@@ -13,28 +13,29 @@ LSP — in a single browser tab served by a single local process.
 
 ## Documentation
 
-The full docs live in **[`docs/`](docs/)** — a self-contained
-static site (no build step, zero external network calls). Browse it
-locally:
+Read the docs online at **[paukode.github.io/whisper-studio](https://paukode.github.io/whisper-studio/)**,
+published to GitHub Pages automatically on every push to `main`.
+
+The docs are a self-contained static site in **[`docs/`](docs/)** (no build
+step, zero external network calls), so you can also browse them locally:
 
 ```sh
 cd docs && python3 -m http.server 8123
 # open http://127.0.0.1:8123
 ```
 
-It also publishes to GitHub Pages — see
-[`docs/README.md`](docs/README.md).
+Deploy setup is in [`docs/README.md`](docs/README.md).
 
 | If you want to… | Read |
 |---|---|
-| Install from scratch (zero prior tooling) | [Installation](docs/installation.html) · [Requirements](docs/requirements.html) |
-| Configure region, model, keys, feature flags | [Configuration](docs/configuration.html) · [Env vars](docs/ref-env.html) · [Settings keys](docs/ref-settings.html) |
-| Learn a task (chat, voice, docs, research, coding, cron) | [Tutorials](docs/tut-first-chat.html) |
-| Look up a slash command or agent tool | [Slash commands](docs/ref-slash-commands.html) · [Agent tools](docs/ref-tools.html) |
-| Record mic, a Chrome tab, or system audio for meetings | [Voice & meetings](docs/tut-voice.html) |
-| Understand the internals | [Architecture](docs/arch-overview.html) |
-| Understand the security model | [Security](docs/ref-security.html) |
-| Hack on the code | [Development & contributing](docs/contributing.html) |
+| Install from scratch (zero prior tooling) | [Installation](https://paukode.github.io/whisper-studio/installation.html) · [Requirements](https://paukode.github.io/whisper-studio/requirements.html) |
+| Configure region, model, keys, feature flags | [Configuration](https://paukode.github.io/whisper-studio/configuration.html) · [Env vars](https://paukode.github.io/whisper-studio/ref-env.html) · [Settings keys](https://paukode.github.io/whisper-studio/ref-settings.html) |
+| Learn a task (chat, voice, docs, research, coding, cron) | [Tutorials](https://paukode.github.io/whisper-studio/tut-first-chat.html) |
+| Look up a slash command or agent tool | [Slash commands](https://paukode.github.io/whisper-studio/ref-slash-commands.html) · [Agent tools](https://paukode.github.io/whisper-studio/ref-tools.html) |
+| Record mic, a Chrome tab, or system audio for meetings | [Voice & meetings](https://paukode.github.io/whisper-studio/tut-voice.html) |
+| Understand the internals | [Architecture](https://paukode.github.io/whisper-studio/arch-overview.html) |
+| Understand the security model | [Security](https://paukode.github.io/whisper-studio/ref-security.html) |
+| Hack on the code | [Development & contributing](https://paukode.github.io/whisper-studio/contributing.html) |
 
 ## Highlights
 
@@ -75,7 +76,7 @@ model auto-downloads on first record.
 For the Vite dev server with hot-module reload, use `bash setup.sh --dev`.
 
 New to Python / Homebrew / AWS, or want the setup flags and model modes?
-The **[Installation guide](docs/installation.html)** walks through
+The **[Installation guide](https://paukode.github.io/whisper-studio/installation.html)** walks through
 everything from zero.
 
 ## Updating
@@ -108,9 +109,9 @@ the in-app Settings panel (gear icon); the env layer is shell-only.
 `setup.sh` seeds `config.json` from `config.example.json` on first run.
 Chat, transcription, and the workspace tools all work out of the box;
 web search needs a Tavily key. Full field-by-field tables are in
-**[Configuration](docs/configuration.html)**,
-**[Environment variables](docs/ref-env.html)**, and
-**[Settings & config keys](docs/ref-settings.html)**.
+**[Configuration](https://paukode.github.io/whisper-studio/configuration.html)**,
+**[Environment variables](https://paukode.github.io/whisper-studio/ref-env.html)**, and
+**[Settings & config keys](https://paukode.github.io/whisper-studio/ref-settings.html)**.
 
 ## Usage
 
@@ -124,12 +125,12 @@ sub-agents — all gated by the current permission mode.
 
 Each of these has a tutorial or reference page:
 
-- **[Tutorials](docs/tut-first-chat.html)** — first chat, voice &
+- **[Tutorials](https://paukode.github.io/whisper-studio/tut-first-chat.html)** — first chat, voice &
   meetings, documents, web research, the workspace IDE, permissions,
   memory & WHISPER.md, skills, sub-agents, cron, indexing & search, MCP &
   plugins, and model modes.
-- **[Slash commands](docs/ref-slash-commands.html)** and
-  **[Agent tools](docs/ref-tools.html)** — the complete reference for
+- **[Slash commands](https://paukode.github.io/whisper-studio/ref-slash-commands.html)** and
+  **[Agent tools](https://paukode.github.io/whisper-studio/ref-tools.html)** — the complete reference for
   every `/` command and the full tool pool the assistant can call (~80+
   core tools plus skill-backed tools).
 
@@ -142,9 +143,9 @@ execution in `sandbox-exec(5)`. Plugins are opt-in, and the only outbound
 call the backend makes on its own is to Amazon Bedrock for chat — no
 telemetry.
 
-Full boundary table: **[Security model](docs/ref-security.html)**,
+Full boundary table: **[Security model](https://paukode.github.io/whisper-studio/ref-security.html)**,
 with the deeper rationale in
-[Overall system § Security boundaries](docs/overall-system.html#security-boundaries).
+[Overall system § Security boundaries](https://paukode.github.io/whisper-studio/overall-system.html#security-boundaries).
 
 ## Development
 
@@ -159,7 +160,7 @@ npm test             # vitest frontend tests
 Ruff lints and formats the Python (`ruff check .` / `ruff format .`) and
 is a blocking CI gate. The project layout, conventions (backend-restart,
 tool wiring, approval flow, file-size budget), and full tech stack are
-documented in **[Development & contributing](docs/contributing.html)**.
+documented in **[Development & contributing](https://paukode.github.io/whisper-studio/contributing.html)**.
 
 ## License
 
@@ -167,9 +168,33 @@ MIT License. See [LICENSE](LICENSE) for the exact terms.
 
 ## Disclaimer
 
-This is a personal project, not affiliated with, endorsed by, or sponsored
-by Amazon. Amazon, AWS, and Amazon Bedrock are trademarks of Amazon.com,
-Inc. or its affiliates, referenced here only for identification. Whisper
-Studio sends chat requests to Amazon Bedrock, a paid AWS service billed to
-your own AWS account per token, so using cloud models incurs costs. Running
-in on-device (local) mode makes no cloud calls.
+Whisper Studio is an independent, community project. It is not affiliated with,
+endorsed by, sponsored by, or certified by Amazon, Anthropic, OpenAI, Google, or
+any other company whose products or services it can connect to.
+
+All product names, brands, and model names referenced in this project are the
+property of their respective owners:
+
+- Amazon, AWS, and Amazon Bedrock are trademarks of Amazon.com, Inc. or its affiliates.
+- Claude is a trademark of Anthropic.
+- GPT and ChatGPT are trademarks of OpenAI.
+- Gemma is a trademark of Google LLC.
+
+These names are used here only for identification and interoperability — to
+describe the third-party services and models that Whisper Studio can connect to.
+Their use does not imply any affiliation with, or endorsement by, the trademark
+owners.
+
+Whisper Studio is built independently, using publicly available knowledge,
+documentation, and APIs. It does not use or rely on any confidential,
+proprietary, or non-public information belonging to any of these companies.
+
+Whisper Studio does not include, host, redistribute, or grant any rights to these
+models, services, or their weights. You access them through your own accounts and
+credentials, and your use of each is governed by that provider's own terms of
+service and pricing. Cloud models are paid services billed to your own account per
+use; running in on-device (local) mode makes no cloud calls. Model names and
+availability are described as of this writing and may change without notice.
+
+The software itself is provided "as is", without warranty of any kind, under the
+terms of the MIT License in [LICENSE](LICENSE).
