@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings &amp; config keys - Whisper Studio Docs</title>
+  <meta name="description" content="Every Settings-UI field and the config.json key it maps to: Bedrock region, default model, model mode, feature flags, effort, permission mode, Tavily key, and cost caps.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="ref-settings">
+    <h1>Settings &amp; config keys</h1>
+    <p class="subtitle">Every field in the in-app Settings panel, and the exact
+      <code class="path">config.json</code> key it writes. Use this page as a lookup when you want to
+      hand-edit config or understand what a toggle actually changes.</p>
+
+    <p>Whisper Studio has no separate config UI to learn: the gear icon opens a Settings panel whose
+      fields map one-to-one onto keys in <code class="path">config.json</code>. Everything below is
+      resolved by <code class="path">server/infrastructure/config.py</code>, which merges several
+      layers in priority order (see <a href="#layers">Config layers</a>). If you prefer to edit JSON
+      directly, the key names in the second column are what you write.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Most of these fields are also <b>latched per session</b>: the model,
+        region, effort level, brief mode, and permission mode are snapshotted when a chat turn first
+        starts, so changing them mid-conversation never disrupts an in-flight turn or invalidates the
+        prompt cache. The new value applies to the next new session. See
+        <a href="arch-persistence.html">Persistence</a> for the latch details.</p></div>
+    </div>
+
+    <h2 id="fields">Settings-UI fields</h2>
+    <p>Open the panel with the gear icon in the top bar. Each row is one control:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Setting</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>Bedrock Region</b></td>
+          <td>The AWS region every Claude and GPT call is routed to. It must match a region where the
+            model you selected is actually enabled, or Bedrock returns an access error. Defaults to
+            <code>us-east-1</code>. See <a href="#pitfalls">Region pitfalls</a>.</td>
+        </tr>
+        <tr>
+          <td><b>Default Model</b></td>
+          <td>The model new sessions start with: Haiku 4.5, Sonnet 4.6, Sonnet 5, Opus 4.6 / 4.7 / 4.8,
+            Fable 5.0, GPT-5.4 / 5.5, or on-device Gemma when local mode is on. The picker only shows
+            models valid for the current <b>Model Mode</b> (cloud hides on-device models and vice versa).
+            Default is <code>opus4.8</code>. Fable 5.0 requires the data-retention consent flow before it
+            can be selected. Full catalog on <a href="arch-backends.html">Model backends</a>.</td>
+        </tr>
+        <tr>
+          <td><b>Model Mode</b></td>
+          <td>Where indexing and retrieval run: <code>cloud</code> (all on Amazon Bedrock),
+            <code>local</code> (all on-device), or <code>hybrid</code> (pick a backend per
+            capability). This also drives which chat models the picker shows. Changing it prompts a
+            reload so the app re-initializes in the new mode. See <a href="tut-model-modes.html">Model
+            modes</a>.</td>
+        </tr>
+        <tr>
+          <td><b>Feature Flags</b></td>
+          <td>Per-feature on/off toggles for gated behavior (hybrid search, reranker, query rewrite,
+            prompt caching, and others) without editing <code class="path">config.json</code> by hand.
+            Changes persist immediately. See <a href="#feature-flags">Feature flags</a>.</td>
+        </tr>
+        <tr>
+          <td><b>Effort Level</b></td>
+          <td>The reasoning budget the model is given, from lowest to highest: <code>low</code>,
+            <code>medium</code>, <code>high</code>, <code>extra</code> (also accepted under its alias
+            <code>xhigh</code>), <code>max</code>, and <code>ultracode</code>. Higher effort trades
+            latency and cost for deeper thinking. Default is <code>high</code>. The levels a model exposes
+            depend on its tier: Opus 4.8 and Fable expose the full ladder up through
+            <code>ultracode</code>; Sonnet and older Opus cap at <code>max</code>; GPT-5.x runs
+            <code>none</code> through <code>max</code>; Haiku and the local models have no effort control.
+            The value is clamped to the nearest level the selected model supports when you switch models.
+            <code>ultracode</code> is a session mode rather than a plain level - it sends the top
+            reasoning effort plus dynamic-workflow orchestration. The old <code>auto</code> value is
+            retired and is coerced back to a real level.</td>
+        </tr>
+        <tr>
+          <td><b>Permission Mode</b></td>
+          <td>How the assistant is gated when it wants to act: <code>default</code>, <code>auto</code>,
+            <code>plan</code>, <code>acceptEdits</code>, <code>bypassPermissions</code>, or
+            <code>dontAsk</code>. Default is <code>default</code> (reads run freely, writes ask). See
+            <a href="#permission-modes">Permission modes</a> and
+            <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td>
+        </tr>
+        <tr>
+          <td><b>Tavily API Key</b></td>
+          <td>Enables the web-search and web-fetch skills. Left empty by default, which disables web
+            search entirely. The API never returns the raw key back to the UI; you only see a masked
+            hint. Prefer the environment variable path (see <a href="#tavily">Tavily key</a>).</td>
+        </tr>
+        <tr>
+          <td><b>Cost Limits</b></td>
+          <td>Two spend caps in USD: a per-session cap and a per-day cap. When a running turn would
+            exceed either, it stops with an error. <code>0</code> means unlimited (the default for
+            both). See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="keys">The config.json keys</h2>
+    <p>Each UI field above writes one or two keys into <code class="path">config.json</code>. This is
+      the mapping, with default values from <code class="path">server/infrastructure/config.py</code>:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>UI field</th></tr></thead>
+      <tbody>
+        <tr><td><code>bedrock_region</code></td><td>string</td><td><code>"us-east-1"</code></td><td>Bedrock Region</td></tr>
+        <tr><td><code>default_chat_model</code></td><td>string</td><td><code>"opus4.8"</code></td><td>Default Model</td></tr>
+        <tr><td><code>chat_models</code></td><td>object</td><td>from <code class="path">config.example.json</code></td><td>(the model catalog behind the picker)</td></tr>
+        <tr><td><code>model_mode</code></td><td>string</td><td><code>"cloud"</code></td><td>Model Mode</td></tr>
+        <tr><td><code>backends</code></td><td>object</td><td><code>{}</code></td><td>Model Mode (hybrid only)</td></tr>
+        <tr><td><code>feature_flags</code></td><td>object</td><td><code>{}</code></td><td>Feature Flags</td></tr>
+        <tr><td><code>effort_level</code></td><td>string</td><td><code>"high"</code></td><td>Effort Level</td></tr>
+        <tr><td><code>permission_mode</code></td><td>string</td><td><code>"default"</code></td><td>Permission Mode</td></tr>
+        <tr><td><code>tavily_api_key</code></td><td>string</td><td><code>""</code></td><td>Tavily API Key</td></tr>
+        <tr><td><code>max_session_cost_usd</code></td><td>number</td><td><code>0.0</code></td><td>Cost Limits (per-session)</td></tr>
+        <tr><td><code>max_daily_cost_usd</code></td><td>number</td><td><code>0.0</code></td><td>Cost Limits (per-day)</td></tr>
+        <tr><td><code>map_reduce_summary</code></td><td>object</td><td>from <code class="path">config.example.json</code></td><td>(no UI field - see <a href="#map-reduce">Transcript condensation keys</a>)</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Older configs used <code>local_mode</code> (a plain on/off boolean)
+        before <code>model_mode</code> existed. Both are still read: if a config has
+        <code>local_mode</code> set but no explicit <code>model_mode</code>, the loader treats it as
+        <code>"local"</code> so your on-device models stay visible. An explicit <code>model_mode</code>
+        always wins.</p></div>
+    </div>
+
+    <h2 id="model-selection">Model mode and backends</h2>
+    <p><code>model_mode</code> picks where the index and retrieval pipeline runs; the
+      <code>backends</code> object is consulted <em>only</em> in <code>"hybrid"</code> mode, where each
+      capability can point at a different engine. Unset capabilities fall back to the cloud backend.</p>
+    <div class="spec">
+      <dt><code class="path">backends.embed</code></dt><dd><code>cohere</code> or <code>qwen3</code> - the embedding model for the index.</dd>
+      <dt><code class="path">backends.rerank</code></dt><dd><code>cohere</code> or <code>qwen3</code> - the reranker applied to retrieved passages.</dd>
+      <dt><code class="path">backends.ner</code></dt><dd><code>haiku</code> or <code>gliner</code> - entity extraction for the GraphRAG entity graph.</dd>
+      <dt><code class="path">backends.index_llm</code></dt><dd><code>haiku</code>, <code>local</code>, or <code>none</code> - the model that summarizes and enriches indexed content.</dd>
+    </div>
+    <p>These map onto the same per-capability picks that <code>setup.sh --hybrid</code> pulls the
+      on-device weights for. See <a href="arch-backends.html">Model backends &amp; modes</a> and
+      <a href="arch-index.html">Index / GraphRAG</a> for how each capability is used.</p>
+
+    <h2 id="feature-flags">Feature flags</h2>
+    <p>The <code>feature_flags</code> key is a small namespace of booleans that gate optional behavior
+      without a code change. Toggling one in Settings persists it immediately. Under the hood the
+      toggle is surgical: it patches only that one boolean inside the <code>feature_flags</code> object
+      and leaves every other byte of <code class="path">config.json</code> untouched, so it never
+      reflows your formatting or flattens the model catalog. Flags cover features such as hybrid
+      search, the reranker, query rewrite, and prompt caching. The live state of each flag is exposed
+      to the UI through the config endpoint so the panel can show what is currently on.</p>
+
+    <p>Several flags added with the ultracode program default <b>on</b>:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Flag</th><th>Default</th><th>What it gates</th></tr></thead>
+      <tbody>
+        <tr><td><code>progressive_tools</code></td><td><code>true</code></td><td>Progressive tool disclosure: advertise a core tool set plus session-activated tools, with everything else discoverable via <code>tool_search</code> from a compact index. Cuts roughly 60-75% of tool-schema tokens per turn.</td></tr>
+        <tr><td><code>goal_loop</code></td><td><code>true</code></td><td>Goal loop + completion gate: a session goal (set with <code>/goal</code>) auto-continues the turn until a cheap evaluator judges it achieved, capped at 8 blocks. See <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</td></tr>
+        <tr><td><code>cron_verify</code></td><td><code>true</code></td><td>Verify a cron run actually achieved its prompt before pushing an "ok" status.</td></tr>
+        <tr><td><code>preview_tools</code></td><td><code>true</code></td><td>Assistant-controllable browser preview tools (start/stop/click/fill/eval/screenshot); they only surface once Playwright and Chromium are installed.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Unlike the latched fields, feature flags take effect right away
+        rather than waiting for a new session, because they change server behavior rather than the
+        cached prompt.</p></div>
+    </div>
+
+    <h2 id="map-reduce">Transcript condensation keys</h2>
+    <p>The <code>map_reduce_summary</code> object tunes how an oversized transcript is condensed before
+      the summary skills run. It has no Settings-UI field, so edit <code class="path">config.json</code>
+      (or the <code class="path">config.example.json</code> template) directly. Every size below is in
+      <b>characters</b> (roughly 4 characters per token), and any malformed numeric value falls back to
+      its default rather than failing the chat turn.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Sub-key</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>enabled</code></td><td><code>true</code></td><td>Master switch. When false, transcripts are never condensed and pass through unchanged.</td></tr>
+        <tr><td><code>threshold_chars</code></td><td><code>600000</code></td><td>Condense only above this size (about 150k tokens). Below it the transcript passes through with no extra LLM calls.</td></tr>
+        <tr><td><code>chunk_chars</code></td><td><code>150000</code></td><td>Per-chunk size for the cloud map step (about 37k tokens).</td></tr>
+        <tr><td><code>local_chunk_chars</code></td><td><code>40000</code></td><td>Per-chunk size in local mode (about 10k tokens; fits the 16k on-device window).</td></tr>
+        <tr><td><code>overlap_chars</code></td><td><code>800</code></td><td>Overlap between adjacent chunks so nothing is lost at a boundary.</td></tr>
+        <tr><td><code>map_max_tokens</code></td><td><code>1200</code></td><td>Output cap for each per-chunk extract.</td></tr>
+        <tr><td><code>max_chunks</code></td><td><code>40</code></td><td>Cap on the number of chunks; the splitter re-chunks coarser before hitting it.</td></tr>
+        <tr><td><code>max_output_chars</code></td><td><code>480000</code></td><td>Cap on the aggregate condensed output in cloud mode (about 120k tokens), so the reduce turn does not overflow.</td></tr>
+        <tr><td><code>local_max_output_chars</code></td><td><code>24000</code></td><td>Tighter aggregate cap for the smaller local window.</td></tr>
+        <tr><td><code>engine</code></td><td><code>"auto"</code></td><td>Which model runs the map step. <code>"auto"</code> follows the model mode (cloud uses Haiku, local uses the on-device model); force <code>"haiku"</code> or <code>"local"</code> to override.</td></tr>
+      </tbody>
+    </table></div>
+    <p>See <a href="arch-summarization.html#config">Transcript summarization</a> for how the map-reduce
+      pipeline uses these values.</p>
+
+    <h2 id="permission-modes">Permission modes</h2>
+    <p>The <code>permission_mode</code> key controls how the assistant is gated when it wants to run a
+      tool. You can also switch it inline with the Mode dropdown in the chat input. Per-tool rules
+      under Settings &gt; Permissions override the mode for specific commands.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Value</th><th>Behavior</th></tr></thead>
+      <tbody>
+        <tr><td><code>default</code></td><td>Reads run freely; writes ask for approval.</td></tr>
+        <tr><td><code>auto</code></td><td>A classifier decides per-tool, per-call (configured in the Auto Mode tab).</td></tr>
+        <tr><td><code>plan</code></td><td>Read-only. The assistant plans but never executes.</td></tr>
+        <tr><td><code>acceptEdits</code></td><td>File edits auto-approve; deletes and shell commands still ask.</td></tr>
+        <tr><td><code>bypassPermissions</code></td><td>Everything runs without prompts.</td></tr>
+        <tr><td><code>dontAsk</code></td><td>Reads auto-allow; writes are silently denied.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The <code>auto</code> mode reads three companion keys - <code>auto_mode_allow</code>,
+      <code>auto_mode_soft_deny</code>, and <code>auto_mode_environment</code> - which the Auto Mode
+      tab manages for you. See <a href="arch-approval.html">Approval &amp; permissions</a> for the
+      classifier and nonce flow.</p>
+
+    <h2 id="tavily">The Tavily key</h2>
+    <p>Web search is off until a Tavily key is present. You can set it two ways, and the environment
+      variable always wins:</p>
+    <ol class="steps">
+      <li>
+        <h4>Environment variable (preferred)</h4>
+        <p>Export <code>TAVILY_API_KEY</code> in your shell. It overrides
+          <code>config.json:tavily_api_key</code> and is re-read on every config load, so a rotated key
+          applies without a restart and never touches disk.</p>
+        <div class="code-block"><pre><code>echo 'export TAVILY_API_KEY=tvly-...' &gt;&gt; ~/.zshrc</code></pre></div>
+      </li>
+      <li>
+        <h4>Settings field</h4>
+        <p>Paste the key into the Tavily API Key field. It is stored in
+          <code class="path">config.json</code>. The config endpoint never returns the raw value - only
+          a masked hint like <code>tvly...abcd</code> - so the UI can show that a key is set without
+          exposing it.</p>
+      </li>
+    </ol>
+    <p>See <a href="tut-research.html">Web research</a> to put the key to work and
+      <a href="ref-env.html">Environment variables</a> for the full env list.</p>
+
+    <h2 id="layers">Config layers</h2>
+    <p>A resolved config is the merge of up to four layers, lowest priority first. Higher layers
+      override lower ones, and nested objects merge key-by-key (except the model catalog, which
+      replaces wholesale).</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>#</th><th>Layer</th><th>Source</th><th>Scope</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Defaults</td><td>built into <code class="path">server/infrastructure/config.py</code></td><td>Fallbacks for everything.</td></tr>
+        <tr><td>2</td><td>User</td><td><code class="path">config.json</code> at the repo root (gitignored)</td><td>Your global preferences for all sessions.</td></tr>
+        <tr><td>3</td><td>Project</td><td><code class="path">.whisper/settings.json</code> in the workspace root</td><td>Per-project overrides for a safe subset of keys.</td></tr>
+        <tr><td>4</td><td>Environment</td><td>shell env vars (e.g. <code>TAVILY_API_KEY</code>)</td><td>Secrets and deployment overrides; wins over everything.</td></tr>
+      </tbody>
+    </table></div>
+    <p><code class="path">config.json</code> is the <b>User</b> layer. It is gitignored and created on
+      first run when <code>setup.sh</code> copies <code class="path">config.example.json</code> over
+      it. A project's <code class="path">.whisper/settings.json</code> overrides your user config, but
+      only for a project-safe subset of keys (region, model, effort, brief mode, permission mode, the
+      auto-mode lists, cost caps, and feature flags) - global-only secrets like the Tavily key are not
+      accepted there. Environment variables override both.</p>
+
+    <p>Separately from that config subset, <code class="path">.whisper/settings.json</code> may also carry
+      an optional <code>hooks</code> key: arbitrary project hook code from the cloned repo. It is treated
+      as untrusted and stays <b>inert until the exact hook set is explicitly trusted</b> (a SHA-256 of
+      the canonical hooks, mirroring trusted skills), so a checked-out repo cannot run hook code on its
+      own. See the <a href="ref-security.html">Security model</a> for the project-trust flow.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Secrets hygiene.</b> <code class="path">config.json</code> is
+        gitignored, but it sits on disk in plain JSON. Treat it like any credential store: do not sync
+        it to untrusted backups, rotate keys after sharing your screen, and prefer the env-var path for
+        the Tavily key.</p></div>
+    </div>
+
+    <h2 id="pitfalls">Region and edit pitfalls</h2>
+    <ul>
+      <li><b>Region must be non-empty.</b> A blank <code>bedrock_region</code> would build a malformed
+        endpoint and fail every Bedrock call, so the loader coerces blank or missing values back to
+        <code>us-east-1</code> and strips stray whitespace. The Settings UI and the config API both
+        refuse to persist a blank region or default model.</li>
+      <li><b>Region has to match the model.</b> Enabling a model in one region and pointing
+        <code>bedrock_region</code> at another produces an access error. If chat fails with an access
+        or model-ID error, this mismatch is the usual cause.</li>
+      <li><b>Unknown default model falls back.</b> If <code>default_chat_model</code> names a key that
+        is not in the catalog, the loader falls back to <code>opus4.8</code> (or the first available
+        model), so resolution never dead-ends.</li>
+      <li><b>Prefer the UI or a surgical edit for the model catalog.</b> The rich
+        <code>chat_models</code> shape carries per-model metadata; a naive re-save can flatten it. To
+        add or change a model, edit <code class="path">config.example.json</code> (the canonical
+        template) rather than hand-flattening the live file.</li>
+    </ul>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="configuration.html">Configuration</a> for
+        the layered model in context, <a href="ref-env.html">Environment variables</a> for the env
+        layer, <a href="tut-model-modes.html">Model modes</a> for cloud vs hybrid vs local, and
+        <a href="arch-backends.html">Model backends &amp; modes</a> for how each model is routed.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>

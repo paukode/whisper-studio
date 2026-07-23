@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The ultracode workflow runtime - Whisper Studio Docs</title>
+  <meta name="description" content="Ultracode: the model authors a deterministic JS orchestration script that a locked-down Node vm harness runs detached, proxying agent() over JSON-RPC into Python with concurrency limits, USD budgets, a resumable journal, and upfront phase-preview approval - on both Claude and GPT-on-Bedrock.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 10l-5 6 5 6'/%3E%3Cpath d='M21 10l5 6-5 6'/%3E%3Cpath d='M17 8l-2 16'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-ultracode">
+    <h1>The ultracode workflow runtime</h1>
+    <p class="subtitle">Ultracode is the mode where the assistant stops improvising a chain of tool
+      calls and instead <em>writes a program</em> - a deterministic JavaScript orchestration script - that a
+      locked-down Node&nbsp;vm harness runs detached from the turn. The script fans out many subagents with
+      real concurrency, budgets, and a resumable journal, and it runs the same way on Claude and on
+      GPT-on-Bedrock.</p>
+
+    <p>The runtime lives in <code class="path">server/workflows/</code>. The model authors a script; a single
+      Node process parses and validates it; the user approves it; then the run executes detached while the
+      Python side enforces the limits and streams progress back as a live card. <b>Click a box</b> in the
+      diagram to trace a workflow from authored script to finished run.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="ultracode-diagram" class="diagram"></div>
+      <figcaption>A workflow's life: the model authors a script, the user approves the phase preview, then
+        <em>manager.start_run</em> drives it detached. The Node vm harness runs the script and proxies each
+        <em>agent()</em> back over JSON-RPC to the Python runtime, which limits concurrency and spend, calls
+        <em>run_agent</em>, journals the result, and streams events to the run card.</figcaption>
+    </figure>
+
+    <h2 id="why">Why a script instead of a tool loop</h2>
+    <p>An ordinary chat turn is a loop: the model emits one tool call, waits for the result, decides the
+      next call, and so on. That is fine for a handful of steps but it serializes everything and the model
+      re-reasons the whole plan on every hop. Ultracode inverts it. For work that is wide (audit twenty
+      files), deep (generate five designs, judge them, synthesize), or that must be <em>confident</em>
+      (find bugs, then adversarially verify each), the model writes the control flow <b>once</b> as a
+      script. Loops, conditionals, fan-out, and fan-in are ordinary JavaScript; the expensive leaf calls -
+      <code>agent()</code> - run concurrently under a real scheduler. The plan is deterministic and
+      inspectable before a single agent runs.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Ultracode is a tier, not a separate model. It is offered at the top of the
+        effort dial and turns on the workflow tools plus the script-authoring directive
+        (<code class="path">server/prompts/ultracode.py</code>). Simple questions are still answered
+        directly - the directive tells the model to reach for a workflow only when the work is genuinely
+        parallel, comprehensive, or adversarially verified.</p></div>
+    </div>
+
+    <h2 id="the-script">The script contract</h2>
+    <p>A workflow script is plain JavaScript (not TypeScript) that must begin with a pure
+      <code>export const meta</code> literal - no variables, calls, or interpolation - so it can be
+      extracted and shown for approval without executing the body. After <code>meta</code>, the body runs
+      in an async context and may <code>await</code> directly.</p>
+
+    <pre><code>export const meta = {
+  name: 'review-changes',
+  description: 'Review changed files across dimensions, verify each finding',
+  phases: [{ title: 'Review' }, { title: 'Verify' }],
+}
+
+const DIMENSIONS = [{ key: 'bugs', prompt: '…' }, { key: 'perf', prompt: '…' }]
+
+// pipeline: each item flows through all stages independently - no barrier,
+// so a 'bugs' finding verifies while 'perf' is still being reviewed.
+const results = await pipeline(
+  DIMENSIONS,
+  d =&gt; agent(d.prompt, { label: `review:${d.key}`, phase: 'Review', schema: FINDINGS }),
+  review =&gt; parallel(review.findings.map(f =&gt; () =&gt;
+    agent(`Adversarially verify: ${f.title}`, { phase: 'Verify', schema: VERDICT })
+      .then(v =&gt; ({ ...f, verdict: v }))
+  ))
+)
+return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></pre>
+
+    <p>The body has a small, fixed set of hooks. Everything else is ordinary JavaScript built-ins.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Hook</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>agent(prompt, opts?)</code></td><td>Spawn one subagent. Without <code>schema</code> it returns the final text; with a JSON-Schema <code>schema</code> it returns a validated object. <code>opts</code>: <code>label</code>, <code>phase</code>, <code>schema</code>, <code>model</code>, <code>effort</code>, <code>isolation:'worktree'</code>, <code>agentType</code>.</td></tr>
+        <tr><td><code>pipeline(items, …stages)</code></td><td>Run each item through all stages independently, <b>no barrier</b> between stages. Item A can be in stage 3 while B is still in stage 1. The default for multi-stage work.</td></tr>
+        <tr><td><code>parallel(thunks)</code></td><td>Run tasks concurrently and await them all - a barrier. A thrown thunk resolves to <code>null</code> (filter before use). Use only when you truly need every result together.</td></tr>
+        <tr><td><code>phase(title)</code></td><td>Start a new phase; subsequent <code>agent()</code> calls group under it in the progress display.</td></tr>
+        <tr><td><code>log(msg)</code></td><td>Emit a progress line shown above the run's progress tree.</td></tr>
+        <tr><td><code>workflow(name, args?)</code></td><td>Run another saved workflow inline as a sub-step (one level of nesting; shares the parent's caps and budget).</td></tr>
+        <tr><td><code>budget</code></td><td><code>{ total, spent(), remaining() }</code> - the run's USD target, for dynamic loops (<code>while (budget.remaining() &gt; 50_000) …</code>).</td></tr>
+        <tr><td><code>args</code></td><td>The JSON value passed into the run, verbatim - the way a saved workflow is parameterized.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="determinism">Determinism and the sandbox</h2>
+    <p>The script runs inside a Node&nbsp;24 <code>vm</code> context created by
+      <code class="path">server/workflows/harness/harness.mjs</code>. The context is deliberately bare: there
+      is no <code>require</code>, <code>process</code>, <code>fs</code>, <code>fetch</code>, or module
+      system - only the hooks above and the standard JS built-ins. On top of that,
+      <code class="path">harness/guards.mjs</code> installs determinism guards so a resume always replays
+      identically:</p>
+    <div class="spec">
+      <dt><code>Math.random()</code></dt><dd>Throws. Randomness would make a resume diverge - derive variety from <code>agent()</code> results or an index instead.</dd>
+      <dt><code>Date.now()</code> / <code>new Date()</code></dt><dd>Throw (a <code>Date</code> with explicit arguments still works). The <code>Date.prototype.constructor</code> back-door is redirected to the guarded constructor too.</dd>
+      <dt><code>setTimeout</code> / <code>setInterval</code> / <code>setImmediate</code></dt><dd>Throw; <code>queueMicrotask</code> is kept (deterministic).</dd>
+    </div>
+    <p>The single hardest boundary is host code execution. Node is launched with
+      <code>--disallow-code-generation-from-strings</code>, so the classic vm escape - reaching the host
+      <code>Function</code> constructor via <code>anAgent.constructor.constructor('return process')()</code> -
+      raises <code>EvalError</code> instead of returning the host <code>process</code>. The harness's own
+      <code>vm.runInContext</code> is unaffected.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+      <div class="callout__body"><p>Honest caveat: a <code>vm</code> context is <b>not</b> a certified security
+        boundary. The real anchor is defence in depth - the user approves every new script before it runs,
+        the context has no dangerous globals, the child's environment is scrubbed, and codegen-from-strings
+        is disabled. Treat a workflow script the way you treat any code you are about to run: read the
+        preview.</p></div>
+    </div>
+
+    <h2 id="runtime">The runtime and its limits</h2>
+    <p><code class="path">server/workflows/runtime.py</code> is the Python side of the bridge - a
+      <code>WorkflowRun</code> that acts as the JSON-RPC <em>server</em> for the harness and owns the limits
+      the script cannot bypass, no matter what the JavaScript does:</p>
+    <ol class="steps">
+      <li><h4>16-way concurrency</h4><p>An <code>asyncio.Semaphore</code> caps live <code>agent()</code>
+        calls. A script may hand <code>parallel()</code> a thousand thunks; only sixteen run at once and the
+        rest queue.</p></li>
+      <li><h4>A 1000-agent lifetime cap</h4><p>A runaway-loop backstop. The cap is checked before dispatch;
+        exceeding it raises an <code>AgentCap</code> error into the script and marks <code>cap_reached</code>.</p></li>
+      <li><h4>A USD budget</h4><p>Optional per-run ceiling. Cost accrues when an agent <em>completes</em>, so
+        the budget is re-checked after acquiring a slot as well as before dispatch - that bounds a
+        parallel burst's overshoot to the concurrency window instead of the whole cap.</p></li>
+      <li><h4>A resumable journal</h4><p>Every phase and agent call is appended to the run's journal; the
+        resume cache is built from it (see below).</p></li>
+    </ol>
+    <p>Cost is priced per agent against the model that actually ran (a per-agent <code>opts.model</code>
+      override is billed at that model's rate), and rolls up into the run's ledger and the session cost
+      log. A nested <code>workflow()</code> inherits the parent's <em>remaining</em> budget and merges its
+      spend, agents, and cap back into the parent, so nested work can never exceed the outer cap.</p>
+
+    <h2 id="bridge">The Node harness to Python bridge</h2>
+    <p>The script and the runtime speak line-delimited JSON-RPC over the child's stdio, framed by
+      <code class="path">server/workflows/rpc.py</code> (a 10&nbsp;MB line ceiling, typed error constants for
+      budget / cap / cancel / depth). Only the calls that need the model cross the boundary: an
+      <code>agent()</code> or nested <code>workflow()</code> becomes a request to Python; every other
+      statement is pure in-sandbox JS. This is what lets the same script run unchanged on either provider -
+      the harness never talks to a model directly.</p>
+    <p>On the Python side, <code class="path">server/workflows/agent_adapter.py</code> turns one
+      <code>agent()</code> RPC into one <a href="arch-agents.html">run_agent</a> call. It maps the harness
+      opts (<code>schema</code> to <code>structured_schema</code>, <code>effort</code>, <code>model</code>,
+      <code>isolation</code>, <code>agentType</code>) and normalizes the result back to
+      <code>{ text, output, usage, status, agent_id }</code>. Because it rides the
+      <a href="arch-backends.html">provider-agnostic runtime</a>, a workflow launched from a GPT-on-Bedrock
+      session spawns GPT subagents, and one launched from a Claude session spawns Claude subagents -
+      structured output is validated on both.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Workflow subagents can reach every session-connected tool - the same
+        <a href="arch-tools.html">tool router and executors</a> the chat pipeline uses - so a workflow agent
+        can read files, run the verify-change skill, search the index, or drive the browser, exactly like a
+        hand-spawned <a href="arch-agents.html">sub-agent</a>.</p></div>
+    </div>
+
+    <h2 id="journal-resume">Journal, resume, and lifecycle</h2>
+    <p>Runs are registered in the <code>workflow_runs</code> table (see
+      <a href="arch-persistence.html">Persistence</a>) with an immutable on-disk script snapshot and an
+      append-only journal under <code class="path">data/workflows/runs/&lt;run_id&gt;/</code>. The run is driven
+      detached via the shared async-task machinery; its outcome is published on a per-run event-bus channel
+      (<code>workflow:{run_id}</code>) so a reloaded session re-attaches. On boot, <code>reconcile_stale()</code>
+      flips any orphaned <code>running</code> row to <code>stale</code> - its journal stays resumable.</p>
+    <p>Resume is the payoff of determinism. Every <code>agent()</code> call is keyed by a
+      <code>call_hash</code> of its <em>prompt and opts</em> (display-only fields like <code>label</code> and
+      <code>phase</code> are dropped). When a run is resumed, the longest unchanged prefix of calls returns
+      cached results instantly - ordered by issue <code>seq</code>, not completion order, so two identical
+      parallel calls replay into the right positions - and only the first edited call and everything after
+      it runs live. Same script and same args means a 100% cache hit; editing one stage re-runs that stage
+      onward.</p>
+    <div class="spec">
+      <dt><code class="path">server/workflows/journal.py</code></dt><dd><code>call_hash</code>, the append-only writer, and <code>load_resume_cache</code> (seq-ordered).</dd>
+      <dt><code class="path">server/workflows/store.py</code></dt><dd>Saved-workflow CRUD; trust drops automatically when a saved script's hash changes.</dd>
+      <dt><code class="path">server/workflows/manager.py</code></dt><dd>The registry and lifecycle owner - <code>start_run</code>, detached drive, <code>reconcile_stale</code>, nested-run scheduling.</dd>
+    </div>
+
+    <h2 id="approval">Approval and trust</h2>
+    <p>A brand-new inline script, or a saved workflow that has not been approved, returns a
+      <code>workflow_preview</code> side-effect rather than running. <code>WorkflowPreviewCard</code> shows
+      the phases as a stepper and the whole script; approving POSTs to <code>/api/workflows/runs</code> and
+      the run begins. A saved workflow only launches immediately once you have approved it (its trust is
+      revoked automatically if the script is later edited), and a resume replays a run you already
+      approved. This preview-then-approve gate is the same mechanism the CI autofix below reuses.</p>
+
+    <h2 id="ci-autofix">CI watch and PR autofix: ultracode applied</h2>
+    <p>The clearest use of the runtime is the CI loop in <code class="path">server/ci/</code>. After you push,
+      <code>ci_watch</code> follows a branch's GitHub Actions run to its conclusion as a detached
+      <a href="arch-cron.html">background task</a>. When it fails, <code>ci_autofix</code> reads the failing
+      logs, diagnoses each failure into structured findings, and <b>generates a workflow script</b> that
+      applies the minimal fixes and then runs the <code>verify_change</code> skill. That generated script is
+      handed to you through the very same <code>workflow_preview</code> card - so nothing is edited or pushed
+      until you approve it, and once approved it runs under the runtime's budget, journal, and run card.
+      Untrusted CI-log text is embedded as double-encoded JSON and clearly delimited as data in the fix
+      agent's prompt, so a hostile log line cannot inject instructions.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+      <div class="callout__body"><p>This is the pattern to copy: a subsystem does its own scouting (find the
+        failing checks, read the logs), then <em>emits</em> a workflow for the runtime to execute under human
+        approval. Diagnosis is read-only; the write path is gated by the preview.</p></div>
+    </div>
+
+    <h2 id="compose">How it composes with the rest of the system</h2>
+    <p>Ultracode is the capstone of a larger harness; it leans on the pieces around it rather than
+      duplicating them.</p>
+    <div class="spec">
+      <dt><a href="arch-agents.html">Provider-agnostic agents</a></dt><dd>Every <code>agent()</code> is a <code>run_agent</code> call, so workflows inherit Claude/GPT parity, usage accounting, effort, structured output, and worktree isolation.</dd>
+      <dt><a href="arch-cron.html">The task registry</a></dt><dd>A workflow run and a CI watch are rows in the unified background-task registry, so they appear in the tasks panel and the header running-count pill.</dd>
+      <dt><a href="arch-tools.html">Tool disclosure and hooks</a></dt><dd>The workflow and CI tools surface only in the ultracode tier; workflow subagents still pass through the same Pre/PostToolUse hooks and tool executors.</dd>
+      <dt>The verify-change skill</dt><dd>Generated fix workflows end by running the repo's verification gate, which emits a deterministic <code>VERIFY PASS</code> / <code>VERIFY FAIL</code> line - the same skill the goal completion gate keys on.</dd>
+    </div>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/workflows/harness/</code></dt><dd><code>harness.mjs</code> (parse + run modes), <code>guards.mjs</code> (determinism guards), <code>api.mjs</code> (the script hooks).</dd>
+      <dt><code class="path">server/workflows/runtime.py</code></dt><dd><code>WorkflowRun</code>: the JSON-RPC server, the semaphore, the agent cap, the USD budget, and the ledger.</dd>
+      <dt><code class="path">server/workflows/rpc.py</code> · <code class="path">agent_adapter.py</code></dt><dd>ndjson JSON-RPC framing; the <code>agent()</code>-to-<code>run_agent</code> seam.</dd>
+      <dt><code class="path">server/workflows/manager.py</code> · <code class="path">journal.py</code> · <code class="path">store.py</code></dt><dd>Lifecycle + the <code>workflow_runs</code> row; the resumable journal; saved-workflow trust.</dd>
+      <dt><code class="path">server/workflows/tools.py</code> · <code class="path">routes.py</code></dt><dd><code>workflow_run/status/save/list</code>; <code>/api/workflows</code> launch, status, stop, and the per-run SSE stream.</dd>
+      <dt><code class="path">server/prompts/ultracode.py</code></dt><dd>The script-authoring directive injected in the ultracode tier.</dd>
+      <dt><code class="path">server/ci/</code></dt><dd>The CI watch + autofix loop that generates and runs workflows.</dd>
+      <dt><code class="path">src/stores/workflowStore.ts</code> · <code class="path">components/chat/WorkflowPreviewCard.tsx</code> · <code class="path">WorkflowRunCard.tsx</code></dt><dd>The approval preview, the live run card, and the run store.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> for when to reach for a workflow versus a plain prompt or a
+        goal, see the <a href="tut-goals.html">Goals &amp; autopilot</a> tutorial. <a href="arch-agents.html">Sub-agents
+        &amp; the event bus</a> is the runtime each <code>agent()</code> rides; <a href="arch-backends.html">Model
+        backends &amp; modes</a> explains the Claude / GPT-on-Bedrock parity; <a href="arch-tools.html">Tool
+        dispatch</a> covers disclosure and hooks; and <a href="ref-slash-commands.html">Slash commands</a>
+        documents <code>/workflow</code> and <code>/ci</code>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/ultracode.js"></script>
+</body>
+</html>

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Keyboard shortcuts - Whisper Studio Docs</title>
+  <meta name="description" content="Keyboard shortcuts for Whisper Studio: sending chat, the ESC kill switch, global app keys, voice submit, and navigating these docs.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="ref-shortcuts">
+    <h1>Keyboard shortcuts</h1>
+    <p class="subtitle">The small set of keys that speed up chat, recording, and the workspace. Whisper
+      Studio keeps its shortcut list short on purpose, so the ones that exist are worth learning.</p>
+
+    <p>Global shortcuts use <code>mod</code>, which resolves to <kbd>Cmd</kbd> on macOS and <kbd>Ctrl</kbd>
+      on Linux or Windows. So <kbd>Cmd</kbd> <kbd>K</kbd> and <kbd>Ctrl</kbd> <kbd>K</kbd> do the same
+      thing depending on your machine. Because Whisper Studio is a macOS-first app, this page shows the
+      <kbd>Cmd</kbd> form. A key only fires as a shortcut when nothing else has already consumed it, so
+      typing inside an input, an open autocomplete, or a modal keeps its normal behavior.</p>
+
+    <h2 id="chat-input">Chat input</h2>
+    <p>The chat textarea is where you will use keys the most. Sending is on <kbd>Enter</kbd> so a quick
+      message needs no mouse, and newlines are still one modifier away.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>Enter</kbd></td><td>Send the message.</td></tr>
+        <tr><td><kbd>Shift</kbd> <kbd>Enter</kbd></td><td>Insert a newline without sending.</td></tr>
+        <tr><td><kbd>Cmd</kbd> <kbd>Enter</kbd></td><td>Force-send now, even while the slash-command autocomplete is open. An explicit "send this" that is never captured as a menu selection.</td></tr>
+        <tr><td><kbd>/</kbd> <span class="badge badge--muted">at line start</span></td><td>Open the slash-command menu. Keep typing to filter it. See <a href="ref-slash-commands.html">Slash commands</a>.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>When the slash-command autocomplete is showing, <kbd>Enter</kbd> and
+        <kbd>Tab</kbd> pick the highlighted command, <kbd>Arrow Up</kbd> / <kbd>Arrow Down</kbd> move
+        the selection, and <kbd>Esc</kbd> closes the menu without sending. Composing with an IME (for
+        example CJK input) never submits on the composition-confirm <kbd>Enter</kbd>.</p></div>
+    </div>
+
+    <h2 id="kill-switch">The ESC kill switch</h2>
+    <p>The single most useful key while an agent is working is <kbd>Esc</kbd>. When a turn is streaming,
+      or any sub-agents are still running, pressing <kbd>Esc</kbd> (this is the same action as the
+      <b>Stop</b> button) instantly kills the active stream and every running sub-agent for the session
+      you are viewing.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>Esc</kbd> <span class="badge badge--muted">while streaming</span></td><td>Kill the current stream and all running sub-agents (same as pressing Stop).</td></tr>
+      </tbody>
+    </table></div>
+    <p>The kill switch is armed only while something is actually running, so <kbd>Esc</kbd> keeps its
+      ordinary meaning everywhere else. Overlays and popups that already treat <kbd>Esc</kbd> as
+      "close me" always win: the first press dismisses the overlay, and a second press then stops the
+      stream. For the full teardown path (how the stop signal reaches sub-agents and the sandbox), see
+      <a href="arch-agents.html">Sub-agents &amp; the event bus</a>.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>ESC stops, it does not undo.</b> Any writes a tool already committed
+        (files changed, a command that already ran) stay committed. The kill switch prevents further
+        work, it does not roll back completed work. To limit what can run in the first place, use the
+        Mode dial and approvals, described in <a href="tut-permissions.html">Permissions &amp; approvals</a>.</p></div>
+    </div>
+
+    <h2 id="global">Global app keys</h2>
+    <p>These work from anywhere in the app (as long as focus is not captured by a text field or an open
+      menu that needs the key). They open the interface pieces you reach for most.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>Cmd</kbd> <kbd>K</kbd></td><td>Open the command palette.</td></tr>
+        <tr><td><kbd>Cmd</kbd> <kbd>B</kbd></td><td>Toggle the session sidebar.</td></tr>
+        <tr><td><kbd>Cmd</kbd> <kbd>,</kbd></td><td>Open Settings. See <a href="ref-settings.html">Settings &amp; config keys</a>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>On Linux or Windows, substitute <kbd>Ctrl</kbd> for <kbd>Cmd</kbd> in the rows above. The
+      command palette (<kbd>Cmd</kbd> <kbd>K</kbd>) is the fastest way to reach an action whose exact
+      key you do not remember, so it is worth making a habit of.</p>
+
+    <h2 id="voice-submit">Voice submit (hands-free)</h2>
+    <p>Dictation is not a key, but it is the closest thing to a hands-free "send". Click the microphone
+      icon between <b>Attach</b> and <b>Send</b> to dictate into the chat textarea; the transcript
+      appends as you speak. To submit without touching the keyboard, end a sentence with a spoken
+      submit command like the examples below. The command words are stripped from the message before
+      it is sent. A bare verb on its own (just "send") never fires, so a one-word mishear cannot
+      submit by accident.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Say</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td>"okay send", "send now", "submit now", "send it now", "send away", "fire away", "send the message"</td><td>Submit the dictated message hands-free. A lead-in ("okay") or a closing word ("now", "away", "the message") is what turns a verb into a command; the command words are removed from the body.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The chat-input mic and the meeting <b>Record</b> button share one reference-counted audio stream,
+      so you can dictate a message while a meeting is recording. See
+      <a href="tut-voice.html">Voice &amp; meetings</a> for dictation, diarization, and system-audio capture.</p>
+
+    <h2 id="docs-shortcuts">These docs</h2>
+    <p>This documentation site has its own small helper: press <kbd>/</kbd> anywhere (as long as you are
+      not already typing in a field) to jump straight to the search box.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>/</kbd></td><td>Focus the docs search box.</td></tr>
+        <tr><td><kbd>Arrow Up</kbd> / <kbd>Arrow Down</kbd></td><td>Move through search results.</td></tr>
+        <tr><td><kbd>Enter</kbd></td><td>Open the highlighted (or first) result.</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Close the results and unfocus search.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="beyond-keys">Beyond keys</h2>
+    <p>Whisper Studio deliberately keeps a small, memorable set of shortcuts rather than a large one.
+      Most actions are reachable two other ways that need nothing to memorize:</p>
+    <div class="cols-2">
+      <div class="card">
+        <h3>Slash commands</h3>
+        <p>Type <kbd>/</kbd> in the chat input for switching models, setting effort, exporting, clearing,
+          and more. It is the fastest surface for chat-level actions.
+          See <a href="ref-slash-commands.html">Slash commands</a>.</p>
+      </div>
+      <div class="card">
+        <h3>The toolbar and UI</h3>
+        <p>Attach, mic, Send, Stop, the Mode dial, and the gear all have visible buttons. If you are
+          unsure whether a key exists for something, the on-screen control always does.</p>
+      </div>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="ref-slash-commands.html">Slash commands</a>,
+        <a href="tut-first-chat.html">Your first chat</a>, and
+        <a href="tut-workspace.html">The workspace IDE</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cron / scheduled tasks - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio schedules recurring jobs: the interval/cron/at schedule union, an APScheduler runtime, run-history leases, and output that streams back into chat as cron_event cards.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-cron">
+    <h1>Cron / scheduled tasks</h1>
+    <p class="subtitle">Whisper Studio can run a prompt on a wall-clock schedule and stream the result
+      back into the conversation that created it. This page covers the schedule union, the APScheduler
+      runtime, the run-history lease, and how a firing lands as a card in your chat.</p>
+
+    <p>Two modules carry the design. <code class="path">server/cron_schedule.py</code> is the pure schedule
+      layer (timezone resolution, the discriminated schedule union, labels, and trigger construction);
+      <code class="path">server/cron_scheduler.py</code> is the runtime (lifecycle, execution, delivery, and
+      routes). Run history lives in <code class="path">server/cron_history.py</code>. <b>Click a box</b> in the
+      diagram to trace a firing from schedule to chat card.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="cron-diagram" class="diagram"></div>
+      <figcaption>A job's life: created and stored, armed on APScheduler, then on each firing it leases a
+        run, spawns an agent, publishes a <em>cron_event</em> to the originating session, and closes the
+        lease with <em>finish_run</em>.</figcaption>
+    </figure>
+
+    <h2 id="the-schedule-union">The schedule union</h2>
+    <p>A job's <code>schedule</code> is a discriminated union with three variants, all normalized and
+      validated by <code>validate_schedule()</code> in <code class="path">server/cron_schedule.py</code>. Bad
+      input raises at create time rather than failing silently at fire time.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Type</th><th>Shape</th><th>Behavior</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>interval</code></td>
+          <td><code>{type:"interval", seconds:1800}</code></td>
+          <td>Repeats every N seconds (minimum 10). Anchor-based: a resumed job fires N seconds after
+            its last run, not immediately. <code>every_minutes</code> is accepted and converted.</td>
+        </tr>
+        <tr>
+          <td><code>cron</code></td>
+          <td><code>{type:"cron", hour:9, minute:0, day_of_week:"mon-fri", tz:"America/New_York"}</code></td>
+          <td>A timezone-aware wall-clock time. <code>hour</code> and <code>minute</code> may be a single
+            value or a comma list (<code>"9,16"</code> for twice a day); <code>day_of_week</code> accepts
+            <code>*</code>, ranges (<code>mon-fri</code>), lists (<code>mon,thu</code>), or a single day.</td>
+        </tr>
+        <tr>
+          <td><code>at</code></td>
+          <td><code>{type:"at", run_at:"2026-07-06T09:00:00", tz:"..."}</code></td>
+          <td>A one-shot run at a specific instant. <code>run_at</code> must be in the future, and the job
+            auto-disables after it fires (see below).</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h3 id="timezone">Where the timezone comes from</h3>
+    <p>When a <code>cron</code> or <code>at</code> job omits <code>tz</code>, the default zone is resolved
+      by <code>_default_tz_name()</code>: the <code>cron_timezone</code> config value if set, otherwise the
+      host system zone. The system zone comes from <code>$TZ</code>, then the <code>/etc/localtime</code>
+      symlink (macOS and Linux), then <code>UTC</code> as a last resort, with no third-party dependency.
+      Because cron triggers carry a real <code>ZoneInfo</code>, "daily at 09:00" fires at the intended
+      local hour and stays correct across DST. A bad IANA name is rejected eagerly at create time.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Every variant flows through <code>schedule_label()</code>, which produces the
+        human string reused by the tools, the API, the panel, and the chat cards ("weekdays at 09:00 ·
+        America/New_York", "every 30 min", "once on Jul 06, 2026 at 09:00"). The countdown to the next
+        run is projected by <code>compute_next_run()</code> straight from the schedule, so the UI stays
+        accurate even when the scheduler is not running.</p></div>
+    </div>
+
+    <h2 id="the-runtime">The runtime</h2>
+    <p><code>init_scheduler()</code> runs once at app startup. It captures the server event loop (so
+      background threads can dispatch coroutines later), reconciles any interrupted runs, imports the
+      legacy results file, then starts an APScheduler <code>AsyncIOScheduler</code> and arms every enabled
+      job. Jobs themselves live in <code class="path">data/cron_jobs.json</code>, mutated under a lock via an
+      atomic temp-file write so a concurrent toggle, delete, and create can never last-write-wins over
+      each other. APScheduler is an optional dependency: if it is not installed, cron is simply disabled
+      and the rest of the app runs normally.</p>
+
+    <p>When a job fires, <code>_make_runner()</code> stamps <code>last_run</code> and bumps
+      <code>run_count</code> under the file lock, then hands off to <code>_execute_cron_prompt()</code> on
+      a daemon thread. That function:</p>
+    <ol class="steps">
+      <li><h4>Guards against overlap</h4><p>An in-progress set (plus APScheduler <code>max_instances=1</code>)
+        ensures the same job never runs twice at once, covering the run-now vs scheduled-fire race.</p></li>
+      <li><h4>Opens a run lease</h4><p><code>cron_history.start_run()</code> writes a <code>cron_runs</code>
+        row with status <code>running</code>. This lease is what lets a crash be detected later.</p></li>
+      <li><h4>Runs the job prompt</h4><p>The prompt is sent to Bedrock inside a short tool-use loop. A
+        per-job Anthropic model override takes precedence: when the job's <code>model</code> field resolves
+        to a configured Anthropic Bedrock id (validated by <code>_validate_job_model()</code>, accepted by
+        <code>cron_create</code> / <code>cron_update</code> and <code>PUT /api/cron/{id}</code>), that model
+        runs; otherwise the loop falls back to the configured Haiku model, then Sonnet, then the first
+        configured model. The system prompt marks the run as a background cron monitor and passes the
+        global prompt rules through <code>append_rules()</code>.</p></li>
+      <li><h4>Delivers and closes the lease</h4><p>The final text is pushed to the originating session and
+        <code>finish_run()</code> closes the lease with <code>ok</code> or <code>failed</code>, the duration,
+        and the next run time.</p></li>
+    </ol>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+      <div class="callout__body"><p>A one-shot <code>at</code> job disables itself (setting <code>enabled=false</code>
+        and stamping <code>fired_at</code>) <em>before</em> the execution runs, so a crash in the
+        fire-then-persist window cannot re-deliver it on the next restart. A run still marked
+        <code>running</code> for more than 15 minutes at boot is reconciled to <code>failed
+        (interrupted)</code>.</p></div>
+    </div>
+
+    <h2 id="run-history">Run history</h2>
+    <p><code class="path">server/cron_history.py</code> persists every run to the <code>cron_runs</code> table
+      in the shared <code>sessions.db</code> (WAL mode, concurrent reads plus a single writer). Each run
+      carries a lease: written as <code>running</code> when the job fires, updated to <code>ok</code> or
+      <code>failed</code> when it finishes. On startup, <code>reconcile_stale()</code> marks any lease
+      older than the 15-minute stale cutoff (<code>STALE_RUN_SEC</code>) as failed, so a run interrupted by
+      a restart is closed instead of hanging forever.</p>
+    <p>Old runs are pruned per job to a configurable ceiling (default 200, from
+      <code>cron_max_runs_per_job</code>). A previous flat <code class="path">data/cron_results.json</code> is
+      imported once via <code>import_legacy()</code> then retired: <code>init_scheduler()</code> renames it
+      to <code>cron_results.json.imported</code> so it is never imported twice.</p>
+    <div class="spec">
+      <dt><code class="path">server/cron_history.py</code></dt><dd>Lease-based run store: <code>start_run</code>, <code>finish_run</code>, <code>list_runs</code>, <code>recent_runs</code>, <code>reconcile_stale</code>.</dd>
+      <dt><code>cron_runs</code></dt><dd>Table keyed by <code>run_id</code>, indexed on <code>(job_id, started_at DESC)</code>; carries status, timestamps, duration, text, and next run.</dd>
+    </div>
+
+    <h2 id="chat-integration">Chat integration</h2>
+    <p>Cron output does not live in an inbox by itself; it flows back into the chat. When a job carries a
+      <code>session_id</code>, a firing calls <code>_emit_cron_event()</code>, which now delegates to the
+      shared <code>emit_session_event()</code> in <code class="path">server/tasks/events.py</code> - the
+      unified session-event service that both appends a <code>cron_event</code> row to that session's
+      history and publishes the same payload live to the <a href="arch-agents.html">event bus</a> as a
+      <code>{type:"cron_event"}</code> event so any open SSE stream renders it immediately. (The same
+      service backs the <code>task_event</code> role.) The row shows up as a compact
+      <code>cron_event</code> card in the conversation.</p>
+    <p>A running job is no longer opaque. Alongside the final card, <code class="path">server/cron_run.py</code>
+      publishes live progress through <code>emit_progress()</code> in
+      <code class="path">server/cron_events.py</code>: TeamProgressEvent-shaped frames (<code>started</code> /
+      <code>turn_start</code> / <code>tool_call</code> / <code>tool_result</code> / <code>completed</code> /
+      <code>failed</code> / <code>stopped</code>) go onto the event bus as <code>{type:"cron_progress"}</code>
+      and are forwarded to the session SSE as <code>team_progress</code>, so the run renders as a live
+      per-tool log in the existing <a href="arch-agents.html">TeamReportCard/AgentCard</a> fold.</p>
+    <p>A cron run that calls <code>notify_user</code> also writes a durable <code>source='cron'</code> row to
+      the <code>notifications</code> table (<a href="arch-persistence.html">migration 008</a>), so a report
+      delivered while you were away is still waiting behind the header bell.</p>
+    <p>These cards are UI-only. They are filtered out by <code>visible_chat_history</code> before the next
+      prompt is built, so background firings never inflate the token bill or confuse the model. If the
+      owning session was deleted or archived, <code>_resolve_target_session()</code> redirects the card to
+      a pinned "Scheduled Reports" inbox instead of dropping it, and a session delete cascades to
+      <code>on_session_deleted()</code>, which disables and flags the job as orphaned (never hard-deleting
+      it) and repoints its run history to the inbox.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>A <code>cron_event</code> is emitted on more than just firings:
+        <code>cron_created</code>, <code>cron_updated</code>, and <code>cron_deleted</code> events also
+        surface in the session so the lifecycle is visible where you scheduled it. See how these events
+        are drained alongside chat frames in <a href="arch-chat-pipeline.html">Chat &amp; tool
+        orchestration</a>.</p></div>
+    </div>
+
+    <h2 id="endpoints">Endpoints and tools</h2>
+    <p>The same logic backs both the assistant's tools and the cron panel's REST API. Claude gets
+      <code>cron_create</code>, <code>cron_update</code>, <code>cron_run</code>, <code>cron_list</code>,
+      and <code>cron_delete</code>; the panel calls the routes below (all under the
+      <code>/api/cron</code> prefix).</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Route</th><th>Method</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>/api/cron</code></td><td>GET / POST</td><td>List all jobs (with schedule label, next run, run state, and system timezone), or create one.</td></tr>
+        <tr><td><code>/api/cron/preview</code></td><td>POST</td><td>Validate a schedule and return its label and next run without persisting anything.</td></tr>
+        <tr><td><code>/api/cron/{job_id}</code></td><td>GET / PUT / DELETE</td><td>Fetch a job with its recent runs, edit it, or delete it.</td></tr>
+        <tr><td><code>/api/cron/{job_id}/history</code></td><td>GET</td><td>List a job's run history.</td></tr>
+        <tr><td><code>/api/cron/{job_id}/run</code></td><td>POST</td><td>Fire a job once, off its schedule (409 if it is already running).</td></tr>
+        <tr><td><code>/api/cron/{job_id}/stop</code></td><td>POST</td><td>Cooperatively stop an in-flight run of this job (404 if the job is unknown, 409 if it is not running).</td></tr>
+        <tr><td><code>/api/cron/{job_id}/toggle</code></td><td>PATCH</td><td>Flip a job's enabled state and re-arm or remove its trigger.</td></tr>
+        <tr><td><code>/api/cron/runs/recent</code></td><td>GET</td><td>Newest runs across all jobs; drives the sidebar unread badges.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Editing a schedule clears the interval anchor (<code>last_run</code> is reset) so the new cadence
+      does not fire off a stale timestamp, and re-homing an orphaned job to a new session clears its
+      orphaned flag. Panel-created jobs with no active chat session land their results in the Scheduled
+      Reports inbox rather than being rejected.</p>
+    <p>The stop route is a cooperative signal, not a kill. <code>stop_cron_job()</code> calls
+      <code>request_stop()</code> in <code class="path">server/cron_events.py</code>, which sets a per-job
+      <code>threading.Event</code> that the run loop checks at round boundaries and between sequential
+      tools; an in-flight tool wait polls in one-second slices, so the run winds down and exits with status
+      <code>stopped</code> within about a second of the request.</p>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/cron_schedule.py</code></dt><dd>Timezone resolution, the schedule union, validation, labels, triggers, and next-run projection.</dd>
+      <dt><code class="path">server/cron_scheduler.py</code></dt><dd>Scheduler lifecycle, execution, inline-in-chat delivery, the assistant tools, and the API routes.</dd>
+      <dt><code class="path">server/cron_history.py</code></dt><dd>Lease-based run history in <code>sessions.db</code>, stale reconciliation, pruning, and the legacy import.</dd>
+      <dt><code class="path">server/cron_run.py</code></dt><dd>The unattended run loop: model resolution (per-job override then the Haiku-first fallback), the tool-use rounds, cooperative-stop checks, and live <code>cron_progress</code> frames.</dd>
+      <dt><code class="path">server/cron_events.py</code></dt><dd>Live run progress (<code>emit_progress</code>) and cooperative stop (<code>request_stop</code> and the per-job <code>threading.Event</code>).</dd>
+      <dt><code class="path">data/cron_jobs.json</code></dt><dd>The persisted job list, mutated under a lock via atomic temp-file writes.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> the <a href="tut-cron.html">Scheduled tasks tutorial</a>
+        walks through creating jobs and reading result cards; <a href="arch-agents.html">Sub-agents &amp;
+        the event bus</a> covers the pub/sub delivery path; and <a href="arch-persistence.html">Persistence</a>
+        explains the <code>sessions.db</code> that holds both chat history and the <code>cron_runs</code>
+        table.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/cron.js"></script>
+</body>
+</html>

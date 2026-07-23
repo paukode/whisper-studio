@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Security model - Whisper Studio Docs</title>
+  <meta name="description" content="A reference summary of Whisper Studio's security model: localhost binding, Markdown sanitization, the nonce approval flow, no-shell aws_cli, the OS sandbox, opt-in plugins, and the accepted residual risks.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="ref-security">
+    <h1>Security model</h1>
+    <p class="subtitle">Boundaries versus defence-in-depth, at a glance. What actually contains a
+      determined attacker, what merely catches the easy cases first, and which residual risks are
+      accepted by design.</p>
+
+    <p class="lead">Whisper Studio runs as a single local process. Its threat model is not "protect a
+      multi-tenant server" but "let an agentic assistant read and change files, run commands, and fetch
+      web pages, without letting a prompt-injected page or a runaway tool call quietly reach your
+      secrets or your LAN." This page is the reference summary. For the mechanisms behind each row, see
+      <a href="arch-sandbox.html">Sandbox &amp; security</a> and
+      <a href="arch-approval.html">Approval &amp; permissions</a>.</p>
+
+    <h2 id="headlines">Headline points</h2>
+    <p>Eleven properties hold by default, out of the box, with no configuration:</p>
+    <ul>
+      <li><b>Localhost-only by default.</b> The server binds <code>127.0.0.1</code>. LAN exposure is an
+        explicit opt-in via <code>HOST=0.0.0.0</code> (see <code class="path">server/main.py</code>).
+        This closes the untrusted coffee-shop Wi-Fi surface an <code>0.0.0.0</code> default would create.</li>
+      <li><b>Every Markdown render is sanitized.</b> All <code>marked</code> output passes through
+        DOMPurify 3.4.6 before it reaches the React DOM, at every
+        <code>dangerouslySetInnerHTML</code> site. A prompt-injected page fetched by
+        <code>web_fetch</code> cannot fire arbitrary JS in the SPA origin.</li>
+      <li><b>Model-authored HTML runs sandboxed, never same-origin.</b> HTML from a code-block
+        preview or open, or a program artifact, renders only inside an <code>iframe</code> with
+        <code>sandbox="allow-scripts"</code> and no <code>allow-same-origin</code> (an opaque origin),
+        including the "Open in new tab" path. A prompt-injected artifact therefore cannot reach the
+        local backend API even if the user opens it
+        (see <code class="path">src/utils/openHtmlSandboxed.ts</code>).</li>
+      <li><b>No client-asserted command approval.</b> The old
+        <code>body.user_approved</code> boolean on <code>/api/workspace/shell</code> is gone. Consent
+        for risky actions routes through <code class="path">server/approval/router.py</code>, which
+        holds a server-side nonce the client cannot fabricate.</li>
+      <li><b><code>aws_cli</code> does not use a shell.</b> Commands are <code>shlex.split</code> into
+        an argv list, so metacharacters like <code>;</code>, <code>&amp;&amp;</code>, and
+        <code>$()</code> become literal arguments to <code>aws</code> rather than shell operators.</li>
+      <li><b>Shell and Python execution is sandboxed.</b> Every subprocess on the code-execution paths
+        is wrapped in <code>sandbox-exec(5)</code> on macOS (and <code>bwrap</code> on Linux),
+        including the hidden <code>terminal_run</code> PTY.</li>
+      <li><b>Plugins are opt-in.</b> Dropping a <code>.py</code> into <code class="path">plugins/</code>
+        does nothing until you explicitly enable it. This closes the drive-by
+        plugin-via-download vector.</li>
+      <li><b>Project hooks are inert until trusted.</b> Hook code shipped in a repo's
+        <code class="path">.whisper/settings.json</code> does not run until you explicitly trust that
+        exact hook set - a SHA-256 canonical hash recorded in <code class="path">hooks_trust.json</code>,
+        read once so the validated bytes and the executed bytes are identical, mirroring trusted skills.
+        A freshly cloned repo cannot run hook code on its own
+        (see <code class="path">server/hooks/config_loader.py</code>).</li>
+      <li><b>The ultracode workflow harness is isolated, but not a certified boundary.</b> Model-authored
+        workflow JavaScript runs in a Node-24 <code>vm.createContext</code>
+        (<code class="path">server/workflows/harness/harness.mjs</code>) whose isolation rests on layers,
+        not a kernel sandbox: the Node globals (<code>require</code>, <code>process</code>, <code>fs</code>,
+        <code>child_process</code>, timers) are simply absent from the context; determinism guards neuter
+        <code>Math.random</code>, <code>Date.now</code>, and the timers; the node flag
+        <code>--disallow-code-generation-from-strings</code> makes <code>eval</code> / <code>new Function</code>
+        throw (so a script cannot reach the host through <code>constructor.constructor</code>); the env is
+        scrubbed; and every new script is approved upfront via the phase-preview card. Real side effects
+        flow through <code>agent()</code> into <code>run_agent</code> tools, which stay permission-gated
+        and sandboxed. See <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</li>
+      <li><b>The Tavily key reads from the environment first.</b> <code>TAVILY_API_KEY</code> overrides
+        <code>config.json:tavily_api_key</code>, so rotation is one <code>export</code> away and the key
+        need never be committed.</li>
+      <li><b>No telemetry.</b> The only outbound call the backend makes on its own is to Amazon Bedrock for
+        chat. Tool calls and skills reach the network only when a user message invokes them - including
+        the <code>/ci</code> command, which shells out to the GitHub CLI (<code>gh</code>) only on explicit
+        invocation, so the "network only when a user acts" property still holds.</li>
+    </ul>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>The system deliberately treats the OS sandbox as the <em>real</em>
+        boundary. The validator and the AWS read-only guard above it are defence-in-depth: they catch
+        the easy cases without being relied upon to contain a determined attacker. When you reason about
+        what is truly enforced, trust the sandbox last and most.</p></div>
+    </div>
+
+    <h2 id="boundary-vs-did">Boundary versus defence-in-depth</h2>
+    <p>The distinction matters. A <b>boundary</b> is enforced by something the attacker cannot talk
+      their way past (the kernel, a secret the server never reveals). <b>Defence-in-depth</b> is a
+      layer that catches common cases but is bypassable on its own, so it sits <em>in front of</em> a
+      boundary, never in place of one. Read this table top to bottom as least-to-most trusted for the
+      execution paths.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Layer</th><th>What it does</th><th>Boundary or defence-in-depth?</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>127.0.0.1</code> default bind</td>
+          <td>Closes LAN reachability.</td>
+          <td><b>Boundary</b> - kernel-level.</td>
+        </tr>
+        <tr>
+          <td>DOMPurify sanitization of every <code>dangerouslySetInnerHTML</code> site</td>
+          <td>Strips <code>&lt;script&gt;</code>, inline event handlers, and <code>javascript:</code>
+            URLs from any HTML reaching the React DOM.</td>
+          <td><b>Boundary</b> for the chat / Markdown render path. Without it, a prompt-injected page
+            rendered through <code>web_fetch</code> could fire arbitrary JS in the SPA origin.</td>
+        </tr>
+        <tr>
+          <td>Approval router with server-side nonce</td>
+          <td>A real consent flow for risky commands.</td>
+          <td><b>Boundary</b> - the server holds the nonce, the client cannot fabricate one.</td>
+        </tr>
+        <tr>
+          <td><code>_validate_command</code> (regex deny-list)</td>
+          <td>Catches <code>rm -rf /</code>, <code>mkfs</code>, <code>dd of=/dev/...</code>, reads of
+            sensitive paths, and similar.</td>
+          <td><b>Defence-in-depth</b> on every command path (workspace shell, <code>terminal_run</code>,
+            <code>aws_cli</code>, the approval executor). Regex-based and bypassable alone, so it sits in
+            front of the sandbox, not in place of it.</td>
+        </tr>
+        <tr>
+          <td><code>validate_command</code> + <code>run_sandboxed</code> on <code>aws_cli</code> /
+            <code>run_python</code> / <code>terminal_run</code></td>
+          <td>Approved CLI / Python / terminal commands are validated, then executed under the OS
+            sandbox (with <code class="path">~/.aws</code> re-allowed so AWS auth still works).</td>
+          <td>The <b>boundary</b> is the sandbox; validation is the layer in front.</td>
+        </tr>
+        <tr>
+          <td><code>sandbox.run_sandboxed</code> via <code>sandbox-exec(5)</code> / <code>bwrap</code></td>
+          <td>A macOS / Linux sandbox profile wraps every shell and code-execution path, including the
+            hidden <code>terminal_run</code> PTY.</td>
+          <td><b>Boundary</b> - the strongest layer. Even if everything above is bypassed, code runs
+            with the secret-store deny-list applied.</td>
+        </tr>
+        <tr>
+          <td><code>_AWS_READONLY_GUARD</code> in <code class="path">server/executors/code.py</code></td>
+          <td>Monkey-patches <code>botocore</code> to reject non-read AWS calls.</td>
+          <td><b>Defence-in-depth only</b> - user code in the same process can <code>del</code> the
+            patch. The boundary that actually contains code is <code>sandbox-exec</code>.</td>
+        </tr>
+        <tr>
+          <td>Workflow vm harness
+            (<code class="path">server/workflows/harness/harness.mjs</code>)</td>
+          <td>Runs model-authored <a href="arch-ultracode.html">ultracode</a> JS in a Node-24
+            <code>vm.createContext</code> with Node globals absent, determinism guards, a scrubbed env,
+            and <code>--disallow-code-generation-from-strings</code>.</td>
+          <td><b>Defence-in-depth, not a certified boundary.</b> Its anchor is upfront user approval of
+            every script plus absent globals, a scrubbed env, and the no-code-from-strings flag; it is
+            not <code>sandbox-exec</code>. Real side effects go through <code>agent()</code> tools, which
+            stay permission-gated and sandboxed.</td>
+        </tr>
+        <tr>
+          <td>Project-hook trust store
+            (<code class="path">hooks_trust.json</code>)</td>
+          <td>A repo's <code class="path">.whisper/settings.json</code> <code>hooks</code> stay inert
+            until the exact hook set is explicitly trusted (SHA-256 canonical hash, single-read).</td>
+          <td><b>Boundary</b> for the cloned-repo hook-code vector - untrusted project hooks never run.</td>
+        </tr>
+        <tr>
+          <td>Plugin loader (<code>enabled</code> allow-list)</td>
+          <td>Opt-in: dropping a new <code>.py</code> into <code class="path">plugins/</code> does
+            nothing until it is explicitly enabled.</td>
+          <td><b>Boundary</b> for the drive-by plugin vector.</td>
+        </tr>
+        <tr>
+          <td>Tavily API key from <code>TAVILY_API_KEY</code> env</td>
+          <td>Avoids committing the key; rotation without editing files.</td>
+          <td><b>Hygiene</b> - not really a security boundary.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="sandbox-enforces">What the sandbox actually enforces</h2>
+    <p>The sandbox is <b>allow-by-default with denials</b>, not deny-by-default. The macOS profile is
+      <code>(allow default)</code> plus <code>deny</code> rules for a curated
+      <code>_DENIED_PATHS</code> list; the Linux <code>bwrap</code> setup read-only-binds the whole
+      filesystem and masks the same paths (directories via tmpfs, files via <code>/dev/null</code>).
+      What it concretely enforces:</p>
+    <dl class="spec">
+      <dt><code class="path">server/sandbox.py</code> - <code>_DENIED_PATHS</code></dt>
+      <dd>Read and write denial of a curated secret-store list: SSH / GPG keys, cloud credentials
+        (<code class="path">~/.aws</code> is denied for generic commands but re-allowed per-call for the
+        AWS tools), git credentials, browser cookies and keychains, shell history, password-manager
+        stores, and assorted CLI token files.</dd>
+    </dl>
+    <p>Because the default is <em>allow</em>, the deny-list is broad but not exhaustive, and it is what
+      the sandbox leans on. That shapes the accepted risks below.</p>
+
+    <h2 id="residual-risks">Accepted residual risks</h2>
+    <p>These are stated plainly rather than hidden. Each is a deliberate trade-off for a single-user
+      local tool, and each has a fix that was judged not worth its cost today.</p>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body">
+        <p><b>Network stays open, and non-listed secret reads are possible.</b> Because the sandbox is
+          allow-default, it does <em>not</em> restrict network access and does <em>not</em> block reads
+          of secret files that are not on <code>_DENIED_PATHS</code>. Network is left open on purpose:
+          sandboxed <code>git</code>, <code>npm</code>, <code>pip</code>, <code>aws</code>, and build
+          commands need it. Flipping to deny-default with network restriction is possible but would break
+          those tools, so it is out of scope for now.</p>
+        <p><b><code>HOST=0.0.0.0</code> exposes an unauthenticated API.</b> Enabling it puts the API on
+          the LAN with no auth. The <code>Origin</code> / <code>Host</code> guard
+          (<code class="path">server/infrastructure/security.py</code>) blocks browser-driven cross-site
+          requests and cross-site WebSocket handshakes, but not a deliberate non-browser client. Only
+          enable <code>0.0.0.0</code> on trusted networks. See <a href="ref-env.html">Environment
+          variables</a>.</p>
+        <p><b>A TOCTOU residual on workspace path containment (S8).</b> Every workspace file op validates
+          the target with <code>_ws_validate_path</code> (<code class="path">server/workspace/paths.py</code>),
+          which <code>os.path.realpath</code>s the path and confirms it stays inside the workspace root.
+          Because this is check-then-use, an intermediate directory swapped to a symlink mid-write could
+          in theory escape. The atomic <code>os.replace</code> does not follow a symlink at the final
+          path component, so the realistic case is covered; a full fix (<code>O_NOFOLLOW</code> /
+          fd-based writes) risks rejecting legitimate symlinked paths inside a workspace, so it is left
+          as-is.</p>
+      </div>
+    </div>
+
+    <h2 id="not-a-boundary">What is intentionally not a security boundary</h2>
+    <p>Two things look protective but are not, and it helps to know which is which.</p>
+    <div class="cols-2">
+      <div class="card">
+        <h3><code>visible_chat_history</code></h3>
+        <p>The <code>cron_event</code> filter
+          (<code class="path">server/infrastructure/sessions.py</code>) is a token-cost and
+          prompt-cleanliness control, not a security boundary. Cron output rows persist in
+          <code>chat_history</code> so they render on session resume, but they are stripped before the
+          Bedrock prompt is built, so a job firing every ten seconds cannot grow the prompt
+          indefinitely. See <a href="arch-cron.html">Cron / scheduled tasks</a>.</p>
+      </div>
+      <div class="card">
+        <h3>The AWS read-only guard</h3>
+        <p><code>_AWS_READONLY_GUARD</code> stops accidental non-read AWS calls from user Python, but
+          because it lives in the same process the code can remove it. Treat it as a guard rail, not a
+          fence. The thing that actually contains that code is <code>sandbox-exec</code>.</p>
+      </div>
+    </div>
+
+    <h2 id="approval-path">The one path that bypasses validation</h2>
+    <p>The approval flow is the only legitimate path that skips <code>_validate_command</code>, and it
+      is safe precisely because the server holds the nonce. When a tool needs consent it issues a
+      nonce, pauses the turn, and streams an approval request over SSE. The client confirms by
+      re-posting the action, payload, and that exact nonce; the server matches it, runs the validated
+      command under the sandbox, and returns the result. A client cannot mint its own nonce, so it
+      cannot self-approve. See <a href="arch-approval.html">Approval &amp; permissions</a> for the
+      full nonce lifecycle and the per-mode behavior of the Mode dial.</p>
+
+    <h2 id="quick-reference">Quick reference</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Question</th><th>Answer</th></tr></thead>
+      <tbody>
+        <tr><td>What does the server bind by default?</td><td><code>127.0.0.1</code>. LAN needs <code>HOST=0.0.0.0</code>.</td></tr>
+        <tr><td>What sanitizes rendered Markdown?</td><td><code>marked</code> then DOMPurify 3.4.6, at every render site.</td></tr>
+        <tr><td>How is command consent enforced?</td><td>A server-held nonce via <code class="path">server/approval/router.py</code>.</td></tr>
+        <tr><td>Does <code>aws_cli</code> run through a shell?</td><td>No. <code>shlex.split</code> into argv; no shell operators.</td></tr>
+        <tr><td>What contains shell / Python execution?</td><td><code>sandbox-exec(5)</code> (macOS) or <code>bwrap</code> (Linux).</td></tr>
+        <tr><td>Are plugins loaded automatically?</td><td>No. Opt-in per plugin; a dropped file does nothing until enabled.</td></tr>
+        <tr><td>Where does the Tavily key come from?</td><td>Env first (<code>TAVILY_API_KEY</code>), then <code>config.json</code>.</td></tr>
+        <tr><td>What outbound calls does the backend make on its own?</td><td>Only Amazon Bedrock for chat. No telemetry.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-sandbox.html">Sandbox &amp; security</a>
+        (the mechanisms behind these rows), <a href="arch-approval.html">Approval &amp; permissions</a>
+        (the nonce flow and permission modes), and <a href="ref-env.html">Environment variables</a>
+        (<code>HOST</code>, <code>TAVILY_API_KEY</code>, and friends).</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Configuration - Whisper Studio Docs</title>
+  <meta name="description" content="Whisper Studio's three config layers, environment variables, the Settings-UI fields, first-run config.json, and secrets hygiene.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="configuration">
+    <h1>Configuration</h1>
+    <p class="subtitle">Whisper Studio reads settings from three layers, merged into one effective
+      config that runs your session. This page covers those layers, the environment variables, every
+      Settings-UI field, the first-run <code class="path">config.json</code>, and how to keep your
+      secrets safe.</p>
+
+    <p>Almost everything is optional. A fresh install runs out of the box with sensible defaults, and
+      you tune it either through the in-app Settings panel (the gear icon) or, for secrets and
+      deployment overrides, through shell environment variables. Nothing here needs a code change.</p>
+
+    <figure class="diagram-figure">
+      <div id="config-layers-diagram" class="diagram"></div>
+      <figcaption>The four sources on the left merge into one effective config, lowest priority
+        (<em>DEFAULTS</em>) to highest (<em>Environment</em>). <b>Click a box</b> to trace where it
+        feeds.</figcaption>
+    </figure>
+
+    <h2 id="the-three-layers">The three layers</h2>
+    <p>Config is resolved in <code class="path">server/infrastructure/config.py</code> by merging
+      layers from lowest to highest priority: built-in <code>DEFAULTS</code>, then your user
+      <code class="path">config.json</code>, then the per-project
+      <code class="path">.whisper/settings.json</code>, and finally the environment overlay. A value in
+      a higher layer wins. Nested objects (like <code>feature_flags</code> and <code>backends</code>)
+      merge key by key; lists replace wholesale.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Layer</th><th>Source</th><th>Priority</th><th>Use for</th></tr></thead>
+      <tbody>
+        <tr><td>Environment</td><td><code>TAVILY_API_KEY</code>, <code>HOST</code>, <code>PORT</code></td><td>Highest</td><td>Secrets and deployment overrides</td></tr>
+        <tr><td>Project</td><td><code class="path">&lt;workspace&gt;/.whisper/settings.json</code></td><td>Middle</td><td>Per-project model, region, permission mode</td></tr>
+        <tr><td>User</td><td><code class="path">config.json</code> (repo root, gitignored)</td><td>Low</td><td>Defaults for all your sessions</td></tr>
+        <tr><td>Code defaults</td><td><code>DEFAULTS</code> in <code class="path">server/infrastructure/config.py</code></td><td>Lowest</td><td>Built-in fallbacks you never edit</td></tr>
+      </tbody>
+    </table></div>
+    <p>Both the project and user layers are edited through the Settings UI. The environment layer is
+      shell-only: there is no UI field for it, and it exists so a machine (or a CI runner, or a
+      LAN-exposed deployment) can override without touching disk.</p>
+    <p>The project layer is deliberately narrow. Only a safe subset of keys is honored from
+      <code class="path">.whisper/settings.json</code> (model, region, effort, permission mode, cost
+      caps, auto-mode rules, and feature flags), so a checked-in project file can never smuggle in, say,
+      a global API key. See <a href="ref-settings.html">Settings &amp; config keys</a> for the exact
+      per-key breakdown.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>Latched per session.</b> A small set of fields (region, model
+        catalog, default model, effort level, brief mode, permission mode) is snapshotted at the first
+        turn of a session and frozen for its lifetime. Changing them mid-conversation in Settings takes
+        effect on your next new session, not the one already running. This keeps a live turn stable and
+        avoids invalidating prompt caches. See <a href="arch-chat-pipeline.html">Chat &amp; tool
+        orchestration</a>.</p></div>
+    </div>
+
+    <h2 id="first-run-config">First-run config.json</h2>
+    <p><code class="path">config.json</code> lives at the repo root and is gitignored, because it holds
+      your Tavily key and any other per-machine settings. It has to be created locally. On the first
+      run, <code>setup.sh</code> copies the tracked template
+      <code class="path">config.example.json</code> to <code class="path">config.json</code> for you.
+      After that, change values either through the Settings UI (gear icon) or by editing the file
+      directly.</p>
+    <p>The seeded file leaves <code>tavily_api_key</code> empty. Web search stays unavailable until you
+      add a Tavily key; everything else (chat, transcription, and the workspace tools) works with no
+      further setup.</p>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p><code class="path">config.json</code> is the single source of truth
+        for the chat-model catalog. When it defines <code>chat_models</code>, that list <em>replaces</em>
+        the built-in defaults rather than unioning onto them, so a renamed or removed model can never
+        collide with a hardcoded default. To add or change a model, edit
+        <code class="path">config.example.json</code> (the template) and copy it forward.</p></div>
+    </div>
+
+    <h3 id="map-reduce-summary">Transcript condensation (map_reduce_summary)</h3>
+    <p>An oversized transcript is condensed with a map-reduce pass before it reaches the model, so a
+      multi-hour meeting never overflows the context window or gets silently truncated. The
+      <code>map_reduce_summary</code> block tunes that pass. The defaults suit most machines, and below
+      <code>threshold_chars</code> the transcript passes through unchanged with no extra model calls, so
+      the block is a no-op for ordinary sessions. All sizes below are in characters (roughly four per
+      token). See <a href="ref-settings.html#map-reduce">Settings &amp; config keys</a> and
+      <a href="arch-summarization.html#config">Transcript summarization</a>.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Key</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>enabled</code></td><td><code>true</code></td><td>Master switch for map-reduce condensation.</td></tr>
+        <tr><td><code>threshold_chars</code></td><td><code>600000</code></td><td>Condense only above this size (about 150k tokens). Below it the transcript passes through unchanged.</td></tr>
+        <tr><td><code>chunk_chars</code></td><td><code>150000</code></td><td>Per-chunk size for the cloud window (about 37k tokens).</td></tr>
+        <tr><td><code>local_chunk_chars</code></td><td><code>40000</code></td><td>Per-chunk size in local mode (about 10k tokens; fits the 16k local window).</td></tr>
+        <tr><td><code>overlap_chars</code></td><td><code>800</code></td><td>Overlap between adjacent chunks so nothing is lost at a boundary.</td></tr>
+        <tr><td><code>map_max_tokens</code></td><td><code>1200</code></td><td>Output cap per chunk extract.</td></tr>
+        <tr><td><code>max_chunks</code></td><td><code>40</code></td><td>Cap on the number of chunks; the chunker re-splits coarser, then hard-caps.</td></tr>
+        <tr><td><code>max_output_chars</code></td><td><code>480000</code></td><td>Cap on the aggregate condensed output in cloud mode (about 120k tokens).</td></tr>
+        <tr><td><code>local_max_output_chars</code></td><td><code>24000</code></td><td>Tighter aggregate cap for the small local window.</td></tr>
+        <tr><td><code>engine</code></td><td><code>"auto"</code></td><td><code>"auto"</code> follows the model mode (cloud uses Haiku, local uses the on-device model); force <code>"haiku"</code> or <code>"local"</code> to override.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="environment-variables">Environment variables</h2>
+    <p>Environment variables are the highest-priority layer and the only place to put secrets you would
+      rather keep off disk. The <code>TAVILY_API_KEY</code> overlay is re-read on every request, so a
+      rotated key applies immediately without a server restart.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Default</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>HOST</code></td><td><code>127.0.0.1</code></td><td>Bind address. Set <code>HOST=0.0.0.0</code> to expose the app on your LAN. Localhost-only is the default for a reason (see <a href="ref-security.html">Security model</a>).</td></tr>
+        <tr><td><code>PORT</code></td><td><code>8000</code></td><td>Backend port. Auto-incremented to the next free port if 8000 is in use, so read the URL the script actually prints.</td></tr>
+        <tr><td><code>BACKEND_PORT</code></td><td><code>8000</code></td><td>Read by <code class="path">vite.config.ts</code> so the dev proxy targets the real backend port. <code>setup.sh</code> sets it from <code>$PORT</code> automatically, so the dev server and backend stay in sync even when the port shifted.</td></tr>
+        <tr><td><code>TAVILY_API_KEY</code></td><td><em>(unset)</em></td><td>Overrides <code>config.json:tavily_api_key</code>. An empty value is ignored, so the config falls back to whatever is stored. If both are set, the env var wins.</td></tr>
+      </tbody>
+    </table></div>
+    <p>To set the Tavily key the recommended way, export it in your shell profile so rotation is a
+      one-line change:</p>
+    <div class="code-block"><pre><code>echo 'export TAVILY_API_KEY=tvly-...' &gt;&gt; ~/.zshrc
+source ~/.zshrc</code></pre></div>
+    <p>The full lookup table lives in <a href="ref-env.html">Environment variables</a>.</p>
+
+    <h2 id="settings-ui-fields">Settings-UI fields</h2>
+    <p>Click the gear icon to open Settings. These fields write to the user layer (or, when a workspace
+      is connected and you save project-scoped, the project layer). You do not need to touch
+      <code class="path">config.json</code> by hand for any of them.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Field</th><th>Values</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>Bedrock Region</td><td>e.g. <code>us-east-1</code></td><td>The AWS region for Claude. Must match a region where the model is enabled, or chat returns an access error. Never stored blank.</td></tr>
+        <tr><td>Default Model</td><td>Haiku 4.5 · Sonnet 4.6 · Sonnet 5 · Opus 4.6/4.7/4.8 · Fable 5.0 · GPT-5.4/5.5 · on-device Gemma</td><td>The model a new session starts with. GPT-5.x runs through the OpenAI-on-Bedrock path; Fable 5.0 needs the data-retention consent flow first; Gemma appears only in local mode. See <a href="arch-backends.html">Model backends &amp; modes</a>.</td></tr>
+        <tr><td>Model Mode</td><td><code>cloud</code> / <code>hybrid</code> / <code>local</code></td><td>Where indexing and retrieval run (<code>config.json:model_mode</code>, plus <code>backends</code> in hybrid). Distinct from the chat-model choice in the toolbar.</td></tr>
+        <tr><td>Feature Flags</td><td>toggles</td><td>Turn gated features on or off (<code>config.json:feature_flags</code>) from the UI without editing the file.</td></tr>
+        <tr><td>Effort Level</td><td><code>low</code> / <code>medium</code> / <code>high</code> / <code>extra</code> (alias <code>xhigh</code>) / <code>max</code> / <code>ultracode</code></td><td>The reasoning budget for a turn. Higher means deeper thinking and more tokens. Which levels are offered depends on the model (Opus 4.8 and Fable reach <code>ultracode</code>; Sonnet and older Opus cap at <code>max</code>; GPT-5.x runs <code>none</code>-<code>max</code>; Haiku and local models have none), and the value is clamped to the nearest supported level when you switch models. <code>ultracode</code> is a session mode that adds workflow orchestration; the old <code>auto</code> value is retired.</td></tr>
+        <tr><td>Permission Mode</td><td><code>default</code> / <code>auto</code> / <code>plan</code> / <code>acceptEdits</code> / <code>bypassPermissions</code> / <code>dontAsk</code></td><td>How risky tool calls are gated. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
+        <tr><td>Tavily API Key</td><td>a key, or blank</td><td>Enables the web-search skill. Only needed if you did not set the <code>TAVILY_API_KEY</code> env var; the env var wins if both are present.</td></tr>
+        <tr><td>Cost Limits</td><td>USD caps</td><td>Per-session (<code>max_session_cost_usd</code>) and per-day (<code>max_daily_cost_usd</code>) Bedrock spend caps. <code>0</code> means unlimited. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 id="model-mode-and-flags">Model Mode and Feature Flags</h3>
+    <p>These two deserve a note because they behave a little differently from the rest.</p>
+    <ul>
+      <li><b>Model Mode</b> changes which stack runs embeddings, reranking, and entity extraction.
+        Switching it prompts a reload so the app re-initializes cleanly in the new mode. In
+        <code>hybrid</code>, you then pick a backend per capability (embed, rerank, NER, index LLM);
+        anything you leave unset falls back to the cloud backend. Each embedder keeps its own index, so
+        switching mode never rebuilds the other one. See <a href="tut-model-modes.html">Model modes</a>.</li>
+      <li><b>Feature Flags</b> toggle features such as hybrid search, the reranker, query rewrite, and
+        prompt caching without editing <code class="path">config.json</code>. A toggle is written
+        surgically (only that one boolean changes) and persists immediately, so aligned formatting and
+        the rich <code>chat_models</code> shape in your config file are preserved.</li>
+    </ul>
+
+    <h2 id="secrets-hygiene">Secrets hygiene</h2>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+      <div class="callout__body"><p><b>Treat <code class="path">config.json</code> like a credential
+        store.</b> It is gitignored, but it still sits on disk in plain JSON with your Tavily key inside.
+        Do not sync it to untrusted backups, and prefer the env-var path for the Tavily key so the
+        secret lives in your shell profile rather than in a project file. Rotate keys after sharing your
+        screen. The <code>/api/config</code> endpoint never returns the raw key (only a masked hint), so
+        the secret does not leave over the API, only off disk.</p></div>
+    </div>
+    <p>Because the environment overlay is re-read on every request, rotation is genuinely painless:
+      change the <code>export</code> line, run <code>source ~/.zshrc</code> in the shell that started
+      the server, and the new key is live on the next request. No restart, no config edit.</p>
+
+    <h2 id="editing-safely">Editing config.json by hand</h2>
+    <p>You can edit <code class="path">config.json</code> directly, but a few habits keep it healthy:</p>
+    <ol class="steps">
+      <li><h4>Keep it valid JSON</h4><p>If the file fails to parse, the loader falls back to
+        <code>DEFAULTS</code> rather than crashing, so a stray comma silently reverts your settings.
+        Validate before you save.</p></li>
+      <li><h4>Never blank a required key</h4><p><code>bedrock_region</code> and
+        <code>default_chat_model</code> must not be empty strings. A blank value is dropped on save and
+        coerced back to a working default on load, so a partial edit will not brick chat.</p></li>
+      <li><h4>Model catalog lives in the template</h4><p>To add or rename a model, edit
+        <code class="path">config.example.json</code> and copy it to <code class="path">config.json</code>.
+        The catalog in <code class="path">config.json</code> replaces the defaults wholesale, so keep it
+        complete.</p></li>
+    </ol>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="ref-env.html">Environment variables</a>,
+        <a href="ref-settings.html">Settings &amp; config keys</a>,
+        <a href="tut-model-modes.html">Model modes</a>, and
+        <a href="installation.html">Installation</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/config-layers.js"></script>
+</body>
+</html>

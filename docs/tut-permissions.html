@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Permissions &amp; approvals - Whisper Studio Docs</title>
+  <meta name="description" content="Control how much Claude can do with the Mode dial: read-only plan mode through bypassPermissions, approval cards, per-tool rules, and the sandbox guards that never turn off.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-permissions">
+    <h1>Permissions &amp; approvals</h1>
+    <p class="subtitle">One dial decides how much Claude can do on its own: from a read-only planner
+      that never touches your disk, to a hands-off mode that runs everything. Under it sit approval
+      cards you click, per-tool rules you write, and a small set of guards that never turn off.</p>
+
+    <p>When the model asks to use a tool, that call does not just run. It is resolved to one of three
+      outcomes first: <b>allow</b> (run now), <b>ask</b> (pause and show you a card), or <b>deny</b>
+      (refuse). What decides the outcome is your <b>permission mode</b> plus any per-tool rules you
+      have set. <b>Click a box</b> below to trace where a call goes.</p>
+
+    <figure class="diagram-figure">
+      <div id="perm-flow-diagram" class="diagram"></div>
+      <figcaption>A tool call fans out from the mode into allow, ask, or deny. Allow and an approved
+        ask both reach the same sandboxed executor. Reads never prompt; that is why the top row is the
+        common case.</figcaption>
+    </figure>
+
+    <h2 id="the-mode-dial">The one control: the Mode dial</h2>
+    <p>The single dial for all of this is the <b>Mode dropdown</b> in the chat input, right where you
+      type. There is no separate permissions screen to open before you can start; you change how much
+      latitude Claude has mid-conversation, per keystroke if you like. The setting is stored server
+      side in <code class="path">data/permissions.json</code> and applies to the tool loop on the very
+      next turn.</p>
+    <p>Two shortcuts do the same thing without leaving the keyboard: the <code>/plan</code> slash
+      command toggles read-only plan mode, and per-project overrides live in
+      <code class="path">&lt;workspace&gt;/.whisper/settings.json</code>. Everything on this page also
+      applies to sub-agents and scheduled jobs, since they run through the same gate.</p>
+
+    <h2 id="modes">The six modes</h2>
+    <p>Pick the row that matches how much you trust the current task. The default is a good starting
+      point: you can read anything, but any change to your files or system waits for a click.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
+      <tbody>
+        <tr><td><code>default</code></td><td>Reads run freely; writes ask for approval. The everyday setting.</td></tr>
+        <tr><td><code>auto</code></td><td>Reads run freely; a classifier decides per-tool, per-call whether a write is safe enough to run or should ask. Tune it under the Auto Mode tab in Settings.</td></tr>
+        <tr><td><code>plan</code></td><td>Read-only. Claude investigates and proposes a plan but never executes. File writes, deletes, commands, and merges are hard-blocked before they can dispatch.</td></tr>
+        <tr><td><code>acceptEdits</code></td><td>File edits and new files auto-approve; deletes and commands still ask. Good for a focused editing session.</td></tr>
+        <tr><td><code>bypassPermissions</code></td><td>Everything runs without prompts. Fastest, least guarded. Use only in a throwaway or fully trusted workspace.</td></tr>
+        <tr><td><code>dontAsk</code></td><td>Reads auto-allow; writes are silently denied. Claude keeps working on read-only tasks and simply cannot change anything, without stopping to ask.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>Reads never prompt, in any mode.</b> Listing files, reading a
+        file, grep, and glob are treated as read-safe and always run (even under <code>dontAsk</code>).
+        The distinction that actually matters is <em>read vs write</em>: a "write" is anything that
+        changes files, runs a command, or alters Git or config state. That category is what each mode
+        loosens or tightens.</p></div>
+    </div>
+
+    <h3 id="plan-mode">A note on plan mode</h3>
+    <p>Plan mode is the strictest and the one people reach for most before a risky change. The core
+      write tools (<code>ws_write_file</code>, <code>ws_create_file</code>, <code>ws_edit_file</code>,
+      <code>ws_delete_file</code>, <code>ws_run_command</code>, and worktree merges) are blocked
+      <em>before dispatch</em>, so there is no card to approve and nothing can slip through. Claude can
+      still read your whole project and hand you a plan; you switch to <code>default</code> or
+      <code>acceptEdits</code> when you are ready to let it act. Toggle it fast with the
+      <code>/plan</code> command.</p>
+
+    <h2 id="approval-cards">Approval cards: what "ask" looks like</h2>
+    <p>When a call resolves to <b>ask</b>, the turn pauses and an approval card appears inline in the
+      chat, right where the tool would have run. The card shows the exact thing about to happen, not a
+      vague label, so you are approving a concrete action:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Card kind</th><th>Shows</th></tr></thead>
+      <tbody>
+        <tr><td>Diff</td><td>A line-by-line diff of the file edit, before and after. File-write cards also offer an <b>Undo</b> that restores the pre-write contents.</td></tr>
+        <tr><td>Command</td><td>The exact shell command and the directory it will run in.</td></tr>
+        <tr><td>List</td><td>The set of paths a bulk action would touch (for example a delete).</td></tr>
+        <tr><td>Text</td><td>A plain summary for anything that does not fit the above.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Each card carries a short <span class="badge badge--muted">risk</span> hint and, when several
+      actions are queued, a "N more pending" counter. You have four buttons:</p>
+    <ol class="steps">
+      <li><h4>Yes</h4><p>Approve just this one call. The turn continues from exactly where it paused.</p></li>
+      <li><h4>Yes, all &lt;category&gt;</h4><p>Approve this and every later call in the same category
+        (for example, all writes) for the rest of the session. Handy once you have seen a few and
+        trust the direction.</p></li>
+      <li><h4>No</h4><p>Deny this one call. Claude sees the denial and can adjust or ask something else.</p></li>
+      <li><h4>Block &lt;category&gt;</h4><p>Deny this and every later call in that category for the
+        session, without asking again.</p></li>
+    </ol>
+    <p>These session-wide "allow all" and "block all" choices sit above the mode: they are the first
+      thing the resolver checks after <code>bypassPermissions</code>, so once you have said "yes to all
+      writes" you will not be re-prompted even in <code>default</code>.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>The approval is enforced server side, not in the browser. A
+        risky action carries a one-time nonce and the turn stays paused until the client confirms it;
+        the old client-asserted "user_approved" flag was removed. You cannot approve something the
+        server did not gate, and a page cannot fake an approval. See
+        <a href="arch-approval.html">Approval &amp; permissions</a> for the nonce mechanics.</p></div>
+    </div>
+
+    <h2 id="per-tool-rules">Per-tool rules: override any mode</h2>
+    <p>Modes are broad. When you want a specific, always-on decision for a specific tool or command,
+      write a <b>per-tool rule</b> under <b>Settings &rsaquo; Permissions</b>. Rules are checked before
+      the mode falls through to its default, so they win over whatever the dial says (with one
+      exception, below). Each rule targets a tool by name, matches its input, and pins an action:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>tool</code></td><td>The tool name to match, or <code>*</code> for any tool.</td></tr>
+        <tr><td><code>pattern</code> / <code>prefix</code></td><td>A glob (<code>pattern</code>) or a literal starts-with (<code>prefix</code>) matched against the tool's key field: the path for file tools, the command for shell, the branch for git, and so on.</td></tr>
+        <tr><td><code>action</code></td><td>One of <code>allow</code>, <code>ask</code>, or <code>deny</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>For example, to let Claude run any <code>git</code> command without prompting but always confirm
+      deletes:</p>
+    <div class="code-block"><pre><code>{ "tool": "ws_run_command", "prefix": "git ", "action": "allow" }
+{ "tool": "ws_delete_file", "pattern": "*",     "action": "ask"   }
+{ "tool": "ws_delete_file", "pattern": "*.log", "action": "deny"  }</code></pre></div>
+    <p>Rules are evaluated top to bottom and the first match wins, so order matters. The Settings panel
+      warns you when a broad earlier rule shadows a narrower later one so you can reorder before it
+      surprises you.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Resolution order, top to bottom:
+        <code>bypassPermissions</code> (absolute) &rarr; a trusted skill script &rarr; your
+        session-wide "all this session" choice &rarr; your custom rules &rarr; the mode's own default.
+        So <code>bypassPermissions</code> overrides even a <code>deny</code> rule, but every other mode
+        respects your rules first.</p></div>
+    </div>
+
+    <h2 id="hard-guards">The guards that never turn off</h2>
+    <p>Modes and rules control the <em>consent</em> layer: whether you are asked. Underneath them sit
+      two guards that apply no matter which mode you pick, including <code>bypassPermissions</code>.
+      They are the real security boundary; the layers above are convenience.</p>
+    <div class="cols-2">
+      <div class="card">
+        <h3>Everything runs sandboxed</h3>
+        <p>Every shell command and every Python run is wrapped in the macOS kernel sandbox
+          (<code>sandbox-exec</code>), which enforces filesystem and network policy at the OS level.
+          Approving a command chooses to <em>run</em> it; it does not unwrap the sandbox around it.</p>
+      </div>
+      <div class="card">
+        <h3>Destructive patterns are blocked</h3>
+        <p>A command validator refuses a small set of clearly destructive shapes before they can run
+          at all: <code>rm -rf /</code> at an absolute path, <code>mkfs</code>, <code>dd</code> to a
+          device, redirects into <code>/etc/</code>, and hidden command substitution like
+          <code>$(...)</code> or backticks. These are denied regardless of mode.</p>
+      </div>
+    </div>
+    <p>The validator also refuses access to sensitive paths and files, strips control characters and
+      deceptive Unicode whitespace, and caps how many commands you can chain in one call. It is
+      defence-in-depth: it catches the easy cases without being what stops a determined attacker. That
+      job belongs to <code>sandbox-exec</code>. And of course, reads never prompt because they cannot
+      change anything.</p>
+
+    <h2 id="which-mode">Which mode should you use?</h2>
+    <dl class="spec">
+      <dt><code class="path">default</code></dt><dd>Most of the time. You watch each change land.</dd>
+      <dt><code class="path">plan</code></dt><dd>Before a big or unfamiliar change: get the plan first, then switch and let it act.</dd>
+      <dt><code class="path">acceptEdits</code></dt><dd>A long editing pass where you trust the edits but still want a beat before deletes and commands.</dd>
+      <dt><code class="path">auto</code></dt><dd>You want fewer prompts but not zero; let the classifier wave through the obviously safe writes.</dd>
+      <dt><code class="path">dontAsk</code></dt><dd>A read-only exploration where you never want Claude to write, and never want to be interrupted saying so.</dd>
+      <dt><code class="path">bypassPermissions</code></dt><dd>A scratch workspace you do not mind. Never on anything you care about.</dd>
+    </dl>
+
+    <h2 id="how-it-fits">How this fits the pipeline</h2>
+    <p>Permission checks happen inside the tool loop, not before the turn. Each round the model may ask
+      for tools; the executor partitions them, evaluates each against your mode and rules, and for
+      anything that resolves to <b>ask</b> it issues a nonce, pauses, and waits. This is why an
+      approval can appear mid-answer and why continuing after one picks up exactly where it left off.
+      See <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for the surrounding
+      state machine.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-workspace.html">The workspace IDE</a>
+        (where writes and commands come from), and the architecture behind the gate:
+        <a href="arch-approval.html">Approval &amp; permissions</a> (nonce flow, the auto-mode
+        classifier) and <a href="arch-sandbox.html">Sandbox &amp; security</a>
+        (sandbox-exec, the validator, deny lists).</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/perm-flow.js"></script>
+</body>
+</html>

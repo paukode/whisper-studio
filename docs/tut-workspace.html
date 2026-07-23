@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The workspace IDE - Whisper Studio Docs</title>
+  <meta name="description" content="Connect a repo and let Claude read, edit, run, and commit. A file tree, Monaco editor, xterm terminal, Git Changes panel, and LSP, with approvals gating every write.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-workspace">
+    <h1>The workspace IDE</h1>
+    <p class="subtitle">Connect a project folder and Whisper Studio becomes a coding assistant with a
+      body. Claude can read, edit, run, and commit in your repo, while a file tree, Monaco editor,
+      terminal, Git panel, and LSP let you work right alongside it in the same tab.</p>
+
+    <p>Everything here is the same one local process you already run. Chat lives on the right; the
+      workspace panel is the IDE on the left. The moment you connect a folder, a set of workspace
+      tools switch on and Claude gains the ability to act on real files, gated by the
+      <a href="tut-permissions.html">Mode you choose</a>.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="workspace-flow-diagram" class="diagram"></div>
+      <figcaption>The loop: connect a folder, describe a task, Claude uses the <code>ws_*</code> tools,
+        writes pause for an approval card, and you review the diff. Click a box to trace the flow.</figcaption>
+    </figure>
+
+    <h2 id="what-you-get">What you get</h2>
+    <p>Connecting a workspace turns the left-hand panel into a full IDE. None of it needs a build step
+      or a separate editor window.</p>
+    <div class="card-grid">
+      <div class="card">
+        <h3>File tree + search</h3>
+        <p>A sorted tree (directories first) with a "Search files..." box that queries the backend and
+          jumps you straight to a match.</p>
+      </div>
+      <div class="card">
+        <h3>Monaco editor</h3>
+        <p>The same editor core as VS Code, with tabs, syntax highlighting, a breadcrumb, and a status
+          bar showing your cursor line and column. Save with the usual shortcut.</p>
+      </div>
+      <div class="card">
+        <h3>Integrated terminal</h3>
+        <p>An xterm.js pane wired to a real PTY over WebSocket. Type commands yourself; output streams
+          back live and follows the app theme.</p>
+      </div>
+      <div class="card">
+        <h3>Git Changes panel</h3>
+        <p>Sits under the file tree. Shows the working-tree status and lets you open any changed file
+          to view its diff without leaving the panel.</p>
+      </div>
+      <div class="card">
+        <h3>Rich file viewers</h3>
+        <p>Beyond code, tabs render images, PDFs, spreadsheets, Word docs, CSV/TSV tables, Markdown
+          previews, and Jupyter notebooks by file type.</p>
+      </div>
+      <div class="card">
+        <h3>LSP: Python + TypeScript</h3>
+        <p>Language servers back the <code>lsp_diagnostics</code>, <code>lsp_hover</code>, and
+          <code>lsp_references</code> tools, so Claude can read real type errors and symbol usages.</p>
+      </div>
+    </div>
+
+    <h2 id="connect">Connect a folder</h2>
+    <p>Use the Workspace control to point Whisper Studio at a project directory. Once a folder is
+      connected, the workspace tools become available to Claude and the panel fills in with the tree
+      and (as you open files) the editor.</p>
+    <ol class="steps">
+      <li>
+        <h4>Open the Workspace panel</h4>
+        <p>The panel header reads <b>Workspace</b> and carries three buttons: refresh the file tree,
+          disconnect, and collapse. Connect the folder you want to work in.</p>
+      </li>
+      <li>
+        <h4>Browse or search for a file</h4>
+        <p>Click through the tree, or type in the search box to filter across the whole project. Open a
+          file and it lands in a Monaco tab (or the right viewer for images, PDFs, notebooks, and the
+          like).</p>
+      </li>
+      <li>
+        <h4>Describe what you want</h4>
+        <p>Switch to the chat and ask in plain English: "add a retry to the fetch helper", "why does
+          this test fail", "rename this component everywhere". Claude does the file work with tools.</p>
+      </li>
+    </ol>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Refreshing is automatic. When a tool writes a file (or you approve
+        a change), the panel fires a workspace-refresh so the tree and open tabs pick up the new
+        content. Non-dirty tabs reload in place; tabs with unsaved edits are left alone. The
+        <b>refresh</b> button in the header is a manual override for changes made outside the app.</p></div>
+    </div>
+
+    <h2 id="reference-files">Point Claude at exact files</h2>
+    <p>You do not have to describe where things live. Reference a file inline with
+      <code>@file:path/to/file</code> and its contents are pulled into the prompt, so Claude reads the
+      real code instead of guessing.</p>
+    <div class="code-block"><pre><code>Refactor the resize logic in @file:src/hooks/useTerminal.ts to
+share a helper with @file:src/components/workspace/WorkspacePanel.tsx</code></pre></div>
+    <p>This is the fastest way to keep an answer grounded in the current file rather than a stale
+      memory of it. For searching across the project when you do not know the path yet, just ask, and
+      Claude reaches for <code>ws_grep</code> (ripgrep) and <code>ws_glob</code>.</p>
+
+    <h2 id="workspace-tools">The tools Claude uses</h2>
+    <p>With a workspace connected, Claude works through a dedicated set of tools. Reads run freely;
+      anything that changes state routes through the approval gate described below.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Kind</th></tr></thead>
+      <tbody>
+        <tr><td><code>ws_read_file</code></td><td>Read a file from the connected codebase.</td><td>read</td></tr>
+        <tr><td><code>ws_grep</code></td><td>Search file contents with regex (ripgrep), globs, context lines.</td><td>read</td></tr>
+        <tr><td><code>ws_glob</code></td><td>Find files by glob pattern.</td><td>read</td></tr>
+        <tr><td><code>ws_list_directory</code></td><td>List files and directories.</td><td>read</td></tr>
+        <tr><td><code>ws_edit_file</code></td><td>Edit a file by replacing a specific string.</td><td>write</td></tr>
+        <tr><td><code>ws_write_file</code></td><td>Overwrite or modify an existing file (atomic write).</td><td>write</td></tr>
+        <tr><td><code>ws_create_file</code></td><td>Create a new file.</td><td>write</td></tr>
+        <tr><td><code>ws_delete_file</code></td><td>Delete a file.</td><td>write</td></tr>
+        <tr><td><code>ws_run_command</code></td><td>Run a shell command in the workspace. Long tasks auto-background.</td><td>command</td></tr>
+        <tr><td><code>git_*</code></td><td>Full Git: status, diff, log, blame, commit, branch, merge, push, PR.</td><td>read / write</td></tr>
+        <tr><td><code>lsp_*</code></td><td>Diagnostics, hover, and references from the language servers.</td><td>read</td></tr>
+      </tbody>
+    </table></div>
+    <p>There are also worktree tools (<code>ws_create_worktree</code>, <code>ws_diff_worktree</code>,
+      <code>ws_merge_worktree</code>) for keeping a change isolated on its own branch before you merge
+      it back. For the complete catalogue, see <a href="ref-tools.html">Agent tools</a> and the deeper
+      <a href="arch-tools.html">tool dispatch</a> writeup.</p>
+
+    <h2 id="running-commands">Running commands</h2>
+    <p><code>ws_run_command</code> is how Claude runs your tests, a linter, a build, or a quick script.
+      Two behaviors matter here:</p>
+    <ul>
+      <li><b>Long tasks auto-background.</b> A command that does not finish quickly is moved to the
+        background so the turn is not blocked waiting on it. Claude checks back on the output rather
+        than hanging.</li>
+      <li><b>It is sandboxed.</b> Every shell command wraps in <code>sandbox-exec</code>, the macOS
+        kernel-level filesystem and network policy. This is not a courtesy check; it is the real
+        boundary (see <a href="arch-sandbox.html">Sandbox &amp; security</a>).</li>
+    </ul>
+    <p>You can also just use the terminal pane yourself. It is a genuine PTY, so an interactive REPL,
+      a watch process, or a one-off command all behave the way they would in Terminal.app.</p>
+
+    <h2 id="autonomy">How much Claude does on its own</h2>
+    <p>The <b>Mode</b> dropdown in the chat input sets how much autonomy Claude has over your files.
+      The same modes that govern chat govern the workspace.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Mode</th><th>Behavior in the workspace</th></tr></thead>
+      <tbody>
+        <tr><td><code>default</code></td><td>Reads run freely; writes ask for approval.</td></tr>
+        <tr><td><code>acceptEdits</code></td><td>File edits auto-approve; deletes and commands still ask.</td></tr>
+        <tr><td><code>auto</code></td><td>A classifier decides per-tool, per-call whether to allow, ask, or deny.</td></tr>
+        <tr><td><code>plan</code></td><td>Read-only. Claude plans and reads but never writes or runs anything.</td></tr>
+        <tr><td><code>bypassPermissions</code></td><td>Everything runs without prompts.</td></tr>
+      </tbody>
+    </table></div>
+    <p>A sensible progression is to start in <code>plan</code> to see the intended change, switch to
+      <code>default</code> to approve edits one by one, and only reach for <code>acceptEdits</code>
+      once you trust the task. Per-tool rules in Settings can override the mode for specific commands.
+      The full model is in <a href="tut-permissions.html">Permissions &amp; approvals</a>.</p>
+
+    <h2 id="approvals">The approval card</h2>
+    <p>When a mode calls for consent, the guarded action pauses and an <b>approval card</b> appears with
+      the concrete detail: for an edit, the exact diff; for a command, the exact command line. Nothing
+      touches disk until you approve. Behind the card is a nonce-based flow, so a write cannot be
+      slipped through by the client asserting it was already approved.</p>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Hard guards stay on even at the most permissive mode.</b> Shell
+        commands always run inside the macOS sandbox, and a small set of destructive patterns are
+        always blocked regardless of mode. <code>bypassPermissions</code> removes the prompts, not the
+        sandbox. See <a href="tut-permissions.html">Permissions &amp; approvals</a> and
+        <a href="arch-sandbox.html">Sandbox &amp; security</a> for exactly where the line is.</p></div>
+    </div>
+
+    <h2 id="review">Review the result</h2>
+    <p>After a change lands, you have two ways to see it. The edited file updates in its Monaco tab (or
+      opens as a diff), and the change shows up in the <b>Git Changes panel</b> under the tree. From
+      there you can open a diff, keep editing, and, when you are ready, ask Claude to commit and push,
+      or open a pull request, through the <code>git_*</code> tools.</p>
+    <ol class="steps">
+      <li><h4>Inspect the diff</h4><p>Open the changed file from the Git Changes panel to review exactly
+        what moved. Nothing here is committed yet.</p></li>
+      <li><h4>Adjust if needed</h4><p>Edit directly in Monaco, or ask Claude for a follow-up. Your
+        unsaved edits are never clobbered by an auto-refresh.</p></li>
+      <li><h4>Commit and push</h4><p>Ask Claude to stage and commit (with <code>git_add_commit</code>),
+        then push or open a PR. Each of these is a guarded action, so you approve the commit message
+        and the push.</p></li>
+    </ol>
+
+    <h2 id="disconnect">Disconnecting</h2>
+    <p>The <b>disconnect</b> button in the panel header drops the workspace connection. The workspace
+      tools go away with it, so Claude can no longer read or write files until you connect a folder
+      again. Your session history and transcript are untouched.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-permissions.html">Permissions &amp; approvals</a>,
+        <a href="tut-index-search.html">Index &amp; semantic search</a>,
+        <a href="arch-git-lsp.html">Git integration &amp; LSP</a>, and
+        <a href="arch-tools.html">Tool dispatch &amp; executors</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/workspace-flow.js"></script>
+</body>
+</html>

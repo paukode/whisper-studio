@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Web research - Whisper Studio Docs</title>
+  <meta name="description" content="Ask Whisper Studio for current information and get cited answers. How web_search (Tavily) and web_fetch work, when Claude decides to search, and how to read the trace.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-research">
+    <h1>Web research</h1>
+    <p class="subtitle">Ask for current information and get an answer with sources. Claude decides when
+      to reach for the web, runs a search, reads the best pages, and streams back a normal answer with
+      footnoted links. You do not call a tool by hand.</p>
+
+    <p>Claude's own knowledge stops at its training cutoff, so anything that happened recently (a launch,
+      a price, a score, a policy change) is a job for the web. When you ask a question like that, Claude
+      can call two tools: <code>web_search</code> to find current results and <code>web_fetch</code> to
+      read the readable text of specific pages. This tutorial shows how to trigger that, what you see
+      while it runs, and how to check the sources.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="research-flow-diagram" class="diagram"></div>
+      <figcaption>One research turn. Claude decides whether to search: if yes it goes through
+        <em>web_search</em> then <em>web_fetch</em>; if it already knows, it answers directly. Click a
+        box to trace the path.</figcaption>
+    </figure>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>You need a Tavily API key for web search.</b> Without one,
+        <code>web_search</code> is unavailable and everything else in the app still works. Setting the
+        key takes two minutes. See <a href="installation.html">Installation</a> (step 3) and
+        <a href="configuration.html">Configuration</a>.</p></div>
+    </div>
+
+    <h2 id="before-you-start">Before you start</h2>
+    <p>Web search runs through <a href="https://app.tavily.com" rel="noopener">Tavily</a>, a search API
+      whose free tier covers personal use. You supply the key one of two ways:</p>
+    <ul>
+      <li><b>Environment variable (recommended).</b> Export <code>TAVILY_API_KEY</code> in your shell.
+        The env var overrides any stored value, so rotation is one <code>export</code> away.
+        <div class="code-block"><pre><code>echo 'export TAVILY_API_KEY=tvly-...' &gt;&gt; ~/.zshrc
+source ~/.zshrc</code></pre></div>
+      </li>
+      <li><b>Settings UI.</b> Click the gear icon and paste the key into the <b>Tavily API Key</b> field.
+        If both the env var and the Settings value are set, the env var wins.</li>
+    </ul>
+    <p>The seeded <code class="path">config.json</code> leaves <code>tavily_api_key</code> empty, so web
+      search is off until you add a key. <code>web_fetch</code> (reading a specific URL) does not need
+      Tavily, so pasting a link and asking about it works even before you configure a key.</p>
+
+    <h2 id="ask-a-question">Ask a question that needs the web</h2>
+    <p>There is nothing to enable in chat. Just ask, and phrase it so it is clear you want current facts
+      (and, if you care, ask for sources).</p>
+    <ol class="steps">
+      <li>
+        <h4>Open a chat and type your question</h4>
+        <p>Anything time-sensitive works. For example:</p>
+        <div class="code-block"><pre><code>What did Anthropic announce at their last developer
+conference? Cite sources.</code></pre></div>
+      </li>
+      <li>
+        <h4>Claude decides whether to search</h4>
+        <p>If the answer is stable and well within its knowledge, Claude answers directly. If it needs
+          fresh facts, it calls <code>web_search</code> on its own. You do not pick the tool.</p>
+      </li>
+      <li>
+        <h4>Watch the searching badge</h4>
+        <p>A small inline indicator appears (a short <em>searching the web...</em> chip) while the tool
+          runs, then disappears. Web search and web fetch are read-only tools, so no approval card
+          interrupts you.</p>
+      </li>
+      <li>
+        <h4>Read the cited answer</h4>
+        <p>The answer streams in like any other, but with footnoted links to the pages Claude relied on.
+          Follow a link to check the source yourself.</p>
+      </li>
+    </ol>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Nudge Claude toward the web when it matters: phrases like
+        "as of today", "the latest", or "cite sources" make the current-info intent explicit. If you
+        want a specific page read, paste the URL and say "summarize this".</p></div>
+    </div>
+
+    <h2 id="the-two-tools">The two web tools</h2>
+    <p>Research uses two distinct tools with different jobs. Both are read-only.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Needs Tavily?</th></tr></thead>
+      <tbody>
+        <tr><td><code>web_search</code></td><td>Searches the web for current, up-to-date information and returns the top results.</td><td>Yes</td></tr>
+        <tr><td><code>web_fetch</code></td><td>Fetches and reads the readable text of a specific web page, including any URL you paste.</td><td>No</td></tr>
+      </tbody>
+    </table></div>
+    <p>A typical research turn chains them: <code>web_search</code> finds candidate pages, then Claude
+      calls <code>web_fetch</code> on the most promising ones to read them in full before it answers.
+      When you paste a URL directly, Claude usually skips straight to <code>web_fetch</code>. For the
+      full tool catalogue, see <a href="ref-tools.html">Agent tools</a>.</p>
+
+    <h2 id="fetching-a-url">Reading a page you paste</h2>
+    <p>You do not have to ask an open-ended question. Paste a link and ask about it directly, and Claude
+      reads that exact page with <code>web_fetch</code>:</p>
+    <div class="code-block"><pre><code>Summarize https://example.com/some-long-article and pull
+out the three main claims.</code></pre></div>
+    <p>Because <code>web_fetch</code> does not touch Tavily, this path works even if you have not set a
+      Tavily key yet. Fetched pages are also sanitized before rendering: a prompt-injected page cannot
+      run scripts in the app. See the <a href="ref-security.html">security model</a> for how
+      <code>web_fetch</code> output is treated as untrusted.</p>
+
+    <h2 id="related-skills">Skills that may trigger alongside</h2>
+    <p>Research often pulls in related skills without you asking for them by name. Each shows up as a
+      small inline indicator when it fires:</p>
+    <div class="card-grid">
+      <div class="card">
+        <h3>Analyze Document</h3>
+        <p>When you upload a paper or report instead of (or alongside) searching, Claude parses it
+          locally and reasons over the text. See <a href="tut-documents.html">Working with documents</a>.</p>
+      </div>
+      <div class="card">
+        <h3>Translate</h3>
+        <p>When a relevant source is not in English, Claude can translate the passage it cites so the
+          answer stays readable.</p>
+      </div>
+      <div class="card">
+        <h3>Web Search / Web Fetch</h3>
+        <p>The two tools above, surfaced as skills. Web Search needs the Tavily key; Web Fetch reads
+          URLs you paste.</p>
+      </div>
+    </div>
+    <p>For the wider set of built-in skills and how to add your own as Markdown files, see
+      <a href="tut-skills.html">Skills</a>.</p>
+
+    <h2 id="reading-the-trace">Check what was searched</h2>
+    <p>You are never asked to trust a citation blindly. The inline search and fetch indicators are
+      clickable: open one to see the trace, meaning the query that was run and the results (or page
+      text) that came back. That is your audit trail for a claim.</p>
+    <ul>
+      <li>Click the <em>searching the web...</em> chip to see the exact <code>web_search</code> query
+        and the results Claude got.</li>
+      <li>Open a <code>web_fetch</code> step to see which page was read.</li>
+      <li>Follow the footnoted links in the answer to read each source directly.</li>
+    </ul>
+    <p>Under the hood, these are ordinary tool calls in the streaming chat loop. The
+      <a href="arch-chat-pipeline.html">chat pipeline</a> streams a tool event as each search or fetch
+      starts, which is exactly what the inline indicator renders.</p>
+
+    <h2 id="no-approvals">Why research never asks for approval</h2>
+    <p>Web search, web fetch, and document parsing are all read-only. They cannot change your files, run
+      commands, or alter git state, so no <a href="tut-permissions.html">approval card</a> appears no
+      matter which permission mode you are in. The worst case for a research turn is a wrong answer, not
+      a harmful action, which is why this journey stays friction-free. Approvals only enter the picture
+      once Claude can write, run, or commit, as in the <a href="tut-workspace.html">workspace</a>.</p>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Symptom</th><th>Likely cause and fix</th></tr></thead>
+      <tbody>
+        <tr><td>Claude answers from memory when you wanted fresh facts</td><td>Ask more explicitly ("as of today", "cite sources"), or paste a specific URL so it uses <code>web_fetch</code>.</td></tr>
+        <tr><td>No search happens at all, ever</td><td>Tavily key is missing. Set <code>TAVILY_API_KEY</code> or fill the Settings field, then reload. See <a href="configuration.html">Configuration</a>.</td></tr>
+        <tr><td>Search worked yesterday, fails now</td><td>Rotated or expired key. The env var overrides <code>config.json</code>, so re-export it and restart your shell.</td></tr>
+        <tr><td>A pasted URL will not load</td><td>The page may block automated fetches or be behind a login. Try a public mirror or paste the relevant text directly.</td></tr>
+      </tbody>
+    </table></div>
+    <p>For a broad health check of dependencies and AWS access, run <code>/doctor</code> in the chat
+      input.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-documents.html">Working with documents</a>,
+        <a href="tut-skills.html">Skills</a>, <a href="arch-tools.html">Tool dispatch &amp; executors</a>,
+        and <a href="ref-tools.html">Agent tools</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/research-flow.js"></script>
+</body>
+</html>

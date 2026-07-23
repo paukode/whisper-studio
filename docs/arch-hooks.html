@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blocking hooks - Whisper Studio Docs</title>
+  <meta name="description" content="Whisper Studio's blocking-hooks engine: PreToolUse deny/rewrite, PostToolUse additional context, and a Stop gate — evaluated in-process then as sandboxed shell hooks (user then trusted project), across chat, subagents, and cron.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 15V11a8 8 0 0 1 16 0v4'/%3E%3Crect x='7' y='15' width='18' height='10' rx='2.5'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-hooks">
+    <h1>Blocking hooks</h1>
+    <p class="subtitle">Hooks let you gate what the assistant does. A hook can <em>deny</em> a tool call, <em>rewrite</em>
+      its input, add context to a result, or refuse to end a turn — deterministically, in your own code,
+      before the model ever sees the outcome. They run across every path: chat, sub-agents, and cron.</p>
+
+    <p>The engine lives in <code class="path">server/hooks/</code>: <code class="path">schema.py</code> (the
+      hook definition, outcome, and matcher semantics), <code class="path">engine.py</code> (evaluation),
+      <code class="path">config_loader.py</code> (loading + project trust), and
+      <code class="path">routes.py</code> (the <code>/api/hooks</code> API). <b>Click a box</b> in the diagram
+      to trace one tool call through the gates.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="hooks-diagram" class="diagram"></div>
+      <figcaption>Before a tool runs, the executor asks the engine for <em>PreToolUse</em> — which may deny or
+        rewrite; after, it asks for <em>PostToolUse</em>. At end of turn, <em>check_stop_hooks</em> can refuse
+        to stop. Each event runs in-process hooks first, then sandboxed shell hooks (user, then trusted
+        project), filtered by matcher.</figcaption>
+    </figure>
+
+    <h2 id="events">The three events</h2>
+    <p>A hook is registered for one <em>event</em>. Three are gates the model cannot route around:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Event</th><th>When</th><th>What a hook can do</th></tr></thead>
+      <tbody>
+        <tr><td><code>PreToolUse</code></td><td>Just before a tool executes</td><td><b>Deny</b> the call (the model gets the reason instead of a result) or <b>rewrite</b> its input via <code>updatedInput</code>.</td></tr>
+        <tr><td><code>PostToolUse</code></td><td>Just after a tool returns</td><td>Fold <code>additionalContext</code> into the result the model sees — e.g. a lint summary after a write.</td></tr>
+        <tr><td><code>Stop</code></td><td>When the turn is about to end</td><td>Refuse to end: return a reason and the turn continues. Bounded by <code>MAX_STOP_BLOCKS_PER_TURN</code> so it can't loop forever.</td></tr>
+      </tbody>
+    </table></div>
+    <p>A hook is a <code>HookDef</code> (<code class="path">server/hooks/schema.py</code>): an
+      <code>event</code>, a shell <code>command</code>, a <code>matcher</code> (default <code>*</code>; exact
+      name, a <code>pipe|list</code>, or a <code>/regex/</code> against the tool name), a
+      <code>timeout</code>, an <code>enabled</code> flag, and an <code>on_error</code> policy
+      (<code>ignore</code> or <code>block</code>). Its <code>source</code> is <code>user</code>,
+      <code>project</code>, or <code>plugin</code>.</p>
+
+    <h2 id="engine">Two phases, one contract</h2>
+    <p><code>run_hooks(event, payload)</code> evaluates an event in two phases. <b>Phase 1</b> runs in-process
+      hooks — Python plugins and the orchestrator's own gate (this is where the <a href="arch-goals.html">goal
+      completion gate</a> registers its <code>Stop</code> handler); a control dict here can short-circuit the
+      whole event. <b>Phase 2</b> runs shell hooks: <em>user</em> hooks first, then <em>trusted project</em>
+      hooks, each filtered by its matcher against the tool name.</p>
+    <p>A shell hook receives the event payload as JSON on stdin (<code>run_sandboxed</code> gained
+      <code>input_data</code> for exactly this, plus <code>env_extra</code> for the <code>WHISPER_*</code>
+      variables) and communicates back through both its exit code and its stdout:</p>
+    <ol class="steps">
+      <li><h4>Exit code</h4><p><code>0</code> passes. <code>2</code> blocks — stderr becomes the reason the
+        model sees. Any other code, or a timeout, is handled by the hook's <code>on_error</code>
+        (<code>ignore</code> lets the call through; <code>block</code> stops it).</p></li>
+      <li><h4>Structured stdout</h4><p>A JSON object <code>{decision, reason, updatedInput,
+        additionalContext}</code> is parsed if present: <code>decision:"deny"</code> blocks with
+        <code>reason</code>; <code>updatedInput</code> rewrites a PreToolUse tool input;
+        <code>additionalContext</code> is appended after a PostToolUse.</p></li>
+    </ol>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+      <div class="callout__body"><p><code>env_extra</code> is passed via the subprocess environment
+        (<code>env=</code>), <b>not</b> prepended to the command. A command prefix would turn any hook that
+        begins with a shell construct (<code>if</code>, <code>for</code>, <code>case</code>) into a syntax
+        error whose exit code 2 reads as DENY — silently blocking every tool call. That was the single
+        biggest bug the hooks review caught.</p></div>
+    </div>
+
+    <h2 id="wiring">Wired across every path</h2>
+    <p>The gates are not chat-only. <code>PreToolUse</code> and <code>PostToolUse</code> fold into the
+      <a href="arch-tools.html">tool executor</a> that chat, sub-agents, and cron all share, so a deny or a
+      rewrite applies uniformly. The <code>Stop</code> gate (<code>check_stop_hooks()</code>) runs at the end
+      of every turn in all three streaming loops. <a href="arch-agents.html">Sub-agents</a> and
+      <a href="arch-cron.html">cron</a> runs honor <code>PreToolUse</code> too — cron bridges the check onto
+      the server loop.</p>
+    <div class="spec">
+      <dt><code class="path">server/hooks/engine.py</code></dt><dd><code>run_hooks(event, payload)</code>, the two-phase evaluator, <code>check_stop_hooks()</code>, and <code>dry_run()</code> for the Test button.</dd>
+      <dt><code class="path">server/hooks/schema.py</code></dt><dd><code>HookDef</code> / <code>HookOutcome</code>, matcher semantics, and config normalization (v2 keyed-by-id; the v1 bare list still loads).</dd>
+      <dt><code class="path">server/hooks/config_loader.py</code></dt><dd>User <code>hooks.json</code> plus project hooks in <code>&lt;workspace&gt;/.whisper/settings.json</code> — the latter inert until trusted.</dd>
+    </div>
+
+    <h2 id="trust">Project trust</h2>
+    <p>Hooks are code that runs on your machine, so a hook that arrives inside a <em>cloned repository</em> is
+      a supply-chain vector. Project hooks are therefore <b>inert until you approve them</b>: the panel shows
+      each project hook's command before you trust it, and a SHA-256 of the trusted content is recorded so an
+      edit re-arms the prompt (the same trust model as <a href="tut-skills.html">skills</a> and
+      <a href="arch-ultracode.html">saved workflows</a>). User hooks — the ones you wrote in your own config —
+      are trusted by definition.</p>
+
+    <h2 id="api">The API and the panel</h2>
+    <p>The Settings <em>Hooks</em> panel is backed by the <code>/api/hooks</code> routes; the assistant does
+      not create hooks itself (there is no hook tool and no <code>/hooks</code> command — hooks are a
+      user-owned guardrail).</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Route</th><th>Method</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>/api/hooks</code></td><td>GET / POST</td><td>List hooks (grouped by event); create one.</td></tr>
+        <tr><td><code>/api/hooks/{hook_id}</code></td><td>PUT / DELETE</td><td>Edit or remove a hook.</td></tr>
+        <tr><td><code>/api/hooks/test</code></td><td>POST</td><td>Dry-run a hook against a sample payload (the Test button) without wiring it live.</td></tr>
+        <tr><td><code>/api/hooks/project/approve</code> · <code>/revoke</code></td><td>POST</td><td>Trust or untrust the current workspace's project hooks.</td></tr>
+        <tr><td><code>/api/hooks/export</code></td><td>GET</td><td>Export the effective hook config.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Live blocks surface in the chat: a denied call renders a <code>hook_blocked</code> card and a refused
+      turn renders <code>stop_hook_feedback</code>. The older <code class="path">server/infrastructure/hooks.py</code>
+      is now a deprecated shim that delegates to this engine.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> the <a href="arch-goals.html">goal loop</a> registers on the
+        <code>Stop</code> event through this engine; <a href="arch-tools.html">Tool dispatch</a> shows where
+        Pre/PostToolUse fold into the executor; and <a href="ref-security.html">the security model</a> covers
+        the sandbox and the project-trust boundary.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/hooks.js"></script>
+</body>
+</html>

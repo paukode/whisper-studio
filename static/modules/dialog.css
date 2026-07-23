@@ -1,0 +1,504 @@
+/* ================================================================
+   Whisper Studio — Dialog & Wizard Module
+   Reusable overlay dialogs, confirms, forms, multi-step wizards
+   ================================================================ */
+
+/* ---- Overlay backdrop ---- */
+.whisper-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1500;
+    background: rgba(0,0,0,0.62);
+    backdrop-filter: blur(14px) saturate(1.15);
+    -webkit-backdrop-filter: blur(14px) saturate(1.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: wdOverlayIn 0.2s ease;
+}
+
+@keyframes wdOverlayIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.whisper-dialog-overlay--leaving {
+    animation: wdOverlayOut 0.2s ease forwards;
+}
+
+@keyframes wdOverlayOut {
+    from { opacity: 1; }
+    to   { opacity: 0; }
+}
+
+/* ---- Dialog container ---- */
+.whisper-dialog {
+    position: relative;
+    background:
+        linear-gradient(var(--bg-surface), var(--bg-surface)) padding-box,
+        linear-gradient(165deg, rgba(255,255,255,0.16), rgba(255,255,255,0.04) 40%) border-box;
+    border: 1px solid transparent;
+    border-radius: 20px;
+    box-shadow:
+        0 32px 80px rgba(0,0,0,0.55),
+        0 4px 16px rgba(0,0,0,0.35);
+    width: 90vw;
+    max-height: 84vh;
+    display: flex;
+    flex-direction: column;
+    animation: wdDialogIn 0.34s cubic-bezier(0.34, 1.3, 0.64, 1);
+    overflow: hidden;
+}
+
+@keyframes wdDialogIn {
+    from { opacity: 0; transform: scale(0.92) translateY(18px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Size variants */
+.whisper-dialog--sm { max-width: 440px; }
+.whisper-dialog--md { max-width: 620px; }
+.whisper-dialog--lg { max-width: 920px; }
+
+/* ---- Header ---- */
+.whisper-dialog__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22px 24px 0;
+}
+
+.whisper-dialog__title {
+    font-size: 1.15em;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.whisper-dialog__close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.25em;
+    cursor: pointer;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    line-height: 1;
+    transition: color 0.12s, background 0.12s;
+}
+
+.whisper-dialog__close:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+/* ---- Body ---- */
+.whisper-dialog__body {
+    padding: 16px 24px 20px;
+    overflow-y: auto;
+    flex: 1;
+    color: var(--text-secondary);
+    font-size: 0.95em;
+    line-height: 1.6;
+}
+
+/* Edge-to-edge layouts (e.g. the split-panel consent screen) opt out of
+   the default body padding entirely. Descendant :has() because the dialog
+   renderer wraps the body ReactNode in an extra div. */
+.whisper-dialog__body:has(.wd-split) {
+    padding: 0;
+}
+
+.whisper-dialog__body:has(.wd-split) > div {
+    height: 100%;
+}
+
+/* ---- Footer ---- */
+.whisper-dialog__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 4px 24px 22px;
+}
+
+.whisper-dialog__footer .btn {
+    padding: 9px 20px;
+    border-radius: 10px;
+    font-size: 0.88em;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    transition: background 0.15s, border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+
+.whisper-dialog__footer .btn:hover {
+    background: var(--bg-hover);
+    transform: translateY(-1px);
+}
+
+.whisper-dialog__footer .btn:active {
+    transform: translateY(0);
+}
+
+.whisper-dialog__footer .btn-primary {
+    background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+    color: #1a1206;
+    border-color: transparent;
+    box-shadow: 0 2px 12px var(--accent-dim);
+}
+
+.whisper-dialog__footer .btn-primary:hover {
+    background: linear-gradient(180deg, var(--accent-hover), var(--accent-hover));
+    box-shadow: 0 4px 18px var(--accent-dim);
+}
+
+/* Danger variant */
+.whisper-dialog--danger .btn-primary {
+    background: linear-gradient(180deg, #ef5a4e, var(--accent-record));
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 2px 12px var(--accent-record-dim);
+}
+
+.whisper-dialog--danger .btn-primary:hover {
+    opacity: 0.92;
+}
+
+/* ---- Form fields ---- */
+.whisper-dialog__field {
+    margin-bottom: 16px;
+}
+
+.whisper-dialog__field:last-child {
+    margin-bottom: 0;
+}
+
+.whisper-dialog__label {
+    display: block;
+    font-size: 0.82em;
+    font-weight: 550;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+}
+
+.whisper-dialog__input {
+    width: 100%;
+    padding: 9px 13px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    font-size: 0.9em;
+    font-family: inherit;
+    box-sizing: border-box;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.whisper-dialog__input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.whisper-dialog__input--textarea {
+    min-height: 80px;
+    resize: vertical;
+}
+
+.whisper-dialog__select {
+    width: 100%;
+    padding: 9px 13px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    font-size: 0.9em;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+
+.whisper-dialog__checkbox-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ---- Wizard step indicator ---- */
+.whisper-wizard-steps {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    padding: 16px 20px 0;
+}
+
+.whisper-wizard-step {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75em;
+    font-weight: 600;
+    border: 2px solid var(--border-strong);
+    color: var(--text-muted);
+    background: var(--bg-surface);
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.whisper-wizard-step--active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.whisper-wizard-step--done {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.whisper-wizard-connector {
+    width: 32px;
+    height: 2px;
+    background: var(--border);
+    flex-shrink: 0;
+}
+
+.whisper-wizard-connector--done {
+    background: var(--accent);
+}
+
+/* ================================================================
+   Split-panel consent screen (Mythos-class data-retention dialog)
+   Rendered chrome-less (kind 'open', no header/footer): the layout
+   below owns the entire dialog including its action buttons.
+   ================================================================ */
+
+/* Widen the dialog when it hosts a split layout, whatever its size prop. */
+.whisper-dialog:has(.wd-split) {
+    max-width: 740px;
+}
+
+.wd-split {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    min-height: 360px;
+}
+
+/* ---- Left: brand panel ---- */
+.wd-split__brand {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 24px;
+    overflow: hidden;
+    background:
+        radial-gradient(120% 90% at 15% 0%, rgba(167,139,250,0.32), transparent 55%),
+        radial-gradient(130% 100% at 85% 100%, rgba(226,163,54,0.30), transparent 60%),
+        linear-gradient(160deg, #17141f 0%, #0d0c12 100%);
+}
+
+.wd-split__brand::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: var(--noise);
+    pointer-events: none;
+}
+
+/* Oversized ghost glyph behind the text */
+.wd-split__glyph {
+    position: absolute;
+    top: -28px;
+    right: -22px;
+    font-size: 9.5em;
+    font-weight: 800;
+    letter-spacing: -0.05em;
+    color: rgba(255,255,255,0.045);
+    user-select: none;
+    pointer-events: none;
+    line-height: 1;
+}
+
+.wd-split__badge {
+    align-self: flex-start;
+    font-size: 0.62em;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #d8c9ff;
+    background: rgba(167,139,250,0.14);
+    border: 1px solid rgba(167,139,250,0.35);
+    border-radius: 999px;
+    padding: 4px 10px;
+}
+
+.wd-split__model {
+    font-size: 1.9em;
+    font-weight: 750;
+    letter-spacing: -0.02em;
+    color: #f5f2ec;
+    line-height: 1.1;
+}
+
+.wd-split__tagline {
+    font-size: 0.78em;
+    color: rgba(245,242,236,0.55);
+    line-height: 1.45;
+}
+
+/* ---- Right: content column ---- */
+.wd-split__content {
+    display: flex;
+    flex-direction: column;
+    padding: 26px 28px 22px;
+    min-width: 0;
+}
+
+.wd-split__title {
+    font-size: 1.25em;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+    margin: 0 0 6px;
+}
+
+.wd-split__lede {
+    font-size: 0.88em;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    margin: 0 0 16px;
+}
+
+.wd-checklist {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0 0 16px;
+    padding: 0;
+}
+
+.wd-checklist li {
+    display: flex;
+    align-items: flex-start;
+    gap: 11px;
+}
+
+.wd-checklist__icon {
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    color: var(--accent);
+}
+
+.wd-checklist__icon svg {
+    width: 15px;
+    height: 15px;
+}
+
+.wd-checklist__text {
+    min-width: 0;
+    font-size: 0.85em;
+    line-height: 1.45;
+    color: var(--text-secondary);
+    padding-top: 2px;
+}
+
+.wd-checklist__text strong {
+    display: block;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.wd-split__note {
+    font-size: 0.78em;
+    color: var(--text-muted);
+    margin: 0 0 18px;
+    padding: 9px 12px;
+    border-radius: 10px;
+    background: var(--bg-inset);
+    border: 1px dashed var(--border-strong);
+}
+
+.wd-split__actions {
+    margin-top: auto;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 14px;
+}
+
+.wd-split__cancel {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.86em;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 9px 6px;
+    transition: color 0.12s;
+}
+
+.wd-split__cancel:hover {
+    color: var(--text-primary);
+}
+
+.wd-split__cta {
+    border: none;
+    cursor: pointer;
+    padding: 11px 22px;
+    border-radius: 11px;
+    font-size: 0.9em;
+    font-weight: 650;
+    color: #1a1206;
+    background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+    box-shadow: 0 2px 14px var(--accent-dim);
+    transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
+}
+
+.wd-split__cta:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.06);
+    box-shadow: 0 5px 20px var(--accent-dim);
+}
+
+.wd-split__cta:active {
+    transform: translateY(0);
+}
+
+/* ---- Narrow screens: stack the panel as a banner ---- */
+@media (max-width: 640px) {
+    .wd-split {
+        grid-template-columns: 1fr;
+        min-height: 0;
+    }
+    .wd-split__brand {
+        flex-direction: row;
+        align-items: center;
+        justify-content: flex-start;
+        gap: 12px;
+        padding: 18px 20px;
+    }
+    .wd-split__glyph { display: none; }
+    .wd-split__model { font-size: 1.3em; }
+    .wd-split__tagline { display: none; }
+}

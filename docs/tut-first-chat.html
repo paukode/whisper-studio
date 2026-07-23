@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Your first chat - Whisper Studio Docs</title>
+  <meta name="description" content="Send a message and watch it stream, switch models and reasoning depth with the toolbar or slash commands, and learn the / commands built into the chat composer.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-first-chat">
+    <h1>Your first chat</h1>
+    <p class="subtitle">The composer is the heart of Whisper Studio. In a few minutes you will send a
+      message, watch the answer stream in, switch models and reasoning depth, and learn the slash
+      commands that live behind the <code>/</code> key.</p>
+
+    <p>Everything below happens in the chat input at the bottom of the window. A single turn travels
+      from the composer to <code>POST /api/chat</code>, out to Claude on Amazon Bedrock, and back as a
+      stream you watch fill in live. The conversation is saved as you go, so you can leave and pick it
+      back up from the sidebar.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="first-chat-diagram" class="diagram"></div>
+      <figcaption>One turn, then a follow-up. The loop back into <em>POST /api/chat</em> is the model
+        re-reading the whole conversation each time you ask again.</figcaption>
+    </figure>
+
+    <h2 id="send-your-first-message">Send your first message</h2>
+    <p>You do not need a workspace, an attachment, or any setup beyond a working AWS connection (see
+      <a href="first-run.html">First run &amp; verify</a>). Just type and press <kbd>Enter</kbd>.</p>
+    <ol class="steps">
+      <li>
+        <h4>Type in the composer</h4>
+        <p>Click the input box (it reads <em>Fix a bug, build a feature, ask anything...</em>) and
+          write a question. The box grows as you type and scrolls once it gets tall.</p>
+      </li>
+      <li>
+        <h4>Press Enter to send</h4>
+        <p><kbd>Enter</kbd> sends the message. <kbd>Shift</kbd>+<kbd>Enter</kbd> inserts a newline so
+          you can write multiple paragraphs before sending. <kbd>Cmd</kbd>+<kbd>Enter</kbd> always
+          sends, even while an autocomplete popup is open. You can also click the paper-plane
+          <b>Send</b> button.</p>
+      </li>
+      <li>
+        <h4>Watch the answer stream</h4>
+        <p>The reply arrives token by token rather than all at once. While it streams, the Send button
+          becomes a square <b>Stop</b> button. Click it (or press <kbd>Esc</kbd>) to end the turn
+          early.</p>
+      </li>
+      <li>
+        <h4>Ask a follow-up</h4>
+        <p>Type again and send. Whisper Studio re-sends the earlier messages as context, so the model
+          remembers what you already discussed. The conversation is saved automatically and appears in
+          the left sidebar, where you can rename it, search it, or return to it later.</p>
+      </li>
+    </ol>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Prefer talking? Click the microphone in the composer and dictate.
+        You can even send hands-free by ending with a spoken phrase like <em>"send now"</em> or
+        <em>"okay send"</em>. See <a href="tut-voice.html">Voice &amp; meetings</a> for the full
+        story.</p></div>
+    </div>
+
+    <h2 id="switch-models">Switch models mid-conversation</h2>
+    <p>The model that answers is shown in the toolbar under the composer. Click that dropdown to pick a
+      different one at any time. The conversation continues with the new model on your next message,
+      keeping all its history. As a rule of thumb, the Haiku models are fastest and cheapest for quick
+      questions, and the Opus models go deepest on hard, multi-step work, with Sonnet in between.</p>
+    <p>If you would rather keep your hands on the keyboard, type a slash command instead:</p>
+    <div class="code-block"><pre><code>/model haiku
+/model sonnet
+/model opus</code></pre></div>
+    <p>The exact keys you can type come from your own configuration (the same list the toolbar
+      dropdown shows), so a fresh install may offer more or fewer than the three above. Type
+      <code>/model</code> and a space to autocomplete against whatever is available, where the picker
+      shows the version label (for example <em>Sonnet 4.6</em>) while inserting the short key
+      (<code>sonnet</code>). See <a href="tut-model-modes.html">Model modes</a> for cloud, hybrid, and
+      on-device options, and <a href="arch-backends.html">Model backends &amp; modes</a> for how each
+      one is routed.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Some models require a one-time data-retention consent screen the
+        first time you switch to them in a session. If it appears, read it and confirm to continue, or
+        cancel to stay on your current model.</p></div>
+    </div>
+
+    <h2 id="reasoning-depth">Set the reasoning depth</h2>
+    <p>Alongside the model there is an <b>Effort</b> control that sets how much the model thinks before
+      it answers. Lower effort is quicker and cheaper; higher effort spends more time reasoning on
+      harder problems. Set it from the toolbar chip, or by command:</p>
+    <div class="code-block"><pre><code>/effort low
+/effort medium
+/effort high
+/effort max</code></pre></div>
+    <p>The available levels are per-model, so the exact set you can pick depends on the model that is
+      currently selected. If you ask for a level the current model does not offer, Whisper Studio
+      clamps it to the nearest lower one and tells you what it settled on. The composer also accepts
+      <code>/effort xhigh</code> as an alias for the "Extra" level. Type <code>/effort</code> with no
+      argument to see exactly which levels this model supports.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>On-device models have no effort tiers, so the Effort and
+        Response-length controls are hidden while an on-device model is selected. See
+        <a href="tut-model-modes.html">Model modes</a>.</p></div>
+    </div>
+
+    <h2 id="slash-commands">Slash commands</h2>
+    <p>Type <code>/</code> at the start of the composer to open the command list. Keep typing to
+      filter, use <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> to move, and press <kbd>Enter</kbd> or
+      <kbd>Tab</kbd> to accept. Slash commands run even while a previous answer is still streaming.
+      Here are the ones you will reach for first:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>/model &lt;key&gt;</code></td><td>Switch the chat model for the rest of the session (for example <code>/model haiku</code>).</td></tr>
+        <tr><td><code>/effort &lt;level&gt;</code></td><td>Set reasoning depth. Levels are per-model; an unavailable level clamps to the nearest lower one.</td></tr>
+        <tr><td><code>/plan</code></td><td>Toggle plan mode, a read-only mode where the model proposes a plan before it edits or runs anything. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
+        <tr><td><code>/verbosity &lt;level&gt;</code></td><td>Set the response length: <code>brief</code>, <code>normal</code>, or <code>detailed</code>. Mirrors the response-length control under the composer.</td></tr>
+        <tr><td><code>/btw &lt;question&gt;</code></td><td>Ask a side-channel question. The answer pops up on its own and does not enter the main transcript, so a quick aside never derails the conversation.</td></tr>
+        <tr><td><code>/goal &lt;text&gt;</code></td><td>Set a goal the assistant works toward until a completion gate judges it met (<code>/goal clear</code> ends it). Use it for multi-step tasks you want run to completion. See <a href="tut-goals.html">Goals &amp; autopilot</a>.</td></tr>
+        <tr><td><code>/subagent &lt;task&gt;</code></td><td>Spawn a one-shot subagent that works in the background with the full tool loop, streaming its progress into a card while you keep chatting. See <a href="tut-subagents.html">Sub-agents &amp; teams</a>.</td></tr>
+        <tr><td><code>/export</code></td><td>Download the whole conversation as a text file.</td></tr>
+        <tr><td><code>/clear</code></td><td>Wipe the visible chat. The saved session keeps its history; this only clears what is on screen.</td></tr>
+        <tr><td><code>/rename &lt;title&gt;</code></td><td>Give the current session a custom title in the sidebar.</td></tr>
+        <tr><td><code>/doctor</code></td><td>Run diagnostics and show the results (handy if chat is not responding).</td></tr>
+        <tr><td><code>/help</code></td><td>Open a dialog listing every command, grouped by category.</td></tr>
+      </tbody>
+    </table></div>
+    <p>There are more (<code>/workflow</code> and <code>/ci</code> for
+      <a href="arch-ultracode.html">workflows and CI</a>, plus <code>/memory</code>, <code>/theme</code>,
+      <code>/notify</code>, <code>/settings</code>, <code>/workspace</code>, and the <code>/file:</code>,
+      <code>/skills:</code>, and <code>/mcp:</code> submenus). The full catalogue lives in
+      <a href="ref-slash-commands.html">Slash commands reference</a>, and <code>/help</code> shows the
+      live list from inside the app.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><code>/clear</code> empties the on-screen conversation and cannot be
+        undone from the composer, but it does not delete the saved session. To keep a copy of a long
+        chat before clearing it, run <code>/export</code> first.</p></div>
+    </div>
+
+    <h2 id="attachments-and-mentions">Attachments and @file mentions</h2>
+    <p>You can bring context into a chat two ways. Drop files onto the composer (or use the paperclip)
+      to attach documents and images; Whisper Studio extracts their text and passes images to the
+      model as vision input. And once a workspace is connected, <code>@file:</code> mentions and the
+      <code>/file:</code> submenu pull a specific file from the project into your message.</p>
+    <div class="cols-2">
+      <a class="card card--link" href="tut-documents.html"><h3>Working with documents</h3><p>Attach a contract, deck, or PDF and ask about it in plain language.</p></a>
+      <a class="card card--link" href="tut-workspace.html"><h3>The workspace IDE</h3><p>Connect a repo, then reference files with <code>@file:</code> and let Claude read and edit.</p></a>
+    </div>
+
+    <h2 id="what-next">What next</h2>
+    <p>You now have the core loop: type, send, stream, follow up, and steer with the model, effort, and
+      slash-command controls. From here, pick the workflow that fits what you are doing.</p>
+    <div class="card-grid">
+      <a class="card card--link" href="tut-goals.html"><h3>Give it a goal</h3><p>Set a goal and let it run to completion instead of nudging "keep going" — and know when a plain prompt is better.</p><span class="card__meta">Goals &amp; autopilot →</span></a>
+      <a class="card card--link" href="tut-voice.html"><h3>Talk instead of type</h3><p>Dictate a message or record a meeting for a live diarized transcript.</p><span class="card__meta">Voice &amp; meetings →</span></a>
+      <a class="card card--link" href="tut-permissions.html"><h3>Control what Claude can do</h3><p>Understand the Mode dial and the approval cards before you let it act.</p><span class="card__meta">Permissions &amp; approvals →</span></a>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-voice.html">Voice &amp; meetings</a>,
+        <a href="tut-documents.html">Working with documents</a>,
+        <a href="tut-permissions.html">Permissions &amp; approvals</a>, and the architecture deep-dive
+        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/first-chat.js"></script>
+</body>
+</html>

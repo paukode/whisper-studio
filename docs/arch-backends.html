@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Model backends &amp; modes - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio picks and runs a chat backend: on-device Gemma, OpenAI GPT-5.x over Bedrock, and the default Anthropic Claude path, plus retry, compaction, and the separate model-mode concept.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-backends">
+    <h1>Model backends &amp; modes</h1>
+    <p class="subtitle">Whisper Studio can send a chat turn to three very different runtimes: on-device
+      Gemma, OpenAI GPT-5.x over Bedrock, or the default Anthropic Claude path. The choice is made from
+      one thing (the model key you picked in the toolbar) and it happens before any tokens stream.</p>
+
+    <p>Every chat turn enters the same endpoint in <code class="path">server/chat/routes.py</code>, but
+      not every turn talks to the same provider. Two of the three backends are self-contained side
+      paths that return their own SSE stream and exit early. <b>Click a box</b> in the diagram to trace
+      where a given model key ends up.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="backends-diagram" class="diagram"></div>
+      <figcaption>The model-key decision chain. On-device and OpenAI turns branch off and return early;
+        only the Anthropic path runs the retry, compaction, and cost-tracking machinery.</figcaption>
+    </figure>
+
+    <h2 id="the-decision">One key, three paths</h2>
+    <p>The toolbar model key is latched on the first turn of a session, so switching models in Settings
+      never disrupts an in-flight conversation. Once the system prompt and messages are assembled, the
+      endpoint asks two yes/no questions in order, and the first "yes" wins:</p>
+    <ol class="steps">
+      <li>
+        <h4>Is it a local model?</h4>
+        <p><code class="path">server/chat/routes.py</code> calls <code>local_chat_response(...)</code>
+          (<code class="path">server/local/route.py</code>). If <code>is_local_model()</code> matches
+          the key (any key prefixed <code>local_</code>, such as Gemma), it returns a
+          <code>StreamingResponse</code> and the turn runs entirely on-device.</p>
+      </li>
+      <li>
+        <h4>Is it an OpenAI model?</h4>
+        <p>Otherwise the endpoint calls <code>openai_chat_response(...)</code>
+          (<code class="path">server/openai_bedrock/route.py</code>). If <code>is_openai_model()</code>
+          matches (its <code>chat_model_meta</code> carries <code>provider == "openai_bedrock"</code>),
+          the turn is served in OpenAI request/response format over Bedrock.</p>
+      </li>
+      <li>
+        <h4>Otherwise: the Anthropic path</h4>
+        <p>If both bridges return <code>None</code>, the default Claude path continues in the endpoint:
+          Bedrock streaming plus the full agentic tool loop, retry wrapper, reactive compaction, and
+          per-turn cost tracking.</p>
+      </li>
+    </ol>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>The early return is load-bearing.</b> Both bridges must be
+        reached <em>before</em> compaction, because compaction itself calls Bedrock (via Claude). A
+        local or OpenAI turn must never touch that. Each side path is therefore self-contained: it
+        builds its own prompt, runs its own tool loop, and yields its own SSE frames.</p></div>
+    </div>
+
+    <h2 id="anthropic-path">The Anthropic path (default)</h2>
+    <p>This is the path most turns take, running Claude Haiku, Sonnet, or Opus. It is where the streaming
+      loop from <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> lives, so the
+      backend-specific parts are the Bedrock client and the resilience wrappers around each round.</p>
+
+    <h3 id="bedrock-client">The shared Bedrock client</h3>
+    <p>All Bedrock traffic goes through a process-wide singleton <code>boto3</code>
+      <code>bedrock-runtime</code> client, one per region, cached in
+      <code class="path">server/chat/infra.py</code>. A fresh client per call multiplies boto3's
+      connection pool by the number of concurrent agents and can exhaust the macOS default file-descriptor
+      limit (256), so the cache exists to keep sockets bounded (the pool is capped at 32 connections).
+      Changing the region in Settings clears the cache so the next call rebuilds it.</p>
+    <p>The streaming call is <code>invoke_model_with_response_stream</code>. Chunks arrive as
+      <code>content_block</code> and <code>message</code> events, which the loop parses into
+      <code>text</code>, <code>thinking</code>, and <code>tool_use</code> blocks as they stream.</p>
+
+    <h3 id="retry-compaction">Retry and reactive compaction</h3>
+    <p>Each streaming invocation is wrapped by <code>invoke_stream_with_retry</code> in
+      <code class="path">server/infrastructure/bedrock_retry.py</code>. The wrapper classifies every
+      Bedrock error and reacts accordingly:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Error kind</th><th>Behavior</th></tr></thead>
+      <tbody>
+        <tr><td>Throttling (429)</td><td>Retried with exponential backoff, up to <b>5</b> attempts (<code>THROTTLE_MAX_RETRIES</code>).</td></tr>
+        <tr><td>Other transient (for example, service unavailable)</td><td>Retried up to <b>3</b> attempts (<code>MAX_RETRIES</code>).</td></tr>
+        <tr><td>Non-retryable</td><td>Raised immediately, no retries.</td></tr>
+        <tr><td>Prompt too long</td><td>Raised immediately as <code>PromptTooLongError</code> so the caller can compact.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Backoff is capped exponential: 500ms, 1s, 2s, 4s, up to a 10s ceiling. When the wrapper raises
+      <code>PromptTooLongError</code>, the endpoint runs <b>reactive compaction</b>: it drops the oldest
+      message pairs, calls <code>compact_messages_with_claude(...)</code>, and retries the round. If the
+      conversation is still too long after that, it surfaces an error asking you to start a new session.
+      (Reactive compaction is the mid-stream safety net; the endpoint also compacts pre-emptively when
+      history grows large. See <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.)</p>
+
+    <h3 id="cost">Cost tracking</h3>
+    <p>Because the Anthropic path is the only one that bills a cloud provider per token, it is where cost
+      tracking runs. Every round logs input, output, and prompt-cache token counts and an estimated USD
+      cost (via <code>estimate_cost</code>), which feeds the session and daily spend caps. If a cap is
+      exceeded, the turn stops with an error. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</p>
+
+    <h2 id="local">On-device Gemma</h2>
+    <p>The local backend (<code class="path">server/local/</code>) runs a quantized Gemma model with
+      <code>llama.cpp</code>, entirely offline. Its design goals are isolation and a small prompt, since
+      a laptop has far less headroom than Bedrock.</p>
+    <dl class="spec">
+      <dt><code class="path">server/local/route.py</code></dt>
+      <dd>The bridge the endpoint calls. Detects a local key, and for a streaming turn returns
+        <code>stream_local_chat(...)</code>; for an approval resume it calls
+        <code>resume_local_chat(...)</code> against the paused local turn.</dd>
+      <dt><code class="path">server/local/stream.py</code></dt>
+      <dd>The streaming tool loop for Gemma. A simpler, non-streaming variant exists alongside it.</dd>
+      <dt><code class="path">server/local/runtime.py</code></dt>
+      <dd>Model definitions (<code>local_gemma</code>, <code>local_gemma_coder</code>), the single-worker
+        executor thread, and the model load/generate/unload lifecycle.</dd>
+    </dl>
+    <p>Some deliberate choices set the local path apart from the cloud one:</p>
+    <ul>
+      <li><b>One executor thread.</b> All <code>llama.cpp</code> work (load, generate, unload) runs on a
+        single-worker thread, so the model is created and used on the same thread. This mirrors the
+        on-device speech backends.</li>
+      <li><b>A lean system prompt.</b> The cloud system prompt is tool-heavy and workspace-heavy (roughly
+        2 to 2.5K tokens the local model cannot use), so <code>build_local_system_prompt(...)</code>
+        drops it and keeps only project and memory context. This speeds prefill and frees context space.</li>
+      <li><b>A configurable context window.</b> Gemma supports up to 256K tokens, but the default (and
+        floor) is 16K, because with tools on the tool-pool prompt alone is around 12K tokens. You can
+        raise the window live from the chat-input context-window slider, which reloads the model at the
+        new size. The <code>WHISPER_LOCAL_N_CTX</code> environment variable overrides the default at
+        startup.</li>
+      <li><b>A shrinkable tool set.</b> The Tools dropdown sets a scope of <code>off</code>,
+        <code>core</code>, <code>core_web</code>, or <code>all</code>. Advertising fewer tools makes the
+        prompt smaller and prefill faster.</li>
+    </ul>
+    <p>The local path reuses the same executor and approval pipeline as the cloud loop, so an on-device
+      turn is gated by the same <a href="arch-approval.html">permission modes</a> and approval flow. It
+      just never touches AWS.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p><b>Summarising a huge transcript reuses the resident model.</b>
+        Condensing an oversized transcript runs a fast per-chunk extraction (the map step), and because
+        only one on-device model is resident at a time, that step runs on the model you are chatting with
+        (its key is threaded into the condense call), falling back to whatever model is currently resident
+        (<code>loaded_key()</code>) and then the first downloaded model - rather than loading a fixed model
+        and evicting the one you are chatting with. So the map step does not thrash the model cache. See
+        <a href="arch-summarization.html#modes">Transcript summarization</a>.</p></div>
+    </div>
+
+    <h2 id="openai">OpenAI on Bedrock</h2>
+    <p>The OpenAI backend (<code class="path">server/openai_bedrock/</code>) runs GPT-5.x models. They
+      are invoked through Bedrock but in OpenAI request/response format (the Responses API shape), which
+      is why they are a separate provider rather than a variant of the Anthropic path.</p>
+    <dl class="spec">
+      <dt><code class="path">server/openai_bedrock/route.py</code></dt>
+      <dd>The bridge the endpoint calls. Detects an OpenAI key and returns <code>stream_openai_chat(...)</code>,
+        or <code>resume_openai_chat(...)</code> for an approval resume.</dd>
+      <dt><code class="path">server/openai_bedrock/runtime.py</code></dt>
+      <dd>Backend detection (<code>is_openai_model</code>), region resolution, and the effort and
+        verbosity mappings below.</dd>
+    </dl>
+    <p>Two GPT-5.x-specific controls are mapped from the app's own settings:</p>
+    <ul>
+      <li><b>Reasoning effort.</b> <code>reasoning_effort_for(...)</code> maps the app's effort label to
+        OpenAI's reasoning effort. On GPT-5.4/5.5 the ladder tops out at <code>xhigh</code>, so the
+        app's <code>extra</code>, <code>max</code>, and <code>ultracode</code> all collapse to it.
+        GPT-5.6 and up add a <code>max</code> tier above <code>xhigh</code>: when
+        <code>_supports_max_effort(...)</code> is true the top-tier labels (<code>max</code> /
+        <code>ultracode</code>) ride it, while only <code>extra</code> always collapses to
+        <code>xhigh</code>.</li>
+      <li><b>Verbosity.</b> <code>verbosity_for(...)</code> resolves the response verbosity
+        (<code>low</code> / <code>medium</code> / <code>high</code>): a per-request override wins, then
+        the model's configured default, otherwise <code>medium</code>.</li>
+    </ul>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>GPT-5.x follows instructions literally, so a prompt like "think for
+        N seconds" can turn into an actual wait. To avoid that, the OpenAI path drops the <code>sleep</code>
+        tool from the pool and appends a short note to the (Claude-tuned) system prompt telling the model
+        to interpret timing phrases as "reason briefly." The default region for this provider is
+        <code>us-east-2</code>, overridable per model.</p></div>
+    </div>
+
+    <p>The "self-contained side path" framing above describes the <em>top-level</em> chat turn. The
+      agent and subagent runtime is provider-agnostic too (WS-C):
+      <code class="path">server/agents/providers/</code> holds <code>base</code>,
+      <code>anthropic</code>, and <code>openai</code> adapters, and
+      <code>get_adapter(model_key, model_id)</code> returns a <code>ProviderTurn</code> in canonical
+      Anthropic shape, so a subagent can run on GPT-on-Bedrock as well as on Claude (with effort
+      propagation and shared <code>AGENT_CALL_CONCURRENCY</code>). See
+      <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</p>
+
+    <h2 id="config">Where the model list comes from</h2>
+    <p>The cloud model catalogue is config-driven, resolved in
+      <code class="path">server/infrastructure/config.py</code> and read through the thin accessors in
+      <code class="path">server/chat/infra.py</code>:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Config key</th><th>What it holds</th></tr></thead>
+      <tbody>
+        <tr><td><code>chat_models</code></td><td>Map of model key to the Bedrock model id.</td></tr>
+        <tr><td><code>chat_model_meta</code></td><td>Per-model metadata: label, thinking mode, <code>supports_tools</code>, <code>is_local</code>, <code>provider</code>, and effort levels.</td></tr>
+        <tr><td><code>default_chat_model</code></td><td>The key used when no model is selected.</td></tr>
+        <tr><td><code>bedrock_region</code></td><td>The AWS region for the shared Bedrock client.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Local models are the exception: they are defined in code
+      (<code class="path">server/local/runtime.py</code>) and detected by their <code>local_</code> key
+      prefix, so a local turn needs no config lookup to branch. For every field the Settings UI writes,
+      see <a href="ref-settings.html">Settings &amp; config keys</a>.</p>
+
+    <h3 id="data-retention">Data-retention consent</h3>
+    <p>One piece of model metadata needs its own path: <code>requires_data_retention</code>.
+      Mythos-class models such as Fable 5.0 only run when the AWS account's Bedrock data-retention mode
+      is <code>provider_data_share</code>, so selecting one routes through a consent screen
+      (<code class="path">src/components/chat/dataRetentionConsent.tsx</code>) before the model is used.
+      The setting is account-wide and managed just-in-time around model selection rather than left on
+      permanently: acknowledging the screen enables it, and switching back to a non-retention model
+      offers to return the account to zero retention (mode <code>none</code>).</p>
+
+    <h2 id="modes-vs-models">Model backend is not model mode</h2>
+    <p>This is the distinction that trips people up. The <b>chat model</b> (which backend runs your turn)
+      is one setting, chosen in the toolbar. The <b>model mode</b> (cloud / hybrid / local) is a
+      different setting entirely, and it controls the <em>indexing and retrieval stack</em>, not the
+      chat model.</p>
+    <div class="cols-2">
+      <div class="card">
+        <h3>Chat model (toolbar)</h3>
+        <p>Selects the backend for the conversation itself: Claude, GPT-5.x, or on-device Gemma. This is
+          the decision chain on this page.</p>
+      </div>
+      <div class="card">
+        <h3>Model mode (cloud / hybrid / local)</h3>
+        <p>Selects where the RAG stack runs: embeddings, the reranker, and entity extraction for the
+          <a href="arch-index.html">workspace index</a>. It does not change your chat model.</p>
+      </div>
+    </div>
+    <p>So you can, for example, chat with cloud Claude while your index embeddings run locally, or run
+      on-device Gemma while nothing about your indexing changes. The two settings are independent. For a
+      hands-on tour of the mode dial, see the <a href="tut-model-modes.html">Model modes</a> tutorial;
+      for what each capability actually runs in each mode, see
+      <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>,
+        <a href="arch-costs.html">Cost tracking &amp; budgets</a>,
+        <a href="arch-index.html">Index / GraphRAG &amp; search</a>, and the
+        <a href="tut-model-modes.html">Model modes</a> tutorial.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/backends.js"></script>
+</body>
+</html>

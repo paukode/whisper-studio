@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The goal loop &amp; completion gate - Whisper Studio Docs</title>
+  <meta name="description" content="Whisper Studio's goal loop: set a session goal and an end-of-turn completion gate runs Stop hooks then a cheap Haiku evaluator, re-injecting feedback until the goal is achieved — capped so it can't loop forever.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='16' cy='16' r='9'/%3E%3Ccircle cx='16' cy='16' r='4.5'/%3E%3Cpath d='M16 4v3M16 25v3M4 16h3M25 16h3'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-goals">
+    <h1>The goal loop &amp; completion gate</h1>
+    <p class="subtitle">Give the assistant a goal and it keeps working until the goal is met. An end-of-turn
+      <em>completion gate</em> checks whether the work is actually done — with hooks and a cheap evaluator —
+      and, if not, feeds back what's missing and lets the turn continue, capped so it can never loop forever.</p>
+
+    <p>The loop lives in <code class="path">server/goals/</code>: <code class="path">store.py</code> (the goal
+      on the session), <code class="path">tail.py</code> (the transcript the evaluator reads),
+      <code class="path">evaluator.py</code> (the verdict), <code class="path">gate.py</code> (the gate that
+      ties it together), and <code class="path">cron_verify.py</code> (the same idea for cron). <b>Click a
+      box</b> in the diagram to trace a turn through the gate.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="goals-diagram" class="diagram"></div>
+      <figcaption>When the model stops, the endpoint runs <em>run_completion_gate</em> instead of ending the
+        turn: Phase 1 always runs the Stop hooks; Phase 2 (behind the goal flag) asks a Haiku evaluator
+        whether the goal is achieved. A block re-injects feedback and the turn continues — bounded by a
+        consecutive-block cap.</figcaption>
+    </figure>
+
+    <h2 id="why">Why a gate</h2>
+    <p>Left alone, a model tends to stop as soon as it has produced <em>something</em> — often before the
+      task actually holds up. The completion gate turns "the model emitted <code>end_turn</code>" from an
+      unconditional stop into a <em>decision</em>: is the stated goal met, and did any Stop hook object? If
+      the answer is no, the turn is not over — the gate re-injects what's missing and the model keeps going.
+      It is opt-in per session (you set a goal), fails open on any error, and is capped so a stubborn
+      evaluator can't trap you.</p>
+
+    <h2 id="the-gate">run_completion_gate: two phases</h2>
+    <p>Every streaming loop calls <code>run_completion_gate(ctx)</code> at end of turn and acts on the returned
+      <code>GateDecision</code>. It has two phases with different flags:</p>
+    <ol class="steps">
+      <li><h4>Phase 1 — Stop hooks (always)</h4><p><code>check_stop_hooks()</code> from the
+        <a href="arch-hooks.html">hooks engine</a> runs regardless of the goal flag. A block re-injects the
+        hook's reason and the turn continues. The <code>goal_loop</code> flag gates <em>only</em> Phase 2, so
+        turning goals off never disables your Stop hooks.</p></li>
+      <li><h4>Phase 2 — the goal evaluator (flagged)</h4><p>When <code>goal_loop</code> is on and the session
+        has an active goal, a cheap Haiku call judges the turn: <code>{achieved | not_achieved | blocked,
+        feedback, confidence}</code>. <code>achieved</code> ends the turn; <code>not_achieved</code>
+        re-injects the feedback and loops; a <em>confident</em> <code>blocked</code> (confidence ≥ 0.7) ends
+        the turn rather than looping on something the model genuinely can't do.</p></li>
+    </ol>
+    <p>Both phases fail <b>open</b>: the evaluator is wrapped so a transport error or malformed reply lets the
+      turn end normally rather than trapping it. And the whole thing is bounded by a consecutive-block cap
+      (<code>goal_max_consecutive_blocks</code>, default 8) — hit it and the gate gives up, records
+      <code>not_achieved</code>, and lets the turn end.</p>
+
+    <h2 id="evaluator">The evaluator and the transcript</h2>
+    <p>The evaluator (<code class="path">server/goals/evaluator.py</code>) is a single non-streaming Haiku
+      call — cheap enough to run at the end of every turn. It reads the goal plus a rendered <em>tail</em> of
+      the turn from <code class="path">server/goals/tail.py</code>, a provider-neutral renderer that flattens
+      recent activity (Anthropic content blocks, OpenAI Responses items, and top-level
+      <code>function_call</code> / <code>function_call_output</code> items) into text, head-and-tail sliced to
+      a 12&nbsp;KB cap so a huge turn can't blow the prompt. The verdict JSON is extracted with a
+      balanced-brace scan and one retry.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+      <div class="callout__body"><p>The evaluator weighs a deterministic signal above prose: the
+        <code>verify-change</code> skill (<code class="path">skills/verify-change.md</code>) runs the repo's
+        real verification gate and ends with exactly <code>VERIFY PASS</code> or <code>VERIFY FAIL:
+        &lt;reason&gt;</code>. That is the same line a generated <a href="arch-ultracode.html">CI autofix
+        workflow</a> finishes on — proof beats a confident-sounding summary.</p></div>
+    </div>
+
+    <h2 id="ui-verify">Full-stack goals: verifying the UI</h2>
+    <p>For a change that touches rendered UI, that verification is not just tsc-and-tests — the
+      <code>verify-change</code> skill's <code>ui_facing</code> branch drives the
+      <a href="arch-preview.html">live preview</a>: it spins up your dev server, loads the changed view,
+      checks the browser console for errors, drives the changed interaction, and captures a screenshot before
+      emitting its verdict. Because the gate weights that verdict above prose, a goal on full-stack work will
+      not be judged done until the page actually renders and behaves — so Whisper keeps re-driving the preview
+      and screenshotting on its own until the UI holds up, without you asking it to "check the browser". See
+      <a href="arch-preview.html#verify-loop">Verifying the UI in the loop</a> for the full mechanism (and its
+      limits: it needs the preview tools available, and parallel UI checks each spin their own dev server).</p>
+
+    <h2 id="store">Where the goal lives</h2>
+    <p>The goal is stored on the session itself. <code class="path">server/goals/store.py</code> adds two
+      additive columns to the <code>sessions</code> row — <code>goal</code> (the text) and
+      <code>goal_state</code> (JSON, including the consecutive-block counter) — via the migration that also
+      carried the workflow tables (see <a href="arch-persistence.html">Persistence</a>). The block counter
+      resets on each new <em>user</em> turn, so the cap counts blocks within one continuous stretch of work,
+      not across a whole conversation.</p>
+
+    <h2 id="cron-verify">Verified cron</h2>
+    <p>The same idea guards scheduled work. <code class="path">server/goals/cron_verify.py</code> lets a
+      <a href="arch-cron.html">cron</a> run verify it actually achieved its prompt before reporting
+      <code>ok</code>: it folds any <code>notify_user</code> bodies in as a synthetic assistant message, runs
+      the evaluator, and continues the run (up to two continuations) if the goal is unmet. A run that never
+      meets its goal is marked <code>failed</code> and its report is prefixed <code>[UNVERIFIED]</code>.
+      Gated by the <code>cron_verify</code> flag.</p>
+
+    <h2 id="ui">Setting a goal</h2>
+    <p><code>/goal &lt;text&gt;</code> sets the session goal; <code>/goal clear</code> ends it. The active goal
+      shows in a <code>GoalBanner</code> above the composer (hydrated from the session on load), and the
+      gate's decisions surface as <code>goal_eval</code> and <code>goal_cap_reached</code> frames. The REST
+      surface is small: <code>GET / POST / DELETE /api/sessions/{session_id}/goal</code>.</p>
+    <div class="spec">
+      <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate(GateContext) → GateDecision</code>; the two-phase logic and the cap. <code>build_context_from_text</code> is the workflow-runtime entry point.</dd>
+      <dt><code class="path">server/goals/evaluator.py</code></dt><dd>The Haiku verdict — note <code>provider</code> is keyword-only.</dd>
+      <dt><code class="path">server/goals/store.py</code> · <code class="path">tail.py</code></dt><dd>The goal on the sessions row; the provider-neutral transcript renderer.</dd>
+      <dt><code class="path">server/goals/cron_verify.py</code></dt><dd>Verify-before-report for scheduled runs.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> for a hands-on walk-through and when to use a goal versus a
+        plain prompt, see the <a href="tut-goals.html">Goals &amp; autopilot</a> tutorial. Phase 1 rides the
+        <a href="arch-hooks.html">blocking-hooks engine</a>; the gate sits at the end of the
+        <a href="arch-chat-pipeline.html">chat &amp; tool orchestration</a> loop; and the
+        <a href="arch-ultracode.html">ultracode workflow runtime</a> uses the same verify skill to prove a
+        generated fix holds.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/goals.js"></script>
+</body>
+</html>

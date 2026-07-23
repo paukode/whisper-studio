@@ -1,0 +1,459 @@
+/* ================================================================
+   Whisper Studio — Theme Definitions
+   All theme variable blocks + picker styles
+   ================================================================ */
+
+/* ---- Dark theme ---- */
+[data-theme="dark"] {
+    --bg-primary: #111113;
+    --bg-surface: #19191d;
+    --bg-elevated: #222228;
+    --bg-secondary: #222228;
+    --bg-hover: #2a2a32;
+    --bg-inset: #0d0d0f;
+    --border: rgba(255,255,255,0.07);
+    --border-strong: rgba(255,255,255,0.12);
+    --text-primary: #e4e2de;
+    --text-secondary: #9b9a97;
+    --text-muted: #5e5d5a;
+    --accent: #e2a336;
+    --accent-dim: rgba(226,163,54,0.15);
+    --accent-hover: #eab34d;
+    --link: #58a6ff;
+    --link-hover: #79c0ff;
+    --accent-record: #e5453a;
+    --accent-record-dim: rgba(229,69,58,0.12);
+    --accent-live: #34c77b;
+    /* Status accents (goal verdicts, workflow run state). Base tokens — themes
+       inherit these unless they override; used in CSS and JSX inline styles. */
+    --accent-ok: #2e7d32;
+    --accent-warn: #b8860b;
+    --accent-send: #e2a336;
+    --accent-send-hover: #d4922a;
+    --chat-user-bg: #2c2924;
+    --chat-user-border: rgba(226,163,54,0.25);
+    --chat-assistant-bg: #1e1e22;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
+    --noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    --speaker-1: #34c77b;
+    --speaker-2: #e2a336;
+    --speaker-3: #a78bfa;
+    --speaker-4: #f472b6;
+    --speaker-5: #38bdf8;
+    --speaker-6: #fb923c;
+}
+
+/* ---- Light theme ---- */
+[data-theme="light"] {
+    --bg-primary: #f5f3ef;
+    --bg-surface: #ffffff;
+    --bg-elevated: #f0ede8;
+    --bg-secondary: #f0ede8;
+    --bg-hover: #e8e5df;
+    --bg-inset: #eae7e1;
+    --border: rgba(0,0,0,0.08);
+    --border-strong: rgba(0,0,0,0.14);
+    --text-primary: #1a1918;
+    --text-secondary: #6b6966;
+    --text-muted: #a09d99;
+    --accent: #c4841d;
+    --accent-dim: rgba(196,132,29,0.1);
+    --accent-hover: #b3760f;
+    --link: #0969da;
+    --link-hover: #0550ae;
+    --accent-record: #dc3529;
+    --accent-record-dim: rgba(220,53,41,0.08);
+    --accent-live: #16a34a;
+    --accent-send: #c4841d;
+    --accent-send-hover: #a86e0f;
+    --chat-user-bg: #fdf6ec;
+    --chat-user-border: rgba(196,132,29,0.2);
+    --chat-assistant-bg: #f7f5f1;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
+    --noise: none;
+    --speaker-1: #0d9488;
+    --speaker-2: #b45309;
+    --speaker-3: #7c3aed;
+    --speaker-4: #db2777;
+    --speaker-5: #0284c7;
+    --speaker-6: #ea580c;
+}
+
+/* ---- Dark High Contrast ---- */
+[data-theme="dark-high-contrast"] {
+    --bg-primary: #000000;
+    --bg-surface: #0a0a0c;
+    --bg-elevated: #1a1a1e;
+    --bg-secondary: #1a1a1e;
+    --bg-hover: #252529;
+    --bg-inset: #000000;
+    --border: rgba(255,255,255,0.2);
+    --border-strong: rgba(255,255,255,0.35);
+    --text-primary: #ffffff;
+    --text-secondary: #c0c0c0;
+    --text-muted: #808080;
+    --accent: #ffb830;
+    --accent-dim: rgba(255,184,48,0.2);
+    --accent-hover: #ffc84d;
+    --link: #6cb6ff;
+    --link-hover: #91cbff;
+    --accent-record: #ff4d4d;
+    --accent-record-dim: rgba(255,77,77,0.15);
+    --accent-live: #4ade80;
+    --accent-send: #ffb830;
+    --accent-send-hover: #e6a52b;
+    --chat-user-bg: #1a1508;
+    --chat-user-border: rgba(255,184,48,0.35);
+    --chat-assistant-bg: #0e0e12;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.6);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.7);
+    --noise: none;
+    --speaker-1: #4ade80;
+    --speaker-2: #ffb830;
+    --speaker-3: #c4b5fd;
+    --speaker-4: #f9a8d4;
+    --speaker-5: #7dd3fc;
+    --speaker-6: #fdba74;
+}
+
+/* ---- Light High Contrast ---- */
+[data-theme="light-high-contrast"] {
+    --bg-primary: #ffffff;
+    --bg-surface: #ffffff;
+    --bg-elevated: #f0f0f0;
+    --bg-secondary: #f0f0f0;
+    --bg-hover: #e0e0e0;
+    --bg-inset: #e8e8e8;
+    --border: rgba(0,0,0,0.2);
+    --border-strong: rgba(0,0,0,0.35);
+    --text-primary: #000000;
+    --text-secondary: #333333;
+    --text-muted: #666666;
+    --accent: #9a5f00;
+    --accent-dim: rgba(154,95,0,0.12);
+    --accent-hover: #7a4b00;
+    --link: #0043ce;
+    --link-hover: #002d9c;
+    --accent-record: #cc0000;
+    --accent-record-dim: rgba(204,0,0,0.1);
+    --accent-live: #0a7c3e;
+    --accent-send: #9a5f00;
+    --accent-send-hover: #7a4b00;
+    --chat-user-bg: #fff5e0;
+    --chat-user-border: rgba(154,95,0,0.3);
+    --chat-assistant-bg: #f5f5f5;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.12);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.15);
+    --noise: none;
+    --speaker-1: #0a7c3e;
+    --speaker-2: #9a5f00;
+    --speaker-3: #5b21b6;
+    --speaker-4: #be185d;
+    --speaker-5: #0369a1;
+    --speaker-6: #c2410c;
+}
+
+/* ---- Dark Daltonized (color-blind friendly) ---- */
+[data-theme="dark-daltonized"] {
+    --bg-primary: #111113;
+    --bg-surface: #19191d;
+    --bg-elevated: #222228;
+    --bg-secondary: #222228;
+    --bg-hover: #2a2a32;
+    --bg-inset: #0d0d0f;
+    --border: rgba(255,255,255,0.07);
+    --border-strong: rgba(255,255,255,0.12);
+    --text-primary: #e4e2de;
+    --text-secondary: #9b9a97;
+    --text-muted: #5e5d5a;
+    --accent: #e2a336;
+    --accent-dim: rgba(226,163,54,0.15);
+    --accent-hover: #eab34d;
+    --link: #58a6ff;
+    --link-hover: #79c0ff;
+    --accent-record: #3b82f6;       /* blue instead of red */
+    --accent-record-dim: rgba(59,130,246,0.12);
+    --accent-live: #f59e0b;         /* amber instead of green */
+    --accent-send: #e2a336;
+    --accent-send-hover: #d4922a;
+    --chat-user-bg: #2c2924;
+    --chat-user-border: rgba(226,163,54,0.25);
+    --chat-assistant-bg: #1e1e22;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
+    --noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    --speaker-1: #3b82f6;           /* blue */
+    --speaker-2: #f59e0b;           /* amber */
+    --speaker-3: #a78bfa;           /* purple */
+    --speaker-4: #ec4899;           /* pink */
+    --speaker-5: #06b6d4;           /* cyan */
+    --speaker-6: #8b5cf6;           /* violet */
+}
+
+/* ---- Light Daltonized (color-blind friendly) ---- */
+[data-theme="light-daltonized"] {
+    --bg-primary: #f5f3ef;
+    --bg-surface: #ffffff;
+    --bg-elevated: #f0ede8;
+    --bg-secondary: #f0ede8;
+    --bg-hover: #e8e5df;
+    --bg-inset: #eae7e1;
+    --border: rgba(0,0,0,0.08);
+    --border-strong: rgba(0,0,0,0.14);
+    --text-primary: #1a1918;
+    --text-secondary: #6b6966;
+    --text-muted: #a09d99;
+    --accent: #c4841d;
+    --accent-dim: rgba(196,132,29,0.1);
+    --accent-hover: #b3760f;
+    --link: #0969da;
+    --link-hover: #0550ae;
+    --accent-record: #2563eb;       /* blue instead of red */
+    --accent-record-dim: rgba(37,99,235,0.08);
+    --accent-live: #d97706;         /* amber instead of green */
+    --accent-send: #c4841d;
+    --accent-send-hover: #a86e0f;
+    --chat-user-bg: #fdf6ec;
+    --chat-user-border: rgba(196,132,29,0.2);
+    --chat-assistant-bg: #f7f5f1;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.08);
+    --noise: none;
+    --speaker-1: #2563eb;           /* blue */
+    --speaker-2: #d97706;           /* amber */
+    --speaker-3: #7c3aed;           /* purple */
+    --speaker-4: #db2777;           /* pink */
+    --speaker-5: #0891b2;           /* cyan */
+    --speaker-6: #6d28d9;           /* violet */
+}
+
+/* ---- Taw Dark (coral on warm charcoal) ---- */
+[data-theme="dark-taw"] {
+    --bg-primary: #1f1e1d;
+    --bg-surface: #262624;
+    --bg-elevated: #30302e;
+    --bg-secondary: #30302e;
+    --bg-hover: #3a3936;
+    --bg-inset: #1a1917;
+    --border: rgba(255,255,255,0.08);
+    --border-strong: rgba(255,255,255,0.14);
+    --text-primary: #f5f4ee;
+    --text-secondary: #b0aea6;
+    --text-muted: #78756e;
+    --accent: #d97757;
+    --accent-dim: rgba(217,119,87,0.16);
+    --accent-hover: #e08b6f;
+    --link: #8fb0d4;
+    --link-hover: #a9c4e0;
+    --accent-record: #e5453a;
+    --accent-record-dim: rgba(229,69,58,0.12);
+    --accent-live: #34c77b;
+    --accent-send: #d97757;
+    --accent-send-hover: #c96647;
+    --chat-user-bg: #322a26;
+    --chat-user-border: rgba(217,119,87,0.28);
+    --chat-assistant-bg: #262624;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
+    --noise: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    --speaker-1: #d97757;
+    --speaker-2: #6cba7f;
+    --speaker-3: #a78bfa;
+    --speaker-4: #e0a458;
+    --speaker-5: #5fa8d3;
+    --speaker-6: #d98cae;
+}
+
+/* ---- Taw Light (coral on warm ivory) ---- */
+[data-theme="light-taw"] {
+    --bg-primary: #faf9f5;
+    --bg-surface: #ffffff;
+    --bg-elevated: #f0eee6;
+    --bg-secondary: #f0eee6;
+    --bg-hover: #ebe8df;
+    --bg-inset: #eeece4;
+    --border: rgba(0,0,0,0.08);
+    --border-strong: rgba(0,0,0,0.14);
+    --text-primary: #1f1e1d;
+    --text-secondary: #6b6862;
+    --text-muted: #a3a097;
+    --accent: #cf6a48;
+    --accent-dim: rgba(217,119,87,0.12);
+    --accent-hover: #bd583a;
+    --link: #4a7fb5;
+    --link-hover: #2f6399;
+    --accent-record: #d33b30;
+    --accent-record-dim: rgba(211,59,48,0.08);
+    --accent-live: #2f9e51;
+    --accent-send: #cf6a48;
+    --accent-send-hover: #bd583a;
+    --chat-user-bg: #f7ede7;
+    --chat-user-border: rgba(217,119,87,0.22);
+    --chat-assistant-bg: #f4f2ea;
+    --shadow-sm: 0 1px 3px rgba(60,50,40,0.06);
+    --shadow-md: 0 4px 16px rgba(60,50,40,0.08);
+    --noise: none;
+    --speaker-1: #c65f3f;
+    --speaker-2: #2f8f56;
+    --speaker-3: #7c3aed;
+    --speaker-4: #b45309;
+    --speaker-5: #2b6cb0;
+    --speaker-6: #c13d80;
+}
+
+/* ---- Theme toggle icons (prefix matching for all variants) ---- */
+[data-theme^="dark"] .icon-moon { display: none; }
+[data-theme^="dark"] .icon-sun  { display: block; }
+[data-theme^="light"] .icon-sun  { display: none; }
+[data-theme^="light"] .icon-moon { display: block; }
+
+/* Risk-warn caution orange: the :root default is dark-tuned; light surfaces
+   need a deeper stop to clear AA at caption size (also avoids colliding with
+   light-daltonized --accent-live, which is exactly #d97706). */
+[data-theme^="light"] {
+    --risk-warn: #92400e;
+    --risk-warn-dim: rgba(146, 64, 14, 0.12);
+}
+
+/* ---- Theme picker dropdown ---- */
+.theme-picker-wrap {
+    position: relative;
+    display: inline-block;
+}
+
+.theme-picker {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 900;
+    min-width: 220px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    box-shadow: var(--shadow-md);
+    padding: 6px 0;
+    display: none;
+}
+
+.theme-picker.open {
+    display: block;
+    animation: themePickerIn 0.15s ease;
+}
+
+@keyframes themePickerIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.theme-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 14px;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    font-size: 0.85em;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.12s;
+}
+
+.theme-picker-item:hover {
+    background: var(--bg-hover);
+}
+
+.theme-picker-item.active {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.theme-picker-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--border-strong);
+    flex-shrink: 0;
+}
+
+.theme-picker-check {
+    margin-left: auto;
+    opacity: 0;
+    font-size: 0.9em;
+}
+
+.theme-picker-item.active .theme-picker-check {
+    opacity: 1;
+}
+
+.theme-picker-separator {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 10px;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Foundation tokens (UI modernization Phase 1)
+   Defined once in :root. Anything theme-dependent resolves through
+   the theme-scoped accent variables, so the daltonized themes'
+   deliberate remaps (record=blue, live=amber) carry through.
+   ════════════════════════════════════════════════════════════════ */
+:root {
+    /* Radius scale — matches the premium dialog recipe (20px card) */
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 20px;
+
+    /* Spacing scale */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --space-6: 32px;
+
+    /* Motion — the consent dialog's springy entrance */
+    --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+
+    /* Z-index ladder (codifies the implicit stack: sidebar 10 <
+       dropdown 900 < drawer 1400 < modal 1500 < toast 2000 < context menu 9999).
+       The Tasks drawer sits just below the modal cluster so a palette or dialog
+       opened over it still wins the stack. */
+    --z-dropdown: 900;
+    --z-drawer: 1400;
+    --z-modal: 1500;
+    --z-toast: 2000;
+    --z-ctx: 9999;
+
+    /* Semantic status colors — resolve through theme accents */
+    --success: var(--accent-live);
+    --warning: var(--accent);
+    --danger: var(--accent-record);
+    --error: var(--accent-record);
+    --info: #3b82f6;
+
+    /* Risk tints for permission modes. A true orange, deliberately NOT
+       --warning: that aliases to the gold brand accent and would not read
+       as caution next to it. Light themes override below (this default is
+       tuned for dark surfaces); danger reuses --danger/--accent-record-dim
+       so the daltonized red-to-blue remap carries through. */
+    --risk-warn: #d97706;
+    --risk-warn-dim: rgba(217, 119, 6, 0.12);
+
+    /* Legacy aliases. These names are used across style.css but were
+       never defined anywhere, so every usage silently fell back to
+       inherited/initial values. Aliased here (instead of rewriting the
+       call sites) per the additive-only CSS contract — the same
+       stylesheet serves the templates/index.html fallback. */
+    --bg: var(--bg-primary);
+    --fg: var(--text-primary);
+    --text: var(--text-primary);
+    --muted: var(--text-muted);
+    --surface-1: var(--bg-surface);
+    --surface-2: var(--bg-elevated);
+    --font-sans: 'Outfit', system-ui, -apple-system, sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}

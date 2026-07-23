@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>First run &amp; verify - Whisper Studio Docs</title>
+  <meta name="description" content="A short checklist to confirm chat, transcription, and the workspace all work after installing Whisper Studio: connect AWS, pick a model, send a first message, record, and run /doctor.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="first-run">
+    <h1>First run &amp; verify</h1>
+    <p class="subtitle">You ran <code>bash setup.sh</code> and it printed a URL. This page is the short
+      checklist that confirms the three things you actually came for work: chat with Claude, on-device
+      transcription, and the workspace tools.</p>
+
+    <p>Whisper Studio is one process serving one origin, so there is nothing to "connect" between a
+      frontend and a backend. What is left is telling the app which AWS region and model to use, then
+      exercising each subsystem once. Work through the steps in order; each one leaves you in a good
+      state for the next.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>New machine, nothing installed yet? Do the
+        <a href="installation.html">Installation</a> walk-through first, then come back here. This page
+        assumes <code>setup.sh</code> has already finished and given you a URL.</p></div>
+    </div>
+
+    <h2 id="checklist">The healthy-install checklist</h2>
+    <p>Five steps. The first two are one-time configuration; the last three prove each subsystem is
+      alive. If all five pass, your install is healthy.</p>
+
+    <ol class="steps">
+      <li>
+        <h4>Open the URL setup.sh printed</h4>
+        <p>Look at the end of the terminal output for a line with an address, typically
+          <code>http://127.0.0.1:8000</code>. If port 8000 was busy, the script auto-increments, so
+          read the URL it actually printed rather than assuming 8000. Open it in a browser. You should
+          see the Whisper Studio interface, not a blank page. (A blank page usually means the frontend
+          bundle is missing; re-run <code>bash setup.sh</code>, or
+          <code>bash setup.sh --new</code> for a clean rebuild. Note that <code>--new</code> also resets
+          <code class="path">config.json</code> to the template after a timestamped backup, so you would
+          then need to re-add your Tavily key and any custom settings, or restore them from the backup.)</p>
+      </li>
+      <li>
+        <h4>Set your region and model in Settings</h4>
+        <p>Click the gear icon to open Settings, then fill in:</p>
+        <ul>
+          <li><b>Bedrock Region</b> must match the region where your Claude model is enabled. This is
+            almost always the same region you used in <code>aws configure</code>. A mismatch here is
+            the single most common first-run error (see below).</li>
+          <li><b>Default Model</b> should start with <b>Sonnet</b>. It is the best balance of speed,
+            cost, and capability while you are confirming things work; you can switch to Opus or Haiku
+            later with the toolbar or <code>/model</code>.</li>
+          <li><b>Tavily API Key</b> only if you did not export <code>TAVILY_API_KEY</code> in your
+            shell. If the env var is set, the app uses it and this field can stay empty (the env var
+            wins if both are present). Skip this entirely if you do not need web search yet.</li>
+        </ul>
+        <p>Click <b>Save</b>.</p>
+      </li>
+      <li>
+        <h4>Confirm chat: type "hello"</h4>
+        <p>In the chat input, type <code>hello</code> and send it. If Claude streams a reply back
+          token by token, chat works and your AWS access is good. If you get an error instead, jump to
+          <a href="#stumbles">Common first-run stumbles</a> below; the message text tells you which
+          problem you have.</p>
+      </li>
+      <li>
+        <h4>Confirm transcription: click Record</h4>
+        <p>Click <b>Record</b> in the top-right. The browser asks for microphone permission the first
+          time; grant it once. Speak a sentence or two. A live transcript should appear with speaker
+          labels attached. The first recording is slightly slower to start because the on-device speech
+          model (Whisper or Parakeet) auto-downloads and loads into memory on first use; after that it
+          is warm. Transcription runs
+          entirely on your machine, so it needs no AWS setup and works even offline.</p>
+      </li>
+      <li>
+        <h4>Optional: connect a workspace folder</h4>
+        <p>To unlock the file, code, and Git tools, connect a folder with the <b>Workspace</b>
+          control. Once a workspace is connected, Claude can read files, edit code, run commands, and
+          use Git, all gated by your <a href="tut-permissions.html">permission mode</a>. You can skip
+          this if you only want chat and transcription; connect a folder whenever you are ready to code.</p>
+      </li>
+    </ol>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+      <div class="callout__body"><p>If steps 3 and 4 both succeed, you have a working install. Chat and
+        transcription are the two independent subsystems, so passing both means AWS, the local model
+        runtime, and the browser permissions are all in order.</p></div>
+    </div>
+
+    <h2 id="doctor">Run /doctor for an automated check</h2>
+    <p>Rather than eyeballing each subsystem, you can let the app check itself. Type
+      <code>/doctor</code> in the chat input and send it. This runs an automated dependency and
+      AWS-access check and reports the results inline in the chat.</p>
+    <p>A healthy result confirms the pieces the manual checklist covers, without you having to record
+      or connect anything:</p>
+    <ul>
+      <li>The system dependencies <code>setup.sh</code> installs (such as <code>ffmpeg</code> and
+        <code>ripgrep</code>) are present and found on the path.</li>
+      <li>AWS credentials resolve and Bedrock is reachable in your configured region, so a chat turn
+        can actually reach a model.</li>
+      <li>The configured Default Model is enabled and callable in that region (this is exactly the
+        check that a plain <code>hello</code> would exercise).</li>
+    </ul>
+    <p>If <code>/doctor</code> flags something, its output points at the specific failing check, which
+      is faster than reading a raw exception from a failed chat turn. Run it any time later, too, if
+      chat suddenly stops working after an AWS or config change.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Backend changes do not hot-reload. If you edit a
+        <code class="path">server/*.py</code> file, restart the process before re-running
+        <code>/doctor</code>, or you will be checking the old code. The frontend, in
+        <code>--dev</code> mode, does reload on its own.</p></div>
+    </div>
+
+    <h2 id="stumbles">Common first-run stumbles</h2>
+    <p>Almost every failed first chat is one of two AWS problems, and the error message tells you which
+      one. Read the text of the error before changing anything.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body">
+        <p><b><code>AccessDeniedException</code> (or "Could not invoke model").</b> Your AWS user does
+          not have Bedrock permission, or the Claude model is not enabled in the region you selected.
+          Grant the user Bedrock access in IAM, and enable the specific Claude model in the Bedrock
+          console for that region.</p>
+        <p><b>"You don't have access to the model with the specified model ID."</b> This is almost
+          always a region mismatch. The model is enabled somewhere, just not in the region Settings
+          points at. Make the <b>Bedrock Region</b> in Settings match the region where you enabled the
+          model (and where <code>aws configure</code> is pointed). This is the same failure the
+          Installation guide's troubleshooting table calls out.</p>
+      </div>
+    </div>
+
+    <p>A few non-AWS stumbles round out the set:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Symptom</th><th>What it means and the fix</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Blank page in the browser</td>
+          <td>The frontend bundle is missing. Re-run <code>bash setup.sh</code>, or
+            <code>bash setup.sh --new</code> for a clean rebuild. Note that <code>--new</code> resets
+            <code class="path">config.json</code> to the template (after a timestamped backup), so
+            re-add your keys and settings afterwards.</td>
+        </tr>
+        <tr>
+          <td>The URL at 8000 does not load</td>
+          <td>Port 8000 was in use, so the script chose another port. Read the URL the script actually
+            printed rather than typing 8000 by hand.</td>
+        </tr>
+        <tr>
+          <td>Microphone permission never prompts</td>
+          <td>The browser may have remembered a denial. Re-grant microphone access for the site in the
+            browser's site settings, then click Record again.</td>
+        </tr>
+        <tr>
+          <td>Recording misses system audio</td>
+          <td>The default mic does not capture what macOS is playing. Set up a virtual input device;
+            see <a href="tut-voice.html">Voice &amp; meetings</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <p>For anything not listed here, the <a href="installation.html">Installation</a> guide has a
+      fuller troubleshooting table covering prerequisites, network errors, and ports.</p>
+
+    <h2 id="whats-next">What to do next</h2>
+    <p>With a healthy install, pick the workflow that sounds like you and follow its tutorial.</p>
+    <div class="card-grid">
+      <a class="card card--link" href="tut-first-chat.html"><h3>Your first chat</h3><p>Models, effort levels, slash commands, streaming, and exporting a conversation.</p><span class="card__meta">Tutorial: Your first chat →</span></a>
+      <a class="card card--link" href="tut-goals.html"><h3>Goals &amp; autopilot</h3><p>When to just prompt, when to set a goal that runs to completion, and when to run a parallel workflow.</p><span class="card__meta">Tutorial: Goals &amp; autopilot →</span></a>
+      <a class="card card--link" href="tut-workspace.html"><h3>The workspace IDE</h3><p>Connect a repo and let Claude read, edit, run, and commit, gated by mode.</p><span class="card__meta">Tutorial: Workspace IDE →</span></a>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="configuration.html">Configuration</a> for
+        the settings behind each field, <a href="tut-first-chat.html">Your first chat</a> and
+        <a href="tut-voice.html">Voice &amp; meetings</a> to go deeper, and
+        <a href="installation.html">Installation</a> if something is still wrong.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>

@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sub-agents &amp; teams - Whisper Studio Docs</title>
+  <meta name="description" content="Spawn a focused one-shot subagent, run a team of agents in parallel, and watch their progress stream into a live team report card.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-subagents">
+    <h1>Sub-agents &amp; teams</h1>
+    <p class="subtitle">Split a big task across several focused agents that run at the same time. You
+      keep chatting; a live report card shows each agent spawn, its tool calls, and its final answer as
+      they happen.</p>
+
+    <p>Most work is fine as a single conversation. But some tasks are naturally parallel: "search these
+      five directories," "draft it, then have another agent verify it," "audit each service." For those,
+      Whisper Studio can run <b>sub-agents</b> - independent worker agents, each with its own tool loop,
+      sharing your session and its selected model (Claude, or OpenAI GPT-on-Bedrock when that is the
+      session model). This tutorial covers the two ways to start them, the agent types you can pick, and
+      how to read the progress card that streams back.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="subagent-flow-diagram" class="diagram"></div>
+      <figcaption>One prompt fans out into parallel agents; each publishes progress to the event bus,
+        which streams into a single live report card. <b>Click a box</b> to trace the flow.</figcaption>
+    </figure>
+
+    <h2 id="two-ways">Two ways to start agents</h2>
+    <p>There are two entry points, depending on whether you want one helper or several.</p>
+    <div class="cols-2">
+      <div class="card">
+        <h3><code>/subagent</code> - one focused helper</h3>
+        <p>Type <code>/subagent &lt;task&gt;</code> in the chat input to launch a single one-shot agent.
+          It runs its own tool loop in the background and reports back into the same conversation. Good
+          for a self-contained side task you do not want cluttering the main thread.</p>
+      </div>
+      <div class="card">
+        <h3>Let Claude spawn them - multi-agent work</h3>
+        <p>Just describe the parallel work in plain language. Claude decides when to call
+          <code>spawn_agent</code> (one independent agent) or <code>team_create</code> (a whole team at
+          once) rather than doing everything sequentially. You do not call these tools yourself; Claude
+          does, and asks approval like any other tool.</p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
+      <div class="callout__body"><p><b>Detached (background) agents.</b> Both entry points above run inline
+        and report within the same turn. Claude can instead call <code>spawn_agent</code> with
+        <code>detach: true</code>: it returns a task id right away, runs <b>read-only by default</b> (or
+        writes safely with <code>isolation: 'worktree'</code>), and shows up in the background-tasks panel
+        while it works. Its result is folded into a later turn, and you or Claude can check on it with
+        <code>task_status</code> / <code>task_output</code> or stop it with <code>task_cancel</code>.</p></div>
+    </div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Agents share your current session and workspace. If no workspace
+        folder is open, file tools (<code>ws_read_file</code>, <code>ws_grep</code>,
+        <code>ws_glob</code>, and friends) are not available to the agents, and they will say so. Open a
+        folder first when the task needs to touch files. See <a href="tut-workspace.html">the workspace
+        IDE</a>.</p></div>
+    </div>
+
+    <h2 id="agent-types">Agent types</h2>
+    <p>Every agent has a <b>type</b> that shapes its tools, its turn budget, and its instructions.
+      Claude picks a type when it spawns an agent (or you can name one in a team brief). The read-only
+      types can search and read but never write or run commands, which makes them fast and safe to
+      parallelize.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Type</th><th>Tools</th><th>Turn limit</th><th>Best for</th></tr></thead>
+      <tbody>
+        <tr><td><code>general</code></td><td>Full tool set</td><td>30</td><td>Do-anything worker: read, edit, run, commit (subject to the session's permission mode).</td></tr>
+        <tr><td><code>explore</code></td><td>Read-only</td><td>10</td><td>Fast search-and-read to answer a question. Concise findings, no side effects.</td></tr>
+        <tr><td><code>plan</code></td><td>Read-only</td><td>15</td><td>Study the codebase and return a step-by-step implementation plan with files to change.</td></tr>
+        <tr><td><code>verify</code></td><td>Full tool set</td><td>10</td><td>Check work by reading and running tests. Ends with <code>VERDICT: PASS</code>, <code>FAIL</code>, or <code>PARTIAL</code>.</td></tr>
+        <tr><td><code>coordinator</code></td><td>Orchestration only</td><td>50</td><td>Manages other agents. No file access at all - it can only spawn, message, list, and finish.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The read-only guarantee is enforced, not just requested: the runtime strips every write tool
+      (file writes, <code>ws_run_command</code>, git commits, <code>config_set</code>, memory writes,
+      and so on) from an <code>explore</code> or <code>plan</code> agent's tool pool. A coordinator gets
+      an even tighter whitelist of just <code>spawn_agent</code>, <code>send_message</code>,
+      <code>list_agents</code>, and <code>complete_coordination</code>, so it cannot touch your files
+      even by accident.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>A classic pattern is <b>explore, then verify</b>: one agent gathers
+        the facts, another checks a change and returns a clear PASS or FAIL. Because each runs its own
+        loop, the verify agent is a genuine second opinion, not the same context re-reading itself.</p></div>
+    </div>
+
+    <h2 id="a-team-run">Running a team</h2>
+    <p>When Claude uses <code>team_create</code>, it names the team and lists the members, each with a
+      name, a task, and an agent type. All members then run <b>in parallel</b>, sharing your
+      session-selected model. Here is what a run looks like end to end.</p>
+    <ol class="steps">
+      <li>
+        <h4>Describe the parallel work</h4>
+        <p>For example: "Look at the auth, billing, and notifications modules in parallel and tell me
+          which ones lack tests." Claude proposes a team with one agent per module.</p>
+      </li>
+      <li>
+        <h4>Approve the tool call</h4>
+        <p><code>team_create</code> is a normal tool call, so it passes through your current
+          <a href="tut-permissions.html">permission mode</a>. Approve it and the team starts.</p>
+      </li>
+      <li>
+        <h4>Watch the card fill in</h4>
+        <p>A team report card appears in the chat immediately (the "scaffold"), then each agent's row
+          updates live as it spawns, calls tools, and finishes. The card header shows a running tally
+          like <code>2/3 done - 1 running - 14s</code>.</p>
+      </li>
+      <li>
+        <h4>Read the results</h4>
+        <p>When every member finishes, the card flips to done and Claude folds the combined summary back
+          into its own answer. Expand any row to see that agent's full event log and final output.</p>
+      </li>
+    </ol>
+
+    <h2 id="report-card">Reading the team report card</h2>
+    <p>The report card (rendered by <code class="path">src/components/chat/TeamReportCard.tsx</code>) is
+      the window into a run. It is one collapsible card per team, with a collapsible row per agent.</p>
+    <ul>
+      <li><b>Header</b> - team name, agent count, and a live status such as
+        <code>3/3 done</code> or <code>1/3 done - 2 running</code>, plus elapsed time. A green check
+        means all completed; a red mark means at least one failed.</li>
+      <li><b>Agent rows</b> - each shows the agent name, its role badge (team or orchestrator), its
+        <b>type</b> badge (<code>explore</code>, <code>verify</code>, and so on), and a live status like
+        <code>running - turn 3</code> or <code>done - 5 turns - 2 tools</code>. A running or failed row
+        opens automatically so you see it without clicking.</li>
+      <li><b>Expanded row</b> - the agent's task, a real-time <b>event log</b> (each tool call and its
+        result, click a line to expand the full input or output), and the agent's <b>final output</b>
+        once it is done.</li>
+      <li><b>Child agents</b> - if an agent spawns its own sub-agent, that child appears as its own row
+        badged <code>&#8629; child</code>, so a nested tree stays visible in one card.</li>
+    </ul>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M3 9h6"/></svg></span>
+      <div class="callout__body"><p>The card also surfaces each agent's own <b>self-check</b>. Every
+        user-facing agent type is told to restate the task, work step by step, and run a brief
+        self-assessment before its final answer, which shows up as a text event in the log. So you can
+        see the agent reason about whether it actually finished, not just its conclusion.</p></div>
+    </div>
+
+    <h2 id="how-it-streams">How progress reaches you</h2>
+    <p>Under the hood, each agent publishes typed events (started, turn_start, tool_call, tool_result,
+      completed, and failure or turn-limit phases) to a per-session <b>event bus</b>. The chat endpoint
+      drains that bus and relays the events to the browser as <code>team_progress</code> SSE frames,
+      which the SPA folds onto the message to build the card you see. Because it is a live stream, the
+      card is accurate the whole way through, not just at the end. For the runtime and bus internals, see
+      <a href="arch-agents.html">Sub-agents &amp; the event bus</a>.</p>
+
+    <h2 id="agents-talking">Agents that talk to each other</h2>
+    <p>Agents in a session are not isolated. They can coordinate through two tools:</p>
+    <dl class="spec">
+      <dt><code class="path">send_message</code></dt>
+      <dd>Message another agent by its ID, or set <code>broadcast: true</code> to reach every active
+        agent at once. Messages are delivered between an agent's turns.</dd>
+      <dt><code class="path">list_agents</code></dt>
+      <dd>List the active agents in the session with their type, status, and current task, so an agent
+        (or you, by asking) can see who is working on what.</dd>
+    </dl>
+    <p>This is the pattern a <code>coordinator</code> agent uses: it spawns workers, messages them, and
+      calls <code>complete_coordination</code> when the work is done, without ever touching a file
+      itself. Agents can spawn agents up to a bounded nesting depth, so a coordinator can build a small
+      tree without runaway recursion.</p>
+
+    <h2 id="stopping">Stopping a run</h2>
+    <p>While any agent is still working, a <b>Stop</b> button sits in the team card header. Click it to
+      cancel the whole team mid-flight: the server cancels the parallel run
+      (<code>POST /api/teams/{team_id}/stop</code>), each running agent flips to a stopped state through
+      the same event stream, and the card reflects it. Pressing <kbd>Esc</kbd> and using the main chat
+      Stop control also tears down in-flight agents along with the streaming turn. See
+      <a href="tut-permissions.html">Permissions &amp; approvals</a> for the broader kill-switch
+      behavior.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>Every extra agent is a full model run with its own token bill.
+        Fan-out is powerful, but a five-agent team is roughly five conversations at once. Keep teams
+        small, prefer read-only <code>explore</code> agents where you can, and watch the usage counter.
+        See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</p></div>
+    </div>
+
+    <h2 id="when-to-use">When to reach for agents</h2>
+    <div class="card-grid">
+      <div class="card">
+        <h3>Good fits</h3>
+        <p>Independent parallel work (per-file, per-module, per-source), a draft-then-verify loop, or a
+          broad search you want split across directories.</p>
+      </div>
+      <div class="card">
+        <h3>Skip it when</h3>
+        <p>The work is a single linear thread, or each step depends on the last. A normal chat turn with
+          the tool loop is simpler, cheaper, and easier to follow.</p>
+      </div>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-goals.html">Goals &amp; autopilot</a> for
+        when to set a goal versus spawn a helper, and <a href="arch-ultracode.html">the ultracode workflow
+        runtime</a> for fanning out many subagents from a script;
+        <a href="tut-cron.html">Scheduled tasks (cron)</a> for work that runs on a timer,
+        <a href="arch-agents.html">Sub-agents &amp; the event bus</a> for the runtime internals, and
+        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for how a turn drives the tool
+        loop that spawns them.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/subagent-flow.js"></script>
+</body>
+</html>

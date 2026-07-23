@@ -1,0 +1,64 @@
+/* ================================================================
+   Whisper Studio — Commands Module Styles
+   Category headers and keyboard navigation for autocomplete
+   ================================================================ */
+
+.ac-category-header {
+    padding: 6px 12px 3px;
+    font-size: 0.7em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    pointer-events: none;
+}
+
+.ac-item--keyboard {
+    background: var(--bg-hover) !important;
+}
+
+/* Help dialog command list */
+.cmd-help-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.cmd-help-category {
+    font-size: 0.75em;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin: 14px 0 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+}
+
+.cmd-help-category:first-child {
+    margin-top: 0;
+}
+
+.cmd-help-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 0;
+    font-size: 0.88em;
+}
+
+.cmd-help-item__icon {
+    flex-shrink: 0;
+    width: 24px;
+    text-align: center;
+}
+
+.cmd-help-item__name {
+    font-weight: 500;
+    color: var(--accent);
+    min-width: 80px;
+}
+
+.cmd-help-item__desc {
+    color: var(--text-secondary);
+}

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Model modes - Whisper Studio Docs</title>
+  <meta name="description" content="Choose where indexing and retrieval run: cloud, hybrid, or fully local. Model mode controls embeddings, the reranker, and entity extraction, separate from your chat-model choice.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-model-modes">
+    <h1>Model modes</h1>
+    <p class="subtitle">Choose where indexing and retrieval run: cloud, hybrid, or fully local. One
+      dropdown decides whether embeddings, the reranker, and entity extraction reach out to Amazon
+      Bedrock or stay entirely on your laptop.</p>
+
+    <p class="lead">You want to index a private repo but keep every byte on your machine. Or you want
+      the leanest possible install and are happy to let Bedrock do the heavy lifting. Model mode is
+      the single switch for that trade-off, and this tutorial walks through picking the right one.</p>
+
+    <figure class="diagram-figure">
+      <div id="modes-flow-diagram" class="diagram"></div>
+      <figcaption>One mode picks where the whole index / RAG stack runs. <b>Click a box</b> to trace
+        the path; all three modes converge on the same retrieval stage, just with different backends.</figcaption>
+    </figure>
+
+    <h2 id="the-goal">The goal</h2>
+    <p>Decide where the indexing and RAG stack runs. When you index a folder for
+      <a href="tut-index-search.html">semantic search</a>, three capabilities do the work: an
+      <b>embedder</b> that turns text into vectors, a <b>reranker</b> that reorders the top hits, and
+      an <b>entity extractor</b> that pulls names and relationships for the entity graph. Model mode
+      is the one setting that says whether those run in the cloud, on-device, or a mix.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>Model mode is not your chat model.</b> The model you talk to
+        (Haiku, Sonnet, Opus, GPT, on-device Gemma) is chosen in the chat toolbar and is a separate
+        decision. Model mode (<b>Settings &rarr; Model Mode</b>) controls only the indexing and
+        retrieval backends. You can run local indexing while chatting with cloud Claude, or the
+        reverse.</p></div>
+    </div>
+
+    <h2 id="the-three-modes">The three modes</h2>
+    <p>There are three modes, stored as <code>model_mode</code> in your config. Here is what each one
+      wires up:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Mode</th><th>Embeddings</th><th>Reranker</th><th>Entity extraction</th><th>On-device weights</th></tr></thead>
+      <tbody>
+        <tr><td><b>Cloud</b> (default)</td><td>Cohere Embed v4 (Bedrock)</td><td>Cohere Rerank 3.5</td><td>Claude Haiku</td><td>none - lean install</td></tr>
+        <tr><td><b>Hybrid</b></td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td><td>pulled, so you can pick them</td></tr>
+        <tr><td><b>Local</b></td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER</td><td>~16 GB, all on-device</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 id="cloud">Cloud (default)</h3>
+    <p>The default. Embeddings and reranking go to Cohere on Amazon Bedrock, and entity extraction
+      uses Claude Haiku. Because nothing runs on-device, the install skips roughly 16 GB of model
+      weights, so it is the leanest setup and the fastest to get running. Pick this when you are happy
+      for indexing to use Bedrock (and to be billed for it) and you want the smallest footprint.</p>
+
+    <h3 id="hybrid">Hybrid (per capability)</h3>
+    <p>Hybrid lets you choose a backend for each capability independently, stored under the
+      <code>backends</code> key in config. The capabilities are <code>embed</code>
+      (<code>cohere</code> or <code>qwen3</code>), <code>rerank</code> (<code>cohere</code> or
+      <code>qwen3</code>), <code>ner</code> (<code>haiku</code> or <code>gliner</code>), and
+      <code>index_llm</code> (<code>haiku</code>, <code>local</code>, or <code>none</code>). Any
+      capability you leave unset falls back to the cloud backend. This install pulls the on-device
+      weights too, so both sides are available to mix. Pick this when you want, say, local embeddings
+      for privacy but the cloud reranker for quality.</p>
+
+    <h3 id="local">Local (fully on-device)</h3>
+    <p>Everything runs on your laptop: Qwen3 for embeddings, the Qwen3 Reranker, and GLiNER for entity
+      extraction. No Bedrock calls are made for indexing or retrieval, so nothing about your indexed
+      folders leaves the machine. The cost is disk and memory: this mode pulls around 16 GB of weights
+      and runs them locally. Pick this when the data you index must never touch the cloud.</p>
+
+    <h2 id="what-stays-local-always">What stays local in every mode</h2>
+    <p>Two things do not depend on the mode you choose:</p>
+    <ul>
+      <li><b>Transcription is always on-device.</b> Whisper and Parakeet run on your machine in every
+        mode, including cloud. Audio never leaves the laptop regardless of the model mode. See
+        <a href="tut-voice.html">Voice &amp; meetings</a>.</li>
+      <li><b>Each embedder keeps its own index.</b> The cloud and local embedders produce different
+        vectors, so they store separate indexes. Switching mode never rebuilds or invalidates the
+        other one, which is convenient (nothing is lost) but means a folder indexed under one backend
+        is not searchable under the other until you re-index it there.</li>
+    </ul>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>If you switch to local and a folder suddenly returns no results,
+        it is almost always because that folder was indexed under the cloud embedder. Re-index it once
+        under the new mode and it will search there. The old index is still intact if you switch back.</p></div>
+    </div>
+
+    <h2 id="regions">A note on regions</h2>
+    <p>Cohere embed and rerank are pinned to <code>us-east-1</code>. Your chat model can run in any
+      region you set as the <b>Bedrock Region</b>, so cloud indexing works even when your chat traffic
+      goes elsewhere. You do not need to move your chat region to <code>us-east-1</code> to use cloud
+      or hybrid mode; the indexing calls target <code>us-east-1</code> on their own.</p>
+
+    <h2 id="changing-mode">Changing the mode</h2>
+    <p>You can set the mode at install time or change it any time from the app.</p>
+    <ol class="steps">
+      <li>
+        <h4>At install (optional)</h4>
+        <p>Pass a flag to the setup script to choose up front. Cloud is the default and skips the
+          on-device download; hybrid and local pull the ~16 GB of weights so they are ready to use.</p>
+        <div class="code-block"><pre><code>bash setup.sh --cloud    # default: indexing on Bedrock, lean install
+bash setup.sh --hybrid   # per-capability; pulls on-device weights too
+bash setup.sh --local    # everything on-device; pulls all weights</code></pre></div>
+      </li>
+      <li>
+        <h4>In the app</h4>
+        <p>Open <b>Settings</b> (the gear icon) and go to the <b>Model Mode</b> tab. Switch between
+          cloud, hybrid, and local there. In hybrid, this is where you pick a backend per capability.</p>
+      </li>
+      <li>
+        <h4>Confirm the reload</h4>
+        <p>Changing the mode prompts a reload so the app re-initializes in the new mode (it has to load
+          or release the on-device models). Accept it, and the indexing stack comes up on the backends
+          you chose.</p>
+      </li>
+    </ol>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 20h20L12 2Z"/><path d="M12 9v5M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>If you installed with <code>--cloud</code> (the default), the
+        on-device weights were never downloaded, so switching to hybrid or local will fetch them on
+        first use. Expect a one-time delay of a few minutes and a few gigabytes of disk while that
+        happens.</p></div>
+    </div>
+
+    <h2 id="which-mode">Which mode should you pick?</h2>
+    <div class="card-grid">
+      <div class="card">
+        <h3>Pick Cloud if</h3>
+        <p>You want the smallest install and the fastest start, you are fine with indexing running on
+          Bedrock, and your indexed data is not sensitive enough to require staying local.</p>
+      </div>
+      <div class="card">
+        <h3>Pick Local if</h3>
+        <p>The folders you index must never leave the machine. You accept ~16 GB of weights and some
+          local compute in exchange for zero Bedrock calls during indexing and retrieval.</p>
+      </div>
+      <div class="card">
+        <h3>Pick Hybrid if</h3>
+        <p>You want to tune per capability, for example local embeddings for privacy plus the cloud
+          reranker for quality. It carries both sets of weights so you can mix freely.</p>
+      </div>
+      <div class="card">
+        <h3>Still not sure?</h3>
+        <p>Start on Cloud. It is the default, needs no download, and you can switch to hybrid or local
+          later without losing your existing cloud index.</p>
+      </div>
+    </div>
+
+    <h2 id="config-keys">The config behind it</h2>
+    <p>If you prefer editing <code class="path">config.json</code> directly, these are the keys the
+      Settings tab writes:</p>
+    <div class="spec">
+      <dt><code class="path">model_mode</code></dt><dd>One of <code>cloud</code> (default), <code>hybrid</code>, or <code>local</code>. Resolved in <code class="path">server/infrastructure/model_mode.py</code>. It also drives which chat models the picker shows: cloud hides on-device models, and local hides cloud ones.</dd>
+      <dt><code class="path">backends</code></dt><dd>Consulted only in hybrid mode. A per-capability map with keys <code>embed</code>, <code>rerank</code>, <code>ner</code>, and <code>index_llm</code>. Unset capabilities fall back to the cloud backend.</dd>
+    </div>
+    <p>For how these settings are read at runtime and how the backend is selected per capability, see
+      <a href="arch-backends.html">Model backends &amp; modes</a>.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-index-search.html">Index &amp; semantic search</a>
+        for indexing a folder and using retrieval grounding, <a href="configuration.html">Configuration</a>
+        for the full config layering, and <a href="arch-backends.html">Model backends &amp; modes</a>
+        for how backends are chosen at runtime.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/modes-flow.js"></script>
+</body>
+</html>

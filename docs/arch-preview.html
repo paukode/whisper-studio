@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Live preview &amp; browser automation - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio spawns a sandboxed dev server, drives a headless Playwright browser, captures screenshots, and streams a live view into the SPA right dock.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-preview">
+    <h1>Live preview &amp; browser automation</h1>
+    <p class="subtitle">The assistant can spin up your dev server, open a headless browser against it,
+      click through the running app, and stream the whole thing into a dock so you watch it happen. All
+      of it is named, sandboxed, and consent-gated.</p>
+
+    <p>Live preview turns "let me build this UI" into "let me build this UI and check it renders." A
+      handful of tools spawn a real dev server (<code class="path">server/preview/process.py</code>),
+      drive a real Playwright Chromium (<code class="path">server/preview/browser.py</code>), and surface
+      the result two ways: a <b>screenshot</b> the model can see inline, and a live <b>screencast</b> you
+      can watch in the right dock. <b>Click a box</b> in the diagram to trace the flow.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="preview-diagram" class="diagram"></div>
+      <figcaption>From <code>preview_start</code> to a live view in the dock. The browser is created
+        lazily on first navigation; the screencast branch is view-only.</figcaption>
+    </figure>
+
+    <h2 id="the-manager">The manager and its sessions</h2>
+    <p><code class="path">server/preview/manager.py</code> holds a <code>PreviewManager</code> that tracks
+      multiple concurrent, named <code>PreviewSession</code> objects (its shape mirrors the MCP manager).
+      Each session bundles an optional dev-server process, its own lazily created browser, and a bit of
+      metadata (port, base URL, creation time). Names are unique: starting a session whose name is already
+      running is an error, so you stop it or pick a new name first.</p>
+    <dl class="spec">
+      <dt><code class="path">PreviewSession</code></dt><dd>One named unit: a <code>DevServerProcess | None</code>, a <code>BrowserSession</code>, plus <code>port</code>, <code>url</code>, and <code>created_at</code>. A session can be browser-only (no subprocess) if you point it at an already-running server.</dd>
+      <dt><code class="path">start_session(name, command, cwd, port, url, env)</code></dt><dd>Under an async lock: refuse a duplicate name, spawn the dev server if a command was given, register the session, and return it. Spawning is separate from loading a page.</dd>
+      <dt><code class="path">stop_session(name)</code></dt><dd>Pop the session, close its browser, then kill the process group. Returns whether anything was actually stopped.</dd>
+      <dt><code class="path">list_sessions()</code></dt><dd>A status snapshot per session: id, url, port, <code>process_alive</code>, <code>browser_started</code>, and <code>created_at</code>.</dd>
+    </dl>
+
+    <h2 id="spawning">Spawning the dev server</h2>
+    <p>Unlike a one-shot terminal command, a dev server must stay alive across many tool calls. So
+      <code class="path">process.py</code> spawns it as a plain asyncio subprocess (no PTY) and drains its
+      output continuously in the background. <code>DevServerProcess.spawn()</code> does this in order:</p>
+    <ol class="steps">
+      <li><h4>Validate the command</h4><p>The raw joined argv is run through <code>validate_command()</code> from <a href="arch-sandbox.html">the security layer</a>. Validation happens on the raw argv (not a shell-quoted form) because the process is exec'd directly with no shell, so quoting would only hide sensitive paths from the scanner.</p></li>
+      <li><h4>Sandbox-wrap it</h4><p>The command is wrapped by <code>build_pty_sandbox_wrap()</code> (the same wrapping long-lived terminal sessions use), producing the real argv plus a temporary sandbox profile path.</p></li>
+      <li><h4>Exec under a new session</h4><p>It is launched with <code>start_new_session=True</code>, not a <code>preexec_fn</code>. A <code>preexec_fn</code> callable would fork Python, which under uvloop can deadlock and wedge the whole event loop; <code>setsid</code> in C between fork and exec avoids that while still making the child a process-group leader so it can be killed cleanly.</p></li>
+      <li><h4>Drain the output</h4><p>Two reader tasks copy stdout and stderr into bounded ring buffers, so <code>preview_logs</code> can tail them and a chatty server can never grow memory without bound.</p></li>
+    </ol>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.2 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.2a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Bounds, not guesses.</b> The stdout/stderr ring buffer is capped at 1 MB per stream
+        (older bytes are dropped in half when it overflows). Spawn itself is bounded at 30 seconds as a safety net against a
+        pathological sandbox-wrap or exec hang, so starting a server can never block a chat turn forever. A validation
+        failure raises <code>DevServerSpawnError</code>, which is surfaced to the model as text, never a silent fallback.</p></div>
+    </div>
+    <p>Where does the command come from? Either a per-workspace <code class="path">.whisper/launch.json</code>
+      entry resolved by name (same shape as Claude Code's own <code>launch.json</code>: a list of
+      configurations, each with a <code>name</code>, <code>runtimeExecutable</code>, <code>runtimeArgs</code>,
+      and optional <code>port</code>), or an ad-hoc command passed directly on the tool call. If neither is
+      present, <code>preview_start</code> returns a clear error explaining both options.</p>
+
+    <h2 id="the-browser">The Playwright browser</h2>
+    <p>Each session owns one <code>BrowserSession</code> (<code class="path">server/preview/browser.py</code>).
+      The Chromium browser, its context, and its page are created <b>lazily on first navigation</b>, so a
+      session that only needs its dev server never pays for a browser. <code>ensure_started()</code>:</p>
+    <ul>
+      <li><b>Launches headless Chromium</b>, bounded at 60 seconds for the cold start (the first launch is slow). A timeout raises a clear error pointing at an incomplete Playwright install.</li>
+      <li><b>Uses an ephemeral context</b> (<code>new_context()</code>, never <code>launch_persistent_context()</code>): no cookies or profile persist across sessions, and nothing is shared with your real browser.</li>
+      <li><b>Sets default timeouts</b> on the context: 15 seconds for actions and 30 seconds for navigation, so a not-yet-ready or unreachable dev server fails fast instead of hanging the turn.</li>
+      <li><b>Installs a scheme guard</b> at the context level (before any page exists, so it also covers popups): every request whose scheme is not <code>http</code> or <code>https</code> is aborted. This blocks <code>file://</code>, <code>data:</code>, and <code>chrome://</code> escapes as a last-line technical backstop under the approval gate.</li>
+      <li><b>Captures diagnostics</b> into bounded ring buffers (500 entries each): console messages, uncaught page errors (recorded as error-level entries so a thrown <code>TypeError</code> is not invisible), and finished/failed network requests with their status.</li>
+    </ul>
+
+    <h2 id="actions">Actions on the page</h2>
+    <p>Once a browser exists, the assistant drives it with a small vocabulary. Actions that change state or
+      spawn work are <b>approval-gated</b>; pure inspection is read-only and runs freely.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>Gate</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>preview_start</code></td><td><span class="badge">approval</span></td><td>Spawn a dev server for a named session (from <code>launch.json</code> or ad-hoc argv). Does not load a page yet.</td></tr>
+        <tr><td><code>preview_stop</code></td><td><span class="badge">approval</span></td><td>Kill the dev server and close the browser.</td></tr>
+        <tr><td><code>preview_navigate</code></td><td><span class="badge">approval</span></td><td><code>page.goto(url)</code>, http/https only. Returns the resolved URL and page title.</td></tr>
+        <tr><td><code>preview_click</code></td><td><span class="badge">approval</span></td><td>Click (or double-click) a CSS selector.</td></tr>
+        <tr><td><code>preview_fill</code></td><td><span class="badge">approval</span></td><td>Fill an input or textarea by selector.</td></tr>
+        <tr><td><code>preview_eval</code></td><td><span class="badge">approval</span></td><td>Evaluate a JS expression in the page (bounded at 15s so a blocking expression cannot wedge the turn). For debugging only.</td></tr>
+        <tr><td><code>preview_resize</code></td><td><span class="badge">approval</span></td><td>Resize the viewport (presets: mobile 375x812, tablet 768x1024, desktop 1280x800) and optionally emulate light/dark color scheme.</td></tr>
+        <tr><td><code>preview_screenshot</code></td><td><span class="badge badge--muted">read</span></td><td>Capture the page as an inline image (see below).</td></tr>
+        <tr><td><code>preview_snapshot</code></td><td><span class="badge badge--muted">read</span></td><td>The accessibility tree as text: roles, names, structure. Often more reliable than a screenshot.</td></tr>
+        <tr><td><code>preview_inspect</code></td><td><span class="badge badge--muted">read</span></td><td>One element's computed styles, bounding box, and text, by selector. Best for exact colors and sizes.</td></tr>
+        <tr><td><code>preview_console_logs</code></td><td><span class="badge badge--muted">read</span></td><td>Browser console output, optionally filtered by level.</td></tr>
+        <tr><td><code>preview_network</code></td><td><span class="badge badge--muted">read</span></td><td>Network requests (method, url, status), optionally only the failed/4xx/5xx ones.</td></tr>
+        <tr><td><code>preview_logs</code></td><td><span class="badge badge--muted">read</span></td><td>The dev server's stdout/stderr (tail bytes, choose a stream).</td></tr>
+        <tr><td><code>preview_list</code></td><td><span class="badge badge--muted">read</span></td><td>Every running session and its status.</td></tr>
+      </tbody>
+    </table></div>
+    <p>That is 14 tools in all: 7 approval-gated and 7 read-only. They are dispatched from an async branch
+      in <code class="path">server/tool_router.py</code> rather than the usual sync executor path, because
+      Playwright's async API must stay bound to the single running event loop. See
+      <a href="arch-tools.html">Tool dispatch &amp; executors</a> for how that split works. The read-only
+      inspection tools are worth reaching for before a screenshot: <code>preview_inspect</code> reads
+      computed styles exactly, so it is the honest way to confirm a color or a spacing value.</p>
+
+    <h2 id="screenshots">Screenshots the model can actually see</h2>
+    <p>A screenshot is not returned as a base64 blob buried in JSON text. <code class="path">server/preview/screenshot.py</code>
+      captures the page as a PNG, downscales it so the long edge is at most 1280px, re-encodes it as a
+      quality-70 JPEG, and returns a <code>[WS_PREVIEW_IMAGE]</code> sentinel carrying the payload and a
+      caption. The <a href="arch-chat-pipeline.html">tool executor</a> detects that sentinel and rewrites
+      it into a real Anthropic <code>image</code> content block, so the model sees actual pixels in the
+      tool result.</p>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>The tool description nudges the model to prefer <code>preview_console_logs</code>,
+        <code>preview_network</code>, and <code>preview_snapshot</code> for precise checks, and to use a
+        screenshot for visual judgment (does this look right?) rather than for reading exact values.</p></div>
+    </div>
+
+    <h2 id="verify-loop">Verifying the UI in the loop</h2>
+    <p>These tools are not just for ad-hoc looking. They are the <em>UI half of verification</em>, and that
+      is what makes "check the page, then keep fixing until it renders" feel automatic during full-stack
+      work. There is no separate component that decides to screenshot — the behavior emerges from three
+      pieces cooperating:</p>
+    <ol class="steps">
+      <li><h4>The tools drive the page</h4><p>Everything above: spawn the dev server, navigate, read the
+        console and the DOM, click and type, and capture a screenshot the model can see.</p></li>
+      <li><h4>The verify-change skill decides to use them</h4><p><code class="path">skills/verify-change.md</code>
+        has a <code>ui_facing</code> branch. When a change touches rendered UI, the skill tells the model to
+        start (or reuse) the dev server, load the changed view, check <code>read_console_messages</code> for
+        errors, <code>read_page</code> for the expected structure, drive the changed interaction and re-read
+        to confirm it took, and capture a screenshot as evidence — then emit exactly <code>VERIFY PASS</code>
+        or <code>VERIFY FAIL: &lt;reason&gt;</code>.</p></li>
+      <li><h4>The goal gate makes it non-optional</h4><p>The <a href="arch-goals.html">completion gate</a>'s
+        evaluator weights a <code>verify_change</code> result <em>above</em> the model's own prose claims
+        (<code class="path">server/goals/evaluator.py</code>). So under a goal, a turn is not judged done
+        until a passing verify token appears — a console error or an interaction that didn't persist yields
+        <code>VERIFY FAIL</code>, the gate returns not-achieved, and the model re-drives the preview and
+        screenshots again until the UI genuinely holds up (capped at 8 blocks).</p></li>
+    </ol>
+    <p>The net effect: give a goal like <em>"make the settings page save correctly"</em> and Whisper will
+      keep spinning the live preview, clicking through the flow, and reading the console on its own until the
+      page actually works — you don't have to keep saying "check it in the browser". The same
+      <code>verify_change</code> step ends a generated <a href="arch-ultracode.html">CI-autofix workflow</a>,
+      so an automated fix proves its UI before it's handed back.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+      <div class="callout__body"><p>Two honest limits. The check only runs when the preview tools are
+        <em>available</em> — gated by the <code>preview_tools</code> flag and a live capability probe
+        (<code>preview_capability_ok()</code> = Playwright importable + Chromium installed); if either is
+        missing, the tools hide themselves and verify-change falls back to the CI gate (tsc, tests, build)
+        only. And in a <a href="arch-ultracode.html">parallel workflow</a>, each agent that verifies UI spins
+        <em>its own</em> dev server on a distinct port — fine for a few, but fanning out many concurrent
+        browser checks is where you'd feel resource pressure.</p></div>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+      <div class="callout__body"><p>Practical tip: phrase a full-stack goal so the UI check is the proof —
+        "the form submits and the row appears" gives the evaluator a concrete thing to verify, where "improve
+        the form" does not. The <a href="tut-goals.html">Goals &amp; autopilot</a> tutorial covers how to
+        write goals that pin down "done".</p></div>
+    </div>
+
+    <h2 id="the-dock">Watching it live: the right dock</h2>
+    <p>The screencast is the human-facing half. <code class="path">server/preview/screencast.py</code>
+      exposes a WebSocket at <code>/ws/preview/{name}/screencast</code>. When the SPA's live-preview pane
+      connects, it ensures the browser page exists (blank if the model has not navigated yet), opens a CDP
+      session, and calls <code>Page.startScreencast</code> to receive JPEG frames, which it forwards to the
+      panel.</p>
+    <div class="cols-2">
+      <div class="card">
+        <h3>View-only by design</h3>
+        <p>Frames flow one way. No clicks or keystrokes are forwarded back from the pane, so watching never
+          interferes with the model driving the page. You see exactly what its browser does: a navigation,
+          a click, dark mode, an overlay swallowing a click.</p>
+      </div>
+      <div class="card">
+        <h3>Fresh over complete</h3>
+        <p>A tiny frame queue (cap 2) drops the oldest frame under backpressure to keep latency low, while
+          every frame is acked immediately so Chromium never pauses the stream. Each viewer opens its own
+          CDP session, so multiple watchers and the agent coexist.</p>
+      </div>
+    </div>
+    <p>The path lives under <code>/ws/...</code> deliberately: Vite's dev proxy upgrades only <code>/ws</code>
+      as a WebSocket, while <code>/api</code> stays plain HTTP. A session that does not exist gets an
+      accept-then-close with code <code>4404</code>, so the browser sees a clean close rather than a
+      handshake failure. See <a href="arch-frontend.html">Frontend architecture</a> for how the dock and its
+      SSE/WebSocket runtimes are wired.</p>
+
+    <h2 id="the-kill-switch">The status API and kill switch</h2>
+    <p><code class="path">server/preview/routes.py</code> is a small status API for the Settings "Live
+      preview" panel: a user-visible kill switch for whatever the model has spun up. It is intentionally
+      not a full remote-control surface (the page actions above are agent tools, not REST endpoints).</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Method + path</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/preview/sessions</code></td><td>List sessions and their status for the panel.</td></tr>
+        <tr><td><code>POST /api/preview/sessions</code></td><td>Start (or reuse) a session by name, resolving its command from <code>.whisper/launch.json</code>. Powers the panel's Restart button, so a stopped dev server can come back without the assistant.</td></tr>
+        <tr><td><code>DELETE /api/preview/sessions/{name}</code></td><td>Stop a session; 404 if there is no such session.</td></tr>
+        <tr><td><code>WS /ws/preview/{name}/screencast</code></td><td>The view-only live screencast described above.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="lifecycle">Lifecycle and cleanup</h2>
+    <p>Stopping a session (via the tool, the Settings panel, or a full shutdown) cancels the reader tasks,
+      kills the dev server's process group, closes the browser context and browser, stops Playwright, and
+      unlinks the temporary sandbox profile. <code>PreviewManager.stop_all()</code> tears down every session
+      at once. Because the context is ephemeral and the profile is temporary, nothing survives a session,
+      which keeps the preview browser cleanly isolated from your real one.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-goals.html">The goal loop</a> and the
+        <a href="tut-goals.html">Goals &amp; autopilot</a> tutorial for how UI verification drives a goal to
+        completion; <a href="arch-tools.html">Tool dispatch &amp; executors</a>,
+        <a href="arch-sandbox.html">Sandbox &amp; security</a>,
+        <a href="tut-workspace.html">The workspace IDE tutorial</a>, and
+        <a href="arch-frontend.html">Frontend architecture</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/preview.js"></script>
+</body>
+</html>

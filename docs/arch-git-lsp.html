@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Git integration &amp; LSP - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio talks to git: cached root discovery, a hardened subprocess wrapper, approval-gated write tools, secret-file guards, a .git watcher that feeds the SPA over SSE, and the LSP proxy.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-git-lsp">
+    <h1>Git integration &amp; LSP</h1>
+    <p class="subtitle">Whisper Studio shells out to your real <code>git</code> binary, but never
+      carelessly. Reads run freely; writes stop for approval; a one-second watcher keeps the SPA in
+      sync; and a small proxy tunnels editor traffic to language servers.</p>
+
+    <p>The git layer lives under <code class="path">server/git/</code> and has three jobs: answer
+      questions about the repo (branch, status, diff, log), let the assistant make changes safely
+      behind the <a href="arch-approval.html">approval flow</a>, and tell the frontend the moment
+      something in <code>.git</code> moves. Alongside it, two separate LSP surfaces give the assistant
+      and the editor code intelligence. <b>Click a box</b> in the diagram to trace a path.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="gitlsp-diagram" class="diagram"></div>
+      <figcaption>Read tools flow straight through <code>_run_git</code> to the repo; write tools
+        detour through Approval. The watcher and the LSP proxy feed the SPA on their own channels.</figcaption>
+    </figure>
+
+    <h2 id="git-core">Git core</h2>
+    <p>Everything starts in <code class="path">server/git/core.py</code>. It is deliberately plain:
+      synchronous functions, <code>subprocess.run()</code> for git, and direct file reads for the
+      fast paths. Two pieces do most of the work.</p>
+
+    <h3 id="root-discovery">Root discovery</h3>
+    <p><code>find_git_root(start_path)</code> walks up the directory tree looking for a <code>.git</code>
+      entry. It accepts either a directory (a normal repo) or a file (a worktree or submodule, where
+      <code>.git</code> is a <code>gitdir:</code> pointer). The resolved root is normalized to Unicode
+      NFC and cached in a plain dict capped at <b>50 entries</b>, evicting the oldest key when full.
+      Because the SPA panel, prompt building, and every status call hit this repeatedly, the cache
+      turns a tree walk into a dict lookup.</p>
+    <p>A companion, <code>find_canonical_git_root()</code>, resolves a worktree back to the main repo
+      identity by following the <code>gitdir:</code> then <code>commondir</code> chain. Two structural
+      checks guard it: the worktree gitdir must be a direct child of
+      <code>&lt;commonDir&gt;/worktrees/</code>, and its <code>gitdir</code> back-link must point at
+      <code>&lt;gitRoot&gt;/.git</code>. Both are required, so a hand-crafted repo cannot borrow
+      another checkout's trust.</p>
+
+    <h3 id="run-git">The subprocess wrapper</h3>
+    <p><code>_run_git(args, cwd, timeout=15)</code> is the single choke point for running git. Its
+      hygiene is the point:</p>
+    <ul>
+      <li><b>No credential hang.</b> It sets <code>GIT_TERMINAL_PROMPT=0</code> and empties
+        <code>GIT_ASKPASS</code>, and closes stdin (<code>subprocess.DEVNULL</code>). A missing
+        credential fails fast instead of blocking the whole process on an invisible prompt.</li>
+      <li><b>A time budget.</b> The default timeout is <b>15 seconds</b> (pushes bump it to 30). A
+        wedged network operation cannot stall a chat turn indefinitely.</li>
+      <li><b>Bounded output.</b> Tool results run through <code>_truncate()</code>
+        (<code class="path">server/git/executor.py</code>), which caps text at roughly
+        <b>50,000 characters</b> or <b>200 lines</b>, whichever comes first, and appends a note when
+        it clips. A giant diff will not blow up the token bill.</li>
+    </ul>
+    <p>The git executable itself is resolved once with <code>shutil.which("git")</code> and memoized.</p>
+
+    <h2 id="diffs">Diffs</h2>
+    <p><code class="path">server/git/diff.py</code> is the most careful reader in the subsystem,
+      because diffs can be arbitrarily large. It supports four shapes:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Shape</th><th>How</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Working tree vs HEAD</td><td><code>git diff HEAD</code></td><td>The default for the panel and the <code>git_diff</code> tool.</td></tr>
+        <tr><td>Staged (cached)</td><td><code>git diff --cached</code></td><td>What a commit would capture right now.</td></tr>
+        <tr><td>Single file, PR-style</td><td>Against a merge base</td><td><code>fetch_single_file_git_diff()</code> diffs a file against the merge base with the default branch, falling back to HEAD.</td></tr>
+        <tr><td>Untracked file</td><td>Synthetic diff</td><td>A brand-new file is rendered as one hunk of pure additions.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Size safeguards are baked in as constants: at most <b>50</b> files get per-file detail, files
+      over <b>1 MB</b> are skipped, and each file is capped at <b>400</b> lines of hunk content
+      (GitHub's auto-load limit). A cheap <code>--shortstat</code> probe gives accurate totals in
+      O(1) memory first, so the expensive numstat and hunk parsing only run when the change set is
+      small enough to be worth it.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><code>is_transient_git_state()</code> checks for
+        <code>MERGE_HEAD</code>, <code>REBASE_HEAD</code>, <code>rebase-merge/</code>,
+        <code>CHERRY_PICK_HEAD</code>, and similar markers. During a merge or rebase the working tree
+        holds incoming changes rather than your edits, so diffing would be misleading. In those
+        states the diff functions return nothing until the operation finishes.</p></div>
+    </div>
+
+    <h2 id="git-tools">Git tools</h2>
+    <p>Each git capability is a registered tool in <code class="path">server/git/executor.py</code>.
+      They split cleanly into two tiers by whether they change the repo.</p>
+
+    <h3 id="read-tools">Read tools (no prompting)</h3>
+    <p>These are registered <code>read_only=True, concurrent_safe=True</code>, so they run without an
+      approval card and can batch in parallel with other reads (see
+      <a href="arch-tools.html">Tool dispatch &amp; executors</a>). Most add
+      <code>--no-optional-locks</code> so they never contend with a concurrent git process.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>Runs</th></tr></thead>
+      <tbody>
+        <tr><td><code>git_status</code></td><td><code>git status</code> (optionally <code>--short</code>).</td></tr>
+        <tr><td><code>git_diff</code></td><td>Working-tree, <code>--cached</code>, <code>--stat</code>, or a single-file PR-style diff.</td></tr>
+        <tr><td><code>git_log</code></td><td><code>git log</code> with a limit (default 20), oneline or formatted, optionally per-file.</td></tr>
+        <tr><td><code>git_show</code></td><td><code>git show &lt;ref&gt;</code>, optionally <code>--stat</code>.</td></tr>
+        <tr><td><code>git_blame</code></td><td><code>git blame</code>, optionally scoped to a line range.</td></tr>
+        <tr><td><code>git_branch_list</code></td><td><code>git branch</code>, optionally <code>-a</code> or <code>-r</code>.</td></tr>
+        <tr><td><code>git_stash_list</code></td><td><code>git stash list</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Every one first calls <code>_get_git_cwd()</code>, which returns a friendly error when no
+      workspace is connected or the workspace is not a repo, so the assistant gets clear feedback
+      instead of a raw subprocess failure.</p>
+
+    <h3 id="write-tools">Write tools (approval-gated)</h3>
+    <p>Registered <code>read_only=False, concurrent_safe=False</code>, these do not run their git
+      command directly. Instead they return a <code>[WS_APPROVAL]</code> payload, which surfaces an
+      approval card in the UI. Only after you confirm (or the session is pre-approved for CLI actions)
+      does <code class="path">server/approval/bootstrap.py</code> call the matching
+      <code>do_*</code> helper that runs the real command. Each helper returns a uniform
+      <code>(ok, output)</code> tuple.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><code>git_add_commit</code></td><td>Stage files (or <code>-A</code>) and commit with a message.</td></tr>
+        <tr><td><code>git_push</code></td><td>Push, setting upstream by default.</td></tr>
+        <tr><td><code>git_push_pr</code></td><td>Push the current branch, then open a PR via the <code>gh</code> CLI.</td></tr>
+        <tr><td><code>git_create_branch</code></td><td><code>git checkout -b</code>, optionally from a ref.</td></tr>
+        <tr><td><code>git_checkout</code></td><td>Switch to an existing branch.</td></tr>
+        <tr><td><code>git_delete_branch</code></td><td>Delete a branch (<code>-d</code>, or <code>-D</code> when forced).</td></tr>
+        <tr><td><code>git_merge</code></td><td>Merge a branch, optionally <code>--no-ff</code>.</td></tr>
+        <tr><td><code>git_stash</code></td><td>push / pop / apply / drop.</td></tr>
+        <tr><td><code>git_clone</code></td><td>Clone a URL and optionally connect it as the workspace.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Two of these carry extra guardrails. <code>git_push_pr</code> refuses to run while you are on
+      the default branch and tells you to make a feature branch first. <code>git_clone</code> is the
+      one write tool that does not require a pre-existing workspace, so it validates the URL against a
+      strict allowlist (<code>https://</code>, <code>ssh://</code>, or <code>git@host:path</code>, no
+      shell metacharacters, no <code>file://</code>) and refuses a non-empty destination.</p>
+
+    <h3 id="secret-guard">The secret-file guard</h3>
+    <p>Before <code>git_add_commit</code> stages anything, <code>contains_secret_files()</code> in
+      <code class="path">server/git/security.py</code> matches every path against a pattern list and
+      aborts the commit if any look sensitive. The patterns include <code>.env</code> and
+      <code>.env.*</code>, <code>*.pem</code>, <code>*.key</code>, <code>credentials.json</code>,
+      <code>service-account*.json</code>, <code>id_rsa</code>, <code>id_ed25519</code>, and
+      catch-alls like <code>*secret*</code> and <code>*password*</code>. The same module also
+      classifies read-only commands for auto-approval, blocks writes to <code>git config</code> and
+      flags like <code>--no-verify</code> and <code>-i</code>, and warns on destructive shapes such
+      as a force push to <code>main</code> or <code>master</code>.</p>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>The secret guard is a safety net, not a boundary. It matches on
+        file names, not contents, so a secret stored under an innocuous name can still slip through.
+        Treat it as defense-in-depth on top of a good <code>.gitignore</code>. See the
+        <a href="ref-security.html">security model</a> for what is a hard boundary versus a
+        best-effort check.</p></div>
+    </div>
+
+    <h2 id="watcher">The change watcher</h2>
+    <p><code class="path">server/git/watcher.py</code> keeps the frontend honest without polling the
+      whole repo. The <code>GitFileWatcher</code> singleton runs one daemon thread that stats three
+      paths once per second: <code>.git/HEAD</code>, the git <code>config</code>, and the loose ref
+      file for the current branch. When any mtime changes, it marks its lazy cache dirty and fires
+      subscribers.</p>
+    <p>The subscriber is the SSE endpoint <code>GET /api/git/events</code>
+      (<code class="path">server/git/router.py</code>). It emits one <code>git-changed</code> event
+      immediately with the current branch and head SHA, then one on every subsequent change,
+      coalescing bursts and sending a keep-alive comment every 30 seconds so proxies do not drop the
+      idle stream. This replaced a 15-second frontend interval, so the Git panel refetches only when
+      state actually moved. If HEAD changed, the watcher re-resolves which branch ref to watch, so
+      switching branches keeps working.</p>
+    <p>The same cache backs the hot read helpers <code>get_cached_branch()</code>,
+      <code>get_cached_head()</code>, <code>get_cached_default_branch()</code>, and
+      <code>get_cached_remote_url()</code>. Because the watcher invalidates on the exact files those
+      values derive from, they stay correct with no timer and no manual invalidation.</p>
+
+    <h2 id="git-rest">Git REST endpoints</h2>
+    <p>The frontend reads git state directly through <code class="path">server/git/router.py</code>
+      (prefix <code>/api/git</code>). These are read and UI-support routes; writes are not exposed as
+      REST here, they go through the approval-gated tools above.</p>
+    <dl class="spec">
+      <dt><code class="path">GET /api/git/status</code></dt><dd>Branch, clean flag, and a per-file status list for indicators.</dd>
+      <dt><code class="path">GET /api/git/changes</code></dt><dd>Combined status + diff in one round trip, behind a 1-second TTL LRU cache that absorbs the assistant's tool-loop and the panel's auto-poll.</dd>
+      <dt><code class="path">GET /api/git/branch</code></dt><dd>Current branch, default branch, and whether they match.</dd>
+      <dt><code class="path">GET /api/git/diff</code></dt><dd>Diff summary (file count, lines added/removed, per-file stats) for the panel.</dd>
+      <dt><code class="path">GET /api/git/show</code></dt><dd>The HEAD version of a file, for side-by-side diffing in the editor.</dd>
+      <dt><code class="path">POST /api/git/restore</code></dt><dd>Undo changes to a single tracked file, or remove an untracked one.</dd>
+      <dt><code class="path">GET / POST /api/git/worktrees</code></dt><dd>List worktrees, add one, or remove one (never the active workspace).</dd>
+      <dt><code class="path">GET /api/git/events</code></dt><dd>The SSE change stream described above.</dd>
+    </dl>
+
+    <h2 id="lsp">Code intelligence: two LSP surfaces</h2>
+    <p>Whisper Studio exposes language-server features in two distinct ways, which is worth keeping
+      straight.</p>
+
+    <h3 id="lsp-tools">Assistant tools</h3>
+    <p><code class="path">server/lsp.py</code> (prefix <code>/api/lsp</code>) backs the tools
+      <code>lsp_diagnostics</code>, <code>lsp_hover</code>, and <code>lsp_references</code>. These are
+      pragmatic static-analysis helpers rather than a live language server: diagnostics run
+      <code>pyflakes</code> (falling back to <code>py_compile</code>) for Python and ESLint for
+      JS/TS, hover extracts the symbol under a line and column and shows surrounding context, and
+      references do a bounded workspace grep (capped at 100 matches). They work with nothing
+      installed and get richer as you add tools, which suits the assistant's needs without spinning
+      up a server per call.</p>
+
+    <h3 id="lsp-proxy">The LSP proxy (editor)</h3>
+    <p>The Monaco editor in the workspace is a real language-server client, so
+      <code class="path">server/lsp_proxy.py</code> provides a WebSocket-to-stdio tunnel at
+      <code>ws://.../ws/lsp/{language}?workspace=/path</code>. Each connection spawns a language
+      server subprocess and relays JSON-RPC both ways, translating between plain JSON on the socket
+      and LSP <code>Content-Length</code> framing on the process's stdio. Two servers are wired up:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Language</th><th>Server</th><th>Command</th></tr></thead>
+      <tbody>
+        <tr><td>Python</td><td>python-lsp-server</td><td><code>pylsp</code></td></tr>
+        <tr><td>JavaScript / TypeScript</td><td>typescript-language-server</td><td><code>typescript-language-server --stdio</code></td></tr>
+      </tbody>
+    </table></div>
+    <p>The proxy checks that the binary is on <code>PATH</code> before accepting, and closes with a
+      helpful install hint if it is missing. On disconnect it terminates the child (then kills it
+      after a 3-second grace) so no orphaned language server lingers. If the servers are not
+      installed, the editor still works; you just do not get inline diagnostics, hovers, or
+      completions there.</p>
+    <p>On the browser side, the <code class="path">useLsp</code> hook
+      (<code class="path">src/hooks/useLsp.ts</code>) is the language client. When a Python, TypeScript,
+      or JavaScript file is open in a connected workspace it opens the WebSocket, runs the
+      <code>initialize</code> / <code>initialized</code> handshake, and sends
+      <code>textDocument/didOpen</code> plus debounced <code>textDocument/didChange</code>
+      (full-text sync) as you type. It maps <code>publishDiagnostics</code> to Monaco markers, and
+      registers completion and hover providers backed by <code>textDocument/completion</code> and
+      <code>textDocument/hover</code>, translating the 0-based LSP positions to Monaco's 1-based
+      coordinates in both directions. A small status dot in the editor's top-right corner shows
+      whether the server is connecting, connected, or unavailable. Everything is torn down on file
+      switch, language change, or disconnect: providers disposed, markers cleared, and the socket
+      closed after a <code>shutdown</code>/<code>exit</code>. For unsupported languages or when no
+      workspace is connected, the client is a no-op and no socket is opened.</p>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Want the full editor experience? Install the servers with
+        <code>pip install python-lsp-server</code> and
+        <code>npm install -g typescript-language-server</code>. The proxy picks them up on the next
+        connection.</p></div>
+    </div>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/git/core.py</code></dt><dd>Root discovery, cached state queries, the <code>_run_git</code> wrapper, remote-URL normalization.</dd>
+      <dt><code class="path">server/git/executor.py</code></dt><dd>Read and write git tools; the <code>do_*</code> helpers approval runs after consent.</dd>
+      <dt><code class="path">server/git/diff.py</code></dt><dd>Diff fetching and parsing with size limits and transient-state detection.</dd>
+      <dt><code class="path">server/git/security.py</code></dt><dd>Read-only allowlist, blocked flags, destructive warnings, and the secret-file guard.</dd>
+      <dt><code class="path">server/git/watcher.py</code></dt><dd>The one-second <code>.git</code> watcher and its lazy cache.</dd>
+      <dt><code class="path">server/git/router.py</code></dt><dd>The <code>/api/git</code> REST routes and the SSE change stream.</dd>
+      <dt><code class="path">server/lsp.py</code></dt><dd>Static-analysis LSP tools for the assistant.</dd>
+      <dt><code class="path">server/lsp_proxy.py</code></dt><dd>The WebSocket-to-stdio language-server tunnel for the editor.</dd>
+      <dt><code class="path">src/hooks/useLsp.ts</code></dt><dd>The browser-side Monaco language client: handshake, text sync, diagnostics, completion, and hover over the proxy socket.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-workspace.html">The workspace IDE</a>
+        tutorial (where you actually use this), <a href="arch-tools.html">Tool dispatch &amp;
+        executors</a>, <a href="arch-approval.html">Approval &amp; permissions</a>, and
+        <a href="arch-frontend.html">Frontend architecture</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/gitlsp.js"></script>
+</body>
+</html>

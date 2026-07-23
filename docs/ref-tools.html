@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent tools - Whisper Studio Docs</title>
+  <meta name="description" content="Every tool the Whisper Studio assistant can call, grouped by area: workspace and files, git, LSP, web, memory, tasks and scheduling, sub-agents, skills, MCP, and interaction.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="ref-tools">
+    <h1>Agent tools</h1>
+    <p class="subtitle">The assistant is agentic: it calls tools to read and change your workspace,
+      search the web, run git, remember things, schedule jobs, and coordinate sub-agents. This page
+      lists every tool, grouped by area, with what each one does and whether it needs your approval.</p>
+
+    <p class="lead">With <b>progressive tool disclosure</b> (feature flag
+      <code>progressive_tools</code>, default on) the interactive chat loop advertises to cloud
+      Claude only a core set plus the tools this session has activated; every other tool lives as a
+      one-line entry in a deferred index and loads on demand via <code>tool_search</code>. The full
+      pool still goes to sub-agents and cron. On-device Gemma can also gate its set with a per-model
+      <b>Tools</b> dropdown (local only). Tools that change files, run commands, or alter git or
+      config state pause for your approval before they take effect; read-only tools run without
+      prompting.</p>
+
+    <h2 id="how-tools-work">How tools reach the model</h2>
+    <p>Tool definitions are part of the input the model reads before your message. But the
+      interactive chat loop no longer sends the whole catalogue every turn: with <b>progressive tool
+      disclosure</b> (<code>progressive_tools</code>, default on) only the core and
+      session-activated schemas are sent, while every deferred tool costs a single index line in the
+      cached system block (<code>build_deferred_index</code>) rather than a full schema. That cuts
+      roughly <b>60-75%</b> of tool-schema tokens per turn, and it applies to cloud Claude too. The
+      ~<b>8K-token</b> full catalogue now describes the non-progressive path (sub-agents and cron),
+      not an interactive cloud turn. For cloud Claude the schemas bill as input tokens (a cost
+      concern, not a speed one); for local Gemma there is no bill, but the extra tokens slow the
+      on-device prefill, which is why you can also shrink the set with the Tools dropdown.</p>
+    <p>Dispatch itself is a pure name-to-function mapping. Each executor is registered with safety
+      metadata (<code>read_only</code>, <code>concurrent_safe</code>, <code>destructive</code>) that
+      the tool loop uses to decide what can run in parallel and what must pause for consent. Defaults
+      are fail-closed: a tool is treated as unsafe unless it declares otherwise. See
+      <a href="arch-tools.html">Tool dispatch &amp; executors</a> for the mechanics.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/><path d="M9 18h6M10 22h4"/></svg></span>
+      <div class="callout__body"><p>Throughout the tables, a <span class="badge">★ Core</span> badge marks
+        a tool in the local <b>Core set</b> (about 11 tools) that the Tools dropdown keeps when you
+        trim the catalogue. This is distinct from the larger progressive-disclosure core set
+        (<code>CORE_TOOLS</code>, ~34 names in
+        <code class="path">server/chat/tool_partition.py</code>) that cloud Claude always advertises:
+        the two overlap but are not the same list. See <a href="#tools-dropdown">the Tools
+        dropdown</a> below.</p></div>
+    </div>
+
+    <h2 id="approval-legend">Approval at a glance</h2>
+    <p>Two badges appear in the tables. Read the <a href="arch-approval.html">Approval &amp;
+      permissions</a> page for the full nonce flow and per-tool rules.</p>
+    <div class="cols-2">
+      <div class="card">
+        <h3><span class="badge badge--muted">read</span> Runs freely</h3>
+        <p>Read-only tools (reading files, searching, viewing git history, fetching pages) run without
+          a prompt. Consecutive read-safe tools can also run concurrently in one batch.</p>
+      </div>
+      <div class="card">
+        <h3><span class="badge">approval</span> Pauses for consent</h3>
+        <p>Tools that write files, run commands, or change git or config state issue a nonce, pause the
+          turn, and wait for you to confirm. The same gate applies to both Claude and Gemma.</p>
+      </div>
+    </div>
+
+    <h2 id="workspace-files">Workspace &amp; files</h2>
+    <p>The largest group: reading, searching, and changing the connected codebase, plus isolated
+      worktrees for multi-file edits. See <a href="tut-workspace.html">The workspace IDE</a> for these
+      in practice.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>ws_read_file</code> <span class="badge">★ Core</span></td><td>Read a file from the connected codebase, with line numbers. Reads the whole file by default.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ws_grep</code> <span class="badge">★ Core</span></td><td>Search file contents with a regex, powered by ripgrep.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ws_glob</code> <span class="badge">★ Core</span></td><td>Find files by glob pattern, sorted by modification time (most recent first).</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ws_list_directory</code> <span class="badge">★ Core</span></td><td>List files and directories in a workspace directory.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>workspace_semantic_search</code></td><td>Semantic search over the indexed workspace by meaning, not keywords. See <a href="arch-index.html">Index / GraphRAG</a>.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>workspace_graph_query</code></td><td>Look up typed relationships about a specific entity (person, organization, project) in the indexed knowledge graph, with a confidence and source citation for each fact. Prefer it over semantic search for direct relationship questions. Needs the workspace indexed with typed relations. See <a href="arch-index.html">Index / GraphRAG</a>.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ws_edit_file</code> <span class="badge">★ Core</span></td><td>Edit an existing file by replacing a specific string.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>ws_write_file</code> <span class="badge">★ Core</span></td><td>Overwrite or modify an existing file with full new content.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>ws_create_file</code></td><td>Create a new file.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>ws_delete_file</code></td><td>Delete a file.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>ws_run_command</code> <span class="badge">★ Core</span></td><td>Run a shell command in the workspace directory. Sandboxed where it touches the shell.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>ws_open_folder</code></td><td>Connect a specific folder as the workspace.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>ws_create_worktree</code></td><td>Create an isolated git worktree branch for multi-file changes.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>ws_diff_worktree</code></td><td>Show the diff between the worktree branch and the main branch.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ws_merge_worktree</code></td><td>Merge a worktree branch back into the current branch.</td><td><span class="badge">approval</span></td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+      <div class="callout__body"><p>Shell commands run through the OS sandbox and the server-side approval
+        router, not a client-asserted flag. Even in a permissive mode, denied commands and blocked
+        paths are refused. See <a href="arch-sandbox.html">Sandbox &amp; security</a>.</p></div>
+    </div>
+
+    <h2 id="git">Git</h2>
+    <p>A full git surface, from status and history to branching, stashing, and opening a pull request.
+      The read side (status, diff, log) runs freely; anything that mutates history or the remote asks
+      first. See <a href="arch-git-lsp.html">Git integration &amp; LSP</a>.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>git_status</code> <span class="badge">★ Core</span></td><td>Show the working tree status: staged, unstaged, and untracked files.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>git_diff</code> <span class="badge">★ Core</span></td><td>Show file diffs. Compares the working tree to HEAD by default.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>git_log</code></td><td>Show commit history: SHA, author, date, and message.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>git_show</code></td><td>Show details of a commit, tag, or other git object.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>git_blame</code></td><td>Line-by-line last-modified annotation for a file.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>git_branch_list</code></td><td>List branches, with the current branch indicated.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>git_stash_list</code></td><td>List all stash entries with their index and description.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>git_add_commit</code></td><td>Stage files and create a git commit.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>git_create_branch</code></td><td>Create a new branch and switch to it.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>git_delete_branch</code></td><td>Delete a local branch.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>git_checkout</code></td><td>Switch to an existing branch or ref.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>git_merge</code></td><td>Merge a branch into the current branch.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>git_stash</code></td><td>Stash or restore working directory changes.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>git_push</code></td><td>Push commits to the remote repository.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>git_push_pr</code></td><td>Push the current branch and open a GitHub pull request.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>git_clone</code></td><td>Clone a remote repository and, by default, open it as the workspace.</td><td><span class="badge">approval</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="code-intelligence">Code intelligence (LSP)</h2>
+    <p>A thin proxy over the language server for the files you have open. All three are read-only.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>lsp_diagnostics</code></td><td>Errors, warnings, and type diagnostics for a file.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>lsp_hover</code></td><td>Type annotations and documentation for a symbol at a position.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>lsp_references</code></td><td>Find all usages of a symbol at a specific location.</td><td><span class="badge badge--muted">read</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="web">Web</h2>
+    <p>Two tools for reaching the live internet, backed by Tavily. Both are read-only. See
+      <a href="tut-research.html">Web research</a> for how to prompt for cited answers, and
+      <a href="ref-env.html">environment variables</a> for the <code>TAVILY_API_KEY</code> these need.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>web_search</code></td><td>Search the web for current, up-to-date information (recent events, prices, releases).</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>web_fetch</code></td><td>Fetch and read the readable text content of a web page given its URL.</td><td><span class="badge badge--muted">read</span></td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20ZM2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20Z"/></svg></span>
+      <div class="callout__body"><p>A page fetched by <code>web_fetch</code> is untrusted content. Its Markdown
+        is sanitized through DOMPurify before it reaches the DOM, so a prompt-injected page cannot run
+        arbitrary JavaScript in the app origin. On the local Tools dropdown these two make up the
+        <b>Core + web</b> scope.</p></div>
+    </div>
+
+    <h2 id="memory">Memory</h2>
+    <p>Read and write the workspace memory store, which the assistant injects into the system prompt on
+      later turns. See <a href="arch-memory.html">Memory system</a> and
+      <a href="tut-memory.html">Memory &amp; WHISPER.md</a>.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>memory_read</code> <span class="badge">★ Core</span></td><td>Read a memory file from the workspace memory store.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>memory_write</code> <span class="badge">★ Core</span></td><td>Write a memory file, creating or overwriting it.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>memory_list</code></td><td>List all memory files with their type and metadata.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>memory_delete</code></td><td>Delete a memory file from the store.</td><td><span class="badge">approval</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="tasks-scheduling">Tasks &amp; scheduling</h2>
+    <p>Three related families. The <em>todo tracker</em> (<code>task_*</code>) tracks the steps of a
+      multi-step workflow within a single turn or session; the <em>background-task registry</em>
+      (<code>task_status</code>/<code>task_output</code>/<code>task_cancel</code>) checks and stops
+      detached shell commands, agents, and workflow/CI runs; <em>cron</em> jobs schedule prompts to
+      run later, whose output streams back into the chat that created them. See
+      <a href="arch-cron.html">Cron / scheduled tasks</a> and <a href="tut-cron.html">the cron
+      tutorial</a>.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>task_create</code></td><td>Create a task to track a step in a multi-step workflow.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_update</code></td><td>Update a task's status (in_progress, completed).</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_list</code></td><td>List all tasks in the session to review progress.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_get</code></td><td>Get full details of a specific task by its ID.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_stop</code></td><td>Cancel and remove a task that is no longer needed.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_status</code></td><td>Check background tasks (shell commands, detached agents, or workflow/CI runs, not the todo list). No id lists them; with an id, full status.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_output</code></td><td>Read a background task's output tail (shell output or an agent task's progress log).</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_cancel</code></td><td>Stop a running background task. Mutating, and distinct from the todo tracker's <code>task_stop</code>.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>cron_create</code></td><td>Schedule a recurring or one-time task that runs a prompt on a schedule.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>cron_list</code></td><td>List all scheduled cron jobs with their schedules and next run.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>cron_delete</code></td><td>Delete a scheduled cron job by name.</td><td><span class="badge">approval</span></td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg></span>
+      <div class="callout__body"><p>The scheduler also exposes <code>cron_update</code> (edit a job's prompt,
+        schedule, or enabled state) and <code>cron_run</code> (run a job once, off its schedule). The
+        three listed above are the ones surfaced in the primary Tasks &amp; scheduling group.</p></div>
+    </div>
+
+    <h2 id="sub-agents">Sub-agents</h2>
+    <p>The assistant can delegate work to independent agents, each running its own full tool loop, and
+      coordinate them as a team. Agent types range from a read-only <code>explore</code> to a
+      test-running <code>verify</code>. See <a href="arch-agents.html">Sub-agents &amp; the event
+      bus</a> and <a href="tut-subagents.html">the sub-agents tutorial</a>.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>spawn_agent</code></td><td>Spawn one independent agent to handle a subtask with full tool access.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>list_agents</code></td><td>List active agents in the session with their IDs, types, and status.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>send_message</code></td><td>Send a message to another agent by ID, or broadcast to all agents.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>team_create</code></td><td>Create a named team of parallel agents for a complex, multi-part task.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>team_delete</code></td><td>Disband a team and clean up its resources.</td><td><span class="badge badge--muted">read</span></td></tr>
+      </tbody>
+    </table></div>
+    <p>Each brief you write for <code>spawn_agent</code> or a <code>team_create</code> member must be
+      self-contained: the agent sees none of the parent conversation, so restate the objective, scope,
+      constraints, and expected output. A spawned agent inherits the session-selected model rather than
+      an agent-type default.</p>
+
+    <h2 id="skills-notebooks-mcp">Skills, notebooks &amp; MCP</h2>
+    <p>Delegate to a named skill, edit Jupyter notebooks cell by cell, or read resources from connected
+      MCP servers. See <a href="tut-skills.html">Skills</a> and
+      <a href="tut-mcp-plugins.html">MCP &amp; plugins</a>.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>skill_list</code></td><td>List all available Whisper skills with names and descriptions.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>skill_invoke</code></td><td>Invoke a named skill as a tool call, passing an input.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>notebook_read</code></td><td>Read a Jupyter notebook (.ipynb) and return all cells with their type and output.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>notebook_edit</code></td><td>Edit a cell in a Jupyter notebook.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>list_mcp_resources</code></td><td>List available resources from all connected MCP servers.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>read_mcp_resource</code></td><td>Read the content of a specific MCP resource by server name and URI.</td><td><span class="badge badge--muted">read</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="skill-tools">Skill-backed tools</h2>
+    <p>Beyond <code>skill_invoke</code>, every skill installed under <code class="path">skills/</code> is
+      <em>also</em> advertised to the model as its own top-level tool, named after the skill (dashes become
+      underscores). So the model can call, say, <code>meeting_notes</code> or <code>terminal_run</code>
+      directly, without going through <code>skill_invoke</code> first. See <a href="tut-skills.html">Skills</a>
+      for what each one does and how to add your own.</p>
+    <p>The default set ships with these skill tools:</p>
+    <ul>
+      <li><b>Command, code, and cloud execution</b> - <code>terminal_run</code>, <code>run_python</code>,
+        <code>aws_cli</code>, and <code>aws_boto3</code>. These run commands, Python, or AWS calls, so they
+        pause for approval like the other command tools.</li>
+      <li><b>Web</b> - <code>web_search</code> and <code>web_fetch</code>, listed in the
+        <a href="#web">Web</a> section above. Read-only.</li>
+      <li><b>Content and transformation</b> - <code>analyze_document</code>, <code>summarize_transcript</code>,
+        <code>meeting_notes</code>, <code>catch_up</code>, <code>translate_text</code>,
+        <code>presentation_builder</code>, <code>create_program</code>, <code>frontend_design</code>,
+        <code>github_actions</code>, <code>feature_flags_architect</code>, and <code>self_eval</code>. These
+        generate or reshape content and run without a prompt.</li>
+    </ul>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Because this set is driven by the installed skills rather than hardcoded,
+        the exact list depends on what is in <code class="path">skills/</code>. Adding or removing a skill
+        adds or removes its tool, so the pool grows with your skill folder.</p></div>
+    </div>
+
+    <h2 id="config-interaction">Config &amp; interaction</h2>
+    <p>Tools for reading and writing settings, talking back to you, and rendering rich output. See
+      <a href="ref-settings.html">Settings &amp; config keys</a> for the keys
+      <code>config_set</code> accepts.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>config_get</code></td><td>Read one or more Whisper Studio config values (empty = list all, with secrets masked).</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>config_set</code></td><td>Write config values. Only known keys are accepted (for example <code>bedrock_region</code>, <code>default_chat_model</code>, <code>permission_mode</code>).</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>ask_user_question</code></td><td>Ask you a multiple-choice question and pause the turn for the answer.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>notify_user</code></td><td>Send a proactive, formatted message card (task done, a blocker, a finding).</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>create_artifact</code></td><td>Render a self-contained artifact as an inline card in chat (live preview plus download).</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>create_plan</code></td><td>Save a detailed plan as a document that opens in the side pane; the chat sees only a one-line summary. Used when you ask for a plan or the assistant is in plan mode.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>tool_search</code></td><td>Search the available tools by keyword to find the right one.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>sleep</code></td><td>Wait for a number of seconds, for example while a background process runs.</td><td><span class="badge badge--muted">read</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="preview">Live preview &amp; browser</h2>
+    <p>A dev-server-plus-headless-browser session for building and checking web UIs. The read-only
+      tools (logs, snapshots, inspection) run freely; anything that starts a server or drives the page
+      pauses for approval. Note that <code>preview_eval</code> is marked <em>destructive</em> since it
+      runs arbitrary page JavaScript. See <a href="arch-preview.html">Live preview &amp; browser</a>.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>preview_start</code></td><td>Start a dev server for a preview session, by name or with an ad-hoc command.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>preview_stop</code></td><td>Stop a preview session's dev server and close its browser.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>preview_navigate</code></td><td>Navigate the preview browser to an http:// or https:// URL.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>preview_list</code></td><td>List all running preview sessions with their status.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>preview_logs</code></td><td>Read the dev server's stdout and stderr for a session.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>preview_console_logs</code></td><td>Read the browser console output for a session.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>preview_network</code></td><td>Read network requests made by the page (method, URL, status).</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>preview_snapshot</code></td><td>Get the accessibility tree of the current page as text.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>preview_screenshot</code></td><td>Capture a downscaled, compressed screenshot of the current page.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>preview_inspect</code></td><td>Inspect one element by CSS selector: computed styles, box, and text.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>preview_click</code></td><td>Click an element on the current page by CSS selector.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>preview_fill</code></td><td>Fill an input or textarea on the current page by CSS selector.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>preview_resize</code></td><td>Resize the browser viewport for responsive or dark-mode testing.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>preview_eval</code></td><td>Execute JavaScript in the page context. For debugging and inspection only.</td><td><span class="badge">approval</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="workflows-ci">Workflows &amp; CI (ultracode)</h2>
+    <p>In ultracode mode the assistant gains a deterministic workflow runtime and a CI watch/autofix
+      surface. These tools appear in the catalogue only when ultracode is active
+      (<code>assemble_full_catalog(ultracode=True)</code>), so you will not see them in other modes.
+      <code>workflow_run</code> and <code>ci_autofix</code> return an approval preview card: the
+      generated workflow runs only after you approve it. See
+      <a href="arch-ultracode.html">Ultracode workflow runtime</a>.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>workflow_run</code></td><td>Launch a deterministic multi-agent workflow from a JS orchestration script (or a saved workflow by name). A new script is shown for approval before it runs; runs detached from the turn.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>workflow_status</code></td><td>Get a run's status, phase/agent journal tail, and spend. Omit the run id to list this session's runs.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>workflow_save</code></td><td>Save a named, reusable workflow script. Stored untrusted until you approve it in the Workflows panel.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>workflow_list</code></td><td>List saved workflows and this session's recent runs.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ci_watch</code></td><td>Watch a branch's latest GitHub Actions run to its conclusion, detached from the turn; a live card updates as jobs finish. Defaults to the current branch.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ci_status</code></td><td>Get the latest CI run and any failed jobs for a branch. One-shot, no watching.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ci_autofix</code></td><td>Diagnose a branch's failing CI and propose a fix as an approvable workflow that applies minimal fixes then runs the verification gate. Shown for approval before it edits anything.</td><td><span class="badge">approval</span></td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>The goal loop is <em>not</em> a tool. It is surfaced through the
+        <code>/goal</code> command and the GoalBanner UI (there are no <code>goal_*</code> tools), so
+        it is documented in <a href="ref-slash-commands.html">Slash commands</a>, not here.</p></div>
+    </div>
+
+    <h2 id="tools-dropdown">The Tools dropdown (local models)</h2>
+    <p>Cloud Claude is trimmed automatically by progressive disclosure (core plus session-activated
+      tools), not by this dropdown. For on-device Gemma, the per-model <b>Tools</b> dropdown lets you
+      shrink the catalogue further so fewer schema tokens slow the prefill. The dropdown itself has
+      no effect on cloud models.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Scope</th><th>Tools declared</th><th>Use when</th></tr></thead>
+      <tbody>
+        <tr><td><b>Off</b></td><td>None</td><td>Plain chat, fastest prefill.</td></tr>
+        <tr><td><b>Core set</b></td><td>The <span class="badge">★ Core</span> tools (about 11)</td><td>Everyday file, code, and git work.</td></tr>
+        <tr><td><b>Core + web</b></td><td>Core set plus <code>web_search</code> and <code>web_fetch</code></td><td>Core work plus internet lookups.</td></tr>
+        <tr><td><b>All tools</b></td><td>Everything on this page</td><td>Full capability (heaviest, slowest prompt).</td></tr>
+      </tbody>
+    </table></div>
+    <p>See <a href="tut-model-modes.html">Model modes</a> for how local, hybrid, and cloud selection
+      interact with this dropdown, and <a href="arch-backends.html">Model backends &amp; modes</a> for
+      the routing underneath.</p>
+
+    <h2 id="key-files">Where these live</h2>
+    <div class="spec">
+      <dt><code class="path">server/agent_tools.py</code></dt><dd>Config, skills, MCP, tool-search, and the agent and team tool schemas.</dd>
+      <dt><code class="path">server/workspace/tools.py</code></dt><dd>The <code>ws_*</code> workspace and file tools.</dd>
+      <dt><code class="path">server/git/tools.py</code></dt><dd>The <code>git_*</code> tool schemas.</dd>
+      <dt><code class="path">server/memory/tools.py</code></dt><dd>The <code>memory_*</code> tools.</dd>
+      <dt><code class="path">server/preview/tools.py</code></dt><dd>The <code>preview_*</code> dev-server and browser tools.</dd>
+      <dt><code class="path">server/executors/__init__.py</code></dt><dd>The executor registry and per-tool safety metadata (<code>read_only</code>, <code>concurrent_safe</code>, <code>destructive</code>).</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-tools.html">Tool dispatch &amp; executors</a>,
+        <a href="arch-approval.html">Approval &amp; permissions</a>,
+        <a href="ref-slash-commands.html">Slash commands</a>, and
+        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>

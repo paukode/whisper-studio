@@ -1,0 +1,78 @@
+name: CI
+
+# Gates every push and PR on the backend test suite (which now includes the
+# file-size-budget and package-re-export guardrails) plus the frontend
+# typecheck / unit tests / production build.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (pytest + guardrails)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      # The transcription / ML stack (mlx*, parakeet-mlx are Apple-silicon
+      # ONLY; torch/torchaudio/speechbrain are heavy and pull it in) is not
+      # exercised by the test suite — server.chat / server.workspace and every
+      # test import cleanly without it. Strip those lines so the Linux runner
+      # installs fast. If a future test imports server.transcription /
+      # streaming / speaker_persistence, run that suite on a macOS runner
+      # instead (those modules need the real MLX runtime).
+      - name: Install Python deps (test subset)
+        run: |
+          grep -vE '^(mlx|mlx-whisper|parakeet-mlx|torch|torchaudio|speechbrain)==' requirements.txt > /tmp/requirements-ci.txt
+          # gliner pulls torch in transitively, so the strip above doesn't keep
+          # torch out — it just drops the pin, leaving CI to test a floating
+          # torch. Constrain it to the version requirements.txt pins
+          # (torch==2.11.0) so CI exercises the same torch the app ships. The
+          # paired setuptools<82 cap still holds: setuptools==81.0.0 survives
+          # the grep and installs from requirements-ci.txt directly.
+          printf 'torch==2.11.0\n' > /tmp/constraints-ci.txt
+          python -m pip install --upgrade pip
+          pip install -c /tmp/constraints-ci.txt -r /tmp/requirements-ci.txt
+
+      # Lint + format gate, mirroring the frontend's `npm run lint`. ruff is
+      # pinned in requirements.txt and survives the ML-strip grep above, so it's
+      # already installed. Runs before pytest for fast feedback.
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Format check (ruff)
+        run: ruff format --check .
+
+      - name: Run tests
+        run: python -m pytest tests/
+
+  frontend:
+    name: Frontend (tsc + vitest + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build

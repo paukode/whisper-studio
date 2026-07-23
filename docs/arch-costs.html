@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cost tracking &amp; budgets - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio logs per-turn token cost, aggregates session and daily totals, surfaces prompt-cache telemetry, and enforces spend caps before each Bedrock call.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-costs">
+    <h1>Cost tracking &amp; budgets</h1>
+    <p class="subtitle">Every chat turn logs exactly what it spent. Those rows roll up into session
+      and daily totals, surface prompt-cache telemetry, and gate the next round
+      against your spend caps - all locally, in SQLite.</p>
+
+    <p>Cost tracking lives in <code class="path">server/costs/</code>, a small self-contained package:
+      <code class="path">tracker.py</code> (pricing, logging, aggregation, cache telemetry, the API) and
+      <code class="path">budget.py</code> (cap enforcement). The
+      <a href="arch-chat-pipeline.html">chat pipeline</a> calls into both. Remaining-capacity tracking is
+      no longer a costs concern: it moved to the token-based context meter in
+      <code class="path">server/chat/loop_hints.py</code> (see below). <b>Click a box</b>
+      below to trace the flow from a completed turn to the Costs panel.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="costs-diagram" class="diagram"></div>
+      <figcaption>A completed round is priced, logged one row at a time, aggregated, and then read
+        back by the budget check (before the next round) and the SPA Costs panel.</figcaption>
+    </figure>
+
+    <h2 id="pricing">Pricing: a per-model rate table</h2>
+    <p>Cost is not measured, it is <em>estimated</em> from token counts and a per-model price table.
+      <code>estimate_cost(model_key, input_tokens, output_tokens, cache_read_tokens,
+      cache_creation_tokens, cached_in_input)</code> returns a USD figure. The rates live in
+      <code>_MODEL_PRICING</code> in <code class="path">server/costs/tracker.py</code> as USD
+      <em>per 1M tokens</em>, with four explicit rates per model: input, output, cache-read, and
+      cache-write (prompt-cache creation).</p>
+
+    <p>There is deliberately <b>no fallback bucket</b>. An unknown model key bills $0 and logs an error
+      rather than silently inheriting another model's rate, so a missing entry is loud instead of
+      quietly wrong. Add new models to the table explicitly.</p>
+
+    <div class="table-wrap"><table>
+      <thead><tr><th>Model key</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th></tr></thead>
+      <tbody>
+        <tr><td><code>haiku</code></td><td>$1.00</td><td>$5.00</td><td>$0.10</td><td>$1.25</td></tr>
+        <tr><td><code>sonnet</code> / <code>sonnet5</code></td><td>$3.00</td><td>$15.00</td><td>$0.30</td><td>$3.75</td></tr>
+        <tr><td><code>opus4.6</code> / <code>opus4.7</code> / <code>opus4.8</code></td><td>$5.00</td><td>$25.00</td><td>$0.50</td><td>$6.25</td></tr>
+        <tr><td><code>fable5.0</code></td><td>$10.00</td><td>$50.00</td><td>$1.00</td><td>$12.50</td></tr>
+        <tr><td><code>gpt5.6-sol</code></td><td>$5.50</td><td>$33.00</td><td>$0.55</td><td>$6.88</td></tr>
+        <tr><td><code>gpt5.6-terra</code></td><td>$2.75</td><td>$16.50</td><td>$0.28</td><td>$3.44</td></tr>
+        <tr><td><code>gpt5.6-luna</code></td><td>$1.10</td><td>$6.60</td><td>$0.11</td><td>$1.38</td></tr>
+        <tr><td><code>gpt5.5</code></td><td>$5.50</td><td>$33.00</td><td>$0.55</td><td>$0.00</td></tr>
+        <tr><td><code>gpt5.4</code></td><td>$2.75</td><td>$16.50</td><td>$0.275</td><td>$0.00</td></tr>
+      </tbody>
+    </table></div>
+    <p>Haiku is the cheapest and Opus the most capable of the Claude tiers. The GPT-5.x models run
+      via <a href="arch-backends.html">OpenAI on Bedrock</a>. Only <code>gpt5.5</code> and
+      <code>gpt5.4</code> carry <b>no cache-write charge</b> (cache-creation rate $0); the GPT-5.6 tiers
+      (<code>sol</code> / <code>terra</code> / <code>luna</code>) do add explicit prompt caching, billed at
+      a non-zero cache-write rate (roughly 1.25x input, 30-minute TTL).</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>These figures are illustrative and change.</b> The rates above
+        are the Amazon Bedrock on-demand list prices as configured in code at the time of writing. Prices
+        move, promotional discounts come and go, and your effective bill depends on your AWS account.
+        Treat the table in <code class="path">server/costs/tracker.py</code> as the source of truth, and
+        see the <a href="https://aws.amazon.com/bedrock/pricing/">Amazon Bedrock pricing page</a> for the
+        current list rates.</p></div>
+    </div>
+
+    <h3 id="two-cache-conventions">Two cache conventions, one function</h3>
+    <p>Anthropic and OpenAI count cached tokens differently, and <code>estimate_cost</code> handles
+      both through its <code>cached_in_input</code> flag:</p>
+    <ul>
+      <li><b>Anthropic</b> (<code>cached_in_input=False</code>, the default): input, cache-read, and
+        cache-creation are three <em>disjoint</em> token buckets, each billed once at its own rate.</li>
+      <li><b>OpenAI</b> (<code>cached_in_input=True</code>): the cache-read tokens are a <em>subset</em>
+        of the reported input tokens, so the function subtracts them out and bills the cached portion
+        once at the cache-read rate and the remainder at the input rate, never both.</li>
+    </ul>
+    <p>See <a href="ref-settings.html">prompt caching</a> for how cache reads and writes are produced
+      in the first place.</p>
+
+    <h2 id="logging">Logging a turn</h2>
+    <p>When a streaming round ends, its <code>message_delta</code> carries the round's token usage. The
+      chat loop calls <code>record_turn(session_id, turn_number, model, input_tokens, output_tokens,
+      cost_usd, ...)</code> to persist one row into the <code>session_costs</code> table in
+      <code class="path">storage/sessions.db</code>. One turn, one row.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+      <div class="callout__body"><p><b>Cost logging never breaks a chat.</b> <code>record_turn</code>
+        wraps its write in a try/except and only logs on failure, so a cost-logging error can never
+        crash the turn that produced it. The same is true of the read-side aggregates, which return an
+        empty result rather than raising.</p></div>
+    </div>
+
+    <p>Each row records the model, the four token counts, the estimated cost, the API duration, and a
+      UTC timestamp:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>session_id</code>, <code>turn_number</code></td><td>Which session and round this row belongs to.</td></tr>
+        <tr><td><code>model</code></td><td>The model key that ran (drives which pricing row applied).</td></tr>
+        <tr><td><code>input_tokens</code>, <code>output_tokens</code></td><td>Non-cached prompt tokens in, generated tokens out.</td></tr>
+        <tr><td><code>cache_read_tokens</code>, <code>cache_creation_tokens</code></td><td>Prompt-cache reads and writes for the round.</td></tr>
+        <tr><td><code>cost_usd</code></td><td>The <code>estimate_cost</code> result for the round.</td></tr>
+        <tr><td><code>api_duration_ms</code></td><td>How long the Bedrock call took.</td></tr>
+        <tr><td><code>created_at</code></td><td>UTC timestamp, defaulted by SQLite; drives the daily rollups.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The table is created by <code class="path">server/migrations/001_add_session_costs.py</code>
+      with indexes on <code>session_id</code> and <code>created_at</code>. When a session is deleted,
+      its cost rows are deleted with it. See <a href="arch-persistence.html">Persistence</a> for how
+      the SQLite store is managed overall.</p>
+
+    <h2 id="aggregation">Aggregations</h2>
+    <p>The logged rows are read back through a handful of query helpers in
+      <code class="path">server/costs/tracker.py</code>:</p>
+    <dl class="spec">
+      <dt><code>get_session_summary(session_id)</code></dt>
+      <dd>Totals for one session: turn count, total input/output tokens, total cache reads, total cost, and total API duration.</dd>
+      <dt><code>get_session_costs(session_id)</code></dt>
+      <dd>The per-turn breakdown for a session, ordered by turn number.</dd>
+      <dt><code>get_model_breakdown(session_id="")</code></dt>
+      <dd>Per-model turns, tokens, and cost, ordered by spend. Pass a session id to scope it, or leave it empty for a global breakdown across all sessions.</dd>
+      <dt><code>get_daily_costs(days=30)</code></dt>
+      <dd>Daily totals for the last N days, grouped by <code>DATE(created_at)</code> - the data behind the bar chart.</dd>
+      <dt><code>get_today_total_cost()</code></dt>
+      <dd>The single number the daily budget check compares against: today's total cost in UTC.</dd>
+    </dl>
+
+    <h3 id="cache-telemetry">Cache telemetry</h3>
+    <p><code>get_cache_stats(session_id="")</code> aggregates prompt-cache usage - globally or for one
+      session - into a small block: <code>read_tokens</code>, <code>write_tokens</code>, a
+      <code>hit_rate</code> (cache reads over total prompt tokens), and <code>est_savings_usd</code> (what
+      the cached reads would have cost at the full input rate minus their cache-read rate, summed per
+      model). It is the live "is caching actually working" surface, and it rides on
+      <code>GET /api/costs/summary</code> as a <code>cache</code> object.</p>
+
+    <h2 id="forecast">Tracking remaining context</h2>
+    <p>Remaining-capacity tracking answers a different question than the cost aggregates. It is not "how
+      much have you spent" but "how much room is left in this conversation before it has to compact". This
+      moved out of the costs package into the token-based context meter in
+      <code class="path">server/chat/loop_hints.py</code>: every round's <code>message_start</code> usage
+      already reports the true prompt size, so <code>note_prompt_tokens()</code> records it directly against
+      the model's window - no character-count estimate:</p>
+    <ul>
+      <li>The true prompt size is <code>input + cache_read + cache_creation</code> tokens from
+        <code>message_start</code>. <code>note_prompt_tokens()</code> stores the latest value per session
+        and <code>context_estimate()</code> reads back <code>(context_used, context_max)</code>.</li>
+      <li>The window defaults to <code>DEFAULT_CONTEXT_MAX</code> (200,000 tokens) and can be overridden
+        per model via <code>context_window_for()</code> and the <code>context_windows</code> config map.</li>
+      <li>When the real prompt crosses <code>COMPACT_NUDGE_FRACTION</code> (0.8) of the window,
+        <code>should_nudge_compaction()</code> fires once so proactive compaction can trigger on token
+        truth rather than a character guess.</li>
+    </ul>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
+      <div class="callout__body"><p><b>Caching no longer fools the meter.</b>
+        The old character-based forecast had to add the cached read and creation tokens back by hand to
+        see the true context size. Now every round's <code>message_start</code> usage already reports the
+        true prompt size and <code>note_prompt_tokens()</code> records it directly, so there is nothing to
+        correct for. See <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> and
+        <a href="arch-index.html">compaction</a>.</p></div>
+    </div>
+
+    <h2 id="budgets">Budgets: stopping before you overspend</h2>
+    <p>Budgets are a hard gate, checked <b>before each round</b> in the chat loop.
+      <code>check_budget(session_id)</code> in <code class="path">server/costs/budget.py</code> reads
+      two caps from <code>config.json</code> and returns either <code>None</code> (you are within
+      budget) or a <code>BudgetExceeded</code> object describing which cap was hit:</p>
+    <dl class="spec">
+      <dt><code>max_session_cost_usd</code></dt>
+      <dd>Ceiling on one session's total cost. Compared against <code>get_session_summary</code>. <code>0</code> means unlimited.</dd>
+      <dt><code>max_daily_cost_usd</code></dt>
+      <dd>Ceiling on today's total cost across all sessions. Compared against <code>get_today_total_cost</code>. <code>0</code> means unlimited.</dd>
+    </dl>
+    <p>The session cap is checked first, then the daily cap. Because either limit set to <code>0</code>
+      means "no limit", cost enforcement is off by default and you opt into it in Settings.</p>
+
+    <h3 id="what-happens">What happens when a cap is hit</h3>
+    <p>When <code>check_budget</code> returns a <code>BudgetExceeded</code>, the chat loop does not
+      start another Bedrock call. Instead it:</p>
+    <ol class="steps">
+      <li><h4>Emits a <code>budget_warning</code> event</h4><p>An SSE frame carries the human-readable
+        message plus the structured <code>budget_kind</code> (<code>session</code> or
+        <code>daily</code>), <code>budget_limit</code>, and <code>budget_current</code> so the SPA can
+        render a precise notice.</p></li>
+      <li><h4>Writes the warning into the transcript</h4><p>A short <code>[Budget exceeded]</code> text
+        line is streamed so the halt is visible in the conversation, not just a silent stop.</p></li>
+      <li><h4>Ends the turn cleanly</h4><p>It sends <code>[DONE]</code> and returns. The turn stops
+        rather than erroring, so nothing is left half-streamed.</p></li>
+    </ol>
+    <p>The message tells you exactly how to proceed - start a new session, raise the relevant cap, or
+      wait until tomorrow for a daily reset. You can also clear today's records manually with
+      <code>POST /api/costs/reset-daily</code>.</p>
+
+    <h2 id="settings-panel">Settings and the Costs panel</h2>
+    <p>The two caps are set in the Settings UI (and persisted to <code>config.json</code>); see
+      <a href="configuration.html">Configuration</a> and <a href="ref-settings.html">Settings &amp;
+      config keys</a>. Live spend is surfaced in two places in the SPA:</p>
+    <div class="card-grid">
+      <div class="card">
+        <h3>Live in the chat</h3>
+        <p>Each turn's <code>usage</code> SSE event carries the running token counts, the per-turn
+          <code>estimated_cost_usd</code>, and <code>context_used</code> / <code>context_max</code>, so the
+          current turn's cost and remaining context update as tokens stream.</p>
+      </div>
+      <div class="card">
+        <h3>The Costs panel</h3>
+        <p>A dedicated panel reads the aggregate endpoints to show per-model totals, a daily bar chart,
+          today's total, and the configured caps - the whole spend picture at a glance.</p>
+      </div>
+    </div>
+
+    <h2 id="endpoints">API endpoints</h2>
+    <p>The router is mounted under <code>/api/costs</code> in
+      <code class="path">server/costs/tracker.py</code>:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Endpoint</th><th>Returns</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/costs/summary</code></td><td>Global summary: total and today's cost, turn count, the daily series, per-model breakdown, the pricing table, and a <code>cache</code> telemetry block (<code>get_cache_stats</code>). Pass <code>session_id</code> to also get that session's <code>context_used</code> / <code>context_max</code> from <code class="path">server/chat/loop_hints.py</code>.</td></tr>
+        <tr><td><code>GET /api/costs/models</code></td><td>Per-model token usage and cost totals, plus the pricing table.</td></tr>
+        <tr><td><code>GET /api/costs/daily?days=N</code></td><td>Daily totals for the bar chart over the last N days (default 30).</td></tr>
+        <tr><td><code>POST /api/costs/reset-daily</code></td><td>Deletes today's cost rows - a manual daily reset.</td></tr>
+        <tr><td><code>GET /api/costs/export?format=json|csv</code></td><td>Every cost record as JSON or as a downloadable CSV file.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-backends.html">Model backends &amp; modes</a>
+        (which pricing rows apply and where caching comes from),
+        <a href="configuration.html">Configuration</a> (setting the caps),
+        <a href="arch-persistence.html">Persistence</a> (the SQLite store),
+        <a href="arch-ultracode.html">The ultracode workflow runtime</a> (each workflow run keeps its own
+        token and cost ledger in <code>workflow_runs</code>), and
+        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> (where the budget check and
+        cost logging fire).</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/costs.js"></script>
+</body>
+</html>

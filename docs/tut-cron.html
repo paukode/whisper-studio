@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scheduled tasks (cron) - Whisper Studio Docs</title>
+  <meta name="description" content="Schedule recurring prompts in plain language. Each run posts a result card back into the conversation that created it, without touching Claude's context window.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-cron">
+    <h1>Scheduled tasks (cron)</h1>
+    <p class="subtitle">Ask Whisper Studio to run a prompt on a schedule and its results come back to
+      you inside the same conversation. No dashboard to check, no calendar reminder to ignore, and no
+      hit to your token bill.</p>
+
+    <p>A cron job is just a prompt plus a schedule. You describe both in plain language, Claude sets it
+      up with the <code>cron_create</code> tool, and from then on the job fires on its own. Every run
+      posts a small card into the chat that created it, so the whole history reads top to bottom like
+      any other conversation. This tutorial covers creating a job, reading its result cards, managing
+      jobs from the panel, and stopping them.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="cron-flow-diagram" class="diagram"></div>
+      <figcaption>You ask once; the scheduler fires on its own. The <em>repeat</em> loop back into
+        <em>Fires on time</em> is the recurring cadence, and the last hop lands the result inline in
+        chat.</figcaption>
+    </figure>
+
+    <h2 id="create-a-job">Create a job in plain language</h2>
+    <p>You do not fill in a form to start. Just say what you want and how often, right in the composer.
+      Claude picks the right schedule shape and calls <code>cron_create</code> for you.</p>
+    <div class="code-block"><pre><code>Every 10 minutes, check our SageMaker endpoints and flag any that aren't InService.</code></pre></div>
+    <p>A small pill appears inline confirming the job was scheduled, something like <em>Cron
+      <b>sagemaker-check</b> scheduled &middot; every 10 min</em>. That pill is the
+      <code>cron_created</code> event, and it stays in the transcript as a marker of when the job began.</p>
+    <ol class="steps">
+      <li>
+        <h4>Describe the task and the cadence</h4>
+        <p>Say the instruction and the timing together, for example <em>every 30 minutes</em>,
+          <em>daily at 9am</em>, <em>weekdays at noon</em>, or <em>once tomorrow at 08:00</em>. Claude
+          maps your words onto a schedule (see <a href="#schedule-types">Schedule types</a> below).</p>
+      </li>
+      <li>
+        <h4>Claude calls cron_create</h4>
+        <p>Behind the scenes the model invokes the <code>cron_create</code> tool with a
+          <code>name</code>, the <code>prompt</code> to run, and a <code>schedule</code>. The job is
+          written to disk so it survives a restart, and the scheduler arms it immediately.</p>
+      </li>
+      <li>
+        <h4>The scheduled pill appears</h4>
+        <p>You get an inline confirmation with the job name and a human-readable schedule label. Nothing
+          else happens until the first trigger comes due.</p>
+      </li>
+    </ol>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Give the job a memorable name when you ask (<em>"call it
+        sagemaker-check"</em>). Names must be unique, and you will use the name later to edit, run, or
+        delete the job.</p></div>
+    </div>
+
+    <h2 id="results-in-chat">Results land back in the chat</h2>
+    <p>When a job fires, its prompt runs and the output posts as a <b>result card</b> in the
+      conversation that created the job. The card header tells you at a glance what happened, and the
+      body renders the run's output as Markdown so it is readable without clicking anything.</p>
+    <p>A finished run shows:</p>
+    <ul>
+      <li>The job name and whether it <b>fired</b> or <b>failed</b>.</li>
+      <li>A status chip, <code>&#10003; ok</code> or <code>&#9888; failed</code>, plus how long the
+        run took (for example <code>820ms</code> or <code>8.2s</code>).</li>
+      <li>The full run output, rendered inline.</li>
+      <li>A small <em>Next run</em> line at the bottom so you know when it will fire again.</li>
+    </ul>
+    <p>The most useful part: a result card appears in its originating conversation <b>even if you are
+      looking at a different session at the time</b>. You do not have to have that chat open, and you do
+      not have to be watching. Come back to the conversation later and every past run is still there,
+      in chronological order, interleaved with the rest of the thread.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>If you delete or archive the conversation a job belonged to, its
+        future runs are not lost. They redirect to a pinned <b>Scheduled Reports</b> inbox session, so a
+        job never fires into a void.</p></div>
+    </div>
+
+    <h2 id="flat-token-costs">Cron cards do not cost you tokens</h2>
+    <p>Cron result cards are UI-only. They render in the transcript, but they never enter Claude's
+      prompt on your next message. The backend filters cron event rows out of the visible history
+      before it builds a turn, so a busy schedule with dozens of past runs adds nothing to your context
+      window and nothing to your token bill.</p>
+    <p>In practice that means you can leave a chatty monitoring job running for weeks without it slowly
+      inflating the cost of every reply you send in the same conversation. The runs themselves get the
+      same tool pool an interactive turn gets; what stays flat is the cost of your own turns. When a
+      single run produces a lot of output, the card keeps it readable rather than sprawling.</p>
+
+    <h2 id="schedule-types">Schedule types</h2>
+    <p>Every job has one of three schedule shapes. You express them in plain language and Claude picks
+      the right one; the table shows what each maps to and when it fires.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Type</th><th>Fires</th><th>You might say</th></tr></thead>
+      <tbody>
+        <tr><td><code>interval</code></td><td>Every N minutes, anchored to when it was created.</td><td><em>every 10 minutes</em>, <em>every 2 hours</em></td></tr>
+        <tr><td><code>cron</code></td><td>At a wall-clock time, timezone-aware and correct across DST.</td><td><em>daily at 9am</em>, <em>weekdays at noon</em>, <em>every Monday 8am</em></td></tr>
+        <tr><td><code>at</code></td><td>Once, at a specific instant, then it disables itself.</td><td><em>tomorrow at 08:00</em>, <em>on 2026-07-06 at 9am</em></td></tr>
+      </tbody>
+    </table></div>
+    <p>Wall-clock schedules use your host system timezone by default, so <em>daily at 09:00</em> fires
+      at 9am your local time and stays correct when the clocks change. You can pin a different timezone
+      by naming one (an IANA name like <code>America/New_York</code>). Wall-clock times also accept
+      several values at once, so <em>at 9 and 4</em> becomes two firings a day, and a day-of-week can be
+      a single day (<code>mon</code>), a range (<code>mon-fri</code>), or a list (<code>mon,thu</code>).
+      For how these triggers are built and stored, see <a href="arch-cron.html">Cron / scheduled
+      tasks</a>.</p>
+
+    <h2 id="managing-jobs">Manage jobs in the Scheduled Tasks panel</h2>
+    <p>For a bird's-eye view of everything you have scheduled, open the <b>Scheduled Tasks</b> panel.
+      It lists every job with its schedule label and next run, and it is where you go to inspect and
+      tweak jobs without going through chat.</p>
+    <div class="card-grid">
+      <div class="card">
+        <h3>Schedule builder</h3>
+        <p>Create or edit a job's cadence directly, choosing interval, wall-clock, or one-shot. A live
+          preview shows the resulting label and the next fire time before you save.</p>
+      </div>
+      <div class="card">
+        <h3>Run history</h3>
+        <p>Each job keeps a capped history of its recent runs with status and duration, so you can see
+          whether the last few checks passed or failed at a glance.</p>
+      </div>
+      <div class="card">
+        <h3>Unread badges</h3>
+        <p>New runs surface as unread badges in the sidebar, drawn from the most recent runs across all
+          jobs, so a fresh result gets your attention even when you are elsewhere.</p>
+      </div>
+      <div class="card">
+        <h3>Enable, run, delete</h3>
+        <p>Pause a job without deleting it, fire one off-schedule right now to test it, or remove it for
+          good. A paused job keeps its history and can be re-enabled later.</p>
+      </div>
+    </div>
+
+    <h2 id="editing-and-stopping">Editing and stopping jobs</h2>
+    <p>You can manage jobs from chat too, in the same plain language you used to create them. Claude has
+      a small set of cron tools it maps your requests onto:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>cron_create</code></td><td>Schedule a new recurring or one-time job.</td></tr>
+        <tr><td><code>cron_list</code></td><td>List every job with its schedule and next run.</td></tr>
+        <tr><td><code>cron_update</code></td><td>Change a job's prompt, schedule, name, or enabled state.</td></tr>
+        <tr><td><code>cron_run</code></td><td>Run a job once right now, off its schedule.</td></tr>
+        <tr><td><code>cron_delete</code></td><td>Delete a job by name.</td></tr>
+      </tbody>
+    </table></div>
+    <p>So you might say <em>"list my cron jobs"</em>, <em>"run cron sagemaker-check now"</em>, or
+      <em>"change sagemaker-check to every 30 minutes"</em>. Stopping a job is one sentence:</p>
+    <div class="code-block"><pre><code>delete cron sagemaker-check</code></pre></div>
+    <p>A small <em>Cron <b>sagemaker-check</b> removed</em> pill confirms it, and no further runs will
+      fire. Editing a schedule re-anchors the cadence to now, so the new timing does not fire off a
+      stale last-run.</p>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>A cron run gets the full chat tool pool: web search, tasks,
+        sub-agents, skills, AWS, MCP and the browser, and, when a workspace folder is open, the
+        workspace and Git tools too. Only <code>ask_user_question</code> is removed, because an
+        unattended run has nobody to answer it, and any tool that would pause for your approval stops
+        the run with a "[stopped] a tool requested user input" message rather than hanging. Write
+        prompts that can finish on their own, without a mid-run confirmation.</p></div>
+    </div>
+
+    <h2 id="good-jobs">What makes a good cron job</h2>
+    <p>Cron shines for anything you would otherwise check by hand on a rhythm. A few examples:</p>
+    <ul>
+      <li>A periodic health check, such as flagging AWS endpoints that are not in service.</li>
+      <li>A morning digest that summarizes something and posts it at 9am on weekdays.</li>
+      <li>A one-shot reminder that runs a prompt once at a specific time and then disables itself.</li>
+    </ul>
+    <p>Because the result lands in the conversation that asked for it, a job doubles as a running log:
+      the request, the schedule, and every result read together as one thread you can scroll back
+      through.</p>
+
+    <h2 id="what-next">What next</h2>
+    <p>You now have the full loop: ask for a schedule, read the inline result cards, manage jobs from
+      the panel or in chat, and stop them with a sentence. From here, two directions are worth a look.</p>
+    <div class="card-grid">
+      <a class="card card--link" href="tut-subagents.html"><h3>Run work in parallel</h3><p>Spawn background sub-agents and coordinate teams that stream progress into cards.</p><span class="card__meta">Sub-agents &amp; teams &rarr;</span></a>
+      <a class="card card--link" href="arch-cron.html"><h3>See the mechanism</h3><p>Wall-clock scheduling, run history, and how cron events render without inflating tokens.</p><span class="card__meta">Architecture: Cron &rarr;</span></a>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-subagents.html">Sub-agents &amp; teams</a>,
+        <a href="arch-cron.html">Cron / scheduled tasks</a>, and the core
+        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> that cron runs plug into.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/cron-flow.js"></script>
+</body>
+</html>

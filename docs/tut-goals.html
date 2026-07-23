@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Goals &amp; autopilot - Whisper Studio Docs</title>
+  <meta name="description" content="When to just prompt, when to set a goal that runs until it's done, and when to run a parallel workflow. How to give Whisper Studio a goal with /goal and let the completion gate keep it working until achieved.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='16' cy='16' r='9'/%3E%3Ccircle cx='16' cy='16' r='4.5'/%3E%3Cpath d='M16 4v3M16 25v3M4 16h3M25 16h3'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-goals">
+    <h1>Goals &amp; autopilot</h1>
+    <p class="subtitle">Most of the time you just type a message. But when a task has many steps and you
+      want Whisper Studio to keep going until it's <em>genuinely done</em> — not stop halfway — you give it
+      a goal. This page shows you which to reach for, and how to set a goal so it runs to completion.</p>
+
+    <p>There is no mode to switch and nothing to configure. You decide how much autopilot a task deserves
+      by <em>how you ask</em>: a plain prompt for something quick, <code>/goal</code> for something that
+      should run until it's finished, or a <a href="arch-ultracode.html">workflow</a> for wide, parallel
+      work. <b>Click a box</b> in the diagram to see when each fits.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="goals-tut-diagram" class="diagram"></div>
+      <figcaption>The same task, three ways to ask. A goal loops through the completion gate — the model
+        keeps working and re-checking until the goal is achieved (or a cap stops it).</figcaption>
+    </figure>
+
+    <h2 id="three-ways">Three ways to ask</h2>
+    <p>They are not different products — they are how much you want Whisper to push on its own before it
+      stops and hands back to you.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Reach for</th><th>When</th><th>How</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>A plain prompt</b></td>
+          <td>A question, or a small, well-scoped change. One turn or a short tool loop is enough. This is
+            the default — don't over-reach.</td>
+          <td>Just type and press <kbd>Enter</kbd>. See <a href="tut-first-chat.html">Your first chat</a>.</td>
+        </tr>
+        <tr>
+          <td><b>A goal</b></td>
+          <td>A multi-step task you want run to completion — "keep going until this actually works" — where
+            the model might otherwise stop as soon as it has done <em>something</em>.</td>
+          <td><code>/goal &lt;text&gt;</code>. A completion gate checks each turn and continues until the goal
+            is met (capped). See below.</td>
+        </tr>
+        <tr>
+          <td><b>A workflow</b></td>
+          <td>Wide, parallel, or adversarially-verified work: audit twenty files, generate five designs and
+            judge them, migrate a whole directory.</td>
+          <td>Ask in ultracode mode, or <code>/workflow &lt;saved-name&gt;</code>. The model writes a script
+            that fans out subagents; you approve the preview. See <a href="arch-ultracode.html">the workflow
+            runtime</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>A rule of thumb: if you'd normally have to nudge with "keep going" or
+        "you're not done yet", set a goal instead and let the completion gate do the nudging. If you'd want
+        several independent things done at once, that's a workflow.</p></div>
+    </div>
+
+    <h2 id="set-a-goal">Give it a goal</h2>
+    <p>A goal is a one-line description of what "done" means for this stretch of work. Whisper keeps it in
+      view and, at the end of every turn, asks itself whether the goal is met yet.</p>
+    <ol class="steps">
+      <li>
+        <h4>Set the goal</h4>
+        <p>Type <code>/goal</code> followed by the objective, for example
+          <code>/goal make the login page pass tsc, eslint, and its tests</code>. A goal banner appears
+          above the composer so you always see what it's working toward.</p>
+      </li>
+      <li>
+        <h4>Give it the first instruction</h4>
+        <p>Then prompt as normal — "start on the failing test" — or just say "go". The goal is context for
+          every turn, not a replacement for your first message.</p>
+      </li>
+      <li>
+        <h4>It keeps going until it's done</h4>
+        <p>When the model stops, the <a href="arch-goals.html">completion gate</a> runs a quick check
+          instead of ending the turn: a cheap evaluator (and any <a href="arch-hooks.html">Stop hooks</a>)
+          decide whether the goal is achieved. If not, it feeds back what's missing and the turn continues —
+          so you don't have to keep typing "keep going".</p>
+      </li>
+      <li>
+        <h4>Clear it when you're done</h4>
+        <p><code>/goal clear</code> ends the goal. It also clears itself naturally: the loop is bounded by a
+          consecutive-block cap (default 8) so a stuck task can never run away, and a confident "can't do
+          this" ends the turn rather than looping.</p>
+      </li>
+    </ol>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+      <div class="callout__body"><p>Goals shine when "done" is <em>checkable</em>. "Make the build pass" or
+        "all tests green" gives the evaluator a real signal — the <code>verify-change</code> skill runs the
+        actual gate and reports <code>VERIFY PASS</code> / <code>VERIFY FAIL</code>, which the evaluator
+        weighs above any confident-sounding summary. Phrase your goal as an outcome it can verify.</p></div>
+    </div>
+
+    <h2 id="full-stack">Full-stack &amp; UI work</h2>
+    <p>This is where a goal earns its keep. For a change that touches the interface, "verify" isn't just
+      running tests — Whisper <b>drives a live browser preview</b> on its own: it starts your dev server,
+      loads the changed page, reads the console for errors, clicks through the changed flow, and takes a
+      screenshot, then decides pass or fail. And because a goal isn't "done" until that passes, it keeps
+      re-checking the page and fixing until the UI actually renders and behaves — you never have to say "now
+      check it in the browser".</p>
+    <p>So phrase a UI goal as something it can see: <em>"the login form submits and shows the dashboard"</em>
+      or <em>"the settings toggle persists after a reload"</em>, not "make the form nicer". You'll want the
+      <a href="tut-permissions.html">permission mode</a> set the way you like first, since a goal may run for
+      several turns editing and reloading. The mechanics — and the two caveats (the browser tooling has to be
+      installed, and parallel UI checks each spin their own dev server) — are in
+      <a href="arch-preview.html#verify-loop">Verifying the UI in the loop</a>.</p>
+
+    <h2 id="when-not">When a goal is overkill</h2>
+    <p>Don't set a goal for a plain question or a one-line edit. A goal adds a small evaluator check at the
+      end of each turn, which is wasted effort when there was never any doubt the task was done. Keep goals
+      for genuinely multi-step, "run until it holds up" work. And you can always steer mid-goal — your next
+      message is still just a message; the goal is the backdrop, not a cage.</p>
+
+    <h2 id="scale-up">Scaling past one worker</h2>
+    <p>A goal keeps <em>one</em> line of work going. When the work is naturally parallel, two other tools
+      take over:</p>
+    <div class="cols-2">
+      <a class="card card--link" href="tut-subagents.html"><h3>Sub-agents &amp; teams</h3><p>Spin off a background helper with <code>/subagent</code>, or let Whisper run a small team — each with its own tool loop.</p></a>
+      <a class="card card--link" href="arch-ultracode.html"><h3>Ultracode workflows</h3><p>For wide or adversarial work, the model writes a deterministic script that fans out many subagents under a budget, and you approve it before it runs.</p></a>
+    </div>
+
+    <h2 id="what-next">What next</h2>
+    <p>You now know the dial: prompt for quick things, a goal to run something to completion, a workflow for
+      parallel scale. From here:</p>
+    <div class="card-grid">
+      <a class="card card--link" href="arch-goals.html"><h3>How the gate works</h3><p>The two-phase completion gate, the evaluator, and the cap, in detail.</p><span class="card__meta">The goal loop →</span></a>
+      <a class="card card--link" href="tut-permissions.html"><h3>Control what it can do</h3><p>The Mode dial and approval cards — worth setting before you let a goal run for a while.</p><span class="card__meta">Permissions &amp; approvals →</span></a>
+      <a class="card card--link" href="tut-cron.html"><h3>Put it on a schedule</h3><p>Run a prompt (verified against its own goal) on a wall-clock schedule.</p><span class="card__meta">Scheduled tasks →</span></a>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-goals.html">The goal loop &amp; completion
+        gate</a> and <a href="arch-hooks.html">Blocking hooks</a> are the machinery behind this;
+        <a href="arch-ultracode.html">the ultracode workflow runtime</a> is the parallel scale-up; and
+        <a href="ref-slash-commands.html">Slash commands</a> lists <code>/goal</code>, <code>/workflow</code>,
+        and <code>/ci</code>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/goals-tut.js"></script>
+</body>
+</html>

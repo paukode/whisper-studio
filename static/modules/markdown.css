@@ -1,0 +1,274 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Markdown rendering — the single modern stylesheet for `.markdown-content`.
+
+   Applies everywhere MarkdownRenderer / StreamingMarkdown render: the dock
+   plan panel, file preview, notebook cells, and chat. Chat bubbles keep a
+   few tighter overrides via the more-specific `.chat-msg.assistant …` rules
+   in style.css; everything else inherits this modern baseline (previously the
+   standalone panels fell back to raw browser defaults — hence the oversized
+   H1 and unstyled code).
+
+   Loaded AFTER style.css so the authoritative code-block rules below win ties.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.markdown-content {
+    font-size: var(--fs-content);
+    line-height: 1.65;
+    color: var(--text-primary);
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+.markdown-content > *:first-child { margin-top: 0; }
+.markdown-content > *:last-child { margin-bottom: 0; }
+
+/* ---- Headings: a clear, restrained hierarchy (no browser-default 2em H1) --- */
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+    margin: 1.4em 0 0.55em;
+    line-height: 1.3;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+}
+.markdown-content h1 {
+    font-size: 1.5em;
+    padding-bottom: 0.3em;
+    border-bottom: 1px solid var(--border);
+}
+.markdown-content h2 {
+    font-size: 1.28em;
+    padding-bottom: 0.25em;
+    border-bottom: 1px solid var(--border);
+}
+.markdown-content h3 { font-size: 1.14em; }
+.markdown-content h4 { font-size: 1em; }
+.markdown-content h5 { font-size: 0.9em; color: var(--text-secondary); }
+.markdown-content h6 { font-size: 0.85em; color: var(--text-muted); }
+
+/* Chat bubbles keep the compact heading sizes from style.css; drop the
+   underline rule so an 18px bubble H1 doesn't sprout a full-width border. */
+.chat-msg.assistant .markdown-content h1,
+.chat-msg.assistant .markdown-content h2 {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+/* ---- Body text ---- */
+.markdown-content p { margin: 0.7em 0; }
+
+/* Step narration (Option C): each action ("Let me…", "Now…") on its own line
+   as a compact activity log. Each step is a <p> prefixed with a chevron; the
+   chevron and the leading cue phrase carry .agent-step-cue and are muted. A
+   hanging indent keeps wrapped lines aligned past the chevron gutter. */
+.markdown-content.step-narration p {
+    margin: 0.28em 0;
+    line-height: 1.5;
+    padding-left: 1.1em;
+    text-indent: -1.1em;
+}
+.markdown-content.step-narration p:first-child { margin-top: 0; }
+.markdown-content.step-narration p:last-child { margin-bottom: 0; }
+.agent-step-cue { color: var(--text-muted); }
+/* Compact the agent/team event log rendering to caption size. */
+.team-event-text .markdown-content { font-size: var(--fs-caption); line-height: 1.45; }
+.markdown-content ul,
+.markdown-content ol { margin: 0.6em 0; padding-left: 1.5em; }
+.markdown-content li { margin: 0.25em 0; }
+.markdown-content li > ul,
+.markdown-content li > ol { margin: 0.2em 0; }
+.markdown-content strong { font-weight: 600; }
+.markdown-content em { font-style: italic; }
+.markdown-content hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 1.5em 0;
+}
+.markdown-content a {
+    color: var(--link);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--link) 40%, transparent);
+    text-underline-offset: 2px;
+}
+.markdown-content a:hover { color: var(--link-hover); text-decoration-color: currentColor; }
+.markdown-content img { max-width: 100%; height: auto; border-radius: 6px; }
+
+.markdown-content blockquote {
+    margin: 0.8em 0;
+    padding: 0.2em 0 0.2em 1em;
+    border-left: 3px solid var(--border-strong);
+    color: var(--text-secondary);
+}
+.markdown-content blockquote > *:first-child { margin-top: 0; }
+.markdown-content blockquote > *:last-child { margin-bottom: 0; }
+
+/* ---- Tables ---- */
+.markdown-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1em 0;
+    font-size: 0.95em;
+}
+.markdown-content th,
+.markdown-content td {
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    text-align: left;
+}
+.markdown-content th {
+    font-weight: 600;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+}
+.markdown-content tr:nth-child(2n) td { background: var(--bg-inset); }
+
+/* ---- Inline code (not inside a code block) ---- */
+.markdown-content :not(pre) > code {
+    font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+    font-size: 0.88em;
+    padding: 0.15em 0.4em;
+    border-radius: 5px;
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Fenced code blocks. The `.code-block-wrap` shell (border, radius, header,
+   Copy/Preview actions) lives in style.css; here we give the <pre> a real
+   surface + padding and enable horizontal scroll so long lines don't wrap
+   into a break-all wall. Scoped `.markdown-content .code-block-wrap pre` to
+   win the tie against `.chat-msg.assistant pre`.
+   ───────────────────────────────────────────────────────────────────────── */
+.markdown-content .code-block-wrap pre {
+    margin: 0;
+    padding: 12px 14px;
+    background: var(--bg-inset);
+    color: var(--text-primary);
+    font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+    font-size: 0.86em;
+    line-height: 1.55;
+    white-space: pre;
+    word-break: normal;
+    overflow-x: auto;
+}
+.markdown-content .code-block-wrap pre code {
+    padding: 0;
+    background: none;
+    border: none;
+    font-size: inherit;
+}
+.markdown-content code.hljs { display: block; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Syntax highlighting theme. highlight.js emits `.hljs-*` token spans; we
+   color them through CSS variables so a single mapping serves every theme.
+   Dark palette (One-Dark-inspired) is the default; light themes override the
+   variables below. All eight app themes start with "dark" or "light".
+   ───────────────────────────────────────────────────────────────────────── */
+.markdown-content {
+    --hl-keyword:  #c678dd;
+    --hl-string:   #98c379;
+    --hl-number:   #d19a66;
+    --hl-literal:  #56b6c2;
+    --hl-comment:  #7d8590;
+    --hl-function: #61afef;
+    --hl-class:    #e5c07b;
+    --hl-builtin:  #56b6c2;
+    --hl-attr:     #d19a66;
+    --hl-tag:      #e06c75;
+    --hl-variable: #e06c75;
+    --hl-meta:     #7d8590;
+    --hl-addition: #98c379;
+    --hl-deletion: #e06c75;
+    --hl-punct:    var(--text-secondary);
+}
+[data-theme^="light"] .markdown-content {
+    --hl-keyword:  #cf222e;
+    --hl-string:   #0a3069;
+    --hl-number:   #0550ae;
+    --hl-literal:  #0550ae;
+    --hl-comment:  #6e7781;
+    --hl-function: #8250df;
+    --hl-class:    #953800;
+    --hl-builtin:  #0550ae;
+    --hl-attr:     #0550ae;
+    --hl-tag:      #116329;
+    --hl-variable: #953800;
+    --hl-meta:     #6e7781;
+    --hl-addition: #116329;
+    --hl-deletion: #cf222e;
+    --hl-punct:    var(--text-secondary);
+}
+
+.markdown-content .hljs-comment,
+.markdown-content .hljs-quote { color: var(--hl-comment); font-style: italic; }
+
+.markdown-content .hljs-keyword,
+.markdown-content .hljs-selector-tag,
+.markdown-content .hljs-doctag,
+.markdown-content .hljs-type,
+.markdown-content .hljs-template-tag { color: var(--hl-keyword); }
+
+.markdown-content .hljs-string,
+.markdown-content .hljs-regexp,
+.markdown-content .hljs-char.escape_,
+.markdown-content .hljs-meta .hljs-string { color: var(--hl-string); }
+
+.markdown-content .hljs-number,
+.markdown-content .hljs-symbol,
+.markdown-content .hljs-bullet { color: var(--hl-number); }
+
+.markdown-content .hljs-literal { color: var(--hl-literal); }
+
+.markdown-content .hljs-title,
+.markdown-content .hljs-title.function_,
+.markdown-content .hljs-section { color: var(--hl-function); }
+
+.markdown-content .hljs-title.class_,
+.markdown-content .hljs-class .hljs-title { color: var(--hl-class); }
+
+.markdown-content .hljs-built_in,
+.markdown-content .hljs-builtin-name { color: var(--hl-builtin); }
+
+.markdown-content .hljs-attr,
+.markdown-content .hljs-attribute,
+.markdown-content .hljs-property,
+.markdown-content .hljs-selector-attr,
+.markdown-content .hljs-selector-pseudo { color: var(--hl-attr); }
+
+.markdown-content .hljs-name,
+.markdown-content .hljs-tag { color: var(--hl-tag); }
+
+.markdown-content .hljs-variable,
+.markdown-content .hljs-template-variable,
+.markdown-content .hljs-params,
+.markdown-content .hljs-selector-id,
+.markdown-content .hljs-selector-class { color: var(--hl-variable); }
+
+.markdown-content .hljs-meta,
+.markdown-content .hljs-meta .hljs-keyword { color: var(--hl-meta); }
+
+.markdown-content .hljs-punctuation { color: var(--hl-punct); }
+
+.markdown-content .hljs-link { color: var(--link); text-decoration: underline; }
+.markdown-content .hljs-emphasis { font-style: italic; }
+.markdown-content .hljs-strong { font-weight: 600; }
+
+/* Diffs get a full-width tinted row, not just colored text. */
+.markdown-content .hljs-addition {
+    color: var(--hl-addition);
+    background: color-mix(in srgb, var(--hl-addition) 14%, transparent);
+    display: inline-block;
+    width: 100%;
+}
+.markdown-content .hljs-deletion {
+    color: var(--hl-deletion);
+    background: color-mix(in srgb, var(--hl-deletion) 14%, transparent);
+    display: inline-block;
+    width: 100%;
+}

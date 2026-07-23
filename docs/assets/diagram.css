@@ -1,0 +1,186 @@
+/* ================================================================
+   Whisper Studio Docs - Interactive diagram engine
+   ================================================================ */
+
+.diagram {
+  position: relative;
+  margin: 8px 0 6px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background:
+    linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0 / 100% 26px,
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0 / 26px 100%,
+    var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.diagram__bar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 60%, transparent);
+}
+.diagram__hint { font-size: 12.5px; color: var(--text-muted); display: flex; align-items: center; gap: 7px; }
+.diagram__hint svg { width: 15px; height: 15px; opacity: 0.8; }
+.diagram__spacer { flex: 1; }
+.diagram__reset {
+  font: inherit; font-size: 12.5px; color: var(--text-secondary);
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 4px 11px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: color 0.14s, border-color 0.14s, opacity 0.2s;
+  opacity: 0; pointer-events: none;
+}
+.diagram.is-active .diagram__reset { opacity: 1; pointer-events: auto; }
+.diagram__reset:hover { color: var(--accent-hover); border-color: var(--accent-soft); }
+.diagram__reset svg { width: 13px; height: 13px; }
+
+.diagram__legend { display: flex; flex-wrap: wrap; gap: 5px 12px; }
+.diagram__legend .lg { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.diagram__legend .lg i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+.diagram__canvas { display: block; width: 100%; max-width: 100%; height: auto; touch-action: manipulation; }
+
+/* ---- Zones (subsystem backgrounds) ---- */
+.zone__box { fill: var(--zone-color, var(--accent)); opacity: 0.05; stroke: var(--zone-color, var(--accent)); stroke-opacity: 0.3; stroke-width: 1; stroke-dasharray: 4 4; rx: 14; transition: opacity 0.3s; }
+.zone__label { fill: var(--zone-color, var(--text-muted)); font-family: var(--font-ui); font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.7; }
+
+/* ---- Edges ---- */
+.edge { transition: opacity 0.3s var(--ease); }
+.edge__line { fill: none; stroke: var(--border-strong); stroke-width: 1.6; transition: stroke 0.25s, stroke-width 0.25s; }
+.edge__flow { fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; stroke-dasharray: 7 12; stroke-dashoffset: 0; opacity: 0; transition: opacity 0.25s; }
+.edge__arrow { fill: var(--border-strong); transition: fill 0.25s; }
+.edge__label { fill: var(--text-muted); font-family: var(--font-ui); font-size: 10.5px; }
+.edge__label-bg { fill: var(--bg-surface); opacity: 0.85; }
+
+/* ---- Nodes ---- */
+.node { cursor: pointer; transition: opacity 0.3s var(--ease); }
+.node__box {
+  fill: var(--bg-surface);
+  stroke: var(--border-strong);
+  stroke-width: 1.4;
+  transition: fill 0.2s, stroke 0.2s, stroke-width 0.2s;
+}
+.node__accent { fill: var(--node-color, var(--accent)); transition: fill 0.2s; }
+.node__label { fill: var(--text-primary); font-family: var(--font-ui); font-size: 13px; font-weight: 500; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
+.node__sub { fill: var(--text-muted); font-family: var(--font-mono); font-size: 9.5px; text-anchor: middle; pointer-events: none; }
+
+.node--external .node__box { stroke-dasharray: 5 4; }
+.node--store .node__box { fill: var(--bg-inset); }
+
+/* hover / focus */
+.node:hover .node__box, .node:focus-visible .node__box { stroke: var(--accent-hover); }
+.node:focus-visible { outline: none; }
+.node:focus-visible .node__box { stroke: var(--accent); stroke-width: 2; }
+
+/* ---- Active states ---- */
+.diagram.is-active .node:not(.is-lit):not(.is-source) { opacity: 0.2; }
+.diagram.is-active .edge:not(.is-lit) { opacity: 0.12; }
+.diagram.is-active .zone { opacity: 0.55; }
+
+.node.is-source .node__box { stroke: var(--accent); stroke-width: 2.6; fill: var(--accent-dim); filter: drop-shadow(0 0 7px var(--accent-soft)); }
+.node.is-lit .node__box { stroke: var(--accent); stroke-width: 2; fill: var(--accent-dim); filter: drop-shadow(0 0 5px var(--accent-soft)); }
+.node.is-source .node__label, .node.is-lit .node__label { fill: var(--accent-hover); }
+
+.edge.is-lit .edge__line { stroke: color-mix(in srgb, var(--accent) 55%, transparent); stroke-width: 2; }
+.edge.is-lit .edge__arrow { fill: var(--accent); filter: drop-shadow(0 0 4px var(--accent-soft)); }
+.edge.is-lit .edge__flow { opacity: 1; animation: edge-flow 0.9s linear infinite; }
+
+@keyframes edge-flow { to { stroke-dashoffset: -19; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .edge.is-lit .edge__flow { animation: none; stroke-dasharray: none; opacity: 0.9; }
+}
+
+/* ---- Tooltip ---- */
+.diagram__tip {
+  position: absolute; z-index: 5; pointer-events: none;
+  max-width: 260px; padding: 8px 11px;
+  background: var(--text-primary); color: var(--bg-surface);
+  border-radius: 9px; font-size: 12.5px; line-height: 1.45;
+  box-shadow: var(--shadow-md);
+  opacity: 0; transform: translateY(3px); transition: opacity 0.14s, transform 0.14s;
+}
+.diagram__tip.show { opacity: 1; transform: translateY(0); }
+.diagram__tip b { color: var(--bg-surface); font-weight: 600; }
+[data-theme="dark"] .diagram__tip { background: #eae7e1; color: #1a1918; }
+[data-theme="dark"] .diagram__tip b { color: #1a1918; }
+
+/* Figure caption for diagrams */
+.diagram-figure { margin: 24px 0 28px; max-width: 100%; }
+.diagram-figure figcaption { margin-top: 10px; font-size: 13px; color: var(--text-muted); text-align: center; }
+
+/* Wide breakout for the flagship diagrams (desktop only, symmetric, never overflows).
+   Generous slack keeps it clear of the on-this-page TOC and the scrollbar width. */
+@media (min-width: 1181px) {
+  .diagram-figure.wide {
+    /* Clamp to the layout's own max width (1500px), never raw 100vw, so on very
+       wide screens the figure cannot spill past the centered layout into the
+       sidebar or the TOC. */
+    width: calc(min(100vw, 1500px) - var(--sidebar-w) - var(--toc-w) - 128px);
+    max-width: 1000px;
+    margin-left: 50%;
+    transform: translateX(-50%);
+  }
+}
+
+/* Sequence-style diagram helper (simple) */
+.seq { counter-reset: seq; }
+
+/* Hard guards: a diagram (or anything) must never cause horizontal page scroll */
+.diagram, .diagram__canvas { max-width: 100%; }
+html, body { overflow-x: clip; }
+
+/* ---- Expand button (always visible in the toolbar) ---- */
+.diagram__expand {
+  font: inherit; font-size: 12.5px; color: var(--text-secondary);
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 4px 11px; cursor: pointer; margin-left: 8px;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: color 0.14s, border-color 0.14s;
+}
+.diagram__expand:hover { color: var(--accent-hover); border-color: var(--accent-soft); }
+.diagram__expand svg { width: 13px; height: 13px; }
+
+/* ---- Fullscreen zoom modal ("pop out") ---- */
+.diagram-modal {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; flex-direction: column;
+  background: color-mix(in srgb, var(--bg-primary) 78%, rgba(0, 0, 0, 0.5));
+  backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+  opacity: 0; transition: opacity 0.18s var(--ease);
+}
+.diagram-modal.open { opacity: 1; }
+.diagram-modal__bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 16px; border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+.diagram-modal__title { font-weight: 600; font-size: 15px; color: var(--text-primary); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diagram-modal__ctrls { margin-left: auto; display: flex; gap: 6px; flex: none; }
+.diagram-modal__btn {
+  width: 36px; height: 36px; display: grid; place-items: center;
+  border: 1px solid var(--border); background: var(--bg-surface);
+  border-radius: 9px; color: var(--text-secondary); cursor: pointer;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+.diagram-modal__btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-strong); }
+.diagram-modal__btn svg { width: 18px; height: 18px; }
+.diagram-modal__stage {
+  flex: 1; overflow: auto; padding: 24px; text-align: center;
+  transform: scale(0.985); transition: transform 0.18s var(--ease);
+}
+.diagram-modal.open .diagram-modal__stage { transform: scale(1); }
+.diagram-modal__content { display: inline-block; vertical-align: top; width: max-content; max-width: none; }
+.diagram-modal__content .diagram { max-width: none; box-shadow: var(--shadow-lg); }
+.diagram-modal__hint { font-size: 12px; color: var(--text-muted); margin-right: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .diagram-modal, .diagram-modal__stage { transition: none; }
+  .diagram-modal__stage { transform: none; }
+}
+@media (max-width: 640px) {
+  .diagram-modal__stage { padding: 10px; }
+  .diagram-modal__title { max-width: 46vw; }
+  .diagram-modal__hint { display: none; }
+}

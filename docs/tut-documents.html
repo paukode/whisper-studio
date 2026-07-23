@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Working with documents - Whisper Studio Docs</title>
+  <meta name="description" content="Drop a PDF, Word doc, deck, spreadsheet, or image into chat and ask about it. Everything is parsed locally; Claude reads the document once and remembers it for follow-ups.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-documents">
+    <h1>Working with documents</h1>
+    <p class="subtitle">Drop a PDF, Word doc, deck, spreadsheet, or image into chat and ask about it
+      in plain English. Everything is parsed on your laptop, and Claude remembers the document for
+      every follow-up in the same conversation.</p>
+
+    <p class="lead">You have a 40-page vendor contract and three minutes before a call. You need the
+      payment terms. This tutorial walks that exact flow: attach the file, ask, and keep asking,
+      without re-uploading anything.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="doc-flow-diagram" class="diagram"></div>
+      <figcaption>From dropped file to streamed answer. The <em>follow-up</em> edge back into
+        "Ask a question" is the payoff: the document stays in context, so you never re-upload.</figcaption>
+    </figure>
+
+    <h2 id="the-goal">The goal</h2>
+    <p>Analyze a document fast. Instead of skimming 40 pages yourself, you hand the file to Claude
+      and ask targeted questions. The whole loop is: attach, ask, read, ask again. No conversion
+      step, no separate viewer, no copy-pasting text into the chat box.</p>
+
+    <h2 id="attach-the-file">Attach the file</h2>
+    <p>There are two ways to get a file onto the composer, and both end up in the same place:</p>
+    <ol class="steps">
+      <li>
+        <h4>Drag it into the chat</h4>
+        <p>Drop a PDF, Word document, PowerPoint deck, Excel or CSV file, or an image straight onto
+          the chat composer. This is the fastest path when the file is already on your desktop.</p>
+      </li>
+      <li>
+        <h4>Or use the paperclip</h4>
+        <p>Click the paperclip (Attach) button in the composer and pick a file. If the file already
+          lives in a connected workspace, you can also pull it in with the
+          <code>/file:</code> picker.</p>
+      </li>
+      <li>
+        <h4>Watch for the chip</h4>
+        <p>A chip with the file name appears in the composer. While it uploads, the chip shows an
+          "uploading" badge; once <code>/api/upload</code> resolves, the badge clears and the chip
+          is ready to send. To drop a file, click the <kbd>x</kbd> on its chip, which also cancels
+          an in-flight upload.</p>
+      </li>
+    </ol>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Uploads start the moment you attach, not when you submit. By the
+        time you finish typing your question, the file is usually already parsed and waiting, so
+        pressing <kbd>Enter</kbd> rarely stalls.</p></div>
+    </div>
+
+    <h2 id="ask-and-follow-up">Ask, then follow up</h2>
+    <p>With the chip in place, type your question and press <kbd>Enter</kbd>. A worked example:</p>
+    <div class="code-block"><pre><code>What are the payment terms, in plain English?</code></pre></div>
+    <p>Claude reads the document text and streams back an answer, for example "Net 30 from the invoice
+      date, with a 1.5% monthly late fee." Now the useful part. Ask a follow-up without touching the
+      file again:</p>
+    <div class="code-block"><pre><code>And the termination clause?</code></pre></div>
+    <p>You do not re-upload. The document is already in the conversation, so Claude answers about
+      termination from the same source. Keep going as long as you like, one question per turn.</p>
+
+    <h2 id="what-happens-locally">What happens on your machine</h2>
+    <p>The important detail: the file is parsed <b>locally</b>. When you attach a document, Whisper
+      Studio converts it to Markdown text on your laptop. The raw bytes do not go to the cloud when
+      you attach; they only travel (as extracted text) when you actually send the chat message. Even
+      then, Claude sees the document <em>text</em>, not the original file.</p>
+    <p>Under the hood, <code class="path">server/extract/__init__.py</code> dispatches by file type:
+      a general converter (MarkItDown) handles most formats, and specialized paths handle PDFs,
+      spreadsheets, and images. Claude reads that text once and keeps it in the conversation history,
+      which is why every follow-up in the same session stays grounded in the document.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Because parsing is local, a document you never send stays entirely
+        on your laptop. The extraction pipeline runs whether or not you are online; the network is
+        only used for the chat call itself.</p></div>
+    </div>
+
+    <h2 id="supported-types">Supported file types</h2>
+    <p>Whisper Studio handles the everyday office formats plus images:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Type</th><th>What you get</th></tr></thead>
+      <tbody>
+        <tr><td>PDF (<code>.pdf</code>)</td><td>Text extraction, with an OCR fallback for scanned or image-only PDFs so scans still become readable text.</td></tr>
+        <tr><td>Word (<code>.docx</code>)</td><td>Document body converted to Markdown, headings preserved.</td></tr>
+        <tr><td>PowerPoint (<code>.pptx</code>)</td><td>Slide text pulled out deck-wide.</td></tr>
+        <tr><td>Excel / CSV (<code>.xlsx</code>, <code>.xls</code>, <code>.csv</code>)</td><td>Small sheets in full; large ones sampled (see below).</td></tr>
+        <tr><td>Images (PNG, JPG, and more)</td><td>Sent as a vision block, and OCR'd to text so text-only models can still read them.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 id="large-spreadsheets">Large spreadsheets are sampled</h3>
+    <p>A spreadsheet with thousands of rows would blow past the context window if dumped whole, so a
+      big sheet is turned into a compact <b>schema plus sample</b> instead: each sheet's dimensions,
+      the header row, and the first 20 rows. Claude sees the shape of the data and can ask for
+      specific rows or columns when it needs more, rather than reading everything at once.</p>
+
+    <h3 id="size-limits">Size limits</h3>
+    <p>Documents are accepted up to about <b>50 MB</b>. A file over that limit is rejected with a
+      clear message (surfaced from the backend, not a blanket "upload failed"), so you know to trim
+      or split it. Very large documents that fit under the size limit are still capped at roughly
+      <b>150,000 characters</b> of injected text per attachment, which keeps a single big file from
+      swamping the conversation.</p>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 20h20L12 2Z"/><path d="M12 9v5M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>If an upload fails, read the toast. It surfaces the real reason,
+        such as an unsupported file type or a file over the 50 MB limit. If it says the server is
+        unreachable, the app's backend is not running.</p></div>
+    </div>
+
+    <h2 id="tips">Tips that make this smoother</h2>
+    <div class="card-grid">
+      <div class="card">
+        <h3>Attach several at once</h3>
+        <p>Drop or pick multiple files in one go. Each gets its own chip, and Claude can compare or
+          cross-reference them in a single question.</p>
+      </div>
+      <div class="card">
+        <h3>Be specific</h3>
+        <p>"Summarize the payment and termination sections" beats "summarize this." Targeted
+          questions get targeted answers from a long document.</p>
+      </div>
+      <div class="card">
+        <h3>Pull from your workspace</h3>
+        <p>If a file already lives in a connected repo, the <code>/file:</code> picker attaches it
+          without leaving the chat. See <a href="tut-workspace.html">The workspace IDE</a>.</p>
+      </div>
+      <div class="card">
+        <h3>One document, many turns</h3>
+        <p>You only pay the upload once. Keep asking follow-ups in the same session and the document
+          stays in context the whole time.</p>
+      </div>
+    </div>
+
+    <h2 id="how-it-works">Go deeper</h2>
+    <p>This tutorial stays at the "what you click" level. For the type-aware router, the OCR fallback,
+      spreadsheet sampling, and how large files are injected by outline and section rather than a
+      blunt truncation, read <a href="arch-extraction.html">Attachment extraction</a>. For how the
+      document text is folded into the prompt alongside your question, see the
+      <a href="arch-chat-pipeline.html">chat pipeline</a>.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-first-chat.html">Your first chat</a>,
+        <a href="tut-research.html">Web research</a>, and
+        <a href="tut-index-search.html">Index &amp; semantic search</a> for asking across a whole
+        folder instead of one file.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/doc-flow.js"></script>
+</body>
+</html>

@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Development &amp; contributing - Whisper Studio Docs</title>
+  <meta name="description" content="Run the test suite, find your way around the codebase, follow the project conventions, and see the full tech stack behind Whisper Studio.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="contributing">
+    <h1>Development &amp; contributing</h1>
+    <p class="subtitle">How to run the checks, find your way around the codebase, and land a change in the
+      right layer. This page is for people working <em>on</em> Whisper Studio; if you just want to run it,
+      start with <a href="installation.html">Installation</a>.</p>
+
+    <p>Whisper Studio is one FastAPI process serving one origin: a Python backend under
+      <code class="path">server/</code> and a React 19 SPA under <code class="path">src/</code>, built and
+      served together by <code class="path">setup.sh</code>. Get a working install first (see
+      <a href="installation.html">Installation</a>), then use the checks and map below to make changes.</p>
+
+    <h2 id="running-tests">Running tests &amp; checks</h2>
+    <p>Activate the virtualenv that <code class="path">setup.sh</code> created, then run the backend and
+      frontend checks. These four commands are the same gate CI runs:</p>
+    <div class="code-block"><pre><code>source venv/bin/activate
+
+pytest tests/ -q      # backend unit + smoke tests
+npm run build         # tsc -b + vite build (catches type and build errors)
+npm run lint          # ESLint over src/
+npm test              # vitest frontend unit tests</code></pre></div>
+    <p>Python is linted and formatted with <b>Ruff</b>, a blocking CI gate. Run it before you push so the
+      pipeline stays green:</p>
+    <div class="code-block"><pre><code>ruff check .          # lint
+ruff format .         # format</code></pre></div>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Run <code>/doctor</code> in the chat input for an automated dependency
+        and AWS-access check. It is the fastest way to confirm a fresh checkout is wired up correctly.</p></div>
+    </div>
+
+    <h2 id="project-layout">Project layout</h2>
+    <p>The backend is organized by subsystem, each with its own package under
+      <code class="path">server/</code>. The frontend mirrors that split by feature. Every architecture
+      page in these docs maps to one of these packages.</p>
+    <div class="code-block"><pre><code>whisper-studio/
+├── server/                 FastAPI backend
+│   ├── main.py             app init, router mounting, SPA fallback
+│   ├── agent_tools.py      tool schemas sent to the model each turn
+│   ├── tool_router.py      tool-call dispatch
+│   ├── chat/               chat streaming + tool orchestration
+│   ├── workspace/          file browser, atomic writes, workspace tools
+│   ├── asr/                Whisper + Parakeet transcription backends
+│   ├── diarization/        speaker embedding + VAD
+│   ├── executors/          pluggable tool implementations
+│   ├── agents/             subagent runtime + event bus
+│   ├── approval/           nonce-based approval registry + router
+│   ├── security/           command validator, permission rules
+│   ├── memory/             cross-session memory system
+│   ├── index/ · search/    GraphRAG indexing + semantic search
+│   ├── extract/            attachment → Markdown extraction
+│   ├── git/                Git command wrappers
+│   ├── preview/            dev-server spawn + screenshots
+│   ├── costs/              per-turn cost tracking + budgets
+│   ├── local/              on-device model runtime
+│   ├── openai_bedrock/     GPT-on-Bedrock provider
+│   ├── prompts/            system prompt templates
+│   ├── infrastructure/     config, sessions (SQLite), Bedrock retry
+│   ├── storage/            session/message persistence
+│   └── migrations/         SQLite schema migrations
+├── src/                    Frontend (TypeScript + React 19)
+│   ├── components/         UI grouped by feature
+│   ├── hooks/              useChatStream, useChatInputMic, useTerminal, …
+│   ├── stores/             Zustand stores (chat, session, ui, settings, …)
+│   ├── providers/          React context providers
+│   ├── services/           client-side services
+│   ├── api/                typed fetch + SSE clients
+│   ├── types/              shared types + Zod SSE schemas
+│   └── utils/              sanitizeHtml, formatters, error helpers
+├── skills/                 skill definitions (Markdown)
+├── plugins/                opt-in Python plugins
+├── tests/                  backend pytest suite
+├── docs/                   this documentation site
+├── setup.sh                install + run script
+└── requirements.txt        Python deps (ML libs pinned)</code></pre></div>
+
+    <h2 id="conventions">Conventions</h2>
+    <dl class="spec">
+      <dt>Backend edits need a restart</dt>
+      <dd>Backend modules are imported once at startup, so edits to <code class="path">server/*.py</code>
+        do not take effect until the process restarts. <code class="path">setup.sh</code> only restarts if
+        the old process is killed first - <code>lsof -ti :8000 | xargs kill</code>.</dd>
+      <dt>Frontend is strict TypeScript + Zod</dt>
+      <dd>The SPA uses TypeScript strict mode. SSE event payloads are validated at runtime with Zod schemas
+        in <code class="path">src/types/</code>, so a malformed event fails loudly rather than corrupting
+        state.</dd>
+      <dt>Tools have three homes</dt>
+      <dd>Tool <b>schemas</b> live in <code class="path">server/agent_tools.py</code>, <b>dispatch</b> in
+        <code class="path">server/tool_router.py</code>, and the <b>implementation</b> in
+        <code class="path">server/executors/</code>. Add a tool by touching all three.</dd>
+      <dt>Never reinvent the approval flow</dt>
+      <dd>Approval-gated server actions go through <code class="path">server/approval/registry.py</code>,
+        which holds the nonce. Do not build a parallel approval path - see
+        <a href="arch-approval.html">Approval &amp; permissions</a> for why.</dd>
+      <dt>Keep files under the size budget</dt>
+      <dd>CI fails any <code class="path">server/</code> or <code class="path">src/</code> file over 1200
+        lines. Split a growing module into a focused component rather than adding it to the allowlist.</dd>
+    </dl>
+
+    <h2 id="tech-stack">Tech stack</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Layer</th><th>Tech</th></tr></thead>
+      <tbody>
+        <tr><td>Backend</td><td>FastAPI, Uvicorn, SQLite (WAL), APScheduler</td></tr>
+        <tr><td>AI (cloud)</td><td>Amazon Bedrock - Claude Haiku 4.5, Sonnet, Opus 4.6 / 4.7 / 4.8, and GPT-5.4 / 5.5</td></tr>
+        <tr><td>AI (local)</td><td>On-device Gemma via the local model runtime (local mode)</td></tr>
+        <tr><td>Transcription</td><td>mlx-whisper + Parakeet, Resemblyzer, WebRTC VAD (all on-device)</td></tr>
+        <tr><td>Retrieval</td><td>GraphRAG - embeddings, reranker, entity graph, sqlite-vec (see <a href="arch-index.html">Index / GraphRAG</a>)</td></tr>
+        <tr><td>Frontend</td><td>React 19, TypeScript (strict), Vite 8, Zustand, Monaco Editor, xterm.js</td></tr>
+        <tr><td>Search</td><td>ripgrep</td></tr>
+        <tr><td>Protocols</td><td>HTTP/JSON, Server-Sent Events, WebSocket, MCP (stdio)</td></tr>
+        <tr><td>LSP</td><td>python-lsp-server, typescript-language-server</td></tr>
+        <tr><td>Sandbox</td><td><code>sandbox-exec(5)</code> (macOS)</td></tr>
+        <tr><td>Sanitization</td><td>DOMPurify 3.4.6</td></tr>
+        <tr><td>Spreadsheets</td><td>ExcelJS 4.4.0</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="contributing">Contributing</h2>
+    <p>Small fixes: open a pull request. For anything larger, read the
+      <a href="arch-overview.html">architecture overview</a> and the relevant subsystem page first, so the
+      change lands in the right layer and reuses the existing approval, tool, and persistence plumbing
+      instead of working around it. Match the surrounding code - the backend and frontend both have a
+      consistent house style, and CI enforces the linting and file-size rules above.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-overview.html">System overview</a>,
+        <a href="arch-tools.html">Tool dispatch &amp; executors</a>,
+        <a href="arch-approval.html">Approval &amp; permissions</a>, and
+        <a href="arch-persistence.html">Persistence</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>

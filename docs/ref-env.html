@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Environment variables - Whisper Studio Docs</title>
+  <meta name="description" content="Environment variables that override config and control binding: HOST, PORT, BACKEND_PORT, WHISPER_TRUSTED_ORIGINS, TAVILY_API_KEY, and NO_OPEN.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="ref-env">
+    <h1>Environment variables</h1>
+    <p class="subtitle">A short list of shell variables that override stored config and control how the
+      server binds and starts. The environment is the highest-priority config layer, so anything set
+      here wins over the project and user layers.</p>
+
+    <p>The environment variables below are the ones you are likely to set: variables
+      that steer <b>binding and startup</b> (<code>HOST</code>, <code>PORT</code>,
+      <code>BACKEND_PORT</code>, <code>NO_OPEN</code>), one that opens up <b>LAN access</b>
+      (<code>WHISPER_TRUSTED_ORIGINS</code>), and one that supplies a <b>secret</b>
+      (<code>TAVILY_API_KEY</code>). Everything else is configured through the Settings UI or
+      <code class="path">config.json</code>. A few lower-level knobs also read the environment
+      (<code>TZ</code> for cron scheduling, plus <code>WHISPER_RG_PATH</code>,
+      <code>WHISPER_SEARCH_TIMEOUT</code>, <code>WHISPER_GLOB_LIMIT</code>, and
+      <code>WHISPER_GREP_LIMIT</code> for the search tools), but the defaults suit almost everyone.
+      See <a href="configuration.html">Configuration</a> for how the layers stack.</p>
+
+    <h2 id="the-variables">The variables</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Default</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>HOST</code></td>
+          <td><code>127.0.0.1</code></td>
+          <td>Bind address. Set <code>HOST=0.0.0.0</code> to bind every interface, but on its own that is
+            not enough to reach the app from another device: the Host-header guard still returns a
+            <code>403</code> until you also set <code>WHISPER_TRUSTED_ORIGINS</code>. Trusted networks
+            only, and read the <a href="#binding-lan">warning below</a> first.</td>
+        </tr>
+        <tr>
+          <td><code>PORT</code></td>
+          <td><code>8000</code></td>
+          <td>Backend port. If the port is already in use the launcher auto-increments to the next free
+            one, so always read the URL the script actually prints.</td>
+        </tr>
+        <tr>
+          <td><code>BACKEND_PORT</code></td>
+          <td><code>8000</code></td>
+          <td>Read by <code class="path">vite.config.ts</code> so the dev proxy targets the real backend
+            port. <code class="path">setup.sh</code> sets it from <code>PORT</code> automatically, so you
+            rarely set it by hand.</td>
+        </tr>
+        <tr>
+          <td><code>TAVILY_API_KEY</code></td>
+          <td><span class="badge badge--muted">unset</span></td>
+          <td>Web-search key. Overrides <code>config.json:tavily_api_key</code>. When both are set, the env
+            var wins, so key rotation is one <code>export</code> away.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_TRUSTED_ORIGINS</code></td>
+          <td><span class="badge badge--muted">unset</span></td>
+          <td>Comma-separated list of extra hosts or origins the Origin/Host guard should trust, e.g.
+            <code>WHISPER_TRUSTED_ORIGINS=192.168.1.50,my-box</code>. Required when you bind
+            <code>HOST=0.0.0.0</code> and browse from another device: the guard rejects any request whose
+            <code>Host</code> is not localhost with a <code>403</code>, so set this to the host or origin
+            you actually type into the browser. See <a href="#binding-lan">Exposing on the LAN</a>.</td>
+        </tr>
+        <tr>
+          <td><code>NO_OPEN</code></td>
+          <td><span class="badge badge--muted">unset</span></td>
+          <td>Set <code>NO_OPEN=1</code> to skip auto-opening the browser at startup. Same effect as the
+            <code>--no-open</code> flag. Useful for SSH and headless sessions.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="binding-startup">Binding and startup</h2>
+    <p>The three binding variables shape how the process comes up. The most common way to set them is a
+      one-line prefix in front of the launcher:</p>
+    <div class="code-block"><pre><code>HOST=0.0.0.0 PORT=8080 bash setup.sh --no-open</code></pre></div>
+    <p><code>PORT</code> is the backend port. Because the launcher auto-increments when the port is busy,
+      the value you pass is a starting point, not a guarantee. If port 8000 is taken and you did not set
+      <code>PORT</code>, the server climbs to 8001, 8002, and so on.
+      <code class="path">setup.sh</code> then propagates the resolved value into
+      <code>BACKEND_PORT</code> so the Vite dev proxy points at wherever the backend actually landed.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p><code>BACKEND_PORT</code> only matters in dev mode
+        (<code>bash setup.sh --dev</code>), where the browser talks to the Vite dev server and Vite proxies
+        API calls to the backend. In production mode (the default), FastAPI serves the SPA and the API on
+        the same origin, so there is nothing to proxy and you can ignore
+        <code>BACKEND_PORT</code> entirely.</p></div>
+    </div>
+
+    <h2 id="binding-lan">Exposing on the LAN</h2>
+    <p>By default the server binds <code>127.0.0.1</code>, so it is reachable only from the machine it runs
+      on. Setting <code>HOST=0.0.0.0</code> binds every interface, but that alone does <b>not</b> make the
+      app usable from another device. The Host-header guard rejects any request whose <code>Host</code> is
+      not <code>localhost</code>, <code>127.0.0.1</code>, <code>::1</code>, or <code>0.0.0.0</code> with a
+      <code>403</code> - and a LAN browser sends <code>Host: 192.168.x.x</code>, so every request, the
+      initial page load included, is refused. To actually reach it from another device you must
+      <em>also</em> set <code>WHISPER_TRUSTED_ORIGINS</code> to the host or origin you browse from:</p>
+    <div class="code-block"><pre><code>HOST=0.0.0.0 WHISPER_TRUSTED_ORIGINS=192.168.1.50 bash setup.sh --no-open</code></pre></div>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.6 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>The API is unauthenticated.</b> Whisper Studio assumes it runs on
+        localhost for a single trusted user. There is no login. When you bind
+        <code>HOST=0.0.0.0</code>, anyone who can reach the port can drive the agent, run sandboxed
+        commands, read your workspace, and spend your Bedrock budget. Do this only on a network you fully
+        control, and prefer an SSH tunnel over raw LAN exposure.</p></div>
+    </div>
+
+    <p>The <b>Origin/Host guard</b> gives partial, not complete, protection here. It rejects cross-site
+      browser requests, so a malicious web page you happen to visit cannot quietly script your local
+      instance through the browser. It does <b>not</b> stop a deliberate non-browser client (curl, a
+      script, another program on the LAN) from calling the API directly, because those clients simply send
+      the expected <code>Origin</code> and <code>Host</code> headers. Treat the guard as a defence against
+      drive-by browser attacks, not as authentication. See the <a href="ref-security.html">security
+      model</a> for the full boundary picture.</p>
+
+    <h2 id="secrets">Secrets</h2>
+    <p><code>TAVILY_API_KEY</code> enables the web-search skill. Reading it from the environment is the
+      recommended path because it keeps the key out of the on-disk
+      <code class="path">config.json</code> and makes rotation trivial:</p>
+    <div class="code-block"><pre><code>echo 'export TAVILY_API_KEY=tvly-...' &gt;&gt; ~/.zshrc
+source ~/.zshrc</code></pre></div>
+    <p>If you also paste a key into Settings, the environment value takes precedence. Without a key set by
+      either path, web search is simply unavailable; chat, transcription, and the workspace tools all work
+      as normal. See <a href="tut-research.html">Web research</a> for how the skill uses it.</p>
+
+    <h2 id="precedence">Where the environment fits</h2>
+    <p>Config resolves in three layers, highest priority first. The environment sits at the top, so a value
+      exported in your shell overrides both the project and user layers:</p>
+    <dl class="spec">
+      <dt><code class="path">Environment</code></dt>
+      <dd>Shell variables (<code>HOST</code>, <code>PORT</code>, <code>BACKEND_PORT</code>,
+        <code>WHISPER_TRUSTED_ORIGINS</code>, <code>TAVILY_API_KEY</code>, <code>NO_OPEN</code>). Highest
+        priority. Set per-launch or in your shell profile.</dd>
+      <dt><code class="path">&lt;workspace&gt;/.whisper/settings.json</code></dt>
+      <dd>Project layer. Per-project model, region, and permission mode. Edited through the Settings UI.</dd>
+      <dt><code class="path">config.json</code></dt>
+      <dd>User layer, at the repo root and gitignored. Defaults for all sessions. Edited through the
+        Settings UI or by hand.</dd>
+    </dl>
+    <p>Only the binding and secret keys have an environment override. Most settings (model, region, effort
+      level, permission mode, feature flags, cost caps) live only in the project and user layers. For the
+      complete field-by-field list, see <a href="ref-settings.html">Settings &amp; config keys</a>.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+      <div class="callout__body"><p>The environment layer is shell-only. There is no field in the Settings
+        UI for <code>HOST</code>, <code>PORT</code>, <code>BACKEND_PORT</code>,
+        <code>WHISPER_TRUSTED_ORIGINS</code>, or <code>NO_OPEN</code>. To change them, set the variable and
+        restart the server.</p></div>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="configuration.html">Configuration</a>,
+        <a href="ref-settings.html">Settings &amp; config keys</a>, and the
+        <a href="ref-security.html">Security model</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>

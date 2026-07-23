@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Overall system - Whisper Studio Docs</title>
+  <meta name="description" content="The whole Whisper Studio architecture on one page: the interactive system map and the chat-turn sequence, plus key invariants and security boundaries.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="overall-system">
+    <h1>Overall system</h1>
+    <p class="subtitle">Whisper Studio runs as a single process on your machine: a FastAPI server that
+      serves both the REST/SSE/WebSocket API and the React SPA from the same origin. There is no
+      separate frontend host and no remote backend; except for Amazon Bedrock and the optional Tavily
+      and MCP integrations, nothing in the request path is remote.</p>
+
+    <p>This page is the whole architecture in one place, at two levels of zoom: the
+      <a href="#system-overview">system map</a> (every major component and the boundaries between
+      them) and the <a href="#chat-turn-sequence">chat-turn sequence</a> (what happens when you send a
+      message). Both diagrams are interactive - <b>click any box</b> to trace where its data flows, and
+      use <b>Expand</b> for full-screen zoom and pan.</p>
+
+    <h2 id="system-overview">1. System overview</h2>
+    <figure class="diagram-figure wide">
+      <div id="overview-diagram" class="diagram"></div>
+      <figcaption>The full system. Click a box to trace its downstream path; press <kbd>Esc</kbd> or
+        <b>Reset</b> to clear. Use <b>Expand</b> to zoom (<kbd>+</kbd>/<kbd>-</kbd>/<kbd>0</kbd>) and
+        scroll to pan. Arrow direction shows data flow.</figcaption>
+    </figure>
+
+    <h3 id="key-invariants">Key invariants</h3>
+    <div class="cols-2">
+      <div class="card"><h3>One origin, one process</h3><p>The SPA is served from
+        <code>/static/dist/</code> by the same FastAPI app that exposes the API. There is no CORS layer
+        because there is nothing to cross.</p></div>
+      <div class="card"><h3>Localhost by default</h3><p>The server binds <code>127.0.0.1</code>, so an
+        untrusted network can't reach it. LAN exposure takes an explicit <code>HOST=0.0.0.0</code>
+        opt-in.</p></div>
+      <div class="card"><h3>Transcription is local</h3><p>The Whisper model loads on first record and
+        runs in-process; audio bytes never leave the machine. Only a transcript can become a Bedrock
+        prompt - and only when you type something.</p></div>
+      <div class="card"><h3>Bedrock is the only cloud LLM</h3><p>No telemetry, no proxy, no gateway.
+        The signed request goes straight from the local process to
+        <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code> and back.</p></div>
+      <div class="card"><h3>MCP servers are child processes</h3><p>Spawned by <code>server/mcp.py</code>
+        and piped over stdio. They never see HTTP.</p></div>
+    </div>
+
+    <h2 id="chat-turn-sequence">2. Chat-turn sequence</h2>
+    <p>When you submit a message, the server builds the prompt, streams the model, and drives an
+      agentic tool loop - pausing for approval on any risky action - before persisting the result.</p>
+    <figure class="diagram-figure wide">
+      <div id="chat-turn-diagram" class="diagram"></div>
+      <figcaption>One chat turn, keystroke to persisted message. Click a step to trace it; use
+        <b>Expand</b> to zoom and pan.</figcaption>
+    </figure>
+
+    <h3>Notes on the sequence</h3>
+    <ul>
+      <li><b><code>visible_chat_history</code> filter.</b> Before building the Bedrock messages array,
+        non-prompt rows (<code>cron_event</code> and future UI-only roles) are stripped. Cron output
+        cards persist on disk and render in the chat, but they never inflate the prompt or the token
+        bill.</li>
+      <li><b>Approval flow.</b> The only legitimate path that bypasses <code>_validate_command</code>:
+        consent is a server-held nonce the client cannot fabricate. See
+        <a href="#security-boundaries">Security boundaries</a>.</li>
+      <li><b>Session persistence.</b> A full UPSERT, but under a per-session asyncio lock with merge
+        logic so cron-event rows appended by the background daemon between renders aren't clobbered by
+        the frontend's save.</li>
+    </ul>
+
+    <h2 id="security-boundaries">3. Security boundaries</h2>
+    <p>Some layers are hard <b>boundaries</b> (kernel- or server-enforced); others are
+      <b>defence-in-depth</b> that catch easy cases before they reach a boundary.</p>
+    <table>
+      <thead><tr><th>Layer</th><th>What it does</th><th>Boundary or defence-in-depth?</th></tr></thead>
+      <tbody>
+        <tr><td><code>127.0.0.1</code> default bind</td><td>Closes LAN reachability</td><td><b>Boundary</b> - kernel-level</td></tr>
+        <tr><td>DOMPurify on every <code>dangerouslySetInnerHTML</code> site</td><td>Strips <code>&lt;script&gt;</code>, inline handlers, and <code>javascript:</code> URLs from any HTML reaching the React DOM</td><td><b>Boundary</b> for the chat/Markdown render path - without it a prompt-injected page fetched via <code>web_fetch</code> could run JS in the SPA origin</td></tr>
+        <tr><td>Approval router with server-side nonce</td><td>Real consent flow for risky commands</td><td><b>Boundary</b> - the server holds the nonce, the client can't fabricate one</td></tr>
+        <tr><td><code>_validate_command</code> (regex deny-list)</td><td>Catches <code>rm -rf /</code>, <code>mkfs</code>, <code>dd of=/dev/…</code>, reads of sensitive paths</td><td><b>Defence-in-depth</b> in front of the sandbox on every command path; regex-based and bypassable alone</td></tr>
+        <tr><td><code>sandbox-exec(5)</code> / <code>bwrap</code></td><td>macOS/Linux sandbox profile around every shell + code execution path (including the terminal PTY)</td><td><b>Boundary</b> - the strongest layer; even if everything above is bypassed, code runs with the secret-store deny-list applied</td></tr>
+        <tr><td><code>_AWS_READONLY_GUARD</code> in <code>executors/code.py</code></td><td>Monkey-patches <code>botocore</code> to reject non-read AWS calls</td><td><b>Defence-in-depth only</b> - user code in the same process can <code>del</code> the patch; the real container is <code>sandbox-exec</code></td></tr>
+        <tr><td>Plugin loader (<code>enabled</code> allow-list)</td><td>Dropping a <code>.py</code> into <code>plugins/</code> does nothing until explicitly enabled</td><td><b>Boundary</b> for the drive-by-plugin vector</td></tr>
+      </tbody>
+    </table>
+
+    <h3>What <code>sandbox-exec</code> actually enforces</h3>
+    <p>The sandbox is <b>allowlist-by-exception</b>, not deny-by-default: the macOS profile is
+      <code>(allow default)</code> plus <code>deny</code> rules for a curated secret-store list
+      (<code>_DENIED_PATHS</code> in <code>server/sandbox.py</code>), and the Linux bwrap setup
+      <code>--ro-bind</code>s the filesystem read-only and masks the same paths. It denies read/write
+      of SSH/GPG keys, cloud credentials (<code>~/.aws</code> is denied for generic commands but
+      re-allowed per-call for the AWS tools), git credentials, browser cookies/keychains, shell
+      history, and password-manager stores.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>Accepted residual.</b> Because the default is <em>allow</em>,
+        the sandbox does not restrict network access (sandboxed <code>git</code>/<code>npm</code>/<code>pip</code>/<code>aws</code>/build
+        commands need it) and does not block reads of secret files that aren't on the deny-list. This
+        is the boundary you should trust last and most - everything above it is layered defence.</p></div>
+    </div>
+
+    <h3>Workspace path containment</h3>
+    <p>Every workspace file op validates the target with <code>_ws_validate_path</code>
+      (<code class="path">server/workspace/paths.py</code>): it <code>os.path.realpath</code>s the path
+      and confirms it stays inside the connected workspace root (also blocking <code>/dev</code>,
+      <code>/proc</code>, <code>/sys</code>, and UNC paths). Writes go through a temp file plus
+      <code>os.replace</code>. The check-then-use pattern leaves a contrived intermediate-symlink TOCTOU
+      residual, accepted for a single-user local tool.</p>
+
+    <h2 id="file-level-map">File-level map</h2>
+    <p>If you want to know where to make a change, this is the reading order:</p>
+    <table>
+      <thead><tr><th>Concern</th><th>File</th></tr></thead>
+      <tbody>
+        <tr><td>Add a new chat tool</td><td><code>server/agent_tools.py</code> (schema) + <code>server/tool_router.py</code> (dispatch) + <code>server/executors/&lt;area&gt;.py</code></td></tr>
+        <tr><td>Add an HTTP endpoint</td><td>one of the routers in <code>server/</code>, mounted in <code>server/main.py</code></td></tr>
+        <tr><td>Add a frontend component</td><td><code>src/components/&lt;area&gt;/</code>, wired into <code>src/App.tsx</code> for a new top-level surface</td></tr>
+        <tr><td>Add a session-scoped event</td><td><code>server/agents/event_bus.py</code> (publisher) + <code>src/stores/sessionRuntimes.ts</code> (consumer)</td></tr>
+        <tr><td>Change a permission rule</td><td><code>server/auto_mode.py</code> (classifier) + <code>server/security/command_validator.py</code> (deny patterns)</td></tr>
+        <tr><td>Add a setting</td><td><code>server/infrastructure/config.py</code> (<code>DEFAULTS</code> + optional env overlay) + the relevant Settings panel</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="not-in-diagram">What's deliberately not on the map</h2>
+    <ul>
+      <li>The <b>companion</b> subsystem - an optional sidecar that can be toggled off entirely.</li>
+      <li><b>Background tasks</b> - used to run long commands without holding an HTTP connection.</li>
+      <li>The <b>skill autocomplete</b> and <b>@-mention</b> paths in the chat input - pure frontend,
+        no backend round-trip.</li>
+    </ul>
+    <p>These are real parts of the system but aren't on the critical path for "how does a chat turn
+      complete and stay safe?", which is what this page is for. Every box above is also a link into a
+      focused page - the whole <a href="arch-overview.html">Architecture</a> section is a zoom into one
+      part of this map.</p>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/overview.js"></script>
+  <script src="assets/diagrams/chat-turn.js"></script>
+</body>
+</html>

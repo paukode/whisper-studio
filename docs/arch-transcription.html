@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transcription &amp; diarization - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio streams audio over one WebSocket, transcribes on-device with Parakeet or Whisper, gates utterances with VAD, and clusters speakers with ECAPA - all without audio leaving the machine.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-transcription">
+    <h1>Transcription &amp; diarization</h1>
+    <p class="subtitle">Streaming audio over a single WebSocket, on-device speech recognition,
+      voice-activity gating, and speaker clustering that self-heals - and no byte of audio ever
+      leaves your machine.</p>
+
+    <p>Recording is the one part of Whisper Studio that opens a persistent, two-way channel instead of
+      a request-response call. The browser streams raw audio up; the server streams interim drafts,
+      settled transcripts, and speaker corrections back down. The whole handler is a thin orchestrator
+      in <code class="path">server/websocket.py</code>: it drives one code path regardless of which ASR
+      backend produced the events, and applies speaker identification on its own side so the backends
+      stay ignorant of each other and of diarization.</p>
+
+    <p><b>Click a box</b> below to trace where audio flows. Notice the two paths that reach the live
+      transcript: interims stream straight through, while re-clustering corrections arrive later as a
+      separate message.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="transcription-diagram" class="diagram"></div>
+      <figcaption>From the browser mic to a diarized transcript. Interims flow through immediately; the
+        <em>speaker_update</em> edge is the diarizer correcting itself after re-clustering.</figcaption>
+    </figure>
+
+    <h2 id="the-channel">The channel</h2>
+    <p>A recording session is a WebSocket to
+      <code>/ws?session_id=...&amp;backend=...&amp;dictation=...</code>. Before the handshake completes,
+      the server rejects any cross-site origin (the HTTP origin middleware never sees WebSocket
+      upgrades, so <code>is_ws_origin_allowed</code> guards it here), closing with code
+      <code>1008</code>. Two frame types then flow up the socket:</p>
+    <ul>
+      <li><b>Binary frames</b> carry raw <code>PCM16</code> mono audio at <b>16 kHz</b>. They are
+        processed strictly in order: the VAD buffer and the decoder are stateful, and decode is faster
+        than real time, so awaiting each frame inline keeps ordering trivial without dropping audio.</li>
+      <li><b>Text frames</b> are JSON control messages: <code>ping</code>, <code>set_backend</code>
+        (a live A/B switch), <code>set_speakers</code> (a participant-count hint), and <code>stop</code>.</li>
+    </ul>
+
+    <h2 id="backend-selection">Choosing a backend at connect</h2>
+    <p>The ASR backend is resolved <b>once</b>, at connect time, so a mid-recording Settings change can
+      never swap models on a live stream. A per-connection <code>?backend=</code> query parameter
+      overrides the global <code>transcription_backend</code> config; with no parameter, the connection
+      follows the config. The registry in <code class="path">server/asr/__init__.py</code> maps names
+      to modules and imports them lazily, so an unused backend's model stack is never loaded.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Backend</th><th>Model</th><th>Character</th></tr></thead>
+      <tbody>
+        <tr><td><code>parakeet</code> (alias <code>streaming</code>)</td><td><code>mlx-community/parakeet-tdt-0.6b-v3</code></td><td>Low-latency. Re-decodes the growing utterance every chunk for word-by-word interims.</td></tr>
+        <tr><td><code>whisper</code> (default)</td><td><code>mlx-community/whisper-large-v3-turbo</code></td><td>Batch. Decodes each settled utterance in one shot; no interims.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Both run through MLX on a dedicated single-worker thread pool
+      (<code>max_workers=1</code>): MLX evaluation streams are thread-local, so the model must be loaded
+      and every utterance decoded on the <em>same</em> thread. The chat-input microphone always passes
+      <code>backend=streaming</code>, so dictation uses Parakeet even when the meeting recorder is on
+      Whisper. See <a href="arch-backends.html">Model backends &amp; modes</a> for how local mode warms
+      and unloads these weights.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>The backend session is created lazily on the first audio frame, and
+        the model is only downloaded on first use into <code class="path">models/</code>. In local mode,
+        loading a cold model streams a <code>model_loading</code> progress banner to the client so the
+        first record is a visible ramp rather than a silent stall.</p></div>
+    </div>
+
+    <h2 id="vad-utterances">VAD and utterance gating</h2>
+    <p>Audio is never sent to the model continuously. Both backends push frames through the same
+      <code>UtteranceBuffer</code> in <code class="path">server/audio_buffer.py</code>, which uses
+      <code>webrtcvad</code> to find natural speech boundaries. An utterance settles into a
+      <em>final</em> when two conditions hold:</p>
+    <ol class="steps">
+      <li><h4>Enough speech</h4><p>At least <b>400 ms</b> of voiced audio
+        (<code>MIN_UTTERANCE_MS</code>). Shorter fragments (a cough, a stray syllable) are dropped
+        rather than transcribed.</p></li>
+      <li><h4>Trailing silence</h4><p>A run of silence after speech marks the end. Whisper waits the
+        default <b>400 ms</b>; Parakeet sits slightly under, at <b>350 ms</b>, because its interims
+        already show the text live, so settling a touch sooner costs nothing visible and trims label
+        latency.</p></li>
+    </ol>
+    <p>Silence inside an utterance is kept (the model uses pause structure to infer sentence
+      boundaries), while dead silence between utterances is discarded so no model time is wasted on it.
+      A hard cap flushes a very long utterance even without a silence boundary.</p>
+
+    <h3 id="interims">Interims vs finals</h3>
+    <p>Parakeet's <code>process()</code> emits two kinds of events. While an utterance is still in
+      flight and no boundary has landed, it re-decodes the growing window and emits a volatile
+      <code>interim</code> - a word-by-word draft whose tail self-corrects as more speech arrives. A
+      full-context <code>generate()</code> is cheap enough (well under the chunk cadence) to keep up in
+      real time. An interim is only decoded once the pending window has at least <b>~300 ms</b> of
+      audio, and an unchanged draft is never re-sent. When silence closes the utterance, the clean,
+      authoritative <code>final</code> is emitted with its audio attached, and the interim window
+      resets. Whisper, being batch, emits only finals.</p>
+
+    <h2 id="diarization">Diarization: assign fast, refine later</h2>
+    <p>Speaker identification lives in <code class="path">server/diarization/speakers.py</code>,
+      entirely on the orchestrator side. It is a two-stage design so that transcripts never wait on
+      clustering:</p>
+
+    <h3 id="embedding">1. Embed each final</h3>
+    <p>Every settled utterance's audio is embedded by the ECAPA-VoxCeleb encoder
+      (<code>speechbrain/spkrec-ecapa-voxceleb</code>) into an L2-normalized speaker vector. This runs
+      on its own <code>diarize</code> thread pool, off the event loop and off the decode thread.
+      Windows under <b>1 second</b> (<code>MIN_EMBED_SAMPLES</code>) return no embedding: below that,
+      the vector is dominated by phoneme content rather than speaker identity, so such utterances get a
+      continuity label (the previous speaker) and never pollute the cluster space.</p>
+
+    <h3 id="assignment">2. Assign immediately</h3>
+    <p><code>assign()</code> scores the new vector against each running cluster (the median of its top-3
+      member cosine similarities, which tolerates one contaminating utterance) and labels the utterance
+      on the spot. The margin rule is deliberately biased toward merging:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Constant</th><th>Value</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>NEW_SPEAKER_THRESHOLD</code></td><td>0.15</td><td>Below the best cluster's score, create a new speaker; at or above, join the nearest one (provisionally when weak).</td></tr>
+        <tr><td><code>MIN_NEW_SPEAKER_SEC</code></td><td>2.0</td><td>Utterances shorter than this never <em>create</em> a speaker; a short fragment must not define an identity.</td></tr>
+        <tr><td><code>MAX_SPEAKERS</code></td><td>12</td><td>At the cap, snap to the nearest cluster instead of spawning yet another spurious speaker.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The reasoning: a wrong merge is one fixable label, while a wrong new speaker pollutes everything
+      after it. Borderline embeddings spawning phantom speakers was the historical failure mode (once,
+      74 "speakers" from 6 real ones in a three-hour session), so the ambiguous band joins the nearest
+      cluster and lets stage two clean up.</p>
+
+    <h3 id="reclustering">3. Re-cluster and correct</h3>
+    <p><code>maybe_recluster()</code> runs after every <b>10</b> finalized utterances
+      (<code>RECLUSTER_EVERY</code>), or sooner - after just <b>3</b>
+      (<code>RECLUSTER_AFTER_NEW</code>) - when a brand-new speaker was just created, which is exactly
+      when assignment mistakes cluster. It re-runs average-linkage agglomerative clustering over every
+      embedding seen so far, cutting the tree at the largest merge-height gap (or at the user-provided
+      participant count, if set). New group ids are re-mapped onto the previous labels by greatest
+      overlap, so stable speakers keep their numbers and only the corrected utterances move. The
+      corrections are returned as <code>{chunk_id: new_label}</code> and pushed to the client as a
+      <code>speaker_update</code>, which retroactively re-labels those segments in the transcript.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>If you know how many people are in the call, the transcript panel's
+        participant count sends <code>set_speakers</code>. Re-clustering then cuts the tree at exactly
+        that many groups and assignment never creates speakers beyond it - unless the tree is already
+        tight, meaning fewer people have actually spoken yet, in which case it declines to split
+        someone.</p></div>
+    </div>
+
+    <h2 id="dictation">Dictation skips speaker ID</h2>
+    <p>When the connection carries <code>dictation=1</code> (the chat-input microphone), speaker
+      identification is skipped entirely: dictation is single-user, so diarization is pointless and its
+      compute would be wasted. Every utterance is simply labeled and returned; no ECAPA embedding, no
+      clustering. A dictation connection never owns speaker state, so it also never clears the meeting
+      recorder's.</p>
+
+    <h2 id="summarization">From transcript to summary</h2>
+    <p>Once you have a transcript, three summary skills turn it into something you can act on.
+      <code>summarize_transcript</code> produces action items, meeting notes, key points, or a brief;
+      <code>meeting_notes</code> writes a fuller polished record with an owner/action/deadline table;
+      and <code>catch_up</code> gives a plain-language recap for someone who joined late. The server
+      supplies the live or recorded transcript to them automatically, so you ask for a summary without
+      pasting anything.</p>
+    <p>A multi-hour meeting can outgrow the model's context window. Rather than truncate the transcript
+      and answer from a partial record, the server condenses an oversized one first with a server-side
+      map-reduce pass, so even long sessions summarise end to end. See
+      <a href="arch-summarization.html#map-reduce">Transcript summarization &amp; condensation</a> for how
+      that works, and <a href="tut-voice.html#summarize">the Voice tutorial</a> for the hands-on steps.</p>
+
+    <h2 id="session-memory">Session memory and privacy</h2>
+    <p>Speaker labels are <b>session-scoped</b> and live in <b>RAM only</b>, keyed by
+      <code>session_id</code> in a per-session registry. A reconnect or a second tab on the same
+      conversation keeps its labels; a server restart starts fresh at "Speaker 1". There is no disk
+      persistence of speaker state by design: labels are inherently session-scoped ("Speaker 1" today
+      and "Speaker 1" tomorrow are unrelated), so a fresh start is fine. An explicit <code>stop</code>
+      drops the session's speaker state (though a user-set participant count outlives it, since stopping
+      and restarting the recorder does not change the meeting's size).</p>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Audio never leaves the machine.</b> Recognition and speaker
+        embedding both run on-device via MLX and SpeechBrain. Nothing is uploaded, and no telemetry is
+        emitted. The only network access is a one-time model download into
+        <code class="path">models/</code> on first use.</p></div>
+    </div>
+
+    <h2 id="messages">WebSocket message types</h2>
+    <p>Every frame the server sends down the socket is one of these JSON payloads:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Type</th><th>Fields</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>interim</code></td><td><code>text</code></td><td>A volatile word-by-word draft of the in-flight utterance (Parakeet only).</td></tr>
+        <tr><td><code>transcript</code></td><td><code>text</code>, <code>speaker</code>, <code>chunk_id</code></td><td>A settled final, labeled with its speaker and a monotonic chunk id.</td></tr>
+        <tr><td><code>speaker_update</code></td><td><code>updates</code> (list of <code>chunk_id</code> to <code>speaker</code>)</td><td>Re-clustering corrections that retroactively re-label earlier segments.</td></tr>
+        <tr><td><code>model_loading</code> / <code>model_unloaded</code></td><td><code>backend</code>, <code>label</code>, <code>progress</code></td><td>Local-mode load banner and the paired unload notice on an engine switch.</td></tr>
+        <tr><td><code>pong</code></td><td>-</td><td>Reply to a <code>ping</code> keepalive.</td></tr>
+        <tr><td><code>session_ended</code></td><td>-</td><td>Acknowledges <code>stop</code> after the last in-flight utterance is drained.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/websocket.py</code></dt><dd>The <code>/ws</code> endpoint: origin check, backend selection, frame loop, and event relay with diarization applied.</dd>
+      <dt><code class="path">server/asr/__init__.py</code></dt><dd>The backend registry: name resolution (including the <code>streaming</code> alias) and lazy module import.</dd>
+      <dt><code class="path">server/asr/parakeet_backend.py</code></dt><dd>Parakeet TDT via MLX, growing-window interims, and the settled final decode.</dd>
+      <dt><code class="path">server/audio_buffer.py</code></dt><dd>The <code>UtteranceBuffer</code>: webrtcvad gating, trailing-silence settling, and the in-flight pending window.</dd>
+      <dt><code class="path">server/diarization/speakers.py</code></dt><dd>ECAPA embedding, immediate assignment, and periodic re-clustering with label re-mapping.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> the hands-on <a href="tut-voice.html">Voice &amp; meetings</a>
+        tutorial, <a href="arch-frontend.html">Frontend architecture</a> for how the SPA renders the
+        live transcript, <a href="arch-backends.html">Model backends &amp; modes</a> for warming and
+        unloading these models, <a href="arch-summarization.html">Transcript summarization &amp; condensation</a>
+        for what happens after recording, and the <a href="arch-overview.html">System overview</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/transcription.js"></script>
+</body>
+</html>

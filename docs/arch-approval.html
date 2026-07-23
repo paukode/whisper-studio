@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Approval &amp; permissions - Whisper Studio Docs</title>
+  <meta name="description" content="Whisper Studio's consent boundary: the six permission modes, the nonce-based two-factor approval flow, declarative approval specs, and the auto-mode classifier.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-approval">
+    <h1>Approval &amp; permissions</h1>
+    <p class="subtitle">Every tool the assistant runs passes a consent check first. A permission mode
+      and a set of rules decide allow, ask, or deny; an <em>ask</em> pauses the turn behind a
+      one-time nonce that only a real user click can satisfy.</p>
+
+    <p>This page covers the <em>decision</em> layer - which tools may run, and how a human confirms the
+      risky ones. It is separate from the <a href="arch-sandbox.html">sandbox</a>, which is the hard OS
+      boundary a command runs <em>inside</em> once approved. The two are complementary: approval decides
+      <em>whether</em>, the sandbox constrains <em>how far</em>. <b>Click a box</b> in the diagram to
+      trace a decision through to execution.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="approval-diagram" class="diagram"></div>
+      <figcaption>A tool call is evaluated against the mode and rules, then either auto-allows,
+        denies, or pauses on a nonce until the user approves. The
+        <em>POST /api/approval/execute</em> step verifies that nonce before running anything.</figcaption>
+    </figure>
+
+    <h2 id="permission-modes">The six permission modes</h2>
+    <p>The current mode lives in <code class="path">data/permissions.json</code> and is read by
+      <code class="path">server/security/permissions.py</code>. It is a single dial that sets the
+      baseline for every tool call in a turn. Read-only tools (reading files, listing directories,
+      searching) auto-allow in all modes except where a custom rule says otherwise; the modes differ in
+      how they treat <em>write</em> and <em>command</em> tools.</p>
+
+    <div class="table-wrap"><table>
+      <thead><tr><th>Mode</th><th>Reads</th><th>Writes &amp; commands</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>default</code></td>
+          <td>Auto-allow</td>
+          <td>Ask. Every write, delete, or command raises an approval card.</td>
+        </tr>
+        <tr>
+          <td><code>auto</code></td>
+          <td>Auto-allow</td>
+          <td>Classified. Write-category tools defer to a Haiku call that returns allow or ask (see below).</td>
+        </tr>
+        <tr>
+          <td><code>plan</code></td>
+          <td>Auto-allow</td>
+          <td>Hard-blocked pre-dispatch for a fixed set (see below); other action tools still ask.</td>
+        </tr>
+        <tr>
+          <td><code>acceptEdits</code></td>
+          <td>Auto-allow</td>
+          <td><code>ws_write_file</code> / <code>ws_create_file</code> auto-allow; delete and commands still ask.</td>
+        </tr>
+        <tr>
+          <td><code>bypassPermissions</code></td>
+          <td>Auto-allow</td>
+          <td>Everything allowed, no prompts. The absolute override.</td>
+        </tr>
+        <tr>
+          <td><code>dontAsk</code></td>
+          <td>Auto-allow</td>
+          <td>Write-category tools auto-deny silently. No card, no action.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <p>The mode is validated against <code>VALID_MODES</code> on every
+      <code>PUT /api/permissions</code> and <code>PUT /api/permissions/mode</code>, so an unknown
+      mode is rejected with a 400 rather than silently accepted. A saved config carrying an
+      unrecognized mode fails safe: no auto-allow branch matches, so every gated tool falls back
+      to an approval card.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Two of these modes are irreversible by design.</b>
+        <code>bypassPermissions</code> runs every action with no prompt, and <code>dontAsk</code>
+        silently drops every write. Both are deliberate opt-ins for trusted or hands-off sessions;
+        neither should be the default for exploratory work. The sandbox still applies under
+        <code>bypassPermissions</code> - it removes the <em>prompt</em>, not the OS boundary.</p></div>
+    </div>
+
+    <h3 id="plan-mode">What plan mode hard-blocks</h3>
+    <p>Plan mode is stricter than "ask" for the most consequential tools: it refuses them
+      <em>before</em> dispatch instead of offering an approval card. The blocked set (tracked as
+      <code>_PLAN_MODE_BLOCKED</code> in <code class="path">server/tool_executor.py</code>) is
+      <code>ws_write_file</code>, <code>ws_create_file</code>, <code>ws_edit_file</code>,
+      <code>ws_delete_file</code>, <code>ws_run_command</code>, and <code>ws_merge_worktree</code>.
+      Other action tools - <code>terminal_run</code>, the <code>git_*</code> family,
+      <code>aws_cli</code>, <code>run_python</code>, and worktree enter/exit - are not hard-blocked;
+      they still surface a normal approval card. The intent is a mode where the assistant can read,
+      search, and propose freely but cannot mutate the tree behind your back.</p>
+
+    <h2 id="decision-order">How a decision is resolved</h2>
+    <p>When the tool loop reaches an approval-gated call, <code>resolve_static_decision()</code>
+      resolves it synchronously and returns <code>"allow"</code>, <code>"ask"</code>,
+      <code>"deny"</code>, or <code>None</code>. A <code>None</code> only happens in
+      <code>auto</code> mode and means "nothing static resolved this; hand it to the classifier."
+      The checks run in this order, first match wins:</p>
+    <ol class="steps">
+      <li><h4>bypassPermissions</h4><p>If the mode is <code>bypassPermissions</code>, allow. Absolute,
+        checked first so nothing downstream can re-gate it.</p></li>
+      <li><h4>Trusted skill script</h4><p>If the call comes from a trusted skill script
+        (<code>auto_allow_trusted</code>), allow.</p></li>
+      <li><h4>Session approvals</h4><p>If you clicked "Yes for all writes" (or "No for all") earlier
+        this turn, the stored decision for that <em>category</em> applies. This is the
+        <code>session_approvals</code> map keyed by category.</p></li>
+      <li><h4>Custom rules</h4><p><code>evaluate_rules()</code> walks your
+        <code>permissions.json</code> rules; the first matching rule's action wins. A rule matches by
+        <code>tool</code> (or <code>*</code>) plus a glob <code>pattern</code> or a
+        <code>prefix</code> against a per-tool field.</p></li>
+      <li><h4>Mode fallbacks</h4><p><code>dontAsk</code> returns deny; <code>acceptEdits</code>
+        returns allow for the <code>write</code> category; <code>auto</code> returns
+        <code>None</code> (defer to the classifier); otherwise the default is ask.</p></li>
+    </ol>
+
+    <h3 id="custom-rules">Custom rules</h3>
+    <p>Rules let you carve fine-grained exceptions out of a mode. Each is a small JSON object; the
+      pattern or prefix is matched against a tool-specific field (the command for
+      <code>ws_run_command</code>, the path for <code>ws_write_file</code>, the branch for
+      <code>git_push</code>, and so on - see <code>_RULE_MATCH_FIELDS</code>). Unlisted tools fall
+      back to matching the JSON-encoded input, which is mainly useful with a <code>*</code> pattern.</p>
+    <div class="code-block"><pre><code>{"tool": "ws_run_command", "prefix": "git ", "action": "allow"}
+{"tool": "ws_write_file",  "pattern": "*.md",  "action": "allow"}
+{"tool": "ws_delete_file", "pattern": "*",     "action": "deny"}</code></pre></div>
+    <p>Rules are managed over <code>POST /api/permissions/rules</code> and
+      <code>DELETE /api/permissions/rules/{index}</code>. Because a broad rule can silently mask a
+      narrower one, the server runs <code>detect_shadowed_rules()</code> on every save and returns any
+      <code>warnings</code> alongside the updated list, so the Settings UI can flag redundant or
+      unreachable rules.</p>
+
+    <h3 id="auto-classifier">The auto-mode classifier</h3>
+    <p>In <code>auto</code> mode, a write-category tool that nothing static resolved is handed to a
+      lightweight Haiku call that classifies it as allow or ask. The idea is to let obviously safe
+      edits (say, appending to a scratch file) run without a card while still surfacing anything that
+      looks consequential. The classifier only ever <em>relaxes</em> to allow or <em>escalates</em> to
+      ask - it can never turn a deny into an allow, because deny is resolved statically before the
+      classifier is ever consulted. If the classifier is unavailable or errors, the safe fallback is to
+      ask.</p>
+
+    <h2 id="nonce-flow">The nonce two-factor flow</h2>
+    <p>An <em>ask</em> decision does not block the server thread waiting on a person. Instead the turn
+      is suspended and handed to the client, and only a matching confirmation from the client can
+      resume it. This is what makes approval a real boundary rather than a UI suggestion.</p>
+    <ol class="steps">
+      <li><h4>Mint a nonce and pause</h4><p>The tool that needs consent generates a one-time nonce and
+        stashes the in-flight turn state in <code>_paused_sessions</code>. The streaming turn yields
+        instead of running the tool.</p></li>
+      <li><h4>Emit the approval card</h4><p>A <code>user_question</code> SSE event carries the action
+        name, the rendered summary, a preview (diff, command, list, or text), and the nonce. The SPA
+        renders an approval card in the chat.</p></li>
+      <li><h4>User decides</h4><p>You read the diff or command and click Yes (optionally "Yes for all"
+        for that category, which writes into <code>session_approvals</code>). Only a genuine click can
+        produce the nonce the server is waiting on.</p></li>
+      <li><h4>Execute against the nonce</h4><p>The client calls
+        <code>POST /api/approval/execute</code> with <code>{action, payload}</code>. The server
+        verifies the nonce, looks up the spec, runs its executor, and returns
+        <code>{ok, output?, error?}</code>.</p></li>
+      <li><h4>Resume the turn</h4><p>The continuation re-enters the chat endpoint with an
+        <code>approved_tool_result</code>, and the model keeps going as if the tool had run inline.</p></li>
+    </ol>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg></span>
+      <div class="callout__body"><p><b>Why the nonce matters.</b> The client cannot fabricate a valid
+        nonce - it is minted server-side only when a decision resolved to ask, and each is single-use.
+        A compromised or scripted frontend cannot POST <code>/api/approval/execute</code> for an action
+        the user never saw, because it has no nonce to present. Approval is enforced on the server, not
+        trusted from the browser.</p></div>
+    </div>
+
+    <h2 id="approval-specs">Approval specs</h2>
+    <p>The server never hardcodes "what running this action means." Each approval-required tool declares
+      an <code>ApprovalSpec</code> (<code class="path">server/approval/spec.py</code>) that describes
+      how to preview it, how to summarize it, which category it belongs to, and the function that
+      actually performs it. Specs are declared in
+      <code class="path">server/approval/bootstrap.py</code> and wired in at startup by a single
+      <code>register_defaults()</code> call.</p>
+    <div class="spec">
+      <dt><code class="path">category</code></dt><dd>The session-memory bucket - <code>write</code>, <code>delete</code>, <code>cli</code>, <code>worktree</code>, or <code>preview</code>. "Yes for all commands" stores <code>allow</code> here so it also covers commits and pushes, which share the <code>cli</code> category.</dd>
+      <dt><code class="path">preview</code></dt><dd>Which of the four frontend renderers shows the action: <code>diff</code> (file changes), <code>command</code> (shell), <code>list</code> (multi-file), or <code>text</code> (free-form).</dd>
+      <dt><code class="path">summary</code></dt><dd>A one-line label - a constant string or a callable over the tool input (for example <code>Commit 3 files: fix parser</code>).</dd>
+      <dt><code class="path">executor</code></dt><dd>The async function that runs on Yes. Sync functions are wrapped at registration so the registry always exposes an awaitable.</dd>
+      <dt><code class="path">risk_hint</code></dt><dd>An advisory <code>low</code> / <code>medium</code> / <code>high</code> tint. For example <code>preview_eval</code> (arbitrary JS in a live page) is <code>high</code>.</dd>
+      <dt><code class="path">payload_fields</code></dt><dd>Which input fields are forwarded to the card's preview and later replayed to the executor.</dd>
+      <dt><code class="path">render_command</code></dt><dd>Optional. Produces the literal command body so the summary can stay short while the preview shows the full command verbatim.</dd>
+    </div>
+
+    <p>The registry (<code class="path">server/approval/registry.py</code>) is a module-level map keyed
+      by action name. <code>POST /api/approval/execute</code> is the single hub: it calls
+      <code>registry.get(action)</code>, runs the spec's executor with the payload, and (for
+      <code>write</code>/<code>delete</code>/<code>cli</code> outcomes) invalidates the git-changes
+      cache so the panel refreshes. The frontend never learns which endpoint actually did the work -
+      it just POSTs an action and a payload. Adding a new approval-gated tool is one new
+      <code>register(...)</code> entry, with no frontend change and no edit to the tool executor.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>Session-memory categories are seeded on the frontend.</b>
+        The client does not fetch the category list from the backend. It seeds its "Yes for all X"
+        session-memory state from a small hardcoded default (<code>write</code>, <code>delete</code>,
+        <code>cli</code>) and treats any category it has not seen as <code>ask</code> lazily. There is
+        no dynamic categories fetch, so a brand-new backend category needs a matching frontend default
+        before it surfaces as a remembered "Yes for all" toggle.</p></div>
+    </div>
+
+    <h2 id="defence-in-depth">Defence in depth: the command validator</h2>
+    <p>Approval decides <em>whether</em> a command runs; it does not vet <em>what</em> the command is.
+      That is the job of <code class="path">server/security/command_validator.py</code>, a regex and
+      heuristic deny-list that runs before a shell command reaches the sandbox. Its
+      <code>validate_command()</code> splits a compound command on <code>;</code>, <code>&amp;&amp;</code>,
+      and <code>||</code> (respecting quotes), strips heredoc bodies so a Markdown table full of
+      <code>|</code> is not mistaken for a pipeline, and runs each subcommand through an ordered set of
+      checks. Any single failure returns a warning and the command is refused.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Check</th><th>Blocks</th></tr></thead>
+      <tbody>
+        <tr><td>Dangerous patterns</td><td><code>rm -rf /</code>, <code>mkfs</code>, <code>dd of=/dev/</code>, redirects into <code>/etc/</code>, <code>/proc/*/environ</code> reads.</td></tr>
+        <tr><td>Command substitution</td><td><code>$(...)</code>, backticks, and process substitution <code>&lt;(...)</code> / <code>&gt;(...)</code> that could hide a nested command.</td></tr>
+        <tr><td>Env injection</td><td>References or assignments to <code>LD_PRELOAD</code>, <code>BASH_ENV</code>, <code>IFS</code>, <code>PROMPT_COMMAND</code>, and friends.</td></tr>
+        <tr><td>Obfuscation</td><td>Hex/octal escapes, ANSI-C quoting, control characters, and zero-width or NBSP-style unicode whitespace.</td></tr>
+        <tr><td>Sensitive paths</td><td>Access to credential files and key types - <code>.pem</code>, <code>id_rsa</code>, <code>.env.production</code>, <code>credentials.json</code>, and the shared sensitive-path list.</td></tr>
+        <tr><td>In-place edits</td><td><code>sed -i</code> in any form, nudging edits toward <code>ws_write_file</code> where they can be previewed and reverted.</td></tr>
+        <tr><td>Chain cap</td><td>More than <code>MAX_SUBCOMMANDS</code> (50) chained segments, to prevent CPU-starvation via deeply nested pipelines.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>The validator is a filter that sits <b>in front of</b> the sandbox,
+        not a replacement for it. It catches known-bad shapes early with helpful messages, but a
+        regex deny-list can never be exhaustive. The real containment - filesystem and network limits
+        on the running process - lives in the <a href="arch-sandbox.html">sandbox</a>. The approved
+        command path in <code>bootstrap.py</code> runs this same
+        <code>_validate_command</code> gate before sandboxing, so an approved command still cannot,
+        for example, read <code>~/.ssh</code>.</p></div>
+    </div>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/security/permissions.py</code></dt><dd>Modes, custom rules, and the static decision resolver.</dd>
+      <dt><code class="path">server/tool_executor.py</code></dt><dd>Applies the decision per tool; holds <code>_PLAN_MODE_BLOCKED</code> and the nonce pause.</dd>
+      <dt><code class="path">server/approval/spec.py</code></dt><dd>The <code>ApprovalSpec</code> and <code>ApprovalOutcome</code> dataclasses.</dd>
+      <dt><code class="path">server/approval/bootstrap.py</code></dt><dd>Declares and registers specs for every built-in workspace tool.</dd>
+      <dt><code class="path">server/approval/registry.py</code></dt><dd>The action-keyed registry and category walk.</dd>
+      <dt><code class="path">server/approval/router.py</code></dt><dd>The <code>/categories</code> and <code>/execute</code> endpoints.</dd>
+      <dt><code class="path">server/security/command_validator.py</code></dt><dd>The shell-command deny-list run before the sandbox.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-sandbox.html">Sandbox &amp; security</a>
+        (the hard OS boundary), <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>
+        (where the decision is applied mid-turn), <a href="arch-tools.html">Tool dispatch &amp;
+        executors</a>, and the hands-on <a href="tut-permissions.html">Permissions &amp; approvals</a>
+        tutorial.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/approval.js"></script>
+</body>
+</html>

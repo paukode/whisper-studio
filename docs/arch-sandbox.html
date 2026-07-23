@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sandbox &amp; security - Whisper Studio Docs</title>
+  <meta name="description" content="The OS sandbox (sandbox-exec / bwrap), the command validator, the secret-path deny list, and how Whisper Studio separates hard boundaries from defence-in-depth.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-sandbox">
+    <h1>Sandbox &amp; security</h1>
+    <p class="subtitle">The OS sandbox is the boundary you should trust last and most. Everything in
+      front of it is layered defence that catches the easy cases before code ever reaches the
+      sandboxed subprocess.</p>
+
+    <p>Whisper Studio runs shell commands and executes code on your machine, so the interesting
+      question is not "does it have security" but "which layer is a hard boundary and which just
+      catches the obvious cases". This page walks the path a command takes, names the deny-list it
+      runs against, and is honest about the risks that are accepted on purpose. The diagram below
+      traces that path left to right - <b>click a box</b> to light up what it reaches.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="sandbox-diagram" class="diagram"></div>
+      <figcaption>A shell command's route to execution. Validation and approval sit in front; the
+        sandbox is the layer that actually contains the subprocess. Network stays open at the end.</figcaption>
+    </figure>
+
+    <h2 id="the-sandbox">The sandbox, and everything it wraps</h2>
+    <p>Every shell and code-execution path funnels through one function,
+      <code>run_sandboxed</code> in <code class="path">server/sandbox.py</code>. That includes the
+      workspace shell, <code>run_python</code>, the hidden <code>terminal_run</code> PTY session, and
+      <code>aws_cli</code>. The wrapper picks the strongest OS-level sandbox available:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Platform</th><th>Mechanism</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>macOS</td><td><code>sandbox-exec(5)</code></td><td>Generates a temporary <code>.sb</code> profile and runs <code>sandbox-exec -f profile /bin/sh -c "..."</code>.</td></tr>
+        <tr><td>Linux</td><td><code>bwrap</code> (bubblewrap)</td><td>Mounts the whole filesystem read-only (<code>--ro-bind / /</code>), rebinds the workspace and <code>/tmp</code> read-write, then masks each secret path.</td></tr>
+        <tr><td>Neither available</td><td>Plain subprocess</td><td>A graceful no-sandbox fallback. There is no OS boundary here, but the command validators still run.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The long-lived interactive PTY that backs <code>terminal_run</code> is wrapped separately by
+      <code>build_pty_sandbox_wrap</code>, which returns the same profile so an interactive shell runs
+      under the identical deny-list as a one-shot command. (On non-macOS or when
+      <code>sandbox-exec</code> is missing, it returns the command unchanged and validation becomes
+      the only enforcement.)</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>The fallback path has no OS boundary.</b> On a machine without
+        <code>sandbox-exec</code> or <code>bwrap</code>, commands run in a plain subprocess. The
+        validator still rejects the obvious dangerous patterns, but the secret-store deny-list is not
+        enforced by the kernel. On stock macOS, <code>sandbox-exec</code> is always present, so this
+        is a Linux-without-bubblewrap edge case.</p></div>
+    </div>
+
+    <h2 id="what-it-enforces">What the sandbox actually enforces</h2>
+    <p>The single most important fact about this sandbox is that it is
+      <b>allow-default plus deny rules</b>, not deny-by-default. The macOS profile is literally
+      <code>(allow default)</code> followed by a block of <code>deny</code> rules; the Linux setup
+      binds everything read-only and then masks the same paths (directories with an empty tmpfs, files
+      with <code>/dev/null</code>). What it enforces, therefore, is a single thing done well:
+      <b>read/write denial of a curated secret-store list</b>.</p>
+    <p>That list is <code>_DENIED_PATHS</code>, built from the canonical definitions in
+      <code class="path">server/security/sensitive_paths.py</code> so the OS sandbox and the command
+      validator can never drift on the shared core. It covers:</p>
+    <ul>
+      <li><b>SSH and GPG keys</b> - <code class="path">~/.ssh</code>, <code class="path">~/.gnupg</code>.</li>
+      <li><b>Cloud credentials</b> - <code class="path">~/.aws</code>, <code class="path">~/.config/gcloud</code>,
+        <code class="path">~/.azure</code>, <code class="path">~/.docker</code>, <code class="path">~/.kube</code>.
+        Note that <code class="path">~/.aws</code> is denied for generic commands but re-allowed per-call for the AWS tools (see below).</li>
+      <li><b>Git and package-registry credentials</b> - <code class="path">~/.git-credentials</code>,
+        <code class="path">~/.netrc</code>, <code class="path">~/.npmrc</code>, <code class="path">~/.pypirc</code>.</li>
+      <li><b>Browser cookies and keychains</b> - Chrome / Chromium / Firefox / Brave / Safari profiles,
+        <code class="path">~/Library/Cookies</code>, and <code class="path">~/Library/Keychains</code>.</li>
+      <li><b>Shell history</b> - <code class="path">~/.bash_history</code>, <code class="path">~/.zsh_history</code>,
+        fish history (these frequently contain pasted tokens).</li>
+      <li><b>Password managers and other CLI token stores</b> - <code class="path">~/.password-store</code>,
+        1Password / <code>op</code>, <code class="path">~/.config/gh/hosts.yml</code>, cargo, gem,
+        terraform, doctl, netlify, and heroku credential files.</li>
+      <li><b>Absolute system secrets</b> - <code class="path">/etc/shadow</code>,
+        <code class="path">/etc/sudoers</code>, <code class="path">/etc/ssl/private</code>.</li>
+    </ul>
+    <p>One deliberate asymmetry: <code class="path">/etc/passwd</code> is checked by the command
+      validator but is <em>not</em> sandbox-denied, because NSS reads it on every user and group
+      lookup - denying it in the kernel would break ordinary commands. A command that mentions it
+      explicitly is still suspicious, so the validator keeps watching for it.</p>
+
+    <h3 id="aws-reallow">Why ~/.aws is denied, then re-allowed</h3>
+    <p><code>run_sandboxed</code> takes an <code>allow_paths</code> argument that subtracts specific
+      entries from the deny-list for that one call. The AWS tools (<code>aws_cli</code>,
+      <code>aws_boto3</code>, and boto3 code inside <code>run_python</code>) pass their cloud-credential
+      paths so authentication works, while every other secret (<code class="path">~/.ssh</code>, git
+      creds, <code class="path">/etc/shadow</code>, and the rest) stays blocked for that command. The
+      re-allow is scoped to the AWS tools; a generic shell command never sees
+      <code class="path">~/.aws</code>.</p>
+
+    <h2 id="residual-risk">Accepted residual risk</h2>
+    <p>Because the default is <em>allow</em>, two things follow directly, and both are accepted on
+      purpose:</p>
+    <ul>
+      <li><b>Network is not restricted.</b> Sandboxed <code>git</code>, <code>npm</code>,
+        <code>pip</code>, <code>aws</code>, and build commands all need the network to function, so the
+        sandbox leaves it open.</li>
+      <li><b>Reads of non-listed secrets are not blocked.</b> The deny-list is broad but not
+        exhaustive - a secret file that is not on <code>_DENIED_PATHS</code> can still be read.</li>
+    </ul>
+    <p>Flipping to a deny-default profile with network restriction is possible in principle, but it
+      would break the tools above, so it is out of scope. This is the trade-off that makes the sandbox
+      the boundary you trust <em>last</em>: it does not try to be a jail, it guarantees the
+      high-value secret stores stay unreadable even if every layer in front of it is defeated.</p>
+
+    <h2 id="layers-in-front">Layers in front (defence-in-depth)</h2>
+    <p>Before a command reaches the sandbox, several cheaper checks catch the easy cases. It is worth
+      being precise about which of these are real boundaries and which only raise the bar.</p>
+
+    <h3 id="command-validator">The command validator</h3>
+    <p><code class="path">server/security/command_validator.py</code> runs a regex deny-list against
+      each subcommand. <code>validate_command()</code> first strips heredoc bodies (so a Markdown table
+      full of <code>|</code> pipes is not mistaken for a pipeline), splits compound commands on
+      <code>;</code>, <code>&amp;&amp;</code>, and <code>||</code>, then runs every validator over each
+      piece. The checks include:</p>
+    <ul>
+      <li><b>Dangerous patterns</b> - <code>rm -rf /</code>, <code>mkfs</code>,
+        <code>dd of=/dev/...</code>, redirects into <code class="path">/etc/</code>, and
+        <code class="path">/proc/*/environ</code> access.</li>
+      <li><b>Command and process substitution</b> - <code>$(...)</code>, backticks, and
+        <code>&lt;(...)</code> that could hide a nested command (with a narrow exception for the
+        <code>$(cat &lt;&lt;...)</code> pattern used by <code>git commit -m</code> and
+        <code>gh pr create --body</code>).</li>
+      <li><b>Environment-variable injection</b> - references or assignments to <code>$LD_PRELOAD</code>,
+        <code>$BASH_ENV</code>, <code>$IFS</code>, <code>$PROMPT_COMMAND</code>, and friends.</li>
+      <li><b>Obfuscation</b> - control characters, deceptive Unicode whitespace, hex/octal escapes, and
+        ANSI-C quoting used to smuggle characters past the other checks.</li>
+      <li><b>Sensitive paths and file types</b> - the shared deny-list plus extensions like
+        <code>.pem</code>, <code>.key</code>, <code>id_rsa</code>, and filenames like
+        <code>.env.production</code>.</li>
+      <li><b>In-place edits</b> - <code>sed -i</code> is blocked with a nudge to use
+        <code>ws_write_file</code> instead.</li>
+      <li><b>A subcommand cap</b> - more than <code>MAX_SUBCOMMANDS</code> (50) chained segments is
+        rejected to prevent CPU starvation from deeply nested pipelines.</li>
+    </ul>
+    <p>The validator is regex-based and bypassable on its own, so it is explicitly <b>defence-in-depth</b>:
+      it sits in front of the sandbox, never in place of it.</p>
+
+    <h3 id="approval">The approval nonce</h3>
+    <p>Risky commands do not run on the model's say-so. They pause the turn and wait for a server-held
+      nonce that the client must echo back to confirm. Because the server holds the nonce, a client
+      cannot fabricate one, which makes approval a genuine <b>boundary</b> rather than a suggestion.
+      See <a href="arch-approval.html">Approval &amp; permissions</a> for the full flow.</p>
+
+    <h3 id="aws-readonly-guard">The AWS read-only guard</h3>
+    <p>When boto3 runs inside <code>run_python</code>, <code class="path">server/executors/code.py</code>
+      prepends <code>_AWS_READONLY_GUARD</code>, which monkey-patches
+      <code>botocore.endpoint.Endpoint.make_request</code> to reject any operation whose name is not
+      read-shaped (the allow-list is <code>list</code>, <code>get</code>, <code>describe</code>,
+      <code>head</code>, <code>query</code>, and similar prefixes). This catches a model that thought it
+      was in read-only mode and would otherwise burn write rate-limits or trip an alarm. It is
+      <b>defence-in-depth only</b>: user code in the same process can simply
+      <code>del _ep.Endpoint.make_request</code> to undo it. The layer that actually contains the code
+      is <code>sandbox-exec</code>, not this patch.</p>
+
+    <h3 id="render-and-network">The render path and the network edges</h3>
+    <ul>
+      <li><b>DOMPurify (3.4.6)</b> sanitizes every Markdown render before it reaches the React DOM,
+        stripping <code>&lt;script&gt;</code>, inline event handlers, and <code>javascript:</code> URLs.
+        This is a real <b>boundary</b> for the render path: without it, a prompt-injected web page fetched
+        through <code>web_fetch</code> could fire arbitrary JS in the SPA origin.</li>
+      <li><b>The <code>127.0.0.1</code> default bind</b> closes LAN reachability at the kernel level.
+        Setting <code>HOST=0.0.0.0</code> is an explicit opt-in that exposes the (unauthenticated) API to
+        the network - only do it on a trusted LAN.</li>
+      <li><b>The Origin / Host guard</b> (<code class="path">server/infrastructure/security.py</code>)
+        blocks browser-driven cross-site requests and cross-site WebSocket handshakes. It does not stop a
+        deliberate non-browser client, which is why the <code>0.0.0.0</code> warning still stands.</li>
+    </ul>
+
+    <h2 id="boundary-table">Boundary vs defence-in-depth, at a glance</h2>
+    <p>This is the table to keep in mind. A <b>boundary</b> holds even if everything above it is
+      bypassed; <b>defence-in-depth</b> raises the bar but can be defeated in isolation.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Layer</th><th>What it does</th><th>Classification</th></tr></thead>
+      <tbody>
+        <tr><td><code>127.0.0.1</code> default bind</td><td>Closes LAN reachability</td><td><span class="badge">Boundary</span> kernel-level</td></tr>
+        <tr><td>DOMPurify sanitization</td><td>Strips scripts and JS URLs from any HTML reaching the DOM</td><td><span class="badge">Boundary</span> for the render path</td></tr>
+        <tr><td>Approval nonce</td><td>Server-held consent token for risky commands</td><td><span class="badge">Boundary</span> client can't forge it</td></tr>
+        <tr><td><code>validate_command</code></td><td>Regex deny-list on every command path</td><td><span class="badge badge--muted">Defence-in-depth</span> bypassable alone</td></tr>
+        <tr><td><code>run_sandboxed</code> via <code>sandbox-exec</code> / <code>bwrap</code></td><td>Secret-store deny-list around every shell + code path</td><td><span class="badge">Boundary</span> the strongest layer</td></tr>
+        <tr><td><code>_AWS_READONLY_GUARD</code></td><td>Monkey-patches botocore to reject AWS writes</td><td><span class="badge badge--muted">Defence-in-depth</span> user code can <code>del</code> it</td></tr>
+        <tr><td>Plugin loader allow-list</td><td>A dropped-in <code>.py</code> does nothing until enabled</td><td><span class="badge">Boundary</span> for drive-by plugins</td></tr>
+      </tbody>
+    </table></div>
+    <p>The full version of this table, with prose on each row, lives in the
+      <a href="ref-security.html">Security model</a> reference.</p>
+
+    <h2 id="path-containment">Workspace path containment</h2>
+    <p>File operations have their own boundary, separate from the shell sandbox. Every workspace file
+      op validates its target with <code>_ws_validate_path</code>
+      (<code class="path">server/workspace/paths.py</code>): it calls <code>os.path.realpath</code> and
+      confirms the result stays inside the connected workspace root, also blocking
+      <code class="path">/dev</code>, <code class="path">/proc</code>, <code class="path">/sys</code>,
+      and UNC paths. Writes then go through an atomic <code>_atomic_write_text</code> (temp file plus
+      <code>os.replace</code>).</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>Accepted TOCTOU residual (S8).</b> This is a check-then-use
+        pattern, so in theory a symlink swapped between the <code>realpath</code> check and the write
+        could redirect it. The atomic <code>os.replace</code> does not follow a symlink at the final
+        path component (it replaces the link itself), so the realistic case is covered; only an
+        intermediate directory swapped to a symlink mid-write would escape, which is contrived on a
+        single-user local tool. An <code>O_NOFOLLOW</code> / fd-based write would close it fully but
+        risks rejecting legitimate symlinked paths inside a workspace, so it is left as-is on
+        purpose.</p></div>
+    </div>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/sandbox.py</code></dt><dd><code>run_sandboxed</code>, the macOS / Linux profile generators, and the PTY wrapper.</dd>
+      <dt><code class="path">server/security/sensitive_paths.py</code></dt><dd>The single source of truth for the secret-path deny-list, shaped for both consumers.</dd>
+      <dt><code class="path">server/security/command_validator.py</code></dt><dd>The regex validators and <code>validate_command()</code>.</dd>
+      <dt><code class="path">server/executors/code.py</code></dt><dd>The AWS read-only guard and the sandboxed <code>run_python</code> / <code>aws_cli</code> executors.</dd>
+      <dt><code class="path">server/workspace/paths.py</code></dt><dd><code>_ws_validate_path</code> and atomic writes for workspace file ops.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-approval.html">Approval &amp; permissions</a>,
+        <a href="arch-tools.html">Tool dispatch &amp; executors</a>, the
+        <a href="ref-security.html">Security model</a> reference, and the
+        <a href="tut-permissions.html">Permissions &amp; approvals</a> tutorial.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/sandbox.js"></script>
+</body>
+</html>

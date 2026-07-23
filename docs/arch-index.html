@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Index / GraphRAG &amp; search - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio indexes a workspace: incremental extraction, chunking, embeddings, an entity graph, sqlite-vec KNN, reranking, a GraphRAG hop, and retrieval grounding for chat.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-index">
+    <h1>Index / GraphRAG &amp; search</h1>
+    <p class="subtitle">A local semantic index of your files: incremental embeddings, a lightweight
+      entity graph, sqlite-vec KNN, an optional cross-encoder reranker, and a one-hop GraphRAG
+      expansion that feed grounded, cited answers back into chat.</p>
+
+    <p>There are two flows and both live in <code class="path">server/index/pipeline.py</code>. The
+      <b>build</b> flow turns a folder into vectors, entity nodes, and edges. The <b>query</b> flow
+      turns a question into ranked passages. <b>Click a box</b> in the diagram to trace how a file
+      becomes storage, and how a question becomes grounding.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="index-diagram" class="diagram"></div>
+      <figcaption>Top row: the incremental build (walk to store). Bottom row: retrieval for one
+        question (embed, KNN, rerank, graph hop, grounding). The store feeds the KNN.</figcaption>
+    </figure>
+
+    <h2 id="the-build-flow">The build flow</h2>
+    <p><code>build(ws_path)</code> is serialized per workspace with a lock, so a user-triggered build
+      and the daily scheduled refresh can never race the same SQLite index. It walks the tree, decides
+      what changed, extracts and chunks each changed file, embeds it, extracts entities, optionally
+      extracts typed relations, and writes everything atomically per file.</p>
+
+    <h3 id="change-detection">Walk and change detection</h3>
+    <p>The walker in <code>_iter_files</code> skips anything not worth indexing:
+      <code>.git</code>, <code>node_modules</code>, <code>venv</code> / <code>.venv</code>,
+      <code>__pycache__</code>, <code>dist</code>, <code>build</code>, <code>.next</code>,
+      <code>models</code>, and any dot-directory. For each remaining file the pipeline runs a two-stage
+      change gate so a re-index is cheap:</p>
+    <ol class="steps">
+      <li><h4>Size + mtime gate</h4><p>If the recorded size and modification time both match the
+        manifest, the file is skipped without even opening it.</p></li>
+      <li><h4>SHA1 content hash</h4><p>If the gate misses but the SHA1 hash matches, the file's
+        timestamps are touched (so the next run hits the cheap gate) and it is not re-embedded.</p></li>
+      <li><h4>Re-extract and re-embed</h4><p>Only a genuine content change reaches extraction. Files
+        that vanished from disk are dropped in a deletion pass at the end.</p></li>
+    </ol>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>A build can be cancelled cooperatively (an <code>Event</code>
+        checked between files). On cancel the deletion pass and the completion stamp are skipped, so a
+        partial index is never mistaken for a finished one and unvisited files are not wrongly dropped.</p></div>
+    </div>
+
+    <h3 id="extraction">Extraction, by type</h3>
+    <p><code>_extract_text</code> routes each file to the right extractor, reusing the same code as
+      <a href="arch-extraction.html">attachment extraction</a>:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>File type</th><th>How it becomes text</th></tr></thead>
+      <tbody>
+        <tr><td>Text and code</td><td>Decoded directly (binary and oversized files are skipped).</td></tr>
+        <tr><td>Spreadsheets (CSV / XLSX)</td><td>Small ones via MarkItDown; large ones via a bounded, streamed schema-plus-sample so a huge grid never loads into memory.</td></tr>
+        <tr><td>Rich docs (PDF / DOCX / PPTX / HTML / EPUB)</td><td>MarkItDown, with OCR for PDFs. Inlined base64 images are stripped so they do not pollute the embedding.</td></tr>
+        <tr><td>Images</td><td>OCR (Apple Vision, falling back to Haiku).</td></tr>
+        <tr><td>Audio and video</td><td>Local transcription (see <a href="arch-transcription.html">Transcription</a>).</td></tr>
+      </tbody>
+    </table></div>
+    <p>A file that yields no usable text still records an empty (zero-chunk) manifest entry, so the next
+      daily refresh skips it via the cheap gate instead of re-OCR-ing it forever.</p>
+
+    <h3 id="chunking">Chunking</h3>
+    <p><code>chunk_text</code> (<code class="path">server/index/chunker.py</code>) splits text into
+      line-anchored, structure-aware chunks. It prefers to start a chunk at a block boundary (a
+      markdown heading or a code definition), budgets each chunk to about <b>400 tokens</b> with a
+      64-token overlap, and keeps every chunk comfortably under the embedder's 512-token window so
+      nothing gets truncated. Each chunk carries its 1-based start and end lines, which flow all the
+      way through to the citation links in a grounded answer.</p>
+    <p>Optionally, a <b>contextual header</b> is prepended before embedding (the folder's
+      <code>chunk_context</code> setting): the file path (free, offline) or an LLM-written situating
+      line. Changing that mode forces a full re-embed, because the vectors themselves change.</p>
+
+    <h3 id="embedding">Embedding</h3>
+    <p>Chunks are embedded in batches by <code>embed_documents</code>
+      (<code class="path">server/index/embedder.py</code>). The backend depends on the active
+      <a href="arch-backends.html">model mode</a>:</p>
+    <dl class="spec">
+      <dt><code class="path">Qwen3-Embedding-0.6B</code></dt>
+      <dd>The local default. 1024-dimensional, L2-normalized vectors on <code>transformers</code> +
+        <code>torch</code> (MPS on Apple Silicon, CPU fallback). Pooling takes the last token's hidden
+        state; queries get an instruction prefix, documents do not. Loaded lazily and unloaded after a
+        build so an index run does not hold roughly 1 GB resident alongside the chat model.</dd>
+      <dt><code class="path">Cohere Embed v4</code></dt>
+      <dd>The cloud path, on Amazon Bedrock (1536-dimensional). Uses <code>input_type</code> to
+        distinguish queries from documents instead of an instruction prefix.</dd>
+    </dl>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>The MPS path can intermittently emit a non-finite (NaN) vector. A
+        persisted NaN silently makes a document unfindable and breaks sqlite-vec, so the embedder
+        re-computes any bad row (up to three retries) and zeroes it only as a last resort. There is
+        also a <code>repair_nonfinite_vectors</code> repair pass in the store for indexes built before
+        this guard existed.</p></div>
+    </div>
+
+    <h3 id="entities-relations">Entities and relations</h3>
+    <p>Each chunk's entities are extracted by <code>extract_entities</code>
+      (<code class="path">server/index/extractor.py</code>). Distinct entities become graph
+      <b>nodes</b>; two nodes that co-occur in a chunk are linked. Crucially, edges are <em>derived</em>
+      (two nodes are connected if they share a chunk) rather than stored, so an incremental delete of a
+      file's chunks can never leave a stale edge weight behind.</p>
+    <div class="cols-2">
+      <div class="card">
+        <h3>Entities (NER)</h3>
+        <p><b>GLiNER</b> (zero-shot, local) returns the spans it believes match at a 0.5 confidence
+          threshold; a workspace can opt into the heavier <b>GLiNER2</b> model instead from the Index
+          settings panel. In cloud mode, <b>Claude Haiku</b> extracts entities instead. The label set
+          is no longer fixed: an entity-type profile (business vs code) is auto-picked per file from
+          its extension, so a CV and a source file are asked for different kinds of entity. Names are
+          stripped and deduped case-insensitively so one entity maps to one node.</p>
+      </div>
+      <div class="card">
+        <h3>Typed relations (optional)</h3>
+        <p>When enabled per workspace, an LLM extracts typed edges (<code>works_at</code>,
+          <code>cites</code>, <code>depends_on</code>) via <b>Haiku</b> or <b>on-device Gemma</b>. The
+          LLM may only connect two names from the already-extracted entity list, so it cannot invent
+          nodes, and each relation carries a 1 to 5 strength score.</p>
+      </div>
+    </div>
+    <p>After the walk, <code>dedupe_entities</code> collapses case, spacing, and punctuation variants
+      of the same name into one canonical node (a lexical pass, plus an optional semantic-embedding
+      pass that catches "Postgres" / "PostgreSQL"), so the graph shows one bubble per person or topic.
+      A salience filter excludes generic category words ("function", "service", "API") and very
+      high-fanout entities from co-occurrence edges, so boilerplate does not clutter the graph.</p>
+
+    <h2 id="storage">Storage layout</h2>
+    <p>Everything lives under <code class="path">storage/index/&lt;name&gt;-&lt;hash8&gt;/</code>, one
+      readable directory per workspace, managed by <code class="path">server/index/store.py</code>.
+      The index is keyed <em>per embedding backend</em>, so switching between the Qwen3 and Cohere
+      backends uses a separate DB and does not force a rebuild of the other. The schema holds files,
+      chunks, entity nodes, node-to-chunk links, typed relations, and a small <code>meta</code>
+      table.</p>
+    <dl class="spec">
+      <dt><code class="path">vec BLOB (in chunks)</code></dt>
+      <dd>Vectors are stored as float32 BLOBs and are the source of truth. Because they are
+        L2-normalized, cosine similarity is just a dot product.</dd>
+      <dt><code class="path">vchunks (sqlite-vec)</code></dt>
+      <dd>An indexed KNN table, rebuilt from the BLOBs whenever a monotonic write-generation counter
+        advances, so it self-heals after any change without threading sync through every write path.
+        Available on the Homebrew-Python venv that <code>setup.sh</code> builds.</dd>
+      <dt><code class="path">numpy fallback</code></dt>
+      <dd>When the interpreter cannot load SQLite extensions (the python.org framework build), search
+        falls back to a cached brute-force numpy matrix. Same ranking, since both compare normalized
+        vectors.</dd>
+      <dt><code class="path">fts_chunks (FTS5)</code></dt>
+      <dd>A BM25 keyword index over chunk text and file path, rebuilt on the same write-generation
+        signal, so a filename token (like <code>buddy</code> in <code>buddy.json</code>) is matchable
+        even when the content never says it.</dd>
+    </dl>
+
+    <h2 id="the-query-flow">The query flow</h2>
+    <p><code>query(ws_path, text, k)</code> returns three lists kept deliberately separate so a
+      multi-index caller can fuse them itself:</p>
+    <ul>
+      <li><b>Dense matches.</b> The question is embedded (with the instruction prefix) and the top-k
+        cosine neighbours are fetched via <code>store.search</code> (sqlite-vec, or the numpy
+        fallback).</li>
+      <li><b>Keyword hits.</b> A BM25/FTS5 leg (behind the <code>rag_hybrid_search</code> flag) catches
+        exact terms (filenames, ids, codes) that dense embeddings miss.</li>
+      <li><b>Related passages.</b> One GraphRAG <em>hop</em>: <code>store.expand</code> returns chunks
+        that share entity nodes with the dense matches, ranked by how many they share.</li>
+    </ul>
+
+    <h3 id="grounding">Retrieval grounding</h3>
+    <p><code>retrieve_grounding</code> is what chat calls when the user has selected indexes to search.
+      It runs the query across every selected index, fuses the rankings, and returns a cited Markdown
+      block. The fusion and filtering steps are careful about precision:</p>
+    <ol class="steps">
+      <li><h4>Global dense ranking</h4><p>Cosine is comparable across indexes, so dense matches from
+        every index are ranked together in one list rather than by per-index rank.</p></li>
+      <li><h4>Reciprocal-rank fusion</h4><p>The dense and keyword lists (and, for a follow-up, a
+        conversation-contextualized query) are fused by reciprocal rank, so a keyword or filename hit
+        with near-zero cosine is promoted in instead of being lost under the score floor.</p></li>
+      <li><h4>Optional rerank</h4><p>Behind the <code>rag_reranker</code> flag, a cross-encoder
+        rescores the top candidates by judging each (question, passage) pair directly. On device this
+        is <b>Qwen3-Reranker</b> (P("yes") from the final-token logits); in cloud mode it is Cohere
+        Rerank on Bedrock. Best-effort: failure keeps the fused order.</p></li>
+      <li><h4>Dedup, cap, floor</h4><p>Byte-identical passages collapse, each document contributes at
+        most 3 chunks, and matches below a 0.15 cosine floor are dropped as noise.</p></li>
+      <li><h4>Auto-merge</h4><p>Parent-document retrieval: once a small, focused file has a chunk in
+        the top matches, its remaining chunks are spliced in (bounded by a budget, and never for a
+        large document like a book), so a CV's full history grounds the answer rather than just its
+        header.</p></li>
+    </ol>
+    <p>The returned block instructs the model to treat the passages as the source of truth, answer
+      directly from them, and end with a Sources section of <code>path:lines</code> links. Line-range
+      citations come straight from the chunk boundaries recorded at build time.</p>
+
+    <h3 id="chat-integration">How chat uses it</h3>
+    <p>Grounding is injected during <a href="arch-chat-pipeline.html">turn assembly</a>: relevant
+      passages are prepended to the user message, and a <code>grounding</code> SSE frame surfaces a
+      chip ("grounded in N folders / M passages") in the UI. When a turn is grounded and the
+      <code>strict_rag</code> flag is on (the default), the workspace file and search tools are
+      <b>suppressed</b> for that turn, so the model answers from the injected passages instead of
+      re-crawling files it has already indexed.</p>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM5 11a7 7 0 0 0 14 0M12 18v4"/></svg></span>
+      <div class="callout__body"><p>Grounding runs on a dedicated single-thread executor with a
+        timeout (extended on a turn's first, cold reranker load). If it times out or fails, the turn
+        answers without grounding rather than blocking, and no chip is shown.</p></div>
+    </div>
+
+    <h2 id="endpoints">HTTP endpoints</h2>
+    <p>The index is driven from <code class="path">server/index/routes.py</code>, mounted under
+      <code>/api/workspace/index</code>:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Endpoint</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /status</code></td><td>Index stats for a workspace: files, chunks, nodes, last-indexed time, embed model.</td></tr>
+        <tr><td><code>POST /build</code></td><td>Start (or refresh) a build; streams progress.</td></tr>
+        <tr><td><code>POST /cancel</code></td><td>Ask an in-progress build to stop after the current file.</td></tr>
+        <tr><td><code>GET /list</code></td><td>Every workspace that currently has an index on disk.</td></tr>
+        <tr><td><code>POST /remove</code></td><td>Delete a workspace's entire on-disk index.</td></tr>
+        <tr><td><code>GET /graph</code>, <code>/graph/entity</code>, <code>/graph/umap</code></td><td>Derived views for the entity-graph and semantic-map UI.</td></tr>
+        <tr><td><code>GET</code> / <code>PUT /settings</code></td><td>Per-workspace typed-relations, descriptions, and chunk-context settings.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/index/pipeline.py</code></dt><dd>Build orchestration, query, and grounding assembly.</dd>
+      <dt><code class="path">server/index/embedder.py</code></dt><dd>Qwen3 / Cohere embeddings, batching, NaN guard.</dd>
+      <dt><code class="path">server/index/extractor.py</code></dt><dd>GLiNER / Haiku entity extraction.</dd>
+      <dt><code class="path">server/index/relations.py</code></dt><dd>Typed relation extraction (Haiku / local Gemma).</dd>
+      <dt><code class="path">server/index/reranker.py</code></dt><dd>Qwen3 / Cohere cross-encoder reranking.</dd>
+      <dt><code class="path">server/index/store.py</code></dt><dd>SQLite storage, sqlite-vec, FTS5, the entity graph, dedup.</dd>
+      <dt><code class="path">server/index/chunker.py</code></dt><dd>Structure-aware, token-budgeted chunking.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> the hands-on
+        <a href="tut-index-search.html">Index &amp; semantic search</a> tutorial,
+        <a href="arch-backends.html">Model backends &amp; modes</a> (which picks the embed / NER /
+        rerank engines), and <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>
+        (where grounding is injected). See also <a href="arch-extraction.html">Attachment
+        extraction</a>, which shares the file-to-text extractors.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/index.js"></script>
+</body>
+</html>

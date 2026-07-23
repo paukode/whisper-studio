@@ -1,0 +1,18 @@
+# gitleaks configuration.
+#
+# Keeps the full default rule set and allowlists test fixtures that
+# intentionally embed dummy credentials — e.g. tests/test_config_no_secret_leak.py
+# sets a fake Tavily key to assert that GET /api/config masks/omits it.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Intentional dummy secrets in test fixtures"
+regexes = [
+  '''tvly-SECRET-1234567890''',
+]
+paths = [
+  '''tests/test_config_no_secret_leak\.py''',
+  '''tests/test_memory_medium_fixes\.py''',
+  '''tests/test_config_tools_safety\.py''',
+]

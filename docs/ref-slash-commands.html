@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Slash commands - Whisper Studio Docs</title>
+  <meta name="description" content="Every / command available in the Whisper Studio chat input: switch models, set thinking depth, toggle plan mode, spawn subagents, reference files, and more.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="ref-slash-commands">
+    <h1>Slash commands</h1>
+    <p class="subtitle">Every <code>/</code> command available in the chat input. Type <code>/</code> at
+      the start of an empty composer to see the full list inline, with argument hints and live
+      autocomplete.</p>
+
+    <p>Slash commands are shortcuts the composer intercepts <em>before</em> anything is sent to the
+      model. They tune the session (model, thinking depth, response length), run side tasks (a subagent,
+      a one-off side question), or drive the UI (open Settings, clear the view, rename the session).
+      Most take effect instantly and confirm with a small toast; a few open a dialog. They are handled
+      client-side in <code class="path">src/hooks/useSlashCommands.tsx</code>, with the list itself
+      defined in <code class="path">src/components/chat/chatInputConstants.ts</code>.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>A command only fires when your message <b>begins</b> with <code>/</code>.
+        Anything that is not a recognised command is treated as a normal chat message, so a stray
+        slash never eats your text. Run <code>/help</code> at any time for the same reference inside the
+        app.</p></div>
+    </div>
+
+    <h2 id="all-commands">All commands at a glance</h2>
+    <p>The table below is the complete set. Details, arguments, and gotchas for each group follow.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Command</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>/model &lt;name&gt;</code></td><td>Switch the chat model for the rest of the session.</td></tr>
+        <tr><td><code>/effort &lt;level&gt;</code></td><td>Set thinking depth for models that support it.</td></tr>
+        <tr><td><code>/plan</code></td><td>Toggle plan mode (a read-only, research-first Claude).</td></tr>
+        <tr><td><code>/verbosity &lt;level&gt;</code></td><td>Set the response length (brief, normal, or detailed).</td></tr>
+        <tr><td><code>/memory on|off|status</code></td><td>Toggle cross-session memory, or report its state.</td></tr>
+        <tr><td><code>/goal &lt;text&gt; | /goal clear</code></td><td>Set or clear a session goal the goal loop works toward.</td></tr>
+        <tr><td><code>/btw &lt;question&gt;</code></td><td>Ask a side question that never enters the transcript.</td></tr>
+        <tr><td><code>/subagent &lt;task&gt;</code></td><td>Spawn a focused one-shot subagent in the background.</td></tr>
+        <tr><td><code>/workflow &lt;saved-name&gt;</code></td><td>Launch a saved ultracode workflow run in this session.</td></tr>
+        <tr><td><code>/file:&lt;path&gt; [question]</code></td><td>Reference a workspace file inline so Claude sees its contents.</td></tr>
+        <tr><td><code>/skills:</code></td><td>Browse and open available skills.</td></tr>
+        <tr><td><code>/mcp:</code></td><td>Browse connected MCP tools.</td></tr>
+        <tr><td><code>/export</code></td><td>Download the visible conversation as a text file.</td></tr>
+        <tr><td><code>/clear</code></td><td>Wipe the visible chat (the stored session keeps its history).</td></tr>
+        <tr><td><code>/rename &lt;title&gt;</code></td><td>Rename the current session.</td></tr>
+        <tr><td><code>/workspace</code></td><td>Connect a workspace folder.</td></tr>
+        <tr><td><code>/theme &lt;name&gt;</code></td><td>Switch the app theme.</td></tr>
+        <tr><td><code>/notify</code></td><td>Request or check browser notification permission.</td></tr>
+        <tr><td><code>/settings</code></td><td>Open the Settings panel.</td></tr>
+        <tr><td><code>/doctor</code></td><td>Run environment and AWS-access diagnostics.</td></tr>
+        <tr><td><code>/ci [branch] | /ci autofix [branch]</code></td><td>Watch a CI run to completion, or propose an autofix for a failing one.</td></tr>
+        <tr><td><code>/help</code></td><td>Show the full command reference in a dialog.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="model-reasoning">Model &amp; reasoning</h2>
+    <p>These four commands change how Claude thinks for the rest of the session. They mirror the
+      controls under the composer, so a command and a click stay in sync.</p>
+
+    <h3 id="model">/model</h3>
+    <p><code>/model &lt;name&gt;</code> switches the model for every subsequent turn in this session. The
+      valid names come from your configured model list, so they track whatever you have enabled, for
+      example <code>haiku</code>, <code>sonnet</code>, <code>opus</code>, or a pinned version like
+      <code>opus4.8</code>. On success you get a toast confirming the version label ("Model set to
+      Sonnet 4.6"). Pass an unknown name and the composer replies with the exact usage string listing
+      the models you can pick.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg></span>
+      <div class="callout__body"><p>Switching to a model with a stricter data-retention policy routes
+        through a consent screen first, so the change only lands after you confirm. See
+        <a href="tut-model-modes.html">Model modes</a> for the cloud, hybrid, and local backends behind
+        each name.</p></div>
+    </div>
+
+    <h3 id="effort">/effort</h3>
+    <p><code>/effort &lt;level&gt;</code> sets thinking depth for models that expose it (the Opus tier).
+      The accepted levels are <code>low</code>, <code>medium</code>, <code>high</code>,
+      <code>extra</code>, <code>max</code>, and <code>ultracode</code>. The raw API name
+      <code>xhigh</code> is accepted as an alias for <code>extra</code>. <code>ultracode</code> is the
+      top mode: it pairs the highest reasoning effort with dynamic-workflow orchestration (see
+      <a href="arch-ultracode.html">The ultracode workflow runtime</a>). Each model advertises its own
+      set of levels, so the validator is model-aware:</p>
+    <ul>
+      <li>Ask for a level the model supports and it is applied, with a toast naming the new level.</li>
+      <li>Ask for a valid level the current model does <em>not</em> expose and it is
+        <b>clamped</b> to the nearest lower one, with a note explaining the adjustment.</li>
+      <li>On a model with no effort levels at all, the command reports that and does nothing.</li>
+    </ul>
+
+    <h3 id="plan">/plan</h3>
+    <p><code>/plan</code> toggles <b>plan mode</b>: a read-only stance where Claude investigates and
+      proposes a plan without writing files, running commands, or taking other write actions. Run it
+      again to leave plan mode. It is the same dial described in
+      <a href="tut-permissions.html">Permissions &amp; approvals</a>, so any write step still surfaces
+      an approval card once you leave plan mode.</p>
+
+    <h3 id="verbosity">/verbosity</h3>
+    <p><code>/verbosity &lt;level&gt;</code> sets the <b>response length</b>, the same three-level control
+      that sits under the composer. Pass <code>brief</code> for short, direct answers,
+      <code>normal</code> for balanced detail, or <code>detailed</code> for thorough, expansive ones
+      (<code>low</code>, <code>medium</code>, and <code>high</code> work as aliases). A toast confirms
+      the level you set; call it with no argument to see the usage string.</p>
+
+    <h3 id="memory">/memory</h3>
+    <p><code>/memory on</code> and <code>/memory off</code> flip cross-session memory, and
+      <code>/memory status</code> reports whether it is currently on. Memory is what lets Claude carry
+      durable facts between conversations; see the <a href="tut-memory.html">Memory &amp; WHISPER.md</a>
+      guide for what gets remembered and how to curate it.</p>
+
+    <h3 id="goal">/goal</h3>
+    <p><code>/goal &lt;text&gt;</code> sets a <b>session goal</b> that the goal loop keeps working toward:
+      after each turn a cheap evaluator judges whether the goal is met, and if not the turn
+      auto-continues (capped so it cannot run away). A goal banner appears above the composer while one
+      is active. <code>/goal clear</code> ends it. Both need an open session, and a bare
+      <code>/goal</code> just shows its usage hint. The loop is gated by the <code>goal_loop</code>
+      feature flag; see <a href="ref-settings.html#feature-flags">Feature flags</a>.</p>
+
+    <h2 id="side-tasks">Side tasks &amp; agents</h2>
+    <p>These run work alongside the main conversation without derailing it.</p>
+
+    <h3 id="btw">/btw</h3>
+    <p><code>/btw &lt;question&gt;</code> asks a quick side-channel question that <b>does not enter the
+      main transcript</b>. It sends only your question plus a few recent messages for context, streams
+      the answer into a small popup, and leaves the conversation history untouched. Use it for a fast
+      aside ("btw what does this acronym mean") when you do not want to spend the main thread's context
+      on it. With no question, the command just shows its usage hint.</p>
+
+    <h3 id="subagent">/subagent</h3>
+    <p><code>/subagent &lt;task&gt;</code> spawns a <b>focused one-shot subagent</b> that works in the
+      background with the full tool loop: web search and fetch, workspace access, code, and any enabled
+      MCP tools. It does not block the composer, so you can keep chatting while it runs. Its live
+      progress renders in a report card inside the chat, and its final answer is posted there when it
+      finishes. Press <b>Stop</b> on the card to cancel a run in flight. For coordinating several agents
+      at once, see <a href="tut-subagents.html">Sub-agents &amp; teams</a>.</p>
+
+    <h3 id="workflow">/workflow</h3>
+    <p><code>/workflow &lt;saved-name&gt;</code> launches a <b>saved workflow</b> by name: a deterministic
+      script from the <a href="arch-ultracode.html">ultracode workflow runtime</a> that orchestrates
+      agents in the current session. The run starts immediately and renders a workflow card in the chat
+      that tracks its phases, and it does not block the composer. It needs an <b>open session</b>, and if
+      no saved workflow matches the name you get an error toast prompting you to check that it is saved.
+      See <a href="arch-ultracode.html">The ultracode workflow runtime</a> for how workflows are authored,
+      previewed, and resumed.</p>
+
+    <h2 id="files-tools">Files &amp; tools</h2>
+    <p>Colon-style commands open an inline picker as you type after the colon, so you can search rather
+      than remember exact names.</p>
+
+    <h3 id="file">/file: and @file</h3>
+    <p><code>/file:&lt;path&gt;</code> references a workspace file so Claude sees its contents inline.
+      There are two behaviors depending on whether you add a question:</p>
+    <dl class="spec">
+      <dt><code class="path">/file:path</code></dt><dd>With no trailing question, the file is attached to
+        the composer as a chip (uploaded in the background) and you keep composing.</dd>
+      <dt><code class="path">/file:path a question</code></dt><dd>With a question, your message and a
+        working indicator appear immediately while the file is fetched, converted, and uploaded in the
+        background, then the turn sends.</dd>
+    </dl>
+    <p>The same file reference is also available as an <code>@file:</code> mention from anywhere in the
+      message, alongside <code>@skills:</code> and <code>@mcp:</code>. Documents are extracted to text
+      (large ones are capped) and images become vision blocks; see
+      <a href="arch-extraction.html">Attachment extraction</a> for the type-aware pipeline. Supported
+      inputs include images, PDF, Office docs, audio, video, code, and text.</p>
+
+    <h3 id="skills-mcp">/skills: and /mcp:</h3>
+    <p><code>/skills:</code> browses the available <a href="tut-skills.html">skills</a> and opens the
+      Skills view. <code>/mcp:</code> browses the tools exposed by your connected
+      <a href="tut-mcp-plugins.html">MCP servers</a>. Both open a searchable submenu as you type after
+      the colon, which is the discoverable way to see exactly what is wired up in the current session.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16v-4M12 8h.01"/><circle cx="12" cy="12" r="9"/></svg></span>
+      <div class="callout__body"><p><b>The colon matters.</b> <code>/file:</code>, <code>/skills:</code>,
+        and <code>/mcp:</code> are submenu commands: the argument comes right after the colon, and the
+        picker dismisses once a space begins the message body. See
+        <a href="ref-tools.html">Agent tools</a> for the full catalogue those tools come from.</p></div>
+    </div>
+
+    <h2 id="conversation">Conversation &amp; session</h2>
+    <p>Manage the transcript and the session record.</p>
+
+    <h3 id="export">/export</h3>
+    <p><code>/export</code> downloads the current conversation as a plain-text file
+      (<code>chat-export-&lt;timestamp&gt;.txt</code>), with each message prefixed by its role and
+      separated by rules. It reads the messages currently in view, so pair it with a fresh session for
+      a clean transcript.</p>
+
+    <h3 id="clear">/clear</h3>
+    <p><code>/clear</code> wipes the <b>visible</b> chat so you can start fresh in the same tab. It
+      clears the on-screen messages only; the stored session still holds its history in SQLite. To
+      remove a session for good, delete it from the sidebar instead.</p>
+
+    <h3 id="rename">/rename</h3>
+    <p><code>/rename &lt;new title&gt;</code> sets a custom title for the current session and marks it as
+      user-chosen, so the automatic title generator will not overwrite it later. Everything after the
+      command word becomes the title. With no title, you get the usage hint.</p>
+
+    <h3 id="workspace">/workspace</h3>
+    <p><code>/workspace</code> opens the native folder picker to connect a workspace directory, which is
+      what unlocks the file tree, editor, terminal, and the file-aware tools. The
+      <a href="tut-workspace.html">workspace IDE</a> tutorial walks through what becomes available once
+      a folder is connected.</p>
+
+    <h2 id="utilities">Utilities &amp; diagnostics</h2>
+    <p>App-level helpers that do not touch the model.</p>
+
+    <h3 id="theme">/theme</h3>
+    <p><code>/theme &lt;name&gt;</code> switches the interface theme immediately and remembers your
+      choice. Accepted values include <code>auto</code>, <code>dark</code>, <code>light</code>, and the
+      accessibility variants such as <code>dark-high-contrast</code>, <code>light-high-contrast</code>,
+      <code>dark-daltonized</code>, and <code>light-daltonized</code>. <code>auto</code> follows your
+      system's light or dark preference.</p>
+
+    <h3 id="notify">/notify</h3>
+    <p><code>/notify</code> requests browser notification permission (or tells you the current state if
+      it is already granted or blocked). With notifications enabled, long-running work like a subagent or
+      a <a href="tut-cron.html">scheduled task</a> can alert you when it finishes.</p>
+
+    <h3 id="settings">/settings</h3>
+    <p><code>/settings</code> opens the Settings panel. It is the keyboard-first way to reach model
+      defaults, API keys, and the rest of the fields documented in
+      <a href="ref-settings.html">Settings &amp; config keys</a>.</p>
+
+    <h3 id="doctor">/doctor</h3>
+    <p><code>/doctor</code> runs an automated diagnostics pass and shows the results in a dialog: a set
+      of checks (dependencies, AWS access, and related environment health) each marked as ok, warn, or
+      fail. It calls the <code>/api/doctor</code> endpoint served by
+      <code class="path">server/doctor.py</code>. Run it first whenever chat is not responding or a
+      model call errors.</p>
+
+    <h3 id="ci">/ci</h3>
+    <p><code>/ci [branch]</code> watches the branch's latest GitHub Actions run to a terminal state,
+      streaming its status into a card in the chat. <code>/ci autofix [branch]</code> goes further: it
+      reads the failing logs, posts a diagnosis, and emits an <b>approvable</b> workflow that fixes the
+      problem and then runs verification, using the <a href="arch-ultracode.html">ultracode workflow
+      runtime</a>. Both need an open session and the GitHub CLI (<code>gh</code>) installed and
+      authenticated; without it the command reports that CI is unavailable. See
+      <a href="arch-ultracode.html#ci-autofix">The ultracode workflow runtime</a>.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+      <div class="callout__body"><p><b>There is no <code>/hooks</code> command.</b> Blocking hooks
+        (<code>PreToolUse</code>, <code>PostToolUse</code>, and the <code>Stop</code> gate) are managed in
+        the Settings panel, not from the composer. See <a href="ref-settings.html">Settings &amp; config
+        keys</a> and the <a href="ref-security.html">Security model</a> for how project hooks are
+        trusted.</p></div>
+    </div>
+
+    <h3 id="help">/help</h3>
+    <p><code>/help</code> opens a dialog listing every command grouped by category (General, AI &amp;
+      Model, Workspace, Settings, Debug) - the AI &amp; Model group is where <code>/workflow</code>,
+      <code>/ci</code>, and <code>/goal</code> appear - each with its icon and one-line description. It is
+      generated from the same command list this page documents, so it always matches your build.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+      <div class="callout__body"><p><b>Names track your config.</b> <code>/model</code> and
+        <code>/effort</code> validate against the models and effort levels you actually have enabled, so
+        the exact options you see may differ from the examples here. When in doubt, run the command with
+        no argument and read the usage hint it returns.</p></div>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-first-chat.html">Your first chat</a>
+        introduces these controls in context, <a href="ref-tools.html">Agent tools</a> lists what the
+        assistant can call, and <a href="tut-permissions.html">Permissions &amp; approvals</a> covers
+        plan mode and the approval flow. See also <a href="ref-shortcuts.html">Keyboard shortcuts</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>

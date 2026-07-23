@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Persistence - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio persists state: one SQLite database in WAL mode, the sessions schema, the session latch, cost and cron tables, startup migrations, and lock-guarded saves.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-persistence">
+    <h1>Persistence</h1>
+    <p class="subtitle">Everything Whisper Studio remembers between requests lives in one SQLite file.
+      This page walks the schema, the per-session config latch, the companion tables, the startup
+      migrations, and the locking that keeps a background write from clobbering a foreground save.</p>
+
+    <p>There is no external database and no server-side session cache to warm. A single file,
+      <code class="path">storage/sessions.db</code>, holds every chat, transcript, cost line, and
+      scheduled-run record. It opens in WAL mode so the app can read while a write is in flight, and
+      the schema evolves through numbered migrations that run once at startup. The data-access code
+      lives in <code class="path">server/infrastructure/sessions.py</code>.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="persistence-diagram" class="diagram"></div>
+      <figcaption>Boot runs migrations, then requests read and write one WAL database. The
+        <em>sessions</em> table fans out to a family of companion tables (<em>session_costs</em> and
+        <em>cron_runs</em> shown here, plus <em>agent_tasks</em>, <em>notifications</em>, and
+        <em>workflow_runs</em>), and the session latch snapshots config off the first turn.</figcaption>
+    </figure>
+
+    <h2 id="one-database">One database, WAL mode</h2>
+    <p>Every connection is opened through a small context manager in
+      <code class="path">server/infrastructure/sessions.py</code> that sets three pragmas on the way
+      in:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Pragma</th><th>Value</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td><code>journal_mode</code></td><td><code>WAL</code></td><td>Readers and a single writer proceed concurrently, so a list query never blocks on an in-flight save.</td></tr>
+        <tr><td><code>busy_timeout</code></td><td><code>5000</code> ms</td><td>When the writer is held, a second connection waits up to five seconds instead of raising <code>database is locked</code>.</td></tr>
+        <tr><td><code>synchronous</code></td><td><code>NORMAL</code></td><td>Fewer fsyncs than <code>FULL</code>; safe with WAL for a local-first, single-node app.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The connection is opened with a <code>timeout=5.0</code> as well, and each context exits by
+      committing then closing. If a pragma cannot be applied the code logs a warning and continues
+      rather than failing the request. Rows come back as <code>sqlite3.Row</code>, so columns are
+      read by name.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>WAL writes a <code>sessions.db-wal</code> and <code>sessions.db-shm</code>
+        sidecar next to the database. They are normal, and SQLite checkpoints the WAL back into the
+        main file on its own. If you copy the database for a backup, copy all three files together.</p></div>
+    </div>
+
+    <h2 id="sessions-table">The sessions table</h2>
+    <p>The <code>sessions</code> table is the heart of the store. Its base shape is created on import
+      by <code>_ensure_db()</code>; later columns are added by migrations (see below). A session
+      carries both the chat conversation and, for recorded sessions, the transcript.</p>
+    <dl class="spec">
+      <dt><code class="path">id</code></dt><dd>Primary key. A UUID for user sessions, or the fixed sentinel <code>__cron_inbox__</code> for the pinned Scheduled Reports inbox.</dd>
+      <dt><code class="path">title</code>, <code class="path">custom_title</code>, <code class="path">generated_title</code></dt><dd>The display title plus two flags recording whether the user renamed it or the app auto-generated it.</dd>
+      <dt><code class="path">created_at</code>, <code class="path">updated_at</code></dt><dd>ISO-8601 UTC timestamps. The list query sorts by <code>updated_at DESC</code>, and an index backs that sort.</dd>
+      <dt><code class="path">segments</code></dt><dd>JSON array of transcript segments (text plus speaker) for recorded sessions. Empty <code>[]</code> for chat-only sessions.</dd>
+      <dt><code class="path">chat_history</code></dt><dd>JSON array of chat messages. Holds prompt roles (<code>user</code>, <code>assistant</code>) and UI-only <code>cron_event</code> rows (see below).</dd>
+      <dt><code class="path">speaker_names</code></dt><dd>JSON map of speaker id to a human-assigned name for diarized transcripts.</dd>
+      <dt><code class="path">workspace_path</code></dt><dd>The folder this session is bound to, if any. The path is read from the DB, never the client, when opening a workspace externally.</dd>
+      <dt><code class="path">latched_config</code></dt><dd>JSON snapshot of the config fields frozen for this session on its first turn (see <a href="#session-latch">the session latch</a>).</dd>
+      <dt><code class="path">pinned</code>, <code class="path">archived</code></dt><dd>Sidebar flags. Pinned floats to the top; archived hides from the default list.</dd>
+      <dt><code class="path">compaction_count</code></dt><dd>How many times history compaction has run for this session, surfaced in the UI so a long conversation shows it is being trimmed.</dd>
+      <dt><code class="path">goal</code>, <code class="path">goal_state</code></dt><dd>The WS-E goal loop's target text (<code>goal</code>) and its progress as a JSON blob (<code>goal_state</code>), added additively via <code>_MIGRATED_SESSION_COLUMNS</code> and surfaced in <code>_row_to_dict()</code> as <code>goal</code> / <code>goalState</code>.</dd>
+    </dl>
+    <p>Reads go through <code>_row_to_dict()</code> (full detail) or <code>_row_to_summary()</code>
+      (list view). Both use a <code>_safe_col()</code> helper that returns a default when a column is
+      absent, so a row written before a migration still deserializes cleanly.</p>
+
+    <h2 id="session-latch">The session latch</h2>
+    <p>Settings can change mid-conversation, but you do not want the model or effort level to switch
+      out from under an in-flight chat. The latch solves this. On the first turn,
+      <code>latch_session()</code> in <code class="path">server/infrastructure/config.py</code>
+      snapshots a fixed set of fields and reuses that snapshot for every later turn in the session.
+      Changing Settings afterward affects new sessions, not this one.</p>
+    <p>The latched fields are:</p>
+    <ul>
+      <li><code>default_chat_model</code> and <code>chat_models</code> - which model runs, and the enabled set.</li>
+      <li><code>chat_model_meta</code> - per-model metadata used to render and price the choice.</li>
+      <li><code>effort_level</code> and <code>brief_mode</code> - the thinking budget and response length.</li>
+      <li><code>permission_mode</code> - the approval posture for the turn.</li>
+      <li><code>bedrock_region</code> - the region the request is routed to.</li>
+    </ul>
+    <p>The live snapshot lives in an in-memory dict (<code>_latched_sessions</code>) guarded by a
+      lock, and the same values are persisted in the <code>latched_config</code> column so a session
+      survives a restart with its choices intact. When a session is deleted, its snapshot is dropped
+      via <code>unlatch_session()</code> as part of the delete cascade.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Latching happens at the very start of the turn, before the prompt
+        is built. See <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for where
+        it sits in the request flow.</p></div>
+    </div>
+
+    <h2 id="chat-history">chat_history and cron_event rows</h2>
+    <p><code>chat_history</code> holds more than what the model sees. Alongside <code>user</code> and
+      <code>assistant</code> messages, a background scheduled task can append a <code>cron_event</code>
+      row so its result renders inline in the conversation that created it. Those rows are UI-only,
+      and two rules keep them from causing trouble:</p>
+    <ol class="steps">
+      <li>
+        <h4>They never enter the prompt</h4>
+        <p><code>visible_chat_history()</code> filters <code>chat_history</code> down to the prompt
+          roles (<code>user</code>, <code>assistant</code>) before the Bedrock messages array is
+          built. A cron card you see in the chat does not inflate the token bill.</p>
+      </li>
+      <li>
+        <h4>They are capped</h4>
+        <p>At most 50 <code>cron_event</code> rows are kept per session (<code>MAX_CRON_EVENTS_PER_SESSION</code>).
+          When the cap is exceeded, the oldest are dropped on append. The durable per-run record still
+          lives in <code>cron_runs</code>, so the history drawer never loses data when the inline cap
+          trims.</p>
+      </li>
+    </ol>
+    <p>Reactive compaction is the other force acting on <code>chat_history</code>. When a prompt grows
+      too long, the oldest message pairs are summarized or dropped and the turn retries;
+      <code>compaction_count</code> is incremented so the UI can show it. See
+      <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for the compaction path.</p>
+
+    <h2 id="companion-tables">The companion tables</h2>
+    <p>Five other tables share the same database file, each created by a numbered migration rather than
+      on import.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Table</th><th>Grain</th><th>Holds</th></tr></thead>
+      <tbody>
+        <tr><td><code>session_costs</code></td><td>One row per model turn</td><td><code>session_id</code>, <code>turn_number</code>, <code>model</code>, input / output / cache-read / cache-creation tokens, <code>cost_usd</code>, and <code>api_duration_ms</code>. Backs the cost aggregates and spend caps.</td></tr>
+        <tr><td><code>cron_runs</code></td><td>One row per scheduled-task fire</td><td><code>run_id</code>, <code>job_id</code>, <code>job_name</code>, <code>session_id</code>, a <code>status</code> lease (<code>running</code> / <code>ok</code> / <code>failed</code>), timestamps, <code>duration_ms</code>, the result <code>text</code>, and the computed <code>next_run</code>.</td></tr>
+        <tr><td><code>agent_tasks</code></td><td>One row per background task</td><td><code>task_id</code>, <code>kind</code> (<code>shell</code> / <code>agent</code> / <code>workflow</code>), <code>session_id</code>, <code>title</code>, a <code>status</code> lease with <code>owner_pid</code>, and kind-specific fields. The unified background-task registry (migration 007).</td></tr>
+        <tr><td><code>notifications</code></td><td>One row per <code>notify_user</code></td><td>An id, <code>session_id</code>, <code>source</code> (<code>chat</code> / <code>agent</code> / <code>cron</code>), <code>title</code>, <code>message</code>, <code>status</code>, and a <code>read_at</code> stamp. The durable log behind the header bell (migration 008).</td></tr>
+        <tr><td><code>workflow_runs</code></td><td>One row per workflow run</td><td><code>run_id</code>, <code>name</code>, <code>session_id</code>, a <code>status</code> lease, the phase list, and a token / <code>cost_usd</code> / <code>budget_usd</code> ledger for the <a href="arch-ultracode.html">ultracode workflow runtime</a> (migration 009).</td></tr>
+      </tbody>
+    </table></div>
+    <p>The status lease is a recurring pattern: <code>cron_runs</code>, <code>agent_tasks</code>, and
+      <code>workflow_runs</code> each write a <code>running</code> row that a boot-time reconcile flips to
+      a terminal state (<code>failed</code> / <code>interrupted</code> / <code>stale</code>) if it is
+      still open after a restart, so nothing hangs forever; <code>notifications</code> is instead the
+      durable record behind the header bell. Each table is indexed for its hot query -
+      <code>session_costs</code> by <code>session_id</code> and <code>created_at</code>,
+      <code>cron_runs</code> by <code>(job_id, started_at DESC)</code>, and <code>agent_tasks</code> /
+      <code>notifications</code> / <code>workflow_runs</code> by session and status. See
+      <a href="arch-costs.html">Cost tracking &amp; budgets</a> and
+      <a href="arch-cron.html">Cron / scheduled tasks</a> for how each is written and read.</p>
+
+    <h2 id="migrations">Migrations</h2>
+    <p>The schema is not frozen. <code class="path">server/migrations/runner.py</code> runs once
+      during the app lifespan (called from <code class="path">server/main.py</code>) and applies any
+      pending migration modules in order. Each module in
+      <code class="path">server/migrations/</code> is a file named <code>NNN_description.py</code>
+      that exports a <code>VERSION</code>, a <code>DESCRIPTION</code>, and a
+      <code>migrate(conn)</code> function.</p>
+    <p>The runner discovers those modules, compares their versions against a
+      <code>schema_version</code> tracking table, and applies only the ones not yet recorded. Each
+      migration runs in a transaction: on success its version is inserted into
+      <code>schema_version</code> and committed; on any exception the runner rolls back and
+      <b>stops</b>, so a half-applied migration never leaves the database in an unknown state.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Version</th><th>Module</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>001</td><td><code class="path">001_add_session_costs.py</code></td><td>Creates the <code>session_costs</code> table for per-turn cost tracking.</td></tr>
+        <tr><td>002</td><td><code class="path">002_add_session_metadata.py</code></td><td>Adds <code>workspace_path</code>, <code>compaction_count</code>, and <code>latched_config</code> columns to <code>sessions</code>.</td></tr>
+        <tr><td>003</td><td><code class="path">003_backfill_session_timestamps.py</code></td><td>Backfills empty <code>updated_at</code> / <code>created_at</code> so old rows sort and render correctly.</td></tr>
+        <tr><td>004</td><td><code class="path">004_purge_orphaned_session_data.py</code></td><td>One-time sweep of orphaned <code>session_costs</code> / <code>tasks</code> rows left by pre-cascade deletes.</td></tr>
+        <tr><td>005</td><td><code class="path">005_add_session_flags.py</code></td><td>Adds the <code>pinned</code> and <code>archived</code> flags to <code>sessions</code>.</td></tr>
+        <tr><td>006</td><td><code class="path">006_add_cron_runs.py</code></td><td>Creates the <code>cron_runs</code> table for per-job scheduled-task run history.</td></tr>
+        <tr><td>007</td><td><code class="path">007_add_agent_tasks.py</code></td><td>Creates the <code>agent_tasks</code> table (unified background-task registry) with session and status indexes.</td></tr>
+        <tr><td>008</td><td><code class="path">008_add_notifications.py</code></td><td>Creates the <code>notifications</code> table (durable <code>notify_user</code> log) with unread and session indexes.</td></tr>
+        <tr><td>009</td><td><code class="path">009_add_workflow_runs.py</code></td><td>Creates the <code>workflow_runs</code> table (ultracode workflow runtime) with session and status indexes.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Column-adding migrations wrap each <code>ALTER TABLE</code> in a guard so a re-run over a
+      database that already has the column is a no-op, while genuine errors still propagate. SQLite
+      requires one <code>ALTER TABLE</code> per column, which is why those migrations loop.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>A migration that raises stops the whole runner, so the app will
+        fail to finish startup rather than serve against a partial schema. Migrations should be
+        idempotent and forward-only; there is no automatic down-migration.</p></div>
+    </div>
+
+    <h2 id="saves-and-locks">Saves, locks, and the merge</h2>
+    <p>Two writers can touch the same session at once: the frontend saving the whole session, and a
+      background cron fire appending a <code>cron_event</code>. A naive full save from the frontend
+      would overwrite the cron row that landed a moment earlier. Two mechanisms prevent that.</p>
+    <ol class="steps">
+      <li>
+        <h4>A per-session lock</h4>
+        <p>Every writer takes an <code>asyncio.Lock</code> keyed by session id (<code>_lock_for()</code>).
+          The save endpoints, the beacon save, <code>append_message()</code>, and the delete cascade
+          all hold the same lock, so a read-modify-write can never interleave with another writer for
+          the same session.</p>
+      </li>
+      <li>
+        <h4>A UPSERT that merges backend rows</h4>
+        <p>A session save is a single UPSERT (<code>INSERT ... ON CONFLICT(id) DO UPDATE</code>).
+          Before writing, <code>_upsert_session()</code> reads the existing <code>chat_history</code>,
+          pulls out the backend-owned UI-only rows, and appends any (by timestamp) that the frontend
+          payload does not yet include. So a cron card written between the last hydrate and this save
+          survives the round-trip.</p>
+      </li>
+    </ol>
+    <p>The cap on <code>cron_event</code> rows is re-applied after the merge, so merging can never push
+      the count over 50. Two save paths share this logic: the normal
+      <code>PUT /api/sessions/{id}</code> and a <code>navigator.sendBeacon</code> POST used on page
+      unload. Deleting a session is also lock-guarded and cascades: it removes the parent row and
+      <code>session_costs</code>, re-homes cron jobs and history to the inbox, and clears the
+      per-session in-memory caches.</p>
+
+    <h2 id="the-cron-inbox">The Scheduled Reports inbox</h2>
+    <p>A scheduled task can outlive the session that created it. If that session is deleted or
+      archived, the firing must still land somewhere. <code>ensure_cron_inbox()</code> creates a
+      fixed, pinned session with id <code>__cron_inbox__</code> and title "Scheduled Reports" that
+      catches orphaned runs. It is a fixture, not a user session: the delete endpoints refuse to
+      remove it, so orphaned cron runs are never stranded.</p>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/infrastructure/sessions.py</code></dt><dd>Connection pragmas, the schema, reads, the locked/merging UPSERT, and the delete cascade.</dd>
+      <dt><code class="path">server/infrastructure/config.py</code></dt><dd><code>latch_session()</code> / <code>unlatch_session()</code> and the set of latched fields.</dd>
+      <dt><code class="path">server/migrations/runner.py</code></dt><dd>Discovers, orders, and applies migrations; tracks applied versions in <code>schema_version</code>.</dd>
+      <dt><code class="path">server/migrations/NNN_*.py</code></dt><dd>The individual migration modules (each with <code>VERSION</code>, <code>DESCRIPTION</code>, <code>migrate</code>).</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>
+        (where the latch and the save happen), <a href="arch-cron.html">Cron / scheduled tasks</a>
+        (who writes <code>cron_runs</code> and <code>cron_event</code> rows), and
+        <a href="arch-costs.html">Cost tracking &amp; budgets</a> (who writes <code>session_costs</code>).</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/persistence.js"></script>
+</body>
+</html>

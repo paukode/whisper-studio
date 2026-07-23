@@ -1,0 +1,153 @@
+/* ================================================================
+   Whisper Studio Docs - Theme & design tokens
+   Ported 1:1 from the app (static/modules/themes.css) + doc tokens.
+   Self-hosted fonts, zero external requests.
+   ================================================================ */
+
+/* ---- Fonts (self-hosted, air-gap safe) ---- */
+@font-face {
+  font-family: "Outfit";
+  font-style: normal;
+  font-weight: 100 900;           /* variable */
+  font-display: swap;
+  src: url("fonts/outfit-var.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/ibmplexmono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/ibmplexmono-500.woff2") format("woff2");
+}
+
+/* ---- Light theme (default) ---- */
+:root,
+[data-theme="light"] {
+  --bg-primary: #f5f3ef;
+  --bg-surface: #ffffff;
+  --bg-elevated: #f0ede8;
+  --bg-secondary: #f0ede8;
+  --bg-hover: #e8e5df;
+  --bg-inset: #eae7e1;
+  --border: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.14);
+  --text-primary: #1a1918;
+  --text-secondary: #6b6966;
+  --text-muted: #a09d99;
+  --accent: #c4841d;
+  --accent-dim: rgba(196, 132, 29, 0.1);
+  --accent-hover: #b3760f;
+  --accent-soft: rgba(196, 132, 29, 0.16);
+  --link: #b3760f;
+  --link-hover: #8a5a08;
+  --accent-record: #dc3529;
+  --accent-live: #16a34a;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 18px 48px rgba(60, 40, 10, 0.12);
+  --hero-wash: radial-gradient(120% 140% at 15% 0%, rgba(196, 132, 29, 0.16), transparent 55%),
+               radial-gradient(120% 120% at 100% 0%, rgba(196, 132, 29, 0.08), transparent 45%);
+  --code-bg: #f6f2ea;
+  --code-border: rgba(0, 0, 0, 0.07);
+  --note-bg: rgba(196, 132, 29, 0.07);
+  --tip-bg: rgba(22, 163, 74, 0.08);
+  --tip-accent: #16a34a;
+  --warn-bg: rgba(220, 53, 41, 0.07);
+  --warn-accent: #c0392b;
+  --grid-line: rgba(0, 0, 0, 0.04);
+  color-scheme: light;
+}
+
+/* ---- Dark theme ---- */
+[data-theme="dark"] {
+  --bg-primary: #111113;
+  --bg-surface: #19191d;
+  --bg-elevated: #222228;
+  --bg-secondary: #222228;
+  --bg-hover: #2a2a32;
+  --bg-inset: #0d0d0f;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text-primary: #e4e2de;
+  --text-secondary: #9b9a97;
+  --text-muted: #6b6a67;
+  --accent: #e2a336;
+  --accent-dim: rgba(226, 163, 54, 0.15);
+  --accent-hover: #eab34d;
+  --accent-soft: rgba(226, 163, 54, 0.2);
+  --link: #eab34d;
+  --link-hover: #f2c56a;
+  --accent-record: #e5453a;
+  --accent-live: #34c77b;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 22px 60px rgba(0, 0, 0, 0.6);
+  --hero-wash: radial-gradient(120% 140% at 15% 0%, rgba(226, 163, 54, 0.14), transparent 55%),
+               radial-gradient(120% 120% at 100% 0%, rgba(226, 163, 54, 0.06), transparent 45%);
+  --code-bg: #0f0f12;
+  --code-border: rgba(255, 255, 255, 0.07);
+  --note-bg: rgba(226, 163, 54, 0.09);
+  --tip-bg: rgba(52, 199, 123, 0.1);
+  --tip-accent: #34c77b;
+  --warn-bg: rgba(229, 69, 58, 0.1);
+  --warn-accent: #f0736a;
+  --grid-line: rgba(255, 255, 255, 0.04);
+  color-scheme: dark;
+}
+
+/* ---- Shared metrics ---- */
+:root {
+  --font-ui: "Outfit", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --sidebar-w: 264px;
+  --toc-w: 208px;
+  --header-h: 60px;
+  --content-max: 820px;
+  --radius: 14px;
+  --radius-sm: 9px;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* ---- Reset / base ---- */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+}
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-synthesis-weight: none;
+  overflow-x: clip; /* hard guard: the page never scrolls horizontally */
+}
+a { color: var(--link); text-decoration: none; }
+a:hover { color: var(--link-hover); }
+img { max-width: 100%; height: auto; }
+::selection { background: var(--accent-soft); }
+
+/* Focus visibility */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Scrollbars */
+* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 8px; border: 3px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-track { background: transparent; }

@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Requirements - Whisper Studio Docs</title>
+  <meta name="description" content="Everything you need before installing Whisper Studio: macOS, the four command-line tools, an Amazon Bedrock account, an optional Tavily key, and the disk and RAM each model mode asks for.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="requirements">
+    <h1>Requirements</h1>
+    <p class="subtitle">Everything you need in place before installing: the operating system, four
+      command-line tools, an Amazon Bedrock account, an optional web-search key, and the disk and memory
+      each model mode asks for.</p>
+
+    <p class="lead">Whisper Studio targets macOS. Most of the heavy lifting (the venv, Node, ffmpeg,
+      ripgrep, the model weights) is done for you by <code class="path">setup.sh</code>, so this page
+      is short. Budget <b>15 to 25 minutes</b> for a first install, most of it spent downloading
+      dependencies and model weights.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>Platform.</b> Whisper Studio is a macOS app. Transcription uses
+        the MLX runtime (Apple Silicon), the sandbox is <code>sandbox-exec(5)</code>, and
+        <code class="path">setup.sh</code> leans on Homebrew for system packages. There is no supported
+        Windows or Linux path today, though the Python backend itself is largely portable.</p></div>
+    </div>
+
+    <h2 id="required-tools">Required command-line tools</h2>
+    <p>You need exactly four tools present before you run the setup script. Everything else the app
+      depends on is installed for you (see <a href="#what-setup-installs">What setup.sh installs</a>
+      below). Open Terminal and run each check command; if it prints a version, you are set.</p>
+
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>Why you need it</th><th>Check command</th></tr></thead>
+      <tbody>
+        <tr><td><b>Git</b></td><td>Clone the repository (and used at runtime for the workspace Git integration and skill/plugin cloning).</td><td><code>git --version</code></td></tr>
+        <tr><td><b>Python 3.10+</b></td><td>The FastAPI backend. It uses <code>match</code> statements, <code>asyncio.TaskGroup</code>, and modern type syntax, so 3.10 is a hard floor.</td><td><code>python3 --version</code></td></tr>
+        <tr><td><b>Homebrew</b></td><td>Installs the rest (ffmpeg, ripgrep, and Python or the AWS CLI if they are missing).</td><td><code>brew --version</code></td></tr>
+        <tr><td><b>AWS CLI</b></td><td>Authenticates to <a href="https://aws.amazon.com/bedrock/">Amazon Bedrock</a> for the Claude chat responses. You run <code>aws configure</code> once.</td><td><code>aws --version</code></td></tr>
+      </tbody>
+    </table></div>
+
+    <p>If Homebrew is installed but Python or the AWS CLI is not,
+      <code class="path">setup.sh</code> can install them for you. Python 3.10+ is the one gate the
+      script enforces up front: if your <code>python3</code> is older or missing, it offers to install
+      <code>python@3.12</code> via Homebrew (in an interactive terminal) and persists it on your
+      <code>PATH</code>. The fastest way to get all four in one line:</p>
+
+    <div class="code-block"><pre><code># Install Homebrew first if `brew --version` fails:
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+# then install Git, Python, and the AWS CLI:
+brew install git python@3.12 awscli</code></pre></div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>You do <b>not</b> need to install Node.js. The
+        <a href="installation.html">Installation</a> guide has copy-paste blocks for Homebrew, Python,
+        and AWS if any check above fails. Come back here for the hardware and AWS specifics.</p></div>
+    </div>
+
+    <h2 id="what-setup-installs">What setup.sh installs for you</h2>
+    <p>The point of the required-tools list being so short is that
+      <code class="path">setup.sh</code> provisions everything else into an isolated
+      <code>venv/</code>, so your system Python and global toolchain stay untouched. On a fresh run it:</p>
+    <ul>
+      <li>Creates the <code>venv/</code> and installs the Python dependencies from
+        <code class="path">requirements.txt</code>.</li>
+      <li>Installs <b>ffmpeg</b> and <b>ripgrep</b> via Homebrew (ffmpeg decodes audio for Whisper;
+        ripgrep backs the workspace search tools).</li>
+      <li>Installs <b>Node.js</b> into the venv via <code>nodeenv</code> (the version is pinned in
+        <code class="path">.nvmrc</code>), then runs <code>npm install</code> and builds the frontend.
+        You never install Node yourself.</li>
+      <li>Fetches the Playwright Chromium build used by the live-preview browser tools.</li>
+      <li>Downloads the model weights for your <a href="#hardware">chosen model mode</a> into
+        <code>models/</code>.</li>
+    </ul>
+    <p>Homebrew is therefore doing double duty: it is one of the four things you install by hand, and
+      it is what the script reaches for to fill in ffmpeg, ripgrep, and (if needed) Python, Git, or the
+      AWS CLI. On a machine without Homebrew, the script warns and some of these steps are skipped.
+      See <a href="installation.html">Installation</a> for the full run-through and the setup flags.</p>
+
+    <h2 id="aws-bedrock">Amazon Bedrock access</h2>
+    <p>Chat responses come from Claude on <a href="https://aws.amazon.com/bedrock/">Amazon Bedrock</a>, so
+      you need an AWS account with Bedrock access and the Claude model you want <b>enabled in your
+      region</b>. Two things trip people up here, both region-related:</p>
+    <ol>
+      <li><b>Enable model access.</b> In the Bedrock console, request access to the Claude models you
+        plan to use. Access is granted per model, per region.</li>
+      <li><b>Match the region.</b> Whatever region you set with <code>aws configure</code> must be the
+        same <b>Bedrock Region</b> you enter in Whisper Studio's Settings, and the model must be
+        enabled there. A mismatch shows up in chat as
+        <code>You don't have access to the model with the specified model ID</code>.</li>
+    </ol>
+    <p>Configure credentials once:</p>
+    <div class="code-block"><pre><code>aws configure</code></pre></div>
+    <p>The full walk-through, including how to create access keys, is in the
+      <a href="https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html">AWS CLI
+      configuration docs</a>. Running <code>aws configure</code> installs nothing on the AWS side; it
+      only stores your keys and default region locally.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.6 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>No enabled model, no chat.</b> Transcription and every local
+        workspace tool run without AWS, but until a Claude model is enabled in your region and your
+        credentials can reach it, the chat panel returns
+        <code>AccessDeniedException</code>. If that happens after install, run <code>/doctor</code> in
+        the chat input for an automated dependency and AWS-access check.</p></div>
+    </div>
+
+    <h2 id="optional-tavily">Optional: a Tavily key for web search</h2>
+    <p>The assistant's web-search skill is powered by <a href="https://tavily.com">Tavily</a>. It is
+      entirely optional: without a key the <code>web_search</code> and <code>web_fetch</code> tools are
+      unavailable, and everything else (chat, transcription, documents, the workspace IDE) works
+      normally. The free tier covers personal use.</p>
+    <p>If you want it, sign up at <a href="https://app.tavily.com">app.tavily.com</a>, copy the key, and
+      either export it in your shell or paste it into the Settings UI. The environment variable takes
+      priority when both are set, which makes rotation a one-line change:</p>
+    <div class="code-block"><pre><code>echo 'export TAVILY_API_KEY=tvly-...' &gt;&gt; ~/.zshrc
+source ~/.zshrc</code></pre></div>
+    <p>See <a href="configuration.html">Configuration</a> for how the environment, project, and user
+      config layers stack.</p>
+
+    <h2 id="hardware">Hardware, by model mode</h2>
+    <p>The disk and memory you need depend on which <b>model mode</b> you install in. The mode decides
+      where indexing and retrieval run and, crucially, which model <b>weights</b> get pulled onto your
+      machine. It is separate from the chat-model choice in the toolbar. You pick a mode with a flag at
+      install time (<code>--cloud</code>, <code>--hybrid</code>, <code>--local</code>) or change it any
+      time under Settings, so this is not a permanent commitment.</p>
+
+    <div class="table-wrap"><table>
+      <thead><tr><th>Mode</th><th>What runs on-device</th><th>On-device weights pulled</th><th>Footprint</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>Cloud</b> <span class="badge badge--muted">default</span></td>
+          <td>Only transcription. Embeddings, reranking, entity extraction, and chat all run on Bedrock.</td>
+          <td>None beyond the transcription models.</td>
+          <td>Lean. The smallest install.</td>
+        </tr>
+        <tr>
+          <td><b>Hybrid</b></td>
+          <td>Whatever you choose per capability. You pick a backend (cloud or on-device) for each of embeddings, reranking, and entity extraction.</td>
+          <td>The full on-device stack is pulled so the on-device options are available to select.</td>
+          <td>Same download as Local (~16 GB); you decide at runtime what actually runs.</td>
+        </tr>
+        <tr>
+          <td><b>Local</b></td>
+          <td>Everything on-device: chat (Gemma), embeddings and reranking (Qwen3), entity extraction (GLiNER), and transcription. Fully offline.</td>
+          <td>The whole stack: Gemma, Qwen3 embed and rerank, GLiNER.</td>
+          <td>~16 GB of weights, plus the RAM to load the ones you run.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <p>The rule of thumb: <b>Cloud is the cheap install</b> (nothing but the transcription models lands
+      on disk), while <b>Hybrid and Local both pull roughly 16 GB</b> of on-device weights. The
+      difference between Hybrid and Local is not what gets downloaded; it is what you let run. Hybrid
+      pulls the weights so you can mix per capability; Local commits to running everything locally.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM5 11a7 7 0 0 0 14 0M12 18v4"/></svg></span>
+      <div class="callout__body"><p><b>Transcription is always on-device.</b> In every mode, the
+        Whisper and Parakeet speech models run locally and audio never leaves the laptop. They are
+        pulled on install (or on first record) regardless of which mode you chose, so even a Cloud
+        install downloads them. See <a href="arch-transcription.html">Transcription &amp;
+        diarization</a>.</p></div>
+    </div>
+
+    <p>A few practical notes on the on-device weights:</p>
+    <dl class="spec">
+      <dt><code class="path">models/</code></dt><dd>Where every weight lands. Downloads are idempotent, so re-running setup skips anything already present.</dd>
+      <dt>Memory</dt><dd>The ~16 GB figure is disk. On-device chat with Gemma additionally needs enough free RAM to hold the model while it runs; the smaller index models (Qwen3, GLiNER) are lighter.</dd>
+      <dt>Apple Silicon</dt><dd>The on-device runtimes (MLX for transcription, llama.cpp with Metal for Gemma) are built for Apple Silicon. On-device chat is a macOS-arm64 feature.</dd>
+    </dl>
+
+    <h2 id="pick-a-mode">Not sure which mode?</h2>
+    <p>If you are just getting started, or you want current answers via Bedrock and a small install,
+      start with <b>Cloud</b> (the default). Reach for <b>Local</b> only when you want everything to
+      run offline and you have the disk and memory to spare, and for <b>Hybrid</b> when you want to
+      keep chat on Bedrock but run some of the index stack on-device. The full trade-offs, including
+      which backend handles what, are on the <a href="tut-model-modes.html">Model modes</a> page.</p>
+
+    <div class="card-grid">
+      <a class="card card--link" href="installation.html">
+        <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></div>
+        <h3>Install &amp; run</h3><p>Once these boxes are checked, the zero-to-running walk-through and every setup flag.</p><span class="card__meta">Next: Installation →</span>
+      </a>
+      <a class="card card--link" href="tut-model-modes.html">
+        <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M6 8.5v3a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-3M12 13.5v2"/></svg></div>
+        <h3>Cloud vs hybrid vs local</h3><p>The per-capability backend picture and when each mode pays off.</p><span class="card__meta">Tutorial: Model modes →</span>
+      </a>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="installation.html">Installation</a>,
+        <a href="configuration.html">Configuration</a>,
+        <a href="first-run.html">First run &amp; verify</a>, and
+        <a href="tut-model-modes.html">Model modes</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>

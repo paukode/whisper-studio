@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memory system - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio remembers: per-session structured memory, workspace memory files, WHISPER.md project context, and how all three enter the system prompt.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-memory">
+    <h1>Memory system</h1>
+    <p class="subtitle">Whisper Studio carries context across turns and across sessions with three
+      distinct stores: per-session memory that summarizes the conversation so far, persistent memory
+      that survives every session in a global and a per-project tier, and a hand-written
+      <code>WHISPER.md</code> for project context. All three are assembled into the system prompt
+      before the model is ever called.</p>
+
+    <p>There is no single "memory blob". Each store has its own file layout, its own update cadence,
+      and its own wrapper tag in the prompt. Extraction happens <em>after</em> a turn as a
+      fire-and-forget background task; recall happens <em>before</em> a turn to pick what the model
+      reads. <b>Click a box</b> in the diagram to trace how a store feeds the next turn.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="memory-diagram" class="diagram"></div>
+      <figcaption>The three stores and how they enter the prompt. Session memory is written by a
+        background summarizer after thresholds are crossed; workspace memory and
+        <code>WHISPER.md</code> are read on every turn. The <em>next turn</em> edge closes the loop.</figcaption>
+    </figure>
+
+    <h2 id="three-stores">Three kinds of memory</h2>
+    <p>It helps to keep the three straight from the start. They differ in scope, in who writes them,
+      and in how they are wrapped when injected.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Store</th><th>Scope</th><th>Written by</th><th>Prompt tag</th></tr></thead>
+      <tbody>
+        <tr><td>Session memory</td><td>One conversation</td><td>Background summarizer</td><td><code>&lt;session-memory&gt;</code></td></tr>
+        <tr><td>Persistent memory</td><td>Global (every chat) plus per-workspace</td><td>Extraction agent or the model itself</td><td><code>&lt;memory-context&gt;</code></td></tr>
+        <tr><td>WHISPER.md</td><td>The workspace, hand-authored</td><td>You (via the app or an editor)</td><td>Inline project-instructions block</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="session-memory">Session memory</h2>
+    <p>Session memory (<code class="path">server/memory/session_memory.py</code>) is a single markdown
+      file per conversation with four fixed sections: <b>Goals</b>, <b>Decisions</b>, <b>Context</b>,
+      and <b>Blockers</b>. It lives at
+      <code class="path">data/session_memory/&lt;session_id&gt;.md</code> and is meant to answer one
+      question: if you resume this conversation later, what does the model need to pick up where it
+      left off?</p>
+
+    <h3 id="session-cadence">When it updates</h3>
+    <p>After each turn, <code>maybe_update_session_memory()</code> runs in the background. It tracks,
+      per session, the character count at the last update and the message index it last processed,
+      then decides whether an update is due:</p>
+    <ul>
+      <li><b>Character growth.</b> Characters added since the last update must cross a threshold:
+        <code>TOKEN_THRESHOLD_CHARS</code> (200,000 chars, roughly 50K tokens) for cloud models, or
+        <code>LOCAL_TOKEN_THRESHOLD_CHARS</code> (6,000 chars, a few turns) for on-device models.</li>
+      <li><b>Tool activity (cloud only).</b> Cloud sessions additionally wait for at least
+        <code>TOOL_CALL_THRESHOLD</code> (10) <code>tool_use</code> blocks since the last update. Local
+        chats often have no tools, so the character threshold alone gates them.</li>
+    </ul>
+    <p>When both applicable guards pass, the summarizer runs against the last 30 turns (each message
+      capped for the excerpt), writes the new markdown, and the per-session counters advance. The
+      result is capped: each section stays under <code>MAX_SECTION_CHARS</code> (2,000 chars) and the
+      whole file under <code>MAX_TOTAL_CHARS</code> (12,000 chars), truncated if the model overshoots.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Who does the summarizing depends on the model. Cloud turns use the
+        <code>memory_extractor</code> agent (see <a href="arch-agents.html">Sub-agents</a>); on-device
+        turns run the summary on the local model itself, on its own executor thread, so a local
+        conversation's memory never leaves the machine. Either way, a failed summary degrades to no
+        update rather than disrupting the chat.</p></div>
+    </div>
+
+    <h3 id="session-injection">How it enters the prompt</h3>
+    <p>On the next turn, <code>get_session_memory_context()</code> reads the file and wraps it:</p>
+    <div class="code-block"><pre><code>&lt;session-memory&gt;
+## Goals
+- Ship the memory docs page and wire it into nav
+
+## Decisions
+- Use the real prompt tags, not the outline's placeholders
+
+## Context
+- Cloud path uses Haiku for recall; local path stays offline
+
+## Blockers
+(none)
+&lt;/session-memory&gt;</code></pre></div>
+    <p>If the file does not exist yet, the wrapper is empty and nothing is injected.</p>
+
+    <h2 id="workspace-memory">Persistent memory: two tiers</h2>
+    <p>Persistent memory (<code class="path">server/memory/memdir.py</code> and
+      <code class="path">server/memory/recall.py</code>) survives across sessions. It is a two-tier
+      store, and every memory belongs to exactly one tier:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tier</th><th>Location</th><th>Alive when</th><th>Holds</th></tr></thead>
+      <tbody>
+        <tr><td><b>Global</b></td><td><code class="path">data/global_memory/</code></td><td>Always, including plain chat with no workspace open</td><td>User preferences, role, cross-project feedback</td></tr>
+        <tr><td><b>Project</b></td><td><code class="path">data/memory/&lt;workspace-slug&gt;/</code></td><td>A workspace is open (slug = sanitized basename of its path)</td><td>Goals, deadlines, repo-specific references</td></tr>
+      </tbody>
+    </table></div>
+    <p>The global directory deliberately sits outside <code class="path">data/memory/</code> so it can
+      never collide with a workspace slug. Both tiers share the same on-disk layout:</p>
+    <div class="spec">
+      <dt><code class="path">MEMORY.md</code></dt><dd>A one-line-per-entry index of that tier's topic files, auto-generated from their frontmatter after every write or delete. Capped at 200 lines and 25 KB when loaded; if it exceeds either limit it is truncated and a warning is appended telling the model to move detail into topic files.</dd>
+      <dt><code class="path">&lt;topic&gt;.md</code></dt><dd>Per-topic markdown with YAML frontmatter (name, description, type). The type is a closed taxonomy: <code>user</code>, <code>feedback</code>, <code>project</code>, or <code>reference</code>.</dd>
+      <dt><code class="path">.cursor.json</code></dt><dd>Extraction cursors keyed by session id, one index per session (not a single "last message index"). Persisted in the global tier so a session keeps its place even when it connects or disconnects a workspace mid-life.</dd>
+      <dt><code class="path">.dream_meta.json</code></dt><dd>Per-tier consolidation bookkeeping (last run time and turn-end count). See <a href="#consolidation">consolidation</a> below.</dd>
+    </div>
+
+    <h3 id="workspace-recall">Recall: choosing what to inject</h3>
+    <p>Because the two tiers together can accumulate many topic files, they are not all injected.
+      Before each turn, <code>recall_memory_context()</code> scans both live tiers and chooses which
+      files are relevant:</p>
+    <ol class="steps">
+      <li><h4>Scan both tiers</h4><p>List the topic files across global and project. If there are none, nothing is injected.</p></li>
+      <li><h4>Few files? Take them all</h4><p>At or below <code>MAX_SELECTIONS</code> (5) files, every file is returned and no model call is made.</p></li>
+      <li><h4>Local turn? Stay offline</h4><p>For on-device models, the ranking side-query is skipped and the most recent files (up to 5) are returned. This trades smart ranking for isolation.</p></li>
+      <li><h4>Otherwise, rank with Haiku</h4><p>A cheap Haiku side-query receives a manifest of file names, types, and descriptions plus the user query, and returns up to 5 filenames as JSON. If it fails, recall degrades to the most recent files.</p></li>
+    </ol>
+    <p>The Haiku call is deliberately tiny: <code>MAX_RECALL_TOKENS</code> is 256 and it runs with a
+      single retry and short timeouts. It then reads the selected files, always prepends each tier's
+      <code>MEMORY.md</code> index, and tags each entry with a freshness note ("today", "yesterday",
+      or "N days ago"). The whole block is wrapped in <code>&lt;memory-context&gt;</code>.</p>
+
+    <h3 id="workspace-extraction">Extraction: writing new memories</h3>
+    <p>After a turn (when the model is not asking for more tools), <code>maybe_extract_memory()</code>
+      fires in the background. It runs with or without a workspace: with one the agent sees both tiers
+      and routes each write by <code>scope</code>; without one, everything lands in global memory. It
+      is guarded four ways:</p>
+    <ul>
+      <li><b>Feature flag.</b> <code>auto_memory</code> must be enabled. <code>ensure_global_memory_dir()</code>
+        returns nothing when it is off, so the whole pipeline (and recall) short-circuits.</li>
+      <li><b>Throttle.</b> Extraction runs only every <code>DEFAULT_EXTRACT_INTERVAL</code> (3) turns.</li>
+      <li><b>Mutual exclusion.</b> If the model already called <code>memory_write</code> this turn, the
+        cursor advances and extraction is skipped, so the model and the agent never fight over the store.</li>
+      <li><b>Cursor.</b> Cursors are keyed by session id and persisted in the global tier; only messages
+        after this session's saved cursor are considered, then the cursor advances.</li>
+    </ul>
+    <p>When it does run, the <code>memory_extractor</code> agent gets an excerpt of the new messages
+      (last 20, truncated) plus a manifest of existing memories per tier, and is told to save what
+      would be valuable in future sessions. It runs at <code>depth=1</code> so it cannot recurse into
+      further extraction.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>Extraction is opinionated about <em>what not to save</em>: code
+        patterns, git history, and one-off debugging fixes are all derivable from the code itself and
+        are skipped. It stores durable facts instead, such as user preferences and role, working
+        guidance, project goals and deadlines, and pointers to external systems.</p></div>
+    </div>
+
+    <h2 id="whisper-md">WHISPER.md</h2>
+    <p><code>WHISPER.md</code> is a plain markdown file at the workspace root, loaded on every turn by
+      <code>get_whisper_md_context()</code> in <code class="path">server/skills.py</code>. It is the
+      Whisper Studio analogue of <code>CLAUDE.md</code>: durable project context that you author by
+      hand rather than have the system extract. It is injected inline as a
+      <code>[WHISPER.md - project-specific instructions]</code> block.</p>
+    <p>Unlike the other two stores, it is fully under your control. The in-app Project Memory dialog is
+      backed by a small CRUD API:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Endpoint</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/whisper-md</code></td><td>Read the current file (returns content plus whether it exists).</td></tr>
+        <tr><td><code>PUT /api/whisper-md</code></td><td>Save new content to the workspace root.</td></tr>
+        <tr><td><code>DELETE /api/whisper-md</code></td><td>Remove the file.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Because it is read every turn and never summarized, keep it tight. It is a good home for stable
+      conventions (coding style, deploy steps, domain vocabulary), not for transient task state.</p>
+
+    <h2 id="into-the-prompt">Assembling all three</h2>
+    <p>All three stores are resolved in the chat endpoint
+      (<code class="path">server/chat/routes.py</code>) and handed to the prompt builder in
+      <code class="path">server/prompts/__init__.py</code>, which owns section ordering. Session memory
+      is placed before workspace memory (it carries a higher-priority slot), and <code>WHISPER.md</code>
+      is its own project-instructions section. When prompt caching is on, these dynamic sections sit
+      after the cacheable static prefix so they do not invalidate the cache. See
+      <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for where this fits in a turn,
+      and <a href="ref-settings.html">Settings</a> for the caching flag.</p>
+
+    <h2 id="memory-tools">Memory tools</h2>
+    <p>Beyond the automatic pipeline, the model can manage persistent memory directly during a turn via
+      four tools defined in <code class="path">server/memory/tools.py</code>. They are registered
+      through the executor, not exposed to the model as HTTP routes. Each read, write, and delete takes
+      an optional <code>scope</code> parameter (<code>global</code> or <code>project</code>) that routes
+      to the right tier; without it, a write updates a matching file in place or routes a new file by
+      type, and reads and deletes search the project tier first, then global.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>memory_read</code></td><td>Read a memory file by relative filename (optional <code>scope</code>).</td></tr>
+        <tr><td><code>memory_write</code></td><td>Create or overwrite a topic file (frontmatter is added automatically) and rebuild the index (optional <code>scope</code>).</td></tr>
+        <tr><td><code>memory_list</code></td><td>List every memory file across both tiers with type, description, and modification date.</td></tr>
+        <tr><td><code>memory_delete</code></td><td>Delete a memory file (optional <code>scope</code>).</td></tr>
+      </tbody>
+    </table></div>
+    <p>Every write, from these tools or the extraction agent, is first screened for secrets by
+      <code class="path">server/memory/secret_scanner.py</code> (<code>check_and_block()</code>): if a
+      credential is detected the write is blocked and the content is never persisted. See
+      <a href="ref-tools.html">Agent tools</a> for the full catalogue of tools the assistant can call.</p>
+
+    <h2 id="memory-api">Memory viewer and the /api/memory router</h2>
+    <p>People manage memory through a small REST router
+      (<code class="path">server/memory/router.py</code>, mounted at <code>/api/memory</code>), which
+      backs the in-app <b>Memory Viewer</b> modal
+      (<code class="path">src/components/settings/MemoryViewerModal.tsx</code>). Open it from the
+      "+ More" menu in the chat toolbar via <b>Memory files</b>. It carries the same guards as the
+      tools: path-traversal checks, secret scanning on every write, a read-only <code>MEMORY.md</code>,
+      and an index rebuild after every mutation.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Endpoint</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/memory</code></td><td>List both tiers: file manifests plus each tier's index (project only when a workspace is open).</td></tr>
+        <tr><td><code>GET /api/memory/file</code></td><td>Read one file's raw content, by <code>scope</code> and <code>filename</code>.</td></tr>
+        <tr><td><code>PUT /api/memory/file</code></td><td>Save raw file content; secret-scanned, then the tier index is rebuilt.</td></tr>
+        <tr><td><code>DELETE /api/memory/file</code></td><td>Delete a file and rebuild that tier's index.</td></tr>
+        <tr><td><code>POST /api/memory/promote</code></td><td>Move a file from the project tier up to global, so every project can use it.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Extraction and consolidation finish after the chat stream closes, so their results surface as
+      live "Memory updated" toasts over the session's long-lived event channel rather than inline in
+      the turn.</p>
+
+    <h2 id="consolidation">Consolidation (dream)</h2>
+    <p>Over time a tier can drift: duplicates pile up, facts go stale, the index grows past its cap.
+      A consolidation pass in <code class="path">server/memory/dream.py</code> periodically distills
+      each tier independently. The post-turn hook <code>record_and_maybe_dream()</code> bumps a
+      per-tier counter after every turn and runs the pass when a tier is due: at least
+      <code>MIN_HOURS_SINCE_LAST</code> (24 hours) and <code>MIN_SESSIONS_SINCE_LAST</code> (5 recorded
+      turn-ends) since that tier's last run, with a PID-based lock (stale after one hour) so two
+      consolidations never run at once.</p>
+    <p>When it runs, a single agent works through four phases: <b>Orient</b> (list files, read the
+      index), <b>Gather</b> (find stale, contradicted, or overlapping entries), <b>Consolidate</b>
+      (merge related files, update facts, delete superseded entries), and <b>Prune</b> (rewrite
+      <code>MEMORY.md</code> to reflect the current state, keeping it under 200 lines). Think of it as
+      the persistent-memory counterpart to how a single session's memory is periodically resummarized.</p>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/memory/session_memory.py</code></dt><dd>Per-session summaries: thresholds, the background updater, cloud vs local paths, and the <code>&lt;session-memory&gt;</code> wrapper.</dd>
+      <dt><code class="path">server/memory/recall.py</code></dt><dd>Query-time selection (Haiku side-query or recent-files fallback) and the <code>&lt;memory-context&gt;</code> block builder.</dd>
+      <dt><code class="path">server/memory/extract.py</code></dt><dd>Post-turn extraction: flag, throttle, mutual-exclusion, cursor, and the extractor agent run.</dd>
+      <dt><code class="path">server/memory/memdir.py</code></dt><dd>Two-tier directory layout, slug and scope resolution, <code>MEMORY.md</code> loading and truncation, and the <code>auto_memory</code> guard.</dd>
+      <dt><code class="path">server/memory/dream.py</code></dt><dd>Cross-session consolidation: trigger thresholds, locking, and the four-phase agent.</dd>
+      <dt><code class="path">server/memory/prompts.py</code></dt><dd>System prompts for recall, extraction, consolidation, and session summarization.</dd>
+      <dt><code class="path">server/memory/tools.py</code></dt><dd>The four memory tool schemas the model can call directly.</dd>
+      <dt><code class="path">server/skills.py</code></dt><dd><code>WHISPER.md</code> loading and its CRUD API.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> the hands-on
+        <a href="tut-memory.html">Memory &amp; WHISPER.md</a> tutorial,
+        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for where memory enters a
+        turn, <a href="arch-agents.html">Sub-agents &amp; the event bus</a> for the extractor agent, and
+        <a href="arch-persistence.html">Persistence</a> for how sessions themselves are stored.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/memory.js"></script>
+</body>
+</html>

@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sub-agents &amp; the event bus - Whisper Studio Docs</title>
+  <meta name="description" content="The agent runtime, agent types, teams, the inter-agent mailbox, and the per-session event bus that streams live agent progress to the chat as team_progress frames.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-agents">
+    <h1>Sub-agents &amp; the event bus</h1>
+    <p class="subtitle">The assistant can hand work to focused helper agents that run their own tool
+      loops in the background. This page covers the runtime that executes them, the agent types, how a
+      team is spawned, the mailbox agents talk through, and the per-session bus that streams their
+      progress back into your chat.</p>
+
+    <p>Sub-agents exist so a single turn can do several things at once, or delegate a narrow job to a
+      cheaper, more constrained worker. A sub-agent is not a separate service. It is a plain
+      <code>run_agent</code> call in <code class="path">server/agents/runtime.py</code> that reuses the
+      same tools, the same dispatch path, and the same session as the chat that spawned it. What makes
+      it feel live is the <b>event bus</b>: a per-session queue the runtime publishes to, which the chat
+      SSE stream drains and forwards as <code>team_progress</code> frames.</p>
+
+    <p><b>Click a box</b> in the map below to trace how a spawn flows out to the runtime and how its
+      progress finds its way back to the report card in the SPA.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="agents-diagram" class="diagram"></div>
+      <figcaption>An agent runs the same tool loop as chat, polls its mailbox each turn, and publishes
+        progress to the session event bus. The chat SSE consumer re-emits those events as
+        <em>team_progress</em>.</figcaption>
+    </figure>
+
+    <h2 id="the-runtime">The agent runtime</h2>
+    <p><code>run_agent()</code> is the entry point. Unlike the chat pipeline, which streams tokens, the
+      runtime makes <b>non-streaming</b> model calls in a loop until the agent returns final text or hits
+      its turn limit. Each call goes through a provider adapter,
+      <code>get_adapter(model_key_for_id(model_id), model_id).invoke(...)</code> from
+      <code class="path">server/agents/providers/</code>, so agents are provider-agnostic and run on both
+      Anthropic-on-Bedrock and OpenAI GPT-on-Bedrock (the Responses API via bedrock-mantle); there is no
+      direct <code>invoke_model</code> path anymore. Concurrency is governed by
+      <code>AGENT_CALL_CONCURRENCY</code>. On calling <code>run_agent</code>, the runtime:</p>
+    <ol class="steps">
+      <li><h4>Guards recursion</h4><p>Depth is capped. An agent that spawns an agent that spawns an
+        agent stops at <code>MAX_DEPTH = 5</code> and returns a failed result rather than recursing
+        forever.</p></li>
+      <li><h4>Registers an id and a mailbox</h4><p>A short random <code>agent_id</code> is minted, a
+        mailbox is created on the <a href="#mailbox">message bus</a>, and the agent is recorded in the
+        <code class="path">server/agents/registry.py</code> registry so <code>list_agents</code> and the
+        UI can see it. Detached agents (below) and <code>/subagent</code>-launched runs are additionally
+        recorded in the unified task registry (<code class="path">server/tasks/registry.py</code>, the
+        <code>agent_tasks</code> table from migration 007, kinds <code>shell|agent|workflow|ci</code>),
+        which emits <code>task_event</code> lifecycle events through
+        <code class="path">server/tasks/events.py</code> so they surface in the global background-tasks
+        panel.</p></li>
+      <li><h4>Resolves the model</h4><p>Agents <b>inherit the session-selected model</b> through a
+        <code>model_id_override</code> threaded from <code>/api/chat</code>. There is no hardcoded
+        per-type model. With no override it falls back to your configured default chat model (then
+        <code>sonnet</code>, then the first configured model).</p></li>
+      <li><h4>Builds a filtered tool pool</h4><p>It starts from the same <code>assemble_tool_pool()</code>
+        the chat turn uses, adds the agent-only tools (<code>receive_messages</code>,
+        <code>complete_coordination</code>, and <code>spawn_agent</code> while below the depth ceiling),
+        deduplicates by name, then applies the agent type's tool filter (see below).</p></li>
+      <li><h4>Runs the loop</h4><p>Up to <code>config.max_turns</code> rounds. Each round polls the
+        mailbox, invokes the model, executes any <code>tool_use</code> blocks, and emits progress
+        events. It ends on any stop reason other than <code>tool_use</code>, or when the turn limit is
+        reached.</p></li>
+    </ol>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg></span>
+      <div class="callout__body"><p>Bedrock calls for agents run on a shared 4-worker
+        <code>ThreadPoolExecutor</code>, off the request's event loop. That is why publishing progress
+        must be thread-safe (see <a href="#event-bus">the event bus</a>).</p></div>
+    </div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
+      <div class="callout__body"><p><b>Detached (background) agents.</b> The loop above runs inline and
+        blocks the turn. Passing <code>detach: true</code> to <code>spawn_agent</code> (in
+        <code class="path">server/agent_tools.py</code>) does not: it returns a <code>task_id</code>
+        immediately through <code>start_detached_agent</code> in
+        <code class="path">server/tasks/agents.py</code> and runs the agent in the background. A detached
+        agent runs <b>read-only by default</b> — no human is present to clear the
+        <code>[WS_APPROVAL]</code> write gate — unless <code>isolation: 'worktree'</code> gives it its own
+        git worktree to write into. Its result is folded into a later turn by
+        <code class="path">server/agents/completion_inject.py</code> (<code>inject_completions</code>);
+        the model polls with <code>task_status</code> / <code>task_output</code> and cancels with
+        <code>task_cancel</code>. At most <code>DETACHED_PER_SESSION_CAP = 8</code> run concurrently per
+        session.</p></div>
+    </div>
+
+    <h2 id="the-loop">Inside one turn</h2>
+    <p>Each iteration of the loop is small and deliberate. At the top, it drains any messages that have
+      arrived in the agent's mailbox since the last turn and appends them as a user message, so an agent
+      always reads its inbox before it thinks. It then invokes the model through the provider adapter
+      (non-streaming), parses the returned content blocks into <code>text</code>, <code>thinking</code>,
+      and <code>tool_use</code>,
+      and acts on the stop reason:</p>
+    <ul>
+      <li>If the stop reason is not <code>tool_use</code> (or there are no tool uses), the collected
+        text is the agent's final output and the loop returns a <b>completed</b> result.</li>
+      <li>Otherwise each tool use is executed and the results are appended as a user message, then the
+        loop runs again.</li>
+    </ul>
+    <p>Tool execution mirrors chat. Most tools route through <code>route_tool()</code> in
+      <code class="path">server/tool_router.py</code> (the same dispatch the chat loop uses), so a
+      sub-agent reads files, greps, runs commands, and calls the web tools exactly as the assistant
+      does. A handful of agent-only tools are handled inline instead: <code>spawn_agent</code>,
+      <code>send_message</code>, <code>list_agents</code>, <code>receive_messages</code>, and
+      <code>complete_coordination</code>. Tool output is capped at 50K characters per result before it
+      is fed back to the model.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0Z"/></svg></span>
+      <div class="callout__body"><p><b>Approvals auto-resolve inside an agent.</b> There is no user
+        present to click a card, so a <code>[WS_APPROVAL]</code> response is executed inline. A tool
+        that needs a workspace but finds none returns an explanatory error rather than pausing. Keep
+        this in mind when you choose which agent type does the work, and lean on read-only types when
+        you do not want unattended writes. See <a href="arch-approval.html">Approval &amp; permissions</a>
+        and <a href="arch-sandbox.html">Sandbox &amp; security</a>.</p></div>
+    </div>
+
+    <h2 id="agent-types">Agent types</h2>
+    <p>Every type is a frozen <code>AgentConfig</code> in <code class="path">server/agents/config.py</code>.
+      A config sets the turn limit, the token budget per response, and how the shared tool pool is
+      filtered (a whitelist, a blacklist, and a read-only flag that strips the write tools). The types
+      the assistant can spawn:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Type</th><th>Tools</th><th>Max turns</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>general</code></td><td>Full pool</td><td>30</td><td>The default worker. Reads, writes, runs, and can itself spawn children.</td></tr>
+        <tr><td><code>explore</code></td><td>Read-only</td><td>10</td><td>Fast search-and-read to answer questions. Write tools are removed.</td></tr>
+        <tr><td><code>plan</code></td><td>Read-only</td><td>15</td><td>Analyzes the codebase and returns a structured, step-by-step implementation plan.</td></tr>
+        <tr><td><code>verify</code></td><td>Full pool</td><td>10</td><td>Runs tests and validates behavior, ending with a <code>VERDICT: PASS / FAIL / PARTIAL</code> line.</td></tr>
+        <tr><td><code>coordinator</code></td><td>Orchestration only</td><td>50</td><td>Spawns and messages other agents; has <b>no file access</b> at all.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The coordinator's whitelist is exactly <code>spawn_agent</code>, <code>send_message</code>,
+      <code>list_agents</code>, and <code>complete_coordination</code>. It cannot touch files by design.
+      A separate <code>memory_extractor</code> type also exists for the memory subsystem; it is not one
+      you spawn directly. See <a href="arch-memory.html">Memory system</a>.</p>
+    <p>Each user-facing type shares a common working method appended to its system prompt: restate the
+      task, list steps, gather evidence per claim, then run a short self-check before the final answer.
+      That self-check is emitted as a <code>text</code> event, so it shows up in the live log.</p>
+
+    <h3 id="read-only-filter">How read-only is enforced</h3>
+    <p><code>filter_tools_for_agent()</code> applies three rules in order: an <code>allowed_tools</code>
+      whitelist short-circuits everything else; then a <code>denied_tools</code> blacklist; then, if
+      <code>read_only</code> is set, every tool in the <code>WRITE_TOOLS</code> set is removed. That set
+      covers the obvious writers (<code>ws_write_file</code>, <code>ws_edit_file</code>,
+      <code>ws_run_command</code>, the git write commands, <code>config_set</code>, <code>memory_write</code>,
+      <code>cron_create</code>, and more), so an <code>explore</code> or <code>plan</code> agent
+      physically cannot mutate your project.</p>
+
+    <h2 id="teams">Teams</h2>
+    <p><code>team_create</code> (in <code class="path">server/agent_tools.py</code>) spawns several agents
+      <b>in parallel</b> in the same session, each with its own agent id, and aggregates the results.
+      The flow:</p>
+    <ol class="steps">
+      <li><h4>Announce the team</h4><p>A <code>team_started</code> event is published with a
+        <code>team_id</code>, the team name, and each member's name, task, and type. The SPA uses this
+        to draw the report card scaffold before any agent produces output.</p></li>
+      <li><h4>Run members concurrently</h4><p>Each member is a <code>run_agent</code> call, gathered
+        with <code>asyncio.gather</code>. Every member inherits the session model and is tagged with the
+        shared <code>team_id</code>, so its events land in the same card.</p></li>
+      <li><h4>Aggregate and finish</h4><p>When all members finish, a <code>team_completed</code> event is
+        published and the tool returns a JSON summary (each member's name, type, status, turns, and a
+        trailing slice of its output) back to the model.</p></li>
+    </ol>
+    <p>A running team can be stopped mid-flight: <code>POST /api/teams/{team_id}/stop</code> sets a stop
+      flag and cancels the gather task, and each member publishes a <code>stopped</code> event as its
+      loop is cancelled. Agents can also spawn their own children with <code>spawn_agent</code>; the
+      child inherits the parent's <code>team_id</code> and event channel, so "agents spawning agents"
+      renders as badged child rows under the same card rather than vanishing.</p>
+
+    <h2 id="mailbox">Inter-agent messaging</h2>
+    <p>Agents coordinate through a mailbox, not shared memory. The <code>MessageBus</code> in
+      <code class="path">server/agents/messaging.py</code> is a thread-safe dictionary of per-agent
+      message lists. It offers a small, deliberate API:</p>
+    <dl class="spec">
+      <dt><code>send(from_id, to_id, content)</code></dt><dd>Enqueue one message into a specific agent's mailbox.</dd>
+      <dt><code>broadcast(from_id, content)</code></dt><dd>Enqueue to every other mailbox <b>in the sender's own session</b>; returns the recipient count. Mailboxes are session-scoped — the bus records each <code>agent_id</code>'s owning session via <code>create_mailbox(agent_id, session_id=...)</code> — so a broadcast never crosses into another session.</dd>
+      <dt><code>receive(agent_id)</code></dt><dd>Drain and return all pending messages (clears the mailbox by default).</dd>
+      <dt><code>peek(agent_id)</code></dt><dd>Count pending messages without consuming them.</dd>
+    </dl>
+    <p>The <code>send_message</code> tool wraps <code>send</code> and <code>broadcast</code>: pass a
+      <code>to_agent_id</code> for a direct message, or set <code>broadcast=true</code> to reach every
+      other agent in the same session. Delivery is pull-based. A recipient sees a message only when its loop next runs and
+      polls its mailbox at the top of the turn, at which point the messages are injected as a user
+      turn. When an agent finishes, its mailbox is deleted in the runtime's <code>finally</code> block.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg></span>
+      <div class="callout__body"><p>The mailbox (<code>MessageBus</code>) and the event bus
+        (<code>AgentEventBus</code>) are separate systems. The mailbox is <b>agent to agent</b>, pulled
+        each turn. The event bus is <b>agent to user</b>, one-way progress that streams live.</p></div>
+    </div>
+
+    <h2 id="event-bus">The event bus</h2>
+    <p>The <code>AgentEventBus</code> in <code class="path">server/agents/event_bus.py</code> is a
+      per-session publish/subscribe queue. A subscriber calls <code>subscribe(session_id)</code> and
+      gets a bounded <code>asyncio.Queue</code> (max around <b>512</b> events); the runtime calls
+      <code>publish(session_id, event)</code> at every milestone. Multiple subscribers per session are
+      supported, and each event fans out to all of their queues.</p>
+    <p>Two properties matter:</p>
+    <ul>
+      <li><b>Thread-safe publishing.</b> Agent Bedrock calls run on a thread pool and
+        <a href="arch-cron.html">cron jobs</a> publish from a daemon thread, so <code>publish</code>
+        must work off the subscriber's event loop. Each subscriber records the loop it lives on; a
+        cross-thread publish hops into that loop via <code>loop.call_soon_threadsafe</code>, while a
+        same-loop publish does a direct <code>put_nowait</code>.</li>
+      <li><b>Bounded and lossy on purpose.</b> If a subscriber falls behind and its queue is full, the
+        event is dropped with a log warning rather than blocking the producer. Progress is
+        best-effort; the aggregated result the tool returns is the source of truth.</li>
+    </ul>
+
+    <h3 id="phases">Event phases</h3>
+    <p>Runtime events are plain payloads (no <code>type</code> field) carrying an <code>agent_id</code>,
+      the optional <code>team_id</code> and <code>parent_agent_id</code>, and a <code>phase</code>. The
+      phases you will see over a run:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Phase</th><th>When</th></tr></thead>
+      <tbody>
+        <tr><td><code>team_started</code></td><td>A team is announced with its member roster.</td></tr>
+        <tr><td><code>started</code></td><td>An agent begins; carries the task preview, model, and max turns.</td></tr>
+        <tr><td><code>turn_start</code></td><td>A new loop iteration starts.</td></tr>
+        <tr><td><code>text</code></td><td>The agent produced text this turn (including its self-check).</td></tr>
+        <tr><td><code>tool_call</code> / <code>tool_result</code></td><td>A tool was invoked, then returned (with a short and a fuller preview).</td></tr>
+        <tr><td><code>completed</code> / <code>turn_limit</code></td><td>The agent finished, or stopped at its turn limit.</td></tr>
+        <tr><td><code>stopped</code> / <code>failed</code></td><td>The agent was cancelled by the user, or raised an error.</td></tr>
+        <tr><td><code>team_completed</code></td><td>Every member of a team has finished.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="to-the-client">Getting to the client</h2>
+    <p>The event bus does not talk to the browser directly. While the chat turn runs the tool batch, the
+      SSE consumer in <code class="path">server/chat/routes.py</code> subscribes to the session channel
+      and drains it in a tight loop, re-emitting each event as a <code>team_progress</code> SSE frame.
+      Draining happens <em>during</em> the batch, so a long-running <code>team_create</code> streams
+      activity in real time instead of arriving in one burst when the tool finally returns.</p>
+    <p>Six event types are filtered out here: <code>cron_event</code>, <code>memory_event</code>,
+      <code>task_event</code>, <code>cron_progress</code>, <code>ci_progress</code>, and
+      <code>ci_result</code> are skipped, because a separate long-lived stream,
+      <code>/api/sessions/{id}/events</code>, delivers those (<code>task_event</code> is the new unified
+      background-task lifecycle role). Skipping them prevents double-rendering. On the client, the SPA groups
+      <code>team_progress</code> frames by <code>team_id</code> and <code>agent_id</code> into the live
+      report card, badging spawned children under their parent. See
+      <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for the wider SSE frame set
+      and <a href="arch-frontend.html">Frontend architecture</a> for how the card is rendered.</p>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/agents/runtime.py</code></dt><dd>The <code>run_agent</code> loop, model resolution, tool execution, and progress events.</dd>
+      <dt><code class="path">server/agents/config.py</code></dt><dd>Agent type presets, the write-tool set, and <code>filter_tools_for_agent</code>.</dd>
+      <dt><code class="path">server/agents/messaging.py</code></dt><dd>The inter-agent mailbox (<code>MessageBus</code>).</dd>
+      <dt><code class="path">server/agents/event_bus.py</code></dt><dd>The per-session, thread-safe progress queue (<code>AgentEventBus</code>).</dd>
+      <dt><code class="path">server/agents/registry.py</code></dt><dd>Tracks active agents, their hierarchy, and status for <code>list_agents</code> and the UI.</dd>
+      <dt><code class="path">server/agents/providers/</code></dt><dd>Provider adapters (<code>base</code>, <code>anthropic</code>, <code>openai</code>) behind <code>get_adapter().invoke()</code>.</dd>
+      <dt><code class="path">server/agents/completion_inject.py</code></dt><dd><code>inject_completions</code> — folds a detached agent's result into a later turn.</dd>
+      <dt><code class="path">server/tasks/</code></dt><dd>The unified background-task package (<code>registry.py</code>, <code>agents.py</code>, <code>tools.py</code>, <code>events.py</code>) that backs detached agents.</dd>
+      <dt><code class="path">server/agent_tools.py</code></dt><dd><code>execute_team_create</code> / <code>execute_team_delete</code>, the team schemas, and the <code>spawn_agent</code> <code>detach</code> path.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>,
+        <a href="arch-tools.html">Tool dispatch &amp; executors</a>,
+        <a href="arch-cron.html">Cron / scheduled tasks</a>, the
+        <a href="arch-ultracode.html">Ultracode workflow runtime</a> that backs detached and workflow tasks,
+        and the hands-on <a href="tut-subagents.html">Sub-agents &amp; teams</a> tutorial.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/agents.js"></script>
+</body>
+</html>

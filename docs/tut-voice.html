@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Voice &amp; meetings - Whisper Studio Docs</title>
+  <meta name="description" content="Dictate chat messages hands-free, record meetings with live speaker labels, rename speakers, capture a Chrome tab or system audio for Zoom or Meet, and turn a call into a summary.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-voice">
+    <h1>Voice &amp; meetings</h1>
+    <p class="subtitle">Two ways to put your voice to work: dictate messages straight into the chat
+      box, or record a meeting and get a live, speaker-labelled transcript you can turn into a
+      summary. Everything is transcribed on your own machine.</p>
+
+    <p>Whisper Studio has two independent voice features. <b>Dictation</b> types your speech into the
+      chat composer (and can even submit it hands-free). <b>Meeting recording</b> captures a whole
+      conversation into a separate transcript panel with speaker labels. They can run at the same
+      time, because both share one microphone under the hood.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="voice-flow-diagram" class="diagram"></div>
+      <figcaption>From microphone to a chat summary. Audio is captured in the browser, streamed to the
+        local server over a WebSocket, transcribed and diarized on-device, then rendered in the
+        transcript panel. Only text (never audio) is ever sent to Claude.</figcaption>
+    </figure>
+
+    <h2 id="dictation">Dictate a message</h2>
+    <p>The microphone icon sits between <b>Attach</b> and <b>Send</b> in the chat input. Click it and
+      start talking: the chat textarea auto-focuses and transcripts append as they arrive, word by
+      word for the sentence in progress and then committed as each sentence settles. Click the icon
+      again (or press it while it is active) to stop.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM5 11a7 7 0 0 0 14 0M12 18v4"/></svg></span>
+      <div class="callout__body"><p><b>Submit hands-free.</b> End a sentence with a spoken submit
+        command like <code>okay send</code>, <code>send now</code>, <code>submit now</code>,
+        <code>fire away</code>, or <code>send the message</code> and it is sent for you. The command
+        words are stripped from the body first, so "summarize the meeting, send now" is sent as
+        "summarize the meeting". A bare verb on its own ("send") never fires, so a one-word mishear
+        cannot submit by accident.</p></div>
+    </div>
+
+    <p>Dictation is tuned for low latency rather than long recordings. It always uses the streaming
+      Parakeet engine and short half-second audio chunks, so trailing words (and your spoken submit
+      command) reach the server quickly. It also runs without speaker identification, which is what
+      lets it operate alongside a meeting recording without the two fighting over the same speaker
+      profiles.</p>
+
+    <h2 id="recording">Record a meeting</h2>
+    <p>The <b>Record</b> button lives at the top right of the window. Click it to start capturing your
+      default microphone; a live transcript with speaker labels grows in the <b>Transcript</b> panel
+      on the right. Click <b>Record</b> again to stop. On your very first recording the transcription
+      model downloads automatically; there is nothing to configure first.</p>
+
+    <ol class="steps">
+      <li>
+        <h4>Click Record</h4>
+        <p>Grant the microphone permission if the browser asks. The transcript panel opens and starts
+          filling in as people speak.</p>
+      </li>
+      <li>
+        <h4>Watch it transcribe live</h4>
+        <p>Finalized sentences stack up as segments; a lighter "live" row shows the sentence currently
+          being spoken and is replaced the instant it settles. The panel auto-scrolls to the newest
+          line.</p>
+      </li>
+      <li>
+        <h4>Stop when the call ends</h4>
+        <p>Click <b>Record</b> again. Whisper Studio waits a beat for any in-flight sentence to land,
+          commits it, and saves the transcript to the session that owns the recording.</p>
+      </li>
+    </ol>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16v-4M12 8h.01M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z"/></svg></span>
+      <div class="callout__body"><p>Recording binds to the session it started in. You can switch to a
+        different session and keep talking; the header shows a chip to jump back to the one that is
+        recording, and the transcript saves to that session no matter what you are looking at.</p></div>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 5.3L20 8.5l-4 4.1.9 5.9L12 15.8l-4.9 2.7.9-5.9-4-4.1 5.6-1.2z"/></svg></span>
+      <div class="callout__body"><p><b>Recording a call?</b> To also transcribe what the other people
+        say, add a <b>Chrome tab</b> or your system audio as a second source with the <b>headphones</b>
+        button next to Record. See <a href="#system-audio">Capturing system audio</a> below.</p></div>
+    </div>
+
+    <h3 id="engine-and-speakers">Choosing an engine and speaker count</h3>
+    <p>The transcript panel header has two dropdowns that change how transcription behaves, and both
+      can be changed live, even mid-recording:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Control</th><th>Options</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>Engine</td><td><b>Whisper</b> / <b>Parakeet (live)</b></td><td>Whisper transcribes whole
+          utterances at pauses (accurate, slightly delayed). Parakeet streams a growing draft word by
+          word (lower latency).</td></tr>
+        <tr><td>Speakers</td><td><b>auto</b> or <b>1</b>&ndash;<b>8</b></td><td>A hint for diarization.
+          Auto estimates the count from the audio; telling it the real number makes speaker labels far
+          more accurate, because clustering cuts at exactly that many speakers.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="speaker-labels">Speaker labels and renaming</h2>
+    <p>Speaker identification happens locally. Each segment is tagged <code>Speaker 1</code>,
+      <code>Speaker 2</code>, and so on, and consecutive lines from the same speaker are merged into
+      one growing segment. As the recording continues, diarization can re-cluster and correct labels
+      it assigned earlier.</p>
+    <p>Click a speaker label to rename it. Type a real name (Maya, Bob) and it applies everywhere that
+      speaker appears; the rename persists for the session, so every past and future line from that
+      speaker shows the friendly name.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 5.3L20 8.5l-4 4.1.9 5.9L12 15.8l-4.9 2.7.9-5.9-4-4.1 5.6-1.2z"/></svg></span>
+      <div class="callout__body"><p><b>Every transcript line is interactive.</b> Select any text in the
+        panel and right-click to copy it (with or without a speaker prefix), quote it in the chat
+        input, edit the segment, search your workspace for the phrase, or have Claude explain,
+        translate, summarize, define terms, or suggest follow-up questions about it.</p></div>
+    </div>
+
+    <h2 id="one-mic">One microphone, both features</h2>
+    <p>The chat-input mic and the Record button share a single reference-counted
+      <code>MediaStream</code> and <code>AudioContext</code>. When one feature is already recording, the
+      other reuses that same device instead of opening a second <code>getUserMedia</code> stream (which
+      the OS often resolves with silence when the device is already in use). The underlying microphone
+      is only released when the last consumer lets go. In practice this means you can dictate a note
+      into chat while a meeting is still being recorded, and neither one interrupts the other.</p>
+
+    <h2 id="local-first">It stays on your laptop</h2>
+    <p>Audio is captured in the page, streamed over a WebSocket to the local server on the same origin,
+      and transcribed by an on-device engine. None of it goes to the cloud. Claude is only involved
+      when you deliberately send a chat message, and even then Claude receives the <b>text</b>
+      transcript, never the audio. See
+      <a href="arch-transcription.html">Transcription &amp; diarization</a> for the full pipeline.</p>
+
+    <h2 id="summarize">Turn a recording into a summary</h2>
+    <p>Once you have a transcript, ask Claude about it in chat. Because the transcript already lives in
+      the session, a plain-English request is enough:</p>
+    <div class="code-block"><pre><code>Summarize the discussion and list action items per speaker.</code></pre></div>
+    <p>Beyond free-form questions, Whisper Studio has three ready-made ways to summarise a call. You do
+      not pick them from a menu; just ask in plain English and the right one runs:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Ask for</th><th>What you get</th></tr></thead>
+      <tbody>
+        <tr><td><b>A quick summary</b></td><td>A fast pass over the transcript in one of four styles:
+          <b>action items</b>, <b>meeting notes</b>, <b>key points</b>, or a short <b>brief</b>. Just say
+          which one you want, for example "give me the key points" or "list the action items".</td></tr>
+        <tr><td><b>A full write-up</b></td><td>A polished set of meeting notes: an overview, the decisions
+          made, an owner / action / deadline table, the main discussion points, any blockers, and the
+          next steps. Ask for "proper meeting notes" or "a full write-up of the call".</td></tr>
+        <tr><td><b>A catch-up</b></td><td>A plain-language recap for someone who joined late, followed by a
+          few suggested follow-up and clarifying questions to ask. Try "catch me up on this meeting".</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p><b>Long meetings just work.</b> A multi-hour recording can be longer
+        than the model can read in one pass. You do not need to do anything special: the app condenses the
+        transcript automatically before it summarises, so nothing is silently dropped. See
+        <a href="arch-summarization.html#map-reduce">how condensation works</a> for the details.</p></div>
+    </div>
+
+    <p>Other prompts that work well: "What did we decide about the launch date?", "Draft a follow-up
+      email to the team", or "List every open question raised in this call". When you are happy with
+      the result, use <code>/export</code> to download the chat (including the summary) as Markdown.
+      See <a href="tut-first-chat.html">Your first chat</a> for more on prompting and export.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h8"/></svg></span>
+      <div class="callout__body"><p>The Transcript panel also has its own <b>Export</b> button, which
+        saves just the raw transcript (each line prefixed with its speaker) as a text file. Use that
+        when you want the words without the chat conversation around them.</p></div>
+    </div>
+
+    <h2 id="system-audio">Capturing system audio (Zoom, Meet, and calls)</h2>
+    <p>The Record button captures your default <b>microphone</b>. That records your side of a call and
+      anything your mic picks up from the room, but not the audio the other participants send to your
+      speakers. There are two ways to add that other side. The quickest is built into the app: add a
+      <b>Chrome tab</b> as a second source, with no system setup. For a system-wide capture that covers
+      every app and browser at once, route mic and system audio into one virtual input device with
+      <a href="https://existential.audio/blackhole/">BlackHole</a>.</p>
+
+    <h3 id="tab-audio">In the app: add a Chrome tab (no setup)</h3>
+    <p>Whisper Studio can capture the audio of a single browser tab and mix it into the same stream as
+      your microphone, so both your voice and the call land in one transcript. It works in
+      <b>Chrome</b> and <b>Edge</b>. Wear headphones so the tab's sound is not picked up a second time
+      by your mic.</p>
+
+    <ol class="steps">
+      <li>
+        <h4>Open Audio sources</h4>
+        <p>Click the <b>headphones</b> button next to <b>Record</b>. The picker lists your microphone,
+          which is always on, and <b>Chrome tab audio</b>.</p>
+      </li>
+      <li>
+        <h4>Choose a tab</h4>
+        <p>Click <b>Choose tab</b>, pick the tab playing the call or video, and turn on
+          <b>Also share tab audio</b> in the browser dialog before you share. If you skip that checkbox
+          nothing is captured and the app tells you to choose the tab again.</p>
+      </li>
+      <li>
+        <h4>Record as usual</h4>
+        <p>Click <b>Record</b>. The header shows <b>Mic + Tab</b>, both sources are mixed into one
+          stream, and the usual speaker labels separate the voices. Clicking <b>Stop</b>, or Chrome's
+          <em>Stop sharing</em> bar, ends the tab capture.</p>
+      </li>
+    </ol>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 5.3L20 8.5l-4 4.1.9 5.9L12 15.8l-4.9 2.7.9-5.9-4-4.1 5.6-1.2z"/></svg></span>
+      <div class="callout__body"><p><b>Chrome and Edge only.</b> Safari and Firefox cannot hand a tab's
+        audio to a web app, and the embedded in-app preview cannot either, so open Whisper Studio in a
+        normal Chrome or Edge tab. The tab source is armed per recording, so add it again for the next
+        one.</p></div>
+    </div>
+
+    <h3 id="system-audio-os">System-wide: a virtual input device (BlackHole)</h3>
+    <p>To transcribe both sides of any app or browser at once, route mic and system audio into one
+      virtual input device using <a href="https://existential.audio/blackhole/">BlackHole</a> and macOS
+      <b>Audio MIDI Setup</b>. This is a one-time setup; after it, every browser and every recording
+      just works.</p>
+
+    <ol class="steps">
+      <li>
+        <h4>Install BlackHole 2ch</h4>
+        <div class="code-block"><pre><code>brew install blackhole-2ch</code></pre></div>
+      </li>
+      <li>
+        <h4>Create an Aggregate input device</h4>
+        <p>In <b>Audio MIDI Setup</b>, click <kbd>+</kbd> and choose <em>Create Aggregate Device</em>.
+          Tick your <b>Built-in Microphone</b> and <b>BlackHole 2ch</b>. Keep the built-in mic at the
+          top as the clock source, enable drift correction on the others, and name it something like
+          <em>Mic + System</em>.</p>
+      </li>
+      <li>
+        <h4>Create a Multi-Output device</h4>
+        <p>In the same panel, click <kbd>+</kbd> and choose <em>Create Multi-Output Device</em>. Tick
+          <b>Built-in Output</b> (or your headphones) and <b>BlackHole 2ch</b>. Keep the built-in
+          output at the top as the clock source and name it <em>Speakers + Loopback</em>. This lets you
+          still hear the call while its audio is also copied into BlackHole.</p>
+      </li>
+      <li>
+        <h4>Route it in System Settings</h4>
+        <p>Under <b>System Settings &rarr; Sound</b>, set <b>Output</b> to your Multi-Output device and
+          <b>Input</b> to your Aggregate device.</p>
+      </li>
+      <li>
+        <h4>Refresh and record</h4>
+        <p>Reload Whisper Studio, click <b>Record</b>, and grant the mic permission once. Both your
+          voice and anything macOS plays are now transcribed together.</p>
+      </li>
+    </ol>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Caveats.</b> A Multi-Output device's volume cannot be adjusted
+        from the menu bar, so use per-app volume instead. Bluetooth headsets often run at a lower
+        sample rate, so avoid using one as the clock source. For the full walk-through and the latest
+        details, see the <b>Capturing system audio (macOS)</b> section of the project README.</p></div>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-first-chat.html">Your first chat</a>,
+        <a href="arch-transcription.html">Transcription &amp; diarization</a>,
+        <a href="tut-documents.html">Working with documents</a>, and the
+        <a href="ref-shortcuts.html">keyboard shortcuts</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/voice-flow.js"></script>
+</body>
+</html>

@@ -1,0 +1,68 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.coverage
+htmlcov/
+
+# Runtime data
+data/
+storage/
+config.json
+# setup.sh --new writes config.json.bak.<timestamp> backups at the repo root;
+# they contain the live Tavily API key, so keep them untracked.
+config.json.bak.*
+
+# Environment
+.env
+.env.*
+
+# macOS
+.DS_Store
+
+# Trained models / large binaries
+eng.traineddata
+*.bin
+*.pt
+*.onnx
+
+# Node — match a directory AND a bare symlink named node_modules (worktree
+# tooling sometimes symlinks it in; the trailing-slash form ignores dirs only).
+node_modules/
+node_modules
+
+# Vite build output
+static/dist/
+
+# TypeScript incremental build info
+tsconfig.tsbuildinfo
+
+# Setup script log
+setup.log
+
+# Downloaded ML model weights
+models/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+
+# Local tooling artifacts
+.claude/
+.whisper-setup*.log
+# Agent/session worktrees live inside the repo; never track or status-list them.
+.whisper/
+# Lockfile from `uv`; the project installs via pip + requirements.txt.
+uv.lock
+
+# Per-user project memory file edited via the in-app WHISPER.md editor.
+# The editor writes ${workspace}/WHISPER.md as user-specific context
+# for the model. Different users want different contents — don't track.
+WHISPER.md

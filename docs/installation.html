@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Installation - Whisper Studio Docs</title>
+  <meta name="description" content="A zero-to-running walk-through of Whisper Studio: prerequisites, aws configure, the setup.sh flags, model modes, in-app configuration, and troubleshooting.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="installation">
+    <h1>Installation</h1>
+    <p class="subtitle">A zero-to-running walk-through for macOS. This guide assumes no prior tooling:
+      it installs Homebrew, Python, and the AWS CLI from scratch, then runs one script that builds and
+      serves the app. Budget 15 to 25 minutes the first time.</p>
+
+    <p>Whisper Studio is one local process that serves both the API and the React SPA on a single
+      origin. Getting there is a short chain: install a few command-line tools, connect AWS, clone the
+      repo, run <code>setup.sh</code>, and configure two fields in the app. <b>Click a box</b> below to
+      see what each step does.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="install-flow-diagram" class="diagram"></div>
+      <figcaption>The install path, from prerequisites to your first <em>hello</em>. The Tavily key on
+        the second row is optional and can be added later.</figcaption>
+    </figure>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Already tooled up?</b> If <code>python3 --version</code>,
+        <code>brew --version</code>, and <code>aws --version</code> all succeed, skip ahead to
+        <a href="#step-4">Step 4 - Get the code and run</a>. If any of them fails, start at Step 1.</p></div>
+    </div>
+
+    <h2 id="step-1">Step 1 - Install prerequisites</h2>
+    <p>Four command-line tools have to be present before <code>setup.sh</code> can do its work. Homebrew
+      installs the other three.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>Why</th><th>Check</th></tr></thead>
+      <tbody>
+        <tr><td><b>Git</b></td><td>Clone the project</td><td><code>git --version</code></td></tr>
+        <tr><td><b>Python 3.10+</b></td><td>Backend runtime</td><td><code>python3 --version</code></td></tr>
+        <tr><td><b>Homebrew</b></td><td>Installs everything else</td><td><code>brew --version</code></td></tr>
+        <tr><td><b>AWS CLI</b></td><td>Bedrock auth for Claude</td><td><code>aws --version</code></td></tr>
+      </tbody>
+    </table></div>
+
+    <p>First install Homebrew (skip this if <code>brew --version</code> already works):</p>
+    <div class="code-block"><pre><code>/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</code></pre></div>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Do not skip the two <code>eval</code> lines.</b> When the installer
+        finishes it prints two <code>eval</code> commands that add Homebrew to your <code>PATH</code>.
+        Run both, then close and reopen Terminal. Without this, the very next command reports
+        <code>brew: command not found</code>.</p></div>
+    </div>
+
+    <p>Then install Git, Python, and the AWS CLI in one line:</p>
+    <div class="code-block"><pre><code>brew install git python@3.12 awscli</code></pre></div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+      <div class="callout__body"><p><b>Node.js is handled for you.</b> You do not install Node yourself.
+        <code>setup.sh</code> installs the pinned Node version <em>inside</em> the project
+        <code class="path">venv/</code> using <code>nodeenv</code>, so it never touches a system Node
+        or your other projects.</p></div>
+    </div>
+
+    <h2 id="step-2">Step 2 - Connect AWS</h2>
+    <p>Chat runs on Claude via Amazon Bedrock, so the AWS CLI needs credentials. Run:</p>
+    <div class="code-block"><pre><code>aws configure</code></pre></div>
+    <p>It prompts for an access key ID, a secret access key, a default region, and an output format. For
+      the full walk-through of creating keys and profiles, see the
+      <a href="https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html">AWS CLI
+      configuration docs</a>.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Regions must match.</b> Whichever region you type here is where
+        Claude must be enabled in your account. Set the same value as the <b>Bedrock Region</b> in
+        Settings later. A mismatch is the most common first-run error (see
+        <a href="#troubleshooting">Troubleshooting</a>). You also need Bedrock model access granted for
+        the Claude models you intend to use.</p></div>
+    </div>
+
+    <h2 id="step-3">Step 3 - (Optional) Tavily key for web search</h2>
+    <p>Without a Tavily key, Claude's web-search skill is unavailable; everything else (chat,
+      transcription, the workspace tools) works. You can add this now or any time later.</p>
+    <ol class="steps">
+      <li><h4>Sign up</h4><p>Create a key at <a href="https://app.tavily.com">app.tavily.com</a>. The
+        free tier covers personal use.</p></li>
+      <li><h4>Export it in your shell (recommended)</h4>
+        <div class="code-block"><pre><code>echo 'export TAVILY_API_KEY=tvly-...' &gt;&gt; ~/.zshrc
+source ~/.zshrc</code></pre></div>
+        <p>The env var overrides any value stored in <code class="path">config.json</code>, so rotating
+          the key is one <code>export</code> away and the secret stays out of the config file.</p></li>
+      <li><h4>Or paste it into Settings</h4><p>You can instead paste the key into the Settings UI. If
+        both are set, the environment variable wins.</p></li>
+    </ol>
+    <p>See <a href="ref-env.html">Environment variables</a> for the full list of what the shell layer
+      can override.</p>
+
+    <h2 id="step-4">Step 4 - Get the code and run</h2>
+    <p>There are two ways to get the project onto your machine. Both finish with one command that builds
+      and serves the app, so pick whichever suits you.</p>
+
+    <h3 id="option-a">Option A - Clone with Git (for developers)</h3>
+    <p>Clone the repository, enter it, and run the setup script:</p>
+    <div class="code-block"><pre><code>git clone https://github.com/paukode/whisper-studio.git
+cd whisper-studio
+bash setup.sh</code></pre></div>
+
+    <h3 id="option-b">Option B - Download the ZIP (no Git needed)</h3>
+    <p>If you would rather not touch the command line to get the code, download the project as a ZIP and
+      run the same script.</p>
+    <ol class="steps">
+      <li><h4>Download</h4><p>On the GitHub repository page, use <b>Code &rarr; Download ZIP</b> and save
+        it (for example to your Downloads folder).</p></li>
+      <li><h4>Extract</h4><p>Double-click the downloaded <code>.zip</code> in Finder. It expands into a
+        <code class="path">whisper-studio</code> folder.</p></li>
+      <li><h4>Run setup.sh</h4><p>Open that folder, right-click <code class="path">setup.sh</code>, and
+        choose <b>Open With &rarr; Terminal</b>. The script runs and prints the URL when the app is ready.
+        That is it - you are good to go.</p></li>
+    </ol>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>If double-clicking opens a text editor instead of running it,</b>
+        macOS has not associated <code>.sh</code> files with Terminal. Use the right-click &rarr; Open With
+        &rarr; Terminal path above, or open Terminal, type <code>bash </code> (with a trailing space), drag
+        the <code class="path">setup.sh</code> file onto the window, and press <kbd>Enter</kbd>. On the
+        first run, macOS Gatekeeper may ask you to confirm running a downloaded script.</p></div>
+    </div>
+    <p>From here on both options are identical - the rest of this guide applies either way.</p>
+
+    <p>On the first run the script does the full provisioning pass:</p>
+    <ol class="steps">
+      <li><h4>Checks Python</h4><p>Requires Python 3.10 or newer (the backend uses <code>match</code>
+        statements and <code>asyncio.TaskGroup</code>). If the active Python is older or missing, it
+        offers to install Python 3.12 via Homebrew.</p></li>
+      <li><h4>Creates the venv and installs Python deps</h4><p>Builds an isolated
+        <code class="path">venv/</code> and installs from <code class="path">requirements.txt</code>. It
+        prefers a Homebrew Python that can load SQLite extensions so vector search can use sqlite-vec,
+        falling back to a numpy vector search otherwise. Your default <code>python3</code> is left
+        untouched.</p></li>
+      <li><h4>Installs system tools</h4><p>Installs <code>ffmpeg</code> (audio decoding for Whisper) and
+        <code>ripgrep</code> (workspace search) via Homebrew, plus the Playwright Chromium build used by
+        live preview.</p></li>
+      <li><h4>Installs the pinned Node inside the venv</h4><p>Uses <code>nodeenv</code> to install the
+        Node version from <code class="path">.nvmrc</code> into the venv, then runs
+        <code>npm install</code>.</p></li>
+      <li><h4>Builds and serves the frontend</h4><p>Runs <code>npm run build</code>, then starts the
+        FastAPI backend, which serves the compiled SPA. It picks a free port starting at 8000, waits for
+        the backend to answer <code>/health</code>, and prints the URL. Press <kbd>Ctrl</kbd>+<kbd>C</kbd>
+        to stop.</p></li>
+    </ol>
+
+    <p>On the first run the script also seeds <code class="path">config.json</code> from
+      <code class="path">config.example.json</code> and downloads model weights into
+      <code class="path">models/</code>. Transcription weights (Whisper, Parakeet, and the speaker
+      encoder) are always pulled; the on-device index and chat weights are only pulled for hybrid and
+      local modes (see <a href="#model-modes">Model modes</a>). Every download is idempotent and
+      non-fatal: a pull that cannot finish now retries automatically on first use.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+      <div class="callout__body"><p><b>Subsequent runs are fast.</b> When
+        <code class="path">venv/</code> and <code class="path">node_modules/</code> already exist, the
+        install steps are skipped. A plain <code>bash setup.sh</code> just rebuilds the frontend and
+        serves it.</p></div>
+    </div>
+
+    <h3 id="setup-flags">setup.sh flags</h3>
+    <p>Flags fall into three groups: what to reinstall, how to serve, and which model mode to provision.
+      With no flags you get production serving in the existing (or cloud) mode.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Flag</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>--new</code></td><td>Wipe <code class="path">venv/</code>,
+          <code class="path">node_modules/</code>, and <code class="path">static/dist/</code>, then
+          reinstall from scratch. It also backs up the live <code class="path">config.json</code>
+          (timestamped) and reseeds it from <code class="path">config.example.json</code>, so re-add
+          your Tavily key and any custom settings afterwards, or restore them from the backup.</td></tr>
+        <tr><td><code>--dev</code></td><td>Development mode: run the backend plus the Vite dev server on
+          port 5173 with hot-module reload. Open the Vite URL, not the backend.</td></tr>
+        <tr><td><code>--prod</code></td><td>Production mode (<b>the default</b>): build the frontend and
+          serve it from FastAPI on port 8000. No Vite, no HMR. Mutually exclusive with
+          <code>--dev</code>.</td></tr>
+        <tr><td><code>--cloud</code></td><td>Cloud mode (<b>the default</b> for a fresh install): all
+          indexing and RAG on Amazon Bedrock. Skips the ~16 GB of on-device weights.</td></tr>
+        <tr><td><code>--hybrid</code></td><td>Hybrid mode: pick a backend per capability. Pulls the
+          on-device weights so you can choose them.</td></tr>
+        <tr><td><code>--local</code></td><td>Local mode: everything on-device. Pulls all on-device
+          weights.</td></tr>
+        <tr><td><code>--no-open</code></td><td>Do not auto-open the browser (also honored via the
+          <code>NO_OPEN=1</code> env var). Useful for SSH or headless sessions.</td></tr>
+        <tr><td><code>--help</code></td><td>Show all options and exit.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Without a mode flag, an existing <code class="path">config.json</code> is honored; a fresh install
+      defaults to cloud. The <code>--dev</code>/<code>--prod</code> and mode flags can be combined, for
+      example <code>bash setup.sh --dev --local</code>.</p>
+
+    <h2 id="model-modes">Model modes</h2>
+    <p>Model mode controls <em>where indexing and retrieval run</em>. It is separate from your chat-model
+      choice, which lives in the toolbar. You can set the mode at install time with the flags above, or
+      change it any time under <b>Settings &rarr; Model Mode</b> (changing it prompts a reload so the app
+      re-initializes).</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Mode</th><th>Embeddings</th><th>Reranker</th><th>Entity extraction</th><th>On-device weights</th></tr></thead>
+      <tbody>
+        <tr><td><b>Cloud</b> (default)</td><td>Cohere Embed v4 (Bedrock)</td><td>Cohere Rerank 3.5</td><td>Claude Haiku</td><td>none - lean install</td></tr>
+        <tr><td><b>Hybrid</b></td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td><td>pulled</td></tr>
+        <tr><td><b>Local</b></td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER</td><td>~16 GB, all on-device</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+      <div class="callout__body"><p><b>Each embedder keeps its own index.</b> Switching modes never
+        rebuilds the other backend's index, so you re-index a folder once under a given backend to search
+        it there. Cohere embed and rerank are pinned to <code>us-east-1</code>; chat can run in any
+        region. Transcription is always on-device (Whisper/Parakeet) in every mode.</p></div>
+    </div>
+    <p>For the full picture of how each backend is wired, see
+      <a href="tut-model-modes.html">Model modes</a> and the architecture page
+      <a href="arch-backends.html">Model backends &amp; modes</a>.</p>
+
+    <h2 id="step-5">Step 5 - Configure in the app</h2>
+    <p>Open the URL the script printed (something like <code>http://127.0.0.1:8000</code>), click the
+      gear icon, and fill in:</p>
+    <div class="spec">
+      <dt><b>Bedrock Region</b></dt><dd>The same region you used in <code>aws configure</code>, where
+        Claude is enabled.</dd>
+      <dt><b>Default Model</b></dt><dd>Start with Sonnet - a good balance of speed and quality.</dd>
+      <dt><b>Tavily API Key</b></dt><dd>Only if you did not set the <code>TAVILY_API_KEY</code>
+        environment variable in Step 3.</dd>
+    </div>
+    <p>Save, then type <code>hello</code> in chat. If Claude responds, the install is verified.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p><b>Transcription needs no setup.</b> The speech model (Whisper/Parakeet)
+        auto-downloads on your first recording (or was pulled during setup) and runs entirely on your
+        machine. There is nothing to configure to record.</p></div>
+    </div>
+
+    <h2 id="config-json">Where settings live</h2>
+    <p><code class="path">config.json</code> at the repo root is gitignored and holds your per-machine
+      settings (your Tavily key, region, default model, and more). Because it is gitignored, a fresh
+      clone has none, so on the first run <code>setup.sh</code> copies
+      <code class="path">config.example.json</code> to <code class="path">config.json</code> for you.
+      After that you change values either through the Settings UI or by editing the file directly.
+      Environment variables override the file, and a per-project
+      <code class="path">.whisper/settings.json</code> sits between them. See
+      <a href="configuration.html">Configuration</a> for the full three-layer model.</p>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+    <p>Most first-run problems fall into a handful of buckets. Match the symptom, apply the fix, re-run.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Symptom</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr><td><code>python3: command not found</code></td><td>Run <code>brew install python@3.12</code>, then reopen Terminal.</td></tr>
+        <tr><td><code>brew: command not found</code></td><td>Run the two <code>eval</code> lines the Homebrew installer printed, then reopen Terminal.</td></tr>
+        <tr><td><code>Python 3.x detected; this project requires Python 3.10 or newer</code></td><td>Run <code>brew install python@3.12</code>, then reopen Terminal so the updated PATH applies.</td></tr>
+        <tr><td><code>setup.sh: Permission denied</code></td><td>Run it as <code>bash setup.sh</code>, not <code>./setup.sh</code>.</td></tr>
+        <tr><td><code>npm install</code> network errors</td><td>You are behind a proxy or firewall. Try another network, or <code>npm config set registry https://registry.npmjs.org/</code>.</td></tr>
+        <tr><td><code>AccessDeniedException</code> / <code>Could not invoke model</code> in chat</td><td>The AWS user lacks Bedrock permissions, or the Claude model is not enabled in your region.</td></tr>
+        <tr><td><code>You don't have access to the model with the specified model ID</code></td><td>Region mismatch - the model is enabled in a different region than Settings says. Align the Bedrock Region.</td></tr>
+        <tr><td>Port 8000 or 5173 already in use</td><td>The script auto-increments to the next free port. Read the URL it actually prints.</td></tr>
+        <tr><td>Blank page in the browser</td><td>The frontend bundle is missing. Re-run <code>bash setup.sh</code>, or <code>bash setup.sh --new</code> for a clean rebuild.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p><b>When in doubt, run <code>/doctor</code>.</b> Type it in the chat
+        input for an automated dependency and AWS-access check that reports exactly what is missing or
+        misconfigured.</p></div>
+    </div>
+
+    <h2 id="next-steps">Next steps</h2>
+    <div class="card-grid">
+      <a class="card card--link" href="requirements.html"><h3>Requirements</h3><p>The OS, Python,
+        Homebrew, AWS, and hardware each model mode expects.</p><span class="card__meta">Read Requirements &rarr;</span></a>
+      <a class="card card--link" href="configuration.html"><h3>Configuration</h3><p>The three config
+        layers, environment variables, and every Settings field.</p><span class="card__meta">Read Configuration &rarr;</span></a>
+      <a class="card card--link" href="first-run.html"><h3>First run &amp; verify</h3><p>Connect AWS,
+        pick a model, and run your first chat and recording.</p><span class="card__meta">Read First run &rarr;</span></a>
+      <a class="card card--link" href="tut-model-modes.html"><h3>Model modes</h3><p>Cloud vs hybrid vs
+        local, and picking a backend per capability.</p><span class="card__meta">Read Model modes &rarr;</span></a>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="requirements.html">Requirements</a>,
+        <a href="configuration.html">Configuration</a>,
+        <a href="first-run.html">First run &amp; verify</a>, and
+        <a href="tut-model-modes.html">Model modes</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/install-flow.js"></script>
+</body>
+</html>

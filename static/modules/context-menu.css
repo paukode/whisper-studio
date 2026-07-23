@@ -1,0 +1,174 @@
+/* Context Menu — Generic reusable styles */
+
+.ws-context-menu {
+    position: fixed; z-index: 9999; min-width: 200px;
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 0; font-size: var(--fs-small);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+    font-family: var(--font-sans);
+    max-height: 80vh; overflow-y: auto;
+    backdrop-filter: none;
+}
+[data-theme="dark"] .ws-context-menu,
+[data-theme="dark-high-contrast"] .ws-context-menu {
+    background: #1e1e1e; border-color: #444;
+}
+[data-theme="light"] .ws-context-menu,
+[data-theme="light-high-contrast"] .ws-context-menu {
+    background: #f8f8f8; border-color: #ccc;
+}
+[data-theme="light"] .ws-context-menu,
+[data-theme="light-high-contrast"] .ws-context-menu {
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+}
+
+.ws-ctx-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px 6px 8px; cursor: pointer; color: var(--text-primary);
+    white-space: nowrap; position: relative;
+}
+.ws-ctx-item:hover,
+.ws-ctx-item.ws-ctx-active {
+    background: var(--accent); color: #fff;
+}
+.ws-ctx-item:hover .ws-ctx-shortcut,
+.ws-ctx-item.ws-ctx-active .ws-ctx-shortcut {
+    color: rgba(255,255,255,0.6);
+}
+.ws-ctx-item:hover .ws-ctx-submenu-arrow,
+.ws-ctx-item.ws-ctx-active .ws-ctx-submenu-arrow {
+    color: rgba(255,255,255,0.7);
+}
+
+/* Danger items (delete, etc.) */
+.ws-ctx-danger:hover,
+.ws-ctx-danger.ws-ctx-active {
+    background: #e74c3c;
+}
+
+/* Disabled items */
+.ws-ctx-disabled {
+    opacity: 0.4; cursor: default; pointer-events: none;
+}
+
+/* Icon column */
+.ws-ctx-icon {
+    width: 18px; text-align: center; font-size: var(--fs-body); flex-shrink: 0;
+}
+
+/* Label */
+.ws-ctx-label {
+    flex: 1;
+}
+
+/* Keyboard shortcut */
+.ws-ctx-shortcut {
+    margin-left: auto; padding-left: 24px;
+    font-size: var(--fs-caption); color: var(--text-muted);
+    font-family: var(--font-sans);
+}
+
+/* Positional number shortcut, rendered as a keycap badge (distinct from
+ * the plain-letter hint style): press the digit while the menu is open. */
+.ws-ctx-keycap {
+    margin-left: auto;
+    min-width: 16px;
+    padding: 1px 4px;
+    font-size: var(--fs-caption);
+    line-height: 14px;
+    text-align: center;
+    font-family: var(--font-mono, monospace);
+    color: var(--text-muted);
+    border: 1px solid var(--border-strong);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    background: var(--bg-inset);
+}
+.ws-ctx-item:hover .ws-ctx-keycap,
+.ws-ctx-item.ws-ctx-active .ws-ctx-keycap {
+    color: rgba(255,255,255,0.85);
+    border-color: rgba(255,255,255,0.35);
+    background: transparent;
+}
+
+/* Separator */
+.ws-ctx-separator {
+    height: 1px; background: var(--border); margin: 4px 0;
+}
+
+/* Submenu arrow */
+.ws-ctx-submenu-arrow {
+    margin-left: auto; font-size: var(--fs-caption); color: var(--text-muted);
+}
+
+/* Submenu positioning */
+.ws-ctx-submenu {
+    position: absolute; top: 0; left: 100%;
+}
+
+/* Inline input (new file, rename) */
+.ws-inline-input-row { padding: 2px 8px 2px 16px; }
+.ws-inline-input {
+    width: 100%; padding: 3px 6px; font-size: var(--fs-small);
+    font-family: var(--font-mono); background: var(--bg-primary);
+    color: var(--text-primary); border: 1px solid var(--accent);
+    border-radius: 3px; outline: none; box-sizing: border-box;
+}
+
+/* Cut file dimming */
+.ws-tree-cut { opacity: 0.45; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Compact variant — for menus that don't need icons or chunky padding
+   (e.g. the sidebar session menu). Aims for a refined macOS / VS Code
+   "File → New → New Window" look: narrow, subtle hover, no leading icons.
+   Scoped via .ws-context-menu--compact so consumers like
+   WorkspaceContextMenu keep the existing chunky style.
+   ───────────────────────────────────────────────────────────────────────── */
+.ws-context-menu--compact {
+    min-width: 168px;
+    padding: 4px 0;
+    font-size: var(--fs-small);
+    border-radius: 6px;
+    /* No scroll gutter for short menus — only show when actually overflowing. */
+    overflow: visible;
+}
+.ws-context-menu--compact .ws-ctx-item {
+    padding: 5px 14px;
+    gap: 0;
+}
+/* Hide the icon column entirely so labels start flush left. */
+.ws-context-menu--compact .ws-ctx-icon { display: none; }
+
+/* Subtle hover that doesn't shout — neutral row tint, no white text. */
+.ws-context-menu--compact .ws-ctx-item:hover,
+.ws-context-menu--compact .ws-ctx-item.ws-ctx-active {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+.ws-context-menu--compact .ws-ctx-item:hover .ws-ctx-shortcut,
+.ws-context-menu--compact .ws-ctx-item.ws-ctx-active .ws-ctx-shortcut {
+    color: var(--text-muted);
+}
+.ws-context-menu--compact .ws-ctx-item:hover .ws-ctx-submenu-arrow,
+.ws-context-menu--compact .ws-ctx-item.ws-ctx-active .ws-ctx-submenu-arrow {
+    color: var(--text-primary);
+}
+
+/* Danger (Delete): muted by default, red text on hover. No red wash. */
+.ws-context-menu--compact .ws-ctx-danger { color: var(--text-primary); }
+.ws-context-menu--compact .ws-ctx-danger:hover,
+.ws-context-menu--compact .ws-ctx-danger.ws-ctx-active {
+    background: var(--bg-hover);
+    color: var(--accent-record);
+}
+
+/* Tighter separator. */
+.ws-context-menu--compact .ws-ctx-separator { margin: 3px 0; }
+
+/* Crisper submenu arrow, right-aligned. */
+.ws-context-menu--compact .ws-ctx-submenu-arrow {
+    margin-left: 12px;
+    font-size: var(--fs-caption);
+    color: var(--text-muted);
+}

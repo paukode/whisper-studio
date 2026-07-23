@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Glossary - Whisper Studio Docs</title>
+  <meta name="description" content="Definitions of the terms used across Whisper Studio: ASR, Bedrock, GraphRAG, MCP, permission mode, sandbox-exec, SSE, sub-agents, WHISPER.md, and more.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="ref-glossary">
+    <h1>Glossary</h1>
+    <p class="subtitle">The vocabulary of Whisper Studio, defined the way this project uses each term.
+      Where a concept has its own page, the entry links to it.</p>
+
+    <p>Terms are grouped alphabetically. Many of these words have broader meanings in the wider
+      industry; the definitions here describe how Whisper Studio specifically uses them. When in doubt,
+      the linked architecture page is the source of truth.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM21 21l-4.3-4.3"/></svg></span>
+      <div class="callout__body"><p>Looking for something specific? Press <kbd>/</kbd> (or click the
+        search box in the sidebar) to filter every page, including this one, by term.</p></div>
+    </div>
+
+    <h2 id="a-b">A - B</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>ASR</code></td>
+          <td>Automatic Speech Recognition. The task of turning audio into text. Whisper Studio runs ASR
+            entirely on-device (Whisper or Parakeet) in every model mode, so audio never leaves your
+            machine. See <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+        </tr>
+        <tr>
+          <td><code>Bedrock</code></td>
+          <td>Amazon Bedrock, the AWS managed service Whisper Studio uses to call Claude (and GPT-5.x)
+            for chat. Requests go from the local process straight to
+            <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code> and back. It is the only cloud LLM
+            call the app makes. See <a href="arch-backends.html">Model backends &amp; modes</a> and
+            <a href="https://docs.aws.amazon.com/bedrock/">the Amazon Bedrock docs</a>.</td>
+        </tr>
+        <tr>
+          <td><code>BlackHole</code></td>
+          <td>A macOS virtual audio driver used to route system audio into a recording. Paired with an
+            Aggregate Device, it lets a meeting recording capture both your microphone and whatever
+            macOS is playing. Install with <code>brew install blackhole-2ch</code>. See
+            <a href="tut-voice.html">Voice &amp; meetings</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="c">C</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>chat turn</td>
+          <td>One request/response cycle: your message plus everything the assistant does to answer it
+            (streamed text, thinking, tool calls, approvals) up to <code>[DONE]</code>. A single turn is
+            one <code>POST /api/chat</code> that streams back over SSE and may run an agentic tool loop
+            of up to 50 rounds. See <a href="arch-chat-turn.html">Anatomy of a chat turn</a>.</td>
+        </tr>
+        <tr>
+          <td><code>cron_event</code></td>
+          <td>A chat-history row produced by a scheduled (cron) task. Cron output cards persist on disk
+            and render in the chat, but <code>visible_chat_history</code> filters them out before the
+            next prompt is built, so a job firing frequently never inflates the token bill. See
+            <a href="arch-cron.html">Cron / scheduled tasks</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="d-e">D - E</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>detached / worktree agent</td>
+          <td>An agent started in the background rather than inline. <code>spawn_agent</code> with
+            <code>detach: true</code> returns a <code>task_id</code> at once (read-only by default) so
+            the turn is not blocked; <code>isolation: 'worktree'</code> additionally runs it inside an
+            isolated git worktree so its edits never touch your current checkout. Complements the
+            sub-agent and worktree entries. See <a href="arch-agents.html">Sub-agents &amp; the event
+            bus</a>.</td>
+        </tr>
+        <tr>
+          <td>diarization</td>
+          <td>Assigning "who spoke when" to a transcript. Whisper Studio uses Resemblyzer speaker
+            embeddings plus voice-activity detection, and remembers speakers per session across
+            reconnects so you can rename them once. See
+            <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+        </tr>
+        <tr>
+          <td><code>DOMPurify</code></td>
+          <td>The HTML sanitizer (version 3.4.6) that every Markdown render passes through before it
+            reaches the React DOM. It strips <code>&lt;script&gt;</code>, inline event handlers, and
+            <code>javascript:</code> URLs, so a prompt-injected page fetched by <code>web_fetch</code>
+            cannot run arbitrary JS in the SPA origin. See <a href="ref-security.html">Security model</a>.</td>
+        </tr>
+        <tr>
+          <td>effort level</td>
+          <td>How much reasoning budget the model spends per turn: <code>low</code>, <code>medium</code>,
+            <code>high</code>, <code>extra</code> (the raw name <code>xhigh</code> is an alias),
+            <code>max</code>, or <code>ultracode</code>. The former <code>auto</code> level is retired
+            (coerced back to a real level). <code>ultracode</code> is a session mode that pairs top
+            reasoning effort with dynamic-workflow orchestration. Set it with the <code>/effort</code>
+            command or in Settings. See <a href="ref-settings.html">Settings &amp; config keys</a> and
+            <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</td>
+        </tr>
+        <tr>
+          <td>embedding</td>
+          <td>A numeric vector that represents the meaning of a chunk of text so similar passages sit
+            close together. Used by the index to find relevant context for grounding. The embedder
+            depends on model mode: Cohere Embed v4 in cloud, Qwen3 on-device in local. See
+            <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</td>
+        </tr>
+        <tr>
+          <td>entity</td>
+          <td>A named thing (person, file, project, concept) extracted from your indexed content and
+            wired into the knowledge graph. Entities are extracted by Claude Haiku in cloud mode and by
+            GLiNER on-device. See <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</td>
+        </tr>
+        <tr>
+          <td>event bus</td>
+          <td>The per-session publish/subscribe channel (<code class="path">server/agents/event_bus.py</code>)
+            that fans sub-agent and team activity out to the browser over SSE. Spawns, progress, and
+            completions all travel across it. See <a href="arch-agents.html">Sub-agents &amp; the event
+            bus</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="g">G</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>GLiNER</code></td>
+          <td>An on-device model used for entity extraction when the app runs in local mode (the cloud
+            equivalent is Claude Haiku). It feeds the knowledge graph without any network call. See
+            <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</td>
+        </tr>
+        <tr>
+          <td>goal / goal gate</td>
+          <td>A per-session objective the assistant works toward. Set it with <code>/goal</code> (and
+            <code>/goal clear</code> to end it); it is stored on the session row and a goal banner shows
+            above the composer. After each turn a <b>completion gate</b> - a cheap Haiku evaluator in
+            <code class="path">server/goals/gate.py</code> - judges whether the goal is met, and if not
+            the goal loop auto-continues the turn (capped). Gated by the <code>goal_loop</code> feature
+            flag. See <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</td>
+        </tr>
+        <tr>
+          <td>GraphRAG</td>
+          <td>Retrieval-augmented generation that combines vector search over embeddings with a graph
+            of entities and their relationships, rather than plain nearest-neighbour lookup. It powers
+            workspace indexing and the grounding chip shown during a turn. See
+            <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</td>
+        </tr>
+        <tr>
+          <td>grounding</td>
+          <td>Injecting passages retrieved from a selected workspace index into the prompt so the answer
+            is anchored to your own documents. A "grounding" chip over SSE reports which folders were
+            searched and how many passages were retrieved. See
+            <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="h-l">H - L</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>hook</td>
+          <td>A user-defined gate that runs at a fixed point in a turn: <code>PreToolUse</code> (can deny
+            or rewrite a tool call), <code>PostToolUse</code> (can inject additional context), and a
+            <code>Stop</code> gate, wired across chat, sub-agents, and cron
+            (<code class="path">server/hooks/</code>). User hooks live in <code class="path">hooks.json</code>;
+            a workspace may also ship trust-gated project hooks in
+            <code class="path">.whisper/settings.json</code> that stay inert until explicitly trusted.
+            Managed in Settings, not from a slash command. See <a href="arch-hooks.html">Blocking
+            hooks</a>.</td>
+        </tr>
+        <tr>
+          <td>hybrid mode</td>
+          <td>One of three model modes. In hybrid mode you pick a backend per capability (embeddings,
+            reranker, entity extraction), mixing cloud and on-device. It pulls the on-device weights so
+            those options are available. Compare cloud (the default) and local. See
+            <a href="tut-model-modes.html">Model modes</a> and
+            <a href="arch-backends.html">Model backends &amp; modes</a>.</td>
+        </tr>
+        <tr>
+          <td><code>LSP</code></td>
+          <td>Language Server Protocol. Whisper Studio proxies python-lsp-server and
+            typescript-language-server to power the <code>lsp_diagnostics</code>, <code>lsp_hover</code>,
+            and <code>lsp_references</code> tools, giving the assistant real type information about your
+            code. See <a href="arch-git-lsp.html">Git integration &amp; LSP</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="m-n">M - N</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Map-reduce condensation</td>
+          <td>Splitting an oversized transcript into overlapping chunks, extracting the salient material
+            from each with a fast one-shot model (the map step), then letting the main chat model compose
+            the summary from the concatenated extracts (the reduce step). Extracting rather than
+            prose-summarising is what keeps owners, decisions, and numbers intact where a plain truncation
+            would lose them. See <a href="arch-summarization.html">Transcript summarization &amp;
+            condensation</a>.</td>
+        </tr>
+        <tr>
+          <td><code>MCP</code></td>
+          <td>Model Context Protocol. A standard for exposing tools from external systems. Whisper Studio
+            spawns configured MCP servers as child processes piped over stdio, so they add tools without
+            ever seeing HTTP. Configure servers in Settings and enable them per turn. See
+            <a href="tut-mcp-plugins.html">MCP &amp; plugins</a>.</td>
+        </tr>
+        <tr>
+          <td>model mode</td>
+          <td>Where indexing and retrieval run: <code>cloud</code> (default), <code>hybrid</code>, or
+            <code>local</code>. This is separate from the chat-model choice in the toolbar. Cohere
+            embed/rerank are pinned to <code>us-east-1</code>; chat can run in any region. See
+            <a href="tut-model-modes.html">Model modes</a>.</td>
+        </tr>
+        <tr>
+          <td>nonce</td>
+          <td>A single-use token the server holds to authorize one risky action. When a tool needs
+            consent, the approval router issues a nonce, pauses the turn, and only runs the action once
+            the client returns that exact nonce. The client cannot fabricate one, which is why command
+            approval is a real boundary and not client-asserted. See
+            <a href="arch-approval.html">Approval &amp; permissions</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="o">O</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>One-shot completion</td>
+          <td>A single non-streaming prompt and response, used by the map step of map-reduce
+            condensation. It is mode-aware - Claude Haiku in the cloud, the resident model on-device - and
+            raises on failure so the condenser can fall back to a truncated transcript instead of
+            returning nothing. See <a href="arch-summarization.html">Transcript summarization &amp;
+            condensation</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="p-q">P - Q</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Parakeet</td>
+          <td>One of the on-device speech-recognition models Whisper Studio can use for transcription
+            (the other is Whisper). Which one runs depends on your setup; both keep audio local. See
+            <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+        </tr>
+        <tr>
+          <td>permission mode</td>
+          <td>The dial that decides how tool calls are gated: <code>default</code> (reads free, writes
+            ask), <code>auto</code> (a classifier decides per call), <code>plan</code> (read-only),
+            <code>acceptEdits</code> (edits auto-approve), <code>bypassPermissions</code> (no prompts),
+            or <code>dontAsk</code> (reads allow, writes silently deny). Per-tool rules override any
+            mode. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td>
+        </tr>
+        <tr>
+          <td>plugin</td>
+          <td>An opt-in Python file in <code class="path">plugins/</code> that adds custom API routes
+            and tool executors. Dropping a file in does nothing until you enable it in Settings and
+            restart; this closes the drive-by "plugin over chat" attack vector. See
+            <a href="tut-mcp-plugins.html">MCP &amp; plugins</a>.</td>
+        </tr>
+        <tr>
+          <td>progressive tool disclosure</td>
+          <td>Sending the model a <b>core</b> tool set plus any session-activated tools, with everything
+            else represented only by a compact index in the cached prompt block; deferred tools are
+            pulled in on demand via <code>tool_search</code>
+            (<code class="path">server/chat/tool_partition.py</code>). This cuts roughly 60-75% of the
+            tool-schema tokens per turn. Gated by the <code>progressive_tools</code> feature flag. See
+            <a href="ref-settings.html#feature-flags">Settings &amp; config keys</a>.</td>
+        </tr>
+        <tr>
+          <td>Qwen3</td>
+          <td>The on-device model family used for embeddings and reranking in local mode (Qwen3 embedder
+            and Qwen3 Reranker). It lets indexing and retrieval run without any cloud call. See
+            <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="r-s">R - S</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>reranker</td>
+          <td>A second-pass model that reorders retrieved passages by relevance to the query, sharpening
+            what actually reaches the prompt. Cohere Rerank 3.5 in cloud mode, Qwen3 Reranker on-device.
+            See <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</td>
+        </tr>
+        <tr>
+          <td><code>sandbox-exec</code></td>
+          <td>The macOS kernel-level sandbox (<code>sandbox-exec(5)</code>) that wraps every shell and
+            code-execution path, including the terminal PTY. It is the security boundary the project
+            trusts last and most; a curated deny-list masks secret stores (SSH/GPG keys, cloud and git
+            credentials, browser cookies, shell history). On Linux the equivalent is <code>bwrap</code>.
+            See <a href="arch-sandbox.html">Sandbox &amp; security</a>.</td>
+        </tr>
+        <tr>
+          <td>skill</td>
+          <td>A Markdown-defined capability the assistant loads when relevant (Web Search, Run Python,
+            Summarize Transcript, and more). Built-in skills load automatically; add your own as files
+            in <code class="path">skills/</code>. Invoke or list them with <code>skill_invoke</code> and
+            <code>skill_list</code>. See <a href="tut-skills.html">Skills</a>.</td>
+        </tr>
+        <tr>
+          <td><code>SSE</code></td>
+          <td>Server-Sent Events. The one-way HTTP streaming used to push chat tokens, tool activity,
+            usage counters, and sub-agent events to the browser as they happen. A chat turn is an SSE
+            stream, not a single JSON body, and it ends with <code>[DONE]</code>. See
+            <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.</td>
+        </tr>
+        <tr>
+          <td>sub-agent</td>
+          <td>An independent agent spawned to handle a focused subtask, coordinated through the event
+            bus and optionally organized into a team of parallel agents. Spawn one with
+            <code>spawn_agent</code> or the <code>/subagent</code> command. See
+            <a href="arch-agents.html">Sub-agents &amp; the event bus</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="t-v">T - V</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>task registry / background task</td>
+          <td>The unified store of long-running background jobs - shell commands, agents, workflows, and
+            CI watches - in the <code>agent_tasks</code> table (<code class="path">server/tasks/</code>).
+            Exposed at <code>/api/background-tasks</code> and surfaced as a running-count pill in the
+            header; it replaced the older <code>server/background_tasks.py</code>. See
+            <a href="arch-agents.html">Sub-agents &amp; the event bus</a>.</td>
+        </tr>
+        <tr>
+          <td>Tavily</td>
+          <td>The web-search provider behind the <code>web_search</code> skill. It is optional: without a
+            <code>TAVILY_API_KEY</code>, web search is unavailable and everything else still works. The
+            env var overrides any key stored in <code>config.json</code>. See
+            <a href="tut-research.html">Web research</a> and
+            <a href="https://app.tavily.com">app.tavily.com</a>.</td>
+        </tr>
+        <tr>
+          <td>Transcript condensation</td>
+          <td>The server-side step that shrinks a transcript too large for the model context before it
+            enters a chat turn, so a summary skill never silently truncates or overflows the request. See
+            the Map-reduce condensation entry and <a href="arch-summarization.html">Transcript
+            summarization &amp; condensation</a>.</td>
+        </tr>
+        <tr>
+          <td>ultracode</td>
+          <td>Whisper Studio's top reasoning mode: the model authors a deterministic JavaScript workflow
+            script that a Node-24 vm harness runs detached over stdio JSON-RPC into Python, on both Claude
+            and GPT-on-Bedrock, with 16-way agent concurrency, a 1000-agent lifetime cap, USD budgets, a
+            resumable journal, and upfront phase-preview approval of every new script. It is also the
+            highest <code>/effort</code> level. See <a href="arch-ultracode.html">The ultracode workflow
+            runtime</a>.</td>
+        </tr>
+        <tr>
+          <td><code>VAD</code></td>
+          <td>Voice-Activity Detection. Distinguishes speech from silence in the audio stream, feeding
+            diarization and keeping the transcript clean. Whisper Studio uses WebRTC VAD locally. See
+            <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="w-z">W - Z</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Term</th><th>Definition</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>WAL</code></td>
+          <td>Write-Ahead Logging, the SQLite journaling mode Whisper Studio runs sessions in. It lets
+            reads and writes proceed concurrently, which matters when a background cron daemon appends
+            rows while the frontend saves. See <a href="arch-persistence.html">Persistence</a>.</td>
+        </tr>
+        <tr>
+          <td><code class="path">WHISPER.md</code></td>
+          <td>A project-context file you drop in your workspace root. Its contents load into the system
+            prompt on every chat turn, the way <code>CLAUDE.md</code> works for the Claude Code CLI.
+            Edit it through the in-app Project Memory dialog or any editor. See
+            <a href="tut-memory.html">Memory &amp; WHISPER.md</a>.</td>
+        </tr>
+        <tr>
+          <td>Whisper</td>
+          <td>The on-device speech-recognition model that gives the app its name (Whisper Studio runs the
+            mlx-whisper build). It loads into memory on first record and runs locally; Parakeet is the
+            alternative. See <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+        </tr>
+        <tr>
+          <td>workflow runtime</td>
+          <td>The subsystem behind ultracode (<code class="path">server/workflows/</code>): a
+            <code>WorkflowRun</code> that enforces the concurrency semaphore, USD budget, and resume; the
+            Node-24 harness (<code class="path">harness.mjs</code>, <code class="path">guards.mjs</code>,
+            <code class="path">api.mjs</code>); the <code>workflow_runs</code> table; and the
+            <code>workflow_run</code> / <code>workflow_status</code> / <code>workflow_save</code> /
+            <code>workflow_list</code> tools, available only in ultracode mode. See
+            <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</td>
+        </tr>
+        <tr>
+          <td>workspace</td>
+          <td>The folder you connect so the assistant can read, edit, run, and commit within it. Every
+            file operation is validated to stay inside the workspace root, and project files like
+            <code class="path">WHISPER.md</code> and <code class="path">.whisper/</code> live there. See
+            <a href="tut-workspace.html">The workspace IDE</a>.</td>
+        </tr>
+        <tr>
+          <td>worktree</td>
+          <td>An isolated Git working tree on its own branch, created so the assistant can make changes
+            without touching your current checkout. Managed with <code>ws_create_worktree</code>,
+            <code>ws_diff_worktree</code>, and <code>ws_merge_worktree</code>. See
+            <a href="arch-git-lsp.html">Git integration &amp; LSP</a>.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+      <div class="callout__body"><p>Whisper (the speech model) and Whisper Studio (the app) are
+        different things. When these docs say "Whisper" alone in a transcription context, they mean the
+        model; the product is always "Whisper Studio".</p></div>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-overview.html">System overview</a>,
+        <a href="ref-tools.html">Agent tools</a>, <a href="ref-settings.html">Settings &amp; config
+        keys</a>, and the <a href="ref-security.html">Security model</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+</body>
+</html>

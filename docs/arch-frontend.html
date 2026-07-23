@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Frontend architecture - Whisper Studio Docs</title>
+  <meta name="description" content="The Whisper Studio SPA: the AppShell layout and startup sequence, per-session runtimes, Zustand v5 stores, the useChatStream SSE consumer, and safe Markdown rendering.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-frontend">
+    <h1>Frontend architecture</h1>
+    <p class="subtitle">The whole UI is one React 19 single-page app served from the same local origin
+      as the API. It is built around one idea: each chat session is a self-contained runtime that keeps
+      streaming, recording, and saving whether or not you are looking at it.</p>
+
+    <p>Where the <a href="arch-chat-pipeline.html">chat pipeline</a> is the backend state machine, this
+      page is its client. Three pieces carry most of the weight: <code class="path">AppShell.tsx</code>
+      (layout plus startup), the <b>session runtime registry</b> in
+      <code class="path">src/stores/sessionRuntimes.ts</code>, and the
+      <code>useChatStream</code> hook that consumes Server-Sent Events. <b>Click a box</b> in the map to
+      trace where data flows.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="frontend-diagram" class="diagram"></div>
+      <figcaption>The SPA from shell to pixels. A stream binds its owning session's stores at send time,
+        so the <em>dispatch</em> edge always lands in the right session even after you switch away.</figcaption>
+    </figure>
+
+    <h2 id="the-shell">The shell and the startup sequence</h2>
+    <p><code class="path">src/components/layout/AppShell.tsx</code> is the top-level component. It renders
+      the four-region layout (sidebar, chat, an optional transcript pane, the workspace IDE, and a
+      right-side dock) and it owns the one-time boot sequence. There is no separate layout engine: every
+      visible split is a ratio-flex <code>Splitter</code>, so no pane is ever pinned to a pixel width and
+      surviving panes redistribute through flexbox when you open or close one.</p>
+    <p>The shell also mounts a persistent bottom status strip,
+      <code class="path">src/components/layout/AppStatusBar.tsx</code> (WS-H), that reads only from
+      existing stores to show the active model, effort, permission mode, git branch with dirty and
+      ahead/behind counts, a live context-window meter, per-turn tokens and cost, and a running
+      background-task pill. The <code>Header</code> carries its own running-count pill that opens the
+      <code>BackgroundTasksPanel</code>.</p>
+    <p>On mount, the shell fires the startup fetches in parallel:</p>
+    <ul>
+      <li><b>Load config and models.</b> <code>loadConfig()</code> reads the merged runtime config;
+        <code>loadModels()</code> fetches the model list only. On-device weights are deliberately
+        <em>not</em> eager-loaded at startup, so launch stays fast and memory stays free until you
+        actually pick a local model. See <a href="arch-backends.html">Model backends &amp; modes</a>.</li>
+      <li><b>Load data retention, skills, and MCP servers.</b> <code>loadDataRetention()</code>,
+        <code>loadSkills()</code>, and <code>loadMCP()</code> populate the settings store; the global
+        tool store is then filled via <code>fetchSkills()</code> and <code>fetchMCPTools()</code> so the
+        skills dropdown and autocomplete have something to filter.</li>
+      <li><b>Restore sessions.</b> <code>loadSessions()</code> lists saved sessions, then the persisted
+        <code>currentSessionId</code> is restored and rehydrated through
+        <code>switchSession()</code>. A stale persisted id is dropped so the next session prompt starts
+        fresh. This is what survives the reload-mid-chat case (a Vite HMR cascade that forces a full
+        reload).</li>
+      <li><b>Check workspace status.</b> A <code>GET /api/workspace/status</code> recovers a previously
+        connected repo after a refresh, flipping the UI back to the connected state and reopening the
+        workspace panel.</li>
+    </ul>
+    <p>The shell also wires the global keyboard shortcuts (<kbd>Cmd/Ctrl</kbd>+<kbd>,</kbd> for Settings,
+      <kbd>Cmd/Ctrl</kbd>+<kbd>B</kbd> to toggle the sidebar, <kbd>Cmd/Ctrl</kbd>+<kbd>K</kbd> for the
+      command palette) and the <a href="arch-approval.html">ESC kill switch</a>, which is armed only
+      while a stream is running or subagents are alive so <kbd>Esc</kbd> keeps its normal meaning
+      everywhere else.</p>
+
+    <h2 id="session-runtimes">Per-session runtimes</h2>
+    <p>The registry in <code class="path">src/stores/sessionRuntimes.ts</code> is the heart of parallel
+      sessions. Every live session owns a <code>RuntimeEntry</code>: its own chat store, its own
+      transcription store, its own long-lived cron/notification <code>EventSource</code>, an in-flight
+      chat <code>AbortController</code>, and self-saving subscriptions.</p>
+    <p>The design rule is simple: <b>nothing is cleared on a switch.</b> The UI binds to the active
+      session's stores and re-points on switch; background sessions keep streaming, keep receiving cron
+      events, and keep saving themselves. This is why you can start a long answer in one session, switch
+      to another, and come back to find the first one finished.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Two different caps, both set to <b>3</b>, do two different jobs.
+        <code>MAX_LIVE_RUNTIMES</code> (in <code class="path">sessionRuntimes.ts</code>) is how many
+        runtimes stay resident in memory. <code>MAX_ACTIVE_SESSIONS</code> (in
+        <code class="path">useChatStream.ts</code>) is the user-facing ceiling on how many sessions may be
+        <em>busy</em> (streaming, mid-approval, or recording) at once.</p></div>
+    </div>
+    <p>Eviction is LRU over idle, hydrated sessions. <code>maybeEvictIdle()</code> flushes a save first,
+      then drops the least-recently-used runtime and closes its channels. <code>isEvictable()</code>
+      guarantees it never evicts the current session, the recording owner, a streaming session, one that
+      is mid-approval, or one still hydrating. Because busy sessions are never evicted, the cap is
+      <em>soft</em>: the registry may briefly exceed three until one goes idle.</p>
+    <p>Access is through a small set of getters and hooks:</p>
+    <div class="spec">
+      <dt><code class="path">getChatStore(sessionId)</code></dt><dd>The imperative getter stream code uses. Bind it <b>once</b> at send time so the stream keeps writing to its owning session regardless of switches.</dd>
+      <dt><code class="path">useActiveChatStore(selector)</code></dt><dd>The reactive hook UI components use. Built on <code>useSyncExternalStore</code>, so a session switch swaps subscription and snapshot in a single commit.</dd>
+      <dt><code class="path">countActiveSessions(excluding?)</code></dt><dd>Counts busy sessions for the parallelism ceiling; viewing idle sessions is never counted.</dd>
+      <dt><code class="path">dropRuntime(sessionId)</code></dt><dd>Teardown: aborts the in-flight stream, closes the EventSource, and unsubscribes.</dd>
+    </div>
+    <p>Each runtime also carries its own cron <code>EventSource</code> to
+      <code>/api/sessions/{id}/events</code>, so a background session still receives its
+      <a href="arch-cron.html">cron events</a> and raises an unread badge on its sidebar row. Stale
+      streams (after a laptop wake or a network restore) are recycled on <code>online</code> and tab
+      refocus so leaked connection slots do not starve new <code>/api/chat</code> requests.</p>
+
+    <h2 id="stores">The store layer</h2>
+    <p>State is <b>Zustand v5</b>. Two kinds of store live side by side. <em>Per-session factories</em>
+      (<code>createChatStore</code>, <code>createTranscriptionStore</code>) are instantiated once per
+      runtime, so each session's messages and segments are fully isolated. <em>Singletons</em> are
+      shared app-wide:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Store</th><th>Kind</th><th>Owns</th></tr></thead>
+      <tbody>
+        <tr><td><code>chatStore</code></td><td>per-session</td><td>Messages, streaming buffers, tool traces, pending approvals, team reports.</td></tr>
+        <tr><td><code>transcriptionStore</code></td><td>per-session</td><td>Diarized segments and speaker names for that session's recording.</td></tr>
+        <tr><td><code>sessionStore</code></td><td>singleton</td><td>The session list, <code>currentSessionId</code>, switching, titling, and saves.</td></tr>
+        <tr><td><code>workspaceStore</code></td><td>singleton</td><td>File tree, editor tabs, and dirty state for the connected repo.</td></tr>
+        <tr><td><code>uiStore</code>, <code>layoutStore</code>, <code>dockStore</code></td><td>singleton</td><td>Panel visibility, persisted split fractions, and the right-side dock panels.</td></tr>
+        <tr><td><code>settingsStore</code></td><td>singleton</td><td>Config, model list, selected model, effort level, verbosity, data retention.</td></tr>
+        <tr><td><code>toolStore</code>, <code>taskStore</code>, <code>recordingStore</code>, <code>cronUnreadStore</code>, <code>subagentStore</code></td><td>singleton</td><td>Skill/MCP catalogue, the live task list, the shared mic, cron badges, and running subagents.</td></tr>
+        <tr><td><code>backgroundTaskStore</code>, <code>workflowStore</code>, <code>ciStore</code>, <code>goalStore</code></td><td>singleton</td><td>The background-task registry + <code>runningCount</code> (WS-A), <a href="arch-ultracode.html">workflow</a> runs keyed by <code>run_id</code> (WS-D), CI watches keyed by <code>task_id</code> (WS-J), and the active goal + last verdict per session (WS-E).</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Zustand v5 selector rule.</b> Never return a fresh object or array
+        from a selector. A new reference on every render trips Zustand's equality check and drives a
+        React error #185 render loop that passes CI but crashes at runtime. Select primitives and derive
+        composite values with <code>useMemo</code> in the component.</p></div>
+    </div>
+
+    <h2 id="chat-streaming">Chat streaming</h2>
+    <p>The <code>useChatStream</code> hook in <code class="path">src/hooks/useChatStream.ts</code> owns
+      the send path. Its central contract is <b>bind once, never let go</b>:</p>
+    <ol class="steps">
+      <li><h4>Resolve the owning session</h4><p><code>send()</code> reads
+        <code>currentSessionId</code> once (creating a session if there is none), then does every store
+        access through <code>getChatStore(activeSessionId)</code>. A mid-stream session switch changes
+        nothing about where this stream writes.</p></li>
+      <li><h4>Check the parallelism ceiling</h4><p>Activating a session beyond
+        <code>MAX_ACTIVE_SESSIONS</code> gets a toast, not a queue. Re-sends and approval continuations
+        in an already-active session always pass. Any in-flight stream for <em>this</em> session is
+        aborted first.</p></li>
+      <li><h4>Build the request body</h4><p>The user message is appended, history is capped to 40
+        entries, and UI-only rows (<code>role='cron_event'</code>) are filtered out before the wire. The
+        body carries the question, transcript, model, effort level, verbosity, session id, attachment
+        ids, and the selected search indexes.</p></li>
+      <li><h4>POST and consume</h4><p>A <code>fetch('/api/chat')</code> streams the response into
+        <code>readSSEStream</code>. A <code>409</code> means the server's same-session guard is holding
+        the slot; the hook surfaces the server's guidance as a toast instead of stacking two streams.</p></li>
+      <li><h4>Commit atomically</h4><p>On stream end, streaming state is cleared and the final assistant
+        message (text, tool traces, team reports, usage, any artifact or plan) is added in a single store
+        update, so there is never a frame with neither the streaming bubble nor the final message.</p></li>
+    </ol>
+
+    <h3 id="routing-events">Routing SSE events</h3>
+    <p><code class="path">src/hooks/chatStream/sseStream.ts</code> holds
+      <code>readSSEStream</code>, the parser. It reads the response body, splits on newlines, strips the
+      <code>data: </code> prefix, and validates each payload against a Zod schema
+      (<code>SSEEventDataSchema</code>) before dispatching it to the owning session's store. Validation
+      failure logs loudly but still passes the raw payload through, because some event types are
+      intentionally loose. The last 200 events are kept on <code>window.__lastSSE</code> for DevTools.</p>
+    <p>Each event type routes to a store action:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Event</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>text</code></td><td>Appended to the streaming buffer via <code>appendStreamToken</code>.</td></tr>
+        <tr><td><code>thinking</code> / <code>thinking_start</code> / <code>thinking_stop</code></td><td>Drives the adaptive thinking block and its elapsed timer.</td></tr>
+        <tr><td><code>skill</code> / <code>skill_input</code> / <code>skill_result</code></td><td>Starts, fills, and completes a live tool trace; also refreshes the Git panel and file tree after mutating tools.</td></tr>
+        <tr><td><code>approval_request</code></td><td>Enqueues a <a href="arch-approval.html">pending approval</a>, or auto-accepts/denies it from session memory.</td></tr>
+        <tr><td><code>user_question</code></td><td>Collapses parallel <code>ask_user_question</code> calls into one tabbed card.</td></tr>
+        <tr><td><code>team_progress</code> / <code>team_results</code></td><td>Folds live <a href="arch-agents.html">sub-agent</a> activity into a turn-local team report.</td></tr>
+        <tr><td><code>usage</code></td><td>Updates token counters and the cost estimate; also carries <code>context_used</code>/<code>context_max</code> for the status-bar context meter.</td></tr>
+        <tr><td><code>grounding</code></td><td>Records how many folders were searched and passages injected this turn.</td></tr>
+        <tr><td><code>cron_event</code></td><td>Appends a live cron card that renders identically to the persisted, resumed one.</td></tr>
+        <tr><td><code>hook_blocked</code> / <code>stop_hook_feedback</code> / <code>stop_hook_block</code></td><td>Surfaces a <a href="arch-tools.html">blocking hook</a>'s veto (a Pre/Post/Stop gate) and its feedback into the turn.</td></tr>
+        <tr><td><code>goal_eval</code> / <code>goal_cap_reached</code></td><td>Updates <code>goalStore</code> with the completion-gate verdict and attempt counter for the active goal.</td></tr>
+        <tr><td><code>workflow_preview</code> / <code>workflow_started</code></td><td>Renders the ultracode <a href="arch-ultracode.html">workflow</a> phase-preview approval card, then its inline run card.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Three more frames route on a different channel. <code>task_event</code>, <code>ci_progress</code>,
+      and <code>ci_result</code> arrive on the per-session <code>EventSource</code> in
+      <code class="path">src/stores/sessionRuntimes.ts</code> - not the chat POST stream - and feed
+      <code>backgroundTaskStore</code> and <code>ciStore</code>, so a detached job keeps updating even
+      when its session is not the one on screen.</p>
+    <p>An approval is not a dead end. <code>sendApprovalContinuation</code> POSTs the accept or deny back
+      to <code>/api/chat</code> and feeds the continuation response straight back into
+      <code>readSSEStream</code>; the two functions are mutually recursive, which is why they share one
+      module. The <a href="arch-approval.html">ESC kill switch</a> stops the viewed session's stream and
+      every running subagent synchronously, and a <code>wasKillFinalized</code> guard stops the read loop
+      from resurrecting an answer after a kill.</p>
+
+    <h2 id="rendering-safety">Rendering safety</h2>
+    <p>All Markdown passes through <code class="path">src/utils/sanitizeHtml.ts</code> before it reaches
+      the DOM. <code>renderMarkdownSafe</code> is the single path that produces HTML for React's
+      raw-HTML escape hatch: <code>markdown -&gt; marked.parse -&gt; DOMPurify.sanitize</code>. DOMPurify
+      runs with <code>USE_PROFILES: { html: true }</code>, which permits standard elements but strips
+      <code>&lt;script&gt;</code>, <code>on*</code> handlers, and <code>javascript:</code> URLs.</p>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6Z"/></svg></span>
+      <div class="callout__body"><p>This matters because a <a href="tut-research.html">web_fetch</a> can
+        pull a prompt-injected page into the model's context. Without sanitization, a payload like
+        <code>&lt;img onerror&gt;</code> would run inside the SPA's same-origin context. A separate
+        <code>sanitizeHtml</code> helper covers already-HTML content that never went through marked, such
+        as a <code>.docx</code> converted for the document viewer. See the
+        <a href="ref-security.html">security model</a>.</p></div>
+    </div>
+
+    <h2 id="glue">The rest of the glue</h2>
+    <ul>
+      <li><b>Providers.</b> The app is wrapped with TanStack Query (for cached, non-streaming server
+        reads) and a theme provider that mirrors the light/dark toggle you see in these docs.</li>
+      <li><b>Validated API client.</b> The client in <code class="path">src/api/client.ts</code>
+        validates responses with Zod schemas, so a shape drift shows up as a clear error rather than a
+        silent <code>undefined</code> deep in a component.</li>
+      <li><b>Reference-counted recording.</b> The chat-input mic and the meeting recorder share a single
+        <code>MediaStream</code> through the recording controller, so two features can hold the microphone
+        without fighting over the device. See <a href="arch-transcription.html">Transcription &amp;
+        diarization</a>.</li>
+    </ul>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">src/components/layout/AppShell.tsx</code></dt><dd>Top-level layout and the startup sequence.</dd>
+      <dt><code class="path">src/components/layout/AppStatusBar.tsx</code></dt><dd>Persistent bottom status strip (WS-H): model, effort, permission mode, git, context meter, tokens/cost, background-task pill.</dd>
+      <dt><code class="path">src/stores/sessionRuntimes.ts</code></dt><dd>The per-session runtime registry: stores, event streams, LRU eviction; also routes <code>task_event</code>/<code>ci_progress</code>/<code>ci_result</code>.</dd>
+      <dt><code class="path">src/hooks/useChatStream.ts</code></dt><dd>The send path: bind the owning session, POST, commit atomically.</dd>
+      <dt><code class="path">src/hooks/chatStream/sseStream.ts</code></dt><dd>The SSE parser and the approval-continuation pump.</dd>
+      <dt><code class="path">src/utils/sanitizeHtml.ts</code></dt><dd>Safe Markdown rendering (marked + DOMPurify).</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-overview.html">System overview</a>,
+        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> (the backend this consumes),
+        <a href="arch-transcription.html">Transcription &amp; diarization</a>,
+        <a href="arch-agents.html">Sub-agents &amp; the event bus</a>, and
+        <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/frontend.js"></script>
+</body>
+</html>

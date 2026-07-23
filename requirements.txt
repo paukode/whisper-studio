@@ -1,0 +1,71 @@
+fastapi==0.136.3
+uvicorn[standard]==0.49.0
+websockets==16.0
+boto3==1.43.25
+numpy==2.4.6
+python-multipart==0.0.32
+Pillow==12.2.0
+markitdown[all]==0.1.6
+# Attachment extraction: scanned-PDF rasterization (BSD/Apache) + native macOS OCR (MIT).
+# ocrmac pulls in pyobjc (macOS-only); marker keeps the Linux CI runner installable.
+pypdfium2==5.9.0
+ocrmac==1.0.1; sys_platform == 'darwin'
+mcp==1.27.2
+tavily-python==0.7.25
+# OpenAI GPT models on Bedrock (GPT-5.5 / GPT-5.4): the Responses API on the
+# bedrock-mantle endpoint. The openai SDK targets
+# https://bedrock-mantle.{region}.api.aws/openai/v1 with a short-lived bearer
+# token minted from AWS credentials by aws-bedrock-token-generator.
+openai==2.44.0
+aws-bedrock-token-generator==1.1.0
+torch==2.11.0
+torchaudio==2.11.0
+setuptools==81.0.0
+webrtcvad-wheels==2.0.14
+pyflakes==3.4.0
+python-lsp-server==1.14.0
+nodeenv==1.10.0
+ripgrep==15.1.0
+APScheduler==3.11.2
+tzdata==2025.2
+mlx-whisper==0.4.3
+mlx==0.31.2
+parakeet-mlx==0.5.2
+speechbrain==1.1.0
+huggingface_hub==1.18.0
+
+# Live browser preview: the assistant-driven preview tools (preview_start/
+# click/screenshot/etc.) run a headless Chromium via Playwright. Pip ships the
+# package only, not the browser binary — setup.sh runs `playwright install
+# chromium` to fetch the build this pinned version expects (playwright 1.61.0 →
+# chromium v1228). Keep this pin and that download step in lockstep.
+playwright==1.61.0
+
+# Workspace semantic index + GraphRAG (local, offline). The embedder
+# (Qwen3-Embedding-0.6B) and GLiNER share one transformers runtime, pinned
+# together. Vectors search via sqlite-vec when the venv's Python can load SQLite
+# extensions (setup.sh builds the venv from Homebrew Python for this); otherwise
+# the store falls back to a brute-force numpy matrix, so this stays optional.
+gliner==0.2.27
+# GLiNER2 (fastino) — optional alternative on-device NER model, selectable per
+# workspace (ner_model="gliner2"). Reuses the same torch/transformers runtime;
+# only adds peft/accelerate. English-strong; the default stays gliner_large.
+gliner2==1.3.2
+transformers==5.6.2
+sqlite-vec==0.1.9
+# Graph community detection for the knowledge-graph view (Leiden coloring).
+# Optional at runtime: store._detect_communities falls back to networkx Louvain,
+# then to a single community, if these aren't importable.
+python-igraph==1.0.0
+leidenalg==0.12.0
+# 2D embedding projection for the "UMAP map" graph view. Optional at runtime:
+# store._project_2d falls back to scikit-learn PCA, then a circle layout.
+umap-learn==0.5.12
+
+# Dev / test
+pytest==9.0.3
+httpx==0.28.1
+# Lint + format for the Python side. Pinned so CI output is reproducible (ruff
+# ships new rules and occasional formatter changes between minor versions). Not
+# matched by the CI ML-strip grep, so it installs in the backend job.
+ruff==0.14.2

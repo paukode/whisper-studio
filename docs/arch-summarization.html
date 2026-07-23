@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transcript summarization &amp; condensation - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio keeps summarising multi-hour meetings: when a transcript is too big for the context window, the server condenses it with map-reduce - extracting per-chunk material and letting the main model reduce - instead of truncating or overflowing, in every model mode.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-summarization">
+    <h1>Transcript summarization &amp; condensation</h1>
+    <p class="subtitle">A multi-hour meeting still summarises cleanly because the server condenses an
+      oversized transcript with map-reduce before the model ever sees it - in cloud, local, and
+      OpenAI-on-Bedrock modes alike.</p>
+
+    <p>The three summary skills work by injecting the <em>whole</em> transcript into the model's context
+      so it can summarise in a single pass. That is the best-quality path while the transcript fits the
+      context window. A long session can outgrow it, and the old choices were both bad: silently truncate
+      (and answer from a partial transcript) or overflow the request (a hard failure). Condensation is the
+      third answer - shrink the transcript first, keeping the material that matters, so the one-pass
+      summary still runs.</p>
+
+    <p><b>Click a box</b> below to trace where the transcript flows. Notice the two-part shape: the map
+      step extracts raw material from each chunk, and the <em>reduce</em> half is the main chat model
+      writing the summary in its normal turn.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="summarization-diagram" class="diagram"></div>
+      <figcaption>Condensation is a size gate in front of a chunk-and-extract map step. The main chat
+        model does the reduce - it composes the summary from the concatenated extracts, or from the raw
+        transcript when it fits.</figcaption>
+    </figure>
+
+    <h2 id="skills">The summary skills</h2>
+    <p>Three folder skills turn a transcript into a written summary. None of them run anything
+      destructive - the assistant simply writes the summary. The server supplies the live or recorded
+      session transcript automatically, so these skills take no transcript text from you.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Skill</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>summarize_transcript</code></td><td>Summarises the session transcript in one of four fixed styles - <code>action_items</code>, <code>meeting_notes</code>, <code>key_points</code>, or <code>brief</code>. Takes no text input.</td></tr>
+        <tr><td><code>meeting_notes</code></td><td>A fuller, polished write-up: overview, decisions, an owner / action / deadline table, discussion points, blockers, and next steps. Also condenses a huge pasted notes argument the same way.</td></tr>
+        <tr><td><code>catch_up</code></td><td>A plain-language recap for someone who joined late, plus suggested follow-up and clarifying questions.</td></tr>
+      </tbody>
+    </table></div>
+    <p>See the <a href="tut-voice.html#summarize">Voice &amp; meetings</a> tutorial for how to invoke a
+      summary from a recording, and <a href="tut-skills.html">Skills</a> for how folder skills are
+      written and loaded.</p>
+
+    <h2 id="when">When condensation fires</h2>
+    <p>Condensation is self-gating. Below <code>threshold_chars</code> (default <b>600,000</b> characters,
+      about 150k tokens) the transcript passes through <b>unchanged</b>, with no map step and no LLM calls
+      at all - most conversations never touch the condenser. Only an oversized transcript is condensed,
+      and because that path blocks on real completions it runs off the event loop
+      (<code>run_in_executor</code>) rather than stalling the request.</p>
+    <p>The condensed result is cached in a bounded LRU (max 8 entries) keyed by the transcript hash plus
+      the config signature. The frontend re-sends the whole transcript on every turn, so identical input
+      is condensed once and reused. A growing live recording changes the hash and re-condenses
+      occasionally, which is intended.</p>
+
+    <h2 id="map-reduce">Map, then reduce</h2>
+    <p>The condenser is called once, in <code class="path">chat_endpoint</code>, right after the model is
+      resolved - the single point where the transcript enters the request. It feeds both the
+      "[Transcript so far]" block and the transcript handed to the summary tools, so the first turn never
+      overflows.</p>
+    <ol class="steps">
+      <li><h4>Split</h4><p>The transcript is cut into overlapping, line-anchored chunks by the same
+        structure-aware chunker the workspace index uses. The count is capped at <code>max_chunks</code>
+        (default 40): the split re-chunks coarser first, then hits a hard cap.</p></li>
+      <li><h4>Map: extract, don't summarise</h4><p>Each chunk gets one fast, non-streaming extraction
+        call. The prompt pulls out raw material - attendees and speakers, decisions, action items as
+        <code>owner|task|deadline</code>, discussion points, blockers, open questions, and uncertain
+        terms - it does not prose-summarise. Extract-not-summarise is the quality crux: owners,
+        decisions, and numbers must survive the shrink. Cloud fans the map calls out with bounded
+        concurrency to cut latency; local runs them serially, because a single on-device instance cannot
+        do concurrent completions.</p></li>
+      <li><h4>Reduce</h4><p>The extracts are concatenated in order and prefixed with a NOTE saying they
+        are per-segment extracts of reduced fidelity, then substituted for the raw transcript. The
+        <b>main chat model</b> composes the requested summary from that material in its normal turn -
+        that is the reduce half.</p></li>
+    </ol>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>The condenser never returns empty.</b> One failed chunk yields
+        <code>""</code> and is skipped; if every chunk fails, it falls back to a hard-truncated
+        transcript. The caller always gets usable text. The reduce itself is not a separate LLM call - it
+        happens inside the normal <a href="arch-chat-pipeline.html">chat pipeline and tool loop</a>.</p></div>
+    </div>
+
+    <h2 id="modes">Every model mode</h2>
+    <p>The map step follows the active model mode. In cloud mode it maps with <b>Haiku</b> (an Anthropic
+      invoke; if the configured Haiku key is missing it falls back to another Claude model, never to a
+      non-Claude id). In local mode it maps with the <b>resident, active on-device model</b>: the local
+      key resolver picks the current chat model, else the currently loaded model
+      (<code>loaded_key()</code>), else the first downloaded model, so a summary never evicts the chat
+      model to load a fixed one, and an <code>is_downloaded</code> guard means a summary never triggers a
+      silent multi-GB download.</p>
+    <p>The condensed transcript is now threaded into the tool loop on the local <b>and</b>
+      OpenAI-on-Bedrock paths too. Previously only the cloud path passed it through, so
+      <code>summarize_transcript</code> returned "No transcript available to summarize." in those modes at
+      any transcript size. See <a href="arch-backends.html">Model backends &amp; modes</a> and the
+      <a href="tut-model-modes.html">Model modes</a> tutorial.</p>
+
+    <h2 id="config">Configuration</h2>
+    <p>The top-level <code>map_reduce_summary</code> block tunes the condenser. All sizes are in
+      <b>characters</b> (roughly 4 characters per token), not tokens. A malformed numeric value coerces to
+      its default rather than crashing a chat turn.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Key</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>enabled</code></td><td><code>true</code></td><td>Master switch. When off, no condensation runs and even an oversized transcript passes through unchanged, which can overflow the request.</td></tr>
+        <tr><td><code>threshold_chars</code></td><td><code>600000</code></td><td>Condense only above this size; smaller transcripts pass through with no LLM calls.</td></tr>
+        <tr><td><code>chunk_chars</code></td><td><code>150000</code></td><td>Per-chunk size for the cloud window (about 37k tokens).</td></tr>
+        <tr><td><code>local_chunk_chars</code></td><td><code>40000</code></td><td>Per-chunk size for local (about 10k tokens, to fit the 16k local window).</td></tr>
+        <tr><td><code>overlap_chars</code></td><td><code>800</code></td><td>Overlap between adjacent chunks.</td></tr>
+        <tr><td><code>map_max_tokens</code></td><td><code>1200</code></td><td>Output cap per map extract.</td></tr>
+        <tr><td><code>max_chunks</code></td><td><code>40</code></td><td>Cap on the number of chunks; re-chunk coarser, then hard-cap.</td></tr>
+        <tr><td><code>max_output_chars</code></td><td><code>480000</code></td><td>Cap on the aggregate condensed output for cloud (about 120k tokens).</td></tr>
+        <tr><td><code>local_max_output_chars</code></td><td><code>24000</code></td><td>Tighter aggregate cap for the small local window.</td></tr>
+        <tr><td><code>engine</code></td><td><code>"auto"</code></td><td>"auto" follows the model mode (cloud to Haiku, local to local); or force <code>"haiku"</code> / <code>"local"</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>See the <a href="ref-settings.html#map-reduce">Settings reference</a> for every key and the
+      <a href="configuration.html">Configuration</a> guide for how <code>config.json</code> merges over
+      the defaults.</p>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/summarize/mapreduce.py</code></dt><dd>The condenser: <code>maybe_condense_transcript</code>, the chunk / map / reduce flow, the cache, the bounds, and the never-empty fallback.</dd>
+      <dt><code class="path">server/infrastructure/oneshot.py</code></dt><dd>The mode-aware one-shot completion, <code>resolve_map_engine</code>, and local-key resolution; raises on hard failure so the condenser can fall back explicitly.</dd>
+      <dt><code class="path">server/chat/routes.py</code></dt><dd>The single condense call site in <code>chat_endpoint</code>, right after the model is resolved.</dd>
+      <dt><code class="path">server/skills.py</code></dt><dd>The <code>_TRANSCRIPT_SKILLS</code> set, the transcript-arg fallback, and the secondary condense of a huge pasted notes / text argument.</dd>
+      <dt><code class="path">server/local/route.py</code>, <code class="path">server/local/stream.py</code></dt><dd>The local path: the condensed transcript threaded through <code>tool_ctx["transcript"]</code> into the tool loop.</dd>
+      <dt><code class="path">server/openai_bedrock/route.py</code>, <code class="path">server/openai_bedrock/stream.py</code></dt><dd>The OpenAI-on-Bedrock path: the same transcript threading into the tool loop.</dd>
+      <dt><code class="path">server/local/runtime.py</code></dt><dd>The on-device runtime: <code>loaded_key()</code>, <code>is_downloaded()</code>, and <code>complete()</code>.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-transcription.html">Transcription &amp; diarization</a>
+        for where the transcript comes from, <a href="arch-chat-pipeline.html">Chat pipeline &amp; tool loop</a>
+        for the turn that does the reduce, <a href="arch-backends.html">Model backends &amp; modes</a> for
+        how each mode maps, and the <a href="tut-voice.html">Voice &amp; meetings</a> tutorial.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/summarization.js"></script>
+</body>
+</html>

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MCP &amp; plugins - Whisper Studio Docs</title>
+  <meta name="description" content="Extend Whisper Studio: add tools from external MCP servers over stdio, and write opt-in Python plugins that register executors, routes, and pre-tool hooks.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-mcp-plugins">
+    <h1>MCP &amp; plugins</h1>
+    <p class="subtitle">Add tools from external MCP servers, and extend the backend with opt-in Python
+      plugins. Both paths hand the assistant new capabilities without touching the core code.</p>
+
+    <p>Whisper Studio ships with a large built-in tool pool, but you can grow that set two ways. An
+      <b>MCP server</b> connects an outside system and exposes its tools over the Model Context
+      Protocol. A <b>plugin</b> is a local Python file that registers new executors, API routes, or
+      pre-tool hooks inside the backend. Both are <b>opt-in</b>: configuring a source does nothing until
+      you explicitly enable it.</p>
+
+    <figure class="diagram-figure">
+      <div id="mcp-flow-diagram" class="diagram"></div>
+      <figcaption>Two ways to add tools. MCP servers run as external stdio child processes and toggle
+        per turn; plugins run in-process and load on restart. Click a box to trace where it goes.</figcaption>
+    </figure>
+
+    <h2 id="which-one">Which one do you want?</h2>
+    <p>Pick the mechanism by where the capability lives and who owns it.</p>
+    <div class="cols-2">
+      <div class="card">
+        <h3>MCP server</h3>
+        <p>A tool already exists as an MCP server (a database bridge, an issue tracker, a filesystem
+          gateway). You want to connect it without writing Python. It runs as its own process, isolated
+          from the backend, and you flip it on and off per conversation.</p>
+      </div>
+      <div class="card">
+        <h3>Plugin</h3>
+        <p>You want custom behaviour that lives inside the backend: a bespoke tool executor, a new REST
+          route, or a <code>PreToolUse</code> hook that inspects or blocks other tools. You are
+          comfortable writing a small Python file and restarting the server.</p>
+      </div>
+    </div>
+
+    <h2 id="mcp">Connecting an MCP server</h2>
+    <p>MCP (the <a href="https://modelcontextprotocol.io" rel="noopener">Model Context Protocol</a>) is a
+      standard way for a host application to talk to external tool providers. Whisper Studio speaks it
+      over <b>stdio</b>: each server you configure is launched as a child process, and the backend
+      exchanges JSON-RPC messages with it over standard input and output. Nothing goes over the network
+      unless the server itself reaches out.</p>
+
+    <ol class="steps">
+      <li>
+        <h4>Open Settings and add a server</h4>
+        <p>Click the gear icon, go to the <b>MCP</b> tab, and add a server entry. Each entry is a
+          command the backend runs to start the server (an executable plus its arguments), the same
+          shape you would put in an MCP client config elsewhere.</p>
+      </li>
+      <li>
+        <h4>Let the backend launch it</h4>
+        <p>On enable, the backend spawns the command as a stdio child process and performs the MCP
+          handshake to discover the tools and resources the server offers. If the command fails to
+          start, the server shows as unavailable rather than silently doing nothing.</p>
+      </li>
+      <li>
+        <h4>Toggle it per turn from the chat toolbar</h4>
+        <p>A configured MCP server does not force itself into every conversation. Enable or disable each
+          server for the current turn from the chat toolbar, so you only pay the token cost of its tool
+          schemas when you actually want it.</p>
+      </li>
+      <li>
+        <h4>Use its tools in chat</h4>
+        <p>Once enabled, the server's tools appear alongside the built-ins and the model can call them
+          during the tool loop, gated by the same <a href="tut-permissions.html">permission mode</a> as
+          everything else.</p>
+      </li>
+    </ol>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>MCP tools count against your per-turn token budget just like built-in
+        tools: every enabled tool's schema is sent to the model before your message. Enable only the
+        servers a conversation needs, and disable them again when you are done. See
+        <a href="ref-tools.html">Agent tools</a> for how tool schemas are billed.</p></div>
+    </div>
+
+    <h3 id="mcp-resources">Reading MCP resources</h3>
+    <p>Beyond tools, MCP servers can expose <b>resources</b> (documents, records, or other readable
+      content). Two built-in tools let the assistant work with them:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>list_mcp_resources</code></td><td>Lists the resources exposed by the connected MCP servers.</td></tr>
+        <tr><td><code>read_mcp_resource</code></td><td>Reads a specific resource so its content enters the conversation.</td></tr>
+      </tbody>
+    </table></div>
+    <p>You do not call these yourself. Ask a question that needs the data ("what tables does the
+      connected database expose?") and the model uses <code>list_mcp_resources</code> and then
+      <code>read_mcp_resource</code> to pull in what it needs.</p>
+
+    <h2 id="plugins">Writing a plugin</h2>
+    <p>Plugins live in <code class="path">plugins/</code> at the repository root. A plugin is a single
+      Python file that declares a version and a description, then exposes a <code>register()</code>
+      function the backend calls at startup.</p>
+
+    <div class="code-block"><pre><code>__version__ = '1.0.0'
+__description__ = 'My custom plugin'
+
+def register(app, executor_registry):
+    # Register a new executor tool
+    def my_tool(tool_input, transcript, attachments):
+        return 'Hello from plugin!'
+    executor_registry['my_tool'] = my_tool</code></pre></div>
+
+    <p><code>register()</code> receives two handles:</p>
+    <dl class="spec">
+      <dt><code>app</code></dt><dd>The FastAPI application, so a plugin can mount custom REST routes.</dd>
+      <dt><code>executor_registry</code></dt><dd>The tool-executor mapping. Add a callable under a tool name and the assistant can call that tool.</dd>
+    </dl>
+
+    <p>An executor callable takes <code>(tool_input, transcript, attachments)</code> and returns the
+      result the model sees. Because plugins run in-process, they can also import backend modules, for
+      example to register a hook (covered below).</p>
+
+    <h3 id="enable-plugins">Enabling a plugin</h3>
+    <p>This is the important part, and it is deliberately not automatic.</p>
+    <ol class="steps">
+      <li>
+        <h4>Drop the file in</h4>
+        <p>Place your <code class="path">plugins/my_plugin.py</code> in the folder. On its own, this does
+          nothing. The file is not imported and its <code>register()</code> is never called.</p>
+      </li>
+      <li>
+        <h4>Enable it in Settings</h4>
+        <p>Open Settings, go to the <b>Plugins</b> tab, and turn your plugin on. Enablement is per
+          plugin, so you choose exactly which files load.</p>
+      </li>
+      <li>
+        <h4>Restart the server</h4>
+        <p>Backend modules are imported once at startup, so a newly enabled plugin loads on the next
+          run. Stop the app (<kbd>Ctrl</kbd>+<kbd>C</kbd>) and start it again with
+          <code>bash setup.sh</code>. The same applies to edits: changing a loaded plugin needs a
+          restart to take effect.</p>
+      </li>
+    </ol>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Why opt-in?</b> A plugin runs arbitrary Python inside the backend
+        with the same privileges as the app. If dropping a <code>.py</code> into
+        <code class="path">plugins/</code> auto-executed it, a drive-by file (pulled in by a dependency,
+        a clone, or a careless copy) would run code the moment the server started. Requiring an explicit
+        enable plus a restart means nothing runs that you did not choose to run. See
+        <a href="arch-sandbox.html">Sandbox &amp; security</a> and the
+        <a href="ref-security.html">security model</a>.</p></div>
+    </div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Migrating from the old opt-out behaviour is lossless: anything already
+        loaded stays loaded, and only <i>new</i> files stop auto-executing.</p></div>
+    </div>
+
+    <h3 id="pre-tool-hooks">Pre-tool hooks: inspecting and blocking calls</h3>
+    <p>Plugins are not limited to adding tools. They can also intercept every tool call before it runs.
+      A plugin registers a <code>PreToolUse</code> hook by importing the hook registry and calling
+      <code>register_pre_tool_hook()</code> from inside <code>register()</code>:</p>
+
+    <div class="code-block"><pre><code>def register(app, executor_registry):
+    from server.infrastructure.plugin_hooks import register_pre_tool_hook
+    register_pre_tool_hook(check_security)</code></pre></div>
+
+    <p>A hook is an async function <code>fn(tool_name, tool_input)</code>. Return <code>None</code> to
+      allow the call. Return a dict such as <code>{"reason": "...", "findings": [...]}</code> to block
+      it: the tool never runs, and the reason is surfaced back to the model. Hooks run in order and the
+      first block wins.</p>
+
+    <p>The bundled <code class="path">plugins/security_checks.py</code> is a working example. It hooks
+      <code>ws_write_file</code>, <code>ws_edit_file</code>, and <code>ws_create_file</code>, scans the
+      content being written for risky patterns (an <code>eval(</code> call, an <code>os.system(</code>
+      shell call, a hardcoded-looking secret), and blocks the write with a summary of what it found. It
+      is disabled by default like any other plugin, so enabling it is a one-line demonstration of the
+      whole flow.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Read <code class="path">plugins/security_checks.py</code> before
+        writing your own. It shows the full shape: module <code>__version__</code> and
+        <code>__description__</code>, a <code>register()</code> entry point, and an async hook that
+        returns a block dict. Copy it as a starting point.</p></div>
+    </div>
+
+    <h2 id="mcp-vs-plugins">MCP servers versus plugins, side by side</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th></th><th>MCP server</th><th>Plugin</th></tr></thead>
+      <tbody>
+        <tr><td>Where it runs</td><td>External child process</td><td>In-process, inside the backend</td></tr>
+        <tr><td>Transport</td><td>stdio (JSON-RPC)</td><td>Direct Python calls</td></tr>
+        <tr><td>Language</td><td>Any (it is a separate program)</td><td>Python</td></tr>
+        <tr><td>How you add it</td><td>Command entry in Settings &gt; MCP</td><td>File in <code class="path">plugins/</code></td></tr>
+        <tr><td>How you enable it</td><td>Per turn from the chat toolbar</td><td>Settings &gt; Plugins, then restart</td></tr>
+        <tr><td>Can block other tools?</td><td>No</td><td>Yes, via a <code>PreToolUse</code> hook</td></tr>
+        <tr><td>Adds REST routes?</td><td>No</td><td>Yes, through the <code>app</code> handle</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+    <ul>
+      <li><b>MCP tools are not showing up.</b> Confirm the server is enabled for the current turn in the
+        chat toolbar, not just configured. A configured-but-disabled server contributes nothing.</li>
+      <li><b>The MCP server shows unavailable.</b> The launch command failed. Check that the executable
+        and arguments are correct and runnable from the same shell that started Whisper Studio.</li>
+      <li><b>My plugin does not load.</b> Enablement plus a restart are both required. Enabling in
+        Settings without restarting, or restarting without enabling, both leave it dormant. Watch the
+        server logs at startup for the "Plugin hook registered" line if it installs a hook.</li>
+      <li><b>My plugin edit did not take.</b> Loaded plugins are imported once at startup. Restart the
+        server after editing the file.</li>
+    </ul>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-skills.html">Skills</a> for Markdown-based
+        capabilities, <a href="arch-tools.html">Tool dispatch &amp; executors</a> for how the registry
+        routes a call, and <a href="arch-sandbox.html">Sandbox &amp; security</a> for the boundaries
+        that make opt-in the safe default.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/mcp-flow.js"></script>
+</body>
+</html>

@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat &amp; tool orchestration - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio streams a chat turn: building the prompt, routing the model, the tool loop, approvals, SSE events, compaction, and persistence.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-chat-pipeline">
+    <h1>Chat &amp; tool orchestration</h1>
+    <p class="subtitle">This is the component every other subsystem plugs into. A single streaming
+      endpoint builds the prompt, calls the model, and drives an agentic tool loop - emitting Server-Sent
+      Events the whole way.</p>
+
+    <p>The entire turn is one coherent state machine in <code class="path">server/chat/routes.py</code>.
+      <b>Click a box</b> below to trace a path - for example, click <em>Streaming loop</em> to see
+      everything a single round can reach.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="chat-pipeline-diagram" class="diagram"></div>
+      <figcaption>One chat turn, from request to persisted message. The
+        <em>tool_result</em> edge back into the loop is the agentic cycle.</figcaption>
+    </figure>
+
+    <h2 id="the-request">The request</h2>
+    <p>A turn is a <code>POST /api/chat</code> whose body carries the <code>question</code>, prior
+      <code>history</code>, the selected <code>model</code> and <code>effort_level</code>, the
+      <code>session_id</code>, and any <code>attachment_ids</code>. The response is an SSE stream, not
+      a single JSON body - tokens and tool activity arrive as they happen. An approval continuation
+      re-enters the same endpoint with an <code>approved_tool_result</code> instead of a fresh
+      question.</p>
+
+    <h2 id="building-the-turn">Building the turn</h2>
+    <p>Before the model is ever called, the endpoint assembles everything the model will read:</p>
+    <ul>
+      <li><b>Latch the session config.</b> On the first turn, the model, effort level, and related
+        settings are snapshotted so mid-session Settings changes never disrupt an in-flight conversation.</li>
+      <li><b>Assemble the system prompt.</b> Base rules, the workspace <code>WHISPER.md</code>,
+        selected <a href="arch-memory.html">memories</a>, and per-session memory are composed with
+        cache-aligned static/dynamic splits (see <a href="ref-settings.html">prompt caching</a>).
+        A third, <em>moving</em> cache checkpoint is placed on the last message each round
+        (<code>annotate_messages_cache</code>, <code class="path">server/chat/caching.py</code>), so
+        the conversation history caches round-over-round instead of being re-billed as uncached input.</li>
+      <li><b>Resolve <code>@file</code> mentions</b> inline into the user message.</li>
+      <li><b>Expand attachments</b> - documents are capped (around 150K characters) and images become
+        vision blocks. See <a href="arch-extraction.html">attachment extraction</a>.</li>
+      <li><b>Index grounding.</b> If the user selected workspace indexes, relevant passages are
+        retrieved and injected, and a "grounding" chip is surfaced over SSE. See
+        <a href="arch-index.html">Index / GraphRAG</a>.</li>
+      <li><b>Condense an oversized transcript.</b> A transcript above a size threshold is condensed
+        to per-chunk extracts before it enters the prompt - both the transcript block and the
+        transcript handed to the summary skills, so the prompt never overflows. It self-gates: below
+        the threshold the transcript passes through unchanged. See
+        <a href="arch-summarization.html#map-reduce">Transcript summarization</a>.</li>
+    </ul>
+
+    <h2 id="model-routing">Model routing</h2>
+    <p>Model selection branches <em>before</em> the main loop, because the on-device and OpenAI paths
+      are self-contained:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Model</th><th>Path</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Claude (Haiku / Sonnet / Opus)</td><td>Main Anthropic path</td><td>Bedrock streaming + the full tool loop below.</td></tr>
+        <tr><td>GPT-5.x</td><td><code class="path">server/openai_bedrock/</code></td><td>OpenAI request/response format over Bedrock; returns early.</td></tr>
+        <tr><td>On-device Gemma</td><td><code class="path">server/local/</code></td><td>Runs locally on a dedicated executor thread; returns early.</td></tr>
+      </tbody>
+    </table></div>
+    <p>See <a href="arch-backends.html">Model backends &amp; modes</a> for the full picture.</p>
+
+    <h2 id="the-streaming-loop">The streaming loop</h2>
+    <p>The Anthropic path enters a loop of up to <b>50 rounds</b>. Each round:</p>
+    <ol class="steps">
+      <li><h4>Check the budget</h4><p>If the session or daily <a href="arch-costs.html">cost cap</a>
+        is exceeded, emit an error and finish.</p></li>
+      <li><h4>Invoke the model, streaming</h4><p><code>invoke_model_with_response_stream</code> is
+        wrapped in <code class="path">server/infrastructure/bedrock_retry.py</code> - exponential
+        backoff on throttling, and reactive compaction if the prompt is too long.</p></li>
+      <li><h4>Parse content blocks</h4><p>Chunks are parsed into <code>text</code>,
+        <code>thinking</code>, and <code>tool_use</code> blocks and streamed onward.</p></li>
+      <li><h4>Act on the stop reason</h4><p><code>tool_use</code> runs the tools, appends the
+        results, and loops again. Any other stop reason (such as <code>end_turn</code>) no longer
+        ends the turn on its own: the non-tool-use branch first runs the <b>completion gate</b>
+        (<code>run_completion_gate</code>, <code class="path">server/goals/gate.py</code>). Phase 1
+        always runs the WS-I Stop hooks; phase 2 runs a Haiku goal evaluator when the
+        <code>goal_loop</code> flag is on and the session has an active goal. A Stop-hook block or an
+        unmet goal re-injects <code>[completion gate]</code> feedback as a user message and loops
+        again, bounded by <code>goal_max_consecutive_blocks</code> (default 8). See
+        <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</p></li>
+    </ol>
+
+    <h2 id="executing-tools">Executing tools</h2>
+    <p>When the model asks for tools, <code>execute_tool_batch()</code>
+      (<code class="path">server/tool_executor.py</code>) runs them safely:</p>
+    <ul>
+      <li><b>Partition for parallelism.</b> Consecutive read-safe tools run concurrently; each write
+        tool runs on its own. So <code>[read, read, write, read]</code> becomes
+        <code>[[read, read], [write], [read]]</code>.</li>
+      <li><b>Permission checks.</b> Every tool is evaluated against the current
+        <a href="arch-approval.html">permission mode</a> and per-tool rules - allow, ask, or deny.</li>
+      <li><b>Approval gate.</b> A tool that needs consent issues a nonce, pauses the turn (state is
+        stashed in <code>_paused_sessions</code>), and waits for the client to confirm.</li>
+      <li><b>Hooks.</b> Hooks are a blocking subsystem (<code class="path">server/hooks/</code>):
+        <code>run_hooks(event, payload)</code> fires <code>PreToolUse</code>, which can
+        <em>deny</em> or <em>rewrite</em> a call, and <code>PostToolUse</code>, which can inject
+        <code>additionalContext</code>. A parallel <code>check_stop_hooks()</code> gate
+        (<code class="path">server/hooks/engine.py</code>) runs at end-of-turn across chat,
+        subagents, and cron — see <a href="arch-hooks.html">Blocking hooks</a>.</li>
+    </ul>
+    <p>Dispatch itself is a pure mapping in <code class="path">server/tool_router.py</code>; the
+      implementations live in <code class="path">server/executors/</code>. See
+      <a href="arch-tools.html">Tool dispatch &amp; executors</a>.</p>
+
+    <h2 id="streaming-back">Streaming back to the client</h2>
+    <p>Throughout the turn, the endpoint yields typed SSE frames the SPA folds into the UI:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Event</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>text</code></td><td>A streamed text chunk.</td></tr>
+        <tr><td><code>thinking</code></td><td>An adaptive thinking block (Opus models).</td></tr>
+        <tr><td><code>skill</code> / <code>skill_input</code></td><td>A tool call started, with its parsed input.</td></tr>
+        <tr><td><code>usage</code></td><td>Token counters, cost estimate, and forecast.</td></tr>
+        <tr><td><code>team_progress</code></td><td>Sub-agent and team events (spawn, progress, completion).</td></tr>
+        <tr><td><code>grounding</code></td><td>Index-search metadata (folders searched, passages retrieved).</td></tr>
+        <tr><td><code>user_question</code></td><td>The turn paused on an approval or an <code>ask_user_question</code>.</td></tr>
+        <tr><td><code>[DONE]</code></td><td>The stream is complete.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="compaction-persistence">Compaction &amp; persistence</h2>
+    <p>If a prompt grows too long mid-stream, <b>reactive compaction</b> drops the oldest message
+      pairs (or summarizes them via Haiku) and retries - so a long agentic session degrades gracefully
+      instead of erroring. When the turn ends, the assistant message is appended and the session is
+      UPSERTed into SQLite under a per-session lock, so background <code>cron_event</code> rows are
+      never clobbered. Those cron rows render in the chat but are filtered by
+      <code>visible_chat_history</code> before the next prompt, so they never inflate the token bill.
+      See <a href="arch-persistence.html">Persistence</a> and <a href="arch-cron.html">Cron</a>.</p>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/chat/routes.py</code></dt><dd>The SSE streaming endpoint and turn state machine.</dd>
+      <dt><code class="path">server/chat/tool_pool.py</code></dt><dd>Assembles the per-turn tool catalogue (mode filter + dedup); with the <code>progressive_tools</code> flag it splits the catalogue into a core prefix plus a deferred, session-activated index.</dd>
+      <dt><code class="path">server/chat/caching.py</code></dt><dd>System-prompt resolution with cache-aligned splits, plus the moving <code>annotate_messages_cache</code> checkpoint on conversation history.</dd>
+      <dt><code class="path">server/hooks/</code></dt><dd>The blocking hook engine: <code>run_hooks</code> (Pre/PostToolUse) and the <code>check_stop_hooks</code> end-of-turn gate.</dd>
+      <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate</code>: Stop hooks plus the optional goal evaluator that can refuse to end the turn.</dd>
+      <dt><code class="path">server/chat/compaction.py</code></dt><dd>History compaction when the prompt is too long.</dd>
+      <dt><code class="path">server/tool_router.py</code></dt><dd>Pure tool dispatch.</dd>
+      <dt><code class="path">server/tool_executor.py</code></dt><dd>Batching, permissions, approvals, hooks, result shaping.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-tools.html">Tool dispatch &amp; executors</a>,
+        <a href="arch-agents.html">Sub-agents &amp; the event bus</a>,
+        <a href="arch-approval.html">Approval &amp; permissions</a>,
+        <a href="arch-summarization.html">Transcript summarization &amp; condensation</a>, and the step-by-step
+        <a href="arch-chat-turn.html">Anatomy of a chat turn</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/chat-pipeline.js"></script>
+</body>
+</html>

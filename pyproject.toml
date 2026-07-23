@@ -1,0 +1,50 @@
+[tool.ruff]
+# The app's runtime floor is Python 3.10 (README, setup.sh); CI runs on 3.13.
+# pyupgrade (UP) rewrites code up to this target, so pin it to the SUPPORT FLOOR,
+# not the CI version, to avoid emitting 3.11+/3.12-only syntax that would break
+# users on 3.10/3.11.
+target-version = "py310"
+# Match the frontend's Prettier printWidth (.prettierrc) for cross-language parity.
+line-length = 100
+
+# skills/ holds vendored third-party skill scripts, not first-party app code.
+# venv, data, storage, models, node_modules and static/dist are gitignored and
+# excluded automatically (ruff respects .gitignore).
+extend-exclude = ["skills"]
+
+[tool.ruff.lint]
+# F  = pyflakes (supersedes the standalone pyflakes dep for project linting)
+# E/W = pycodestyle   I = import sorting (isort)
+# UP = pyupgrade      B = flake8-bugbear
+select = ["F", "E", "W", "I", "UP", "B"]
+# `ruff format` owns line width (line-length above). E501's residue is only lines
+# the formatter can't break (long string literals, URLs, comments), so enforcing
+# it in the linter too would just add noqa noise. `ruff format --check` in CI is
+# the real width gate.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py files intentionally re-export symbols they don't use locally
+# (tests/test_package_exports.py asserts these stay intact), and several build a
+# router/executor singleton before importing submodules, so imports aren't all at
+# the top of the file.
+"**/__init__.py" = ["F401", "E402"]
+# Test modules keep fixtures/imports that ruff reads as unused.
+"tests/**" = ["F401"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI puts callables in argument defaults by design (Depends/Query/File/...);
+# without this, B008 (function-call-in-default-argument) fires on every route.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Body",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Cookie",
+]
+
+[tool.ruff.format]
+quote-style = "double"

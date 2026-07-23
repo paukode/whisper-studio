@@ -1,0 +1,6 @@
+# Commits listed here are skipped by `git blame` (GitHub honors this file
+# automatically). Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: apply ruff format (repo-wide, mechanical reformat)
+333b92ecbf7d90ca3831a7831291a38f5239313c

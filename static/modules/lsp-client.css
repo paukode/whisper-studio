@@ -1,0 +1,99 @@
+/* LSP Client — Status indicators and diagnostics styling */
+
+/* Status bar LSP indicator */
+.ws-lsp-status {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: var(--fs-caption); cursor: pointer; padding: 0 4px;
+    border-radius: 3px;
+}
+.ws-lsp-status:hover { background: var(--bg-secondary); }
+
+.ws-lsp-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-muted);
+}
+.ws-lsp-dot.connected { background: #27ae60; }
+.ws-lsp-dot.connecting { background: #f39c12; animation: lsp-pulse 1s infinite; }
+.ws-lsp-dot.error { background: #e74c3c; }
+
+@keyframes lsp-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* Diagnostics count in status bar */
+.ws-diagnostics-count {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: var(--fs-caption); padding: 0 4px; cursor: pointer;
+}
+.ws-diagnostics-count:hover { background: var(--bg-secondary); border-radius: 3px; }
+
+.ws-diag-errors {
+    display: inline-flex; align-items: center; gap: 2px;
+    color: #e74c3c;
+}
+.ws-diag-warnings {
+    display: inline-flex; align-items: center; gap: 2px;
+    color: #f39c12;
+}
+.ws-diag-icon {
+    font-size: var(--fs-caption); line-height: 1;
+}
+
+/* Tab diagnostic badge */
+.ws-tab-diag-badge {
+    font-size: var(--fs-caption); font-weight: 700;
+    padding: 0 4px; border-radius: 8px;
+    line-height: 14px; margin-left: 2px;
+}
+.ws-tab-diag-badge.errors {
+    background: #e74c3c; color: #fff;
+}
+.ws-tab-diag-badge.warnings {
+    background: #f39c12; color: #000;
+}
+
+/* Problems panel (bottom of editor) */
+.ws-problems-panel {
+    border-top: 1px solid var(--border);
+    background: var(--bg-secondary);
+    font-size: var(--fs-small);
+    max-height: 200px;
+    overflow-y: auto;
+}
+.ws-problems-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 8px;
+    font-weight: 600; font-size: var(--fs-caption); text-transform: uppercase;
+    color: var(--text-muted); letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+}
+.ws-problems-header:hover { background: var(--bg-primary); }
+
+.ws-problem-row {
+    display: flex; align-items: flex-start; gap: 6px;
+    padding: 3px 8px 3px 12px;
+    cursor: pointer;
+    color: var(--text-primary);
+}
+.ws-problem-row:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+
+.ws-problem-icon {
+    flex-shrink: 0; width: 14px; text-align: center; font-size: var(--fs-caption);
+    line-height: 18px;
+}
+.ws-problem-icon.error { color: #e74c3c; }
+.ws-problem-icon.warning { color: #f39c12; }
+.ws-problem-icon.info { color: #3498db; }
+.ws-problem-icon.hint { color: var(--text-muted); }
+
+.ws-problem-message { flex: 1; line-height: 18px; }
+.ws-problem-source {
+    color: var(--text-muted); font-size: var(--fs-caption); margin-left: 4px;
+}
+.ws-problem-location {
+    color: var(--text-muted); font-size: var(--fs-caption); white-space: nowrap;
+    margin-left: auto; padding-left: 8px;
+}

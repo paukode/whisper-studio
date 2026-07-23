@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Anatomy of a chat turn - Whisper Studio Docs</title>
+  <meta name="description" content="The end-to-end sequence of one Whisper Studio chat turn, from keystroke to persisted message: POST, prompt build, Bedrock stream, the tool loop, approvals, [DONE], and save.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-chat-turn">
+    <h1>Anatomy of a chat turn</h1>
+    <p class="subtitle">One request, followed all the way through: from the keystroke that starts it to
+      the SQLite row that outlives it. This is the sequence-level companion to
+      <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>, which covers the same
+      machinery component by component.</p>
+
+    <p>Where the pipeline page describes the parts, this page describes the <em>order</em>. Read it
+      top to bottom and you have walked a complete turn. <b>Click a box</b> in the diagram to trace a
+      path, for example click <em>tool_use?</em> to see the branch that leads into the tool loop and
+      back.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="chat-turn-diagram" class="diagram"></div>
+      <figcaption>The main pipeline runs left to right along the top row. The tool branch drops down,
+        and <em>tool_result</em> loops back into the Bedrock invoke, which is the agentic cycle. The
+        turn ends at <em>[DONE]</em>, then the session is persisted.</figcaption>
+    </figure>
+
+    <h2 id="the-sequence">The sequence at a glance</h2>
+    <p>A turn is a single <code>POST /api/chat</code> whose response is a long-lived SSE stream, not a
+      one-shot JSON body. Tokens, tool activity, and control events all arrive over that one
+      connection as they happen. The high-level shape is:</p>
+    <ol class="steps">
+      <li><h4>The user types and clicks Send</h4><p>The SPA adds the user bubble, marks the session
+        streaming, and opens a <code>fetch</code> to <code>/api/chat</code>.</p></li>
+      <li><h4>The server builds the turn</h4><p>It filters the history, assembles the system prompt,
+        and calls Bedrock as a streaming upstream.</p></li>
+      <li><h4>Chunks stream back</h4><p>Text becomes tokens; a <code>tool_use</code> stop reason
+        enters the tool loop and continues.</p></li>
+      <li><h4>The turn ends and persists</h4><p><code>[DONE]</code> closes the stream, the SPA
+        commits the assistant message, and PUTs the session to SQLite.</p></li>
+    </ol>
+    <p>The rest of this page expands each of those into what actually runs.</p>
+
+    <h2 id="the-request">1. The request leaves the browser</h2>
+    <p>When you press Send, <code class="path">src/hooks/useChatStream.ts</code> binds the owning
+      session (so a mid-stream tab switch never redirects where the answer lands), appends your
+      message, sets the streaming flag, and issues the POST. The JSON body carries everything the
+      server needs to construct the turn:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Field</th><th>What it is</th></tr></thead>
+      <tbody>
+        <tr><td><code>question</code></td><td>The text you typed (a continuation sends an empty string).</td></tr>
+        <tr><td><code>history</code></td><td>Prior user/assistant turns, capped to the last 40 entries. UI-only rows are already filtered client-side.</td></tr>
+        <tr><td><code>model</code> / <code>effort_level</code> / <code>verbosity</code></td><td>The selected model and its response controls.</td></tr>
+        <tr><td><code>session_id</code></td><td>Which conversation this turn belongs to.</td></tr>
+        <tr><td><code>attachment_ids</code></td><td>Any files dropped into the composer, resolved server-side into the prompt.</td></tr>
+        <tr><td><code>approved_tool_result</code></td><td>Present only on an approval continuation. Its presence is what makes the server resume a paused turn instead of starting a fresh one.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
+      <div class="callout__body"><p>Only one stream may be in flight per session. A re-send aborts
+        this session's stream but leaves other sessions streaming; the server also returns
+        <code>409</code> if a session already has a live stream (a stale slot auto-reclaims after a
+        short timeout). Up to three sessions can be active at once. See
+        <a href="arch-frontend.html">Frontend architecture</a>.</p></div>
+    </div>
+
+    <h2 id="building-the-turn">2. The server builds the turn</h2>
+    <p>Inside <code>chat_endpoint()</code> (<code class="path">server/chat/routes.py</code>), before
+      the model is ever called, the endpoint prepares the two inputs the model reads: the message
+      array and the system prompt.</p>
+    <ul>
+      <li><b>Latch the session config.</b> <code>latch_session()</code> freezes the model, effort
+        level, and related settings on the first turn, so a mid-conversation Settings change never
+        disrupts an in-flight session.</li>
+      <li><b>Filter the history.</b> <code>visible_chat_history()</code>
+        (<code class="path">server/infrastructure/sessions.py</code>) drops UI-only rows, most
+        importantly <code>cron_event</code> rows, before the Bedrock <code>messages</code> array is
+        built. Those rows persist on disk and render in the chat, but they never enter the model's
+        context.</li>
+      <li><b>Assemble the system prompt.</b> <code>resolve_system_prompt()</code> composes base
+        rules, the workspace <code>WHISPER.md</code>, selected
+        <a href="arch-memory.html">memories</a>, and per-session memory, split into cache-aligned
+        static and dynamic parts when prompt caching is on.</li>
+      <li><b>Resolve <code>@file</code> mentions and attachments</b> inline into the user message, and
+        add <a href="arch-index.html">index grounding</a> if the session selected workspace indexes.</li>
+    </ul>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b><code>visible_chat_history</code> is not a security boundary.</b>
+        It is a token-cost and prompt-cleanliness control. A cron firing every ten seconds would grow
+        the prompt indefinitely without it, so cron output is stripped before the prompt is built, not
+        for safety but for economy. The client also filters these rows before sending, so the server
+        filter is defence-in-depth against wasted wire bytes, not against an attacker.</p></div>
+    </div>
+
+    <h2 id="the-stream">3. Bedrock streams, the loop turns</h2>
+    <p>The Anthropic path calls <code>invoke_model_with_response_stream</code> and reads the upstream
+      SSE. Content blocks are parsed as they arrive, and each maps to an event the client folds into
+      the UI. Two block types drive the turn:</p>
+    <ul>
+      <li><b>A <code>text</code> chunk</b> is yielded straight to the client as a token. The SPA
+        appends it to the streaming bubble in real time (<code class="path">src/hooks/chatStream/sseStream.ts</code>).</li>
+      <li><b>A <code>tool_use</code> block</b> means the model wants to act. The endpoint collects the
+        tool calls, dispatches them, and feeds the results back so the model can continue. This is the
+        loop-back edge in the diagram.</li>
+    </ul>
+    <p>The turn keeps looping (invoke, stream, act on the stop reason, invoke again) until the model
+      stops asking for tools <em>and</em> the completion gate lets it end. On <code>end_turn</code>
+      the endpoint first runs <code>run_completion_gate</code>
+      (<code class="path">server/goals/gate.py</code>): the WS-I Stop hooks always run, and a WS-E
+      Haiku goal evaluator runs when the <code>goal_loop</code> flag is on with an active goal. If a
+      Stop hook blocks or the goal is judged not achieved, the gate injects
+      <code>[completion gate]</code> feedback and the loop continues; only an unblocked gate reaches
+      <code>[DONE]</code>, bounded by <code>goal_max_consecutive_blocks</code> (default 8). For the
+      full round-by-round state machine (budget checks, retries, reactive compaction, parallel
+      batching), see <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.</p>
+
+    <h3 id="sse-events">What the client sees on the wire</h3>
+    <p>The SPA switches on a typed SSE payload for each frame. A representative slice:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Event</th><th>Effect in the UI</th></tr></thead>
+      <tbody>
+        <tr><td><code>text</code></td><td>Appends a token to the live assistant bubble.</td></tr>
+        <tr><td><code>thinking</code></td><td>Streams an adaptive-thinking block (shown collapsed).</td></tr>
+        <tr><td><code>skill</code> / <code>skill_input</code> / <code>skill_result</code></td><td>A tool call started, its parsed input, and its output, rendered as a live tool trace.</td></tr>
+        <tr><td><code>approval_request</code></td><td>Raises the approval card and pauses on your consent (see below).</td></tr>
+        <tr><td><code>usage</code></td><td>Updates the token counters and cost estimate.</td></tr>
+        <tr><td><code>[DONE]</code></td><td>Signals the stream is complete.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="the-tool-branch">4. The tool branch: two ways to run</h2>
+    <p>When the model asks for a tool, one of two paths runs, and which one depends entirely on the
+      current <a href="arch-approval.html">permission mode</a> and the tool's risk.</p>
+
+    <h3 id="allow-listed">Allow-listed: run it now</h3>
+    <p>A read-safe or already-permitted tool runs immediately through its executor
+      (<code class="path">server/executors/</code>), gated by
+      <a href="arch-sandbox.html">the sandbox</a> wherever it touches the shell. Its
+      <code>tool_result</code> is appended to the messages and the loop invokes Bedrock again. No user
+      interaction, no pause.</p>
+
+    <h3 id="approval-gate">Needs consent: pause on a nonce</h3>
+    <p>A tool that requires approval takes the guarded path:</p>
+    <ol class="steps">
+      <li><h4>Pause and stash state</h4><p>The turn's continuation state is stored in
+        <code>_paused_sessions[session_id]</code> (in-process), keyed so the exact tool call can be
+        resumed later.</p></li>
+      <li><h4>Emit an approval request</h4><p>The server issues a server-held nonce and yields an
+        <code>approval_request</code> event describing the action, category, and preview.</p></li>
+      <li><h4>Wait for your decision</h4><p>The approval card appears. When you click Approve, the SPA
+        calls <code>POST /api/approval/execute</code>
+        (<code class="path">server/approval/router.py</code>) with the action and payload; the server
+        validates and runs it, then reports a truthful outcome.</p></li>
+      <li><h4>Resume the turn</h4><p>The SPA re-enters <code>/api/chat</code> with an
+        <code>approved_tool_result</code> carrying the real result. The server pops the paused state,
+        fills in that <code>tool_use_id</code>, and the loop continues as if the tool had run inline.</p></li>
+    </ol>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6Z"/><path d="m9 12 2 2 4-4"/></svg></span>
+      <div class="callout__body"><p><b>The approval path is the only route that bypasses command
+        validation, and it is gated by a nonce the server holds.</b> The client cannot fabricate
+        consent: there is no client-asserted "approved" boolean the endpoint trusts. The nonce lives
+        on the server, so a real, server-mediated Approve is the single legitimate way past
+        <code>_validate_command</code>. See <a href="arch-approval.html">Approval &amp; permissions</a>
+        and the <a href="ref-security.html">security model</a>.</p></div>
+    </div>
+
+    <h2 id="ending-persisting">5. The turn ends and is persisted</h2>
+    <p>When the model returns <code>end_turn</code> <em>and the completion gate allows the turn to
+      end</em>, the endpoint emits <code>[DONE]</code> and the SSE
+      connection closes. On the client, <code>readSSEStream</code> returns its accumulated result and
+      the hook commits the final assistant message <em>atomically</em> with clearing the streaming
+      flag, so there is never a frame where neither the streaming bubble nor the final message is on
+      screen.</p>
+    <p>The SPA then persists the conversation with
+      <code>PUT /api/sessions/&lt;session_id&gt;</code> (<code class="path">src/api/sessions.ts</code>),
+      which the server turns into a SQLite UPSERT of <code>chat_history</code>. That save runs under a
+      per-session <code>asyncio</code> lock with merge logic, so background <code>cron_event</code>
+      rows appended by the daemon between renders are never clobbered by the frontend's write. See
+      <a href="arch-persistence.html">Persistence</a> and <a href="arch-cron.html">Cron</a>.</p>
+
+    <h3 id="not-end-turn">Turns that do not simply end</h3>
+    <p>Three common variations do not reach the plain <code>end_turn</code> path:</p>
+    <ul>
+      <li><b>A pending approval</b> leaves the turn paused. The stream still closes with
+        <code>[DONE]</code>, but the assistant message carries its tool traces and the approval card,
+        and the real end of the turn is the continuation described above.</li>
+      <li><b>An <code>ask_user_question</code></b> collapses one or more question calls into a single
+        tabbed card; the card <em>is</em> the response, and your answer re-enters the endpoint as a
+        continuation, exactly like an approval.</li>
+      <li><b>The completion gate refuses to end the turn.</b> A Stop-hook block, or an active goal
+        the evaluator judges not-yet-achieved (the <code>goal_loop</code> flag), re-injects feedback
+        and loops again instead of ending. These decisions surface over SSE as <code>goal_eval</code>,
+        <code>stop_hook_block</code>, and <code>goal_cap_reached</code> frames. See
+        <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</li>
+    </ul>
+
+    <h2 id="one-worked-path">A worked path</h2>
+    <p>Putting it together, a "fix this file" turn that needs a write approval runs like this:</p>
+    <ol class="steps">
+      <li><h4>Send</h4><p>You type the request and Send. <code>POST /api/chat</code> opens the SSE
+        stream.</p></li>
+      <li><h4>Build + invoke</h4><p>The server filters history, builds the prompt, and invokes
+        Bedrock. Explanatory text streams back as tokens.</p></li>
+      <li><h4>tool_use</h4><p>The model emits a <code>ws_write_file</code> tool call. Under the current
+        mode it needs consent, so the turn pauses on a nonce and an <code>approval_request</code> is
+        emitted.</p></li>
+      <li><h4>Approve</h4><p>You click Approve. <code>POST /api/approval/execute</code> runs the
+        validated write; the SPA re-enters <code>/api/chat</code> with the real
+        <code>approved_tool_result</code>.</p></li>
+      <li><h4>Continue + finish</h4><p>The model reads the result, streams a confirmation, and returns
+        <code>end_turn</code>. <code>[DONE]</code> fires.</p></li>
+      <li><h4>Persist</h4><p>The SPA commits the assistant message and PUTs the session to SQLite.</p></li>
+    </ol>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/chat/routes.py</code></dt><dd>The SSE chat endpoint, the streaming loop, and the <code>_paused_sessions</code> approval-resume state.</dd>
+      <dt><code class="path">server/infrastructure/sessions.py</code></dt><dd><code>visible_chat_history()</code> and the session persistence UPSERT with its per-session lock.</dd>
+      <dt><code class="path">server/approval/router.py</code></dt><dd><code>POST /api/approval/execute</code>, the single hub the SPA calls to run an approved action.</dd>
+      <dt><code class="path">src/hooks/useChatStream.ts</code></dt><dd>The React hook: binds the owning session, POSTs the turn, commits the final message, PUTs the save.</dd>
+      <dt><code class="path">src/hooks/chatStream/sseStream.ts</code></dt><dd>The SSE parser and the approval continuation pump that re-enters the stream.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> the component-level
+        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>,
+        <a href="arch-approval.html">Approval &amp; permissions</a>, and
+        <a href="arch-persistence.html">Persistence</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/chat-turn.js"></script>
+</body>
+</html>

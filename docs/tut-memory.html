@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Memory &amp; WHISPER.md - Whisper Studio Docs</title>
+  <meta name="description" content="Give Claude persistent memory across sessions and project-specific context: how workspace memory, session summaries, and WHISPER.md are built and injected into prompts.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-memory">
+    <h1>Memory &amp; WHISPER.md</h1>
+    <p class="subtitle">Give Claude a memory that survives past the current thread, and a place to
+      write down the standing facts about your project so you never repeat them.</p>
+
+    <p class="lead">Out of the box, each chat starts fresh: Claude knows only what is in the current
+      thread. Turn on memory and that changes. Claude quietly records the facts worth keeping, writes
+      a running summary of the conversation, and reads both back on later turns. Add a
+      <code>WHISPER.md</code> to your workspace and it gets the project context you would otherwise
+      re-explain every time.</p>
+
+    <p>There are three separate mechanisms here, and it helps to keep them straight from the start:
+      <b>workspace memory</b> (durable facts that carry across sessions), <b>session memory</b> (a
+      structured summary of the thread you are in), and <b>WHISPER.md</b> (a file you write by hand).
+      The diagram traces how they meet in the prompt.</p>
+
+    <figure class="diagram-figure">
+      <div id="memory-flow-diagram" class="diagram"></div>
+      <figcaption>How memory moves. A turn ends, a background agent extracts to files, and those
+        files (plus <code>WHISPER.md</code>) are injected back into later turns. <b>Click a box</b> to
+        trace its path.</figcaption>
+    </figure>
+
+    <h2 id="turn-it-on">On by default, in two tiers</h2>
+    <p>Memory is <b>on out of the box</b>. The underlying flags, <code>auto_memory</code> for the
+      persistent memory and extraction and <code>session_memory</code> for the per-session summary,
+      both default on, so everything below happens automatically without you calling any tools or
+      running any commands. If you would rather turn it off, flip the <b>Memory</b> row in the
+      "+ More" menu of the chat toolbar, or type <code>/memory off</code>.</p>
+    <p>Persistent memory has two tiers, so there is always somewhere for a fact to go, workspace or no
+      workspace:</p>
+    <ul>
+      <li><b>Global</b> memory is cross-workspace and stays alive even in plain chat with no workspace
+        open. It holds facts about you: preferences, role, and general feedback on how you like Claude
+        to work.</li>
+      <li><b>Project</b> memory is scoped to the open workspace. It holds workspace-specific facts such
+        as goals, deadlines, and repo references.</li>
+    </ul>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Project memory lives under a slug derived from the workspace folder
+        name, so two different projects keep separate memories and never bleed into each other. Global
+        memory sits apart from all of them, shared across every chat.</p></div>
+    </div>
+
+    <h2 id="workspace-memory">Workspace memory: durable facts</h2>
+    <p>Workspace memory is a small set of Markdown files that persist across every session in a
+      project. They live in <code class="path">data/memory/&lt;workspace-slug&gt;/</code>
+      and are pulled into prompts on demand. Each file carries YAML frontmatter (a name, a one-line
+      description, and a type) followed by a short Markdown body. An index file,
+      <code class="path">MEMORY.md</code>, lists them one line each.</p>
+
+    <p>Not everything is worth remembering. The extraction agent is deliberately selective, and it
+      saves into a closed set of four types:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Type</th><th>What it captures</th></tr></thead>
+      <tbody>
+        <tr><td><code>user</code></td><td>Who you are: preferences, role, expertise.</td></tr>
+        <tr><td><code>feedback</code></td><td>Corrections and guidance on how you want Claude to work.</td></tr>
+        <tr><td><code>project</code></td><td>Project context, goals, and deadlines not already in the code.</td></tr>
+        <tr><td><code>reference</code></td><td>Pointers to external systems and resources.</td></tr>
+      </tbody>
+    </table></div>
+
+    <p>It deliberately does <em>not</em> save things that are already recoverable from the codebase:
+      architecture and code patterns (read the code), git history (read the log), or one-off debugging
+      fixes (the fix is already committed). The point is to remember what only you can tell it, not to
+      duplicate the repository.</p>
+
+    <h3 id="recall">How memory is recalled</h3>
+    <p>Memory is read back on demand, not dumped wholesale into every prompt. On a new query the system
+      scans the memory files for a manifest. If there are five or fewer files, it simply loads them
+      all. If there are more, it runs a quick Haiku side-query that ranks the manifest against your
+      current question and picks up to five relevant files. That keeps the prompt lean: only what is
+      likely to matter is injected. On-device (local) turns skip the ranking side-query to stay fully
+      offline and just take the most recent memories instead.</p>
+
+    <h2 id="session-memory">Session memory: a running summary</h2>
+    <p>Session memory is a different animal. Rather than durable cross-session facts, it summarizes the
+      conversation you are in right now, so a long thread stays coherent without the model re-reading
+      every earlier turn. It is a single Markdown file with four fixed sections:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Section</th><th>Contents</th></tr></thead>
+      <tbody>
+        <tr><td><code>## Goals</code></td><td>What you are trying to accomplish this session.</td></tr>
+        <tr><td><code>## Decisions</code></td><td>Key choices made along the way.</td></tr>
+        <tr><td><code>## Context</code></td><td>Important background that has been established.</td></tr>
+        <tr><td><code>## Blockers</code></td><td>Issues hit or problems still unresolved.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The summary is written incrementally by a background agent and injected into later turns wrapped
+      in a <code>&lt;session-memory&gt;</code> block. Because it is a compact digest rather than the raw
+      transcript, a thread that has run for hours can resume without paying to re-read everything.</p>
+
+    <h3 id="when-it-updates">When it updates</h3>
+    <p>The update runs as a background task after a turn, and only once the conversation has grown
+      enough to be worth re-summarizing. Cloud sessions wait for both a large size threshold and some
+      tool activity before updating; on-device sessions summarize far more often (every few turns) and
+      on the local model itself, since local chats often have no tools to gate on. Either way it never
+      blocks your reply, and if the summary fails it is simply skipped rather than disrupting the chat.
+      For the exact thresholds and the injection format, see the architecture page.</p>
+
+    <div class="callout callout--note">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg></span>
+      <div class="callout__body"><p>Session memory and workspace memory are stored separately.
+        Workspace memory carries facts <em>between</em> projects' sessions; session memory is a digest
+        <em>within</em> one thread. You do not have to choose, both run at once when memory is on.</p></div>
+    </div>
+
+    <h2 id="whisper-md">WHISPER.md: project context you write</h2>
+    <p>Everything above is automatic. <code>WHISPER.md</code> is the opposite: it is a file you author,
+      dropped in your workspace root, for the standing facts about a project that you want Claude to
+      have on <em>every</em> turn. If you have used the Claude Code CLI, it is the same idea as
+      <code>CLAUDE.md</code>. Unlike recalled memory, which is selected per query, <code>WHISPER.md</code>
+      is loaded on every chat turn.</p>
+
+    <p>Good things to put in it:</p>
+    <ul>
+      <li>How to run, build, and test the project (the commands you always forget to mention).</li>
+      <li>Conventions you care about: style rules, naming, directories that are off limits.</li>
+      <li>Domain vocabulary and the shape of the codebase, so Claude does not have to re-derive it.</li>
+      <li>Standing instructions: "always branch before committing", "never touch the generated files".</li>
+    </ul>
+
+    <p>You can edit it two ways:</p>
+    <ol class="steps">
+      <li><h4>The in-app Project Memory dialog</h4><p>Open the Project Memory dialog and edit
+        <code>WHISPER.md</code> in place. This is the quickest path and keeps you in the app.</p></li>
+      <li><h4>Any editor</h4><p>It is just a file in your workspace root, so the Monaco editor in the
+        <a href="tut-workspace.html">workspace IDE</a>, or any external editor, works fine. Save and the
+        next turn picks it up.</p></li>
+    </ol>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Keep <code>WHISPER.md</code> short and stable. It is read on every
+        turn, so it costs input tokens each time. Put durable, always-true facts here and let the
+        automatic memory system handle the things that change from session to session.</p></div>
+    </div>
+
+    <h2 id="memory-tools">The memory tools</h2>
+    <p>Claude does not only read memory passively. During a turn it can operate on the store directly
+      through four tools, so it can look something up mid-task or record a fact the moment you state it:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>memory_read</code></td><td>Read a memory file from the workspace store to recall stored information.</td></tr>
+        <tr><td><code>memory_write</code></td><td>Create or overwrite a memory file (with name, description, and type), and update the <code>MEMORY.md</code> index.</td></tr>
+        <tr><td><code>memory_list</code></td><td>List memory files with their type, description, and modification date.</td></tr>
+        <tr><td><code>memory_delete</code></td><td>Delete a memory file from the store.</td></tr>
+      </tbody>
+    </table></div>
+    <p>These are just tools, so they follow the same rules as any other. If you want to see the full
+      catalogue and how tool permissions work, see <a href="ref-tools.html">Agent tools</a> and
+      <a href="tut-permissions.html">Permissions &amp; approvals</a>.</p>
+
+    <h2 id="viewing">Viewing and curating memory</h2>
+    <p>You do not have to dig through files on disk to see what Claude has remembered. Open the
+      <b>Memory Viewer</b> from the "+ More" menu in the chat toolbar, under <b>Memory files</b>. It
+      lists both tiers side by side and lets you read and edit any file, delete ones that no longer
+      apply, and promote a project memory up to global when a fact turns out to matter everywhere. The
+      <code>MEMORY.md</code> index is read-only, since it is regenerated for you after every change.</p>
+    <p>Memory also announces itself as it works. When the background extractor saves or removes
+      something after a turn, a small <b>"Memory updated"</b> toast appears, so you know the store
+      changed without having to open the viewer.</p>
+
+    <h2 id="try-it">Try it</h2>
+    <p>The fastest way to see memory work is to tell Claude something durable, start a fresh chat, and
+      check that it remembers:</p>
+    <ol class="steps">
+      <li><h4>Check memory is on</h4><p>It is on by default; confirm the <b>Memory</b> row in the "+ More" menu shows On (or type <code>/memory status</code>).</p></li>
+      <li><h4>State a preference</h4><p>Tell Claude something worth keeping, for example how you like
+        commit messages written, or which package manager the project uses.</p></li>
+      <li><h4>Keep working, then start a new session</h4><p>Have a normal exchange so the background
+        extractor has something to save, then open a fresh chat in the same workspace.</p></li>
+      <li><h4>Check the recall</h4><p>Ask a question that touches that preference. Claude should apply
+        it without being reminded, because the fact was recalled from workspace memory.</p></li>
+    </ol>
+    <p>Peek at <code class="path">data/memory/&lt;workspace-slug&gt;/</code> and you will see the files it
+      wrote, each with its frontmatter and body, plus the <code>MEMORY.md</code> index.</p>
+
+    <h2 id="where-it-lives">Where it all lives</h2>
+    <div class="spec">
+      <dt><code class="path">data/memory/&lt;workspace-slug&gt;/</code></dt><dd>Durable project (workspace-scoped) memory: topic files plus the <code>MEMORY.md</code> index.</dd>
+      <dt><code class="path">data/global_memory/</code></dt><dd>Global (cross-workspace) memory: user and feedback facts that apply everywhere, incl. plain chat.</dd>
+      <dt><code class="path">&lt;workspace&gt;/WHISPER.md</code></dt><dd>Project context you write; loaded on every chat turn.</dd>
+      <dt><code class="path">server/memory/</code></dt><dd>The memory subsystem: extraction, recall, session summaries, and tools.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-first-chat.html">Your first chat</a>
+        to get talking, the <a href="arch-memory.html">Memory system</a> architecture page for exact
+        thresholds and the injection format, <a href="tut-workspace.html">The workspace IDE</a> for
+        editing <code>WHISPER.md</code>, and <a href="ref-tools.html">Agent tools</a> for the memory
+        tool reference.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/memory-flow.js"></script>
+</body>
+</html>

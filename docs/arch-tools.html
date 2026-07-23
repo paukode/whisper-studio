@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tool dispatch &amp; executors - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio routes its full tool pool: a pure dispatch layer, a lifecycle executor that batches reads in parallel and serializes writes, permission checks, approvals, and hooks.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-tools">
+    <h1>Tool dispatch &amp; executors</h1>
+    <p class="subtitle">When the model asks for tools, two small modules take over: one decides
+      <em>how</em> to run the batch safely, the other decides <em>where</em> each call goes. This is the
+      layer the <a href="arch-chat-pipeline.html">chat loop</a> calls once per round.</p>
+
+    <p>The design keeps a clean seam. <code class="path">server/tool_router.py</code> is pure dispatch:
+      it maps a tool name to its handler and returns a result, with no state of its own.
+      <code class="path">server/tool_executor.py</code> owns the lifecycle around that dispatch: batching
+      for parallelism, permission checks, denial tracking, plan-mode blocking, hooks, approvals, and
+      result post-processing. <b>Click a box</b> below to trace one batch, from the model's request to a
+      persisted result.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="tools-diagram" class="diagram"></div>
+      <figcaption>One batch of tool calls, routed and executed. The <em>write</em> edge into
+        <em>Approval</em> is the consent gate; the <em>allow</em> edge skips it for pre-approved and
+        read-only tools.</figcaption>
+    </figure>
+
+    <h2 id="two-layers">Two layers, one seam</h2>
+    <p>Splitting dispatch from lifecycle keeps each file readable and makes adding a tool a one-line
+      change in most cases. The router never has to know about permissions; the executor never has to
+      know how a given tool is implemented.</p>
+    <div class="cols-2">
+      <div class="card">
+        <h3><code>route_tool</code></h3>
+        <p>Pure mapping in <code class="path">server/tool_router.py</code>. Given a tool name and input,
+          it dispatches to the right handler and returns <code>(output, side_effects)</code>. Side
+          effects are SSE payload dicts; a special <code>_pause</code> side effect signals the stream to
+          stop and wait.</p>
+      </div>
+      <div class="card">
+        <h3><code>execute_tool_batch</code></h3>
+        <p>Lifecycle in <code class="path">server/tool_executor.py</code>. It partitions the batch,
+          runs pre-execution checks, fires hooks, calls <code>route_tool</code>, and hands completed
+          <code>ToolState</code> objects to <code>process_tool_results</code> for approvals, budgeting,
+          and SSE formatting.</p>
+      </div>
+    </div>
+
+    <h2 id="partitioning">Partitioning for parallelism</h2>
+    <p>A single assistant turn can request several tools at once. Running them all in parallel would be
+      unsafe (two writes could race), and running them all serially would be slow (three independent
+      reads should not wait on each other). So <code>partition_batches()</code> walks the calls in order
+      and groups <em>consecutive</em> concurrent-safe tools into one parallel batch, while every unsafe
+      tool becomes a batch of one that runs on its own:</p>
+    <div class="code-block"><pre><code>[read, read, write, read, write]
+  -&gt; [[read, read], [write], [read], [write]]</code></pre></div>
+    <p>Order is preserved. A parallel batch is awaited with <code>asyncio.gather</code>; a solo batch is
+      awaited directly. Because grouping only merges <em>adjacent</em> safe tools, a write always acts as
+      a barrier: nothing after it starts until it finishes.</p>
+
+    <h3 id="safety-classifier">What counts as concurrent-safe</h3>
+    <p>The partitioner takes an <code>is_concurrent_safe</code> classifier. For registry executors that
+      answer comes from per-executor metadata declared at registration in
+      <code class="path">server/executors/__init__.py</code>:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Metadata flag</th><th>Meaning</th><th>Default</th></tr></thead>
+      <tbody>
+        <tr><td><code>read_only</code></td><td>The executor only reads; no side effects.</td><td><code>False</code></td></tr>
+        <tr><td><code>concurrent_safe</code></td><td>Safe to run in parallel with other tools.</td><td><code>False</code></td></tr>
+        <tr><td><code>destructive</code></td><td>Can cause irreversible changes.</td><td><code>False</code></td></tr>
+      </tbody>
+    </table></div>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>The defaults are <b>fail-closed</b>. A tool with no registered
+        metadata is treated as not read-only, not concurrent-safe, and not destructive, so an unknown
+        or newly added tool serializes by default rather than racing. You opt into parallelism
+        explicitly with <code>@register_executor(name, concurrent_safe=True)</code>.</p></div>
+    </div>
+
+    <h2 id="per-tool-lifecycle">The per-tool lifecycle</h2>
+    <p>Inside a batch, each tool runs through <code>_run_one</code>, which guards it with several checks
+      before dispatch. The tool's input is cloned three ways so nothing leaks across boundaries: the
+      original stays intact for the Bedrock message history, one clone is passed to hooks (observed,
+      never mutated), and one clone is passed to execution (which handlers may mutate).</p>
+    <ol class="steps">
+      <li><h4>Sibling abort</h4><p>If an earlier command tool (<code>ws_run_command</code> or
+        <code>run_python</code>) already failed this batch, subsequent non-safe tools are skipped with a
+        "prior command failed" note rather than acting on broken state.</p></li>
+      <li><h4>Plan-mode block</h4><p>In plan mode, write tools (<code>ws_write_file</code>,
+        <code>ws_create_file</code>, <code>ws_edit_file</code>, <code>ws_delete_file</code>,
+        <code>ws_run_command</code>, <code>ws_merge_worktree</code>) are blocked before they run, and a
+        <code>plan_blocked</code> event lets the UI offer an upgrade dialog.</p></li>
+      <li><h4>Denial tracking</h4><p>If the user has denied a given tool
+        <code>MAX_AUTO_DENIALS</code> (2) times this session, it is auto-skipped with a message pointing
+        to permission settings. This check is bypassed under <code>bypassPermissions</code> so a stale
+        count from an earlier mode does not linger.</p></li>
+      <li><h4>Hooks fire</h4><p>The call runs through the blocking-hooks engine
+        (<code class="path">server/hooks/engine.py</code> <code>run_hooks</code>): one
+        <code>PreToolUse</code> pass covers in-process plugins, user shell hooks, and trusted
+        project shell hooks. A <code>PreToolUse</code> hook can not only <em>deny</em> the call but
+        also <em>rewrite</em> its input (<code>updatedInput</code> replaces the call input before
+        dispatch). A plugin denial carrying findings emits a <code>security_blocked</code> event; a
+        plain shell/project denial emits the newer <code>hook_blocked</code> frame. On success,
+        <code>PostToolUse</code> fires and may return <code>additionalContext</code> that is folded
+        back into the tool result the model reads next; on an exception,
+        <code>PostToolUseFailure</code> fires. A separate <code>Stop</code> gate
+        (<code>check_stop_hooks</code>) runs at end of turn across chat, sub-agents, and cron. The
+        old <code class="path">server/infrastructure/hooks.py</code> is now a deprecated shim.</p></li>
+      <li><h4>Dispatch</h4><p>Only now is <code>route_tool</code> called. Any exception is caught,
+        logged, and returned to the model as a <code>[Tool Error]</code> string, so one failing tool
+        never crashes the turn. Errors from command tools cascade to later writes via the sibling-abort
+        flag above.</p></li>
+    </ol>
+
+    <h2 id="permissions-approval">Permissions and the approval gate</h2>
+    <p>Most consent logic lives one step later, in <code>process_tool_results</code>. Tools that need
+      approval return a string prefixed with <code>[WS_APPROVAL]</code> carrying JSON; the prefix is
+      purely internal. The executor looks up the registered <code>ApprovalSpec</code> for the action and
+      calls <code>resolve_static_decision()</code>
+      (<code class="path">server/security/permissions.py</code>), whose precedence is:</p>
+    <ol>
+      <li><code>bypassPermissions</code> - everything allowed, no prompts.</li>
+      <li>Trusted-skill scripts - a trusted skill running its own bundled command.</li>
+      <li>Session approvals - category-level pre-approvals from the frontend (for example
+        <code>{"write": "allow"}</code>).</li>
+      <li>Custom rules, then <code>dontAsk</code>, then <code>acceptEdits</code> (writes only).</li>
+      <li><code>auto</code> - defer to the classifier (below).</li>
+      <li>Otherwise, <code>ask</code>.</li>
+    </ol>
+    <p>An <code>allow</code> runs the action inline through the same <code>ApprovalSpec</code> executor
+      the UI's Yes button uses, so there is a single execution path. A <code>deny</code> returns a
+      "blocked by user" result. Anything else emits an <code>approval_request</code> event (optionally
+      with a risk explanation) and <b>pauses the turn</b>: the stream stops, and after the user confirms,
+      the frontend re-enters <code>/api/chat</code> with the real <code>tool_result</code>.</p>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>When a batch pauses on approval, Bedrock still requires a
+        <code>tool_result</code> for every <code>tool_use</code> in the preceding message. The executor
+        fills the remaining calls with "[Not executed]" placeholders so the next request's message array
+        stays well-formed, then re-issues them after the approval resolves. See
+        <a href="arch-approval.html">Approval &amp; permissions</a>.</p></div>
+    </div>
+
+    <h3 id="auto-mode">Auto mode and the classifier</h3>
+    <p>In <code>auto</code> mode, when nothing static resolves the decision and a Bedrock model is
+      available, <code>classify_tool_call()</code> asks a fast model (Haiku, falling back to Sonnet) to
+      judge the call and returns <code>allow</code> or <code>ask</code>. The classifier is only invoked
+      for actions that actually need approval; read-only tools never reach it, and the offline local
+      path stays Bedrock-free because <code>model_id</code> is empty there.</p>
+
+    <h2 id="routing-categories">How route_tool dispatches</h2>
+    <p><code>route_tool</code> is an ordered set of branches by tool category. The first match wins; a
+      default fallback covers everything else. The main branches:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Category</th><th>Where it goes</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>MCP tools</td><td><code>execute_mcp_tool</code></td><td>Forwarded to a connected MCP server. See <a href="tut-mcp-plugins.html">MCP &amp; plugins</a>.</td></tr>
+        <tr><td>Live preview</td><td><code class="path">server/preview/router.py</code></td><td>Async handlers, so Playwright objects stay bound to the running event loop.</td></tr>
+        <tr><td>Todo tracker</td><td>Inline task handlers</td><td><code>task_create</code>, <code>task_update</code>, <code>task_list</code>, <code>task_get</code>, <code>task_stop</code> emit a <code>todo_update</code>.</td></tr>
+        <tr><td>Background tasks</td><td><code>execute_background_task_tool</code></td><td><code>task_status</code>, <code>task_output</code>, <code>task_cancel</code> over the unified registry (<code class="path">server/tasks/tools.py</code>); distinct from the todo tracker.</td></tr>
+        <tr><td>Cron</td><td>Cron handlers</td><td>Run via <a href="arch-cron.html">the scheduler</a>.</td></tr>
+        <tr><td>Workflows &amp; CI</td><td><code class="path">server/workflows/tools.py</code>, <code class="path">server/ci/tools.py</code></td><td><b>Ultracode-only.</b> <code>workflow_run</code>/<code>workflow_status</code>/<code>workflow_save</code>/<code>workflow_list</code> and <code>ci_watch</code>/<code>ci_status</code>/<code>ci_autofix</code>. See <a href="arch-ultracode.html">Ultracode workflow runtime</a>.</td></tr>
+        <tr><td>LSP &amp; worktree</td><td><code>execute_lsp_tool</code>, worktree handlers</td><td>Run on the thread-pool executor. See <a href="arch-git-lsp.html">Git &amp; LSP</a>.</td></tr>
+        <tr><td>Sub-agents &amp; teams</td><td><code>spawn_agent</code>, <code>send_message</code>, <code>list_agents</code>, <code>team_create</code></td><td>The agent runtime. See <a href="arch-agents.html">Sub-agents</a>.</td></tr>
+        <tr><td><code>skill_invoke</code></td><td>Runs a general agent</td><td>Delegates the named skill to a full sub-agent tool loop.</td></tr>
+        <tr><td>Memory</td><td>Registry executor</td><td>Looked up in <code>EXECUTORS</code>. See <a href="arch-memory.html">Memory</a>.</td></tr>
+        <tr><td>Config &amp; interaction</td><td><code>config_get</code>/<code>config_set</code>, <code>ask_user_question</code>, <code>notify_user</code></td><td><code>ask_user_question</code> emits <code>_pause</code>.</td></tr>
+        <tr><td>SSE side-effects</td><td><code>create_artifact</code>, <code>create_plan</code></td><td>Persist or emit a card; the chat sees only a compact confirmation.</td></tr>
+        <tr><td><b>Default</b></td><td><code>execute_tool</code> (the skill system)</td><td>Files, git, web, and code executors registered under <code class="path">server/executors/</code>.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="results-back">Results back to the loop</h2>
+    <p>Once a batch completes, <code>process_tool_results</code> turns each <code>ToolState</code> into a
+      Bedrock <code>tool_result</code> and a set of SSE events. Along the way it handles a few special
+      output shapes signalled by internal string prefixes:</p>
+    <dl class="spec">
+      <dt><code>[WS_APPROVAL]</code></dt><dd>Needs consent; resolved through the precedence chain above.</dd>
+      <dt><code>[WS_WORKSPACE_PROMPT]</code></dt><dd>A write fired with no connected workspace; a folder picker is shown and the turn pauses.</dd>
+      <dt><code>[WS_PREVIEW_IMAGE]</code></dt><dd>A screenshot; returned as an Anthropic image content block (never budget-truncated) so the model sees pixels, not base64 text.</dd>
+    </dl>
+    <p>Ordinary string outputs are run through <code>budget_fn</code> to cap oversized results, a
+      truncated preview streams to the SPA as a <code>skill_result</code> event, and the full output
+      becomes the <code>tool_result</code> content the model reads on the next round.</p>
+
+    <h2 id="the-catalogue">The tool catalogue</h2>
+    <p>Whisper Studio's <em>full</em> tool pool runs on the order of <b>80-plus core tools plus the
+      skill-backed tools</b> - grouped by purpose: workspace &amp; files, git, LSP, web, memory,
+      tasks &amp; scheduling, sub-agents, skills / notebooks / MCP, config &amp; interaction, and live
+      preview. The interactive chat loop no longer ships all of those schemas every turn. With
+      <b>progressive tool disclosure</b> (feature flag <code>progressive_tools</code>, default
+      <b>on</b>) it advertises only a curated core set plus whatever this session has activated;
+      every other tool costs a single one-line entry in a deferred index inside the cached system
+      block, loadable on demand via <code>tool_search</code>. That trims roughly <b>60-75%</b> of
+      tool-schema tokens per turn. The full ~8K-token pool now survives only off the interactive
+      path - cron and the agent runtime still send every schema (<code>assemble_tool_pool</code>
+      defaults to <code>progressive=False</code>). See
+      <a href="#progressive-disclosure">Progressive tool disclosure</a> below, and note the pool is
+      still deduplicated and mode-filtered upstream in the
+      <a href="arch-chat-pipeline.html">chat pipeline</a>.</p>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Cloud Claude is now trimmed automatically by progressive
+        disclosure (core plus session-activated tools); on-device model modes can trim the exposed
+        set further with the local Tools dropdown. The dropdown is no longer the only mechanism that
+        shrinks the advertised set. For the complete, grouped list of every tool the assistant can
+        call, see the <a href="ref-tools.html">Agent tools reference</a>.</p></div>
+    </div>
+
+    <h2 id="progressive-disclosure">Progressive tool disclosure</h2>
+    <p>On the interactive chat loop the advertised pool is partitioned rather than sent whole. The
+      split is computed by <code>partition_pool</code> in
+      <code class="path">server/chat/tool_partition.py</code> and wired through
+      <code>assemble_partitioned_pool</code> (<code class="path">server/chat/tool_pool.py</code>) in
+      <a href="arch-chat-pipeline.html">the chat pipeline</a>:</p>
+    <div class="spec">
+      <dt><code>CORE_TOOLS</code></dt><dd>A curated always-advertised set (~34 names) in
+        <code class="path">tool_partition.py</code>: workspace primitives, the discovery tools
+        (<code>tool_search</code> can never be deferred - it is the way back), the todo and
+        background-task tools, orchestration, and the workflow / CI tools when present.</dd>
+      <dt>Session activation</dt><dd>Tools this session has pulled in via <code>tool_search</code> or
+        history replay, tracked in <code class="path">server/chat/tool_activation.py</code> and
+        appended after the core prefix in activation order.</dd>
+      <dt>Deferred index</dt><dd>Every remaining tool becomes one line
+        (<code>build_deferred_index</code>, <code class="path">server/chat/tool_index.py</code>) in
+        the cached system block - a name plus its first sentence - loadable on demand.</dd>
+    </div>
+    <p>Ordering is cache-stable: the core prefix keeps the catalogue's sorted order and a
+      <code>core_count</code> breakpoint is placed on it, so a new activation invalidates only the
+      appended tail of the tools cache block, not the core prefix. The flag
+      <code>progressive_tools</code> defaults <b>on</b> and applies to the interactive chat loop
+      only; cron and the agent runtime still receive the full pool
+      (<code>assemble_tool_pool</code> defaults to <code>progressive=False</code>).</p>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/tool_router.py</code></dt><dd>Pure dispatch: tool name to handler, returns <code>(output, side_effects)</code>.</dd>
+      <dt><code class="path">server/tool_executor.py</code></dt><dd>Batching, per-tool lifecycle, hooks, and <code>process_tool_results</code>.</dd>
+      <dt><code class="path">server/executors/__init__.py</code></dt><dd>The <code>@register_executor</code> registry and safety metadata.</dd>
+      <dt><code class="path">server/security/permissions.py</code></dt><dd><code>resolve_static_decision</code> and the mode definitions.</dd>
+      <dt><code class="path">server/auto_mode.py</code></dt><dd>The Haiku classifier used by <code>auto</code> mode.</dd>
+      <dt><code class="path">server/agent_tools.py</code></dt><dd>Config, skill, MCP-resource, tool-search, and agent/team tools.</dd>
+      <dt><code class="path">server/hooks/</code></dt><dd>The blocking-hooks engine: <code>engine.py</code> (<code>run_hooks</code>, <code>check_stop_hooks</code>), <code>schema.py</code>, <code>config_loader.py</code>, and <code>routes.py</code>.</dd>
+      <dt><code class="path">server/chat/tool_partition.py</code></dt><dd><code>CORE_TOOLS</code> and <code>partition_pool</code> for progressive disclosure.</dd>
+      <dt><code class="path">server/chat/tool_activation.py</code></dt><dd>Per-session tool activation tracking (what <code>tool_search</code> has pulled in).</dd>
+      <dt><code class="path">server/chat/tool_index.py</code></dt><dd><code>build_deferred_index</code>: the one-line-per-tool deferred catalogue in the cached system block.</dd>
+      <dt><code class="path">server/tasks/</code></dt><dd>The unified background-task registry behind <code>task_status</code>/<code>task_output</code>/<code>task_cancel</code>.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>,
+        <a href="arch-approval.html">Approval &amp; permissions</a>,
+        <a href="arch-sandbox.html">Sandbox &amp; security</a>, and the
+        <a href="ref-tools.html">Agent tools reference</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/tools.js"></script>
+</body>
+</html>

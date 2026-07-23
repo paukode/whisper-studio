@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Skills - Whisper Studio Docs</title>
+  <meta name="description" content="Built-in skills load automatically when they fit your request, and you can add your own as Markdown files in the skills directory. What ships, how selection works, and how to write and invoke a custom skill.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-skills">
+    <h1>Skills</h1>
+    <p class="subtitle">Skills are small, focused capabilities Claude can reach for mid-conversation.
+      The built-in ones load automatically when they fit your request, and you can add your own by
+      dropping a Markdown file into the <code class="path">skills/</code> directory.</p>
+
+    <p class="lead">You never have to name a skill. You just ask for what you want, and Claude picks
+      the skill whose description matches. This page shows what ships in the box, how selection works,
+      and how to write and invoke a skill of your own.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="skills-flow-diagram" class="diagram"></div>
+      <figcaption>From your message to the answer. Each enabled skill is offered to the model as a
+        tool; Claude invokes the matching one, which may use other tools before the result streams back.</figcaption>
+    </figure>
+
+    <h2 id="what-is-a-skill">What a skill actually is</h2>
+    <p>A skill is a Markdown file with a small YAML header (the frontmatter) and a body. The
+      frontmatter names the skill and describes when to use it; the body is the instructions the
+      model follows once the skill runs. On startup, Whisper Studio reads every file in
+      <code class="path">skills/</code>, turns each one into a tool, and hands the whole set to Claude
+      alongside its other tools. Because a skill <em>is</em> a tool, selection is just normal tool
+      use: Claude reads the descriptions and calls the one that fits.</p>
+    <p>Skills come in two shapes:</p>
+    <ul>
+      <li><b>Prompt skills.</b> The body is guidance the model reads and applies directly (for
+        example, a house style for meeting notes). No code runs on your machine.</li>
+      <li><b>Executor skills.</b> The frontmatter names an <code>executor</code>, so invoking the
+        skill runs backend code instead (for example, calling the Tavily API or a sandboxed Python
+        subprocess).</li>
+    </ul>
+
+    <h2 id="built-in">Built-in skills</h2>
+    <p>These load automatically when relevant. You do not enable or invoke them by hand; you just
+      ask.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Skill</th><th>What it does</th><th>Ask something like</th></tr></thead>
+      <tbody>
+        <tr><td><b>Web Search</b></td><td>Real-time web results (titles, URLs, snippets) via the Tavily API.</td><td>"What's the latest on X?"</td></tr>
+        <tr><td><b>Web Fetch</b></td><td>Pulls the contents of a specific URL into the conversation.</td><td>"Read this page and summarize it."</td></tr>
+        <tr><td><b>Run Python</b> <span class="badge badge--muted">sandboxed</span></td><td>Executes Python for calculations, parsing, or quick data work and returns stdout/stderr.</td><td>"Compute the median of these numbers."</td></tr>
+        <tr><td><b>Summarize Transcript</b></td><td>Turns the session transcript into one of four fixed styles: action items, meeting notes, key points, or a brief.</td><td>"Give me the action items from this call."</td></tr>
+        <tr><td><b>Meeting Notes</b></td><td>A fuller, polished write-up: overview, decisions, an owner / action / deadline table, discussion points, blockers, and next steps.</td><td>"Write up minutes for this meeting."</td></tr>
+        <tr><td><b>Translate</b></td><td>Translates the transcript or any text to a target language.</td><td>"Translate this into Kurdish."</td></tr>
+        <tr><td><b>Analyze Document</b></td><td>Deep analysis of an attached file, with optional section fetches for large documents.</td><td>"Compare the two contracts I attached."</td></tr>
+        <tr><td><b>Presentation Builder</b></td><td>Drafts a structured slide deck from a topic or source material.</td><td>"Build me a 10-slide deck on this."</td></tr>
+        <tr><td><b>AWS Boto3</b> <span class="badge badge--muted">read-only</span></td><td>Direct, read-only queries against AWS services via boto3 (list, describe, get).</td><td>"List my S3 buckets."</td></tr>
+        <tr><td><b>Catch Up</b></td><td>A plain-language recap for someone who joined late, plus suggested follow-up and clarifying questions.</td><td>"Catch me up on what I missed."</td></tr>
+      </tbody>
+    </table></div>
+    <p>The three transcript skills - Summarize Transcript, Meeting Notes, and Catch Up - work from the
+      live or recorded transcript, which the server supplies for you. A very long transcript is
+      condensed automatically before these skills run, so a multi-hour session still summarizes cleanly;
+      see <a href="arch-summarization.html">Transcript summarization</a>.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Web Search needs a Tavily API key. Set <code>TAVILY_API_KEY</code> in
+        the environment (it takes precedence) or the <code>tavily_api_key</code> field in
+        <code class="path">config.json</code>. Without a key, the Web Search skill is unavailable and
+        everything else keeps working. See <a href="ref-env.html">Environment variables</a>.</p></div>
+    </div>
+
+    <h2 id="seeing-it-run">Seeing a skill run</h2>
+    <p>When Claude invokes a skill, a small inline indicator appears in the message stream as the call
+      starts, carried on the <code>skill</code> and <code>skill_input</code> SSE events. Click into
+      that indicator to open the trace: which skill ran, the input it received, and what it returned.
+      This is the same tracing you get for any tool call, so a skill never happens invisibly.</p>
+
+    <h2 id="managing">Turning skills on and off</h2>
+    <p>Every skill is listed in <b>Settings, Skills</b>, where you can enable or disable each one and
+      read its definition. Disabling a skill removes it from the catalogue, so Claude can no longer
+      pick it. The on and off state is stored in <code class="path">data/skills_config.json</code>,
+      separately from the skill files themselves, so toggling a built-in skill off never edits or
+      deletes it.</p>
+
+    <h2 id="custom">Writing a custom skill</h2>
+    <p>A custom skill is one Markdown file in <code class="path">skills/</code>. The frontmatter is
+      the important part: <code>name</code> is how the skill is invoked, and <code>description</code>
+      is what Claude reads when deciding whether this skill fits your request. Write the description
+      the way you would explain the skill to a colleague, since it is the whole basis for selection.
+      The optional <code>triggers</code> line lists example phrases that hint when the skill applies.</p>
+
+    <p>Here is a minimal prompt skill. Save it as
+      <code class="path">skills/standup-notes.md</code>:</p>
+    <div class="code-block"><pre><code>---
+name: standup_notes
+description: Turn rough standup jottings into a tidy per-person update with blockers called out. Use when the user pastes standup notes.
+triggers: standup, daily update, blockers, what I did, yesterday, today
+input_schema:
+  notes:
+    type: string
+    required: true
+    description: The raw standup notes to format
+---
+
+Rewrite the notes as a clean standup update. For each person, list:
+Yesterday, Today, and Blockers. Put anything that sounds like a blocker
+under Blockers even if it wasn't labelled that way. Keep it terse.</code></pre></div>
+
+    <p>The steps to add and use it:</p>
+    <ol class="steps">
+      <li><h4>Create the file</h4><p>Drop your <code>.md</code> file into
+        <code class="path">skills/</code>, or use <b>Settings, Skills, New</b> to write it in the app.
+        Files created in the UI are validated and hot-reloaded, no restart needed.</p></li>
+      <li><h4>Confirm it loaded</h4><p>Ask Claude to run <code>skill_list</code>, or open
+        <b>Settings, Skills</b>. Your skill should appear with its description and trigger count.</p></li>
+      <li><h4>Just ask</h4><p>Say something that matches the description ("clean up these standup
+        notes"). Claude selects the skill on its own. You do not have to type its name.</p></li>
+      <li><h4>Or invoke it by name</h4><p>If you want to force a specific skill, Claude can call
+        <code>skill_invoke</code> with the skill's <code>name</code> and your <code>input</code>.</p></li>
+    </ol>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Selection lives and dies by the <code>description</code>. If a
+        skill is being ignored, sharpen its description to say plainly when to use it, and list a few
+        realistic <code>triggers</code>. If two skills overlap, disable the one you don't want so
+        Claude isn't guessing between them.</p></div>
+    </div>
+
+    <h3 id="the-two-tools">skill_list and skill_invoke</h3>
+    <p>Two tools let Claude work with skills directly, rather than relying only on automatic
+      selection:</p>
+    <div class="spec">
+      <dt><code>skill_list</code></dt><dd>Returns every available skill with its name, description, and triggers. Claude calls this to discover what is on hand before picking one.</dd>
+      <dt><code>skill_invoke</code></dt><dd>Runs a named skill. It takes a <code>skill_name</code> and an <code>input</code> string, then applies the skill to that input.</dd>
+    </div>
+    <p>You rarely need to think about these. They exist so Claude can be explicit ("let me list the
+      skills, then invoke the right one") when a request is ambiguous or when you name a skill
+      outright.</p>
+
+    <h2 id="folder-skills">Folder skills</h2>
+    <p>A skill can also be a whole directory instead of a single file: a folder containing a
+      <code>SKILL.md</code> plus its own scripts, references, and assets. These are loaded whole, and
+      the skill's instructions can point Claude at bundled scripts to run. Folder skills are read-only
+      in the UI (you edit the files on disk), and you can mark one <b>trusted</b> so that when it runs
+      a script from inside its own directory, that specific command is auto-approved. Untrusted
+      folder skills still surface the normal approval card. See
+      <a href="tut-permissions.html">Permissions &amp; approvals</a> for what trust does and does not
+      grant.</p>
+
+    <h2 id="safety">Sandboxing and guardrails</h2>
+    <p>Skills that touch the outside world run behind the same protections as every other tool.</p>
+    <div class="cols-2">
+      <div class="card">
+        <h3>Run Python is sandboxed</h3>
+        <p>Code runs in a subprocess with a short timeout, inside the OS sandbox. It is meant for
+          quick computation, not for running arbitrary programs against your machine.</p>
+      </div>
+      <div class="card">
+        <h3>AWS Boto3 is read-only</h3>
+        <p>The Boto3 skill is guarded to allow only read operations (list, describe, get). Write
+          actions are the job of a separate, gated path, not this skill.</p>
+      </div>
+    </div>
+    <p>The real boundary is the OS sandbox (<code>sandbox-exec</code> on macOS); the read-only Boto3
+      guard and the command validator are defence-in-depth on top of it. For the full picture of what
+      contains a skill and what merely double-checks it, see <a href="arch-sandbox.html">Sandbox
+      &amp; security</a> and the <a href="ref-security.html">security model</a>.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+      <div class="callout__body"><p>A skill's instructions run with Claude's tools. Treat an imported
+        or shared skill like any code you did not write: read its <code>SKILL.md</code> and scripts
+        before you trust it, and leave it untrusted until you have.</p></div>
+    </div>
+
+    <h2 id="key-files">Where skills live</h2>
+    <div class="spec">
+      <dt><code class="path">skills/</code></dt><dd>Skill definitions: one Markdown file per skill, plus folder skills as subdirectories.</dd>
+      <dt><code class="path">server/skills.py</code></dt><dd>Loads the files, parses frontmatter, builds the tool catalogue, and serves the Skills API.</dd>
+      <dt><code class="path">data/skills_config.json</code></dt><dd>Which skills are disabled or trusted, kept apart from the skill files.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-research.html">Web research</a> (the
+        Web Search and Web Fetch skills in action), <a href="tut-mcp-plugins.html">MCP &amp; plugins</a>
+        (other ways to add tools), and the architecture pages
+        <a href="arch-tools.html">Tool dispatch &amp; executors</a> and
+        <a href="arch-sandbox.html">Sandbox &amp; security</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/skills-flow.js"></script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+# ============================================================================
+# GitHub Pages - publish the Whisper Studio documentation site.
+#
+# The docs are a prebuilt, self-contained static site in docs/ (no build
+# step, no dependencies, zero external network calls). This workflow uploads
+# that folder and deploys it to GitHub Pages.
+#
+# One-time setup: in the repo, Settings > Pages > Build and deployment >
+# Source = "GitHub Actions". The site is then served at
+# https://<owner>.github.io/<repo>/ (relative links make the subpath work).
+# ============================================================================
+name: Deploy docs to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; newer pushes cancel in-flight runs.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload docs as the Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

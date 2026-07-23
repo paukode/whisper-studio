@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Attachment extraction - Whisper Studio Docs</title>
+  <meta name="description" content="How Whisper Studio turns any uploaded file into Markdown: the MarkItDown router, the scanned-PDF OCR fallback (Apple Vision then Haiku), spreadsheet sampling, image OCR, vision sizing, and on-device audio and video transcription.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-extraction">
+    <h1>Attachment extraction</h1>
+    <p class="subtitle">When you drop a file into chat, one type-aware router turns it into Markdown the
+      model can read. PDFs, DOCX, spreadsheets, images, and audio/video each get their own handler, with an
+      OCR fallback for scans, careful sizing for vision, and on-device transcription for media.</p>
+
+    <p>Everything an attachment goes through lives under <code class="path">server/extract/</code>, fronted
+      by the upload endpoint in <code class="path">server/attachments.py</code>. The goal is simple: give the
+      model clean Markdown for text, readable text for scanned pages, a compact sample for huge tables,
+      and image blocks sized so fine print survives. <b>Click a box</b> in the diagram to trace where a
+      given file type flows.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="extraction-diagram" class="diagram"></div>
+      <figcaption>One file, one router. MarkItDown fans out to specialized handlers by extension and
+        content type; every path converges on Markdown injected into the chat turn.</figcaption>
+    </figure>
+
+    <h2 id="the-router">The router</h2>
+    <p>The heart of the pipeline is <code>convert_document(content, ext, filename)</code> in
+      <code class="path">server/extract/__init__.py</code>. It runs <a href="#markitdown">MarkItDown</a> first to
+      convert almost any format to Markdown, then dispatches by file extension to a specializer:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Extension</th><th>Handler</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>.pdf</code></td><td><code>extract_pdf</code> (<code class="path">server/extract/pdf.py</code>)</td><td>Keep the text layer, or OCR the pages if the PDF is scanned.</td></tr>
+        <tr><td><code>.xlsx</code> / <code>.xls</code></td><td><code>extract_xlsx</code> (<code class="path">server/extract/sheet.py</code>)</td><td>Keep the full table when small; sample it when large.</td></tr>
+        <tr><td><code>.csv</code></td><td><code>extract_csv</code> (<code class="path">server/extract/sheet.py</code>)</td><td>Same size-aware sampling as spreadsheets.</td></tr>
+        <tr><td>everything else</td><td>MarkItDown output</td><td>DOCX, PPTX, HTML, EPUB, JSON, XML, code, plain text.</td></tr>
+      </tbody>
+    </table></div>
+    <p>This function is blocking (it touches disk and CPU-heavy libraries), so the upload endpoint calls it
+      through <code>asyncio.to_thread</code> and never stalls the event loop. Images and audio/video take
+      their own handlers, covered in <a href="#images-vision">Images and vision sizing</a> and
+      <a href="#audio-video">Audio and video</a> below.</p>
+
+    <h2 id="markitdown">MarkItDown first</h2>
+    <p>Whatever the extension, <code>convert_document</code> writes the bytes to a temp file and runs
+      <code>MarkItDown().convert()</code> once. That single call handles the long tail of office and web
+      formats, so the specializers never re-parse from scratch. For PDFs and spreadsheets, the MarkItDown
+      text is passed straight into the specialized handler, which decides whether it is good enough to keep
+      or whether it needs to fall back to OCR or sampling.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>MarkItDown often raises or returns nothing on scanned PDFs and odd
+        files. That is expected. The failure is logged and swallowed; PDFs still get an OCR pass, and any
+        other file surfaces <code>[No content extracted]</code> rather than crashing the upload.</p></div>
+    </div>
+
+    <h2 id="scanned-pdfs">Scanned PDFs</h2>
+    <p>MarkItDown (via pdfplumber and pdfminer.six) only reads an embedded text layer. A born-digital PDF
+      yields plenty of text; a scanned, image-only PDF comes back nearly empty. So
+      <code>extract_pdf</code> counts the non-whitespace characters MarkItDown produced:</p>
+    <ul>
+      <li>If the text has <b>100 or more</b> non-whitespace characters (<code>_SCANNED_TEXT_THRESHOLD</code>),
+        the PDF is treated as born-digital and the MarkItDown text is returned as-is.</li>
+      <li>Below that threshold, the PDF is treated as scanned. Its pages are rasterized with
+        <b>pypdfium2</b> and sent to <a href="#ocr">OCR</a>.</li>
+    </ul>
+    <p>Rasterization is deliberately bounded so uploads stay responsive:</p>
+    <dl class="spec">
+      <dt><code class="path">_RENDER_SCALE = 2.0</code></dt><dd>About 144 DPI. A good balance of OCR accuracy against render time.</dd>
+      <dt><code class="path">_MAX_OCR_PAGES = 30</code></dt><dd>Only the first 30 pages are rendered and OCR'd. If the document is longer, the output notes that OCR was limited to the first 30 pages.</dd>
+    </dl>
+    <p>pypdfium2 was chosen partly because it is license-clean (BSD/Apache). If it is unavailable for any
+      reason, the handler returns the (empty) MarkItDown text rather than failing.</p>
+
+    <h2 id="ocr">OCR engine priority</h2>
+    <p>OCR lives in <code class="path">server/extract/ocr.py</code> and tries engines in a strict order,
+      designed so the normal path is fully on-device and never spends Bedrock tokens without reason:</p>
+    <ol class="steps">
+      <li>
+        <h4>Apple Vision, always first</h4>
+        <p>Native macOS OCR via the <code>ocrmac</code> package (Vision framework). Zero model download,
+          near-zero RAM, fast on printed text, fully on-device and private, no Bedrock cost. Results come
+          back as <code>(text, confidence, bbox)</code> tuples, which the handler sorts top-to-bottom then
+          left-to-right (Vision's bounding boxes use a bottom-left origin) so reading order is preserved.</p>
+      </li>
+      <li>
+        <h4>Bedrock Claude Haiku, only as a fallback</h4>
+        <p>If Apple Vision fails or is unavailable <em>and</em> AWS credentials resolve locally, the pages
+          are sent to Haiku's vision model with a prompt to transcribe them into clean Markdown. Up to 20
+          images go out in a single invoke, so a scanned PDF is usually one request.</p>
+      </li>
+    </ol>
+    <p>Credentials are checked without a network call (<code>boto3.Session().get_credentials()</code>), so
+      a machine with no AWS setup simply never reaches the Haiku branch. If Haiku is tried and returns an
+      access-denied or missing-credentials error, that fallback is disabled for the rest of the process so
+      uploads do not keep hammering a denied endpoint.</p>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>OCR is best-effort by design. If neither engine yields text, the
+        handler returns an empty string (or <code>[No text recognized]</code>) instead of raising, so a bad
+        scan never fails the whole upload.</p></div>
+    </div>
+
+    <h2 id="spreadsheets">Large spreadsheets</h2>
+    <p>A wide sheet with thousands of rows can blow past the context window on its own. So
+      <code class="path">server/extract/sheet.py</code> keeps MarkItDown's full Markdown table only while it is
+      small. Once that output exceeds <b>60,000 characters</b> (<code>_LARGE_CHARS</code>), the handler
+      swaps in a compact schema and sample instead:</p>
+    <ul>
+      <li>Each sheet's title and dimensions, as <code>N rows x M cols</code>.</li>
+      <li>The header row.</li>
+      <li>The first <b>20 rows</b> (<code>_SAMPLE_ROWS</code>) of data, rendered as a Markdown table.</li>
+    </ul>
+    <p>The injected text opens with a note telling the model it is seeing a sample and can ask for specific
+      rows or columns to see more, which it does through the <code>analyze_document</code> tool (see
+      <a href="ref-tools.html">Agent tools</a>). CSV files follow the same rule via <code>extract_csv</code>,
+      reporting the total row and column counts alongside the sample. If openpyxl or the CSV parser fails,
+      the handler keeps the original MarkItDown output rather than losing the data.</p>
+
+    <h2 id="images-vision">Images and vision sizing</h2>
+    <p>Images take their own branch in the upload endpoint. Two things happen to every uploaded image:</p>
+    <ul>
+      <li><b>OCR to text.</b> <code>ocr_image_bytes</code> (<code class="path">server/extract/image.py</code>)
+        runs the same OCR path as scanned PDFs, so text-only models (the local Gemma build) get readable
+        text pulled out of the image. Vision-capable models still receive the raw image block alongside it.</li>
+      <li><b>Sizing for vision.</b> <code>_prepare_image</code> in
+        <code class="path">server/attachments.py</code> caps the image's long edge and re-encodes it once, at
+        high quality, so fine text stays legible.</li>
+    </ul>
+    <p>The sizing is tuned around how Claude handles images. Claude internally downsamples anything whose
+      long edge exceeds about 1568px, so Whisper Studio does that <em>once</em>, at high quality, rather than
+      shipping an oversized image the model re-compresses (which softens small text and hurts OCR):</p>
+    <dl class="spec">
+      <dt><code class="path">IMAGE_MAX_DIM = 1568</code></dt><dd>Long-edge cap, Anthropic's recommended maximum. The image is only ever shrunk, never enlarged.</dd>
+      <dt><code class="path">IMAGE_JPEG_QUALITY = 90</code></dt><dd>High quality so small text stays readable when a JPEG re-encode is needed.</dd>
+      <dt><code class="path">IMAGE_HARD_BYTES</code></dt><dd>Keeps each image under Bedrock's roughly 5 MB per-image limit; JPEG quality steps down if necessary.</dd>
+    </dl>
+    <p>Small, simple images (a PNG screenshot within the size caps) pass through untouched so they stay
+      lossless for the crispest possible OCR. PNG sources stay PNG when that fits under the byte cap, and
+      only fall back to JPEG when the lossless version is too large.</p>
+
+    <h2 id="audio-video">Audio and video</h2>
+    <p>Audio and video are never sent to the model as media. The upload endpoint routes them by extension
+      (<code>is_media_ext</code> - MP3, WAV, M4A, FLAC, OGG on the audio side; MP4, MOV, WebM, MKV, AVI,
+      M4V on the video side) to <code>extract_media</code> in <code class="path">server/extract/media.py</code>,
+      which turns them into a Markdown transcript entirely <b>on-device</b> - no Bedrock call. Only that
+      transcript (plus, for video, a bounded set of frames) is kept; the original media bytes are discarded,
+      which is why audio and video get the higher <a href="#size-gates">size cap</a>.</p>
+    <ul>
+      <li><b>Transcription.</b> ffmpeg decodes the audio track to 16&nbsp;kHz mono and <b>mlx-whisper</b>
+        (<code>large-v3-turbo</code>) transcribes it into timestamped lines. Video reuses the same loader on
+        its audio track, so one code path covers both.</li>
+      <li><b>Speaker labels.</b> Each segment is embedded with <b>ECAPA-VoxCeleb</b> and clustered by the same
+        agglomerative clusterer that powers live diarization (<code class="path">server/diarization/</code>), so
+        the transcript reads <code>[00:12] Speaker&nbsp;2: &hellip;</code>. Segments too short to embed inherit
+        the previous speaker, and the whole step degrades to a single speaker if clustering is unavailable.</li>
+      <li><b>Video frames (hybrid understanding).</b> ffmpeg samples keyframes on a single pass - about
+        one every <b>10&nbsp;s</b>, stretched on longer clips so no more than <b>20 frames</b>
+        (<code>_MAX_FRAMES</code>) are ever kept. Each frame's on-screen text is OCR'd with <b>Apple Vision
+        directly</b> (not the escalating engine, so a text-free video never fans out into a Haiku call per
+        frame) and merged into the transcript as timestamped notes. The frames themselves are retained as
+        downscaled JPEGs (<code>1288</code>px long edge, quality <code>82</code>) so vision-capable models can
+        see what was on screen, while text-only models still get the transcript plus the OCR'd notes.</li>
+    </ul>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3ZM19 10v2a7 7 0 0 1-14 0v-2M12 19v4"/></svg></span>
+      <div class="callout__body"><p>This is the <em>uploaded-file</em> path. Recording live in a meeting is a
+        different pipeline - audio streamed over a WebSocket with interim drafts and self-healing speaker
+        clusters - covered in <a href="arch-transcription.html">Transcription &amp; diarization</a> and the
+        <a href="tut-voice.html">Voice &amp; meetings</a> tutorial.</p></div>
+    </div>
+
+    <h2 id="outline">Heading outline for partial injection</h2>
+    <p>Every converted document also gets a heading outline built by
+      <code class="path">server/extract/outline.py</code>. <code>build_outline(text)</code> scans the Markdown for
+      <code>#</code> through <code>######</code> headings and returns both a nested outline and a list of
+      sections, each a character-offset slice keyed by a 1-based number.</p>
+    <p>This is what lets the chat layer inject a large document by outline plus a lead section rather than a
+      blunt character truncation. When the model wants more, <code>get_section(text, sections, num)</code>
+      returns exactly that section by number. Documents with no Markdown headings (plain text, a flat
+      spreadsheet dump) simply come back with an empty outline. See
+      <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for how the injection fits into a turn.</p>
+
+    <h2 id="size-gates">Size gates and storage</h2>
+    <p>The upload endpoint (<code>POST /api/upload</code>) gates by byte size before any conversion runs.
+      Documents and images share one cap; audio and video get a larger one because only their transcript is
+      kept:</p>
+    <dl class="spec">
+      <dt><code class="path">MAX_FILE_SIZE = 50 MB</code></dt><dd>Documents and images. Over this, the upload is rejected with a 400.</dd>
+      <dt><code class="path">MEDIA_MAX_FILE_SIZE = 200 MB</code></dt><dd>Audio and video. They are transcribed to text (only the transcript is retained), so the byte cap can be higher.</dd>
+    </dl>
+    <p>Converted attachments are held in memory keyed by a UUID, with a <b>3 hour</b> TTL
+      (<code>ATTACHMENT_TTL</code>) so a message's files survive a later regenerate or edit-resend in the same
+      running session. A background loop prunes expired entries. Anything not matched by an image, media, or
+      known-document extension is treated as plain text if its bytes decode as UTF-8, and rejected only when
+      it is genuinely binary.</p>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/extract/__init__.py</code></dt><dd><code>convert_document</code>: MarkItDown-first router and extension dispatch.</dd>
+      <dt><code class="path">server/extract/pdf.py</code></dt><dd>Scanned-PDF detection and pypdfium2 rasterization.</dd>
+      <dt><code class="path">server/extract/ocr.py</code></dt><dd>Apple Vision first, Haiku fallback, graceful degradation.</dd>
+      <dt><code class="path">server/extract/sheet.py</code></dt><dd>Size-aware spreadsheet and CSV schema-plus-sample.</dd>
+      <dt><code class="path">server/extract/image.py</code></dt><dd>Image OCR for text-only models.</dd>
+      <dt><code class="path">server/extract/media.py</code></dt><dd>On-device audio and video transcription, ECAPA speaker labels, and bounded video keyframe sampling with OCR.</dd>
+      <dt><code class="path">server/extract/outline.py</code></dt><dd>Heading outline and section slicing for partial injection.</dd>
+      <dt><code class="path">server/attachments.py</code></dt><dd>The upload endpoint, size gates, image sizing, and in-memory storage.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> the <a href="tut-documents.html">Working with documents</a>
+        tutorial walks through this from the UI, <a href="arch-index.html">Index / GraphRAG &amp; search</a>
+        reuses the same extraction for indexed folders, <a href="arch-chat-pipeline.html">Chat &amp; tool
+        orchestration</a> shows where the Markdown gets injected, and
+        <a href="arch-transcription.html">Transcription &amp; diarization</a> covers the live recording path
+        (uploaded audio and video are handled <a href="#audio-video">above</a>).</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/extraction.js"></script>
+</body>
+</html>

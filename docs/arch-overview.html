@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>System overview - Whisper Studio Docs</title>
+  <meta name="description" content="The whole Whisper Studio system on one interactive map: browser SPA, FastAPI server, local runtime, storage, and external services.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-overview">
+    <h1>System overview</h1>
+    <p class="subtitle">Whisper Studio runs as a single process on your machine: one FastAPI server
+      that serves both the API and the React SPA from the same origin. Except for Amazon Bedrock and the
+      optional Tavily and MCP integrations, nothing in the request path is remote.</p>
+
+    <p>This page is the map. Everything below the diagram - and every other page in the Architecture
+      section - is a zoom into one part of it. <b>Click any box</b> to trace where its data flows; the
+      downstream path lights up and the rest fades.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="overview-diagram" class="diagram"></div>
+      <figcaption>The full system. Click a box to trace its downstream path; press <kbd>Esc</kbd> or
+        <b>Reset</b> to clear. Arrow direction shows data flow.</figcaption>
+    </figure>
+
+    <h2 id="the-four-layers">The layers, left to right</h2>
+    <p>Read the diagram as a pipeline. A request starts in the browser, crosses one of three
+      transports, and lands in the FastAPI process, which fans out to local runtimes, storage, and  - 
+      only for chat - the cloud.</p>
+
+    <h3>Browser (React 19 SPA)</h3>
+    <p>A single-page app renders the chat, the live transcript, and the full workspace IDE. State
+      lives in Zustand stores organized as <em>per-session runtimes</em> (up to three sessions stream
+      at once). All Markdown is sanitized through <code>marked</code> + DOMPurify before it reaches
+      the DOM. See <a href="arch-frontend.html">Frontend architecture</a>.</p>
+
+    <h3>Transport (same origin)</h3>
+    <p>Three channels share <code>http://127.0.0.1:8000</code>: REST for request/response, Server-Sent
+      Events for streamed tokens and session events, and WebSocket for binary audio, the terminal
+      PTY, and LSP. Because the SPA is served by the same process, there is no CORS layer.</p>
+
+    <h3>FastAPI server (the local process)</h3>
+    <p>The heart of the system. The <a href="arch-chat-pipeline.html">chat pipeline</a> builds each
+      prompt and drives a streaming tool loop; the <a href="arch-tools.html">tool router and
+      executors</a> carry out tool calls; the <a href="arch-agents.html">agent runtime</a> spawns
+      sub-agents and teams; and the <a href="arch-approval.html">approval + validator</a> layer gates
+      anything that writes.</p>
+    <p>The A-J program added five more server subsystems the map now covers. A unified
+      <b>background-task framework</b> (<code class="path">server/tasks/</code>, the
+      <code>agent_tasks</code> table, kinds <code>shell</code>/<code>agent</code>/<code>workflow</code>/<code>ci</code>,
+      <code>/api/background-tasks</code>) registers every detached job, including
+      <a href="arch-cron.html">scheduled</a> and <a href="arch-agents.html">sub-agent</a> runs.
+      <b>Blocking hooks</b> (<code class="path">server/hooks/</code>) gate the loop at
+      <code>PreToolUse</code>, <code>PostToolUse</code>, and <code>Stop</code> (see
+      <a href="arch-hooks.html">Blocking hooks</a>). A <b>goal loop + completion gate</b>
+      (<code class="path">server/goals/</code>, <code>run_completion_gate</code>) keeps a turn running
+      until a goal verdict clears (see <a href="arch-goals.html">The goal loop</a>). The <b>ultracode workflow runtime</b>
+      (<code class="path">server/workflows/</code>) runs model-authored deterministic JS in a Node-24
+      <code>vm</code> harness over JSON-RPC into Python; see
+      <a href="arch-ultracode.html">The ultracode workflow runtime</a>. And <b>CI watch + PR autofix</b>
+      (<code class="path">server/ci/</code>) watches a build and drives it back to green.</p>
+
+    <h3>Local runtime &amp; storage</h3>
+    <p>Transcription (<a href="arch-transcription.html">Whisper / Parakeet</a>), the
+      <a href="arch-index.html">workspace index</a>, and the <a href="arch-sandbox.html">sandbox</a>
+      all run on-device. Everything durable lives in a single WAL-mode
+      <a href="arch-persistence.html">SQLite database</a> plus your workspace files and the
+      <a href="arch-memory.html">memory store</a>.</p>
+
+    <h3>External services</h3>
+    <p><a href="arch-backends.html">Amazon Bedrock</a> is the only cloud LLM. It is called when you
+      submit a message, and now also from detached background work: the goal evaluator
+      (<code class="path">server/goals/evaluator.py</code>), CI diagnose
+      (<code class="path">server/ci/diagnose.py</code>), and workflow agents make their own (often
+      Haiku) Bedrock calls without a fresh submit. Optional MCP servers and Tavily are reached only
+      when a tool invokes them, and CI watch/autofix reaches <b>GitHub</b> through a read-only
+      <code>gh</code> CLI wrapper (<code class="path">server/ci/provider.py</code>) when
+      <code>ci_watch</code>/<code>ci_status</code>/<code>ci_autofix</code> run - a fourth external
+      service, but not an LLM call.</p>
+
+    <h2 id="key-invariants">Key invariants</h2>
+    <div class="cols-2">
+      <div class="card"><h3>One origin, one process</h3><p>The SPA is served from the same FastAPI app
+        that exposes the API. Nothing to cross, so no CORS.</p></div>
+      <div class="card"><h3>Localhost by default</h3><p>The server binds <code>127.0.0.1</code>. LAN
+        exposure requires an explicit <code>HOST=0.0.0.0</code> opt-in.</p></div>
+      <div class="card"><h3>Transcription is local</h3><p>Audio never leaves the machine. Only a
+        transcript can become a prompt - and only when you type something.</p></div>
+      <div class="card"><h3>Bedrock is the only cloud LLM</h3><p>No telemetry, no proxy, no gateway.
+        The signed request goes straight from the local process to Bedrock.</p></div>
+    </div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>Where to go next.</b> Read
+        <a href="arch-chat-turn.html">Anatomy of a chat turn</a> for the end-to-end sequence, then
+        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> - the component every
+        other subsystem plugs into.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/overview.js"></script>
+</body>
+</html>
