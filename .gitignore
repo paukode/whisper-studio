@@ -15,7 +15,9 @@ config.json
 # they contain the live Tavily API key, so keep them untracked.
 config.json.bak.*
 # Optional per-key pricing overrides; defaults live in pricing.example.json.
+# setup.sh --new writes pricing.json.bak.<timestamp> backups; keep them untracked.
 pricing.json
+pricing.json.bak.*
 
 # Environment
 .env
