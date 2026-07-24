@@ -29,16 +29,18 @@ const CTX_COLORS_DARK = ['#5dcaa5', '#fac775', '#ef9f27', '#f0997b', '#f09595'];
 // Threshold above which we prompt for confirmation before reloading.
 const CONFIRM_ABOVE = 16384;
 
-// Recommended TOTAL system memory per context window. Approximate ranges
-// (model weights ~7 GB + KV cache, which Gemma's sliding-window attention
-// shrinks): a guideline, not your specific machine. Lower bound assumes the
-// efficient case; upper bound is conservative headroom.
+// Recommended TOTAL system memory per context window. Measured from the model's
+// real allocation with the windowed (swa_full=false) KV cache: ~7.4 GB of
+// weights plus an iSWA KV cache that only grows on gemma's global-attention
+// layers, so the footprint climbs gently (8.5 GB at 16K, 9.3 GB at 64K, 12.5 GB
+// at 256K) instead of exploding. Ranges add headroom for macOS, the app, and the
+// KV-prefix cache; a guideline, not your specific machine.
 const RECOMMENDED_MEMORY: Record<number, string> = {
   16384: '12 to 16 GB',
-  32768: '16 to 24 GB',
-  65536: '24 to 40 GB',
-  131072: '40 to 64 GB',
-  262144: '64 to 128 GB',
+  32768: '12 to 16 GB',
+  65536: '12 to 16 GB',
+  131072: '16 to 20 GB',
+  262144: '16 to 24 GB',
 };
 
 const nearestMarkIndex = (value: number): number =>
@@ -62,7 +64,7 @@ function memoryNote(ctx: number): { text: string; warn: boolean } {
     };
   }
   return {
-    text: `⚠ Recommended memory: ${rec}. If your system has less, the model may fail to load or become unstable. Changing this reloads the model.`,
+    text: `⚠ Recommended memory: ${rec} total. If your machine has less, the model may fail to load or run slowly. Changing this reloads the model.`,
     warn: true,
   };
 }
@@ -76,9 +78,9 @@ const ContextWarningBody: React.FC<{ ctx: number }> = ({ ctx }) => (
       <strong>{recMem(ctx)}</strong> of total system memory.
     </p>
     <p>
-      Your system may not support this context window: if there is not enough
-      memory, the model can fail to load, run very slowly, or the app or your
-      system may become unstable or shut down. Recommended memory per size:
+      These are approximate totals for the model itself (weights plus its KV
+      cache), with headroom for the rest of your system. If your machine has
+      less, the model may fail to load or run slowly. Recommended memory per size:
     </p>
     <table className="ctx-mem-table">
       <thead>
