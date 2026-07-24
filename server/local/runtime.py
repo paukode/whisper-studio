@@ -628,12 +628,20 @@ def iter_generate_round(
     tool_schemas: list[dict],
     max_tokens: int = 4096,
     cancel: threading.Event | None = None,
+    thinking: bool = False,
 ):
     """Run ONE agentic round, STREAMING it. Yields ``("thinking", piece)`` for
     any ``<|channel>thought`` reasoning the model opens, ``("text", piece)`` for
     displayable text as it decodes (everything before any ``<|tool_call>`` DSL),
     then a final ``("raw", full_text)`` so the caller can parse the tool call
     (``raw`` excludes the reasoning channel).
+
+    ``thinking`` mirrors the plain path (``iter_chat``): when set (and the model
+    supports it) the prompt is rendered with ``enable_thinking=True`` so the
+    model reasons in a ``<|channel>thought`` block before answering — the tools
+    path used to hard-disable this, so the "Think on" toggle did nothing once
+    tools were on. If thinking + tools cannot render together we retry with
+    thinking off so the tool block is never lost.
 
     Streaming (vs buffering the whole round) is what keeps a tools-on turn from
     looking frozen while the model prefills a large prompt and decodes the
@@ -650,7 +658,13 @@ def iter_generate_round(
     accumulated ``raw`` so a break leaves the generator well-formed; the drained
     consumer is already gone, so those trailing pieces are simply discarded."""
     load_sync(key)
-    prompt = _render_prompt(convo, tools=tool_schemas)
+    want_think = thinking and supports_thinking(key)
+    prompt = _render_prompt(convo, enable_thinking=want_think, tools=tool_schemas)
+    if prompt is None and want_think:
+        # Thinking + tools failed to render together — keep the tools (the whole
+        # point of this path) and drop thinking rather than falling all the way
+        # back to a tool-less answer.
+        prompt = _render_prompt(convo, enable_thinking=False, tools=tool_schemas)
     tool_sp = _ToolCallSplitter()
     thought_sp = _ThoughtSplitter()
 

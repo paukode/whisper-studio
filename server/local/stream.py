@@ -214,11 +214,16 @@ def _results_context(tool_results: list[dict], names_by_id: dict[str, str]) -> s
 # ── tools-on path ─────────────────────────────────────────────────────────────
 
 
-async def _stream_round(model_key: str, convo: list[dict], schemas: list[dict]):
+async def _stream_round(
+    model_key: str, convo: list[dict], schemas: list[dict], thinking: bool = False
+):
     """Bridge one streaming generation round (sync, thread-affine) to async.
     Pumps ``iter_generate_round``'s pieces onto a queue so the answer streams
     token-by-token as it decodes. Yields ``("text", piece)`` then ``("raw",
     full_text)``; raises on a generation error so the caller can surface it.
+
+    ``thinking`` is forwarded to ``iter_generate_round`` so the tools path honors
+    the "Think on" toggle just like the plain path.
 
     Cancellation: local generation runs on the SINGLE model thread, so an
     abandoned round (client disconnect / Stop) must be stopped or the next turn
@@ -235,7 +240,7 @@ async def _stream_round(model_key: str, convo: list[dict], schemas: list[dict]):
     def produce() -> None:
         try:
             for kind, piece in local_llm.iter_generate_round(
-                model_key, convo, schemas, 4096, cancel=cancel
+                model_key, convo, schemas, 4096, cancel=cancel, thinking=thinking
             ):
                 loop.call_soon_threadsafe(queue.put_nowait, (kind, piece))
         except Exception as e:
@@ -295,12 +300,18 @@ async def _tool_loop(
     if start_round == 0 and _goal_text:
         _goal_store.reset_for_new_turn(session_id)
 
+    # Honor the "Think on" toggle in the tools path too (carried on tool_ctx so a
+    # paused turn's resume keeps the same setting). Previously the tools path
+    # never enabled thinking, so the toggle silently did nothing once tools were
+    # on — parity with the plain path in server/local/runtime.iter_chat.
+    thinking = bool(tool_ctx.get("thinking", False))
+
     for rnd in range(start_round, _MAX_TOOL_ROUNDS):
         # Stream the round as it decodes (displayable text only — the tool-call
         # DSL is withheld by the splitter); `raw` carries the full text to parse.
         raw = ""
         thinking_open = False
-        async for kind, piece in _stream_round(model_key, convo, schemas):
+        async for kind, piece in _stream_round(model_key, convo, schemas, thinking=thinking):
             if kind == "text":
                 if thinking_open:
                     thinking_open = False
