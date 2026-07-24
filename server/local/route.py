@@ -89,6 +89,9 @@ def local_chat_response(
         "tool_scope": tool_scope,
         "suppress_ws_search": suppress_ws_search,
         "transcript": transcript,
+        # Carried so the tools path renders the thinking channel (and a paused
+        # turn's resume keeps the same setting), matching the plain path.
+        "thinking": bool(body.get("local_thinking", False)),
     }
     return StreamingResponse(
         stream_local_chat(

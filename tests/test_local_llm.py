@@ -390,6 +390,86 @@ def test_iter_generate_round_routes_thought_channel(monkeypatch):
     assert "<|tool_call>call:web_search" in raw  # tool DSL retained for parsing
 
 
+def test_iter_generate_round_enables_thinking_when_requested(monkeypatch):
+    """The tools path must honor the thinking toggle: with thinking=True it
+    renders the prompt with enable_thinking=True (previously the tools path
+    always rendered enable_thinking=False, so 'Think on' did nothing once tools
+    were on)."""
+    monkeypatch.setattr(L, "load_sync", lambda *a, **k: None)
+    monkeypatch.setattr(L, "supports_thinking", lambda k: True)
+    seen = []
+
+    def fake_render(chat, enable_thinking=False, tools=None):
+        seen.append(enable_thinking)
+        return "PROMPT"
+
+    monkeypatch.setattr(L, "_render_prompt", fake_render)
+
+    class FakeLlm:
+        def create_completion(self, **kw):
+            yield {"choices": [{"text": "hi"}]}
+
+    monkeypatch.setattr(L, "_llm", FakeLlm(), raising=False)
+
+    list(L.iter_generate_round("local_gemma", [], [{"x": 1}], 128, thinking=True))
+    assert seen == [True]
+    seen.clear()
+    list(L.iter_generate_round("local_gemma", [], [{"x": 1}], 128, thinking=False))
+    assert seen == [False]
+
+
+def test_iter_generate_round_keeps_tools_if_thinking_render_fails(monkeypatch):
+    """If thinking + tools cannot render together, we retry with thinking off so
+    the tool block is preserved — never fall all the way back to a tool-less
+    answer just because thinking was requested."""
+    monkeypatch.setattr(L, "load_sync", lambda *a, **k: None)
+    monkeypatch.setattr(L, "supports_thinking", lambda k: True)
+    tried = []
+
+    def fake_render(chat, enable_thinking=False, tools=None):
+        tried.append(enable_thinking)
+        return None if enable_thinking else "PROMPT"  # thinking render fails
+
+    monkeypatch.setattr(L, "_render_prompt", fake_render)
+
+    class FakeLlm:
+        def create_completion(self, **kw):
+            yield {"choices": [{"text": "answer"}]}
+
+        def create_chat_completion(self, **kw):  # the tool-less fallback
+            raise AssertionError("must keep tools via retry, not answer tool-less")
+
+    monkeypatch.setattr(L, "_llm", FakeLlm(), raising=False)
+
+    out = list(L.iter_generate_round("local_gemma", [], [{"x": 1}], 128, thinking=True))
+    assert tried == [True, False]  # tried thinking, then retried without it
+    assert "".join(t for k, t in out if k == "text").strip() == "answer"
+
+
+def test_stream_tools_path_forwards_thinking_toggle(monkeypatch):
+    """tool_ctx['thinking'] must reach iter_generate_round so the agentic loop
+    reasons like the plain path (regression: the tools path ignored the toggle)."""
+    import server.local.stream as S
+
+    monkeypatch.setattr(L, "supports_tools", lambda k: True)
+    monkeypatch.setattr(S, "get_tool_schemas", lambda **k: ([], set()))
+    seen = {}
+
+    def gen(key, convo, schemas, max_tokens=4096, cancel=None, thinking=False):
+        seen["thinking"] = thinking
+        yield ("text", "done")
+        yield ("raw", "done")
+
+    monkeypatch.setattr(L, "iter_generate_round", gen)
+
+    _drain(
+        lambda: stream_local_chat(
+            "local_gemma", "s", [], "x", tools=True, tool_ctx={"thinking": True}
+        )
+    )
+    assert seen["thinking"] is True
+
+
 def test_stream_surfaces_runtime_error_without_usage(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("llama-cpp-python is not installed")
@@ -572,7 +652,7 @@ def _fake_rounds(*texts):
     text (the part before any tool-call DSL) then yields ('raw', full_text)."""
     box = {"i": 0}
 
-    def gen(key, convo, schemas, max_tokens=4096, cancel=None):
+    def gen(key, convo, schemas, max_tokens=4096, cancel=None, thinking=False):
         i = box["i"]
         box["i"] = min(i + 1, len(texts) - 1)
         t = texts[i]
@@ -623,7 +703,7 @@ def test_stream_tools_surfaces_thinking_not_raw_markers(monkeypatch):
     monkeypatch.setattr(L, "supports_tools", lambda k: True)
     monkeypatch.setattr(S, "get_tool_schemas", lambda **k: ([], set()))
 
-    def gen(key, convo, schemas, max_tokens=4096, cancel=None):
+    def gen(key, convo, schemas, max_tokens=4096, cancel=None, thinking=False):
         yield ("thinking", "let me reason")
         yield ("text", "The answer is 42.")
         yield ("raw", "The answer is 42.")
