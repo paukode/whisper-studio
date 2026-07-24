@@ -64,12 +64,15 @@ def local_chat_response(
     tool_scope = str(body.get("local_tool_scope", "core_web"))
     # Lean system prompt: the cloud one is tool/workspace-heavy (~2-2.5k tokens
     # the local model can't use) — drop it to speed prefill and free n_ctx,
-    # keeping only project/memory context.
+    # keeping only project/memory context plus, when tools are on, a short marker
+    # that a workspace is connected (so the model reaches it via ws_* tools
+    # instead of claiming no project was provided).
     local_system = build_local_system_prompt(
         whisper_md_context,
         memory_context,
         session_memory_context,
         tools=local_tools_on,
+        ws_path=ws_path or "",
     )
     # Tool context mirrors what the cloud loop computes per request, so the local
     # model sees the same tool pool and reuses the same executor + approval
