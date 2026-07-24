@@ -120,6 +120,41 @@ def test_load_sync_keeps_requested_ctx_on_lazy_load(monkeypatch):
     assert created == [65536]
 
 
+def test_load_sync_uses_windowed_swa_and_attaches_kv_cache(monkeypatch):
+    """The model loads with swa_full=False (windowed gemma KV cache, so large
+    context windows fit instead of allocating a full-size SWA buffer) and gets a
+    bounded RAM cache of KV prefixes (so an interleaved generation can't force the
+    next turn to re-prefill from cold)."""
+    kwargs: dict = {}
+    caches: list = []
+
+    class FakeLlama:
+        def __init__(self, **kw):
+            kwargs.update(kw)
+
+        def set_cache(self, cache):
+            caches.append(cache)
+
+    class FakeRAMCache:
+        def __init__(self, capacity_bytes):
+            self.capacity_bytes = capacity_bytes
+
+    fake_mod = types.ModuleType("llama_cpp")
+    fake_mod.Llama = FakeLlama
+    fake_mod.LlamaRAMCache = FakeRAMCache
+    monkeypatch.setitem(sys.modules, "llama_cpp", fake_mod)
+    monkeypatch.setattr(L, "ensure_downloaded", lambda key: "/tmp/fake.gguf")
+    monkeypatch.setattr(L, "_llm", None, raising=False)
+    monkeypatch.setattr(L, "_llm_key", None, raising=False)
+    monkeypatch.setattr(L, "_KV_CACHE_BYTES", 2 * 1024**3, raising=False)
+
+    L.load_sync("local_gemma", 32768)
+
+    assert kwargs.get("swa_full") is False  # C: windowed SWA cache
+    assert len(caches) == 1  # A: KV-prefix cache attached
+    assert caches[0].capacity_bytes == 2 * 1024**3
+
+
 # ── Local memory stays offline ───────────────────────────────────────────────
 
 
@@ -296,6 +331,41 @@ def test_thought_splitter_all_text_when_no_markers():
     out.extend(sp.flush())
     assert "".join(t for k, t in out if k == "thinking") == ""
     assert "".join(t for k, t in out if k == "text") == "just a plain answer"
+
+
+def test_iter_generate_round_routes_thought_channel(monkeypatch):
+    """Regression: in the tools path the model can open a <|channel>thought
+    reasoning block. It must be surfaced as 'thinking' pieces (never leaked as
+    visible text), and 'raw' — used for tool parsing + history — must exclude the
+    reasoning while keeping the <|tool_call> DSL."""
+    monkeypatch.setattr(L, "load_sync", lambda *a, **k: None)
+    monkeypatch.setattr(L, "_render_prompt", lambda *a, **k: "PROMPT")
+
+    stream_pieces = [
+        "<|channel>thought\n",
+        "reasoning about the ask",
+        "\n<channel|>",
+        "Here is the answer. ",
+        '<|tool_call>call:web_search{query:<|"|>x<|"|>}',
+    ]
+
+    class FakeLlm:
+        def create_completion(self, **kw):
+            for p in stream_pieces:
+                yield {"choices": [{"text": p}]}
+
+    monkeypatch.setattr(L, "_llm", FakeLlm(), raising=False)
+
+    out = list(L.iter_generate_round("local_gemma", [], [], 128))
+    thinking = "".join(t for k, t in out if k == "thinking")
+    text = "".join(t for k, t in out if k == "text")
+    raw = next(t for k, t in out if k == "raw")
+
+    assert thinking.strip() == "reasoning about the ask"
+    assert "<|channel>" not in text and "<|tool_call>" not in text
+    assert text.strip() == "Here is the answer."
+    assert "<|channel>" not in raw  # reasoning excluded from raw
+    assert "<|tool_call>call:web_search" in raw  # tool DSL retained for parsing
 
 
 def test_stream_surfaces_runtime_error_without_usage(monkeypatch):
@@ -520,6 +590,33 @@ def test_stream_tools_runs_tool_then_answers(monkeypatch):
     assert '"skill_result": "web_search"' in blob and "Sunny, 20C" in blob
     assert '"text": "It is sunny."' in blob
     assert '"usage"' in blob
+    assert chunks[-1].strip() == "data: [DONE]"
+
+
+def test_stream_tools_surfaces_thinking_not_raw_markers(monkeypatch):
+    """The tools path must render a mid-round reasoning channel as thinking_*
+    events (parity with the plain path), never leaking the raw markers."""
+    import server.local.stream as S
+
+    monkeypatch.setattr(L, "supports_tools", lambda k: True)
+    monkeypatch.setattr(S, "get_tool_schemas", lambda **k: ([], set()))
+
+    def gen(key, convo, schemas, max_tokens=4096, cancel=None):
+        yield ("thinking", "let me reason")
+        yield ("text", "The answer is 42.")
+        yield ("raw", "The answer is 42.")
+
+    monkeypatch.setattr(L, "iter_generate_round", gen)
+
+    chunks = _drain(lambda: stream_local_chat("local_gemma", "s", [], "x", tools=True, tool_ctx={}))
+    blob = "".join(chunks)
+    assert '"thinking_start": true' in blob
+    assert '"thinking": "let me reason"' in blob
+    assert '"thinking_stop": true' in blob
+    assert '"text": "The answer is 42."' in blob
+    assert "<|channel" not in blob  # no raw reasoning markers leaked
+    # thinking_stop precedes the answer text
+    assert blob.index('"thinking_stop"') < blob.index('"text": "The answer is 42."')
     assert chunks[-1].strip() == "data: [DONE]"
 
 

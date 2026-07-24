@@ -299,12 +299,26 @@ async def _tool_loop(
         # Stream the round as it decodes (displayable text only — the tool-call
         # DSL is withheld by the splitter); `raw` carries the full text to parse.
         raw = ""
+        thinking_open = False
         async for kind, piece in _stream_round(model_key, convo, schemas):
             if kind == "text":
+                if thinking_open:
+                    thinking_open = False
+                    yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
                 out_chars += len(piece)
                 yield f"data: {ndjson_dumps({'text': piece})}\n\n"
+            elif kind == "thinking":
+                # A reasoning channel the model opened mid-round — surface it as
+                # thinking events (parity with the plain path) instead of leaking
+                # the raw <|channel>thought markers into the answer.
+                if not thinking_open:
+                    thinking_open = True
+                    yield f"data: {ndjson_dumps({'thinking_start': True})}\n\n"
+                yield f"data: {ndjson_dumps({'thinking': piece})}\n\n"
             else:  # ("raw", full_text)
                 raw = piece
+        if thinking_open:  # reasoning but no answer text followed in this round
+            yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
         log.info("Local tools round %d output (first 200): %r", rnd, raw[:200])
 
         calls = parse_tool_calls(raw, valid_names)

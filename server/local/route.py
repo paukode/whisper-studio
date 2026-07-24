@@ -58,7 +58,10 @@ def local_chat_response(
     local_tools_on = bool(body.get("local_tools", False))
     # Tool scope picks how much of the pool the on-device model sees:
     # off / core / core_web / all. Fewer tools = a much smaller prompt = faster.
-    tool_scope = str(body.get("local_tool_scope", "all"))
+    # Default to the lean core+web set, not the full ~58-tool pool: the full pool
+    # prefills for ~50s on a 12B model (vs a few seconds for core), and the UI
+    # always sends an explicit scope, so this only backstops direct API callers.
+    tool_scope = str(body.get("local_tool_scope", "core_web"))
     # Lean system prompt: the cloud one is tool/workspace-heavy (~2-2.5k tokens
     # the local model can't use) — drop it to speed prefill and free n_ctx,
     # keeping only project/memory context.
