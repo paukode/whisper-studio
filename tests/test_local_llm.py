@@ -281,6 +281,28 @@ def test_local_system_prompt_tools_mode_tells_model_it_has_tools():
     assert "do not claim you lack tools" in p
 
 
+def test_local_system_prompt_notes_connected_workspace_when_tools_on(monkeypatch):
+    from server.prompts import rules
+
+    monkeypatch.setattr(rules, "load_prompt_rules", lambda: "")
+    p = L.build_local_system_prompt(tools=True, ws_path="/Users/me/proj")
+    # The model must be told a workspace is connected at the path so it reaches
+    # it via ws_* tools instead of claiming no project was provided.
+    assert "/Users/me/proj" in p
+    assert "ws_read_file" in p
+
+
+def test_local_system_prompt_skips_workspace_note_without_tools(monkeypatch):
+    from server.prompts import rules
+
+    monkeypatch.setattr(rules, "load_prompt_rules", lambda: "")
+    # No tools means no ws_* tools to call — the marker would over-promise, so
+    # the honest no-tools identity stands even with a workspace connected.
+    p = L.build_local_system_prompt(tools=False, ws_path="/Users/me/proj")
+    assert "/Users/me/proj" not in p
+    assert "do not have access to tools" in p.lower()
+
+
 def test_stream_emits_text_usage_then_done(monkeypatch):
     monkeypatch.setattr(
         L, "iter_chat", lambda *a, **k: iter([("text", "Hello"), ("text", " world")])

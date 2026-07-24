@@ -337,8 +337,28 @@ _LOCAL_SYSTEM_TOOLS = (
 )
 
 
+def _local_workspace_note(ws_path: str) -> str:
+    """A trimmed workspace marker for the local prompt.
+
+    The cloud ``workspace_prompt`` is ~400 tokens of write/approval workflow the
+    on-device model doesn't need spelled out. This is the one thing it DOES need:
+    that a workspace is connected right now and it should reach it via ws_* tools
+    instead of telling the user no project was provided."""
+    return (
+        f"A code workspace is connected at '{ws_path}'. When the user asks about "
+        "their project, code, or files, use the ws_* tools (ws_read_file, ws_grep, "
+        "ws_glob, ws_list_directory) to read and search it — do NOT say that no "
+        "file, folder, or project was provided. Read files before answering "
+        "questions about them."
+    )
+
+
 def build_local_system_prompt(
-    whisper_md: str = "", memory: str = "", session_memory: str = "", tools: bool = False
+    whisper_md: str = "",
+    memory: str = "",
+    session_memory: str = "",
+    tools: bool = False,
+    ws_path: str = "",
 ) -> str:
     """A lean system prompt for local turns.
 
@@ -347,10 +367,17 @@ def build_local_system_prompt(
     model just slows prefill (a longer warm-up) and eats the n_ctx budget. Keep
     a short identity plus any genuinely useful project/memory context. When
     ``tools`` is set, use the tools-positive identity instead of the no-tools one.
+
+    When a workspace is connected AND tools are on, append a short marker so the
+    model knows to reach the codebase with ws_* tools. Without tools there are no
+    ws_* tools to call, so the marker is skipped — the honest no-tools identity
+    stands.
     """
     from server.prompts.rules import append_rules
 
     parts = [_LOCAL_SYSTEM_TOOLS if tools else _LOCAL_SYSTEM_BASE]
+    if tools and ws_path:
+        parts.append(_local_workspace_note(ws_path))
     for extra in (whisper_md, memory, session_memory):
         if extra and extra.strip():
             parts.append(extra.strip())
