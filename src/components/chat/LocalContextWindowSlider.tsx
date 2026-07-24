@@ -1,8 +1,10 @@
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore, dialogConfirm } from '@/stores/uiStore';
 import { useDismiss } from '@/hooks/useDismiss';
+import { useTheme } from '@/providers/ThemeProvider';
 import { loadLocalModel } from '@/api/localModel';
+import { StardustSlider, parseColor, type RGB } from '@/components/chat/StardustSlider';
 
 interface LocalContextWindowSliderProps {
   /** Called when the popover opens so the parent can close its other toolbar
@@ -16,6 +18,13 @@ interface LocalContextWindowSliderProps {
 // requires confirmation, because the KV cache grows fast with context length.
 const MARKS = [16384, 32768, 65536, 131072, 262144];
 const fmt = (n: number) => `${Math.round(n / 1024)}K`;
+
+// Orb colours per size (index-aligned with MARKS). Unlike the effort slider's
+// tier hues, context size maps to MEMORY COST: teal is comfortable, warming
+// through amber to red as the KV cache grows. Separate light/dark ramps keep the
+// orb legible on both the cream and the dark composer.
+const CTX_COLORS_LIGHT = ['#1d9e75', '#ef9f27', '#ba7517', '#d85a30', '#e24b4a'];
+const CTX_COLORS_DARK = ['#5dcaa5', '#fac775', '#ef9f27', '#f0997b', '#f09595'];
 
 // Threshold above which we prompt for confirmation before reloading.
 const CONFIRM_ABOVE = 16384;
@@ -103,12 +112,20 @@ export const LocalContextWindowSlider: React.FC<LocalContextWindowSliderProps> =
   const ctx = useSettingsStore((s) => s.localContextWindow);
   const setCtx = useSettingsStore((s) => s.setLocalContextWindow);
   const modelLoading = useUIStore((s) => s.modelLoading);
+  const { resolvedTheme } = useTheme();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   // The size the resident model was last (re)loaded at. We reload only when the
   // committed value actually differs, so opening and closing without a change
   // never reloads.
   const appliedRef = useRef(ctx);
+
+  // Per-size orb colours, re-read on theme change so the memory-cost ramp stays
+  // legible in both themes.
+  const readColors = useCallback(
+    (): RGB[] => (resolvedTheme === 'dark' ? CTX_COLORS_DARK : CTX_COLORS_LIGHT).map(parseColor),
+    [resolvedTheme],
+  );
 
   // Commit on close: if the size changed, reload the model at the new size.
   // Above 16K, confirm first (memory requirements); cancel reverts the slider.
@@ -170,17 +187,18 @@ export const LocalContextWindowSlider: React.FC<LocalContextWindowSliderProps> =
           <span className="effort-pop-label">Context window</span>
           <span className="effort-pop-val">{fmt(ctx)} tokens</span>
         </div>
-        <input
-          type="range"
-          className="effort-slider"
-          min={0}
-          max={MARKS.length - 1}
-          step={1}
-          value={idx}
-          disabled={busy}
-          onChange={(e) => setCtx(MARKS[Number(e.target.value)])}
-          aria-label="Context window size"
-        />
+        {open && (
+          <StardustSlider
+            count={MARKS.length}
+            value={idx}
+            onChange={(i) => setCtx(MARKS[i])}
+            readColors={readColors}
+            colorKey={resolvedTheme}
+            ariaLabel="Context window size"
+            valueText={(i) => `${fmt(MARKS[i])} tokens`}
+            disabled={busy}
+          />
+        )}
         <div className="effort-pop-ticks">
           {MARKS.map((m, i) => (
             <button
