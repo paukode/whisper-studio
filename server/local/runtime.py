@@ -67,6 +67,17 @@ _llm = None  # the loaded llama_cpp.Llama instance
 _llm_key: str | None = None
 _lock = threading.Lock()
 
+# The context window (n_ctx) most recently REQUESTED by an explicit load — i.e.
+# the size the user picked in the chat-input context-window slider, which loads
+# the model via /api/local-model/load?n_ctx=... . Chat turns call load_sync(key)
+# with n_ctx=None to lazily ensure the model is resident; without remembering the
+# choice here, None resolves back to the model default (16K) and RELOADS the
+# model smaller mid-turn, so the very next message overflows a 16K window even
+# though the badge says 32K/64K. Keeping it sticky makes None mean "keep whatever
+# the user last asked for". Updated only by an explicit request, so a lazy load
+# can never downshift the resident window.
+_requested_n_ctx: int | None = None
+
 
 def is_local_model(key: str | None) -> bool:
     return bool(key) and key in LOCAL_MODELS
@@ -154,17 +165,22 @@ def load_sync(key: str, n_ctx: int | None = None) -> None:
     MUST run on ``executor`` (model has thread affinity). Raises RuntimeError
     with an actionable message when the runtime or weights are missing.
     """
-    global _llm, _llm_key
+    global _llm, _llm_key, _requested_n_ctx
     if not is_local_model(key):
         raise RuntimeError(f"Unknown local model: {key}")
     m = LOCAL_MODELS[key]
     # Larger n_ctx = larger KV cache = more memory; flash attention keeps it in
-    # check and is needed for efficient sliding-window attention.
-    target_n_ctx = (
-        int(n_ctx)
-        if n_ctx is not None
-        else int(os.environ.get("WHISPER_LOCAL_N_CTX") or m.get("ctx", 16384))
-    )
+    # check and is needed for efficient sliding-window attention. Resolution:
+    # explicit request > last explicit request (sticky) > env override > model
+    # default. The sticky tier is what stops a lazy chat-turn load (n_ctx=None)
+    # from resetting the user's chosen window back to 16K.
+    if n_ctx is not None:
+        target_n_ctx = int(n_ctx)
+        _requested_n_ctx = target_n_ctx
+    elif _requested_n_ctx is not None:
+        target_n_ctx = _requested_n_ctx
+    else:
+        target_n_ctx = int(os.environ.get("WHISPER_LOCAL_N_CTX") or m.get("ctx", 16384))
     # Same model already resident at the same context size → nothing to do.
     if (
         _llm is not None

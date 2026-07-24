@@ -8,9 +8,22 @@ import asyncio
 import sys
 import types
 
+import pytest
+
 import server.local.runtime as L
 from server.local import tools as T
 from server.local.stream import stream_local_chat
+
+
+@pytest.fixture(autouse=True)
+def _reset_requested_n_ctx():
+    """The resident context window is a module global that intentionally persists
+    across loads (so a lazy chat-turn load keeps the user's chosen size). Reset it
+    around every test so one test's explicit n_ctx can't leak into another's
+    default-path assertion."""
+    L._requested_n_ctx = None
+    yield
+    L._requested_n_ctx = None
 
 
 def _drain(agen_factory):
@@ -79,6 +92,32 @@ def test_load_sync_default_ctx_is_16k(monkeypatch):
     assert L.LOCAL_MODELS["local_gemma"]["ctx"] == 16384
     L.load_sync("local_gemma")  # no explicit n_ctx
     assert created == [16384]
+
+
+def test_load_sync_keeps_requested_ctx_on_lazy_load(monkeypatch):
+    """Regression: once the slider loads the model at a larger window, a lazy
+    chat-turn load (``load_sync`` with no n_ctx) must KEEP that window, not fall
+    back to the 16K default and reload the model smaller mid-session — which made
+    the next message overflow a 16K window even though the badge said 32K/64K."""
+    created: list[int] = []
+
+    class FakeLlama:
+        def __init__(self, **kw):
+            created.append(kw["n_ctx"])
+
+    fake_mod = types.ModuleType("llama_cpp")
+    fake_mod.Llama = FakeLlama
+    monkeypatch.setitem(sys.modules, "llama_cpp", fake_mod)
+    monkeypatch.setattr(L, "ensure_downloaded", lambda key: "/tmp/fake.gguf")
+    monkeypatch.setattr(L, "_llm", None, raising=False)
+    monkeypatch.setattr(L, "_llm_key", None, raising=False)
+    monkeypatch.delenv("WHISPER_LOCAL_N_CTX", raising=False)
+
+    L.load_sync("local_gemma", 65536)  # user picks 64K via the slider
+    L.load_sync("local_gemma")  # a chat turn lazily ensures residency
+    # Only one construction: the 64K model stays resident; it is NOT reloaded at
+    # the 16K default just because the lazy load passed no n_ctx.
+    assert created == [65536]
 
 
 # ── Local memory stays offline ───────────────────────────────────────────────
