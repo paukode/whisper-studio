@@ -10,6 +10,7 @@
       "thinking": "adaptive",
       "requires_data_retention": true
     },
+    "opus5.0": { "id": "global.anthropic.claude-opus-5",                  "label": "Opus 5",     "thinking": "adaptive" },
     "opus4.8": { "id": "global.anthropic.claude-opus-4-8",                "label": "Opus 4.8",   "thinking": "adaptive" },
     "sonnet5": { "id": "global.anthropic.claude-sonnet-5",                "label": "Sonnet 5",   "thinking": "adaptive" },
     "haiku":   { "id": "global.anthropic.claude-haiku-4-5-20251001-v1:0", "label": "Haiku 4.5",  "thinking": "budget" },
@@ -71,7 +72,7 @@
       "supports_tools": true
     }
   },
-  "default_chat_model": "opus4.8",
+  "default_chat_model": "opus5.0",
   "brief_mode": false,
   "permission_mode": "default",
   "permission_explainer_enabled": true,
