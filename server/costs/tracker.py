@@ -10,6 +10,7 @@ Provides:
 
 import csv
 import io
+import json
 import logging
 import os
 import sqlite3
@@ -27,67 +28,78 @@ STORAGE_DIR = os.path.join(BASE_DIR, "storage")
 DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
 
 # ── Model pricing (USD per 1M tokens) ────────────────────────────────
-# Authoritative, version-keyed list price for every model in chat_models — one
-# entry per key, every rate explicit. There is NO fallback bucket: an unknown
-# key bills $0 and logs loudly (see get_model_pricing) rather than silently
-# inheriting another model's rate. Rates are AWS Bedrock on-demand list prices.
-#   cache_read  = prompt-cache read (Anthropic) / cached input (OpenAI)
-#   cache_write = prompt-cache write. Anthropic: 5-minute TTL. OpenAI: GPT-5.5
-#                 and 5.4 have no cache-creation charge (0); GPT-5.6 adds
-#                 explicit prompt caching billed at 1.25x input, 30-minute TTL
-_MODEL_PRICING = {
-    "haiku": {"input": 1.00, "output": 5.00, "cache_read": 0.10, "cache_write": 1.25},
-    "sonnet": {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 3.75},
-    # Sonnet 5 list price matches Sonnet 4.6 ($3/$15). An introductory discount
-    # ($2/$10) runs through 2026-08-31; we bill the list price so budget caps
-    # stay conservative during the promo and need no revert once it ends.
-    "sonnet5": {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 3.75},
-    "opus5.0": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
-    "opus4.6": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
-    "opus4.7": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
-    "opus4.8": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
-    "fable5.0": {"input": 10.00, "output": 50.00, "cache_read": 1.00, "cache_write": 12.50},
-    # OpenAI on Bedrock (Geo / in-region on-demand, us-east-1 / us-east-2).
-    # input_tokens already INCLUDES cached input, so estimate_cost is called
-    # with cached_in_input=True to bill the cached portion once at cache_read.
-    # GPT-5.6 rates from the Bedrock pricing page (us-east-1/us-east-2,
-    # 2026-07-15): cache read is 10% of input, cache write (30m) 1.25x input.
-    "gpt5.6-sol": {
-        "input": 5.50,
-        "output": 33.00,
-        "cache_read": 0.55,
-        "cache_write": 6.88,
-        "cached_in_input": True,
-    },
-    "gpt5.6-terra": {
-        "input": 2.75,
-        "output": 16.50,
-        "cache_read": 0.28,
-        "cache_write": 3.44,
-        "cached_in_input": True,
-    },
-    "gpt5.6-luna": {
-        "input": 1.10,
-        "output": 6.60,
-        "cache_read": 0.11,
-        "cache_write": 1.38,
-        "cached_in_input": True,
-    },
-    "gpt5.5": {
-        "input": 5.50,
-        "output": 33.00,
-        "cache_read": 0.55,
-        "cache_write": 0.0,
-        "cached_in_input": True,
-    },
-    "gpt5.4": {
-        "input": 2.75,
-        "output": 16.50,
-        "cache_read": 0.275,
-        "cache_write": 0.0,
-        "cached_in_input": True,
-    },
-}
+# Sourced from JSON, not code: ``pricing.example.json`` (committed, at the repo
+# root next to config.example.json) holds the authoritative default rates, and
+# an optional gitignored ``pricing.json`` overlays them PER KEY — the same
+# example→override split as config.example.json → config.json. Adding or
+# repricing a model is a JSON edit, no code change. Loaded once at import;
+# changes apply on server restart.
+#
+# Keyed by chat_models KEY (e.g. "opus5.0"), not the Bedrock model id. Every
+# rate is explicit and there is NO fallback bucket: a model with no entry bills
+# $0 and logs loudly (see get_model_pricing) rather than inheriting another
+# model's rate. Entry shape:
+#   input / output          — required, USD per 1M tokens
+#   cache_read / cache_write — optional (default 0.0); prompt-cache read/write
+#   cached_in_input          — optional bool; OpenAI convention where
+#                              input_tokens already includes the cached portion
+PRICING_EXAMPLE_PATH = os.path.join(BASE_DIR, "pricing.example.json")
+PRICING_PATH = os.path.join(BASE_DIR, "pricing.json")
+
+# Numeric rate fields kept when normalizing an entry (all default to 0.0 except
+# input/output, which are required).
+_RATE_FIELDS = ("input", "output", "cache_read", "cache_write")
+
+
+def _coerce_pricing_entry(val: object) -> dict | None:
+    """Validate/normalize one raw pricing entry. Returns a clean dict, or None
+    for anything malformed (missing/non-numeric input|output) so a typo in the
+    file can't take pricing down — the model just bills $0 and logs."""
+    if not isinstance(val, dict) or "input" not in val or "output" not in val:
+        return None
+    try:
+        entry = {f: float(val.get(f, 0.0)) for f in _RATE_FIELDS}
+    except (TypeError, ValueError):
+        return None
+    if val.get("cached_in_input"):
+        entry["cached_in_input"] = True
+    return entry
+
+
+def _read_pricing_file(path: str) -> dict:
+    """Parse one pricing JSON file into {key: entry}. Missing file → {} (the
+    overlay is optional). Keys starting with "_" or "$" are annotations and are
+    skipped. Unreadable/malformed file → {} and a loud log (never crashes)."""
+    try:
+        with open(path) as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception as e:  # unreadable / invalid JSON
+        log.error("Ignoring unreadable pricing file %s: %s", path, e)
+        return {}
+    out: dict[str, dict] = {}
+    for key, val in (raw.items() if isinstance(raw, dict) else []):
+        if key.startswith(("_", "$")):
+            continue
+        entry = _coerce_pricing_entry(val)
+        if entry is None:
+            log.error("Skipping malformed pricing entry %r in %s", key, path)
+            continue
+        out[key] = entry
+    return out
+
+
+def _load_pricing() -> dict:
+    """Default rates from pricing.example.json, overlaid PER KEY by pricing.json
+    (user entries win). A missing example file degrades to {} (all models bill
+    $0 and log) rather than crashing the cost tracker."""
+    table = _read_pricing_file(PRICING_EXAMPLE_PATH)
+    table.update(_read_pricing_file(PRICING_PATH))
+    return table
+
+
+_MODEL_PRICING = _load_pricing()
 
 
 def get_model_pricing(model_key: str) -> dict | None:
