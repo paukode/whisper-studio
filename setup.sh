@@ -331,7 +331,7 @@ for arg in "$@"; do
         -h|--help)
             echo "Usage: bash setup.sh [--new] [--dev|--prod] [--cloud|--hybrid|--local] [--no-open]"
             echo "  --new       Delete venv/, node_modules/, and static/dist/ and reinstall from scratch."
-            echo "              Also backs up config.json (timestamped) and reseeds it from config.example.json."
+            echo "              Also backs up config.json and pricing.json (timestamped) and reseeds them from their .example.json templates."
             echo "  --dev       Development mode: run the backend + Vite dev server with HMR."
             echo "  --prod      Production mode: build the frontend and serve it from the backend"
             echo "              only (no Vite dev server). This is the default."
@@ -379,6 +379,18 @@ if [ "$FRESH" -eq 1 ]; then
         echo "Wrote a fresh config.json from config.example.json."
         echo "  Re-add your Tavily API key and any custom settings in Settings (gear icon)."
     fi
+    # pricing.json gets the same treatment (gitignored per-key rate overrides;
+    # defaults live in pricing.example.json). Back up any existing one and reseed
+    # so a fresh install starts from the current rate table.
+    if [ -f pricing.json ]; then
+        pricing_backup="pricing.json.bak.$(date +%Y%m%d%H%M%S)"
+        cp pricing.json "$pricing_backup"
+        echo "Backed up existing pricing.json to $pricing_backup."
+    fi
+    if [ -f pricing.example.json ]; then
+        cp pricing.example.json pricing.json
+        echo "Wrote a fresh pricing.json from pricing.example.json."
+    fi
     if [ -d "$VENV_DIR" ]; then
         echo "Removing existing virtual environment ($VENV_DIR)..."
         rm -rf "$VENV_DIR"
@@ -407,6 +419,14 @@ if [ ! -f config.json ] && [ -f config.example.json ]; then
     echo "Created config.json from config.example.json."
     echo "  Open the app and add your Tavily API key in Settings (gear icon)"
     echo "  to enable the web-search skill. Everything else works without it."
+fi
+
+# Seed pricing.json from the template on first run too. The app runs fine off
+# pricing.example.json alone, but seeding gives a ready-to-edit local copy for
+# per-key rate overrides. gitignored; an existing pricing.json is left untouched.
+if [ ! -f pricing.json ] && [ -f pricing.example.json ]; then
+    cp pricing.example.json pricing.json
+    echo "Created pricing.json from pricing.example.json (edit to override model rates)."
 fi
 
 if [ -d "$VENV_DIR" ]; then
