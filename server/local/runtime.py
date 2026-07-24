@@ -152,6 +152,30 @@ def loaded_key() -> str | None:
     return _llm_key
 
 
+# RAM budget for the resident model's KV-prefix cache (bytes). Sized to hold a
+# couple of (windowed) states so an interleaved generation on the single model
+# thread — the post-turn session-memory summariser is the usual culprit — can't
+# evict the chat prefix and force the next turn to re-prefill the whole
+# system+tools prompt from cold. 0 disables it.
+_KV_CACHE_BYTES = int(os.environ.get("WHISPER_LOCAL_KV_CACHE_BYTES", str(2 * 1024**3)))
+
+
+def _attach_kv_cache(llm) -> None:
+    """Give the model a bounded RAM cache of KV prefixes. Within a turn llama.cpp
+    already reuses the live KV for a shared prefix; this additionally SURVIVES an
+    intervening generation on the same thread (which otherwise evicts the live KV
+    and makes the next turn re-prefill from cold). Best-effort: if the cache class
+    isn't available the model just runs without it."""
+    if _KV_CACHE_BYTES <= 0:
+        return
+    try:
+        from llama_cpp import LlamaRAMCache
+
+        llm.set_cache(LlamaRAMCache(capacity_bytes=_KV_CACHE_BYTES))
+    except Exception as e:
+        log.debug("Local KV prefix cache not enabled: %s", e)
+
+
 def load_sync(key: str, n_ctx: int | None = None) -> None:
     """Load the GGUF into memory (unloading any other local model — or the same
     model at a different context size — first).
@@ -210,6 +234,15 @@ def load_sync(key: str, n_ctx: int | None = None) -> None:
                 n_ctx=target_n_ctx,
                 n_gpu_layers=-1,  # offload all layers to Metal on Apple Silicon
                 flash_attn=True,  # smaller KV cache, faster; aids gemma's SWA
+                # Keep gemma's sliding-window KV cache at its true (windowed) size
+                # rather than a full n_ctx-sized one. llama.cpp defaults to a
+                # FULL-size SWA cache which, at 32K/64K, allocates an enormous KV
+                # buffer — it fails to allocate outright on tighter machines and
+                # thrashes/swaps on larger ones, which is the root of the
+                # multi-minute local turns at large context windows. Windowed is
+                # far smaller and (verified locally) still keeps prompt-prefix
+                # reuse working and answers correct.
+                swa_full=False,
                 verbose=False,
             )
             # Stash the REQUESTED n_ctx for the reload comparison above —
@@ -217,6 +250,7 @@ def load_sync(key: str, n_ctx: int | None = None) -> None:
             # not the requested arg, so comparing against it would never match.
             _llm._studio_n_ctx = target_n_ctx
             _llm_key = key
+            _attach_kv_cache(_llm)
             log.info("Local model %s loaded.", key)
 
 
@@ -568,9 +602,11 @@ def iter_generate_round(
     max_tokens: int = 4096,
     cancel: threading.Event | None = None,
 ):
-    """Run ONE agentic round, STREAMING it. Yields ``("text", piece)`` for
+    """Run ONE agentic round, STREAMING it. Yields ``("thinking", piece)`` for
+    any ``<|channel>thought`` reasoning the model opens, ``("text", piece)`` for
     displayable text as it decodes (everything before any ``<|tool_call>`` DSL),
-    then a final ``("raw", full_text)`` so the caller can parse the tool call.
+    then a final ``("raw", full_text)`` so the caller can parse the tool call
+    (``raw`` excludes the reasoning channel).
 
     Streaming (vs buffering the whole round) is what keeps a tools-on turn from
     looking frozen while the model prefills a large prompt and decodes the
@@ -588,7 +624,25 @@ def iter_generate_round(
     consumer is already gone, so those trailing pieces are simply discarded."""
     load_sync(key)
     prompt = _render_prompt(convo, tools=tool_schemas)
-    splitter = _ToolCallSplitter()
+    tool_sp = _ToolCallSplitter()
+    thought_sp = _ThoughtSplitter()
+
+    def route(piece: str):
+        """Peel any ``<|channel>thought`` reasoning first (surfaced as
+        ``thinking`` events), then run the remaining visible text through the
+        tool-call splitter (which withholds the ``<|tool_call>`` DSL). Without
+        this, a reasoning channel the model opens mid-answer leaks raw into the
+        UI: the tools path ignores the thinking flag, so nothing else strips it.
+        Only non-thought text reaches ``tool_sp``, so its ``raw`` is the answer +
+        tool DSL without the reasoning — exactly what history/parsing want."""
+        for kind, s in thought_sp.feed(piece):
+            if kind == "thinking":
+                if s:
+                    yield ("thinking", s)
+            else:
+                for t in tool_sp.feed(s):
+                    yield ("text", t)
+
     if prompt:
         stream = _llm.create_completion(
             prompt=prompt,
@@ -604,8 +658,7 @@ def iter_generate_round(
             except (KeyError, IndexError):
                 piece = None
             if piece:
-                for t in splitter.feed(piece):
-                    yield ("text", t)
+                yield from route(piece)
     else:
         # Tools couldn't be rendered into the template — answer without tools.
         log.info("Local tools could not be rendered; answering without tools.")
@@ -617,11 +670,19 @@ def iter_generate_round(
             except (KeyError, IndexError):
                 piece = None
             if piece:
-                for t in splitter.feed(piece):
-                    yield ("text", t)
-    for t in splitter.flush():
+                yield from route(piece)
+    # Flush the thought splitter's tail (routing any trailing text on to the tool
+    # splitter), then the tool splitter's own tail.
+    for kind, s in thought_sp.flush():
+        if kind == "thinking":
+            if s:
+                yield ("thinking", s)
+        else:
+            for t in tool_sp.feed(s):
+                yield ("text", t)
+    for t in tool_sp.flush():
         yield ("text", t)
-    yield ("raw", splitter.raw)
+    yield ("raw", tool_sp.raw)
 
 
 def generate_round(
