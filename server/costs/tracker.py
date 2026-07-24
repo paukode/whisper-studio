@@ -42,6 +42,7 @@ _MODEL_PRICING = {
     # ($2/$10) runs through 2026-08-31; we bill the list price so budget caps
     # stay conservative during the promo and need no revert once it ends.
     "sonnet5": {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 3.75},
+    "opus5.0": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
     "opus4.6": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
     "opus4.7": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
     "opus4.8": {"input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25},
