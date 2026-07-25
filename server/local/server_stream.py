@@ -115,6 +115,87 @@ def _tool_results_to_messages(tool_results: list[dict], names_by_id: dict[str, s
     return msgs
 
 
+def _schema_props(schemas: list[dict]) -> dict[str, dict]:
+    """``{tool_name: {param: json_schema}}`` from the declared OpenAI functions."""
+    out: dict[str, dict] = {}
+    for s in schemas or []:
+        fn = s.get("function") or {}
+        name = fn.get("name")
+        if not name:
+            continue
+        props = ((fn.get("parameters") or {}).get("properties")) or {}
+        if isinstance(props, dict):
+            out[name] = props
+    return out
+
+
+def _coerce_arg(value, spec: dict):
+    """Best-effort coercion of one argument to its declared JSON-schema type.
+
+    Local models emit sloppier arguments than a hosted API does — a ``string``
+    parameter can arrive as a list or a number. Bedrock validates against the
+    schema before we ever see the call; llama-server hands through whatever the
+    model produced, so an un-coerced list reaches an executor that calls
+    ``.strip()`` on it and the tool call is wasted on an AttributeError.
+    Only obvious mismatches are converted; anything already correct, or too
+    ambiguous to convert, is passed through untouched for the executor to reject.
+    """
+    want = spec.get("type") if isinstance(spec, dict) else None
+    if want == "string" and not isinstance(value, str):
+        if isinstance(value, list):
+            # "path": [] means "no argument" — it must become "" so the executor's
+            # own `or "."` default applies. Left as a list it reaches .strip() and
+            # the call dies on AttributeError (observed on a Gemma fine-tune).
+            if not value:
+                return ""
+            # A single-element list is the common "path": ["a.py"] slip. Longer
+            # lists are genuinely ambiguous, so join on comma only for scalars.
+            flat = [v for v in value if isinstance(v, (str, int, float, bool))]
+            if len(flat) == 1:
+                return str(flat[0])
+            if len(flat) == len(value):
+                return ",".join(str(v) for v in flat)
+            return value
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        if value is None:
+            return ""
+        return value
+    if want in ("integer", "number") and isinstance(value, str):
+        try:
+            return int(value) if want == "integer" else float(value)
+        except ValueError:
+            return value
+    if want == "boolean" and isinstance(value, str):
+        low = value.strip().lower()
+        if low in ("true", "false"):
+            return low == "true"
+    if want == "array" and isinstance(value, (str, int, float, bool)):
+        return [value]
+    return value
+
+
+def _coerce_call_args(name: str, args: dict, props_by_tool: dict[str, dict]) -> dict:
+    """Coerce a parsed call's arguments toward the tool's declared types."""
+    props = props_by_tool.get(name)
+    if not props or not isinstance(args, dict):
+        return args
+    fixed = {}
+    for key, value in args.items():
+        spec = props.get(key)
+        new = _coerce_arg(value, spec) if isinstance(spec, dict) else value
+        if new is not value and type(new) is not type(value):
+            log.info(
+                "Coerced %s.%s from %s to %s (local models emit loose types).",
+                name,
+                key,
+                type(value).__name__,
+                type(new).__name__,
+            )
+        fixed[key] = new
+    return fixed
+
+
 class _CallAccumulator:
     """Reassembles streamed ``tool_calls`` deltas into complete calls.
 
@@ -223,6 +304,7 @@ async def _run_loop(
     """The agentic loop, shared by fresh turns and approval resumes."""
     out_chars = 0
     thinking_on = bool(tool_ctx.get("thinking", False))
+    props_by_tool = _schema_props(schemas)
 
     for rnd in range(start_round, _MAX_TOOL_ROUNDS):
         payload: dict = {"model": model_key, "messages": convo, "max_tokens": 4096}
@@ -265,9 +347,27 @@ async def _run_loop(
             yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
 
         if not calls:
+            if out_chars == 0:
+                # The model ended the turn with neither text nor a tool call — it
+                # can decode tokens that yield no content, no reasoning and no
+                # parseable call (seen on some community fine-tunes after a tool
+                # result). Say so instead of leaving an empty assistant bubble
+                # that looks like the app broke. Not a substitute for a real
+                # answer; it makes a model-quality failure legible.
+                log.warning(
+                    "Local turn (%s) ended with no text and no tool call at round %d.",
+                    model_key,
+                    rnd,
+                )
+                yield f"data: {ndjson_dumps({'text': '(No answer: the model ended its turn without producing any text. Try again, or switch model — some fine-tunes stall after a tool result.)'})}\n\n"
             yield _usage_line(model_key, out_chars // 4)
             yield "data: [DONE]\n\n"
             return
+
+        # Normalize loose argument types against the declared schema before the
+        # call reaches an executor (and before it goes into history).
+        for c in calls:
+            c["input"] = _coerce_call_args(c["name"], c["input"], props_by_tool)
 
         # Record the assistant's tool-calling turn in OpenAI shape so the template
         # renders it (and the follow-up tool messages) natively.

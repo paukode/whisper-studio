@@ -13,7 +13,7 @@ loadable and selectable with no code change::
       "repo_id": "unsloth/Llama-4-8B-Instruct-GGUF",
       "filename": "Llama-4-8B-Instruct-Q4_K_M.gguf",
       "dir": "llama-4-8b",
-      "ctx": 16384
+      "ctx": 32768
     }
 
 Why the same entry as the picker metadata rather than a separate ``local_models``
@@ -46,12 +46,13 @@ BUILTIN_LOCAL_MODELS: dict[str, dict] = {
         "repo_id": "google/gemma-4-12B-it-qat-q4_0-gguf",
         "filename": "gemma-4-12b-it-qat-q4_0.gguf",
         "dir": "gemma-4-12b-it-qat-q4_0",
-        # Gemma 4 supports up to 262144 (256K) natively. 16K is the default and
-        # the floor: with tools on, the tool-pool prompt alone is ~12K tokens, so
-        # a smaller window overflows. The user can raise it live from the
-        # chat-input context-window slider. WHISPER_LOCAL_N_CTX still overrides
-        # the default at startup.
-        "ctx": 16384,
+        # Gemma 4 supports up to 262144 (256K) natively. 32K is the default
+        # because the FULL tool pool ("Tools: All") renders a ~17.2K-token prompt
+        # — a 16K window rejects the very first turn with exceed_context_size.
+        # Measured on an M3/18GB: 32K loads fine with one slot and llama.cpp's
+        # windowed SWA cache. Lower it per-model via config `ctx` on a smaller
+        # machine; the chat-input slider still changes it live.
+        "ctx": 32768,
         "supports_thinking": True,
         "supports_tools": True,
     },
@@ -62,13 +63,15 @@ BUILTIN_LOCAL_MODELS: dict[str, dict] = {
         "filename": "gemma4-coding-Q4_K_M.gguf",
         "dir": "gemma-4-12b-coder",
         # Same family as Gemma 4 12B above; identical context + capability flags.
-        "ctx": 16384,
+        "ctx": 32768,
         "supports_thinking": True,
         "supports_tools": True,
     },
 }
 
-_DEFAULT_CTX = 16384
+# Applied to a config model that omits `ctx`. Matches the built-ins for the same
+# reason: the full tool pool needs more than 16K.
+_DEFAULT_CTX = 32768
 
 
 def _config_local_models() -> dict[str, dict]:

@@ -92,7 +92,7 @@
       "repo_id": "google/gemma-4-12B-it-qat-q4_0-gguf",
       "filename": "gemma-4-12b-it-qat-q4_0.gguf",
       "dir": "gemma-4-12b-it-qat-q4_0",
-      "ctx": 16384
+      "ctx": 32768
     },
     "local_gemma_coder": {
       "id": "local:gemma-4-12b-coder",
@@ -105,7 +105,7 @@
       "repo_id": "yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF",
       "filename": "gemma4-coding-Q4_K_M.gguf",
       "dir": "gemma-4-12b-coder",
-      "ctx": 16384
+      "ctx": 32768
     }
   },
   "default_chat_model": "opus5.0",

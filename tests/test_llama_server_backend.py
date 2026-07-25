@@ -57,8 +57,20 @@ def test_registry_adds_a_config_only_model(monkeypatch):
     assert "local_llama4" in models
     entry = models["local_llama4"]
     assert entry["id"] == "local:llama-4-8b"
-    assert entry["ctx"] == 16384  # defaulted, not required in config
+    assert entry["ctx"] == R._DEFAULT_CTX  # defaulted, not required in config
     assert entry["supports_tools"] is True
+
+
+def test_every_builtin_context_fits_the_full_tool_pool():
+    """The full tool pool ("Tools: All") renders ~17.2K tokens, so any built-in
+    left at 16K rejects the very first turn with exceed_context_size. Caught
+    exactly that drift on local_gemma_coder, hence this guard."""
+    _MIN_CTX_FOR_FULL_TOOLS = 32768
+    for key, entry in R.BUILTIN_LOCAL_MODELS.items():
+        assert entry["ctx"] >= _MIN_CTX_FOR_FULL_TOOLS, (
+            f"{key} ctx={entry['ctx']} is too small for the full tool pool"
+        )
+    assert R._DEFAULT_CTX >= _MIN_CTX_FOR_FULL_TOOLS
 
 
 def test_registry_drops_half_declared_model(monkeypatch):
@@ -347,6 +359,111 @@ def test_last_round_forbids_tools_so_the_model_must_answer(monkeypatch):
     _drain(lambda: SS._run_loop("k", "http://x", [], [{"type": "function"}], {}, session_id="s"))
     assert seen[:-1] == ["auto"] * (len(seen) - 1)
     assert seen[-1] == "none"
+
+
+def test_coerces_loose_argument_types_against_the_schema():
+    """Regression: the Coder emitted "path": ["dir"] for a string parameter and
+    _exec_ws_list_dir died on .strip(). Bedrock validates against the schema
+    first; llama-server hands through whatever the model produced."""
+    schemas = [
+        {
+            "function": {
+                "name": "ws_list_directory",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "limit": {"type": "integer"},
+                        "deep": {"type": "boolean"},
+                        "globs": {"type": "array"},
+                    },
+                },
+            }
+        }
+    ]
+    props = SS._schema_props(schemas)
+    got = SS._coerce_call_args(
+        "ws_list_directory",
+        {"path": ["server"], "limit": "20", "deep": "true", "globs": "*.py"},
+        props,
+    )
+    assert got == {"path": "server", "limit": 20, "deep": True, "globs": ["*.py"]}
+
+
+def test_empty_and_null_string_args_become_empty_string():
+    """Regression: the Coder emitted "path": [] for a string parameter, which
+    reached _exec_ws_list_dir's .strip() and killed the call. It must become ""
+    so the executor's own default applies."""
+    schemas = [
+        {
+            "function": {
+                "name": "ws_list_directory",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+            }
+        }
+    ]
+    props = SS._schema_props(schemas)
+    assert SS._coerce_call_args("ws_list_directory", {"path": []}, props) == {"path": ""}
+    assert SS._coerce_call_args("ws_list_directory", {"path": None}, props) == {"path": ""}
+
+
+def test_coercion_leaves_correct_and_ambiguous_values_alone():
+    schemas = [
+        {
+            "function": {
+                "name": "t",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+            }
+        }
+    ]
+    props = SS._schema_props(schemas)
+    # Already correct.
+    assert SS._coerce_call_args("t", {"path": "a.py"}, props) == {"path": "a.py"}
+    # Nested object into a string is ambiguous — pass through so the executor
+    # can reject it with a clear validation error instead of us inventing a value.
+    nested = {"path": {"a": 1}}
+    assert SS._coerce_call_args("t", nested, props) == nested
+    # Unknown tool / unknown param: untouched.
+    assert SS._coerce_call_args("other", {"path": ["x"]}, props) == {"path": ["x"]}
+
+
+def test_loop_coerces_before_dispatch(monkeypatch):
+    calls = [{"id": "c1", "name": "ws_list_directory", "input": {"path": ["server"]}}]
+    monkeypatch.setattr(SS, "_stream_round", _fake_rounds(([], calls), ([("text", "ok")], [])))
+    seen = {}
+
+    async def fake_round(tool_uses, **kw):
+        seen["input"] = tool_uses[0]["input"]
+        return ([{"type": "tool_result", "tool_use_id": "c1", "content": "r"}], [], False, False)
+
+    monkeypatch.setattr(SS, "run_tool_round", fake_round)
+    schemas = [
+        {
+            "function": {
+                "name": "ws_list_directory",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+            }
+        }
+    ]
+    _drain(lambda: SS._run_loop("k", "http://x", [], schemas, {}, session_id="s"))
+    assert seen["input"] == {"path": "server"}  # a list would crash the executor
+
+
+def test_empty_turn_gets_an_explanatory_line_not_a_blank_bubble(monkeypatch):
+    """A round with no text and no calls must not render as an empty message —
+    some fine-tunes decode tokens that yield neither after a tool result."""
+    monkeypatch.setattr(SS, "_stream_round", _fake_rounds(([], [])))
+    blob = "".join(_drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="s")))
+    assert '"text"' in blob and "No answer" in blob
+    assert '"usage"' in blob
+    assert blob.strip().endswith("data: [DONE]")
+
+
+def test_no_fallback_line_when_the_turn_produced_text(monkeypatch):
+    monkeypatch.setattr(SS, "_stream_round", _fake_rounds(([("text", "real answer")], [])))
+    blob = "".join(_drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="s")))
+    assert "real answer" in blob
+    assert "No answer" not in blob
 
 
 def test_transport_error_surfaces_without_usage(monkeypatch):

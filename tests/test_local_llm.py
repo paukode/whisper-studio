@@ -89,9 +89,9 @@ def test_load_sync_default_ctx_is_16k(monkeypatch):
     monkeypatch.setattr(L, "_llm_key", None, raising=False)
     monkeypatch.delenv("WHISPER_LOCAL_N_CTX", raising=False)
 
-    assert L.LOCAL_MODELS["local_gemma"]["ctx"] == 16384
+    default_ctx = L.LOCAL_MODELS["local_gemma"]["ctx"]
     L.load_sync("local_gemma")  # no explicit n_ctx
-    assert created == [16384]
+    assert created == [default_ctx]
 
 
 def test_load_sync_keeps_requested_ctx_on_lazy_load(monkeypatch):
