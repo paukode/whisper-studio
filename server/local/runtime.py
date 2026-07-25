@@ -79,6 +79,24 @@ _lock = threading.Lock()
 _requested_n_ctx: int | None = None
 
 
+def requested_n_ctx() -> int | None:
+    """The context size the user last explicitly asked for, or None.
+
+    Shared with the llama-server backend so the chat-input slider means the same
+    thing on both: whichever backend serves the turn honors the last explicit
+    choice rather than silently reverting to the model default.
+    """
+    return _requested_n_ctx
+
+
+def set_requested_n_ctx(n: int | None) -> None:
+    """Record an explicit context-size request (slider / API). Ignores None so a
+    lazy load can never clear the user's choice."""
+    global _requested_n_ctx
+    if n is not None:
+        _requested_n_ctx = int(n)
+
+
 def is_local_model(key: str | None) -> bool:
     return bool(key) and key in LOCAL_MODELS
 

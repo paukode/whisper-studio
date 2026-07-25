@@ -357,13 +357,33 @@ async def local_model_load(model: str, n_ctx: int | None = None):
     # like a stalled load.
     busy_stage = "downloading" if not local_llm.is_downloaded(model) else "loading"
 
+    # Record the explicit choice so BOTH backends honor it on later lazy starts.
+    local_llm.set_requested_n_ctx(n_ctx)
+
+    # Which backend actually holds the weights decides what "load" means. On the
+    # llama-server backend, calling the in-process loader would pull a second
+    # multi-GB copy into this process while the subprocess also holds one — and
+    # the slider still wouldn't change the subprocess's context window.
+    from server.local.backend import use_llama_server
+
+    via_server = use_llama_server()
+
     async def gen():
         loop = asyncio.get_event_loop()
         yield f"data: {ndjson_dumps({'stage': busy_stage, 'progress': 0.0, 'label': label})}\n\n"
-        # _load_sync downloads (if needed) then loads; run it on the model's
-        # own thread while we ramp the bar concurrently. run_in_executor passes
-        # positional args, so n_ctx follows model.
-        load_future = loop.run_in_executor(local_llm.executor, local_llm.load_sync, model, n_ctx)
+        if via_server:
+            from server.local import llama_server
+
+            # Starts (or restarts at the new context size) the model server. Runs
+            # on a plain I/O thread — it is a subprocess wait, not model work.
+            load_future = loop.run_in_executor(None, llama_server.ensure_serving, model, n_ctx)
+        else:
+            # _load_sync downloads (if needed) then loads; run it on the model's
+            # own thread while we ramp the bar concurrently. run_in_executor passes
+            # positional args, so n_ctx follows model.
+            load_future = loop.run_in_executor(
+                local_llm.executor, local_llm.load_sync, model, n_ctx
+            )
         p = 0.0
         while not load_future.done() and p < 0.9:
             await asyncio.sleep(0.4)
@@ -431,11 +451,18 @@ async def local_model_download(model: str):
 
 @router.post("/api/local-model/unload")
 async def local_model_unload():
-    """Free the resident on-device model (called when switching away from it)."""
+    """Free the resident on-device model (called when switching away from it).
+
+    Frees BOTH backends unconditionally rather than only the active one: after a
+    backend switch the previously-used one can still be holding gigabytes, and
+    "unload" should mean no on-device weights are resident either way.
+    """
+    from server.local import llama_server
     from server.local import runtime as local_llm
 
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(local_llm.executor, local_llm.unload_sync)
+    await loop.run_in_executor(None, llama_server.stop)
     return {"unloaded": True}
 
 

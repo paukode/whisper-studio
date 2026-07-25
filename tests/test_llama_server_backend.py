@@ -373,6 +373,49 @@ def test_start_failure_is_reported_to_the_client(monkeypatch):
     assert blob.strip().endswith("data: [DONE]")
 
 
+def test_ensure_serving_honors_sticky_requested_ctx(monkeypatch):
+    """The chat-input context slider must mean the same on both backends: a lazy
+    start has to keep the user's last explicit size, not revert to the default."""
+    import server.local.runtime as L
+
+    monkeypatch.setattr(LS, "ensure_available", lambda: "/usr/bin/llama-server")
+    monkeypatch.setattr(L, "ensure_downloaded", lambda key: "/models/x.gguf")
+    monkeypatch.setattr(LS, "stop", lambda: None)
+    monkeypatch.setattr(LS, "_wait_healthy", lambda port, proc, deadline: True)
+    monkeypatch.setattr(L, "requested_n_ctx", lambda: 65536)
+    seen = {}
+
+    class FakeProc:
+        pid = 4242
+
+        def poll(self):
+            return None
+
+    def fake_popen(cmd, **kw):
+        seen["cmd"] = cmd
+        return FakeProc()
+
+    monkeypatch.setattr(LS.subprocess, "Popen", fake_popen)
+    LS.ensure_serving("local_gemma")  # no explicit n_ctx
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--ctx-size") + 1] == "65536"
+    # And the memory-critical flags are present.
+    assert "--jinja" in cmd
+    assert cmd[cmd.index("--parallel") + 1] == "1"
+    LS._state.update(key=None, port=None, n_ctx=None)
+    LS._proc = None
+
+
+def test_requested_n_ctx_setter_ignores_none():
+    import server.local.runtime as L
+
+    L.set_requested_n_ctx(32768)
+    assert L.requested_n_ctx() == 32768
+    L.set_requested_n_ctx(None)  # a lazy load must not clear the choice
+    assert L.requested_n_ctx() == 32768
+    L._requested_n_ctx = None
+
+
 def test_messages_flatten_bedrock_blocks_to_openai():
     msgs = SS._to_openai_messages(
         "SYS",

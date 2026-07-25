@@ -200,13 +200,17 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
     global _proc, _log_path
 
     from server.local.registry import local_models
-    from server.local.runtime import MODELS_DIR, ensure_downloaded
+    from server.local.runtime import MODELS_DIR, ensure_downloaded, requested_n_ctx
 
     models = local_models()
     if key not in models:
         raise RuntimeError(f"Unknown local model: {key}")
     meta = models[key]
-    target_ctx = int(n_ctx or meta.get("ctx") or 16384)
+    # Explicit request > the user's last slider choice (sticky, shared with the
+    # in-process runtime) > the model default. Without the sticky tier a lazy
+    # chat-turn start would restart the server back down at 16K even though the
+    # badge says 32K/64K.
+    target_ctx = int(n_ctx or requested_n_ctx() or meta.get("ctx") or 16384)
 
     with _lock:
         if (
