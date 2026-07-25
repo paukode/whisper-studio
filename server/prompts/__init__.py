@@ -33,6 +33,8 @@ from server.prompts.workspace import (
     workspace_prompt,
 )
 
+__all__ = ["build_system_prompt", "build_system_prompt_split", "get_registry"]
+
 log = logging.getLogger("whisper-studio")
 
 # Appended when the Ultracode effort mode is active (Opus 4.8 / Fable 5). It is
@@ -138,6 +140,17 @@ def get_registry() -> PromptRegistry:
 # ── Section builders ─────────────────────────────────────────────────
 
 
+def _build_code_output_rule(ws_path: str | None = None, **_) -> str:
+    """Pick the code-output rule that matches the current surface.
+
+    With a workspace the model edits files via ws_* tools; without one the reply
+    itself is the deliverable, so it must carry complete fenced code. Emitting
+    both at once tells the model to do two contradictory things, so this is a
+    branch, never a concatenation.
+    """
+    return CODE_OUTPUT_RULE_WORKSPACE if ws_path else CODE_OUTPUT_RULE_GENERIC
+
+
 def _build_workspace_section(ws_path: str | None = None, **_) -> str:
     if not ws_path:
         return ""
@@ -173,17 +186,37 @@ def _build_no_workspace_section(ws_path: str | None = None, **_) -> str:
     )
 
 
-def _build_git_section(ws_path: str | None = None, **_) -> str:
+def _git_context_on(ws_path: str | None) -> bool:
+    """Whether the git prompt sections apply: a workspace, the flag, a repo.
+
+    Checked by both git sections so they appear and disappear together. Uses
+    ``find_git_root`` rather than the status output, so the static instructions
+    do not have to run git commands to learn whether they are wanted.
+    """
     if not ws_path:
-        return ""
+        return False
     from server.infrastructure.feature_flags import is_enabled
 
     if not is_enabled("git_context"):
+        return False
+    from server.git.core import find_git_root
+
+    return bool(find_git_root(ws_path))
+
+
+def _build_git_instructions_section(ws_path: str | None = None, **_) -> str:
+    """Fixed git workflow rules. Static, so it sits in the cached prefix."""
+    if not _git_context_on(ws_path):
         return ""
-    git_context = build_git_status_prompt(ws_path)
-    if git_context:
-        return "\n" + git_context + "\n" + build_git_instructions_prompt()
-    return ""
+    return "\n" + build_git_instructions_prompt()
+
+
+def _build_git_status_section(ws_path: str | None = None, **_) -> str:
+    """Live branch / dirty state / recent commits. Genuinely per-request."""
+    if not _git_context_on(ws_path):
+        return ""
+    status = build_git_status_prompt(ws_path)
+    return "\n" + status if status else ""
 
 
 def _build_task_tracking_section(session_id: str = "default", **_) -> str:
@@ -230,6 +263,15 @@ _registry.register(
         layer=PromptLayer.IDENTITY,
         priority=0,
         content=BASE,
+    )
+)
+
+_registry.register(
+    PromptSection(
+        name="code_output_rule",
+        layer=PromptLayer.IDENTITY,
+        priority=3,
+        builder=_build_code_output_rule,
     )
 )
 
@@ -283,6 +325,18 @@ _registry.register(
     )
 )
 
+# Static git workflow rules. Deliberately on the WORKSPACE (cached) layer while
+# its sibling "git_context" — the live status — stays DYNAMIC. Both are gated by
+# _git_context_on, so they still appear and disappear as a pair.
+_registry.register(
+    PromptSection(
+        name="git_instructions",
+        layer=PromptLayer.WORKSPACE,
+        priority=20,
+        builder=_build_git_instructions_section,
+    )
+)
+
 
 def _build_deferred_tool_index(deferred_tool_index: str | None = None, **_) -> str:
     """Progressive tool disclosure: the compact list of not-loaded tools.
@@ -327,7 +381,7 @@ _registry.register(
         name="git_context",
         layer=PromptLayer.DYNAMIC,
         priority=0,
-        builder=_build_git_section,
+        builder=_build_git_status_section,
     )
 )
 
@@ -457,10 +511,16 @@ def _resolve_sections(
 ) -> tuple[str, str]:
     """Resolve the section registry into a ``(static, dynamic)`` pair.
 
-    - ``static``  = layers <= WORKSPACE (30): identity, mode, workspace rules.
-      Session-stable, so safe to prompt-cache.
+    - ``static``  = layers <= WORKSPACE (30): identity, mode, workspace rules,
+      git workflow instructions. Session-stable, so safe to prompt-cache.
     - ``dynamic`` = layers >= DYNAMIC (40): memory, git status, session memory,
       tool guidance, ultracode directive. Changes per request.
+
+    The split is what makes the cheap half cheap, so a section belongs in
+    ``static`` unless its text genuinely varies per request. Static text parked
+    on a DYNAMIC layer is re-billed as uncached input on every round of every
+    turn, which is how ~1.5K tokens of fixed git instructions came to ride along
+    behind 120 tokens of real git status.
 
     Invariant: ``static + dynamic`` is byte-identical to the single-string prompt
     the legacy builder produced. So callers that don't cache are unaffected, and
@@ -530,8 +590,6 @@ def _resolve_sections(
             + "".join(static_main)
             + "".join(dyn_main)
         )
-        if ws_path:
-            full = full.replace(CODE_OUTPUT_RULE_GENERIC, CODE_OUTPUT_RULE_WORKSPACE)
         if ultracode:
             from server.prompts.ultracode import build_ultracode_directive
 
@@ -539,11 +597,6 @@ def _resolve_sections(
         return "", full
 
     static_block = "".join(static_prepend) + "".join(static_main)
-    # The generic->workspace code-rule swap targets an IDENTITY/WORKSPACE section
-    # (layer <= 30), so it lives entirely within the static block.
-    if ws_path:
-        static_block = static_block.replace(CODE_OUTPUT_RULE_GENERIC, CODE_OUTPUT_RULE_WORKSPACE)
-
     dynamic_block = "".join(dyn_main)
     if ultracode:
         from server.prompts.ultracode import build_ultracode_directive

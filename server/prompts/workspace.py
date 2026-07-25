@@ -1,17 +1,21 @@
 """Workspace-mode prompt — injected when a code workspace is connected."""
 
-# Replaces the generic code output rule when a workspace is active
+# The two branches of the ``code_output_rule`` prompt section. Exactly one is
+# emitted per request, chosen on whether a workspace is connected (see
+# ``server.prompts._build_code_output_rule``). They are mutually exclusive: the
+# generic rule asks for complete fenced code in the reply because there is
+# nowhere to write it, and the workspace rule asks for ws_* edits instead.
 CODE_OUTPUT_RULE_GENERIC = (
-    "CRITICAL CODE OUTPUT RULE: When generating or modifying HTML, CSS, JavaScript, Python, or any code, "
+    "\n\nCRITICAL CODE OUTPUT RULE: When generating or modifying HTML, CSS, JavaScript, Python, or any code, "
     "you MUST wrap the COMPLETE code in a fenced code block using triple backticks with the language tag "
     "(e.g. ```html ... ```). Never output raw HTML or code outside of a code fence. "
     "When modifying an existing app, always output the FULL updated code in a single ```html code block. "
-    "Do not output partial snippets or raw HTML mixed with explanation text. "
+    "Do not output partial snippets or raw HTML mixed with explanation text."
 )
 
 CODE_OUTPUT_RULE_WORKSPACE = (
-    "When a workspace is connected, use ws_* tools to modify code directly; do NOT output full code in code blocks. "
-    "Only use code blocks for short snippets when explaining something. "
+    "\n\nCODE OUTPUT RULE: A workspace is connected, so modify code with the ws_* tools rather than printing it. "
+    "Do NOT output full files in code blocks. Use code blocks only for short snippets when explaining something."
 )
 
 
