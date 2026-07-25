@@ -106,6 +106,19 @@
       "filename": "gemma4-coding-Q4_K_M.gguf",
       "dir": "gemma-4-12b-coder",
       "ctx": 32768
+    },
+    "local_qwen35_9b": {
+      "id": "local:qwen3.5-9b",
+      "label": "Qwen3.5 9B (Local)",
+      "thinking": "none",
+      "effort_tier": "none",
+      "is_local": true,
+      "supports_thinking": true,
+      "supports_tools": true,
+      "repo_id": "unsloth/Qwen3.5-9B-GGUF",
+      "filename": "Qwen3.5-9B-Q4_K_M.gguf",
+      "dir": "qwen3.5-9b",
+      "ctx": 32768
     }
   },
   "default_chat_model": "opus5.0",
