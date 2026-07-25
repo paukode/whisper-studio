@@ -35,20 +35,37 @@ def local_chat_response(
     session_config: dict,
     suppress_ws_search: bool = False,
 ) -> StreamingResponse | None:
+    from server.local.backend import use_llama_server
     from server.local.runtime import build_local_system_prompt, is_local_model
 
     if not is_local_model(model_key):
         return None
 
+    from server.local import server_stream
     from server.local.stream import has_local_pause, resume_local_chat, stream_local_chat
 
+    # Which on-device backend serves this turn. llama-server is preferred: it
+    # brings upstream's per-family tool-call + reasoning parsers, so a model added
+    # to config works without marker code here. The in-process llama-cpp-python
+    # path remains the fallback when the binary is missing/too old.
+    via_server = use_llama_server()
+
     # Approval continuation for a paused local tool turn: the action already ran
-    # server-side via /api/approval/execute, so just resume the Gemma loop with
-    # the result. (The cloud approved_tool_result path uses a separate
+    # server-side via /api/approval/execute, so just resume the loop with the
+    # result. (The cloud approved_tool_result path uses a separate
     # _paused_sessions dict, so it never touches local state.) Note: the resume
     # reuses the paused turn's tool_ctx, so strict_rag suppression (if it was
     # active on the original turn) intentionally carries over — unlike the cloud
     # resume, which recomputes suppress_ws_search as False.
+    #
+    # Resume checks BOTH backends' pause tables, keyed on where the turn actually
+    # paused rather than on the current preference: flipping the backend (or an
+    # availability change) mid-turn must not orphan a pending approval.
+    if approved_tool_result and server_stream.has_pause(session_id):
+        return StreamingResponse(
+            server_stream.resume_chat(session_id, approved_tool_result, session_approvals),
+            media_type="text/event-stream",
+        )
     if approved_tool_result and has_local_pause(session_id):
         return StreamingResponse(
             resume_local_chat(session_id, approved_tool_result, session_approvals),
@@ -93,8 +110,9 @@ def local_chat_response(
         # turn's resume keeps the same setting), matching the plain path.
         "thinking": bool(body.get("local_thinking", False)),
     }
+    stream_fn = server_stream.stream_chat if via_server else stream_local_chat
     return StreamingResponse(
-        stream_local_chat(
+        stream_fn(
             model_key,
             local_system,
             messages,

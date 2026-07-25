@@ -1,0 +1,441 @@
+"""SSE adapter for on-device turns served by ``llama-server``.
+
+This is the llama-server counterpart of server/local/stream.py. It speaks the
+OpenAI-compatible ``/v1/chat/completions`` endpoint, which means upstream
+llama.cpp does the two jobs the in-process path had to hand-roll per model:
+
+  * ``tool_calls`` arrive already parsed into OpenAI shape (name + JSON
+    arguments), for every family upstream supports — so a new GGUF in config gets
+    tool calling with no marker constants here.
+  * reasoning arrives on ``reasoning_content``, so the thinking channel needs no
+    marker splitter and can never leak raw markers into the answer.
+
+Because of that, this module contains NO model-specific tokens. It emits the same
+event contract the frontend already consumes (``text`` / ``thinking_*`` /
+``skill`` / ``skill_input`` / ``skill_result`` / ``approval_request`` / ``usage``
+/ ``[DONE]``) and reuses the SAME executor + approval pipeline as the cloud and
+in-process paths (``run_tool_round`` → ``execute_tool_batch`` +
+``process_tool_results``), so the safety gate is unchanged.
+
+Parallel tool calls work here (the in-process path structurally could not emit
+them), matching how the cloud paths batch reads.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+
+from server.local.tools import get_tool_schemas, run_tool_round
+from server.utils import ndjson_dumps
+
+log = logging.getLogger("whisper-studio")
+
+_MAX_TOOL_ROUNDS = 50  # parity with the cloud + OpenAI paths (was 24 in-process)
+
+# Turns paused awaiting an approval continuation, keyed by session_id. In-process
+# and ephemeral, exactly like the cloud ``_paused_sessions`` and the in-process
+# ``_local_paused`` — a restart drops it, and a continuation that finds no entry
+# is handled as a fresh turn by the router.
+_paused: dict[str, dict] = {}
+
+_REQUEST_TIMEOUT = 900.0
+
+
+def has_pause(session_id: str) -> bool:
+    return session_id in _paused
+
+
+def _usage_line(model_key: str, output_tokens: int) -> str:
+    """On-device turns are $0; the shape matches the cloud usage frame."""
+    return (
+        "data: "
+        + ndjson_dumps(
+            {
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": output_tokens,
+                    "total_input": 0,
+                    "total_output": output_tokens,
+                    "estimated_cost_usd": 0.0,
+                    "model": model_key,
+                }
+            }
+        )
+        + "\n\n"
+    )
+
+
+def _to_openai_messages(system_prompt: str, messages: list[dict]) -> list[dict]:
+    """Flatten the Bedrock-shaped history into OpenAI chat messages.
+
+    Text-only: image blocks are dropped (vision is not wired here) and any
+    tool/thinking blocks from a cloud turn are skipped, since a resumed local
+    conversation carries its own tool history in OpenAI shape.
+    """
+    out: list[dict] = []
+    if system_prompt:
+        out.append({"role": "system", "content": system_prompt})
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = "".join(
+                b.get("text", "")
+                for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+        else:
+            text = ""
+        if text.strip():
+            out.append({"role": m.get("role", "user"), "content": text})
+    return out
+
+
+def _tool_results_to_messages(tool_results: list[dict], names_by_id: dict[str, str]) -> list[dict]:
+    """Executed results → native OpenAI ``tool`` messages.
+
+    The in-process path had to fold results into a plain user turn; here the
+    template consumes them as real tool responses, which is a much stronger
+    signal that this text is a tool result rather than the user talking.
+    """
+    msgs = []
+    for r in tool_results:
+        tid = r.get("tool_use_id", "")
+        msgs.append(
+            {
+                "role": "tool",
+                "tool_call_id": tid,
+                "name": names_by_id.get(tid, "tool"),
+                "content": str(r.get("content", "")),
+            }
+        )
+    return msgs
+
+
+class _CallAccumulator:
+    """Reassembles streamed ``tool_calls`` deltas into complete calls.
+
+    Arguments arrive as JSON string fragments across many deltas, and the index
+    field is what ties fragments to their call when several stream in parallel.
+    """
+
+    def __init__(self) -> None:
+        self._by_index: dict[int, dict] = {}
+
+    def feed(self, deltas: list[dict]) -> None:
+        for d in deltas or []:
+            if not isinstance(d, dict):
+                continue
+            idx = d.get("index", 0) or 0
+            slot = self._by_index.setdefault(idx, {"id": None, "name": None, "args": ""})
+            if d.get("id"):
+                slot["id"] = d["id"]
+            fn = d.get("function") or {}
+            if fn.get("name"):
+                slot["name"] = fn["name"]
+            if fn.get("arguments"):
+                slot["args"] += fn["arguments"]
+
+    def finish(self) -> list[dict]:
+        """``[{id, name, input}]`` in stream order, skipping nameless slots."""
+        calls = []
+        for idx in sorted(self._by_index):
+            slot = self._by_index[idx]
+            if not slot["name"]:
+                continue
+            raw = (slot["args"] or "").strip()
+            try:
+                args = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                log.warning(
+                    "llama-server tool %r had unparseable arguments %r — passing {}.",
+                    slot["name"],
+                    raw[:200],
+                )
+                args = {}
+            calls.append(
+                {
+                    "id": slot["id"] or f"call_{idx}",
+                    "name": slot["name"],
+                    "input": args if isinstance(args, dict) else {},
+                }
+            )
+        return calls
+
+
+async def _stream_round(base_url: str, payload: dict):
+    """One generation round. Yields ``("text"|"thinking", piece)`` as it decodes,
+    then ``("done", {"calls": [...], "finish_reason": str})``.
+
+    Raises RuntimeError on transport/HTTP failure so the caller can surface it.
+    """
+    import httpx
+
+    acc = _CallAccumulator()
+    finish_reason = None
+    async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
+        async with client.stream(
+            "POST", f"{base_url}/v1/chat/completions", json={**payload, "stream": True}
+        ) as resp:
+            if resp.status_code != 200:
+                body = (await resp.aread()).decode(errors="replace")
+                raise RuntimeError(f"llama-server returned {resp.status_code}: {body[:500]}")
+            async for line in resp.aiter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                if obj.get("error"):
+                    raise RuntimeError(f"llama-server error: {str(obj['error'])[:400]}")
+                choices = obj.get("choices") or [{}]
+                choice = choices[0] if choices else {}
+                delta = choice.get("delta") or {}
+                if delta.get("reasoning_content"):
+                    yield ("thinking", delta["reasoning_content"])
+                if delta.get("content"):
+                    yield ("text", delta["content"])
+                if delta.get("tool_calls"):
+                    acc.feed(delta["tool_calls"])
+                if choice.get("finish_reason"):
+                    finish_reason = choice["finish_reason"]
+    yield ("done", {"calls": acc.finish(), "finish_reason": finish_reason})
+
+
+async def _run_loop(
+    model_key: str,
+    base_url: str,
+    convo: list[dict],
+    schemas: list[dict],
+    tool_ctx: dict,
+    *,
+    session_id: str,
+    start_round: int = 0,
+    memory_ctx: dict | None = None,
+):
+    """The agentic loop, shared by fresh turns and approval resumes."""
+    out_chars = 0
+    thinking_on = bool(tool_ctx.get("thinking", False))
+
+    for rnd in range(start_round, _MAX_TOOL_ROUNDS):
+        payload: dict = {"model": model_key, "messages": convo, "max_tokens": 4096}
+        if schemas:
+            # Final-round parity with the cloud paths: forbid calls on the last
+            # round so the model must synthesize an answer from what it has,
+            # instead of hitting the cap with nothing to show the user.
+            payload["tools"] = schemas
+            payload["tool_choice"] = "none" if rnd == _MAX_TOOL_ROUNDS - 1 else "auto"
+        # Some builds gate reasoning behind an explicit request; harmless when the
+        # model has no thinking mode.
+        if thinking_on:
+            payload["chat_template_kwargs"] = {"enable_thinking": True}
+
+        thinking_open = False
+        calls: list[dict] = []
+        try:
+            async for kind, piece in _stream_round(base_url, payload):
+                if kind == "thinking":
+                    if not thinking_open:
+                        thinking_open = True
+                        yield f"data: {ndjson_dumps({'thinking_start': True})}\n\n"
+                    yield f"data: {ndjson_dumps({'thinking': piece})}\n\n"
+                elif kind == "text":
+                    if thinking_open:
+                        thinking_open = False
+                        yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
+                    out_chars += len(piece)
+                    yield f"data: {ndjson_dumps({'text': piece})}\n\n"
+                else:  # ("done", {...})
+                    calls = piece.get("calls") or []
+        except Exception as e:
+            if thinking_open:
+                yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
+            log.warning("llama-server round %d failed: %s", rnd, e)
+            yield f"data: {ndjson_dumps({'error': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+        if thinking_open:  # reasoned but produced no answer text this round
+            yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
+
+        if not calls:
+            yield _usage_line(model_key, out_chars // 4)
+            yield "data: [DONE]\n\n"
+            return
+
+        # Record the assistant's tool-calling turn in OpenAI shape so the template
+        # renders it (and the follow-up tool messages) natively.
+        convo.append(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": c["id"],
+                        "type": "function",
+                        "function": {"name": c["name"], "arguments": json.dumps(c["input"])},
+                    }
+                    for c in calls
+                ],
+            }
+        )
+
+        tool_uses = [
+            {"type": "tool_use", "id": c["id"], "name": c["name"], "input": c["input"]}
+            for c in calls
+        ]
+        names_by_id = {tu["id"]: tu["name"] for tu in tool_uses}
+        for tu in tool_uses:
+            yield f"data: {ndjson_dumps({'skill': tu['name']})}\n\n"
+            yield f"data: {ndjson_dumps({'skill_input': tu['name'], 'input': tu['input']})}\n\n"
+
+        tool_results, sse_events, has_pending_approval, has_user_question = await run_tool_round(
+            tool_uses,
+            session_id=session_id,
+            plan_mode=tool_ctx.get("plan_mode", False),
+            mode=tool_ctx.get("mode", "default"),
+            session_approvals=tool_ctx.get("session_approvals"),
+            session_denials=tool_ctx.get("session_denials"),
+            config=tool_ctx.get("config"),
+            transcript=tool_ctx.get("transcript", ""),
+        )
+        for ev in sse_events:
+            yield f"data: {ev}\n\n"
+
+        if has_pending_approval or has_user_question:
+            # Hard stop: no destructive action has run, the handler only returned
+            # a sentinel. Stash state so the approval continuation can fill in the
+            # real result and resume from the next round.
+            _paused[session_id] = {
+                "model_key": model_key,
+                "base_url": base_url,
+                "convo": convo,
+                "schemas": schemas,
+                "tool_ctx": tool_ctx,
+                "pending_results": tool_results,
+                "names_by_id": names_by_id,
+                "next_round": rnd + 1,
+                "memory_ctx": memory_ctx,
+            }
+            yield "data: [DONE]\n\n"
+            return
+
+        convo.extend(_tool_results_to_messages(tool_results, names_by_id))
+
+    yield f"data: {ndjson_dumps({'text': '(Reached the local tool-call round limit without a final answer.)'})}\n\n"
+    yield _usage_line(model_key, out_chars // 4)
+    yield "data: [DONE]\n\n"
+
+
+async def stream_chat(
+    model_key: str,
+    system_prompt: str,
+    messages: list[dict],
+    session_id: str,
+    thinking: bool = False,
+    tools: bool = False,
+    tool_ctx: dict | None = None,
+    ws_path: str | None = None,
+    n_ctx: int | None = None,
+):
+    """Entry point — mirrors server/local/stream.stream_local_chat's signature."""
+    from server.local import llama_server
+    from server.local.stream import _spawn_memory_hooks
+
+    tool_ctx = dict(tool_ctx or {})
+    tool_ctx.setdefault("thinking", thinking)
+
+    # Cold start loads gigabytes; keep it off the event loop.
+    try:
+        base_url = await asyncio.get_running_loop().run_in_executor(
+            None, llama_server.ensure_serving, model_key, n_ctx
+        )
+    except Exception as e:
+        log.warning("Could not start llama-server for %s: %s", model_key, e)
+        yield f"data: {ndjson_dumps({'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+        return
+
+    schemas: list[dict] = []
+    if tools:
+        schemas, _ = get_tool_schemas(
+            plan_mode=tool_ctx.get("plan_mode", False),
+            ws_connected=tool_ctx.get("ws_connected", False),
+            mcp_enabled_names=tool_ctx.get("mcp_enabled_names"),
+            scope=tool_ctx.get("tool_scope", "core_web"),
+            suppress_workspace_search=tool_ctx.get("suppress_ws_search", False),
+        )
+
+    convo = _to_openai_messages(system_prompt, messages)
+    async for chunk in _run_loop(
+        model_key,
+        base_url,
+        convo,
+        schemas,
+        tool_ctx,
+        session_id=session_id,
+        memory_ctx={"messages": messages, "ws_path": ws_path},
+    ):
+        yield chunk
+    # Don't run memory hooks on a turn that paused for approval — it isn't
+    # finished; the resume fires them at the true end of the turn.
+    if not has_pause(session_id):
+        _spawn_memory_hooks(model_key, messages, session_id, ws_path)
+
+
+async def resume_chat(session_id: str, approved_tool_result, session_approvals: dict | None = None):
+    """Resume a paused turn after the user approved / denied an action. The action
+    already ran server-side via /api/approval/execute; here we only inject its
+    result and continue. Falls back to a clean [DONE] when no paused state exists
+    (e.g. after a restart)."""
+    from server.local.stream import _spawn_memory_hooks
+
+    paused = _paused.pop(session_id, None)
+    if not paused:
+        log.warning("resume_chat: no paused state for %s — ending.", session_id)
+        yield "data: [DONE]\n\n"
+        return
+
+    answers = (
+        approved_tool_result if isinstance(approved_tool_result, list) else [approved_tool_result]
+    )
+    by_id = {a.get("tool_use_id", ""): a for a in answers if isinstance(a, dict)}
+
+    tool_results = paused["pending_results"]
+    names_by_id = paused["names_by_id"]
+    for r in tool_results:
+        ans = by_id.get(r.get("tool_use_id", ""))
+        if ans is not None:
+            r["content"] = ans.get("content", "")
+            name = names_by_id.get(r["tool_use_id"], "tool")
+            preview = str(r["content"])[:2000]
+            yield f"data: {ndjson_dumps({'skill_result': name, 'output': preview})}\n\n"
+
+    convo = paused["convo"]
+    convo.extend(_tool_results_to_messages(tool_results, names_by_id))
+
+    tool_ctx = paused["tool_ctx"]
+    if session_approvals is not None:
+        # Pick up any new "allow for session" choices for downstream rounds.
+        tool_ctx = {**tool_ctx, "session_approvals": session_approvals}
+
+    mem = paused.get("memory_ctx")
+    async for chunk in _run_loop(
+        paused["model_key"],
+        paused["base_url"],
+        convo,
+        paused["schemas"],
+        tool_ctx,
+        session_id=session_id,
+        start_round=paused["next_round"],
+        memory_ctx=mem,
+    ):
+        yield chunk
+    if mem and not has_pause(session_id):
+        _spawn_memory_hooks(paused["model_key"], mem["messages"], session_id, mem["ws_path"])
