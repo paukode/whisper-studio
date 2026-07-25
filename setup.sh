@@ -546,8 +546,56 @@ fi
 if [ "$MODE" = "cloud" ]; then WANT_LOCAL=0; else WANT_LOCAL=1; fi
 echo "Model mode: $MODE — $([ "$WANT_LOCAL" -eq 1 ] && echo 'pulling on-device models' || echo 'cloud, skipping on-device weights')."
 
-# On-device LLM runtime (llama-cpp-python, Metal). Only needed for hybrid/local
-# (on-device chat), and only in production mode (the default; PROD=1). Non-fatal:
+# ── On-device serving runtime: llama.cpp (llama-server) ─────────────────────
+# The preferred on-device backend. llama-server owns upstream's per-model-family
+# tool-call and reasoning parsers, so a GGUF added to config.json gets tools and
+# a thinking channel with no code change. The in-process llama-cpp-python path
+# below stays as a fallback, but its parsing is Gemma-specific.
+#
+# Build matters: gemma4 (and newer architectures) need >= LLAMA_MIN_BUILD. Older
+# builds load fine and then fail with "unknown model architecture", so we upgrade
+# an outdated install rather than leaving that trap. Non-fatal throughout — the
+# app falls back to the in-process runtime.
+LLAMA_MIN_BUILD=10090
+
+llama_server_build() {
+    command -v llama-server >/dev/null 2>&1 || return 1
+    # Prints e.g. "version: 10090 (7347430f4)" on stderr.
+    llama-server --version 2>&1 | sed -n 's/^[[:space:]]*version:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' | head -1
+}
+
+if [ "$WANT_LOCAL" -eq 1 ]; then
+    LLAMA_BUILD="$(llama_server_build || true)"
+    if [ -z "$LLAMA_BUILD" ]; then
+        if command -v brew >/dev/null 2>&1; then
+            echo "Installing llama.cpp (on-device serving runtime) (logs → $SETUP_LOG)..."
+            if brew install llama.cpp >>"$SETUP_LOG" 2>&1; then
+                LLAMA_BUILD="$(llama_server_build || true)"
+                echo "  ✓ llama.cpp installed (build ${LLAMA_BUILD:-unknown})."
+            else
+                echo "  ✗ llama.cpp install failed; falling back to the in-process runtime (see $SETUP_LOG)."
+            fi
+        else
+            echo "  • Homebrew not found — skipping llama.cpp. Install it manually for the"
+            echo "    preferred on-device backend: https://github.com/ggml-org/llama.cpp"
+        fi
+    elif [ "$LLAMA_BUILD" -lt "$LLAMA_MIN_BUILD" ] 2>/dev/null; then
+        echo "llama.cpp build $LLAMA_BUILD is older than $LLAMA_MIN_BUILD (needed for current"
+        echo "model architectures). Upgrading (logs → $SETUP_LOG)..."
+        if command -v brew >/dev/null 2>&1 && brew upgrade llama.cpp >>"$SETUP_LOG" 2>&1; then
+            echo "  ✓ llama.cpp upgraded to build $(llama_server_build || echo unknown)."
+        else
+            echo "  ✗ Could not upgrade llama.cpp. On-device models may fail with 'unknown"
+            echo "    model architecture'; run 'brew upgrade llama.cpp' manually."
+        fi
+    else
+        echo "  ✓ llama.cpp present (build $LLAMA_BUILD)."
+    fi
+fi
+
+# On-device LLM runtime (llama-cpp-python, Metal) — the FALLBACK backend, used
+# when llama-server is unavailable. Only needed for hybrid/local (on-device
+# chat), and only in production mode (the default; PROD=1). Non-fatal:
 # on-device models are simply unavailable if this cannot build.
 if [ "$PROD" -eq 1 ] && [ "$WANT_LOCAL" -eq 1 ] && ! python -c "import llama_cpp" >/dev/null 2>&1; then
     # Genuinely non-fatal: run the build directly rather than via run_quiet,
@@ -630,16 +678,31 @@ if [ "$WANT_LOCAL" -eq 1 ]; then
         "models/qwen3-reranker-0.6b/model.safetensors" \
         "from server.index.reranker import ensure_rerank_model; ensure_rerank_model()"
 
-    # Gemma on-device LLMs (~7 GB each, GGUF). Only the download needs
-    # huggingface_hub; the llama-cpp-python runtime that loads them is installed
-    # in production mode above.
-    download_model "Gemma 4 12B on-device LLM (~7 GB)" \
-        "models/gemma-4-12b-it-qat-q4_0/gemma-4-12b-it-qat-q4_0.gguf" \
-        "import server.local.runtime as L; L.ensure_downloaded('local_gemma')"
-
-    download_model "Gemma 4 Coder on-device LLM (~7 GB)" \
-        "models/gemma-4-12b-coder/gemma4-coding-Q4_K_M.gguf" \
-        "import server.local.runtime as L; L.ensure_downloaded('local_gemma_coder')"
+    # On-device chat LLMs (GGUF, typically several GB each). Driven by the model
+    # REGISTRY rather than a hardcoded list, so a local model added to
+    # config.json's chat_models is downloaded here automatically — no edit to
+    # this script. Only the download needs huggingface_hub; the runtime that
+    # serves them is installed above.
+    # Emits one "key<TAB>label<TAB>sentinel-path" line per registered model.
+    LOCAL_MODEL_ROWS="$(python - <<'PYEOF' 2>/dev/null
+try:
+    from server.local.registry import local_models
+    from server.local.runtime import gguf_path
+    for key, m in local_models().items():
+        print(f"{key}\t{m.get('label') or key}\t{gguf_path(key)}")
+except Exception:
+    pass
+PYEOF
+)"
+    if [ -z "$LOCAL_MODEL_ROWS" ]; then
+        echo "  • Could not read the on-device model registry — skipping LLM weights."
+    else
+        printf '%s\n' "$LOCAL_MODEL_ROWS" | while IFS="$(printf '\t')" read -r key label path; do
+            [ -n "$key" ] || continue
+            download_model "$label (on-device LLM)" "$path" \
+                "import server.local.runtime as L; L.ensure_downloaded('$key')"
+        done
+    fi
 else
     echo "  • Cloud mode — skipping on-device index/LLM weights (Bedrock provides embed/rerank/NER/chat)."
 fi

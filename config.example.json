@@ -10,10 +10,26 @@
       "thinking": "adaptive",
       "requires_data_retention": true
     },
-    "opus5.0": { "id": "global.anthropic.claude-opus-5",                  "label": "Opus 5",     "thinking": "adaptive" },
-    "opus4.8": { "id": "global.anthropic.claude-opus-4-8",                "label": "Opus 4.8",   "thinking": "adaptive" },
-    "sonnet5": { "id": "global.anthropic.claude-sonnet-5",                "label": "Sonnet 5",   "thinking": "adaptive" },
-    "haiku":   { "id": "global.anthropic.claude-haiku-4-5-20251001-v1:0", "label": "Haiku 4.5",  "thinking": "budget" },
+    "opus5.0": {
+      "id": "global.anthropic.claude-opus-5",
+      "label": "Opus 5",
+      "thinking": "adaptive"
+    },
+    "opus4.8": {
+      "id": "global.anthropic.claude-opus-4-8",
+      "label": "Opus 4.8",
+      "thinking": "adaptive"
+    },
+    "sonnet5": {
+      "id": "global.anthropic.claude-sonnet-5",
+      "label": "Sonnet 5",
+      "thinking": "adaptive"
+    },
+    "haiku": {
+      "id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+      "label": "Haiku 4.5",
+      "thinking": "budget"
+    },
     "gpt5.6-sol": {
       "id": "openai.gpt-5.6-sol",
       "label": "GPT-5.6 Sol",
@@ -38,9 +54,21 @@
       "effort_tier": "openai",
       "verbosity": "medium"
     },
-    "opus4.7": { "id": "global.anthropic.claude-opus-4-7",                "label": "Opus 4.7",   "thinking": "adaptive" },
-    "opus4.6": { "id": "global.anthropic.claude-opus-4-6-v1",             "label": "Opus 4.6",   "thinking": "budget" },
-    "sonnet":  { "id": "global.anthropic.claude-sonnet-4-6",              "label": "Sonnet 4.6", "thinking": "budget" },
+    "opus4.7": {
+      "id": "global.anthropic.claude-opus-4-7",
+      "label": "Opus 4.7",
+      "thinking": "adaptive"
+    },
+    "opus4.6": {
+      "id": "global.anthropic.claude-opus-4-6-v1",
+      "label": "Opus 4.6",
+      "thinking": "budget"
+    },
+    "sonnet": {
+      "id": "global.anthropic.claude-sonnet-4-6",
+      "label": "Sonnet 4.6",
+      "thinking": "budget"
+    },
     "gpt5.5": {
       "id": "openai.gpt-5.5",
       "label": "GPT-5.5",
@@ -60,7 +88,11 @@
       "effort_tier": "none",
       "is_local": true,
       "supports_thinking": true,
-      "supports_tools": true
+      "supports_tools": true,
+      "repo_id": "google/gemma-4-12B-it-qat-q4_0-gguf",
+      "filename": "gemma-4-12b-it-qat-q4_0.gguf",
+      "dir": "gemma-4-12b-it-qat-q4_0",
+      "ctx": 16384
     },
     "local_gemma_coder": {
       "id": "local:gemma-4-12b-coder",
@@ -69,7 +101,11 @@
       "effort_tier": "none",
       "is_local": true,
       "supports_thinking": true,
-      "supports_tools": true
+      "supports_tools": true,
+      "repo_id": "yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF",
+      "filename": "gemma4-coding-Q4_K_M.gguf",
+      "dir": "gemma-4-12b-coder",
+      "ctx": 16384
     }
   },
   "default_chat_model": "opus5.0",
@@ -77,6 +113,7 @@
   "permission_mode": "default",
   "permission_explainer_enabled": true,
   "model_mode": "cloud",
+  "local_backend": "auto",
   "backends": {},
   "local_mode": false,
   "effort_level": "max",
@@ -88,9 +125,18 @@
   "max_daily_cost_usd": 0.0,
   "model_fallback_enabled": false,
   "agent_limits": {
-    "default": { "max_turns": 120, "deadline_seconds": 900 },
-    "general": { "max_turns": 120, "deadline_seconds": 900 },
-    "coordinator": { "max_turns": 100, "deadline_seconds": 1800 }
+    "default": {
+      "max_turns": 120,
+      "deadline_seconds": 900
+    },
+    "general": {
+      "max_turns": 120,
+      "deadline_seconds": 900
+    },
+    "coordinator": {
+      "max_turns": 100,
+      "deadline_seconds": 1800
+    }
   },
   "map_reduce_summary": {
     "enabled": true,

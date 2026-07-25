@@ -113,6 +113,40 @@ web search needs a Tavily key. Full field-by-field tables are in
 **[Environment variables](https://paukode.github.io/whisper-studio/ref-env.html)**, and
 **[Settings & config keys](https://paukode.github.io/whisper-studio/ref-settings.html)**.
 
+### Adding an on-device model
+
+On-device models are declared entirely in config — no code change. Add one
+entry to `chat_models` in `config.json` carrying both the picker fields and
+the weights:
+
+```json
+"local_llama4": {
+  "id": "local:llama-4-8b",
+  "label": "Llama 4 8B (Local)",
+  "is_local": true,
+  "supports_thinking": true,
+  "supports_tools": true,
+  "repo_id": "some-org/Llama-4-8B-Instruct-GGUF",
+  "filename": "Llama-4-8B-Instruct-Q4_K_M.gguf",
+  "dir": "llama-4-8b",
+  "ctx": 16384
+}
+```
+
+`repo_id`, `filename` and `dir` are required (an entry missing them is
+skipped with a warning); `ctx` defaults to 16384. On the next `setup.sh`
+run the weights are downloaded automatically, and the model appears in the
+picker.
+
+Tool calling and the thinking channel come from `llama-server`, which uses
+each model's own chat template and upstream's per-family parsers — so a new
+family works without app changes. `setup.sh` installs it (Homebrew on
+macOS); build 10090 or newer is required for current architectures. Set
+`local_backend` to `llama_server`, `in_process`, or `auto` (default) to
+choose the backend; `auto` prefers `llama-server` and falls back to the
+in-process `llama-cpp-python` runtime, whose tool/thinking parsing only
+supports Gemma.
+
 ## Usage
 
 Type `/` in the chat input for slash commands, `@file:path` to pull a
