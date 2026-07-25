@@ -42,9 +42,9 @@ from server.infrastructure.errors import (
     classify_bedrock_error,
 )
 from server.security.permissions import get_mode
-from server.whisper_md import get_whisper_md_context
 from server.tool_executor import execute_tool_batch, process_tool_results
 from server.utils import BoundedUUIDSet, ndjson_dumps
+from server.whisper_md import get_whisper_md_context
 from server.workspace import (
     _ws_validate_path,
     get_workspace_path,

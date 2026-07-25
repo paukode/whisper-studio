@@ -36,8 +36,7 @@ def _truncate(text: str, limit: int, rel_path: str) -> str:
     if len(text) <= limit:
         return text
     return (
-        text[:limit].rstrip()
-        + f"\n\n[truncated at {limit} characters — read {rel_path} "
+        text[:limit].rstrip() + f"\n\n[truncated at {limit} characters — read {rel_path} "
         "with ws_read_file for the rest]"
     )
 

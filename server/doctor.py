@@ -161,3 +161,22 @@ async def doctor(model: str = None):
         else ("error" if any(r["status"] == "error" for r in results) else "warn")
     )
     return {"status": overall, "checks": results}
+
+
+@router.get("/context")
+async def doctor_context(question: str = ""):
+    """Rightsize the prompt: per-section cost, and what is being paid for twice.
+
+    The credentials/connectivity checks above catch things that fail loudly.
+    This catches the failures that don't: a section duplicating a tool
+    description, static text stranded on a per-request layer, or an instruction
+    naming a tool that no longer exists.
+    """
+    from server.context_report import build_context_report
+    from server.workspace import get_workspace_path
+
+    try:
+        return build_context_report(ws_path=get_workspace_path(), question=question)
+    except Exception as e:  # noqa: BLE001 — a diagnostics endpoint must not 500
+        log.warning("context report failed: %s", e)
+        return {"error": str(e)}

@@ -44,6 +44,7 @@ export const BASE_SLASH_COMMANDS: SlashCommand[] = [
   { cmd: 'btw ', icon: '💬', desc: 'Ask a side question', category: 'ai' },
   { cmd: 'clear ', icon: '🧹', desc: 'Clear chat display', category: 'general' },
   { cmd: 'doctor ', icon: '🩺', desc: 'Run diagnostics', category: 'debug' },
+  { cmd: 'doctor context ', icon: '📏', desc: 'Rightsize the system prompt', category: 'debug' },
   { cmd: 'effort ', icon: '🎯', desc: 'Set thinking depth', options: ['low', 'medium', 'high', 'extra', 'max', 'ultracode'], category: 'ai' },
   { cmd: 'export ', icon: '💾', desc: 'Export conversation as text', category: 'general' },
   { cmd: 'file:', icon: '📂', desc: 'Reference a workspace file', submenu: true, category: 'workspace' },
