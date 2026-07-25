@@ -1,0 +1,388 @@
+"""The llama-server on-device backend: registry, process manager, SSE adapter.
+
+These cover the parts that must hold for "drop a model in config and it works":
+the registry merge + validation, backend selection/fallback, the version guard,
+and the streaming normalization (content / reasoning_content / tool_calls →
+the app's existing SSE contract). No real model or subprocess is started.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+
+import pytest
+
+from server.local import backend as B
+from server.local import llama_server as LS
+from server.local import registry as R
+from server.local import server_stream as SS
+
+
+def _drain(make_agen) -> list[str]:
+    async def run():
+        return [c async for c in make_agen()]
+
+    return asyncio.run(run())
+
+
+# ── registry ─────────────────────────────────────────────────────────────────
+
+
+def test_registry_returns_builtins_when_config_adds_nothing(monkeypatch):
+    monkeypatch.setattr(R, "_config_local_models", lambda: {})
+    models = R.local_models()
+    assert set(models) == set(R.BUILTIN_LOCAL_MODELS)
+    assert models["local_gemma"]["id"] == "local:gemma-4-12b-it-qat-q4_0"
+
+
+def test_registry_adds_a_config_only_model(monkeypatch):
+    """The headline behavior: a brand-new family needs no code change."""
+    monkeypatch.setattr(
+        R,
+        "_config_local_models",
+        lambda: {
+            "local_llama4": {
+                "id": "local:llama-4-8b",
+                "label": "Llama 4 8B (Local)",
+                "repo_id": "org/Llama-4-8B-GGUF",
+                "filename": "llama-4-8b-Q4_K_M.gguf",
+                "dir": "llama-4-8b",
+                "supports_tools": True,
+                "supports_thinking": True,
+            }
+        },
+    )
+    models = R.local_models()
+    assert "local_llama4" in models
+    entry = models["local_llama4"]
+    assert entry["id"] == "local:llama-4-8b"
+    assert entry["ctx"] == 16384  # defaulted, not required in config
+    assert entry["supports_tools"] is True
+
+
+def test_registry_drops_half_declared_model(monkeypatch):
+    """Missing weight fields must be skipped loudly, not fail later at load."""
+    monkeypatch.setattr(
+        R,
+        "_config_local_models",
+        lambda: {"local_broken": {"id": "local:x", "label": "Broken", "supports_tools": True}},
+    )
+    assert "local_broken" not in R.local_models()
+
+
+def test_config_overrides_builtin_field_without_restating_repo(monkeypatch):
+    monkeypatch.setattr(R, "_config_local_models", lambda: {"local_gemma": {"ctx": 65536}})
+    entry = R.local_models()["local_gemma"]
+    assert entry["ctx"] == 65536
+    # Untouched fields still come from the built-in.
+    assert entry["filename"] == "gemma-4-12b-it-qat-q4_0.gguf"
+
+
+def test_runtime_view_is_live(monkeypatch):
+    """runtime.LOCAL_MODELS is a view, so a config change needs no restart."""
+    import server.local.runtime as L
+
+    monkeypatch.setattr(
+        R,
+        "_config_local_models",
+        lambda: {
+            "local_new": {
+                "id": "local:new",
+                "repo_id": "o/r",
+                "filename": "n.gguf",
+                "dir": "n",
+            }
+        },
+    )
+    assert L.is_local_model("local_new")
+    assert L.key_for_id("local:new") == "local_new"
+    assert "local_new" in list(L.LOCAL_MODELS)
+
+
+def test_registry_reads_id_from_chat_models_not_meta(monkeypatch):
+    """Regression: ids live in the parallel chat_models map. Reading them from
+    chat_model_meta yields None and invents "local:<key>", which then overwrites
+    a built-in's real sentinel and breaks key_for_id()."""
+    cfg = {
+        "chat_models": {"local_gemma": "local:gemma-4-12b-it-qat-q4_0"},
+        "chat_model_meta": {"local_gemma": {"is_local": True, "label": "G"}},
+    }
+    monkeypatch.setattr("server.infrastructure.config.load_config", lambda *a, **k: cfg)
+    assert R._config_local_models()["local_gemma"]["id"] == "local:gemma-4-12b-it-qat-q4_0"
+
+
+# ── version guard / availability ─────────────────────────────────────────────
+
+
+def test_ensure_available_rejects_too_old_build(monkeypatch):
+    monkeypatch.setattr(LS, "binary_path", lambda: "/usr/bin/llama-server")
+    monkeypatch.setattr(LS, "installed_build", lambda: LS.MIN_BUILD - 1)
+    with pytest.raises(LS.LlamaServerUnavailable) as e:
+        LS.ensure_available()
+    assert "brew upgrade" in str(e.value)  # actionable fix, not just a complaint
+
+
+def test_ensure_available_explains_missing_binary(monkeypatch):
+    monkeypatch.setattr(LS, "binary_path", lambda: None)
+    with pytest.raises(LS.LlamaServerUnavailable) as e:
+        LS.ensure_available()
+    assert "setup.sh" in str(e.value)
+
+
+def test_ensure_available_accepts_unknown_build(monkeypatch):
+    """An unparseable version must not block startup."""
+    monkeypatch.setattr(LS, "binary_path", lambda: "/usr/bin/llama-server")
+    monkeypatch.setattr(LS, "installed_build", lambda: None)
+    assert LS.ensure_available() == "/usr/bin/llama-server"
+
+
+def test_backend_falls_back_when_llama_server_unusable(monkeypatch):
+    B.reset_cache()
+    monkeypatch.delenv("WHISPER_LOCAL_BACKEND", raising=False)
+    monkeypatch.setattr("server.infrastructure.config.get", lambda k, d=None: "auto")
+    monkeypatch.setattr(B, "llama_server_available", lambda: False)
+    assert B.resolve() == B.IN_PROCESS
+    monkeypatch.setattr(B, "llama_server_available", lambda: True)
+    assert B.resolve() == B.LLAMA_SERVER
+
+
+def test_backend_env_overrides_config(monkeypatch):
+    B.reset_cache()
+    monkeypatch.setenv("WHISPER_LOCAL_BACKEND", "in_process")
+    monkeypatch.setattr(B, "llama_server_available", lambda: True)
+    assert B.resolve() == B.IN_PROCESS
+
+
+def test_backend_unknown_value_falls_back_to_auto(monkeypatch):
+    B.reset_cache()
+    monkeypatch.setenv("WHISPER_LOCAL_BACKEND", "nonsense")
+    monkeypatch.setattr(B, "llama_server_available", lambda: True)
+    assert B.resolve() == B.LLAMA_SERVER
+
+
+# ── streamed tool-call reassembly ────────────────────────────────────────────
+
+
+def test_call_accumulator_reassembles_fragmented_arguments():
+    acc = SS._CallAccumulator()
+    acc.feed([{"index": 0, "id": "c1", "function": {"name": "ws_read_file"}}])
+    acc.feed([{"index": 0, "function": {"arguments": '{"pa'}}])
+    acc.feed([{"index": 0, "function": {"arguments": 'th":"a.py"}'}}])
+    calls = acc.finish()
+    assert calls == [{"id": "c1", "name": "ws_read_file", "input": {"path": "a.py"}}]
+
+
+def test_call_accumulator_keeps_parallel_calls_separate():
+    acc = SS._CallAccumulator()
+    acc.feed(
+        [{"index": 0, "id": "a", "function": {"name": "ws_read_file", "arguments": '{"path":"x"}'}}]
+    )
+    acc.feed(
+        [{"index": 1, "id": "b", "function": {"name": "ws_read_file", "arguments": '{"path":"y"}'}}]
+    )
+    calls = acc.finish()
+    assert [c["input"]["path"] for c in calls] == ["x", "y"]
+
+
+def test_call_accumulator_survives_bad_json():
+    acc = SS._CallAccumulator()
+    acc.feed([{"index": 0, "id": "a", "function": {"name": "t", "arguments": "{not json"}}])
+    assert acc.finish() == [{"id": "a", "name": "t", "input": {}}]
+
+
+# ── SSE normalization ────────────────────────────────────────────────────────
+
+
+def _fake_rounds(*rounds):
+    """Stand in for _stream_round. Each round is a list of (kind, piece) plus an
+    implicit terminating ("done", {...}) built from its trailing calls entry."""
+    box = {"i": 0}
+
+    async def gen(base_url, payload):
+        i = min(box["i"], len(rounds) - 1)
+        box["i"] = i + 1
+        pieces, calls = rounds[i]
+        for kind, piece in pieces:
+            yield (kind, piece)
+        yield ("done", {"calls": calls, "finish_reason": "tool_calls" if calls else "stop"})
+
+    return gen
+
+
+def _events(blob: str) -> dict:
+    counts: dict[str, int] = {}
+    for line in blob.splitlines():
+        if not line.startswith("data: ") or line[6:].strip() == "[DONE]":
+            continue
+        try:
+            obj = json.loads(line[6:])
+        except json.JSONDecodeError:
+            continue
+        for k in obj:
+            counts[k] = counts.get(k, 0) + 1
+    return counts
+
+
+def test_reasoning_becomes_thinking_events(monkeypatch):
+    monkeypatch.setattr(
+        SS, "_stream_round", _fake_rounds(([("thinking", "hmm"), ("text", "answer")], []))
+    )
+    blob = "".join(
+        _drain(lambda: SS._run_loop("k", "http://x", [], [], {"thinking": True}, session_id="s"))
+    )
+    assert '"thinking_start": true' in blob
+    assert '"thinking": "hmm"' in blob
+    assert '"thinking_stop": true' in blob
+    assert '"text": "answer"' in blob
+    # thinking closes before the answer starts
+    assert blob.index('"thinking_stop"') < blob.index('"text": "answer"')
+    assert blob.strip().endswith("data: [DONE]")
+
+
+def test_thinking_stop_emitted_when_round_has_no_answer_text(monkeypatch):
+    monkeypatch.setattr(SS, "_stream_round", _fake_rounds(([("thinking", "only")], [])))
+    blob = "".join(_drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="s")))
+    assert '"thinking_start": true' in blob and '"thinking_stop": true' in blob
+
+
+def test_tool_round_emits_skill_events_and_feeds_results_back(monkeypatch):
+    calls = [{"id": "c1", "name": "ws_read_file", "input": {"path": "a.py"}}]
+    monkeypatch.setattr(SS, "_stream_round", _fake_rounds(([], calls), ([("text", "done")], [])))
+
+    async def fake_round(tool_uses, **kw):
+        return (
+            [{"type": "tool_result", "tool_use_id": "c1", "content": "print(1)"}],
+            ['{"skill_result": "ws_read_file", "output": "print(1)"}'],
+            False,
+            False,
+        )
+
+    monkeypatch.setattr(SS, "run_tool_round", fake_round)
+    convo: list[dict] = []
+    blob = "".join(_drain(lambda: SS._run_loop("k", "http://x", convo, [], {}, session_id="s")))
+    assert '"skill": "ws_read_file"' in blob
+    assert '"path": "a.py"' in blob
+    assert '"skill_result": "ws_read_file"' in blob
+    assert '"text": "done"' in blob
+    # Results go back as NATIVE tool messages, not folded into a user turn.
+    tool_msgs = [m for m in convo if m.get("role") == "tool"]
+    assert tool_msgs and tool_msgs[0]["tool_call_id"] == "c1"
+    assert not any(m.get("role") == "user" for m in convo)
+    # And the assistant's calling turn is recorded in OpenAI shape.
+    assistant = [m for m in convo if m.get("role") == "assistant"]
+    assert assistant[0]["tool_calls"][0]["function"]["name"] == "ws_read_file"
+
+
+def test_parallel_calls_execute_in_one_round(monkeypatch):
+    calls = [
+        {"id": "a", "name": "ws_read_file", "input": {"path": "x"}},
+        {"id": "b", "name": "ws_read_file", "input": {"path": "y"}},
+    ]
+    monkeypatch.setattr(SS, "_stream_round", _fake_rounds(([], calls), ([("text", "ok")], [])))
+    seen = {}
+
+    async def fake_round(tool_uses, **kw):
+        seen["n"] = len(tool_uses)
+        return (
+            [{"type": "tool_result", "tool_use_id": t["id"], "content": "c"} for t in tool_uses],
+            [],
+            False,
+            False,
+        )
+
+    monkeypatch.setattr(SS, "run_tool_round", fake_round)
+    _drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="s"))
+    assert seen["n"] == 2  # the in-process path could not do this
+
+
+def test_pause_on_approval_stashes_state_and_emits_no_answer(monkeypatch):
+    calls = [{"id": "w1", "name": "ws_write_file", "input": {"path": "a.txt"}}]
+    monkeypatch.setattr(SS, "_stream_round", _fake_rounds(([], calls), ([("text", "after")], [])))
+
+    async def pause_round(tool_uses, **kw):
+        return (
+            [{"type": "tool_result", "tool_use_id": "w1", "content": "[Not executed]"}],
+            ['{"approval_request": {"tool_use_id": "w1", "category": "write"}}'],
+            True,
+            False,
+        )
+
+    monkeypatch.setattr(SS, "run_tool_round", pause_round)
+    SS._paused.pop("sess-x", None)
+    blob = "".join(_drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="sess-x")))
+    assert '"approval_request"' in blob
+    assert '"text"' not in blob  # the destructive action did NOT run
+    assert SS.has_pause("sess-x")
+    assert blob.strip().endswith("data: [DONE]")
+    SS._paused.pop("sess-x", None)
+
+
+def test_resume_with_no_paused_state_ends_cleanly():
+    SS._paused.pop("ghost", None)
+    chunks = _drain(lambda: SS.resume_chat("ghost", {"tool_use_id": "x", "content": "y"}))
+    assert chunks == ["data: [DONE]\n\n"]
+
+
+def test_last_round_forbids_tools_so_the_model_must_answer(monkeypatch):
+    """Parity with the cloud paths: the in-process loop died at the cap with a
+    canned message instead of making the model synthesize an answer."""
+    seen: list[str] = []
+
+    async def gen(base_url, payload):
+        seen.append(payload.get("tool_choice"))
+        # Always ask for a call, so only the final-round guard can stop the loop.
+        yield (
+            "done",
+            {"calls": [{"id": "c", "name": "t", "input": {}}], "finish_reason": "tool_calls"},
+        )
+
+    monkeypatch.setattr(SS, "_stream_round", gen)
+    monkeypatch.setattr(SS, "_MAX_TOOL_ROUNDS", 3)
+
+    async def fake_round(tool_uses, **kw):
+        return ([{"type": "tool_result", "tool_use_id": "c", "content": "r"}], [], False, False)
+
+    monkeypatch.setattr(SS, "run_tool_round", fake_round)
+    _drain(lambda: SS._run_loop("k", "http://x", [], [{"type": "function"}], {}, session_id="s"))
+    assert seen[:-1] == ["auto"] * (len(seen) - 1)
+    assert seen[-1] == "none"
+
+
+def test_transport_error_surfaces_without_usage(monkeypatch):
+    async def boom(base_url, payload):
+        raise RuntimeError("connection refused")
+        yield  # pragma: no cover - generator marker
+
+    monkeypatch.setattr(SS, "_stream_round", boom)
+    blob = "".join(_drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="s")))
+    assert '"error"' in blob and "connection refused" in blob
+    assert '"usage"' not in blob  # no cost line on failure
+    assert blob.strip().endswith("data: [DONE]")
+
+
+def test_start_failure_is_reported_to_the_client(monkeypatch):
+    def boom(key, n_ctx=None):
+        raise LS.LlamaServerUnavailable("llama-server is not installed")
+
+    monkeypatch.setattr(LS, "ensure_serving", boom)
+    blob = "".join(
+        _drain(lambda: SS.stream_chat("local_gemma", "sys", [], "s", tools=False, tool_ctx={}))
+    )
+    assert '"error"' in blob and "not installed" in blob
+    assert blob.strip().endswith("data: [DONE]")
+
+
+def test_messages_flatten_bedrock_blocks_to_openai():
+    msgs = SS._to_openai_messages(
+        "SYS",
+        [
+            {"role": "user", "content": [{"type": "text", "text": "hi"}, {"type": "image"}]},
+            {"role": "assistant", "content": "hello"},
+            {"role": "user", "content": [{"type": "image"}]},  # nothing renderable
+        ],
+    )
+    assert msgs[0] == {"role": "system", "content": "SYS"}
+    assert msgs[1] == {"role": "user", "content": "hi"}
+    assert msgs[2] == {"role": "assistant", "content": "hello"}
+    assert len(msgs) == 3  # the image-only turn is dropped, not sent empty
