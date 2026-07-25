@@ -304,6 +304,27 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
     return f"http://{_HOST}:{port}"
 
 
+def _strip_reasoning_markers(text: str) -> str:
+    """Drop a model's reasoning-channel markers (and any reasoning ahead of the
+    close marker) from one-shot content.
+
+    Observed on the non-streaming endpoint: when upstream's reasoning parser does
+    not claim a model's thought channel, ``reasoning_content`` comes back empty and
+    the content arrives as ``"<channel|>the real answer"`` — sometimes with the
+    whole thought block ahead of it. Callers here want clean prose or JSON (session
+    summaries, index extraction), so keep only what follows the LAST close marker
+    and drop any stray markers. Text without markers is returned untouched.
+    """
+    if not text:
+        return text
+    for close in ("<channel|>", "</think>"):
+        if close in text:
+            text = text.rsplit(close, 1)[1]
+    for stray in ("<|channel>thought", "<|channel>", "<think>", "<|think|>"):
+        text = text.replace(stray, "")
+    return text.strip()
+
+
 def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) -> str:
     """One-shot, NON-streaming generation; returns the assistant text ('' on
     failure). Blocking — starts the model server if it isn't already serving
@@ -338,7 +359,8 @@ def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) ->
         choices = (r.json() or {}).get("choices") or []
         if not choices:
             return ""
-        return (choices[0].get("message") or {}).get("content") or ""
+        msg = choices[0].get("message") or {}
+        return _strip_reasoning_markers(msg.get("content") or "")
     except Exception as e:
         log.warning("complete(%s) failed: %s", key, e)
         return ""

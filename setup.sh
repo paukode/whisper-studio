@@ -568,10 +568,10 @@ if [ "$WANT_LOCAL" -eq 1 ]; then
     LLAMA_BUILD="$(llama_server_build || true)"
     if [ -z "$LLAMA_BUILD" ]; then
         if command -v brew >/dev/null 2>&1; then
-            echo "Installing llama.cpp (on-device serving runtime) (logs → $SETUP_LOG)..."
+            echo "Installing llama.cpp via Homebrew — provides the llama-server binary (logs → $SETUP_LOG)..."
             if brew install llama.cpp >>"$SETUP_LOG" 2>&1; then
                 LLAMA_BUILD="$(llama_server_build || true)"
-                echo "  ✓ llama.cpp installed (build ${LLAMA_BUILD:-unknown})."
+                echo "  ✓ llama-server installed (build ${LLAMA_BUILD:-unknown}) at $(command -v llama-server)."
             else
                 echo "  ✗ llama.cpp install FAILED (see $SETUP_LOG)."
                 echo "    On-device chat will not work until this succeeds — there is no"
@@ -592,7 +592,7 @@ if [ "$WANT_LOCAL" -eq 1 ]; then
             echo "    model architecture'; run 'brew upgrade llama.cpp' manually."
         fi
     else
-        echo "  ✓ llama.cpp present (build $LLAMA_BUILD)."
+        echo "  ✓ llama-server present (build $LLAMA_BUILD) at $(command -v llama-server)."
     fi
 fi
 

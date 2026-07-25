@@ -465,6 +465,24 @@ def test_start_failure_is_reported_to_the_client(monkeypatch):
     assert blob.strip().endswith("data: [DONE]")
 
 
+def test_complete_strips_leaked_reasoning_markers():
+    """Observed live: on the non-streaming endpoint a model's thought channel can
+    go unclaimed by upstream's parser, so reasoning_content is empty and content
+    arrives as "<channel|>the answer". complete()'s callers (session summaries,
+    index extraction) want clean text, not markers."""
+    f = LS._strip_reasoning_markers
+    assert f("<channel|>The repo is a web app.") == "The repo is a web app."
+    # Whole thought block ahead of the close marker is dropped.
+    assert f("<|channel>thought\nlet me think\n<channel|>Final answer.") == "Final answer."
+    # Last close marker wins, so a marker quoted mid-reasoning can't truncate early.
+    assert f("<channel|>a<channel|>b") == "b"
+    # Qwen/DeepSeek-style markers too.
+    assert f("<think>hmm</think>Answer.") == "Answer."
+    # Marker-free text is untouched (the normal case for a well-behaved model).
+    assert f("Just a plain answer.") == "Just a plain answer."
+    assert f("") == ""
+
+
 def test_reap_orphans_kills_only_our_model_servers(monkeypatch):
     """SIGKILL skips the shutdown hook and the child runs in its own session, so
     a force-quit leaves a llama-server holding gigabytes. Startup reaps those —
