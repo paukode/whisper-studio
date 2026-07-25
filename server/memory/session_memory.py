@@ -255,21 +255,16 @@ async def _run_local_session_update(existing: str, excerpt: str, model_id: str) 
         return None
 
     user = _update_task(existing, excerpt)
-    loop = asyncio.get_event_loop()
-
-    def _gen() -> str:
-        convo = local_llm.to_chat_messages(
-            SESSION_SUMMARY_PROMPT, [{"role": "user", "content": user}]
-        )
-        return local_llm.generate_round(key, convo, [], max_tokens=1024)
 
     try:
-        text = (await loop.run_in_executor(local_llm.executor, _gen)) or ""
+        # Off the event loop: this blocks on the model server (and starts it if
+        # the model isn't resident yet).
+        text = (
+            await asyncio.to_thread(local_llm.complete, key, SESSION_SUMMARY_PROMPT, user, 1024)
+            or ""
+        )
     except Exception as e:  # never let a background summary disrupt anything
         log.warning("Local session summary failed: %s", e)
         return None
 
-    from server.local.tools import strip_tool_markers
-
-    text = strip_tool_markers(text).strip()
-    return text or None
+    return text.strip() or None

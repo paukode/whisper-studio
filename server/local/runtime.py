@@ -1,22 +1,23 @@
-"""On-device LLM runtime (local mode) — fully isolated from Bedrock/Claude.
+"""On-device model metadata and prompts — fully isolated from Bedrock/Claude.
 
-Runs a GGUF model via llama-cpp-python on Apple Silicon (Metal). Only one model
-is resident at a time: loading a different local model unloads the previous one,
-matching the memory-constrained on-device build (e.g. M3/18GB). This path is
-reached only when a ``local_*`` model key is selected; the cloud Claude path in
-server/chat is never touched.
+The weights themselves live in a llama-server subprocess (see
+server/local/llama_server.py); this module owns everything *around* that: the
+config-driven registry view, GGUF download/paths, the sticky context-size
+request, capability flags, and the local system prompt. Only one model is
+resident at a time, matching the memory-constrained on-device build (e.g.
+M3/18GB).
 
-llama-cpp-python is imported lazily so the server still boots (and the cloud
-models work) on machines where the local runtime isn't installed — selecting a
-local model there surfaces a clear "run setup.sh --prod" error instead.
+There is deliberately no in-process engine any more. llama-server is the single
+on-device backend, so a model added to config.json is served through upstream's
+own template and tool-call parsers rather than marker code maintained here — and
+when it is unavailable, local turns fail loudly instead of silently degrading.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import threading
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Mapping
 
 log = logging.getLogger("whisper-studio")
 
@@ -26,57 +27,64 @@ log = logging.getLogger("whisper-studio")
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MODELS_DIR = os.path.join(SCRIPT_DIR, "models")
 
-# Supported on-device models. Keys are prefixed ``local_`` so the chat router
-# can detect them by key alone, with no config lookup. `id` is a sentinel that
-# never reaches Bedrock (the router branches before any AWS call).
-LOCAL_MODELS: dict[str, dict] = {
-    "local_gemma": {
-        "id": "local:gemma-4-12b-it-qat-q4_0",
-        "label": "Gemma 4 12B (Local)",
-        "repo_id": "google/gemma-4-12B-it-qat-q4_0-gguf",
-        "filename": "gemma-4-12b-it-qat-q4_0.gguf",
-        "dir": "gemma-4-12b-it-qat-q4_0",
-        # Gemma 4 supports up to 262144 (256K) natively. 16K is the default and
-        # the floor: with tools on, the tool-pool prompt alone is ~12K tokens, so
-        # a smaller window overflows. The user can raise it live from the
-        # chat-input context-window slider (which reloads the model at the new
-        # size, prompting for confirmation above 16K). WHISPER_LOCAL_N_CTX still
-        # overrides the default at startup.
-        "ctx": 16384,
-        "supports_thinking": True,
-        "supports_tools": True,
-    },
-    "local_gemma_coder": {
-        "id": "local:gemma-4-12b-coder",
-        "label": "Gemma 4 Coder (Local)",
-        "repo_id": "yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF",
-        "filename": "gemma4-coding-Q4_K_M.gguf",
-        "dir": "gemma-4-12b-coder",
-        # Same family as Gemma 4 12B above; identical context + capability flags.
-        "ctx": 16384,
-        "supports_thinking": True,
-        "supports_tools": True,
-    },
-}
 
-# All llama.cpp work (load, generate, unload) runs on ONE thread so the model
-# is created and used on the same thread — mirrors the ASR backends.
-executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="local-llm")
+# Supported on-device models. Keys are prefixed ``local_`` by convention so they
+# read as on-device at a glance; detection itself is registry membership (below),
+# not the prefix, so a config-added model does not have to follow it.
+# The registry is config-driven — see server/local/registry.py. This module-level
+# name is kept as a LIVE VIEW for the many callsites that read it like a dict
+# (``key in LOCAL_MODELS``, ``LOCAL_MODELS[key]["ctx"]``, iteration): it resolves
+# the merged built-in + config registry on every access, so a model added to
+# config.json is picked up without a restart and without touching this file.
+class _LocalModelsView(Mapping):
+    """Read-only Mapping over the effective registry (built-ins + config)."""
 
-_llm = None  # the loaded llama_cpp.Llama instance
-_llm_key: str | None = None
-_lock = threading.Lock()
+    def _resolved(self) -> dict[str, dict]:
+        from server.local.registry import local_models
+
+        return local_models()
+
+    def __getitem__(self, key):
+        return self._resolved()[key]
+
+    def __iter__(self):
+        return iter(self._resolved())
+
+    def __len__(self):
+        return len(self._resolved())
+
+    def __repr__(self):  # pragma: no cover - debugging aid
+        return f"_LocalModelsView({self._resolved()!r})"
+
+
+LOCAL_MODELS: Mapping[str, dict] = _LocalModelsView()
 
 # The context window (n_ctx) most recently REQUESTED by an explicit load — i.e.
 # the size the user picked in the chat-input context-window slider, which loads
-# the model via /api/local-model/load?n_ctx=... . Chat turns call load_sync(key)
-# with n_ctx=None to lazily ensure the model is resident; without remembering the
-# choice here, None resolves back to the model default (16K) and RELOADS the
-# model smaller mid-turn, so the very next message overflows a 16K window even
-# though the badge says 32K/64K. Keeping it sticky makes None mean "keep whatever
-# the user last asked for". Updated only by an explicit request, so a lazy load
-# can never downshift the resident window.
+# the model via /api/local-model/load?n_ctx=... . A chat turn only asks that the
+# model be resident (n_ctx=None); without remembering the choice here, None
+# resolves back to the model default and restarts the server smaller mid-turn, so
+# the very next message overflows even though the badge says 32K/64K. Keeping it
+# sticky makes None mean "keep whatever the user last asked for". Updated only by
+# an explicit request, so a lazy start can never downshift the resident window.
 _requested_n_ctx: int | None = None
+
+
+def requested_n_ctx() -> int | None:
+    """The context size the user last explicitly asked for, or None.
+
+    Read by the model server when deciding what window to start at, so the
+    chat-input slider survives a lazy start later in the session.
+    """
+    return _requested_n_ctx
+
+
+def set_requested_n_ctx(n: int | None) -> None:
+    """Record an explicit context-size request (slider / API). Ignores None so a
+    lazy load can never clear the user's choice."""
+    global _requested_n_ctx
+    if n is not None:
+        _requested_n_ctx = int(n)
 
 
 def is_local_model(key: str | None) -> bool:
@@ -140,173 +148,42 @@ def ensure_downloaded(key: str) -> str:
 
 
 def is_loaded(key: str | None = None) -> bool:
-    if key is None:
-        return _llm is not None
-    return _llm is not None and _llm_key == key
+    """Whether a local model (or ``key`` specifically) is currently resident.
+
+    Residency is a property of the model server, not this process — the weights
+    were never in here.
+    """
+    from server.local import llama_server
+
+    resident = llama_server.resident_key()
+    if resident is None:
+        return False
+    return True if key is None else resident == key
 
 
 def loaded_key() -> str | None:
-    """The key of the currently resident local model, or None if none is loaded.
+    """The key of the currently resident local model, or None.
     Lets callers follow the active model (e.g. the one-shot map step) instead of
     pinning a fixed key and evicting the resident one to load it."""
-    return _llm_key
+    from server.local import llama_server
 
-
-# RAM budget for the resident model's KV-prefix cache (bytes). Sized to hold a
-# couple of (windowed) states so an interleaved generation on the single model
-# thread — the post-turn session-memory summariser is the usual culprit — can't
-# evict the chat prefix and force the next turn to re-prefill the whole
-# system+tools prompt from cold. 0 disables it.
-_KV_CACHE_BYTES = int(os.environ.get("WHISPER_LOCAL_KV_CACHE_BYTES", str(2 * 1024**3)))
-
-
-def _attach_kv_cache(llm) -> None:
-    """Give the model a bounded RAM cache of KV prefixes. Within a turn llama.cpp
-    already reuses the live KV for a shared prefix; this additionally SURVIVES an
-    intervening generation on the same thread (which otherwise evicts the live KV
-    and makes the next turn re-prefill from cold). Best-effort: if the cache class
-    isn't available the model just runs without it."""
-    if _KV_CACHE_BYTES <= 0:
-        return
-    try:
-        from llama_cpp import LlamaRAMCache
-
-        llm.set_cache(LlamaRAMCache(capacity_bytes=_KV_CACHE_BYTES))
-    except Exception as e:
-        log.debug("Local KV prefix cache not enabled: %s", e)
-
-
-def load_sync(key: str, n_ctx: int | None = None) -> None:
-    """Load the GGUF into memory (unloading any other local model — or the same
-    model at a different context size — first).
-
-    ``n_ctx`` overrides the context window for this load; None falls back to the
-    WHISPER_LOCAL_N_CTX env var, else the model's default (16K). Because
-    llama.cpp fixes n_ctx at construction, changing it requires a full reload —
-    that is how the UI's context-window slider grows the window: it re-creates
-    the model at the requested size.
-
-    MUST run on ``executor`` (model has thread affinity). Raises RuntimeError
-    with an actionable message when the runtime or weights are missing.
-    """
-    global _llm, _llm_key, _requested_n_ctx
-    if not is_local_model(key):
-        raise RuntimeError(f"Unknown local model: {key}")
-    m = LOCAL_MODELS[key]
-    # Larger n_ctx = larger KV cache = more memory; flash attention keeps it in
-    # check and is needed for efficient sliding-window attention. Resolution:
-    # explicit request > last explicit request (sticky) > env override > model
-    # default. The sticky tier is what stops a lazy chat-turn load (n_ctx=None)
-    # from resetting the user's chosen window back to 16K.
-    if n_ctx is not None:
-        target_n_ctx = int(n_ctx)
-        _requested_n_ctx = target_n_ctx
-    elif _requested_n_ctx is not None:
-        target_n_ctx = _requested_n_ctx
-    else:
-        target_n_ctx = int(os.environ.get("WHISPER_LOCAL_N_CTX") or m.get("ctx", 16384))
-    # Same model already resident at the same context size → nothing to do.
-    if (
-        _llm is not None
-        and _llm_key == key
-        and getattr(_llm, "_studio_n_ctx", None) == target_n_ctx
-    ):
-        return
-    with _lock:
-        # Reload when the model differs OR the requested context size changed
-        # (llama.cpp can't resize n_ctx in place).
-        if _llm is not None and (
-            _llm_key != key or getattr(_llm, "_studio_n_ctx", None) != target_n_ctx
-        ):
-            _unload_locked()
-        if _llm is None:
-            try:
-                from llama_cpp import Llama
-            except ImportError as e:
-                raise RuntimeError(
-                    "llama-cpp-python is not installed — run `bash setup.sh --prod` "
-                    "to set up on-device models."
-                ) from e
-            path = ensure_downloaded(key)
-            log.info("Loading local model %s into memory (n_ctx=%d) ...", key, target_n_ctx)
-            _llm = Llama(
-                model_path=path,
-                n_ctx=target_n_ctx,
-                n_gpu_layers=-1,  # offload all layers to Metal on Apple Silicon
-                flash_attn=True,  # smaller KV cache, faster; aids gemma's SWA
-                # Keep gemma's sliding-window KV cache at its true (windowed) size
-                # rather than a full n_ctx-sized one. llama.cpp defaults to a
-                # FULL-size SWA cache which, at 32K/64K, allocates an enormous KV
-                # buffer — it fails to allocate outright on tighter machines and
-                # thrashes/swaps on larger ones, which is the root of the
-                # multi-minute local turns at large context windows. Windowed is
-                # far smaller and (verified locally) still keeps prompt-prefix
-                # reuse working and answers correct.
-                swa_full=False,
-                verbose=False,
-            )
-            # Stash the REQUESTED n_ctx for the reload comparison above —
-            # llama_cpp may pad the effective value and `_llm.n_ctx` is a method,
-            # not the requested arg, so comparing against it would never match.
-            _llm._studio_n_ctx = target_n_ctx
-            _llm_key = key
-            _attach_kv_cache(_llm)
-            log.info("Local model %s loaded.", key)
-
-
-def _unload_locked() -> None:
-    global _llm, _llm_key
-    # Free the C / Metal allocations DETERMINISTICALLY before dropping the
-    # reference. ``_llm = None`` + gc alone is unsafe: any lingering reference
-    # (a chat formatter, an in-flight generation, an internal llama_cpp handle)
-    # keeps the ~7 GB of weights + Metal KV cache resident, so loading a second
-    # 12B model on top momentarily needs BOTH and OOMs an 18 GB machine —
-    # freezing or crashing the system. close() releases the model immediately,
-    # regardless of any remaining Python references, so the new model loads
-    # into freed memory.
-    if _llm is not None:
-        log.info("Unloading local model %s (freeing memory) ...", _llm_key)
-        try:
-            _llm.close()
-        except Exception as e:
-            log.warning("local model close() failed during unload: %s", e)
-    _llm = None
-    _llm_key = None
-    import gc
-
-    gc.collect()
-
-
-def unload_sync() -> None:
-    """Free the resident local model. MUST run on ``executor``."""
-    with _lock:
-        _unload_locked()
-
-
-def _complete_on_thread(key: str, system_prompt: str, user: str, max_tokens: int) -> str:
-    load_sync(key)
-    chat = _to_chat_messages(system_prompt, [{"role": "user", "content": user}])
-    resp = _llm.create_chat_completion(
-        messages=chat,
-        stream=False,
-        max_tokens=max_tokens,
-        temperature=0.0,
-    )
-    try:
-        return resp["choices"][0]["message"].get("content") or ""
-    except (KeyError, IndexError, TypeError):
-        return ""
+    return llama_server.resident_key()
 
 
 def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) -> str:
     """One-shot, NON-streaming generation; returns the assistant text ('' on
-    failure). Blocking and safe to call from any thread — the work is submitted
-    to the single model-affine ``executor`` and therefore serialises with chat
-    generation. Loads the model if it isn't resident. Used by the workspace
-    index's on-device typed-relation extraction."""
+    failure). Blocking — starts the model server if needed, so call it off the
+    event loop.
+
+    Kept here as the stable entry point for non-chat callers (workspace-index
+    relations/descriptions/contextualize, the one-shot helper, the on-device
+    session summariser); the work itself happens in the model server.
+    """
     if not is_local_model(key):
         return ""
-    return executor.submit(_complete_on_thread, key, system_prompt, user, max_tokens).result()
+    from server.local import llama_server
+
+    return llama_server.complete(key, system_prompt, user, max_tokens)
 
 
 _LOCAL_SYSTEM_BASE = (
@@ -384,34 +261,6 @@ def build_local_system_prompt(
     return append_rules("\n\n".join(parts))
 
 
-def _to_chat_messages(system_prompt: str, messages: list[dict]) -> list[dict]:
-    """Flatten the Bedrock-shaped messages into llama.cpp chat messages.
-
-    Text-only: image blocks are dropped (the local runtime here doesn't do
-    vision), and tool/thinking blocks never appear because the local path is
-    requested without tools.
-    """
-    chat: list[dict] = []
-    if system_prompt:
-        chat.append({"role": "system", "content": system_prompt})
-    for msg in messages:
-        role = msg.get("role", "user")
-        if role not in ("user", "assistant", "system"):
-            role = "user"
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            text = "\n".join(
-                b.get("text", "")
-                for b in content
-                if isinstance(b, dict) and b.get("type") == "text"
-            )
-        else:
-            text = str(content)
-        if text:
-            chat.append({"role": role, "content": text})
-    return chat
-
-
 def supports_thinking(key: str) -> bool:
     return bool(LOCAL_MODELS.get(key, {}).get("supports_thinking"))
 
@@ -424,316 +273,10 @@ _THOUGHT_OPEN = "<|channel>thought"
 _THOUGHT_CLOSE = "<channel|>"
 
 
-class _ThoughtSplitter:
-    """Streaming splitter that separates gemma's thought channel from the
-    answer. Feed text chunks; get back ('thinking', s) / ('text', s) pieces.
-    Holds back a few chars so a marker split across chunks is still matched."""
-
-    def __init__(self) -> None:
-        self._buf = ""
-        self._in_thought = False
-        self._hold = max(len(_THOUGHT_OPEN), len(_THOUGHT_CLOSE)) - 1
-
-    def feed(self, chunk: str) -> list[tuple[str, str]]:
-        self._buf += chunk
-        out: list[tuple[str, str]] = []
-        while True:
-            if not self._in_thought:
-                idx = self._buf.find(_THOUGHT_OPEN)
-                if idx == -1:
-                    safe = len(self._buf) - self._hold
-                    if safe > 0:
-                        out.append(("text", self._buf[:safe]))
-                        self._buf = self._buf[safe:]
-                    break
-                if idx > 0:
-                    out.append(("text", self._buf[:idx]))
-                rest = self._buf[idx + len(_THOUGHT_OPEN) :]
-                self._buf = rest[1:] if rest.startswith("\n") else rest
-                self._in_thought = True
-            else:
-                idx = self._buf.find(_THOUGHT_CLOSE)
-                if idx == -1:
-                    safe = len(self._buf) - self._hold
-                    if safe > 0:
-                        out.append(("thinking", self._buf[:safe]))
-                        self._buf = self._buf[safe:]
-                    break
-                if idx > 0:
-                    out.append(("thinking", self._buf[:idx]))
-                self._buf = self._buf[idx + len(_THOUGHT_CLOSE) :]
-                self._in_thought = False
-        return out
-
-    def flush(self) -> list[tuple[str, str]]:
-        if not self._buf:
-            return []
-        kind = "thinking" if self._in_thought else "text"
-        piece, self._buf = self._buf, ""
-        return [(kind, piece)]
-
-
-def _render_prompt(
-    chat: list[dict], enable_thinking: bool = False, tools: list[dict] | None = None
-) -> str | None:
-    """Render gemma's chat template via llama-cpp's Jinja2 formatter so we can
-    feed the raw prompt to create_completion (create_chat_completion can't pass
-    enable_thinking, and the gemma tool block needs the template). Returns None
-    on any problem → caller falls back. Self-verifies that the requested feature
-    actually rendered (the <|think|> / <|tool> tokens)."""
-    try:
-        from llama_cpp.llama_chat_format import Jinja2ChatFormatter
-
-        tmpl = (getattr(_llm, "metadata", None) or {}).get("tokenizer.chat_template")
-        if not tmpl:
-            return None
-        # bos_token="" → template emits no <bos> text; create_completion adds the
-        # BOS token itself, avoiding a double BOS.
-        fmt = Jinja2ChatFormatter(
-            template=tmpl, eos_token="<eos>", bos_token="", add_generation_prompt=True
-        )
-        res = fmt(messages=chat, tools=tools, enable_thinking=enable_thinking)
-        prompt = getattr(res, "prompt", None)
-        if not prompt or "<|turn>" not in prompt:
-            return None
-        if enable_thinking and "<|think|>" not in prompt:
-            log.info("enable_thinking did not inject <|think|>; falling back.")
-            return None
-        if tools and "<|tool>" not in prompt:
-            log.info("tools did not render into the prompt; falling back.")
-            return None
-        return prompt
-    except Exception as e:
-        log.warning("Local prompt render failed (%s); falling back", e)
-        return None
-
-
-def iter_chat(
-    key: str,
-    system_prompt: str,
-    messages: list[dict],
-    max_tokens: int = 4096,
-    thinking: bool = False,
-    cancel: threading.Event | None = None,
-):
-    """Yield (kind, text) pieces for a chat turn, kind in {"text","thinking"}.
-    Loads the model if needed. Blocking generator — call on ``executor``; the
-    async SSE layer in server/local/stream.py bridges the pieces out.
-
-    ``cancel`` is a cooperative stop signal: the async bridge sets it when the
-    client disconnects / hits Stop, and we break out of the decode loop at the
-    next token so the single model thread is freed promptly instead of running
-    on to ``max_tokens`` (which would wedge the next turn — see server/local/
-    stream.py). None → run to completion (the non-streaming/happy path)."""
-    load_sync(key)
-    chat = _to_chat_messages(system_prompt, messages)
-
-    if thinking and supports_thinking(key):
-        prompt = _render_prompt(chat, enable_thinking=True)
-        if prompt:
-            log.info("Local thinking enabled for this turn.")
-            splitter = _ThoughtSplitter()
-            # Gemma 4 ends a turn with <turn|> (not <end_of_turn>); keep the
-            # others as belt-and-suspenders stop strings.
-            for out in _llm.create_completion(
-                prompt=prompt,
-                stream=True,
-                max_tokens=max_tokens,
-                stop=["<turn|>", "<end_of_turn>", "<eos>"],
-            ):
-                if cancel is not None and cancel.is_set():
-                    break
-                try:
-                    piece = out["choices"][0].get("text")
-                except (KeyError, IndexError):
-                    piece = None
-                if piece:
-                    for kv in splitter.feed(piece):
-                        yield kv
-            for kv in splitter.flush():
-                yield kv
-            return
-
-    # Default path: no thinking. Let llama.cpp format via the embedded template.
-    for out in _llm.create_chat_completion(messages=chat, stream=True, max_tokens=max_tokens):
-        if cancel is not None and cancel.is_set():
-            break
-        try:
-            piece = out["choices"][0]["delta"].get("content")
-        except (KeyError, IndexError):
-            piece = None
-        if piece:
-            yield ("text", piece)
-
-
 def supports_tools(key: str) -> bool:
     return bool(LOCAL_MODELS.get(key, {}).get("supports_tools"))
-
-
-def to_chat_messages(system_prompt: str, messages: list[dict]) -> list[dict]:
-    """Public wrapper around the message flattener — the async tool loop builds
-    its conversation here, then feeds rounds back through ``generate_round``."""
-    return _to_chat_messages(system_prompt, messages)
 
 
 # A tool call begins with this marker; everything from it onward is the
 # <|tool_call>...<tool_call|> DSL, which must NOT be shown to the user.
 _TOOL_OPEN = "<|tool_call>"
-
-
-class _ToolCallSplitter:
-    """Streaming splitter for the tool loop: emits displayable text until a
-    tool-call marker begins, then withholds the rest (the DSL). Accumulates the
-    full raw text so the caller can parse the call. Holds back a few chars at the
-    tail so a marker split across chunks is still caught."""
-
-    def __init__(self) -> None:
-        self._buf = ""
-        self._raw = ""
-        self._in_call = False
-        self._hold = len(_TOOL_OPEN) - 1
-
-    def feed(self, chunk: str) -> list[str]:
-        self._raw += chunk
-        if self._in_call:
-            return []
-        self._buf += chunk
-        idx = self._buf.find(_TOOL_OPEN)
-        if idx != -1:
-            self._in_call = True
-            pre = self._buf[:idx]
-            self._buf = ""
-            return [pre] if pre else []
-        safe = len(self._buf) - self._hold
-        if safe > 0:
-            out = self._buf[:safe]
-            self._buf = self._buf[safe:]
-            return [out]
-        return []
-
-    def flush(self) -> list[str]:
-        if self._in_call or not self._buf:
-            return []
-        piece, self._buf = self._buf, ""
-        return [piece]
-
-    @property
-    def raw(self) -> str:
-        return self._raw
-
-
-def iter_generate_round(
-    key: str,
-    convo: list[dict],
-    tool_schemas: list[dict],
-    max_tokens: int = 4096,
-    cancel: threading.Event | None = None,
-    thinking: bool = False,
-):
-    """Run ONE agentic round, STREAMING it. Yields ``("thinking", piece)`` for
-    any ``<|channel>thought`` reasoning the model opens, ``("text", piece)`` for
-    displayable text as it decodes (everything before any ``<|tool_call>`` DSL),
-    then a final ``("raw", full_text)`` so the caller can parse the tool call
-    (``raw`` excludes the reasoning channel).
-
-    ``thinking`` mirrors the plain path (``iter_chat``): when set (and the model
-    supports it) the prompt is rendered with ``enable_thinking=True`` so the
-    model reasons in a ``<|channel>thought`` block before answering — the tools
-    path used to hard-disable this, so the "Think on" toggle did nothing once
-    tools were on. If thinking + tools cannot render together we retry with
-    thinking off so the tool block is never lost.
-
-    Streaming (vs buffering the whole round) is what keeps a tools-on turn from
-    looking frozen while the model prefills a large prompt and decodes the
-    answer. If the template can't render the tools, we degrade to a plain answer.
-    Blocking generator — MUST run on ``executor`` (model thread affinity); the
-    async loop in server/local/stream.py bridges it to SSE via a queue.
-
-    ``cancel`` is a cooperative stop signal set by that async bridge when the
-    client disconnects / hits Stop. Because generation runs on the SINGLE model
-    thread, an abandoned round left to run on to ``max_tokens`` would wedge the
-    next turn — so we check the flag each token and break, which stops pulling
-    from the llama.cpp generator (the C decode only advances on the next pull)
-    and lets the producer thread return. We still yield the flushed tail + the
-    accumulated ``raw`` so a break leaves the generator well-formed; the drained
-    consumer is already gone, so those trailing pieces are simply discarded."""
-    load_sync(key)
-    want_think = thinking and supports_thinking(key)
-    prompt = _render_prompt(convo, enable_thinking=want_think, tools=tool_schemas)
-    if prompt is None and want_think:
-        # Thinking + tools failed to render together — keep the tools (the whole
-        # point of this path) and drop thinking rather than falling all the way
-        # back to a tool-less answer.
-        prompt = _render_prompt(convo, enable_thinking=False, tools=tool_schemas)
-    tool_sp = _ToolCallSplitter()
-    thought_sp = _ThoughtSplitter()
-
-    def route(piece: str):
-        """Peel any ``<|channel>thought`` reasoning first (surfaced as
-        ``thinking`` events), then run the remaining visible text through the
-        tool-call splitter (which withholds the ``<|tool_call>`` DSL). Without
-        this, a reasoning channel the model opens mid-answer leaks raw into the
-        UI: the tools path ignores the thinking flag, so nothing else strips it.
-        Only non-thought text reaches ``tool_sp``, so its ``raw`` is the answer +
-        tool DSL without the reasoning — exactly what history/parsing want."""
-        for kind, s in thought_sp.feed(piece):
-            if kind == "thinking":
-                if s:
-                    yield ("thinking", s)
-            else:
-                for t in tool_sp.feed(s):
-                    yield ("text", t)
-
-    if prompt:
-        stream = _llm.create_completion(
-            prompt=prompt,
-            stream=True,
-            max_tokens=max_tokens,
-            stop=["<tool_call|>", "<turn|>", "<eos>"],
-        )
-        for out in stream:
-            if cancel is not None and cancel.is_set():
-                break
-            try:
-                piece = out["choices"][0].get("text")
-            except (KeyError, IndexError):
-                piece = None
-            if piece:
-                yield from route(piece)
-    else:
-        # Tools couldn't be rendered into the template — answer without tools.
-        log.info("Local tools could not be rendered; answering without tools.")
-        for out in _llm.create_chat_completion(messages=convo, stream=True, max_tokens=max_tokens):
-            if cancel is not None and cancel.is_set():
-                break
-            try:
-                piece = out["choices"][0]["delta"].get("content")
-            except (KeyError, IndexError):
-                piece = None
-            if piece:
-                yield from route(piece)
-    # Flush the thought splitter's tail (routing any trailing text on to the tool
-    # splitter), then the tool splitter's own tail.
-    for kind, s in thought_sp.flush():
-        if kind == "thinking":
-            if s:
-                yield ("thinking", s)
-        else:
-            for t in tool_sp.feed(s):
-                yield ("text", t)
-    for t in tool_sp.flush():
-        yield ("text", t)
-    yield ("raw", tool_sp.raw)
-
-
-def generate_round(
-    key: str, convo: list[dict], tool_schemas: list[dict], max_tokens: int = 4096
-) -> str:
-    """Buffered variant of :func:`iter_generate_round` — returns the full raw
-    text (including any ``<|tool_call>`` DSL). Used by the on-device session
-    summariser, which wants the whole summary, not a stream."""
-    raw = ""
-    for kind, piece in iter_generate_round(key, convo, tool_schemas, max_tokens):
-        if kind == "raw":
-            raw = piece
-    return raw

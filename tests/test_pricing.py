@@ -83,9 +83,12 @@ def test_coerce_entry_normalizes_and_validates():
         "cache_read": 0.0,
         "cache_write": 0.0,
     }
-    assert tracker._coerce_pricing_entry(
-        {"input": 1, "output": 2, "cached_in_input": True}
-    ).get("cached_in_input") is True
+    assert (
+        tracker._coerce_pricing_entry({"input": 1, "output": 2, "cached_in_input": True}).get(
+            "cached_in_input"
+        )
+        is True
+    )
     # Missing required field or non-numeric → rejected (None), not a silent 0.
     assert tracker._coerce_pricing_entry({"input": 5}) is None
     assert tracker._coerce_pricing_entry({"input": "x", "output": 1}) is None

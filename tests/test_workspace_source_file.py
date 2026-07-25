@@ -147,7 +147,9 @@ def test_oversized_text_returns_unsupported(tmp_path, monkeypatch):
 
 def test_relative_path_resolves_against_connected_workspace(tmp_path, monkeypatch):
     (tmp_path / "a.txt").write_text("hello")
-    monkeypatch.setattr("server.workspace.routes.file_ops.get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        "server.workspace.routes.file_ops.get_workspace_path", lambda: str(tmp_path)
+    )
 
     data = _client().get("/api/workspace/source-file", params={"path": "a.txt"}).json()
     assert data["kind"] == "text"

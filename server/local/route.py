@@ -40,18 +40,18 @@ def local_chat_response(
     if not is_local_model(model_key):
         return None
 
-    from server.local.stream import has_local_pause, resume_local_chat, stream_local_chat
+    from server.local import server_stream
 
     # Approval continuation for a paused local tool turn: the action already ran
-    # server-side via /api/approval/execute, so just resume the Gemma loop with
-    # the result. (The cloud approved_tool_result path uses a separate
+    # server-side via /api/approval/execute, so just resume the loop with the
+    # result. (The cloud approved_tool_result path uses a separate
     # _paused_sessions dict, so it never touches local state.) Note: the resume
     # reuses the paused turn's tool_ctx, so strict_rag suppression (if it was
     # active on the original turn) intentionally carries over — unlike the cloud
     # resume, which recomputes suppress_ws_search as False.
-    if approved_tool_result and has_local_pause(session_id):
+    if approved_tool_result and server_stream.has_pause(session_id):
         return StreamingResponse(
-            resume_local_chat(session_id, approved_tool_result, session_approvals),
+            server_stream.resume_chat(session_id, approved_tool_result, session_approvals),
             media_type="text/event-stream",
         )
 
@@ -94,7 +94,7 @@ def local_chat_response(
         "thinking": bool(body.get("local_thinking", False)),
     }
     return StreamingResponse(
-        stream_local_chat(
+        server_stream.stream_chat(
             model_key,
             local_system,
             messages,
