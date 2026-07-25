@@ -58,18 +58,26 @@ def load_prompt_rules() -> str:
 
 
 def rules_block() -> str:
-    """The rules formatted as a prompt section, or '' if no rules are set."""
+    """The rules formatted as a prompt section, or '' if no rules are set.
+
+    Carries its own leading blank line, like every other prompt section — the
+    registry joins sections with ``"".join`` and used to run this heading
+    straight onto the end of the identity text ("...documentation.## Output
+    rules").
+    """
     rules = load_prompt_rules()
     if not rules:
         return ""
     return (
-        "## Output rules\n"
+        "\n\n## Output rules\n"
         "The user configured these global rules. Follow them unless the user "
         "explicitly asks otherwise in their message:\n" + rules
     )
 
 
 def append_rules(prompt: str) -> str:
-    """Append the user's rules block to a system prompt (no-op if none set)."""
-    block = rules_block()
-    return f"{prompt}\n\n{block}" if block else prompt
+    """Append the user's rules block to a system prompt (no-op if none set).
+
+    ``rules_block`` supplies the separator, so this is a plain concatenation.
+    """
+    return f"{prompt}{rules_block()}"
