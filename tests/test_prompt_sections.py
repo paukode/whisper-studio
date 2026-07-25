@@ -75,8 +75,8 @@ def test_git_instructions_are_static_and_status_is_dynamic(tmp_path, monkeypatch
 
     static, dynamic = build_system_prompt_split(ws_path=str(repo), session_id="s")
 
-    assert "# Git Commit Instructions" in static
-    assert "# Git Commit Instructions" not in dynamic
+    assert "# Commits" in static
+    assert "# Commits" not in dynamic
     assert "Current branch: feat/x" in dynamic
     assert "Current branch: feat/x" not in static
 
@@ -86,7 +86,7 @@ def test_git_sections_appear_and_disappear_together(monkeypatch):
     monkeypatch.setattr("server.git.core.find_git_root", lambda _p: None)
     static, dynamic = build_system_prompt_split(ws_path="/tmp/not-a-repo", session_id="s")
     whole = static + dynamic
-    assert "# Git Commit Instructions" not in whole
+    assert "# Commits" not in whole
     assert "# Git Status" not in whole
 
 
@@ -124,6 +124,52 @@ def test_prompt_prose_only_references_real_tools(tmp_path, monkeypatch):
 
     missing = sorted(referenced - available)
     assert not missing, f"prompt references tools that are not in the catalog: {missing}"
+
+
+# ── The no-workspace flow the prompt promises has to be callable ─────────────
+
+
+def test_write_tools_are_advertised_without_a_workspace(monkeypatch):
+    """The no_workspace prompt section tells the model to call a write tool and
+    let the harness show a folder picker. That requires the write tools to be in
+    the catalog with no workspace connected.
+
+    Regression: get_workspace_tools() returned [] without a workspace, so all
+    four write tools were absent. The section instructed the model to call tools
+    it did not have, while forbidding the one workspace tool it did have
+    (ws_open_folder). ws_run_command stays out — it has no picker fallback.
+    """
+    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
+    monkeypatch.setattr("server.chat.tool_pool.get_workspace_path", lambda: None)
+    monkeypatch.setattr("server.workspace.tools.get_workspace_path", lambda: None)
+
+    from server.chat.tool_pool import assemble_full_catalog
+    from server.skills import init_skills
+
+    init_skills()
+    names = {t["name"] for t in assemble_full_catalog(ws_connected=False)}
+
+    for name in ("ws_write_file", "ws_create_file", "ws_edit_file", "ws_delete_file"):
+        assert name in names, f"{name} must be callable so the folder picker is reachable"
+    assert "ws_run_command" not in names
+    assert "ws_read_file" not in names
+
+
+def test_git_tools_still_load_with_a_git_workspace(tmp_path, monkeypatch):
+    """Guards the workspace/no-workspace branch in assemble_full_catalog: the git
+    and GitHub tools hang off the ws_connected arm, and an edit that moved them
+    onto the else arm silently removed git from every real session."""
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    names = _catalog_tool_names(monkeypatch, str(repo))
+
+    for name in ("git_status", "git_diff", "git_log", "git_checkout", "github"):
+        assert name in names, f"{name} vanished from a git workspace catalog"
+    # And the picker-capable write tools are present exactly once.
+    from server.chat.tool_pool import assemble_full_catalog
+
+    catalog = [t["name"] for t in assemble_full_catalog(ws_connected=True)]
+    assert catalog.count("ws_create_file") == 1
 
 
 def test_worktree_warning_lives_on_the_tools_that_need_it(tmp_path, monkeypatch):
