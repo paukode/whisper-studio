@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import threading
@@ -297,6 +298,49 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
         )
     log.info("llama-server ready for %s on port %d.", key, port)
     return f"http://{_HOST}:{port}"
+
+
+def reap_orphans() -> int:
+    """Kill leftover llama-server processes serving OUR models. Returns the count.
+
+    The lifespan shutdown hook stops the child on a graceful exit, but SIGKILL
+    (force quit, OOM killer, `kill -9`) skips it — and because the child runs in
+    its own session it survives, holding gigabytes and its port forever. Called
+    at startup so a hard-killed run cleans up after itself.
+
+    Matching is deliberately narrow: only processes whose ``--model`` path is
+    inside our models directory. A llama-server the user runs for their own
+    purposes is never touched.
+    """
+    from server.local.runtime import MODELS_DIR
+
+    try:
+        out = subprocess.run(
+            ["ps", "-axo", "pid=,args="], capture_output=True, text=True, timeout=20
+        ).stdout
+    except Exception as e:  # pragma: no cover - environment dependent
+        log.debug("Could not scan for llama-server orphans: %s", e)
+        return 0
+
+    marker = os.path.realpath(MODELS_DIR)
+    killed = 0
+    for line in out.splitlines():
+        line = line.strip()
+        if not line or "llama-server" not in line:
+            continue
+        pid_str, _, args = line.partition(" ")
+        if not pid_str.isdigit() or marker not in args:
+            continue
+        pid = int(pid_str)
+        if pid == os.getpid():
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed += 1
+            log.info("Reaped orphaned llama-server (pid %d) from a previous run.", pid)
+        except (ProcessLookupError, PermissionError) as e:
+            log.debug("Could not reap llama-server pid %d: %s", pid, e)
+    return killed
 
 
 def status() -> dict:

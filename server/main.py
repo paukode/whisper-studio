@@ -194,6 +194,15 @@ async def lifespan(app):
 
     git_watcher.start()
     git_watcher.set_workspace(get_workspace_path())
+    # A previous run killed with SIGKILL (force quit / OOM) never ran the
+    # shutdown hook below, leaving its on-device model server alive and holding
+    # gigabytes. Reap those before anything else needs the memory.
+    try:
+        from server.local import llama_server
+
+        await asyncio.to_thread(llama_server.reap_orphans)
+    except Exception as e:
+        logging.getLogger("whisper-studio").debug("llama-server orphan reap failed: %s", e)
     cleanup_task = asyncio.create_task(cleanup_loop())
     mcp_task = asyncio.create_task(mcp_manager.start_all())
     # Warm the transcription stack in the background so the first

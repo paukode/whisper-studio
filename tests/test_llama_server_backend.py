@@ -490,6 +490,44 @@ def test_start_failure_is_reported_to_the_client(monkeypatch):
     assert blob.strip().endswith("data: [DONE]")
 
 
+def test_reap_orphans_kills_only_our_model_servers(monkeypatch):
+    """SIGKILL skips the shutdown hook and the child runs in its own session, so
+    a force-quit leaves a llama-server holding gigabytes. Startup reaps those —
+    but must never touch a llama-server the user runs for their own purposes."""
+    import server.local.runtime as L
+
+    models_dir = L.MODELS_DIR
+    ps_out = (
+        f"  111 /opt/homebrew/bin/llama-server --model {models_dir}/g/g.gguf --jinja\n"
+        "  222 /opt/homebrew/bin/llama-server --model /home/me/other/model.gguf --jinja\n"
+        "  333 /usr/bin/some-other-process --model foo\n"
+    )
+
+    class R:
+        stdout = ps_out
+
+    monkeypatch.setattr(LS.subprocess, "run", lambda *a, **k: R())
+    killed = []
+    monkeypatch.setattr(LS.os, "kill", lambda pid, sig: killed.append(pid))
+    assert LS.reap_orphans() == 1
+    assert killed == [111]  # not 222 (user's own), not 333 (not llama-server)
+
+
+def test_reap_orphans_survives_a_dead_pid(monkeypatch):
+    import server.local.runtime as L
+
+    class R:
+        stdout = f"  111 llama-server --model {L.MODELS_DIR}/g/g.gguf\n"
+
+    monkeypatch.setattr(LS.subprocess, "run", lambda *a, **k: R())
+
+    def gone(pid, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(LS.os, "kill", gone)
+    assert LS.reap_orphans() == 0  # counted only when the signal lands
+
+
 def test_ensure_serving_honors_sticky_requested_ctx(monkeypatch):
     """The chat-input context slider must mean the same on both backends: a lazy
     start has to keep the user's last explicit size, not revert to the default."""
