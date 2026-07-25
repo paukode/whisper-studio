@@ -200,26 +200,6 @@ def init_skills():
     rebuild_tools()
 
 
-def get_whisper_md_context(ws_path: str | None) -> str:
-    """Feature 10: Load WHISPER.md from the workspace root as additional system context."""
-    if not ws_path:
-        return ""
-    whisper_md = os.path.join(ws_path, "WHISPER.md")
-    if not os.path.isfile(whisper_md):
-        return ""
-    try:
-        with open(whisper_md, errors="replace") as f:
-            content = f.read().strip()
-        if content:
-            return f"\n\n[WHISPER.md — project-specific instructions]\n{content}"
-    except Exception as e:
-        # Surface why custom context isn't applying — users were
-        # silently getting no project memory when WHISPER.md had a
-        # permission issue or other read failure.
-        log.warning("WHISPER.md read failed at %s: %s", whisper_md, e)
-    return ""
-
-
 def get_skill_model(skill_name: str) -> str | None:
     """Feature 9: Return the model override for a skill, if specified."""
     skill = SKILLS.get(skill_name)

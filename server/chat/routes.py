@@ -42,7 +42,7 @@ from server.infrastructure.errors import (
     classify_bedrock_error,
 )
 from server.security.permissions import get_mode
-from server.skills import get_whisper_md_context
+from server.whisper_md import get_whisper_md_context
 from server.tool_executor import execute_tool_batch, process_tool_results
 from server.utils import BoundedUUIDSet, ndjson_dumps
 from server.workspace import (
@@ -1070,7 +1070,8 @@ async def chat_endpoint(request: Request):
     ultracode_active = is_ultracode(effort_label)
 
     # Load WHISPER.md from workspace
-    whisper_md_context = get_whisper_md_context(ws_path)
+    # `question` selects which directory-scoped WHISPER.md files load this turn.
+    whisper_md_context = get_whisper_md_context(ws_path, question)
 
     # Memory recall — select relevant memories for this query
     memory_context = ""
