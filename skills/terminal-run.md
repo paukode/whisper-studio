@@ -1,6 +1,6 @@
 ---
 name: terminal_run
-description: Runs a one-shot, non-interactive shell command and returns the exit code plus combined stdout/stderr. mode=sandbox (default) uses a hidden ephemeral PTY with a minimal rc-free shell, sandboxed away from secrets; use it to check, try, or probe. mode=visible types the command into the user's open terminal so they can watch, and errors if none is open; use it only when the user asks to see it run. Every call is approval-gated and validated first; dangerous commands and interactive ones that wait for stdin (vim, less, top, watch, ssh without BatchMode=yes, sudo without -n) are refused before running. Default timeout 30s, max 300s; on timeout partial output is returned. Works without a connected workspace, but prefer ws_run_command for project commands when a workspace is connected. Not for long-running servers or watch loops.
+description: Runs a one-shot, non-interactive shell command and returns the exit code plus combined stdout/stderr. Prefer this over asking the user to run something themselves; asking is friction, this is one approval click. mode=sandbox (default) uses a hidden ephemeral PTY with a minimal rc-free shell, sandboxed away from secrets; use it to check, try, or probe. Sandbox mode hides the output, it does not isolate the filesystem, so writes still land on the real machine. mode=visible types the command into the user's open terminal so they can watch, and errors if none is open; use it only when the user asks to see it run. Every call is approval-gated and validated first; dangerous commands and interactive ones that wait for stdin (vim, less, top, watch, ssh without BatchMode=yes, sudo without -n) are refused before running. Default timeout 30s, max 300s; on timeout partial output is returned. Works without a connected workspace, but prefer ws_run_command for project commands when a workspace is connected. Not for long-running servers or watch loops; use preview_start for anything that serves a page.
 triggers: shell, command, terminal, bash, zsh, cli, exec, install, npm, pip, brew, sandbox
 executor: terminal_run
 input_schema:
@@ -13,7 +13,7 @@ input_schema:
     description: Either sandbox (default; hidden ephemeral PTY, invisible to the user) or visible (types into the user's open terminal and errors if none is open).
   timeout:
     type: number
-    description: Seconds before the command is killed. Default 30, max 300.
+    description: Seconds before the command is killed. Default 30, max 300. Pass it explicitly when the command is expected to be slow, such as a large install.
   cwd:
     type: string
     description: Working directory. Defaults to the workspace path if connected, else $HOME. Supports ~ expansion; a nonexistent path falls back silently.

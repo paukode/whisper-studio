@@ -158,31 +158,22 @@ def _build_workspace_section(ws_path: str | None = None, **_) -> str:
 
 
 def _build_no_workspace_section(ws_path: str | None = None, **_) -> str:
-    """Injected when NO workspace is connected. The write executors
-    (ws_create_file / ws_write_file / ws_edit_file / ws_delete_file)
-    emit a [WS_WORKSPACE_PROMPT] payload that renders a folder picker
-    to the user. After the user picks, a continuation turn arrives
-    telling the LLM to re-issue the same tool call, which then hits
-    the normal [WS_APPROVAL] flow. So the LLM should NOT pre-prompt
-    the user with ask_user_question or guess a path via ws_open_folder —
-    the system handles workspace selection automatically."""
+    """Injected when NO workspace is connected.
+
+    The harness resolves the missing workspace itself: a write tool called
+    without one returns a [WS_WORKSPACE_PROMPT] payload, the user picks a folder,
+    and the turn resumes so the same call runs against it. That is not
+    inferable from any tool schema, so it stays in the prompt — but the
+    per-tool half of it now lives in the write tools' own descriptions.
+    """
     if ws_path:
         return ""
     return (
-        "\n\nNO CODE WORKSPACE: No workspace folder is connected. "
-        "If the user asks to create, edit, or delete files: call the "
-        "write tool directly (ws_create_file / ws_write_file / "
-        "ws_edit_file / ws_delete_file) with the intended relative "
-        "path. The system will automatically show the user a folder "
-        "picker before the write happens, then resume this turn with "
-        "the workspace connected, you will then re-issue the same "
-        "tool call and it will go through the normal approval flow. "
-        "Do NOT call ask_user_question to ask where to save. Do NOT "
-        "call ws_open_folder with a guessed path. Only call "
-        "ws_open_folder if the user explicitly asks to open a specific "
-        "folder. If the user only wants a conversation or a one-off "
-        "code snippet, respond normally with a fenced code block, do "
-        "not call any write tool."
+        "\n\nNO CODE WORKSPACE: No folder is connected yet, but the write tools still work — "
+        "call one with the relative path you intend and the user is shown a folder picker, "
+        "after which this turn resumes and you re-issue the same call. So do not ask where to "
+        "save, and do not guess a path with ws_open_folder (use that only when the user names a "
+        "folder to open). For a conversation or a throwaway snippet, just answer; no write tool."
     )
 
 
@@ -391,96 +382,6 @@ _registry.register(
         layer=PromptLayer.TOOL_GUIDANCE,
         priority=0,
         builder=_build_task_tracking_section,
-    )
-)
-
-_registry.register(
-    PromptSection(
-        name="terminal_run_guidance",
-        layer=PromptLayer.TOOL_GUIDANCE,
-        priority=5,
-        content="""
-# Running shell commands (terminal_run)
-
-You have a `terminal_run` tool that executes shell commands. Use it for:
-"install package X", "check the version of Y", "run the tests", "what's in
-that file", "see if Z is available", etc.
-
-Two modes:
-  • `mode='sandbox'` (default): runs in a hidden ephemeral shell. Use this
-    for probes and checks: the user doesn't see it scroll, no rc-file noise
-    pollutes the output, and the session is destroyed afterwards. Side
-    effects on the host filesystem still persist (it's the same machine).
-  • `mode='visible'`: writes into the user's currently-open terminal so
-    they can watch the command stream in real time. Use ONLY when the user
-    explicitly says "in the terminal", "so I can see", "where I can watch",
-    or similar. Requires an open terminal session in the UI.
-
-Rules:
-  • Non-interactive only. Commands waiting on stdin (vim, less, top, ssh
-    password prompts, sudo without -n) are refused before execution.
-  • Default timeout 30s, max 300s. If a long-running install is expected,
-    pass `timeout` explicitly.
-  • Prefer `terminal_run` over asking the user to run something. Asking is
-    friction; `terminal_run` is one approval click.
-  • If a workspace is connected, the working directory defaults to it.
-    Pass `cwd` only when you specifically need a different location.
-""",
-    )
-)
-
-
-def _build_preview_guidance_section(ws_path: str | None = None, **_) -> str:
-    """Steer the model to run dev servers through the preview tools so they
-    render in the right-side Live pane, never a browser tab. Emitted only when
-    the preview tools are actually in the catalog (flag on + Chromium installed)
-    — otherwise the model would be told to call tools it doesn't have."""
-    try:
-        from server.infrastructure.feature_flags import is_enabled
-
-        if not is_enabled("preview_tools"):
-            return ""
-        from server.preview.capability import preview_capability_ok
-
-        if not preview_capability_ok():
-            return ""
-    except Exception:
-        return ""
-    return """
-# Running a dev server / previewing an app (preview_start)
-
-When the user wants to SEE a running app, site, or dev server (anything that
-serves a page — Vite, Next.js, `npm run dev`, a static server, an HTTP API with
-a UI), start it with `preview_start`, NOT terminal_run, and NEVER by printing a
-localhost URL for the user to open in their browser. `preview_start` runs the
-server; then `preview_navigate` loads the page into the right-side Live pane.
-terminal_run can't do this (sandbox mode kills the server on timeout, and either
-way it stays invisible to the preview pane).
-
-  • ALWAYS pass `session_name` (it names the preview session — it is required
-    and is never replaced by the command args). For the command, prefer a named
-    config in `.whisper/launch.json` (same shape as Claude Code's
-    `.claude/launch.json`), in which case `session_name` alone suffices; if the
-    project has no launch.json, add one, or pass `runtimeExecutable`/
-    `runtimeArgs` alongside `session_name` (e.g. session_name="web",
-    runtimeExecutable="npm", runtimeArgs=["run","dev"]).
-  • After preview_start, call preview_navigate to load the page (nothing is
-    visible until you do), then preview_screenshot / preview_snapshot /
-    preview_console_logs to inspect it.
-  • Reuse a running session instead of starting a duplicate; stop it with
-    preview_stop when done.
-  • Only fall back to terminal_run for one-shot builds or servers the user
-    explicitly does not want previewed. Do not tell the user to open a
-    localhost link themselves — the Live pane is the preview surface.
-"""
-
-
-_registry.register(
-    PromptSection(
-        name="preview_guidance",
-        layer=PromptLayer.TOOL_GUIDANCE,
-        priority=6,
-        builder=_build_preview_guidance_section,
     )
 )
 
