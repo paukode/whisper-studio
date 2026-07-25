@@ -71,61 +71,42 @@ def build_git_instructions_prompt() -> str:
     NOT alongside build_git_status_prompt on the dynamic layer.
 
     Scope rule: per-tool usage guidance belongs in that tool's ``description``,
-    where it loads with the tool instead of on every turn. Only cross-tool
-    workflow (which tool to reach for, message/PR shape, repo-wide safety) earns
-    a place here. "How to clone" lived here as a near-verbatim copy of
-    git_clone's own description; the branch-swap worktree requirement lived here
-    while git_checkout / git_merge / git_stash said nothing about it.
+    where it loads with the tool instead of on every turn. Only three things earn
+    a place here: intent disambiguation where guessing wrong is not reversible,
+    the shape of output the user expects, and constraints that span tools so no
+    single description can hold them.
+
+    What that rule removed, and why it is safe to have removed it:
+    - "How to clone" was a near-verbatim copy of git_clone's own description.
+    - The safety protocol (never update config, never skip hooks, never --amend,
+      never -i, warn on secret files) guarded against flags these tools do not
+      expose, and git_add_commit already says it never amends and rejects secret
+      files. The one real hole was the shell, which the shell rule below covers.
+    - The GitHub bullets restated the github / github_api / github_api_write
+      descriptions, which already carry the argv shape, the read-vs-mutate split,
+      the hard-blocked actions, and the "never claim a state a tool did not
+      confirm" rule.
+    - Step-by-step commit and branch-deletion procedures were multi-step
+      completion the model does unprompted, and git_delete_branch's own
+      description carries the one real ordering constraint (be on another branch).
     """
-    return """# Git Commit Instructions
+    return """# Commits
 
-When creating a git commit using git_add_commit:
+Match the repository's existing style — read recent messages with git_log before
+writing one. Say why the change was made rather than restating the diff, and
+stage the files you actually touched rather than everything.
 
-1. First use git_status and git_diff to review all changes.
-2. Use git_log to see recent commit messages and follow the repository's style.
-3. Draft a concise commit message that focuses on the "why" rather than the "what".
-4. Summarize the nature of the changes (new feature, enhancement, bug fix, refactor, test, docs).
-5. Prefer staging specific files over staging all changes.
-6. NEVER commit files that likely contain secrets (.env, credentials.json, etc.).
+# Pull requests
 
-# Branch Deletion Rules
-- "delete all other branches", "clean up local branches", "delete other branches" → use git_branch_list to list all local branches, then call git_delete_branch for every branch except the current one. Complete ALL deletions: do not stop after switching branches.
-- Always switch to the target branch first, then delete the others one by one.
-- Use force=true only when the user explicitly says "force delete" or "delete unmerged".
-
-# Git Safety Protocol
-- NEVER update git config
-- NEVER skip hooks (--no-verify, --no-gpg-sign)
-- ALWAYS create NEW commits (never --amend unless explicitly requested)
-- Warn on secret files (.env, credentials.json, credentials, .aws, .ssh, etc.)
-- Never use -i (interactive) flag
-
-# Working Tree Safety
-
-Whisper's dev server watches the workspace tree, so any git operation that
-rewrites files across it can trigger a reload that ends the chat session. The
-tools whose descriptions carry this warning (git_checkout, git_merge, git_stash
-pop/apply) must be confirmed with the user before you call them. Never reach for
-`git worktree add`, checkout, merge, rebase, or `reset --hard` through
-ws_run_command or any shell: those bypass both the warning and the approval card.
-
-# Pull Request Rules
-
-## When to push / create a PR
-- "write a PR message", "draft a PR", "write PR description" → ONLY write the message as text. Do NOT push or create the PR.
-- "create a PR", "open a PR", "submit a PR", "push and create PR" → push to remote and create the PR.
-- "commit and write a PR message" → commit the changes, then write the PR message as text only. Do NOT push or create the PR.
-- Never push to remote or create a PR unless the user explicitly asks to create/open/submit one.
-
-## GitHub beyond creating a PR (issues, PRs, runs, releases, API)
-- Use the `github` tool for any GitHub CLI subcommand: pass gh argv without the leading "gh", e.g. `["pr","close","2"]`, `["issue","list"]`, `["run","view","123"]`. Reads run immediately; mutations show the exact command for approval and are verified.
-- Use `github_api` (read) / `github_api_write` (mutate) for raw REST/GraphQL that no gh verb covers.
-- To CLOSE a PR without merging, call `github ["pr","close",<number>]`. To check a PR's state, `github ["pr","view",<number>]` or `github_api`.
-- NEVER manage GitHub by shelling out to `gh`/`git`/`curl` through a command tool — that path is not authenticated and fails silently, which has caused false "closed the PR" claims. Only the github / github_api / github_api_write tools reach the authenticated GitHub path.
-- Some actions are NEVER permitted from the assistant, no matter what the user says — deleting or transferring a repository, changing repository visibility (private/public), and adding or removing repository collaborators or teams. The tools hard-block these; if asked, explain that the user must do it themselves on GitHub. Do not try to work around the block.
-- NEVER tell the user a PR or issue is closed, merged, or open unless a github/github_api result THIS TURN confirmed that exact state. If a tool reports it could not complete or verify a mutation, say so plainly — do not claim success.
-
-## PR message format (when drafting or creating)
+Read the request literally here, because pushing cannot be undone from this side:
+- "write a PR message", "draft a PR", "write PR description" → produce the text
+  only. Do not push. Do not open a PR.
+- "commit and write a PR message" → commit, then produce the text only.
+- "create a PR", "open a PR", "submit a PR", "push and create PR" → push the
+  branch and open it.
+Never push or open a PR the user did not ask for. When drafting, read every
+commit on the branch rather than only the newest. Branch first if the current
+branch is the default one.
 
 Title: short, under 70 chars
 Body:
@@ -138,9 +119,19 @@ Body:
 ## Test plan
 <bulleted checklist>
 
-Important:
-- Always analyze ALL commits on the branch (not just the latest) when drafting the PR description.
-- If on the default branch, create a new branch first.
+# Constraints that span tools
+
+Whisper's dev server watches the workspace tree, so any git operation that
+rewrites files across it can trigger a reload that ends the chat session. The
+tools whose descriptions carry that warning (git_checkout, git_merge, git_stash
+pop/apply) must be confirmed with the user before you call them.
+
+Do git and GitHub work through the git_* and github tools, never by shelling out
+through ws_run_command, terminal_run, or any other command tool. The shell path
+skips the approval cards, skips the verification the github tools perform, and is
+not authenticated for GitHub — which is how it has produced confident but false
+"I closed the PR" claims. That includes `git worktree add`, checkout, merge,
+rebase, and `reset --hard`.
 """
 
 

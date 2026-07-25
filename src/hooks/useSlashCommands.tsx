@@ -13,6 +13,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import type { SettingsState } from '@/stores/settingsStore';
 import type { UseChatStreamReturn } from '@/hooks/useChatStream';
 import { requestModelChange } from '@/components/chat/dataRetentionConsent';
+import { ContextReportPanel, type ContextReport } from '@/components/chat/ContextReportPanel';
 import { clampEffort, effortLabel, EFFORT_ORDER } from '@/utils/effort';
 import { useTheme } from '@/providers/ThemeProvider';
 import type { ThemeKey } from '@/types/theme';
@@ -228,6 +229,22 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         return true;
       }
       case 'doctor': {
+        // `/doctor context` reports what the model is actually being sent: which
+        // prompt sections cost what, how much of that is cached, and whether any
+        // of it duplicates a tool description or names a tool that is gone.
+        if (arg === 'context') {
+          void (async () => {
+            try {
+              const r = await get<ContextReport>('/api/doctor/context');
+              useUIStore.getState().pushDialog({
+                kind: 'open', title: false, size: 'lg', body: <ContextReportPanel report={r} />,
+              });
+            } catch {
+              addToast({ type: 'error', message: 'Context report failed.', duration: 3000 });
+            }
+          })();
+          return true;
+        }
         void (async () => {
           try {
             const result = await get<Record<string, unknown>>('/api/doctor');

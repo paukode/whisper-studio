@@ -118,7 +118,19 @@ READ_ONLY_TOOLS: list[dict] = [
 APPROVAL_GATED_TOOLS: list[dict] = [
     {
         "name": "preview_start",
-        "description": "Start a dev server for a preview session, by name (resolved against .whisper/launch.json) or with an ad-hoc command. Does not load a page yet — call preview_navigate next.",
+        "description": (
+            "Start a dev server for a preview session, by name (resolved against "
+            ".whisper/launch.json) or with an ad-hoc command. This is how the user SEES a "
+            "running app, site, or dev server: it renders in the right-side Live pane. Use it "
+            "instead of terminal_run for anything that serves a page, and never just print a "
+            "localhost URL for the user to open themselves. terminal_run cannot do this — its "
+            "sandbox mode kills the server on timeout and either mode is invisible to the Live "
+            "pane. Does not load a page yet: call preview_navigate next, then "
+            "preview_screenshot / preview_snapshot / preview_console_logs to inspect it. Reuse a "
+            "running session rather than starting a duplicate, and preview_stop when done. Prefer "
+            "a named config in .whisper/launch.json (same shape as .claude/launch.json), adding "
+            "one if the project has none, over passing runtimeExecutable/runtimeArgs ad hoc."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {

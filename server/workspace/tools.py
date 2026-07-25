@@ -1,10 +1,13 @@
 """Tool schemas advertised to the LLM.
 
-Three schema groups:
+Four schema groups:
 - get_global_workspace_tools(): always-available tools (currently just
   ws_open_folder so the model can connect a workspace mid-conversation).
-- get_workspace_tools(): tools that require a connected workspace
-  (read/list/grep/glob + write/create/edit/delete + run_command).
+- get_workspace_write_tools(): the four file-write tools. Advertised whether or
+  not a workspace is connected, because each executor answers a missing
+  workspace with a [WS_WORKSPACE_PROMPT] folder picker rather than an error.
+- get_workspace_tools(): everything that needs a connected workspace
+  (read/list/grep/glob + the write tools + run_command).
 - get_worktree_tools(): only surfaced when the workspace is a git repo.
 """
 
@@ -235,10 +238,27 @@ def get_workspace_tools() -> list[dict]:
             },
         },
     ]
-    write_tools = [
+    return read_tools + get_workspace_write_tools() + _run_command_tool()
+
+
+def get_workspace_write_tools() -> list[dict]:
+    """The file-write tools, advertised with or without a connected workspace.
+
+    Each of these executors handles "no workspace" by returning a
+    [WS_WORKSPACE_PROMPT] payload: the user gets a folder picker, the chosen
+    folder is connected, and the turn resumes so the same call is re-issued
+    against a real workspace. Withholding them until a workspace exists made
+    that flow unreachable — the model was told (by the no_workspace prompt
+    section) to call tools that were not in its catalog, and the only workspace
+    tool it did have, ws_open_folder, was the one the section told it not to use.
+
+    ws_run_command is deliberately NOT here: it has no picker fallback and just
+    errors without a workspace.
+    """
+    return [
         {
             "name": "ws_write_file",
-            "description": "[Workspace] Modify an existing file. Provide the full new content. Requires user approval before writing.",
+            "description": "[Workspace] Modify an existing file. Provide the full new content. Requires user approval before writing. If no workspace is connected, this asks the user to pick a folder first, then the write is re-issued against it.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -253,7 +273,13 @@ def get_workspace_tools() -> list[dict]:
         },
         {
             "name": "ws_create_file",
-            "description": "[Workspace] Create a new file. Requires user approval.",
+            "description": (
+                "[Workspace] Create a new file. Requires user approval. "
+                "Parent directories are created automatically, so never create them "
+                "as a separate step. Do not read the file first; it does not exist yet. "
+                "If no workspace is connected, this asks the user to pick a folder "
+                "first, then the create is re-issued against it."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -295,7 +321,10 @@ def get_workspace_tools() -> list[dict]:
         },
         {
             "name": "ws_delete_file",
-            "description": "[Workspace] Delete a file. Requires user approval.",
+            "description": (
+                "[Workspace] Delete a file. Requires user approval. "
+                "If no workspace is connected, this asks the user to pick a folder first."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -304,6 +333,12 @@ def get_workspace_tools() -> list[dict]:
                 "required": ["path"],
             },
         },
+    ]
+
+
+def _run_command_tool() -> list[dict]:
+    """ws_run_command — needs a real workspace, so it is never advertised without one."""
+    return [
         {
             "name": "ws_run_command",
             "description": (
@@ -328,7 +363,6 @@ def get_workspace_tools() -> list[dict]:
             },
         },
     ]
-    return read_tools + write_tools
 
 
 def get_worktree_tools() -> list[dict]:

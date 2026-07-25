@@ -35,6 +35,7 @@ from server.workspace import (
     get_global_workspace_tools,
     get_workspace_path,
     get_workspace_tools,
+    get_workspace_write_tools,
     get_worktree_tools,
 )
 
@@ -201,6 +202,11 @@ def assemble_full_catalog(
             from server.git.gh_tools import get_github_tools
 
             builtin_tools += get_github_tools()
+    else:
+        # The write tools stay in the catalog with no workspace: their executors
+        # answer that with a folder picker and the turn resumes against the
+        # folder the user chose. See get_workspace_write_tools.
+        builtin_tools += get_workspace_write_tools()
     builtin_tools += RESULT_CACHE_TOOLS
     builtin_tools += TASK_TOOLS
     from server.tasks.tools import BACKGROUND_TASK_TOOLS
