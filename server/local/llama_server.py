@@ -41,6 +41,10 @@ MIN_BUILD = 10090
 _FALLBACK_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
 
 _STARTUP_TIMEOUT = float(os.environ.get("WHISPER_LLAMA_SERVER_TIMEOUT", "600"))
+# One-shot (non-chat) generations: a long prompt on a 12B can prefill for a
+# couple of minutes before the first token, so this is generous by design. The
+# callers are all background work that must not wedge on a slow decode either.
+_ONESHOT_TIMEOUT = float(os.environ.get("WHISPER_LLAMA_ONESHOT_TIMEOUT", "600"))
 _HOST = "127.0.0.1"
 
 _lock = threading.Lock()
@@ -298,6 +302,46 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
         )
     log.info("llama-server ready for %s on port %d.", key, port)
     return f"http://{_HOST}:{port}"
+
+
+def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) -> str:
+    """One-shot, NON-streaming generation; returns the assistant text ('' on
+    failure). Blocking — starts the model server if it isn't already serving
+    ``key``, so call it off the event loop.
+
+    This is the non-chat entry point (workspace-index extraction, the on-device
+    session summariser). It deliberately sends no tools: these callers want prose
+    or JSON back, not a tool call.
+    """
+    import httpx
+
+    try:
+        url = ensure_serving(key)
+    except Exception as e:
+        log.warning("complete(%s): model server unavailable: %s", key, e)
+        return ""
+    try:
+        r = httpx.post(
+            f"{url}/v1/chat/completions",
+            json={
+                "model": key,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user},
+                ],
+                "max_tokens": max_tokens,
+                "stream": False,
+            },
+            timeout=_ONESHOT_TIMEOUT,
+        )
+        r.raise_for_status()
+        choices = (r.json() or {}).get("choices") or []
+        if not choices:
+            return ""
+        return (choices[0].get("message") or {}).get("content") or ""
+    except Exception as e:
+        log.warning("complete(%s) failed: %s", key, e)
+        return ""
 
 
 def reap_orphans() -> int:

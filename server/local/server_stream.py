@@ -1,8 +1,8 @@
-"""SSE adapter for on-device turns served by ``llama-server``.
+"""SSE adapter for on-device turns — the ONE on-device path.
 
-This is the llama-server counterpart of server/local/stream.py. It speaks the
-OpenAI-compatible ``/v1/chat/completions`` endpoint, which means upstream
-llama.cpp does the two jobs the in-process path had to hand-roll per model:
+Speaks llama-server's OpenAI-compatible ``/v1/chat/completions`` endpoint, which
+means upstream llama.cpp does the two jobs a hand-rolled in-process path had to
+solve per model family:
 
   * ``tool_calls`` arrive already parsed into OpenAI shape (name + JSON
     arguments), for every family upstream supports — so a new GGUF in config gets
@@ -13,12 +13,12 @@ llama.cpp does the two jobs the in-process path had to hand-roll per model:
 Because of that, this module contains NO model-specific tokens. It emits the same
 event contract the frontend already consumes (``text`` / ``thinking_*`` /
 ``skill`` / ``skill_input`` / ``skill_result`` / ``approval_request`` / ``usage``
-/ ``[DONE]``) and reuses the SAME executor + approval pipeline as the cloud and
-in-process paths (``run_tool_round`` → ``execute_tool_batch`` +
-``process_tool_results``), so the safety gate is unchanged.
+/ ``[DONE]``) and reuses the SAME executor + approval pipeline as the cloud paths
+(``run_tool_round`` → ``execute_tool_batch`` + ``process_tool_results``), so the
+safety gate is unchanged.
 
-Parallel tool calls work here (the in-process path structurally could not emit
-them), matching how the cloud paths batch reads.
+Parallel tool calls work here, matching how the cloud paths batch reads. There is
+no fallback runtime: if llama-server cannot serve the model, the turn errors.
 """
 
 from __future__ import annotations
@@ -32,12 +32,11 @@ from server.utils import ndjson_dumps
 
 log = logging.getLogger("whisper-studio")
 
-_MAX_TOOL_ROUNDS = 50  # parity with the cloud + OpenAI paths (was 24 in-process)
+_MAX_TOOL_ROUNDS = 50  # parity with the cloud + OpenAI paths
 
-# Turns paused awaiting an approval continuation, keyed by session_id. In-process
-# and ephemeral, exactly like the cloud ``_paused_sessions`` and the in-process
-# ``_local_paused`` — a restart drops it, and a continuation that finds no entry
-# is handled as a fresh turn by the router.
+# Turns paused awaiting an approval continuation, keyed by session_id. In-memory
+# and ephemeral, exactly like the cloud ``_paused_sessions`` — a restart drops it,
+# and a continuation that finds no entry is handled as a fresh turn by the router.
 _paused: dict[str, dict] = {}
 
 _REQUEST_TIMEOUT = 900.0
@@ -45,6 +44,133 @@ _REQUEST_TIMEOUT = 900.0
 
 def has_pause(session_id: str) -> bool:
     return session_id in _paused
+
+
+# ── Post-turn memory hooks ───────────────────────────────────────────────────
+# These used to live alongside the in-process streamer; they are model-agnostic
+# bookkeeping, so they moved here with the single on-device path.
+
+
+def _spawn_session_update(model_key: str, messages: list[dict], session_id: str) -> None:
+    """Fire-and-forget on-device session-memory update after a local turn.
+
+    The cadence + feature-flag gate lives in ``maybe_update_session_memory``;
+    this just kicks it off (on the model's executor thread, via the local
+    summariser) so session memory auto-builds fully offline. It runs one turn
+    behind — the just-generated answer is captured on the next turn via the
+    persisted history — which avoids threading the answer text out of the
+    stream and keeps the model thread free while the response is still flushing.
+    """
+    if not messages:
+        return
+    try:
+        from server.infrastructure.feature_flags import is_enabled
+
+        if not is_enabled("session_memory"):
+            return
+        from server.infrastructure.async_tasks import spawn
+        from server.local.runtime import local_model_meta
+        from server.memory.session_memory import maybe_update_session_memory
+
+        model_id = local_model_meta(model_key).get("id", "")
+        spawn(
+            maybe_update_session_memory(
+                messages=list(messages),
+                session_id=session_id,
+                model_id=model_id,
+            ),
+            name="local-session-memory-update",
+        )
+    except Exception as e:  # never let memory bookkeeping disrupt a turn
+        log.debug("Could not spawn local session update: %s", e)
+
+
+def _spawn_extraction(
+    model_key: str, messages: list[dict], session_id: str, ws_path: str | None
+) -> None:
+    """Fire-and-forget auto-memory extraction after a local turn.
+
+    The extraction agent runs through the cloud agent runtime (run_agent
+    resolves the memory_extractor model itself; the local model id passed here
+    is ignored), so it only fires when cloud access is allowed: in "local"
+    model mode the app is fully offline and extraction skips gracefully, while
+    hybrid/cloud modes get the same two-tier extraction the cloud paths spawn
+    (see chat/routes.py and openai_bedrock/stream.py). Throttle + cursor +
+    feature-flag gates all live inside ``maybe_extract_memory``.
+    """
+    if not messages:
+        return
+    try:
+        from server.infrastructure.feature_flags import is_enabled
+
+        if not is_enabled("auto_memory"):
+            return
+        from server.infrastructure.model_mode import current_mode
+
+        if current_mode() == "local":
+            log.debug("Skipping auto-memory extraction: fully offline (model_mode=local)")
+            return
+        from server.infrastructure.async_tasks import spawn
+        from server.local.runtime import local_model_meta
+        from server.memory.extract import maybe_extract_memory
+
+        model_id = local_model_meta(model_key).get("id", "")
+        spawn(
+            maybe_extract_memory(
+                messages=list(messages),
+                session_id=session_id,
+                ws_path=ws_path,
+                model_id=model_id,
+            ),
+            name="local-auto-memory-extract",
+        )
+    except Exception as e:  # never let memory bookkeeping disrupt a turn
+        log.debug("Could not spawn local memory extraction: %s", e)
+
+
+def _spawn_dream(model_key: str, ws_path: str | None) -> None:
+    """Fire-and-forget dream consolidation after a local turn.
+
+    Mirrors the cloud paths (chat/routes.py and openai_bedrock/stream.py):
+    record the session against each memory tier and consolidate any tier that
+    is due. The consolidator agent runs on a cloud model, so — like
+    ``_spawn_extraction`` above — this skips gracefully when the app is fully
+    offline (model_mode=local). Cadence + feature-flag gates also live inside
+    ``record_and_maybe_dream``.
+    """
+    try:
+        from server.infrastructure.feature_flags import is_enabled
+
+        if not is_enabled("dream_consolidation"):
+            return
+        from server.infrastructure.model_mode import current_mode
+
+        if current_mode() == "local":
+            log.debug("Skipping dream consolidation: fully offline (model_mode=local)")
+            return
+        from server.infrastructure.async_tasks import spawn
+        from server.local.runtime import local_model_meta
+        from server.memory.dream import record_and_maybe_dream
+
+        model_id = local_model_meta(model_key).get("id", "")
+        spawn(
+            record_and_maybe_dream(ws_path, model_id=model_id),
+            name="local-dream-consolidation",
+        )
+    except Exception as e:  # never let memory bookkeeping disrupt a turn
+        log.debug("Could not spawn local dream consolidation: %s", e)
+
+
+def _spawn_memory_hooks(
+    model_key: str, messages: list[dict], session_id: str, ws_path: str | None
+) -> None:
+    """Post-turn memory hooks for local turns, mirroring the cloud paths:
+    session memory (summarised on-device, fully offline) + auto-memory
+    extraction and dream consolidation (cloud agents; skipped when fully
+    offline)."""
+    _spawn_session_update(model_key, messages, session_id)
+    _spawn_extraction(model_key, messages, session_id, ws_path)
+    _spawn_dream(model_key, ws_path)
 
 
 def _usage_line(model_key: str, output_tokens: int) -> str:
@@ -444,9 +570,8 @@ async def stream_chat(
     ws_path: str | None = None,
     n_ctx: int | None = None,
 ):
-    """Entry point — mirrors server/local/stream.stream_local_chat's signature."""
+    """Entry point for an on-device chat turn."""
     from server.local import llama_server
-    from server.local.stream import _spawn_memory_hooks
 
     tool_ctx = dict(tool_ctx or {})
     tool_ctx.setdefault("thinking", thinking)
@@ -494,7 +619,6 @@ async def resume_chat(session_id: str, approved_tool_result, session_approvals: 
     already ran server-side via /api/approval/execute; here we only inject its
     result and continue. Falls back to a clean [DONE] when no paused state exists
     (e.g. after a restart)."""
-    from server.local.stream import _spawn_memory_hooks
 
     paused = _paused.pop(session_id, None)
     if not paused:

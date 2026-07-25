@@ -1,36 +1,27 @@
-"""On-device (local mode) LLM runtime + SSE adapter.
+"""On-device (local mode) metadata, prompts, and tool declarations.
 
-These exercise the isolation seam and the streaming contract with the llama.cpp
-runtime mocked, so they run without the GGUF or llama-cpp-python installed.
+The model itself is served by llama-server (covered by
+tests/test_llama_server_backend.py); these exercise the isolation seam, the
+registry, the local system prompt, and the tool-schema surface, all without a
+GGUF or a subprocess.
 """
 
 import asyncio
-import sys
-import types
 
 import pytest
 
 import server.local.runtime as L
 from server.local import tools as T
-from server.local.stream import stream_local_chat
 
 
 @pytest.fixture(autouse=True)
 def _reset_requested_n_ctx():
-    """The resident context window is a module global that intentionally persists
-    across loads (so a lazy chat-turn load keeps the user's chosen size). Reset it
-    around every test so one test's explicit n_ctx can't leak into another's
-    default-path assertion."""
+    """The requested context window is a module global that intentionally persists
+    (so a lazy start keeps the user's chosen size). Reset it around every test so
+    one test's explicit n_ctx can't leak into another's default-path assertion."""
     L._requested_n_ctx = None
     yield
     L._requested_n_ctx = None
-
-
-def _drain(agen_factory):
-    async def run():
-        return [c async for c in agen_factory()]
-
-    return asyncio.run(run())
 
 
 def test_registry_detects_local_keys_only():
@@ -44,115 +35,6 @@ def test_is_local_model_id_discriminates_on_sentinel_prefix():
     assert L.is_local_model_id("local:gemma-4-12b-it-qat-q4_0")
     assert not L.is_local_model_id("anthropic.claude-opus-4-8")
     assert not L.is_local_model_id(None)
-
-
-def test_load_sync_reloads_only_on_ctx_change(monkeypatch):
-    """The load-bearing reload guard: same model + same n_ctx is a no-op; a
-    different n_ctx forces a full reload (llama.cpp can't resize in place)."""
-    created: list[int] = []
-
-    class FakeLlama:
-        def __init__(self, **kw):
-            created.append(kw["n_ctx"])
-
-    fake_mod = types.ModuleType("llama_cpp")
-    fake_mod.Llama = FakeLlama
-    monkeypatch.setitem(sys.modules, "llama_cpp", fake_mod)
-    monkeypatch.setattr(L, "ensure_downloaded", lambda key: "/tmp/fake.gguf")
-    monkeypatch.setattr(L, "_llm", None, raising=False)
-    monkeypatch.setattr(L, "_llm_key", None, raising=False)
-
-    L.load_sync("local_gemma", 16384)
-    L.load_sync("local_gemma", 16384)  # same ctx → no reload
-    assert created == [16384]
-    assert L.is_loaded("local_gemma")
-
-    L.load_sync("local_gemma", 32768)  # changed ctx → reload
-    assert created == [16384, 32768]
-
-
-def test_load_sync_default_ctx_is_16k(monkeypatch):
-    """With no explicit n_ctx (and no env override), the model loads at the 16K
-    default — the floor, since the tools-on prompt is ~12K tokens. The UI slider
-    raises it on demand."""
-    created: list[int] = []
-
-    class FakeLlama:
-        def __init__(self, **kw):
-            created.append(kw["n_ctx"])
-
-    fake_mod = types.ModuleType("llama_cpp")
-    fake_mod.Llama = FakeLlama
-    monkeypatch.setitem(sys.modules, "llama_cpp", fake_mod)
-    monkeypatch.setattr(L, "ensure_downloaded", lambda key: "/tmp/fake.gguf")
-    monkeypatch.setattr(L, "_llm", None, raising=False)
-    monkeypatch.setattr(L, "_llm_key", None, raising=False)
-    monkeypatch.delenv("WHISPER_LOCAL_N_CTX", raising=False)
-
-    default_ctx = L.LOCAL_MODELS["local_gemma"]["ctx"]
-    L.load_sync("local_gemma")  # no explicit n_ctx
-    assert created == [default_ctx]
-
-
-def test_load_sync_keeps_requested_ctx_on_lazy_load(monkeypatch):
-    """Regression: once the slider loads the model at a larger window, a lazy
-    chat-turn load (``load_sync`` with no n_ctx) must KEEP that window, not fall
-    back to the 16K default and reload the model smaller mid-session — which made
-    the next message overflow a 16K window even though the badge said 32K/64K."""
-    created: list[int] = []
-
-    class FakeLlama:
-        def __init__(self, **kw):
-            created.append(kw["n_ctx"])
-
-    fake_mod = types.ModuleType("llama_cpp")
-    fake_mod.Llama = FakeLlama
-    monkeypatch.setitem(sys.modules, "llama_cpp", fake_mod)
-    monkeypatch.setattr(L, "ensure_downloaded", lambda key: "/tmp/fake.gguf")
-    monkeypatch.setattr(L, "_llm", None, raising=False)
-    monkeypatch.setattr(L, "_llm_key", None, raising=False)
-    monkeypatch.delenv("WHISPER_LOCAL_N_CTX", raising=False)
-
-    L.load_sync("local_gemma", 65536)  # user picks 64K via the slider
-    L.load_sync("local_gemma")  # a chat turn lazily ensures residency
-    # Only one construction: the 64K model stays resident; it is NOT reloaded at
-    # the 16K default just because the lazy load passed no n_ctx.
-    assert created == [65536]
-
-
-def test_load_sync_uses_windowed_swa_and_attaches_kv_cache(monkeypatch):
-    """The model loads with swa_full=False (windowed gemma KV cache, so large
-    context windows fit instead of allocating a full-size SWA buffer) and gets a
-    bounded RAM cache of KV prefixes (so an interleaved generation can't force the
-    next turn to re-prefill from cold)."""
-    kwargs: dict = {}
-    caches: list = []
-
-    class FakeLlama:
-        def __init__(self, **kw):
-            kwargs.update(kw)
-
-        def set_cache(self, cache):
-            caches.append(cache)
-
-    class FakeRAMCache:
-        def __init__(self, capacity_bytes):
-            self.capacity_bytes = capacity_bytes
-
-    fake_mod = types.ModuleType("llama_cpp")
-    fake_mod.Llama = FakeLlama
-    fake_mod.LlamaRAMCache = FakeRAMCache
-    monkeypatch.setitem(sys.modules, "llama_cpp", fake_mod)
-    monkeypatch.setattr(L, "ensure_downloaded", lambda key: "/tmp/fake.gguf")
-    monkeypatch.setattr(L, "_llm", None, raising=False)
-    monkeypatch.setattr(L, "_llm_key", None, raising=False)
-    monkeypatch.setattr(L, "_KV_CACHE_BYTES", 2 * 1024**3, raising=False)
-
-    L.load_sync("local_gemma", 32768)
-
-    assert kwargs.get("swa_full") is False  # C: windowed SWA cache
-    assert len(caches) == 1  # A: KV-prefix cache attached
-    assert caches[0].capacity_bytes == 2 * 1024**3
 
 
 # ── Local memory stays offline ───────────────────────────────────────────────
@@ -180,8 +62,8 @@ def test_select_memories_skips_cloud_for_local(monkeypatch):
 
 
 def test_session_memory_summarizes_on_device_for_local(monkeypatch, tmp_path):
-    """A local turn auto-updates session memory via the on-device model
-    (generate_round), not the cloud memory_extractor agent, and writes the file."""
+    """A local turn auto-updates session memory through the on-device model
+    (runtime.complete), not the cloud memory_extractor agent, and writes the file."""
     import server.infrastructure.feature_flags as FF
     import server.memory.session_memory as SM
 
@@ -189,14 +71,14 @@ def test_session_memory_summarizes_on_device_for_local(monkeypatch, tmp_path):
     target = tmp_path / "sess.md"
     monkeypatch.setattr(SM, "get_session_memory_path", lambda sid: str(target))
 
-    used = {"gemma": False}
+    used = {"local": False}
 
-    def fake_gen(key, convo, schemas, max_tokens=1024):
-        used["gemma"] = True
-        assert key == "local_gemma" and schemas == []
+    def fake_complete(key, system_prompt, user, max_tokens=1500):
+        used["local"] = True
+        assert key == "local_gemma"
         return "## Goals\n- ship the context slider\n## Decisions\n## Context\n## Blockers\n"
 
-    monkeypatch.setattr(L, "generate_round", fake_gen)
+    monkeypatch.setattr(L, "complete", fake_complete)
 
     # > LOCAL_TOKEN_THRESHOLD_CHARS so the lean local cadence fires (no tool calls needed).
     msgs = [{"role": "user", "content": "x" * (SM.LOCAL_TOKEN_THRESHOLD_CHARS + 100)}]
@@ -208,13 +90,13 @@ def test_session_memory_summarizes_on_device_for_local(monkeypatch, tmp_path):
         )
     )
 
-    assert used["gemma"]  # summarised on-device
+    assert used["local"]  # summarised on-device
     assert "ship the context slider" in target.read_text()
 
 
 def test_session_memory_below_local_threshold_does_nothing(monkeypatch, tmp_path):
     """Lean cadence: a small local turn does not trigger a summary (so we don't
-    summarise on the model thread after every short turn)."""
+    round-trip the model server after every short turn)."""
     import server.infrastructure.feature_flags as FF
     import server.memory.session_memory as SM
 
@@ -224,7 +106,7 @@ def test_session_memory_below_local_threshold_does_nothing(monkeypatch, tmp_path
     def boom(*a, **k):
         raise AssertionError("should not summarise below the local threshold")
 
-    monkeypatch.setattr(L, "generate_round", boom)
+    monkeypatch.setattr(L, "complete", boom)
 
     msgs = [{"role": "user", "content": "tiny"}]
     asyncio.run(
@@ -233,18 +115,7 @@ def test_session_memory_below_local_threshold_does_nothing(monkeypatch, tmp_path
             session_id="local-sum-test-2",
             model_id="local:gemma-4-12b-it-qat-q4_0",
         )
-    )  # no exception ⇒ generate_round never called
-
-
-def test_to_chat_messages_flattens_and_drops_images():
-    msgs = [
-        {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "hi"}]},
-        {"role": "assistant", "content": "ok"},
-    ]
-    out = L._to_chat_messages("SYS", msgs)
-    assert out[0] == {"role": "system", "content": "SYS"}
-    assert {"role": "user", "content": "hi"} in out  # image block dropped
-    assert {"role": "assistant", "content": "ok"} in out
+    )  # no exception ⇒ complete() never called
 
 
 def test_local_system_prompt_is_lean_and_keeps_context(monkeypatch):
@@ -301,185 +172,6 @@ def test_local_system_prompt_skips_workspace_note_without_tools(monkeypatch):
     p = L.build_local_system_prompt(tools=False, ws_path="/Users/me/proj")
     assert "/Users/me/proj" not in p
     assert "do not have access to tools" in p.lower()
-
-
-def test_stream_emits_text_usage_then_done(monkeypatch):
-    monkeypatch.setattr(
-        L, "iter_chat", lambda *a, **k: iter([("text", "Hello"), ("text", " world")])
-    )
-    chunks = _drain(
-        lambda: stream_local_chat("local_gemma", "sys", [{"role": "user", "content": "hi"}], "s")
-    )
-    blob = "".join(chunks)
-    assert '"text": "Hello"' in blob and '"text": " world"' in blob
-    assert '"usage"' in blob and '"estimated_cost_usd": 0.0' in blob
-    assert chunks[-1].strip() == "data: [DONE]"
-
-
-def test_stream_emits_thinking_events_when_thinking(monkeypatch):
-    monkeypatch.setattr(
-        L,
-        "iter_chat",
-        lambda *a, **k: iter([("thinking", "let me reason"), ("text", "the answer")]),
-    )
-    chunks = _drain(lambda: stream_local_chat("local_gemma", "s", [], "x", thinking=True))
-    blob = "".join(chunks)
-    assert '"thinking_start": true' in blob
-    assert '"thinking": "let me reason"' in blob
-    assert '"thinking_stop": true' in blob
-    assert '"text": "the answer"' in blob
-    # thinking_stop precedes the answer text
-    assert blob.index('"thinking_stop"') < blob.index('"text": "the answer"')
-
-
-def test_thought_splitter_separates_channel_from_answer():
-    sp = L._ThoughtSplitter()
-    out = []
-    # Feed in chunks that split the markers across boundaries.
-    for chunk in ["<|channel>thou", "ght\nreason", "ing here<chan", "nel|>final ", "answer"]:
-        out.extend(sp.feed(chunk))
-    out.extend(sp.flush())
-    thinking = "".join(t for k, t in out if k == "thinking")
-    text = "".join(t for k, t in out if k == "text")
-    assert thinking == "reasoning here"
-    assert text == "final answer"
-
-
-def test_thought_splitter_all_text_when_no_markers():
-    sp = L._ThoughtSplitter()
-    out = []
-    for chunk in ["just ", "a plain ", "answer"]:
-        out.extend(sp.feed(chunk))
-    out.extend(sp.flush())
-    assert "".join(t for k, t in out if k == "thinking") == ""
-    assert "".join(t for k, t in out if k == "text") == "just a plain answer"
-
-
-def test_iter_generate_round_routes_thought_channel(monkeypatch):
-    """Regression: in the tools path the model can open a <|channel>thought
-    reasoning block. It must be surfaced as 'thinking' pieces (never leaked as
-    visible text), and 'raw' — used for tool parsing + history — must exclude the
-    reasoning while keeping the <|tool_call> DSL."""
-    monkeypatch.setattr(L, "load_sync", lambda *a, **k: None)
-    monkeypatch.setattr(L, "_render_prompt", lambda *a, **k: "PROMPT")
-
-    stream_pieces = [
-        "<|channel>thought\n",
-        "reasoning about the ask",
-        "\n<channel|>",
-        "Here is the answer. ",
-        '<|tool_call>call:web_search{query:<|"|>x<|"|>}',
-    ]
-
-    class FakeLlm:
-        def create_completion(self, **kw):
-            for p in stream_pieces:
-                yield {"choices": [{"text": p}]}
-
-    monkeypatch.setattr(L, "_llm", FakeLlm(), raising=False)
-
-    out = list(L.iter_generate_round("local_gemma", [], [], 128))
-    thinking = "".join(t for k, t in out if k == "thinking")
-    text = "".join(t for k, t in out if k == "text")
-    raw = next(t for k, t in out if k == "raw")
-
-    assert thinking.strip() == "reasoning about the ask"
-    assert "<|channel>" not in text and "<|tool_call>" not in text
-    assert text.strip() == "Here is the answer."
-    assert "<|channel>" not in raw  # reasoning excluded from raw
-    assert "<|tool_call>call:web_search" in raw  # tool DSL retained for parsing
-
-
-def test_iter_generate_round_enables_thinking_when_requested(monkeypatch):
-    """The tools path must honor the thinking toggle: with thinking=True it
-    renders the prompt with enable_thinking=True (previously the tools path
-    always rendered enable_thinking=False, so 'Think on' did nothing once tools
-    were on)."""
-    monkeypatch.setattr(L, "load_sync", lambda *a, **k: None)
-    monkeypatch.setattr(L, "supports_thinking", lambda k: True)
-    seen = []
-
-    def fake_render(chat, enable_thinking=False, tools=None):
-        seen.append(enable_thinking)
-        return "PROMPT"
-
-    monkeypatch.setattr(L, "_render_prompt", fake_render)
-
-    class FakeLlm:
-        def create_completion(self, **kw):
-            yield {"choices": [{"text": "hi"}]}
-
-    monkeypatch.setattr(L, "_llm", FakeLlm(), raising=False)
-
-    list(L.iter_generate_round("local_gemma", [], [{"x": 1}], 128, thinking=True))
-    assert seen == [True]
-    seen.clear()
-    list(L.iter_generate_round("local_gemma", [], [{"x": 1}], 128, thinking=False))
-    assert seen == [False]
-
-
-def test_iter_generate_round_keeps_tools_if_thinking_render_fails(monkeypatch):
-    """If thinking + tools cannot render together, we retry with thinking off so
-    the tool block is preserved — never fall all the way back to a tool-less
-    answer just because thinking was requested."""
-    monkeypatch.setattr(L, "load_sync", lambda *a, **k: None)
-    monkeypatch.setattr(L, "supports_thinking", lambda k: True)
-    tried = []
-
-    def fake_render(chat, enable_thinking=False, tools=None):
-        tried.append(enable_thinking)
-        return None if enable_thinking else "PROMPT"  # thinking render fails
-
-    monkeypatch.setattr(L, "_render_prompt", fake_render)
-
-    class FakeLlm:
-        def create_completion(self, **kw):
-            yield {"choices": [{"text": "answer"}]}
-
-        def create_chat_completion(self, **kw):  # the tool-less fallback
-            raise AssertionError("must keep tools via retry, not answer tool-less")
-
-    monkeypatch.setattr(L, "_llm", FakeLlm(), raising=False)
-
-    out = list(L.iter_generate_round("local_gemma", [], [{"x": 1}], 128, thinking=True))
-    assert tried == [True, False]  # tried thinking, then retried without it
-    assert "".join(t for k, t in out if k == "text").strip() == "answer"
-
-
-def test_stream_tools_path_forwards_thinking_toggle(monkeypatch):
-    """tool_ctx['thinking'] must reach iter_generate_round so the agentic loop
-    reasons like the plain path (regression: the tools path ignored the toggle)."""
-    import server.local.stream as S
-
-    monkeypatch.setattr(L, "supports_tools", lambda k: True)
-    monkeypatch.setattr(S, "get_tool_schemas", lambda **k: ([], set()))
-    seen = {}
-
-    def gen(key, convo, schemas, max_tokens=4096, cancel=None, thinking=False):
-        seen["thinking"] = thinking
-        yield ("text", "done")
-        yield ("raw", "done")
-
-    monkeypatch.setattr(L, "iter_generate_round", gen)
-
-    _drain(
-        lambda: stream_local_chat(
-            "local_gemma", "s", [], "x", tools=True, tool_ctx={"thinking": True}
-        )
-    )
-    assert seen["thinking"] is True
-
-
-def test_stream_surfaces_runtime_error_without_usage(monkeypatch):
-    def boom(*a, **k):
-        raise RuntimeError("llama-cpp-python is not installed")
-
-    monkeypatch.setattr(L, "iter_chat", boom)
-    chunks = _drain(lambda: stream_local_chat("local_gemma", "s", [], "x"))
-    blob = "".join(chunks)
-    assert '"error"' in blob and "llama-cpp-python" in blob
-    assert '"usage"' not in blob  # no cost line on failure
-    assert chunks[-1].strip() == "data: [DONE]"
 
 
 # ── Full tool parity: schema conversion + DSL parsing ────────────────────────
@@ -543,45 +235,6 @@ def test_get_tool_schemas_scopes_trim_the_pool(monkeypatch, tmp_path):
     assert len(all_names) > len(core_names) + 5
 
 
-def test_parse_tool_call_web_search():
-    text = 'ok<|tool_call>call:web_search{query:<|"|>weather in Paris<|"|>}<tool_call|>'
-    assert T.parse_tool_calls(text) == [("web_search", {"query": "weather in Paris"})]
-
-
-def test_parse_tool_call_missing_close_marker():
-    # We stop generation at <tool_call|>, so the close marker is often absent.
-    text = '<|tool_call>call:web_fetch{url:<|"|>https://example.com<|"|>}'
-    assert T.parse_tool_calls(text) == [("web_fetch", {"url": "https://example.com"})]
-
-
-def test_parse_tool_call_coerces_scalars_and_json_body():
-    # Bare scalars are coerced; a JSON-object body parses too.
-    assert T.parse_tool_calls("<|tool_call>call:sleep{seconds:5}") == [("sleep", {"seconds": 5})]
-    assert T.parse_tool_calls('<|tool_call>call:web_search{"query": "hi"}') == [
-        ("web_search", {"query": "hi"})
-    ]
-
-
-def test_parse_tool_call_filters_unknown_when_names_given():
-    # With a valid-name set, hallucinated tools are dropped; without it, anything
-    # well-formed is returned (legacy behaviour).
-    assert T.parse_tool_calls('<|tool_call>call:rm_rf{path:<|"|>/<|"|>}', {"web_search"}) == []
-    assert T.parse_tool_calls('<|tool_call>call:rm_rf{path:<|"|>/<|"|>}') == [
-        ("rm_rf", {"path": "/"})
-    ]
-
-
-def test_gemma_call_to_tool_use_synthesises_id():
-    tu = T.gemma_call_to_tool_use("web_search", {"query": "x"})
-    assert tu["type"] == "tool_use" and tu["name"] == "web_search"
-    assert tu["id"].startswith("call_") and tu["input"] == {"query": "x"}
-
-
-def test_strip_tool_markers_removes_dsl():
-    out = T.strip_tool_markers('a <|tool_call>call:web_search{query:<|"|>x<|"|>}<tool_call|> b')
-    assert "<|tool_call>" not in out and "a" in out and "b" in out
-
-
 def test_run_tool_round_routes_through_the_safety_gate(monkeypatch):
     """The load-bearing safety invariant: run_tool_round MUST call
     process_tool_results (the [WS_APPROVAL] gate) and surface its returns —
@@ -608,7 +261,8 @@ def test_run_tool_round_routes_through_the_safety_gate(monkeypatch):
 
     async def run():
         return await T.run_tool_round(
-            [T.gemma_call_to_tool_use("web_search", {"query": "x"})],
+            # The shape llama-server's parsed calls are normalized into.
+            [{"type": "tool_use", "id": "call_1", "name": "web_search", "input": {"query": "x"}}],
             session_id="s",
             session_approvals={},
             session_denials={},
@@ -623,226 +277,3 @@ def test_run_tool_round_routes_through_the_safety_gate(monkeypatch):
     assert seen["batch"][1]["model_id"] == ""
     assert results[0]["content"] == "RESULT" and pending is False
     assert any("skill_result" in e for e in sse_events)
-
-
-def test_tool_call_splitter_streams_text_and_withholds_dsl():
-    """The streaming splitter shows answer text token-by-token but never leaks
-    the <|tool_call> DSL to the user — while keeping the full raw for parsing."""
-    sp = L._ToolCallSplitter()
-    out = []
-    for chunk in ["Let me ", "check.<|tool_", "call>call:web_search{q}"]:
-        out.extend(sp.feed(chunk))
-    out.extend(sp.flush())
-    assert "".join(out) == "Let me check."  # DSL withheld
-    assert sp.raw == "Let me check.<|tool_call>call:web_search{q}"  # full raw kept
-
-
-def test_tool_call_splitter_streams_all_when_no_call():
-    sp = L._ToolCallSplitter()
-    out = []
-    for chunk in ["The answer ", "is 42."]:
-        out.extend(sp.feed(chunk))
-    out.extend(sp.flush())
-    assert "".join(out) == "The answer is 42."
-    assert sp.raw == "The answer is 42."
-
-
-def _fake_rounds(*texts):
-    """An iter_generate_round stand-in: for each round, streams the displayable
-    text (the part before any tool-call DSL) then yields ('raw', full_text)."""
-    box = {"i": 0}
-
-    def gen(key, convo, schemas, max_tokens=4096, cancel=None, thinking=False):
-        i = box["i"]
-        box["i"] = min(i + 1, len(texts) - 1)
-        t = texts[i]
-        displayable = t.split("<|tool_call>")[0] if "<|tool_call>" in t else t
-        if displayable:
-            yield ("text", displayable)
-        yield ("raw", t)
-
-    return gen
-
-
-def test_stream_tools_runs_tool_then_answers(monkeypatch):
-    import server.local.stream as S
-
-    monkeypatch.setattr(L, "supports_tools", lambda k: True)
-    monkeypatch.setattr(S, "get_tool_schemas", lambda **k: ([], {"web_search"}))
-    monkeypatch.setattr(
-        L,
-        "iter_generate_round",
-        _fake_rounds('<|tool_call>call:web_search{query:<|"|>weather<|"|>}', "It is sunny."),
-    )
-
-    async def fake_round(tool_uses, **kw):
-        return (
-            [{"type": "tool_result", "tool_use_id": tool_uses[0]["id"], "content": "Sunny, 20C"}],
-            ['{"skill_result": "web_search", "output": "Sunny, 20C"}'],
-            False,
-            False,
-        )
-
-    monkeypatch.setattr(S, "run_tool_round", fake_round)
-
-    chunks = _drain(lambda: stream_local_chat("local_gemma", "s", [], "x", tools=True, tool_ctx={}))
-    blob = "".join(chunks)
-    assert '"skill": "web_search"' in blob
-    assert '"skill_input": "web_search"' in blob and '"query": "weather"' in blob
-    assert '"skill_result": "web_search"' in blob and "Sunny, 20C" in blob
-    assert '"text": "It is sunny."' in blob
-    assert '"usage"' in blob
-    assert chunks[-1].strip() == "data: [DONE]"
-
-
-def test_stream_tools_surfaces_thinking_not_raw_markers(monkeypatch):
-    """The tools path must render a mid-round reasoning channel as thinking_*
-    events (parity with the plain path), never leaking the raw markers."""
-    import server.local.stream as S
-
-    monkeypatch.setattr(L, "supports_tools", lambda k: True)
-    monkeypatch.setattr(S, "get_tool_schemas", lambda **k: ([], set()))
-
-    def gen(key, convo, schemas, max_tokens=4096, cancel=None, thinking=False):
-        yield ("thinking", "let me reason")
-        yield ("text", "The answer is 42.")
-        yield ("raw", "The answer is 42.")
-
-    monkeypatch.setattr(L, "iter_generate_round", gen)
-
-    chunks = _drain(lambda: stream_local_chat("local_gemma", "s", [], "x", tools=True, tool_ctx={}))
-    blob = "".join(chunks)
-    assert '"thinking_start": true' in blob
-    assert '"thinking": "let me reason"' in blob
-    assert '"thinking_stop": true' in blob
-    assert '"text": "The answer is 42."' in blob
-    assert "<|channel" not in blob  # no raw reasoning markers leaked
-    # thinking_stop precedes the answer text
-    assert blob.index('"thinking_stop"') < blob.index('"text": "The answer is 42."')
-    assert chunks[-1].strip() == "data: [DONE]"
-
-
-def test_stream_tools_pauses_on_approval_and_resumes(monkeypatch):
-    """A destructive tool needing approval pauses (real approval_request card +
-    stashed state, NO answer), then resume_local_chat continues with the
-    approved result."""
-    import server.local.stream as S
-
-    monkeypatch.setattr(L, "supports_tools", lambda k: True)
-    monkeypatch.setattr(S, "get_tool_schemas", lambda **k: ([], {"ws_write_file"}))
-    monkeypatch.setattr(
-        L,
-        "iter_generate_round",
-        _fake_rounds('<|tool_call>call:ws_write_file{path:<|"|>a.txt<|"|>}', "Done. File written."),
-    )
-
-    async def fake_round(tool_uses, **kw):
-        tid = tool_uses[0]["id"]
-        return (
-            [
-                {
-                    "type": "tool_result",
-                    "tool_use_id": tid,
-                    "content": "[Not executed] awaiting approval",
-                }
-            ],
-            [
-                '{"approval_request": {"tool_use_id": "'
-                + tid
-                + '", "action": "file_write", "category": "write"}}'
-            ],
-            True,  # has_pending_approval
-            False,
-        )
-
-    monkeypatch.setattr(S, "run_tool_round", fake_round)
-
-    # Round 1: pause. The card is emitted, no answer, and state is stashed.
-    chunks = _drain(
-        lambda: stream_local_chat("local_gemma", "s", [], "sess", tools=True, tool_ctx={})
-    )
-    blob = "".join(chunks)
-    assert '"approval_request"' in blob
-    assert '"skill": "ws_write_file"' in blob
-    assert '"text"' not in blob  # destructive action did NOT run / answer
-    assert S.has_local_pause("sess")
-    assert chunks[-1].strip() == "data: [DONE]"
-
-    # Resume: the action already ran via /api/approval/execute; we inject its
-    # result and the model answers. Pause state is consumed.
-    tid = next(iter(S._local_paused["sess"]["names_by_id"]))
-    resume_chunks = _drain(
-        lambda: S.resume_local_chat(
-            "sess",
-            {"tool_use_id": tid, "content": "[User approved] file_write a.txt succeeded."},
-            {},
-        )
-    )
-    rblob = "".join(resume_chunks)
-    assert '"skill_result": "ws_write_file"' in rblob and "approved" in rblob
-    assert '"text": "Done. File written."' in rblob
-    assert not S.has_local_pause("sess")
-    assert resume_chunks[-1].strip() == "data: [DONE]"
-
-
-def test_unload_closes_the_model_to_free_memory(monkeypatch):
-    """Switching local models must close() the resident one so a second 12B is
-    not loaded on top of the first — that double-allocation OOMs / freezes an
-    18 GB machine. Relying on ``_llm = None`` + gc alone does not free the C /
-    Metal weights when any reference lingers."""
-
-    class _FakeLlama:
-        def __init__(self):
-            self.closed = False
-
-        def close(self):
-            self.closed = True
-
-    fake = _FakeLlama()
-    monkeypatch.setattr(L, "_llm", fake, raising=False)
-    monkeypatch.setattr(L, "_llm_key", "local_gemma", raising=False)
-
-    L.unload_sync()
-
-    assert fake.closed is True  # weights/KV cache explicitly freed
-    assert L._llm is None and L._llm_key is None
-
-
-def test_local_summarize_transcript_gets_transcript_from_tool_ctx(monkeypatch):
-    """Regression (PR #135 follow-up): the on-device path must thread the
-    request transcript through ``tool_ctx`` into ``run_tool_round`` so the real
-    ``summarize_transcript`` executor sees it. Before the fix, tool_ctx carried
-    no transcript, ``run_tool_round`` defaulted it to "", and exec_summarize
-    returned "No transcript available to summarize." for every local turn.
-
-    Drives the FULL real pipeline (no run_tool_round mock) so the assertion
-    covers the whole tool_ctx -> run_tool_round -> execute_tool_batch ->
-    exec_summarize chain."""
-    import server.executors.content  # noqa: F401 — registers summarize_transcript
-    import server.local.stream as S
-    import server.skills as sk
-
-    sk.SKILLS = sk.load_skills()
-
-    monkeypatch.setattr(L, "supports_tools", lambda k: True)
-    monkeypatch.setattr(S, "get_tool_schemas", lambda **k: ([], {"summarize_transcript"}))
-    monkeypatch.setattr(
-        L,
-        "iter_generate_round",
-        _fake_rounds(
-            '<|tool_call>call:summarize_transcript{style:<|"|>brief<|"|>}',
-            "Here is the summary.",
-        ),
-    )
-
-    transcript = "Alice: We ship on Friday. Bob: Agreed, code freeze is Thursday."
-    chunks = _drain(
-        lambda: stream_local_chat(
-            "local_gemma", "sys", [], "sess-tx", tools=True, tool_ctx={"transcript": transcript}
-        )
-    )
-    blob = "".join(chunks)
-    assert "No transcript available" not in blob
-    # The real transcript reached exec_summarize and came back in the result.
-    assert "We ship on Friday" in blob
-    assert chunks[-1].strip() == "data: [DONE]"

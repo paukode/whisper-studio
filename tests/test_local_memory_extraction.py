@@ -21,7 +21,7 @@ import pytest
 
 import server.infrastructure.feature_flags as FF
 import server.local.runtime as L
-import server.local.stream as STREAM
+import server.local.server_stream as STREAM
 import server.memory.extract as XT
 import server.memory.memdir as MD
 
@@ -31,6 +31,28 @@ def _drain(agen_factory):
         return [c async for c in agen_factory()]
 
     return asyncio.run(run())
+
+
+def _serve(monkeypatch, rounds=(([], []),)):
+    """Stub the subprocess + HTTP so a turn runs offline.
+
+    ``rounds`` is a sequence of (pieces, calls) per round, where pieces are
+    ("text"|"thinking", str) — the shape _stream_round yields.
+    """
+    from server.local import llama_server
+
+    monkeypatch.setattr(llama_server, "ensure_serving", lambda *a, **k: "http://stub")
+    box = {"i": 0}
+
+    async def fake_round(base_url, payload):
+        i = min(box["i"], len(rounds) - 1)
+        box["i"] += 1
+        pieces, calls = rounds[i]
+        for kind, piece in pieces:
+            yield (kind, piece)
+        yield ("done", {"calls": list(calls)})
+
+    monkeypatch.setattr(STREAM, "_stream_round", fake_round)
 
 
 def _messages(n):
@@ -70,25 +92,29 @@ def fresh_extract_state():
 
 
 def test_plain_stream_fires_memory_hooks_with_ws_path(monkeypatch):
-    monkeypatch.setattr(L, "iter_chat", lambda *a, **k: iter([("text", "hi")]))
+    _serve(monkeypatch, rounds=((([("text", "hi")]), []),))
     calls = []
     monkeypatch.setattr(STREAM, "_spawn_memory_hooks", lambda *a: calls.append(a))
 
     msgs = [{"role": "user", "content": "hello"}]
-    _drain(lambda: STREAM.stream_local_chat("local_gemma", "sys", msgs, "s1", ws_path="/ws"))
+    _drain(lambda: STREAM.stream_chat("local_gemma", "sys", msgs, "s1", ws_path="/ws"))
 
     assert calls == [("local_gemma", msgs, "s1", "/ws")]
 
 
 def test_plain_stream_skips_memory_hooks_on_error(monkeypatch):
-    def boom(*a, **k):
-        raise RuntimeError("no llama")
+    """A failed turn must not record memory. With no fallback runtime, an
+    unavailable model server is exactly this case."""
+    from server.local import llama_server
 
-    monkeypatch.setattr(L, "iter_chat", boom)
+    def boom(*a, **k):
+        raise RuntimeError("llama-server unavailable")
+
+    monkeypatch.setattr(llama_server, "ensure_serving", boom)
     calls = []
     monkeypatch.setattr(STREAM, "_spawn_memory_hooks", lambda *a: calls.append(a))
 
-    _drain(lambda: STREAM.stream_local_chat("local_gemma", "sys", _messages(1), "s2"))
+    _drain(lambda: STREAM.stream_chat("local_gemma", "sys", _messages(1), "s2"))
     assert calls == []
 
 
@@ -96,38 +122,40 @@ def test_tools_stream_hooks_skipped_on_pause_fired_on_completion(monkeypatch):
     # Mirror of the OpenAI-path regression test: hooks must not fire on a
     # half-finished (approval-paused) turn, only when the turn completes.
     monkeypatch.setattr(L, "supports_tools", lambda key: True)
-    monkeypatch.setattr(L, "to_chat_messages", lambda sp, msgs: [{"role": "user", "content": "x"}])
+    _serve(monkeypatch)
     calls = []
     monkeypatch.setattr(STREAM, "_spawn_memory_hooks", lambda *a: calls.append(a))
 
     async def _fake_pause(
-        model_key, convo, tool_ctx, *, session_id, start_round=0, memory_ctx=None
+        model_key, base_url, convo, schemas, tool_ctx, *, session_id, start_round=0, memory_ctx=None
     ):
-        STREAM._local_paused[session_id] = {"convo": convo, "memory_ctx": memory_ctx}
+        STREAM._paused[session_id] = {
+            "base_url": "http://stub",
+            "convo": convo,
+            "memory_ctx": memory_ctx,
+        }
         yield "data: [DONE]\n\n"
 
-    async def _fake_done(model_key, convo, tool_ctx, *, session_id, start_round=0, memory_ctx=None):
+    async def _fake_done(
+        model_key, base_url, convo, schemas, tool_ctx, *, session_id, start_round=0, memory_ctx=None
+    ):
         yield "data: [DONE]\n\n"
 
     msgs = _messages(2)
-    STREAM._local_paused.pop("t-pause", None)
-    monkeypatch.setattr(STREAM, "_tool_loop", _fake_pause)
+    STREAM._paused.pop("t-pause", None)
+    monkeypatch.setattr(STREAM, "_run_loop", _fake_pause)
     _drain(
-        lambda: STREAM.stream_local_chat(
-            "local_gemma", "s", msgs, "t-pause", tools=True, ws_path=None
-        )
+        lambda: STREAM.stream_chat("local_gemma", "s", msgs, "t-pause", tools=True, ws_path=None)
     )
     assert calls == [], "memory hooks must not fire on a pause"
     # The stream threads the hook context into the loop so the pause stash
     # carries it to the resume.
-    stash = STREAM._local_paused.pop("t-pause")
+    stash = STREAM._paused.pop("t-pause")
     assert stash["memory_ctx"] == {"messages": msgs, "ws_path": None}
 
-    monkeypatch.setattr(STREAM, "_tool_loop", _fake_done)
+    monkeypatch.setattr(STREAM, "_run_loop", _fake_done)
     _drain(
-        lambda: STREAM.stream_local_chat(
-            "local_gemma", "s", msgs, "t-done", tools=True, ws_path="/ws"
-        )
+        lambda: STREAM.stream_chat("local_gemma", "s", msgs, "t-done", tools=True, ws_path="/ws")
     )
     assert calls == [("local_gemma", msgs, "t-done", "/ws")]
 
@@ -142,8 +170,10 @@ def test_resume_fires_hooks_on_completion_not_on_repause(monkeypatch):
     msgs = _messages(2)
 
     def _stash(session_id):
-        STREAM._local_paused[session_id] = {
+        STREAM._paused[session_id] = {
             "model_key": "local_gemma",
+            "base_url": "http://stub",
+            "schemas": [],
             "convo": [{"role": "user", "content": "x"}],
             "tool_ctx": {},
             "pending_results": [{"type": "tool_result", "tool_use_id": "t1", "content": ""}],
@@ -153,12 +183,18 @@ def test_resume_fires_hooks_on_completion_not_on_repause(monkeypatch):
         }
 
     async def _fake_repause(
-        model_key, convo, tool_ctx, *, session_id, start_round=0, memory_ctx=None
+        model_key, base_url, convo, schemas, tool_ctx, *, session_id, start_round=0, memory_ctx=None
     ):
-        STREAM._local_paused[session_id] = {"convo": convo, "memory_ctx": memory_ctx}
+        STREAM._paused[session_id] = {
+            "base_url": "http://stub",
+            "convo": convo,
+            "memory_ctx": memory_ctx,
+        }
         yield "data: [DONE]\n\n"
 
-    async def _fake_done(model_key, convo, tool_ctx, *, session_id, start_round=0, memory_ctx=None):
+    async def _fake_done(
+        model_key, base_url, convo, schemas, tool_ctx, *, session_id, start_round=0, memory_ctx=None
+    ):
         yield "data: [DONE]\n\n"
 
     answer = {"tool_use_id": "t1", "content": "[User approved] done"}
@@ -166,24 +202,24 @@ def test_resume_fires_hooks_on_completion_not_on_repause(monkeypatch):
     # Resume pauses AGAIN: still no hooks, and the re-stash carries the
     # memory_ctx forward for the next resume.
     _stash("r-pause")
-    monkeypatch.setattr(STREAM, "_tool_loop", _fake_repause)
-    _drain(lambda: STREAM.resume_local_chat("r-pause", answer))
+    monkeypatch.setattr(STREAM, "_run_loop", _fake_repause)
+    _drain(lambda: STREAM.resume_chat("r-pause", answer))
     assert calls == [], "memory hooks must not fire when the resume pauses again"
-    stash = STREAM._local_paused.pop("r-pause")
+    stash = STREAM._paused.pop("r-pause")
     assert stash["memory_ctx"] == {"messages": msgs, "ws_path": "/ws"}
 
     # Resume completes: the hooks fire with the context stashed at pause time.
     _stash("r-done")
-    monkeypatch.setattr(STREAM, "_tool_loop", _fake_done)
-    _drain(lambda: STREAM.resume_local_chat("r-done", answer))
+    monkeypatch.setattr(STREAM, "_run_loop", _fake_done)
+    _drain(lambda: STREAM.resume_chat("r-done", answer))
     assert calls == [("local_gemma", msgs, "r-done", "/ws")]
 
     # A pre-fix stash without memory_ctx (e.g. across a deploy) resumes cleanly
     # and just skips the hooks.
     _stash("r-legacy")
-    del STREAM._local_paused["r-legacy"]["memory_ctx"]
+    del STREAM._paused["r-legacy"]["memory_ctx"]
     calls.clear()
-    _drain(lambda: STREAM.resume_local_chat("r-legacy", answer))
+    _drain(lambda: STREAM.resume_chat("r-legacy", answer))
     assert calls == []
 
 

@@ -547,15 +547,15 @@ if [ "$MODE" = "cloud" ]; then WANT_LOCAL=0; else WANT_LOCAL=1; fi
 echo "Model mode: $MODE — $([ "$WANT_LOCAL" -eq 1 ] && echo 'pulling on-device models' || echo 'cloud, skipping on-device weights')."
 
 # ── On-device serving runtime: llama.cpp (llama-server) ─────────────────────
-# The preferred on-device backend. llama-server owns upstream's per-model-family
+# The ONLY on-device backend. llama-server owns upstream's per-model-family
 # tool-call and reasoning parsers, so a GGUF added to config.json gets tools and
-# a thinking channel with no code change. The in-process llama-cpp-python path
-# below stays as a fallback, but its parsing is Gemma-specific.
+# a thinking channel with no code change.
 #
 # Build matters: gemma4 (and newer architectures) need >= LLAMA_MIN_BUILD. Older
 # builds load fine and then fail with "unknown model architecture", so we upgrade
-# an outdated install rather than leaving that trap. Non-fatal throughout — the
-# app falls back to the in-process runtime.
+# an outdated install rather than leaving that trap. Failure here is REPORTED, not
+# silently absorbed: without llama-server, on-device chat does not work at all
+# (there is no in-process fallback), so a broken install must be visible.
 LLAMA_MIN_BUILD=10090
 
 llama_server_build() {
@@ -573,11 +573,14 @@ if [ "$WANT_LOCAL" -eq 1 ]; then
                 LLAMA_BUILD="$(llama_server_build || true)"
                 echo "  ✓ llama.cpp installed (build ${LLAMA_BUILD:-unknown})."
             else
-                echo "  ✗ llama.cpp install failed; falling back to the in-process runtime (see $SETUP_LOG)."
+                echo "  ✗ llama.cpp install FAILED (see $SETUP_LOG)."
+                echo "    On-device chat will not work until this succeeds — there is no"
+                echo "    fallback runtime. Retry with: brew install llama.cpp"
             fi
         else
-            echo "  • Homebrew not found — skipping llama.cpp. Install it manually for the"
-            echo "    preferred on-device backend: https://github.com/ggml-org/llama.cpp"
+            echo "  ✗ Homebrew not found, so llama.cpp cannot be installed automatically."
+            echo "    On-device chat REQUIRES llama-server and has no fallback. Install it"
+            echo "    manually: https://github.com/ggml-org/llama.cpp"
         fi
     elif [ "$LLAMA_BUILD" -lt "$LLAMA_MIN_BUILD" ] 2>/dev/null; then
         echo "llama.cpp build $LLAMA_BUILD is older than $LLAMA_MIN_BUILD (needed for current"
@@ -590,22 +593,6 @@ if [ "$WANT_LOCAL" -eq 1 ]; then
         fi
     else
         echo "  ✓ llama.cpp present (build $LLAMA_BUILD)."
-    fi
-fi
-
-# On-device LLM runtime (llama-cpp-python, Metal) — the FALLBACK backend, used
-# when llama-server is unavailable. Only needed for hybrid/local (on-device
-# chat), and only in production mode (the default; PROD=1). Non-fatal:
-# on-device models are simply unavailable if this cannot build.
-if [ "$PROD" -eq 1 ] && [ "$WANT_LOCAL" -eq 1 ] && ! python -c "import llama_cpp" >/dev/null 2>&1; then
-    # Genuinely non-fatal: run the build directly rather than via run_quiet,
-    # which calls `exit 1` on failure (so the `|| echo` here would never run
-    # and a failed optional build would abort the whole setup). On-device
-    # models are simply unavailable if this cannot build.
-    # Metal is the default for macOS arm64; force it for any source build.
-    echo "Installing llama-cpp-python (local LLM runtime) (logs → $SETUP_LOG)..."
-    if ! CMAKE_ARGS="-DGGML_METAL=on" pip install --upgrade llama-cpp-python >>"$SETUP_LOG" 2>&1; then
-        echo "WARNING: llama-cpp-python install failed; on-device models will be unavailable."
     fi
 fi
 

@@ -1,7 +1,7 @@
 """The llama-server on-device backend: registry, process manager, SSE adapter.
 
 These cover the parts that must hold for "drop a model in config and it works":
-the registry merge + validation, backend selection/fallback, the version guard,
+the registry merge + validation, the required-binary version guard,
 and the streaming normalization (content / reasoning_content / tool_calls →
 the app's existing SSE contract). No real model or subprocess is started.
 """
@@ -13,7 +13,6 @@ import json
 
 import pytest
 
-from server.local import backend as B
 from server.local import llama_server as LS
 from server.local import registry as R
 from server.local import server_stream as SS
@@ -124,7 +123,7 @@ def test_registry_reads_id_from_chat_models_not_meta(monkeypatch):
     assert R._config_local_models()["local_gemma"]["id"] == "local:gemma-4-12b-it-qat-q4_0"
 
 
-# ── version guard / availability ─────────────────────────────────────────────
+# ── version guard: llama-server is REQUIRED, so failures must be loud ────────
 
 
 def test_ensure_available_rejects_too_old_build(monkeypatch):
@@ -147,30 +146,6 @@ def test_ensure_available_accepts_unknown_build(monkeypatch):
     monkeypatch.setattr(LS, "binary_path", lambda: "/usr/bin/llama-server")
     monkeypatch.setattr(LS, "installed_build", lambda: None)
     assert LS.ensure_available() == "/usr/bin/llama-server"
-
-
-def test_backend_falls_back_when_llama_server_unusable(monkeypatch):
-    B.reset_cache()
-    monkeypatch.delenv("WHISPER_LOCAL_BACKEND", raising=False)
-    monkeypatch.setattr("server.infrastructure.config.get", lambda k, d=None: "auto")
-    monkeypatch.setattr(B, "llama_server_available", lambda: False)
-    assert B.resolve() == B.IN_PROCESS
-    monkeypatch.setattr(B, "llama_server_available", lambda: True)
-    assert B.resolve() == B.LLAMA_SERVER
-
-
-def test_backend_env_overrides_config(monkeypatch):
-    B.reset_cache()
-    monkeypatch.setenv("WHISPER_LOCAL_BACKEND", "in_process")
-    monkeypatch.setattr(B, "llama_server_available", lambda: True)
-    assert B.resolve() == B.IN_PROCESS
-
-
-def test_backend_unknown_value_falls_back_to_auto(monkeypatch):
-    B.reset_cache()
-    monkeypatch.setenv("WHISPER_LOCAL_BACKEND", "nonsense")
-    monkeypatch.setattr(B, "llama_server_available", lambda: True)
-    assert B.resolve() == B.LLAMA_SERVER
 
 
 # ── streamed tool-call reassembly ────────────────────────────────────────────

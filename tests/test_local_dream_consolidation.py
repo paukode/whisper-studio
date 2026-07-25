@@ -12,7 +12,7 @@ import asyncio
 
 import server.infrastructure.feature_flags as FF
 import server.local.runtime as L
-import server.local.stream as STREAM
+import server.local.server_stream as STREAM
 
 
 def _capture_dream(monkeypatch):
