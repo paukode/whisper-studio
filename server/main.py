@@ -233,6 +233,14 @@ async def lifespan(app):
     yield
     index_agent.mark_app_stopped()
     git_watcher.stop()
+    # Stop the on-device model server before the loop tears down; an orphaned
+    # llama-server would keep holding its port and gigabytes of weights.
+    try:
+        from server.local import llama_server
+
+        llama_server.stop()
+    except Exception as e:  # never block shutdown on this
+        logging.getLogger("whisper-studio").debug("llama-server stop failed: %s", e)
     await mcp_manager.stop_all()
     await preview_manager.stop_all()
     cleanup_task.cancel()
