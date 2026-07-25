@@ -276,7 +276,13 @@ GIT_WRITE_TOOLS = [
         "name": "git_checkout",
         "description": (
             "[Git] Switch to an existing branch or ref. "
-            "Use git_create_branch to create a new branch."
+            "Use git_create_branch to create a new branch. "
+            "Swapping branches rewrites files across the working tree, which the dev "
+            "server's file watcher sees as a mass change and answers with a full page "
+            "reload, ending the user's chat session. Warn the user that the session "
+            "will end and get explicit confirmation before calling this. When the work "
+            "can be done off to the side instead, ws_create_worktree gives an isolated "
+            "tree the watcher ignores."
         ),
         "input_schema": {
             "type": "object",
@@ -291,7 +297,13 @@ GIT_WRITE_TOOLS = [
     },
     {
         "name": "git_merge",
-        "description": ("[Git] Merge a branch into the current branch."),
+        "description": (
+            "[Git] Merge a branch into the current branch. "
+            "Rewrites files across the working tree, so the dev server's file watcher "
+            "answers with a full page reload that ends the user's chat session. Warn the "
+            "user and get explicit confirmation before calling this. ws_create_worktree "
+            "gives an isolated tree the watcher ignores when the merge can happen there."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -312,7 +324,11 @@ GIT_WRITE_TOOLS = [
         "description": (
             "[Git] Stash or restore working directory changes. "
             "Actions: push (save changes), pop (apply and remove top stash), "
-            "apply (apply without removing), drop (discard a stash entry)."
+            "apply (apply without removing), drop (discard a stash entry). "
+            "push and drop leave the working tree where it is and are safe to call. "
+            "pop and apply rewrite files across it, which the dev server's file watcher "
+            "can answer with a page reload that ends the user's chat session: warn the "
+            "user and get explicit confirmation before those two actions."
         ),
         "input_schema": {
             "type": "object",

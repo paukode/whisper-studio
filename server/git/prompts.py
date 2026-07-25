@@ -65,25 +65,19 @@ def build_git_status_prompt(workspace_path: str) -> str:
 def build_git_instructions_prompt() -> str:
     """Static git workflow instructions for the system prompt.
 
-    Modeled after the reference implementation's getCommitAndPRInstructions():
-    always included when git tools are in the tool pool so the LLM knows
-    the expected commit message style, PR body format, and safety rules.
-    These are static instructions — no dynamic git state.
+    Always included when git tools are in the tool pool so the LLM knows the
+    expected commit message style, PR body format, and safety rules. Static —
+    no dynamic git state — so it is registered on the cached WORKSPACE layer,
+    NOT alongside build_git_status_prompt on the dynamic layer.
+
+    Scope rule: per-tool usage guidance belongs in that tool's ``description``,
+    where it loads with the tool instead of on every turn. Only cross-tool
+    workflow (which tool to reach for, message/PR shape, repo-wide safety) earns
+    a place here. "How to clone" lived here as a near-verbatim copy of
+    git_clone's own description; the branch-swap worktree requirement lived here
+    while git_checkout / git_merge / git_stash said nothing about it.
     """
-    return """# Cloning new repositories
-
-When the user asks to "clone <url>", "pull <repo>", "open <github-url>",
-"set up <repo>", or any phrasing that means "bring this repo onto my
-machine", use the **git_clone TOOL**. This is the ONLY git tool that
-works without a connected workspace; it creates one. By default it
-auto-opens the cloned repo as the workspace; set `open=false` only if
-the user explicitly says "just clone, don't open".
-
-Do NOT ask the user to run `git clone` manually in their terminal,
-that creates two-step friction. Do NOT call `ws_run_command "git clone …"`
-either, since it requires a workspace that doesn't exist yet.
-
-# Git Commit Instructions
+    return """# Git Commit Instructions
 
 When creating a git commit using git_add_commit:
 
@@ -106,39 +100,14 @@ When creating a git commit using git_add_commit:
 - Warn on secret files (.env, credentials.json, credentials, .aws, .ssh, etc.)
 - Never use -i (interactive) flag
 
-# Branch-Swapping Operations MUST Use a Worktree
+# Working Tree Safety
 
-Whisper's dev server watches the workspace tree. Any git command that
-swaps files across the working tree triggers an HMR cascade that can
-force a full page reload, severing the chat stream and losing the
-session. Affected commands: git_checkout (to a different branch),
-git_merge, git_stash (apply/pop), plus any rebase/reset --hard.
-
-Required flow for these:
-1. Call the **enter_worktree TOOL** with a descriptive slug (e.g.
-   "merge-feat-x"). DO NOT call `git worktree add` via ws_run_command
-   or any shell, since those paths land in directories Vite still watches.
-   Only the enter_worktree tool places the worktree at the correct
-   ignored path (.whisper/worktrees/<slug>/) so the dev server's file
-   watcher stays quiet.
-2. Perform the branch-swap operation. It executes inside the worktree
-   path, which Vite does NOT watch, so the user's chat stays alive.
-3. When done, call the **exit_worktree TOOL** to remove the worktree.
-   Do not `git worktree remove` via the shell.
-
-Operations that DO NOT need a worktree (safe in-place):
-- Read-only: git_status, git_diff, git_log, git_branch_list, git_show.
-- git_add_commit: only touches staging + creates a commit; working
-  files don't move.
-- git_push, git_push_pr: only touches the remote.
-- git_create_branch: creates a ref; working tree stays put.
-- git_stash push: saves work without swapping files. (A later
-  apply/pop DOES swap and needs a worktree.)
-
-If the user explicitly insists on an in-place checkout/merge, warn
-them once before running: "This will reload the page and end the
-chat session. Use a worktree (recommended) or proceed in-place?",
-then respect their choice.
+Whisper's dev server watches the workspace tree, so any git operation that
+rewrites files across it can trigger a reload that ends the chat session. The
+tools whose descriptions carry this warning (git_checkout, git_merge, git_stash
+pop/apply) must be confirmed with the user before you call them. Never reach for
+`git worktree add`, checkout, merge, rebase, or `reset --hard` through
+ws_run_command or any shell: those bypass both the warning and the approval card.
 
 # Pull Request Rules
 
