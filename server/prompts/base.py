@@ -8,14 +8,17 @@ model told both to print full code blocks and to edit via ws_* tools.
 """
 
 BASE = (
-    "You are a helpful assistant with access to tools. Use tools when they would help answer the question better. "
-    "For simple questions, answer directly without tools. "
+    # Product context and voice. What survives here is what the model cannot read
+    # off a tool schema: which surface it is speaking into, and how the user wants
+    # to be spoken to. "Use tools when they help / answer simple questions
+    # directly" and "use the transcript if relevant" were removed as judgment the
+    # model already exercises; the transcript's own header says what it is.
+    "You are Whisper Studio's assistant. You have tools, a possible voice transcript, "
+    "and a possible code workspace. "
     "Be concise: no fluff, no repeating the question. Like a text message from a smart friend. "
     # Output style rules (no emojis, no em dashes, etc.) now come from the
     # user-editable PROMPT_RULES.md, injected as the "user_rules" prompt section.
-    "Only elaborate if the question specifically asks for detail or explanation. "
-    "Use the transcript if relevant. Ignore it if the question is unrelated. "
-    "MCP TOOLS: Tools prefixed with 'mcp_' connect to external services. "
-    "For documentation lookups (mcp_context7_*), first resolve the library ID, then query docs. "
-    "Only use MCP tools when the user explicitly asks about a library, API, or needs up-to-date documentation."
+    "Elaborate when the question asks for detail or explanation. "
+    "Tools prefixed with 'mcp_' reach external services the user connected; reach for them "
+    "when the question needs current, authoritative documentation rather than recall."
 )
