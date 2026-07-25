@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 
 log = logging.getLogger("whisper-studio")
@@ -26,38 +27,37 @@ log = logging.getLogger("whisper-studio")
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MODELS_DIR = os.path.join(SCRIPT_DIR, "models")
 
-# Supported on-device models. Keys are prefixed ``local_`` so the chat router
-# can detect them by key alone, with no config lookup. `id` is a sentinel that
-# never reaches Bedrock (the router branches before any AWS call).
-LOCAL_MODELS: dict[str, dict] = {
-    "local_gemma": {
-        "id": "local:gemma-4-12b-it-qat-q4_0",
-        "label": "Gemma 4 12B (Local)",
-        "repo_id": "google/gemma-4-12B-it-qat-q4_0-gguf",
-        "filename": "gemma-4-12b-it-qat-q4_0.gguf",
-        "dir": "gemma-4-12b-it-qat-q4_0",
-        # Gemma 4 supports up to 262144 (256K) natively. 16K is the default and
-        # the floor: with tools on, the tool-pool prompt alone is ~12K tokens, so
-        # a smaller window overflows. The user can raise it live from the
-        # chat-input context-window slider (which reloads the model at the new
-        # size, prompting for confirmation above 16K). WHISPER_LOCAL_N_CTX still
-        # overrides the default at startup.
-        "ctx": 16384,
-        "supports_thinking": True,
-        "supports_tools": True,
-    },
-    "local_gemma_coder": {
-        "id": "local:gemma-4-12b-coder",
-        "label": "Gemma 4 Coder (Local)",
-        "repo_id": "yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF",
-        "filename": "gemma4-coding-Q4_K_M.gguf",
-        "dir": "gemma-4-12b-coder",
-        # Same family as Gemma 4 12B above; identical context + capability flags.
-        "ctx": 16384,
-        "supports_thinking": True,
-        "supports_tools": True,
-    },
-}
+
+# Supported on-device models. Keys are prefixed ``local_`` by convention so they
+# read as on-device at a glance; detection itself is registry membership (below),
+# not the prefix, so a config-added model does not have to follow it.
+# The registry is config-driven — see server/local/registry.py. This module-level
+# name is kept as a LIVE VIEW for the many callsites that read it like a dict
+# (``key in LOCAL_MODELS``, ``LOCAL_MODELS[key]["ctx"]``, iteration): it resolves
+# the merged built-in + config registry on every access, so a model added to
+# config.json is picked up without a restart and without touching this file.
+class _LocalModelsView(Mapping):
+    """Read-only Mapping over the effective registry (built-ins + config)."""
+
+    def _resolved(self) -> dict[str, dict]:
+        from server.local.registry import local_models
+
+        return local_models()
+
+    def __getitem__(self, key):
+        return self._resolved()[key]
+
+    def __iter__(self):
+        return iter(self._resolved())
+
+    def __len__(self):
+        return len(self._resolved())
+
+    def __repr__(self):  # pragma: no cover - debugging aid
+        return f"_LocalModelsView({self._resolved()!r})"
+
+
+LOCAL_MODELS: Mapping[str, dict] = _LocalModelsView()
 
 # All llama.cpp work (load, generate, unload) runs on ONE thread so the model
 # is created and used on the same thread — mirrors the ASR backends.

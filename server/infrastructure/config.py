@@ -239,6 +239,17 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
                 # Ignored by other providers.
                 "openai_region": val.get("openai_region"),
                 "verbosity": val.get("verbosity") or "medium",
+                # On-device weights, for is_local entries only. Carrying these on
+                # the SAME entry is what makes a new local model a one-place
+                # config change: the picker metadata above and the loader info
+                # here live together, so dropping a model into chat_models is
+                # enough for the registry to download and serve it. Absent for
+                # cloud models (and for local entries that rely on a built-in
+                # default). See server/local/registry.py.
+                "repo_id": val.get("repo_id"),
+                "filename": val.get("filename"),
+                "dir": val.get("dir"),
+                "ctx": val.get("ctx"),
             }
         # Silently skip malformed entries — a typo in config.json shouldn't
         # take the server down. The model just won't appear in the picker.
