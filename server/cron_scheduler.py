@@ -803,6 +803,7 @@ def _delete_jobs(pred) -> list[dict]:
             log.warning("cron: failed to purge run history for deleted jobs: %s", exc)
     return deleted
 
+
 # HTTP handlers live in the sibling cron_routes module; importing it registers
 # them on ``router`` via decorator side-effects. Imported here (after router and
 # the engine/job helpers it depends on are defined) so

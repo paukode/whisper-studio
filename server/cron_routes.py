@@ -50,7 +50,8 @@ from server.cron_scheduler import (
 async def get_cron_jobs():
     return {
         "jobs": [_job_public(j) for j in load_cron_jobs()],
-        "scheduler_active": _cs._scheduler is not None and getattr(_cs._scheduler, "running", False),
+        "scheduler_active": _cs._scheduler is not None
+        and getattr(_cs._scheduler, "running", False),
         "system_timezone": _default_tz_name(),
     }
 

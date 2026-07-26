@@ -79,7 +79,7 @@ def _read_pricing_file(path: str) -> dict:
         log.error("Ignoring unreadable pricing file %s: %s", path, e)
         return {}
     out: dict[str, dict] = {}
-    for key, val in (raw.items() if isinstance(raw, dict) else []):
+    for key, val in raw.items() if isinstance(raw, dict) else []:
         if key.startswith(("_", "$")):
             continue
         entry = _coerce_pricing_entry(val)
