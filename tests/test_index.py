@@ -533,7 +533,7 @@ def test_dedupe_entities_merges_textual_variants_not_distinct_spellings(monkeypa
     (one bubble per person); genuinely different spellings stay separate. The
     semantic pass is disabled here so this stays a fast, model-free unit test of
     the conservative normalizer — semantic merging is covered by the test below."""
-    monkeypatch.setattr(store, "ENTITY_SEMANTIC_MERGE", False)
+    monkeypatch.setattr("server.index.store.entities.ENTITY_SEMANTIC_MERGE", False)
     import sqlite3 as _sql
 
     ws = "/fake/ws-dedupe"
@@ -590,7 +590,7 @@ def test_dedupe_entities_semantic_merge_catches_spelling_variants(monkeypatch):
         return np.vstack([v / np.linalg.norm(v) for v in rows])
 
     monkeypatch.setattr("server.index.embedder.embed_documents", fake_embed)
-    monkeypatch.setattr(store, "ENTITY_SEMANTIC_MERGE", True)
+    monkeypatch.setattr("server.index.store.entities.ENTITY_SEMANTIC_MERGE", True)
 
     ws = "/fake/ws-sem"
     for f, nm in [("a.md", "Postgres"), ("b.md", "PostgreSQL"), ("c.md", "Redis")]:
@@ -632,7 +632,7 @@ def test_file_graph_assigns_communities(monkeypatch):
     """file_graph nodes carry a `community` index and edge `degree`: two
     entity-disjoint file clusters land in different communities, and nodes within
     a cluster share one. (Leiden when available, networkx Louvain otherwise.)"""
-    monkeypatch.setattr(store, "ENTITY_SEMANTIC_MERGE", False)
+    monkeypatch.setattr("server.index.store.entities.ENTITY_SEMANTIC_MERGE", False)
     ws = "/fake/ws-comm"
     clusters = {
         ("a.md", "b.md", "c.md"): [("Alpha", "product"), ("Beta", "product")],
@@ -667,7 +667,7 @@ def test_umap_graph_projects_files_to_2d(monkeypatch):
     """umap_graph lays files out by an embedding projection: every node gets
     ux/uy in [0,1] (the semantic-map view) plus the file_graph community. Uses
     the PCA path here (n<5) so it's fast and deterministic — no UMAP/numba."""
-    monkeypatch.setattr(store, "ENTITY_SEMANTIC_MERGE", False)
+    monkeypatch.setattr("server.index.store.entities.ENTITY_SEMANTIC_MERGE", False)
     ws = "/fake/ws-umap"
     for i in range(4):
         store.replace_file(
@@ -698,7 +698,7 @@ def test_umap_graph_projects_files_to_2d(monkeypatch):
 def test_all_workspaces_umap_graph_spans_every_workspace(monkeypatch):
     """The cross-workspace UMAP projects files from ALL indexed workspaces into one
     map (the fix for 'All indexed' + 'UMAP map' previously showing one folder)."""
-    monkeypatch.setattr(store, "ENTITY_SEMANTIC_MERGE", False)
+    monkeypatch.setattr("server.index.store.entities.ENTITY_SEMANTIC_MERGE", False)
     for ws in ("/fake/ws-uall-a", "/fake/ws-uall-b"):
         for i in range(3):
             store.replace_file(
@@ -869,7 +869,8 @@ def test_evidence_line_finds_cooccurrence():
 def test_relations2_repointed_on_entity_merge(monkeypatch):
     """When entity dedup merges two variants, their node-id-keyed relations are
     repointed onto the canonical node instead of dangling."""
-    monkeypatch.setattr(store, "ENTITY_SEMANTIC_MERGE", False)  # lexical merge only, no embedder
+    # Lexical merge only, no embedder.
+    monkeypatch.setattr("server.index.store.entities.ENTITY_SEMANTIC_MERGE", False)
     from server.index import relstore
 
     ws = "/fake/ws-rel2-merge"
@@ -948,7 +949,7 @@ def test_workspace_graph_query_tool_cites_sources(monkeypatch):
 def test_entity_descriptions_persist_and_surface(monkeypatch):
     """set_node_descriptions stores a one-line description on the canonical node;
     entity_graph surfaces it on the centre node (the entity-pivot view)."""
-    monkeypatch.setattr(store, "ENTITY_SEMANTIC_MERGE", False)
+    monkeypatch.setattr("server.index.store.entities.ENTITY_SEMANTIC_MERGE", False)
     ws = "/fake/ws-desc"
     store.replace_file(
         ws,
