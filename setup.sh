@@ -654,7 +654,7 @@ if [ "$WANT_LOCAL" -eq 1 ]; then
         "from server.index.embedder import ensure_embed_model; ensure_embed_model()"
 
     download_model "GLiNER entity extractor (~0.8 GB)" \
-        "models/gliner-mediumv2.1/gliner_config.json" \
+        "models/gliner-large-v2.5/gliner_config.json" \
         "from server.index.extractor import ensure_gliner_model; ensure_gliner_model()"
 
     download_model "GLiNER2 entity extractor (~0.8 GB, optional NER model)" \
