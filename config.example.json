@@ -119,6 +119,19 @@
       "filename": "Qwen3.5-9B-Q4_K_M.gguf",
       "dir": "qwen3.5-9b",
       "ctx": 32768
+    },
+    "local_ministral3_14b": {
+      "id": "local:ministral3-14",
+      "label": "Ministral 3 14B (Local)",
+      "thinking": "none",
+      "effort_tier": "none",
+      "is_local": true,
+      "supports_thinking": true,
+      "supports_tools": true,
+      "repo_id": "unsloth/Ministral-3-14B-Reasoning-2512-GGUF",
+      "filename": "Ministral-3-14B-Reasoning-2512-UD-Q4_K_XL.gguf",
+      "dir": "ministral3-14",
+      "ctx": 32768
     }
   },
   "default_chat_model": "opus5.0",
