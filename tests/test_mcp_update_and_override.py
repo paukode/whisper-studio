@@ -1,15 +1,14 @@
-"""Two medium MCP fixes:
+"""Two MCP contracts around the persisted `enabled` flag:
 
-(A) PUT /api/mcp/servers/{name} (mcp_update_server) must preserve the persisted
-    `enabled` flag when it rewrites a server entry. Rebuilding it as
-    {command, args, env} only dropped the flag; load_config()'s backfill then
-    persisted enabled=false, silently unticking an enabled server on every edit
-    or rename (its tools vanished and call_tool returned "... is disabled").
+(A) PUT /api/mcp/servers/{name} (mcp_update_server) preserves the persisted
+    `enabled` flag when it rewrites a server entry. A rewrite that reduced the
+    entry to {command, args, env} would drop the flag, and load_config()'s
+    backfill would then persist enabled=false — unticking an enabled server on
+    every edit or rename.
 
-(B) get_bedrock_tools must never advertise a server whose persisted `enabled`
-    flag is off, even when a (deprecated) per-request `enabled_names` override
-    asks for it — because call_tool enforces the persisted flag at execution
-    time, so advertising a disabled server only yields "disabled" at call time.
+(B) get_bedrock_tools advertises exactly the servers whose persisted `enabled`
+    flag is on. That is the same set call_tool will run, since call_tool
+    enforces the flag at execution time.
 """
 
 import asyncio
@@ -58,8 +57,8 @@ class _FakeRequest:
 def _bind_fresh_manager(monkeypatch) -> MCPManager:
     """Install a fresh MCPManager as the module singleton the route uses, with
     the connection lifecycle neutered so the PUT handler exercises config
-    persistence only (no real MCP subprocess). The refactored start/stop tasks
-    are intentionally not driven here."""
+    persistence only (no real MCP subprocess). The start/stop tasks are
+    intentionally not driven here."""
     mgr = MCPManager()
 
     async def _noop(*args, **kwargs):
@@ -117,7 +116,7 @@ def test_put_rename_preserves_enabled_flag(isolated_mcp, monkeypatch):
 
 def test_put_edit_keeps_disabled_disabled(isolated_mcp, monkeypatch):
     """The flag is preserved in both directions: editing a disabled server
-    must not silently enable it."""
+    does not silently enable it."""
     with open(isolated_mcp, "w") as f:
         json.dump(
             {"servers": {"alpha": {"command": "c", "args": [], "env": {}, "enabled": False}}},
@@ -132,7 +131,7 @@ def test_put_edit_keeps_disabled_disabled(isolated_mcp, monkeypatch):
     assert on_disk["alpha"]["enabled"] is False
 
 
-# --- (B) override cannot advertise a persisted-disabled server ----------
+# --- (B) advertisement matches what call_tool will run ------------------
 
 
 def _seed(mgr: MCPManager) -> None:
@@ -145,10 +144,9 @@ def _seed(mgr: MCPManager) -> None:
         }
 
 
-def test_override_cannot_advertise_disabled_server(isolated_mcp):
-    """A per-request enabled_names override that names a persisted-disabled
-    server must NOT advertise its tools — advertisement is intersected with
-    the persisted-enabled set so it matches what call_tool would run."""
+def test_disabled_server_is_not_advertised(isolated_mcp):
+    """A server whose persisted `enabled` flag is off contributes no tools,
+    while its enabled sibling still does."""
     with open(isolated_mcp, "w") as f:
         json.dump(
             {
@@ -162,17 +160,32 @@ def test_override_cannot_advertise_disabled_server(isolated_mcp):
     mgr = MCPManager()
     _seed(mgr)
 
-    # Override asks for both; beta is persisted-off so only alpha advertises.
-    both = mgr.get_bedrock_tools(enabled_names={"alpha", "beta"})
-    assert {t["name"] for t in both} == {"mcp__alpha__ping"}
-
-    # Asking only for the disabled server yields nothing.
-    assert mgr.get_bedrock_tools(enabled_names={"beta"}) == []
+    assert {t["name"] for t in mgr.get_bedrock_tools()} == {"mcp__alpha__ping"}
 
 
-def test_override_can_still_narrow(isolated_mcp):
-    """The override may only NARROW the persisted set, never widen it: with
-    both servers enabled, an override of {alpha} drops beta."""
+def test_disabled_server_is_also_refused_at_call_time(isolated_mcp):
+    """Advertisement and execution agree: beta's tool is neither advertised
+    nor callable, so a stale tool name from session history cannot reach it."""
+    with open(isolated_mcp, "w") as f:
+        json.dump(
+            {
+                "servers": {
+                    "alpha": {"command": "x", "args": [], "env": {}, "enabled": True},
+                    "beta": {"command": "y", "args": [], "env": {}, "enabled": False},
+                }
+            },
+            f,
+        )
+    mgr = MCPManager()
+    _seed(mgr)
+
+    result = asyncio.run(mgr.call_tool("mcp__beta__echo", {}))
+    assert "disabled" in result
+    assert "beta" in result
+
+
+def test_enabled_servers_are_all_advertised(isolated_mcp):
+    """With both flags on, both servers' tools are advertised."""
     with open(isolated_mcp, "w") as f:
         json.dump(
             {
@@ -186,5 +199,7 @@ def test_override_can_still_narrow(isolated_mcp):
     mgr = MCPManager()
     _seed(mgr)
 
-    only_alpha = mgr.get_bedrock_tools(enabled_names={"alpha"})
-    assert {t["name"] for t in only_alpha} == {"mcp__alpha__ping"}
+    assert {t["name"] for t in mgr.get_bedrock_tools()} == {
+        "mcp__alpha__ping",
+        "mcp__beta__echo",
+    }

@@ -92,23 +92,21 @@ def assemble_tool_pool(
     *,
     plan_mode: bool = False,
     ws_connected: bool = False,
-    mcp_enabled_names: set[str] | None = None,
     suppress_workspace_search: bool = False,
     session_id: str = "",
     progressive: bool = False,
 ) -> list[dict]:
     """Advertised tool pool for one model request.
 
-    Default (``progressive=False``) is the byte-identical legacy full pool —
-    cron and the agent runtime keep their existing behavior. The interactive
-    chat loop passes ``progressive=True``: when the ``progressive_tools``
-    flag is on, the pool is partitioned to core + this session's activated
-    tools, with everything else discoverable via tool_search.
+    Default (``progressive=False``) is the full pool — cron and the agent
+    runtime use it. The interactive chat loop passes ``progressive=True``:
+    when the ``progressive_tools`` flag is on, the pool is partitioned to
+    core + this session's activated tools, with everything else discoverable
+    via tool_search.
     """
     catalog = assemble_full_catalog(
         plan_mode=plan_mode,
         ws_connected=ws_connected,
-        mcp_enabled_names=mcp_enabled_names,
         suppress_workspace_search=suppress_workspace_search,
     )
     if not progressive or not session_id:
@@ -128,7 +126,6 @@ def assemble_partitioned_pool(
     *,
     plan_mode: bool = False,
     ws_connected: bool = False,
-    mcp_enabled_names: set[str] | None = None,
     suppress_workspace_search: bool = False,
     session_id: str = "",
     ultracode: bool = False,
@@ -139,7 +136,6 @@ def assemble_partitioned_pool(
     catalog = assemble_full_catalog(
         plan_mode=plan_mode,
         ws_connected=ws_connected,
-        mcp_enabled_names=mcp_enabled_names,
         suppress_workspace_search=suppress_workspace_search,
         ultracode=ultracode,
     )
@@ -157,7 +153,6 @@ def assemble_full_catalog(
     *,
     plan_mode: bool = False,
     ws_connected: bool = False,
-    mcp_enabled_names: set[str] | None = None,
     suppress_workspace_search: bool = False,
     ultracode: bool = False,
 ) -> list[dict]:
@@ -166,11 +161,6 @@ def assemble_full_catalog(
     Tier 1 (catalog): All registered tools from all sources.
     Tier 2 (mode filter): Remove tools incompatible with current mode.
     Tier 3 (sort & merge): Built-ins sorted, MCP sorted, concatenated.
-
-    `mcp_enabled_names` controls which MCP servers' tools are exposed:
-    - None (default): each server's persisted `enabled` flag is honoured.
-    - Explicit set: only those servers' tools are advertised — used for
-      per-request overrides from the chat toolbar's MCP checklist.
 
     This is the PRE-PARTITION catalog: also the single source of truth for
     tool_search, which must see every tool regardless of deferral.
@@ -250,7 +240,7 @@ def assemble_full_catalog(
 
             builtin_tools += PREVIEW_TOOLS
 
-    mcp_tools = list(mcp_manager.get_bedrock_tools(enabled_names=mcp_enabled_names))
+    mcp_tools = list(mcp_manager.get_bedrock_tools())
 
     # Tier 2: mode filtering
     if plan_mode:

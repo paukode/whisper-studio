@@ -900,17 +900,6 @@ async def chat_endpoint(request: Request):
     session_denials = body.get("session_denials", {})
     # Session-scoped tool approvals (categories pre-approved by user)
     session_approvals = body.get("session_approvals", {})
-    # Per-request MCP server allowlist. None means "use the persisted
-    # enabled flag on each server". When provided as a list (possibly
-    # empty), only those servers' tools are advertised this turn — lets
-    # the user toggle MCP per-conversation from the toolbar without
-    # rewriting the global config.
-    raw_mcp = body.get("mcp_servers")
-    mcp_enabled_names: set[str] | None
-    if isinstance(raw_mcp, list):
-        mcp_enabled_names = {str(n) for n in raw_mcp}
-    else:
-        mcp_enabled_names = None
     # Continuation turn: carries the tool_result for a tool_use that was
     # paused awaiting user approval. When set, this is a continuation
     # rather than a new user message — the LLM resumes where it paused.
@@ -1047,7 +1036,6 @@ async def chat_endpoint(request: Request):
     _advertised0, _deferred0, _core_count0 = assemble_partitioned_pool(
         plan_mode=plan_mode,
         ws_connected=bool(ws_path),
-        mcp_enabled_names=mcp_enabled_names,
         session_id=session_id,
         ultracode=ultracode_active,
     )
@@ -1388,7 +1376,6 @@ async def chat_endpoint(request: Request):
         plan_mode=plan_mode,
         mode=mode,
         ws_path=ws_path,
-        mcp_enabled_names=mcp_enabled_names,
         session_approvals=session_approvals,
         session_denials=session_denials,
         session_config=session_config,
@@ -1416,7 +1403,6 @@ async def chat_endpoint(request: Request):
         plan_mode=plan_mode,
         mode=mode,
         ws_path=ws_path,
-        mcp_enabled_names=mcp_enabled_names,
         session_approvals=session_approvals,
         session_denials=session_denials,
         session_config=session_config,
@@ -1594,7 +1580,6 @@ async def chat_endpoint(request: Request):
                 _catalog = assemble_full_catalog(
                     plan_mode=plan_mode,
                     ws_connected=bool(ws_path),
-                    mcp_enabled_names=mcp_enabled_names,
                     suppress_workspace_search=suppress_ws_search,
                 )
                 if _is_ff_enabled("progressive_tools"):

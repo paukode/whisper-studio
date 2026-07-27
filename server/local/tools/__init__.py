@@ -120,7 +120,6 @@ CORE_TOOL_NAMES = {
 def get_tool_schemas(
     plan_mode: bool = False,
     ws_connected: bool = False,
-    mcp_enabled_names: set[str] | None = None,
     scope: str = "all",
     suppress_workspace_search: bool = False,
 ) -> tuple[list[dict], set[str]]:
@@ -138,7 +137,6 @@ def get_tool_schemas(
     pool = assemble_tool_pool(
         plan_mode=plan_mode,
         ws_connected=ws_connected,
-        mcp_enabled_names=mcp_enabled_names,
         suppress_workspace_search=suppress_workspace_search,
     )
     if scope in ("core", "core_web"):

@@ -252,7 +252,6 @@ def _execute_cron_prompt(job_id: str):
         pool = assemble_tool_pool(
             plan_mode=False,
             ws_connected=bool(get_workspace_path()),
-            mcp_enabled_names=None,
             suppress_workspace_search=False,
         )
         cron_tools = _assemble_cron_tools(pool)

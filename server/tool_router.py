@@ -270,14 +270,13 @@ async def route_tool(
         from server.chat.tool_pool import assemble_full_catalog
         from server.workspace import get_workspace_path
 
-        # The TRUE full catalog (pre-partition, post nothing): the old
-        # hand-rolled union silently missed plan/result-cache/preview/
-        # worktree/background-task tools. Deferred tools found here are
-        # ACTIVATED for this session so they're callable next round.
+        # The TRUE full catalog (pre-partition): every registered tool,
+        # including plan/result-cache/preview/worktree/background-task tools.
+        # Deferred tools found here are ACTIVATED for this session so they're
+        # callable next round.
         all_t = assemble_full_catalog(
             plan_mode=False,
             ws_connected=bool(get_workspace_path()),
-            mcp_enabled_names=None,
         )
         output = execute_tool_search(tool_input, all_t, session_id=session_id)
         return output, side_effects

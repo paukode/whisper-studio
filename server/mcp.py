@@ -297,30 +297,13 @@ class MCPManager:
     def _sanitize_tool_name(self, name: str) -> str:
         return name.replace("-", "_").replace(" ", "_")
 
-    def get_bedrock_tools(self, enabled_names: set[str] | None = None) -> list[dict]:
+    def get_bedrock_tools(self) -> list[dict]:
         """Return the MCP tools to advertise to Bedrock.
 
-        Advertisement is always gated by the persisted per-server `enabled`
-        flag in mcp_servers.json:
-
-        - When `enabled_names` is None: advertise exactly the persisted-
-          enabled servers. This is the normal path.
-        - When `enabled_names` is a (possibly empty) set: it is intersected
-          with the persisted-enabled set, so it can only ever NARROW the
-          selection, never advertise a server whose persisted flag is off.
-
-        The per-request `enabled_names` override is DEPRECATED. It used to be
-        able to advertise persisted-disabled servers for a single turn, but
-        call_tool() independently enforces the persisted flag at EXECUTION
-        time (is_server_enabled), so every such advertised tool just returned
-        "[MCP] Server ... is disabled". The frontend no longer sends it (see
-        useMcpToggle.ts: "there is no separate per-turn override anymore").
-        Intersecting here keeps advertisement in agreement with what call_tool
-        will actually run.
-        TODO (follow-up, out of this file's scope): drop the `enabled_names`
-        param entirely along with the `mcp_servers` request field in
-        server/chat/routes.py and the `mcp_enabled_names` plumbing in
-        server/chat/tool_pool.py.
+        Advertisement is gated by the persisted per-server `enabled` flag in
+        mcp_servers.json: exactly the enabled servers contribute tools, which
+        matches what call_tool() will accept at execution time (it enforces
+        the same flag via is_server_enabled).
 
         Each MCP tool definition costs ~150–200 tokens in the Bedrock
         request, so filtering here is the leverage point for the user's
@@ -328,13 +311,7 @@ class MCPManager:
         stays warm so a server can be re-enabled without paying a cold
         start; only the tool advertisement is gated.
         """
-        persisted_enabled = self.globally_enabled_servers()
-        if enabled_names is None:
-            enabled_names = persisted_enabled
-        else:
-            # A deprecated override can only narrow, never widen: never
-            # advertise a server whose persisted flag is off.
-            enabled_names = enabled_names & persisted_enabled
+        enabled_servers = self.globally_enabled_servers()
 
         tools = []
         # Two distinct tool_keys can sanitize to the same Bedrock name
@@ -346,7 +323,7 @@ class MCPManager:
         # agreement (the later, shadowed tool was already unreachable).
         seen: set[str] = set()
         for tool_key, tool_info in list(self._tools.items()):
-            if tool_info["server_name"] not in enabled_names:
+            if tool_info["server_name"] not in enabled_servers:
                 continue
             safe_name = self._sanitize_tool_name(tool_key)
             if safe_name in seen:
