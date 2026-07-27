@@ -229,10 +229,9 @@ export interface Approval {
 }
 
 /**
- * Generic approval request emitted by the backend. Replaces the per-action
- * WsApproval union — the frontend now reads `preview` to pick a renderer
- * instead of switching on `action`. Categories come from the backend's
- * ApprovalSpec registry and are extensible (no longer a literal union).
+ * Generic approval request emitted by the backend. The frontend reads
+ * `preview` to pick a renderer. Categories come from the backend's
+ * ApprovalSpec registry and are open-ended strings, not a literal union.
  */
 export type PreviewKind = 'diff' | 'command' | 'list' | 'text';
 export type RiskHint = 'low' | 'medium' | 'high';

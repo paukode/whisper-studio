@@ -484,9 +484,8 @@ export async function readSSEStream(
           if (parsed.notify_user) {
             const n = parsed.notify_user as Record<string, string>;
             const msg = n.message ?? '';
-            // Honor the tool's declared status (the schema always offered
-            // success/warning/error; the toast previously flattened them all
-            // to info) and the title; warnings/errors linger longer.
+            // Honor the tool's declared status (success/warning/error) and title;
+            // warnings and errors linger longer.
             const type =
               n.status === 'success' || n.status === 'warning' || n.status === 'error'
                 ? n.status

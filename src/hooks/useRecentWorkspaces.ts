@@ -5,12 +5,8 @@ import { get } from '@/api/client';
  * Recent workspace paths, newest first — the single source of truth for
  * BOTH the toolbar Workspace dropdown and the Connect Workspace dialog.
  *
- * They share the react-query cache key, so the cached shape must be
- * identical for every consumer: previously each component had its own
- * queryFn under the same key with different shapes (string[] vs
- * {path,name}[]), and whichever ran first poisoned the cache for the
- * other — opening the toolbar dropdown then the dialog crashed it on
- * `ws.path.split` of undefined.
+ * They share the react-query cache key ['workspace-recent'], so every consumer
+ * must read the same shape — this hook is the only queryFn for that key.
  */
 export function useRecentWorkspaces(enabled: boolean): string[] {
   const { data } = useQuery({

@@ -39,7 +39,7 @@ export async function fetchMcpServers(): Promise<MCPServerInfo[]> {
  * (`['mcp-servers']`) and the chat-toolbar's `settingsStore.mcpServers` — so the
  * change shows immediately in both places with no page refresh. Rolls back both
  * on failure. This is the single source of truth for enabling/disabling an MCP
- * server; there is no separate per-turn override anymore.
+ * server.
  */
 export function useMcpToggle(): (name: string, enabled: boolean) => Promise<void> {
   const queryClient = useQueryClient();

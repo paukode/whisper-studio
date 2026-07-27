@@ -4,9 +4,7 @@
    Applies everywhere MarkdownRenderer / StreamingMarkdown render: the dock
    plan panel, file preview, notebook cells, and chat. Chat bubbles keep a
    few tighter overrides via the more-specific `.chat-msg.assistant …` rules
-   in style.css; everything else inherits this modern baseline (previously the
-   standalone panels fell back to raw browser defaults — hence the oversized
-   H1 and unstyled code).
+   in style.css; everything else inherits this modern baseline.
 
    Loaded AFTER style.css so the authoritative code-block rules below win ties.
    ───────────────────────────────────────────────────────────────────────── */

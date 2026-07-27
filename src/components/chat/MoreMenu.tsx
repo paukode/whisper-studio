@@ -95,8 +95,6 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
         )}
       </button>
       <div className="toolbar-dropdown more-pop" id="moreMenu" role="group" aria-label="More controls" style={{ display: open ? 'block' : 'none' }}>
-        {/* Response length now lives in the toolbar (Brief/Normal/Detailed),
-         *  so it's no longer duplicated here. */}
         <button
           type="button"
           className={`more-row${autoMemory ? ' on' : ''}`}

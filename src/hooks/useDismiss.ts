@@ -64,9 +64,7 @@ const FOCUSABLE_SELECTOR = [
 
 /**
  * Trap Tab focus within `ref` while `enabled`, and restore focus to the
- * previously-focused element when it unmounts/disables. Modals previously
- * let Tab walk out into the page behind them and never returned focus to
- * the trigger — the two biggest keyboard-a11y gaps.
+ * previously-focused element when it unmounts/disables.
  *
  * @param opts.initialFocus  focus the first focusable on enable (default true).
  *                           Pass false when the host already manages initial

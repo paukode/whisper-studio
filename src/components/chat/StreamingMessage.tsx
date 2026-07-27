@@ -29,8 +29,7 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
   const streamToolUse = useActiveChatStore((s) => s.currentStreamToolUse);
   // Turn-local team reports, folded live from team_progress SSE events.
   // Rendering them here is what makes agents visibly run in parallel DURING
-  // the turn — before this, the streaming view only knew the generic
-  // AgentCard and every live event was dropped.
+  // the turn.
   const liveTeamReports = useActiveChatStore((s) => s.liveTeamReports);
   // Local on-device models don't emit thinking — the pre-first-token wait is
   // just generation warm-up, so label it honestly rather than "Thinking…".

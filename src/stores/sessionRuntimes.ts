@@ -193,9 +193,8 @@ function attachRuntimeSubscriptions(sid: string, entry: RuntimeEntry): void {
 }
 
 // ── Per-session cron/notification SSE ──────────────────────────────────
-// Replaces useSessionEventStream (active-session-only): a background live
-// session must receive its cron events too, since non-destructive
-// switching skips the rehydrate that used to replay them.
+// A background live session receives its cron events too, not just the active
+// one: non-destructive session switching does not replay them.
 
 /** Memory activity payload forwarded by /api/sessions/{id}/events. */
 interface MemoryEventPayload {

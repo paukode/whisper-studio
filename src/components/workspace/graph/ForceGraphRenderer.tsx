@@ -4,10 +4,7 @@ import type { IndexGraph } from '@/api/workspace';
 
 /**
  * Force-directed renderer for the workspace file-relationship graph, built on
- * react-force-graph-2d (canvas). This is the first of a planned set of
- * interchangeable renderers — a Cytoscape.js and a sigma.js renderer can drop
- * in behind the same {graph, width, height, selectedId, onSelect, onReveal}
- * contract.
+ * react-force-graph-2d (canvas).
  *
  * Interaction: single-click selects a node (it + its direct neighbours are
  * highlighted, the rest dimmed); double-click reveals the file in Finder;

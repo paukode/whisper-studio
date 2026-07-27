@@ -12,9 +12,9 @@ type ViewKind = 'force' | 'communities' | 'umap';
 /**
  * Full-screen overlay showing the file-relationship graph for an indexed
  * workspace. Opened from the connect dialog's indexed-workspace list. The view
- * is swappable: "Force" (default coloring) and "Communities" (Leiden clusters,
- * nodes sized by connection degree) are live; "UMAP map" (a semantic embedding
- * projection of the files) is the remaining planned view.
+ * is swappable: "Force" (default coloring), "Communities" (Leiden clusters, nodes
+ * sized by connection degree), and "UMAP map" (a semantic embedding projection of
+ * the files) are all live.
  */
 export const WorkspaceGraphOverlay: React.FC = () => {
   const workspace = useUIStore((s) => s.graphWorkspace);

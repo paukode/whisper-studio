@@ -85,7 +85,7 @@ export const CommandPalette: React.FC = () => {
     // Permission modes. Same write path as ChatInput's Mode dropdown
     // (handleSelectMode): flip the Plan flag, update the config's permissionMode,
     // then PUT /api/permissions/mode so the backend session_approvals view stays
-    // in sync. Previously these just opened the Settings tab instead of applying.
+    // in sync.
     for (const { value, label } of PERMISSION_MODES) {
       list.push({ id: `mode-${label}`, group: 'Mode', title: `Set permission mode: ${label}`, keywords: 'permission',
         run: run(() => {
