@@ -135,6 +135,20 @@ def resident_key() -> str | None:
         return _state["key"] if _proc is not None and _proc.poll() is None else None
 
 
+def resident_n_ctx() -> int | None:
+    """Context size the running process was started with, or None.
+
+    This is the TRUE window for an on-device turn — the ``--ctx-size`` the
+    subprocess was launched with — so the context meter must read it here rather
+    than from the cloud ``context_windows`` config map, which knows nothing about
+    local models.
+    """
+    with _lock:
+        if _proc is None or _proc.poll() is not None:
+            return None
+        return _state["n_ctx"]
+
+
 def base_url() -> str | None:
     with _lock:
         if _proc is None or _proc.poll() is not None or not _state["port"]:
