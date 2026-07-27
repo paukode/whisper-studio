@@ -61,9 +61,7 @@ def rules_block() -> str:
     """The rules formatted as a prompt section, or '' if no rules are set.
 
     Carries its own leading blank line, like every other prompt section — the
-    registry joins sections with ``"".join`` and used to run this heading
-    straight onto the end of the identity text ("...documentation.## Output
-    rules").
+    registry joins sections with ``"".join``.
     """
     rules = load_prompt_rules()
     if not rules:

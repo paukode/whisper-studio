@@ -1,9 +1,7 @@
 """Cron run progress events and cooperative stop.
 
-Before this module a running cron job was a black box: the user saw a polled
-"Running…" chip and then, minutes later, the final card — no turns, no tool
-calls, no way to stop it. Now `cron_run.py` emits TeamProgressEvent-shaped
-frames (phase started/turn_start/tool_call/tool_result/completed/failed/
+``cron_run.py`` emits TeamProgressEvent-shaped frames
+(phase started/turn_start/tool_call/tool_result/completed/failed/
 stopped) on the agents event bus under ``type: "cron_progress"``; the
 long-lived session SSE forwards them as ``team_progress``, so the existing
 TeamReportCard/AgentCard fold renders a live per-tool log with zero new

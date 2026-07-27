@@ -68,7 +68,7 @@ WORKFLOW_TOOLS: list[dict] = [
     },
     {
         "name": "workflow_save",
-        "description": "Save a named, reusable workflow script (invocable later by name via workflow_run). Stored untrusted until the user approves it.",
+        "description": "Save a named, reusable workflow script (invocable later by name via workflow_run). Stored untrusted; each run by name shows an approval preview card.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -234,7 +234,7 @@ async def execute_workflow_save(tool_input) -> str:
     except ValueError as e:
         return f"Workflow script error: {e}"
     store.save_script(name, script, meta, trusted=False)
-    return f"Saved workflow '{name}' ({len(meta.get('phases', []))} phases). It is untrusted until you approve it in the Workflows panel; running it will prompt for approval."
+    return f"Saved workflow '{name}' ({len(meta.get('phases', []))} phases). Running it by name re-shows the approval preview card each time."
 
 
 def execute_workflow_list(tool_input, session_id) -> str:

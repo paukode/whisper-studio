@@ -218,10 +218,9 @@ async def git_events_endpoint():
 def git_changes_endpoint():
     """Combined status + diff in one round trip with a 1-second TTL cache.
 
-    Replaces two parallel calls (`/api/git/status` + `/api/git/diff`) the
-    GitChangesPanel used to make. The cache absorbs the assistant's tool
-    loop running `git status` / `git diff` repeatedly between rounds —
-    cuts subprocess count by ~70% under load."""
+    Returns status and per-file diff stats in one call. The cache absorbs the
+    assistant's tool loop running `git status` / `git diff` repeatedly between
+    rounds — cuts subprocess count by ~70% under load."""
     ws = _require_git_workspace()
     key = os.path.normpath(ws)
     now = time.monotonic()

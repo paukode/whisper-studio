@@ -48,7 +48,7 @@ MAX_AUTO_DENIALS = 2
 
 def _append_hook_context(state: "ToolState", outcome) -> None:
     """Fold a PostToolUse[Failure] hook's additionalContext into the tool result
-    so the model actually reads it next turn (the old fire_hook discarded it)."""
+    so the model actually reads it next turn."""
     if not outcome.contexts:
         return
     note = "\n".join(f"[Hook] {c}" for c in outcome.contexts)

@@ -175,7 +175,7 @@ async def index_graph_all():
 async def index_graph_umap_all():
     """Cross-workspace semantic map: the unified all-workspaces graph laid out by a
     single UMAP over every indexed file's mean vector. Powers "All indexed" +
-    "UMAP map" (previously this combination fell back to one workspace)."""
+    "UMAP map"."""
     return store.all_workspaces_umap_graph()
 
 

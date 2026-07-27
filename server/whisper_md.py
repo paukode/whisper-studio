@@ -7,9 +7,8 @@ WHISPER.md files load only when the turn actually concerns their directory.
 Everything else is announced by path, for the model to read with ws_read_file if
 it turns out to be relevant.
 
-Both halves are capped. An unbounded file used to be inlined verbatim on every
-single request, so one long WHISPER.md silently taxed every turn in the session
-and could crowd out the conversation itself.
+Both halves are capped, so one long WHISPER.md cannot silently tax every turn in
+the session or crowd out the conversation itself.
 """
 
 from __future__ import annotations

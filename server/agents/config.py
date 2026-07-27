@@ -231,8 +231,7 @@ AGENT_TYPES: dict[str, AgentConfig] = {
         max_turns=5,
         max_tokens=4096,
         allowed_tools=MEMORY_RW_TOOLS,
-        # Single source of truth in server/memory/prompts.py (previously this
-        # held a drifting inline copy of the same instructions).
+        # Single source of truth in server/memory/prompts.py.
         system_prompt=EXTRACTION_SYSTEM_PROMPT,
     ),
     # Dream consolidation: reorganizes the EXISTING store (merge/update/prune),

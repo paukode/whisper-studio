@@ -65,7 +65,7 @@ def test_discovery_skips_vendor_directories(tmp_path):
 
 
 def test_oversized_files_are_capped_with_a_pointer_to_the_rest(tmp_path):
-    """An unbounded file used to be inlined verbatim on every single request."""
+    """An oversized file is capped, never inlined verbatim on every request."""
     ws = str(tmp_path)
     _write(ws, "WHISPER.md", "x" * (ROOT_MAX_CHARS * 3))
     _write(ws, "api/WHISPER.md", "y" * (SCOPED_MAX_CHARS * 3))

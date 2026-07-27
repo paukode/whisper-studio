@@ -44,7 +44,8 @@ async def ws_browse(path: str = ""):
                 mtime = 0.0
             if os.path.isdir(full):
                 dirs.append(name)
-                # `dirs` (flat names) is kept verbatim for the legacy template.
+                # `dirs` (flat names) is kept as the fallback shape the client
+                # reads when `entries` is absent (see workspaceConnectHelpers.ts).
                 entries.append({"name": name, "mtime": mtime})
             elif os.path.isfile(full):
                 files.append({"name": name, "mtime": mtime})

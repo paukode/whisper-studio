@@ -1,9 +1,9 @@
 """Persistent notification log.
 
-notify_user was a fire-and-forget 5-second toast: a user away from the screen
-lost the message forever (only recoverable by expanding the raw tool trace).
-This table gives every notification — from chat turns, agents, and cron runs —
-a durable, queryable record behind the header bell.
+notify_user shows a 5-second toast. This table gives every notification, from
+chat turns, agents, and cron runs, a durable, queryable record that outlives
+the toast and is readable over ``GET /api/notifications`` (no UI surfaces it
+yet), so a user away from the screen can catch up.
 """
 
 import sqlite3

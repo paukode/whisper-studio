@@ -330,8 +330,7 @@ def load_config(workspace_path: str | None = None) -> dict:
         # catalog it REPLACES the built-in DEFAULTS wholesale, rather than being
         # unioned key-by-key underneath it. The config file is the single source
         # of truth for the model list, so a renamed/removed model can't collide
-        # with (or be resurrected by) a hardcoded default — that key-drift union
-        # is exactly what used to surface "Opus 4.6" twice. DEFAULTS' catalog is
+        # with (or be resurrected by) a hardcoded default. DEFAULTS' catalog is
         # only the fallback when config defines no chat_models (e.g. empty/first-
         # run config).
         if isinstance(user_stored.get("chat_models"), dict) and user_stored["chat_models"]:
@@ -467,7 +466,7 @@ def set_feature_flag(flag_name: str, enabled: bool) -> None:
 
     A flag toggle should be surgical. Re-serializing the whole file via
     save_config()/json.dump reflows formatting (e.g. collapses aligned
-    chat_models one-liners) and historically flattened the rich chat_models
+    chat_models one-liners) and flattens the rich chat_models
     shape, silently dropping fields like requires_data_retention. This patches
     the flag's value in place inside the feature_flags object; it only falls
     back to a structured write when config.json has no feature_flags block at

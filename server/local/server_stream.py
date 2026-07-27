@@ -50,8 +50,7 @@ def has_pause(session_id: str) -> bool:
 
 
 # ── Post-turn memory hooks ───────────────────────────────────────────────────
-# These used to live alongside the in-process streamer; they are model-agnostic
-# bookkeeping, so they moved here with the single on-device path.
+# Model-agnostic post-turn bookkeeping for the on-device path.
 
 
 def _spawn_session_update(model_key: str, messages: list[dict], session_id: str) -> None:
@@ -476,8 +475,8 @@ async def _stream_round(base_url: str, payload: dict):
             f"{base_url}/v1/chat/completions",
             # include_usage is what makes llama-server append a final chunk
             # carrying prompt/completion token counts. WITHOUT it the stream ends
-            # with only a `timings` object, which is why on-device turns used to
-            # report 0 input tokens and a chars/4 guess for output.
+            # with only a `timings` object, and output falls back to the chars/4
+            # estimate (see the fallback documented at the top of this module).
             json={**payload, "stream": True, "stream_options": {"include_usage": True}},
         ) as resp:
             if resp.status_code != 200:
@@ -705,7 +704,6 @@ async def stream_chat(
         schemas, _ = get_tool_schemas(
             plan_mode=tool_ctx.get("plan_mode", False),
             ws_connected=tool_ctx.get("ws_connected", False),
-            mcp_enabled_names=tool_ctx.get("mcp_enabled_names"),
             scope=tool_ctx.get("tool_scope", "core_web"),
             suppress_workspace_search=tool_ctx.get("suppress_ws_search", False),
         )

@@ -84,7 +84,7 @@ def _raise_fd_soft_limit() -> None:
     """Bump RLIMIT_NOFILE soft to the hard cap so a burst of agents
     can't exhaust the macOS default of 256 file descriptors.
 
-    The cascade we used to see on team-agent spawns started here:
+    Without the bump, a team-agent spawn cascades:
         [Errno 24] Too many open files
         -> sqlite "unable to open database file"
         -> "Could not connect to bedrock-runtime…" (socket() returns 24)
@@ -346,8 +346,7 @@ def _spa_index_response() -> Response:
 
 @app.get("/")
 async def index():
-    # Serve the React build; without one there is nothing to serve (the
-    # old vanilla-JS template fallback was removed once it went stale).
+    # Serve the React build; without one there is nothing to serve.
     return _spa_index_response()
 
 

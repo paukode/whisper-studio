@@ -1,10 +1,11 @@
-"""Persistent notification log behind the header bell.
+"""Persistent notification log.
 
 Single choke-point write: the ``notify_user`` branch in server/tool_router.py
 calls :func:`record_notification` best-effort, so chat turns, agent runs, and
 cron jobs (which all dispatch through ``route_tool``) land in one log with an
 ``origin`` tag. The ephemeral toast stays; this is the durable record a user
-who was away from the screen can catch up from.
+who was away from the screen can catch up from, read over
+``GET /api/notifications`` (no UI surfaces it yet).
 """
 
 import logging

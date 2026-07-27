@@ -3,9 +3,7 @@ Buddy / Companion system for Whisper Studio.
 
 A small creature lives in the chat UI corner. It is:
   - Deterministic per machine (same user@host always gets the same creature).
-  - Purely cosmetic — it makes NO LLM calls and never touches a chat turn.
-    (It used to inject a persona into every system prompt and fire a Bedrock
-    reaction call ~40% of turns; both were removed.)
+  - No LLM call on any chat turn; the only model call is the opt-in /fact endpoint.
   - Rendered client-side as an animated SVG from the rolled "bones"; the
     backend only rolls traits, names it deterministically, and persists the
     hatched/muted state.
