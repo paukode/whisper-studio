@@ -304,29 +304,6 @@ def git_branch_endpoint():
     }
 
 
-@router.get("/diff")
-def git_diff_endpoint():
-    """Diff summary for UI panel."""
-    ws = _require_git_workspace()
-    diff = fetch_git_diff(ws)
-    if diff is None:
-        return {"files_count": 0, "lines_added": 0, "lines_removed": 0, "per_file_stats": {}}
-    per_file = {}
-    for fname, fstat in diff.per_file_stats.items():
-        per_file[fname] = {
-            "added": fstat.added,
-            "removed": fstat.removed,
-            "is_binary": fstat.is_binary,
-            "is_untracked": fstat.is_untracked,
-        }
-    return {
-        "files_count": diff.files_count,
-        "lines_added": diff.lines_added,
-        "lines_removed": diff.lines_removed,
-        "per_file_stats": per_file,
-    }
-
-
 @router.get("/show")
 def git_show_endpoint(path: str):
     """Return the HEAD version of a file for diffing."""

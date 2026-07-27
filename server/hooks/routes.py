@@ -22,7 +22,6 @@ from server.hooks.schema import (
     HookDef,
     build_stdin_payload,
     canonical_event,
-    serialize_v2,
 )
 
 router = APIRouter(prefix="/api/hooks", tags=["hooks"])
@@ -182,9 +181,3 @@ async def revoke_project(request: Request):
     if not cfg.revoke_project_hooks(ws):
         return _err("No trusted project hooks to revoke")
     return {"revoked": True, "status": cfg.project_trust_status(ws)}
-
-
-@router.get("/export")
-async def export_hooks():
-    """The raw v2 document (for backup / copy between machines)."""
-    return serialize_v2(cfg.load_user_hooks())

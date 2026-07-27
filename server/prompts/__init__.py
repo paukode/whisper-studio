@@ -46,7 +46,7 @@ class PromptLayer(IntEnum):
     WORKSPACE = 30
     DYNAMIC = 40
     TOOL_GUIDANCE = 50
-    EXTENSION = 60
+    EXTENSION = 60  # reserved for plugin-registered sections; no in-repo user by design
 
 
 @dataclass

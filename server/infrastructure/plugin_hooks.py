@@ -26,11 +26,6 @@ def register_hook(event: str, fn) -> None:
     log.info("In-process hook registered for %s: %s", event, getattr(fn, "__qualname__", fn))
 
 
-def unregister_hook(event: str, fn) -> None:
-    if event in _hooks and fn in _hooks[event]:
-        _hooks[event].remove(fn)
-
-
 async def run_inprocess(event: str, payload: dict) -> list[dict]:
     """Run all in-process hooks for an event; returns their non-None results
     (structured-control dicts) in registration order. The engine merges them."""
@@ -65,12 +60,3 @@ def register_pre_tool_hook(fn):
 
     register_hook("PreToolUse", _adapter)
     log.info("Plugin pre-tool hook registered: %s", getattr(fn, "__qualname__", fn))
-
-
-async def run_pre_tool_hooks(tool_name: str, tool_input: dict) -> dict | None:
-    """Legacy entry point kept for any direct caller. Prefer the engine."""
-    results = await run_inprocess("PreToolUse", {"tool_name": tool_name, "tool_input": tool_input})
-    for r in results:
-        if r.get("decision") == "deny":
-            return {"reason": r.get("reason", ""), "findings": r.get("_findings")}
-    return None
