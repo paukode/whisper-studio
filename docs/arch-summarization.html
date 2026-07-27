@@ -102,11 +102,9 @@
       (<code>loaded_key()</code>), else the first downloaded model, so a summary never evicts the chat
       model to load a fixed one, and an <code>is_downloaded</code> guard means a summary never triggers a
       silent multi-GB download.</p>
-    <p>The condensed transcript is now threaded into the tool loop on the local <b>and</b>
-      OpenAI-on-Bedrock paths too. Previously only the cloud path passed it through, so
-      <code>summarize_transcript</code> returned "No transcript available to summarize." in those modes at
-      any transcript size. See <a href="arch-backends.html">Model backends &amp; modes</a> and the
-      <a href="tut-model-modes.html">Model modes</a> tutorial.</p>
+    <p>The condensed transcript is threaded into the tool loop on the cloud, local, and
+      OpenAI-on-Bedrock paths alike. See <a href="arch-backends.html">Model backends &amp; modes</a> and
+      the <a href="tut-model-modes.html">Model modes</a> tutorial.</p>
 
     <h2 id="config">Configuration</h2>
     <p>The top-level <code>map_reduce_summary</code> block tunes the condenser. All sizes are in
@@ -137,7 +135,7 @@
       <dt><code class="path">server/infrastructure/oneshot.py</code></dt><dd>The mode-aware one-shot completion, <code>resolve_map_engine</code>, and local-key resolution; raises on hard failure so the condenser can fall back explicitly.</dd>
       <dt><code class="path">server/chat/routes.py</code></dt><dd>The single condense call site in <code>chat_endpoint</code>, right after the model is resolved.</dd>
       <dt><code class="path">server/skills.py</code></dt><dd>The <code>_TRANSCRIPT_SKILLS</code> set, the transcript-arg fallback, and the secondary condense of a huge pasted notes / text argument.</dd>
-      <dt><code class="path">server/local/route.py</code>, <code class="path">server/local/stream.py</code></dt><dd>The local path: the condensed transcript threaded through <code>tool_ctx["transcript"]</code> into the tool loop.</dd>
+      <dt><code class="path">server/local/route.py</code>, <code class="path">server/local/server_stream.py</code></dt><dd>The local path: the condensed transcript threaded through <code>tool_ctx["transcript"]</code> into the tool loop.</dd>
       <dt><code class="path">server/openai_bedrock/route.py</code>, <code class="path">server/openai_bedrock/stream.py</code></dt><dd>The OpenAI-on-Bedrock path: the same transcript threading into the tool loop.</dd>
       <dt><code class="path">server/local/runtime.py</code></dt><dd>The on-device runtime: <code>loaded_key()</code>, <code>is_downloaded()</code>, and <code>complete()</code>.</dd>
     </div>

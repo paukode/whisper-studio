@@ -84,7 +84,7 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
       <div class="callout__body"><p><b>Detached (background) agents.</b> The loop above runs inline and
         blocks the turn. Passing <code>detach: true</code> to <code>spawn_agent</code> (in
-        <code class="path">server/agent_tools.py</code>) does not: it returns a <code>task_id</code>
+        <code class="path">server/agent_tools/</code>) does not: it returns a <code>task_id</code>
         immediately through <code>start_detached_agent</code> in
         <code class="path">server/tasks/agents.py</code> and runs the agent in the background. A detached
         agent runs <b>read-only by default</b> — no human is present to clear the
@@ -160,7 +160,7 @@
       physically cannot mutate your project.</p>
 
     <h2 id="teams">Teams</h2>
-    <p><code>team_create</code> (in <code class="path">server/agent_tools.py</code>) spawns several agents
+    <p><code>team_create</code> (in <code class="path">server/agent_tools/</code>) spawns several agents
       <b>in parallel</b> in the same session, each with its own agent id, and aggregates the results.
       The flow:</p>
     <ol class="steps">
@@ -265,7 +265,7 @@
       <dt><code class="path">server/agents/providers/</code></dt><dd>Provider adapters (<code>base</code>, <code>anthropic</code>, <code>openai</code>) behind <code>get_adapter().invoke()</code>.</dd>
       <dt><code class="path">server/agents/completion_inject.py</code></dt><dd><code>inject_completions</code> — folds a detached agent's result into a later turn.</dd>
       <dt><code class="path">server/tasks/</code></dt><dd>The unified background-task package (<code>registry.py</code>, <code>agents.py</code>, <code>tools.py</code>, <code>events.py</code>) that backs detached agents.</dd>
-      <dt><code class="path">server/agent_tools.py</code></dt><dd><code>execute_team_create</code> / <code>execute_team_delete</code>, the team schemas, and the <code>spawn_agent</code> <code>detach</code> path.</dd>
+      <dt><code class="path">server/agent_tools/</code></dt><dd><code>execute_team_create</code> / <code>execute_team_delete</code>, the team schemas, and the <code>spawn_agent</code> <code>detach</code> path.</dd>
     </div>
 
     <div class="callout callout--tip">

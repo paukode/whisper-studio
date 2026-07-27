@@ -120,7 +120,7 @@
     <table>
       <thead><tr><th>Concern</th><th>File</th></tr></thead>
       <tbody>
-        <tr><td>Add a new chat tool</td><td><code>server/agent_tools.py</code> (schema) + <code>server/tool_router.py</code> (dispatch) + <code>server/executors/&lt;area&gt;.py</code></td></tr>
+        <tr><td>Add a new chat tool</td><td><code>server/agent_tools/</code> (schema) + <code>server/tool_router.py</code> (dispatch) + <code>server/executors/&lt;area&gt;.py</code></td></tr>
         <tr><td>Add an HTTP endpoint</td><td>one of the routers in <code>server/</code>, mounted in <code>server/main.py</code></td></tr>
         <tr><td>Add a frontend component</td><td><code>src/components/&lt;area&gt;/</code>, wired into <code>src/App.tsx</code> for a new top-level surface</td></tr>
         <tr><td>Add a session-scoped event</td><td><code>server/agents/event_bus.py</code> (publisher) + <code>src/stores/sessionRuntimes.ts</code> (consumer)</td></tr>

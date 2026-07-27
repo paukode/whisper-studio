@@ -47,10 +47,11 @@
         </tr>
         <tr>
           <td><b>Default Model</b></td>
-          <td>The model new sessions start with: Haiku 4.5, Sonnet 4.6, Sonnet 5, Opus 4.6 / 4.7 / 4.8,
-            Fable 5.0, GPT-5.4 / 5.5, or on-device Gemma when local mode is on. The picker only shows
+          <td>The model new sessions start with: Haiku 4.5, Sonnet 4.6, Sonnet 5,
+            Opus 4.6 / 4.7 / 4.8, Opus 5, Fable 5.0, GPT-5.4 / 5.5, GPT-5.6 Sol / Terra / Luna, or an
+            on-device model when local mode is on. The picker only shows
             models valid for the current <b>Model Mode</b> (cloud hides on-device models and vice versa).
-            Default is <code>opus4.8</code>. Fable 5.0 requires the data-retention consent flow before it
+            Default is <code>opus5.0</code>. Fable 5.0 requires the data-retention consent flow before it
             can be selected. Full catalog on <a href="arch-backends.html">Model backends</a>.</td>
         </tr>
         <tr>
@@ -73,9 +74,9 @@
             <code>medium</code>, <code>high</code>, <code>extra</code> (also accepted under its alias
             <code>xhigh</code>), <code>max</code>, and <code>ultracode</code>. Higher effort trades
             latency and cost for deeper thinking. Default is <code>high</code>. The levels a model exposes
-            depend on its tier: Opus 4.8 and Fable expose the full ladder up through
-            <code>ultracode</code>; Sonnet and older Opus cap at <code>max</code>; GPT-5.x runs
-            <code>none</code> through <code>max</code>; Haiku and the local models have no effort control.
+            depend on its tier: Opus 4.8, Opus 5, and Fable expose the full ladder up through
+            <code>ultracode</code>; Sonnet and older Opus cap at <code>max</code>; GPT-5.5 and 5.6 run
+            <code>none</code> through <code>ultracode</code>; Haiku and the local models have no effort control.
             The value is clamped to the nearest level the selected model supports when you switch models.
             <code>ultracode</code> is a session mode rather than a plain level - it sends the top
             reasoning effort plus dynamic-workflow orchestration. The old <code>auto</code> value is
@@ -207,7 +208,7 @@
       <thead><tr><th>Value</th><th>Behavior</th></tr></thead>
       <tbody>
         <tr><td><code>default</code></td><td>Reads run freely; writes ask for approval.</td></tr>
-        <tr><td><code>auto</code></td><td>A classifier decides per-tool, per-call (configured in the Auto Mode tab).</td></tr>
+        <tr><td><code>auto</code></td><td>A classifier decides per-tool, per-call (rules audited in the Auto Mode tab, edited via config_set).</td></tr>
         <tr><td><code>plan</code></td><td>Read-only. The assistant plans but never executes.</td></tr>
         <tr><td><code>acceptEdits</code></td><td>File edits auto-approve; deletes and shell commands still ask.</td></tr>
         <tr><td><code>bypassPermissions</code></td><td>Everything runs without prompts.</td></tr>
@@ -216,8 +217,10 @@
     </table></div>
     <p>The <code>auto</code> mode reads three companion keys - <code>auto_mode_allow</code>,
       <code>auto_mode_soft_deny</code>, and <code>auto_mode_environment</code> - which the Auto Mode
-      tab manages for you. See <a href="arch-approval.html">Approval &amp; permissions</a> for the
-      classifier and nonce flow.</p>
+      tab displays read-only; edit them with config_set in chat or in <code class="path">config.json</code>.
+      The classifier itself only runs when <code>auto_mode_enabled</code> is <code>true</code>
+      (a config-only key, default <code>false</code>). See
+      <a href="arch-approval.html">Approval &amp; permissions</a> for the classifier and nonce flow.</p>
 
     <h2 id="tavily">The Tavily key</h2>
     <p>Web search is off until a Tavily key is present. You can set it two ways, and the environment
