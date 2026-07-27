@@ -9,8 +9,8 @@ WSDiagram.mount("backends-diagram", {
   },
   nodes: [
     { id: "key", group: "server", col: 0, row: 1.5, label: "Model key", sub: "from toolbar", desc: "The chat model chosen in the toolbar (latched on the first turn). Its key alone decides the path." },
-    { id: "islocal", group: "model", col: 1, row: 1.5, label: "is_local?", sub: "local_ prefix", desc: "is_local_model(): keys prefixed local_ (Gemma) route on-device with no config lookup." },
-    { id: "local", group: "local", col: 2, row: 0, label: "Local runtime", sub: "Gemma, on-device", desc: "stream_local_chat on a single llama.cpp executor thread. Returns early, before compaction." },
+    { id: "islocal", group: "model", col: 1, row: 1.5, label: "is_local?", sub: "registry member", desc: "is_local_model(): the key is in the on-device registry (built-ins merged with is_local config entries)." },
+    { id: "local", group: "local", col: 2, row: 0, label: "Local runtime", sub: "on-device GGUF", desc: "server_stream.stream_chat over a llama-server subprocess. Returns early, before compaction." },
     { id: "isopenai", group: "model", col: 2, row: 2.5, label: "is_openai?", sub: "provider check", desc: "is_openai_model(): true when chat_model_meta.provider == 'openai_bedrock'." },
     { id: "openai", group: "external", kind: "external", col: 3, row: 1.5, label: "OpenAI on Bedrock", sub: "GPT-5.x", desc: "stream_openai_chat: OpenAI Responses format over Bedrock. Returns early, before compaction." },
     { id: "anth", group: "external", kind: "external", col: 3, row: 3, label: "Anthropic path", sub: "Claude", desc: "The default path: Claude Haiku / Sonnet / Opus via Bedrock streaming and the full tool loop." },

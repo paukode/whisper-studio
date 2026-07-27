@@ -39,8 +39,9 @@
         <h4>Is it a local model?</h4>
         <p><code class="path">server/chat/routes.py</code> calls <code>local_chat_response(...)</code>
           (<code class="path">server/local/route.py</code>). If <code>is_local_model()</code> matches
-          the key (any key prefixed <code>local_</code>, such as Gemma), it returns a
-          <code>StreamingResponse</code> and the turn runs entirely on-device.</p>
+          the key (that is, the key is in the on-device registry; keys are prefixed <code>local_</code>
+          by convention), it returns a <code>StreamingResponse</code> and the turn runs entirely
+          on-device.</p>
       </li>
       <li>
         <h4>Is it an OpenAI model?</h4>
@@ -107,41 +108,114 @@
       cost (via <code>estimate_cost</code>), which feeds the session and daily spend caps. If a cap is
       exceeded, the turn stops with an error. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</p>
 
-    <h2 id="local">On-device Gemma</h2>
-    <p>The local backend (<code class="path">server/local/</code>) runs a quantized Gemma model with
-      <code>llama.cpp</code>, entirely offline. Its design goals are isolation and a small prompt, since
-      a laptop has far less headroom than Bedrock.</p>
+    <h2 id="local">On-device models</h2>
+    <p>The local backend (<code class="path">server/local/</code>) runs a quantized GGUF model entirely
+      offline, through <code>llama-server</code>: upstream llama.cpp's own HTTP server, run as a
+      subprocess. The app starts it, speaks its OpenAI-compatible
+      <code>/v1/chat/completions</code> endpoint, and stops it on shutdown. There is no in-process
+      engine and no fallback, so if the binary is missing or too old a local turn fails loudly with the
+      command that fixes it.</p>
+    <p>The subprocess is the point. llama.cpp's server owns the chat template plus the tool-call and
+      reasoning parsers for every model family it supports, so a GGUF added to config gets parsed
+      <code>tool_calls</code> and a separate reasoning channel with no per-family marker code in this
+      repo. Nothing under <code class="path">server/local/</code> contains model-specific tokens.</p>
     <dl class="spec">
       <dt><code class="path">server/local/route.py</code></dt>
-      <dd>The bridge the endpoint calls. Detects a local key, and for a streaming turn returns
-        <code>stream_local_chat(...)</code>; for an approval resume it calls
-        <code>resume_local_chat(...)</code> against the paused local turn.</dd>
-      <dt><code class="path">server/local/stream.py</code></dt>
-      <dd>The streaming tool loop for Gemma. A simpler, non-streaming variant exists alongside it.</dd>
+      <dd>The bridge the endpoint calls. Detects a local key, then returns
+        <code>server_stream.stream_chat(...)</code> for a fresh turn, or
+        <code>server_stream.resume_chat(...)</code> when an approval continuation arrives for a paused
+        local turn. It also builds the lean system prompt and the per-request <code>tool_ctx</code>.</dd>
+      <dt><code class="path">server/local/llama_server.py</code></dt>
+      <dd>The subprocess lifecycle: locating the binary (PATH, then Homebrew) and checking its build,
+        <code>ensure_serving(key, n_ctx)</code> to start / reuse / restart it, the <code>/health</code>
+        wait, <code>stop()</code>, orphan reaping, and a non-streaming <code>complete(...)</code> for
+        non-chat callers. It knows nothing about chat, tools, or SSE.</dd>
+      <dt><code class="path">server/local/server_stream.py</code></dt>
+      <dd>The SSE adapter and the agentic tool loop: streams <code>/v1/chat/completions</code>,
+        reassembles streamed <code>tool_calls</code> deltas into complete calls, runs them through the
+        shared executor, and emits the same event frames the frontend already consumes. It also holds
+        the paused-turn state and fires the post-turn memory hooks.</dd>
+      <dt><code class="path">server/local/registry.py</code></dt>
+      <dd>The effective model registry: built-in defaults merged with every <code>is_local</code> entry
+        in config's <code>chat_models</code>, config winning per key.</dd>
       <dt><code class="path">server/local/runtime.py</code></dt>
-      <dd>Model definitions (<code>local_gemma</code>, <code>local_gemma_coder</code>), the single-worker
-        executor thread, and the model load/generate/unload lifecycle.</dd>
+      <dd>Everything around the weights: the live registry view (<code>LOCAL_MODELS</code>), GGUF
+        download and paths, capability flags, the sticky context-size request, and
+        <code>build_local_system_prompt(...)</code>.</dd>
     </dl>
-    <p>Some deliberate choices set the local path apart from the cloud one:</p>
+
+    <h3 id="llama-server">The model server</h3>
+    <p><code>ensure_serving(key, n_ctx)</code> is the whole entry contract: guarantee this model is
+      being served at this context size, and return its base URL. It reuses the running process when it
+      already matches, and otherwise stops it and starts a new one, because <b>only one model is
+      resident at a time</b> (the on-device build targets a memory-constrained machine, for example an
+      M3 with 18GB). Weights are fetched before the process is spawned, so a missing GGUF is not an
+      opaque subprocess exit, and the call is blocking, so both the chat path and the load endpoint run
+      it in a thread executor rather than on the event loop.</p>
+    <p>The process is started on an ephemeral port with four flags that carry the design:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Flag</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td><code>--jinja</code></td><td>Activates the model's own chat template <em>and</em> upstream's per-family tool-call parser. Without it, tools are not parsed at all.</td></tr>
+        <tr><td><code>--parallel 1</code></td><td>One slot. The default is 4, and each slot gets its own KV cache, so the default quadruples KV memory for a single-user desktop app and can OOM Metal at a large context.</td></tr>
+        <tr><td><code>--cache-reuse 256</code></td><td>Reuses cached prompt prefixes across turns, so a follow-up does not re-prefill the whole system plus tools prompt.</td></tr>
+        <tr><td><code>--reasoning-format auto</code></td><td>Puts reasoning on its own channel (<code>reasoning_content</code>) instead of leaking raw thought markers into the answer.</td></tr>
+      </tbody>
+    </table></div>
+    <p><code>WHISPER_LLAMA_SERVER_ARGS</code> appends extra arguments for anything else you want to
+      pass. The subprocess logs to <code class="path">models/.logs/llama-server-&lt;key&gt;.log</code>,
+      and a failed start raises with that log's tail, so a load error names its own cause.</p>
+    <p>The child runs in its own session, so a signal aimed at the app cannot take the model down
+      mid-turn. The flip side is that <code>SIGKILL</code> on the app (force quit, OOM killer) skips
+      the shutdown hook and orphans a process holding its port and gigabytes of RAM, so startup calls
+      <code>reap_orphans()</code>. Matching is deliberately narrow: only processes whose
+      <code>--model</code> path is inside our <code class="path">models/</code> directory, never a
+      <code>llama-server</code> the user runs for their own purposes.</p>
+
+    <h3 id="local-choices">What a local turn does differently</h3>
     <ul>
-      <li><b>One executor thread.</b> All <code>llama.cpp</code> work (load, generate, unload) runs on a
-        single-worker thread, so the model is created and used on the same thread. This mirrors the
-        on-device speech backends.</li>
+      <li><b>A config-driven registry.</b> The built-ins (<code>local_gemma</code>,
+        <code>local_gemma_coder</code>) stay in code so a fresh checkout with no
+        <code class="path">config.json</code> still has working on-device models, but the effective list
+        is those merged with any <code>is_local</code> entry in <code>chat_models</code>, config winning
+        per key. Adding a model is a one-place change: an entry carrying <code>repo_id</code>,
+        <code>filename</code>, and <code>dir</code> alongside the picker fields becomes downloadable,
+        loadable, and selectable with no code change. An entry still missing a weight field after the
+        merge is dropped with a warning rather than failing later at load time.</li>
       <li><b>A lean system prompt.</b> The cloud system prompt is tool-heavy and workspace-heavy (roughly
-        2 to 2.5K tokens the local model cannot use), so <code>build_local_system_prompt(...)</code>
-        drops it and keeps only project and memory context. This speeds prefill and frees context space.</li>
-      <li><b>A configurable context window.</b> Gemma supports up to 256K tokens, but the default (and
-        floor) is 16K, because with tools on the tool-pool prompt alone is around 12K tokens. You can
-        raise the window live from the chat-input context-window slider, which reloads the model at the
-        new size. The <code>WHISPER_LOCAL_N_CTX</code> environment variable overrides the default at
-        startup.</li>
+        2 to 2.5K tokens the local model cannot act on), so <code>build_local_system_prompt(...)</code>
+        drops it and keeps a short identity plus project and memory context. This speeds prefill and
+        frees context space. With tools on it swaps in a tools-positive identity (the no-tools one makes
+        the model refuse instead of calling what is declared) and, when a workspace is connected, a
+        short marker telling it to reach the code through the <code>ws_*</code> tools.</li>
+      <li><b>A configurable context window.</b> llama.cpp fixes the window when the server starts, so
+        changing it restarts the process. <code>ensure_serving</code> resolves the size in order: an
+        explicit request, then the last size the user asked for, then the model's registry
+        <code>ctx</code> (32K for the built-ins), then 16K. That middle tier is sticky on purpose: a
+        chat turn only asks that the model be resident, and without it a lazy start later in the session
+        would restart the server back down at the model default while the badge still reads 32K or 64K.
+        The chat-input slider is the explicit request, from 16K up to Gemma's 256K maximum, and anything
+        above 16K confirms first because the KV cache grows with the window.</li>
       <li><b>A shrinkable tool set.</b> The Tools dropdown sets a scope of <code>off</code>,
-        <code>core</code>, <code>core_web</code>, or <code>all</code>. Advertising fewer tools makes the
-        prompt smaller and prefill faster.</li>
+        <code>core</code>, <code>core_web</code>, or <code>all</code>, and the default is
+        <code>core_web</code> rather than the full pool: the full pool prefills for around 50s on a 12B
+        model (a few seconds for the core set) and renders a prompt large enough that a 16K window
+        rejects the very first turn, which is why the built-ins default to 32K. Advertising fewer tools
+        makes the prompt smaller and prefill faster.</li>
+      <li><b>Native tool messages, and looser arguments.</b> Executed results go back as real OpenAI
+        <code>tool</code> messages, which is a much stronger signal than folding them into a user turn.
+        Because llama-server passes through whatever the model produced (Bedrock validates against the
+        schema first), arguments are coerced toward their declared JSON-schema types before reaching an
+        executor, so a <code>"path": ["a.py"]</code> slip does not waste the call on an
+        <code>AttributeError</code>. Parallel tool calls work here, matching how the cloud paths batch
+        reads.</li>
     </ul>
-    <p>The local path reuses the same executor and approval pipeline as the cloud loop, so an on-device
-      turn is gated by the same <a href="arch-approval.html">permission modes</a> and approval flow. It
-      just never touches AWS.</p>
+    <p>The loop itself matches the cloud paths: up to 50 tool rounds, with calls forbidden on the last
+      round so the model must synthesize an answer from what it has. It reuses the same executor and
+      approval pipeline (<code>run_tool_round</code>), so an on-device turn is gated by the same
+      <a href="arch-approval.html">permission modes</a> and approval flow, and a pause stores its state
+      in memory for <code>resume_chat(...)</code> to pick up. On-device turns are billed at $0 but still
+      emit a <code>usage</code> frame in the cloud shape. It just never touches AWS.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
@@ -150,7 +224,8 @@
         only one on-device model is resident at a time, that step runs on the model you are chatting with
         (its key is threaded into the condense call), falling back to whatever model is currently resident
         (<code>loaded_key()</code>) and then the first downloaded model - rather than loading a fixed model
-        and evicting the one you are chatting with. So the map step does not thrash the model cache. See
+        and evicting the one you are chatting with. So the map step never restarts the model server on a
+        different model. See
         <a href="arch-summarization.html#modes">Transcript summarization</a>.</p></div>
     </div>
 
@@ -210,10 +285,12 @@
         <tr><td><code>bedrock_region</code></td><td>The AWS region for the shared Bedrock client.</td></tr>
       </tbody>
     </table></div>
-    <p>Local models are the exception: they are defined in code
-      (<code class="path">server/local/runtime.py</code>) and detected by their <code>local_</code> key
-      prefix, so a local turn needs no config lookup to branch. For every field the Settings UI writes,
-      see <a href="ref-settings.html">Settings &amp; config keys</a>.</p>
+    <p>On-device models sit in the same <code>chat_models</code> map, marked <code>is_local</code> and
+      carrying their weight fields (<code>repo_id</code>, <code>filename</code>, <code>dir</code>, and
+      optionally <code>ctx</code>). <code class="path">server/local/registry.py</code> merges those over
+      the built-ins it keeps in code, and their <code>id</code> is a <code>local:</code> sentinel that
+      never reaches Bedrock. For every field the Settings UI writes, see
+      <a href="ref-settings.html">Settings &amp; config keys</a>.</p>
 
     <h3 id="data-retention">Data-retention consent</h3>
     <p>One piece of model metadata needs its own path: <code>requires_data_retention</code>.
