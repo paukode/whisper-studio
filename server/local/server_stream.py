@@ -9,6 +9,9 @@ solve per model family:
     tool calling with no marker constants here.
   * reasoning arrives on ``reasoning_content``, so the thinking channel needs no
     marker splitter and can never leak raw markers into the answer.
+  * real token counts arrive on ``usage`` (with ``stream_options.include_usage``),
+    so the counter and context meter report measured tokens rather than the
+    chars/4 guess a hand-rolled path had to make.
 
 Because of that, this module contains NO model-specific tokens. It emits the same
 event contract the frontend already consumes (``text`` / ``thinking_*`` /
@@ -173,24 +176,107 @@ def _spawn_memory_hooks(
     _spawn_dream(model_key, ws_path)
 
 
-def _usage_line(model_key: str, output_tokens: int) -> str:
-    """On-device turns are $0; the shape matches the cloud usage frame."""
-    return (
-        "data: "
-        + ndjson_dumps(
-            {
-                "usage": {
-                    "input_tokens": 0,
-                    "output_tokens": output_tokens,
-                    "total_input": 0,
-                    "total_output": output_tokens,
-                    "estimated_cost_usd": 0.0,
-                    "model": model_key,
-                }
-            }
-        )
-        + "\n\n"
-    )
+def _as_int(value) -> int:
+    """Non-negative int from a usage field, 0 for anything unusable."""
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+class _Tally:
+    """Per-turn token accounting across tool rounds, from llama-server's usage.
+
+    Semantics deliberately match the cloud path's usage frame so the same
+    frontend counter reads correctly for both:
+
+      * ``input_tokens`` is the NON-cached prefill for the round. llama.cpp
+        reports the full prompt in ``prompt_tokens`` and the KV-reused prefix in
+        ``prompt_tokens_details.cached_tokens``; the difference is what the model
+        actually prefilled. Summing full prompts instead would count the whole
+        conversation again on every tool round.
+      * ``cache_read_tokens`` is that reused prefix (``--cache-reuse`` on the
+        subprocess), the local analogue of a Bedrock cache read.
+      * ``context_used`` is the full ``prompt_tokens`` of the LAST round — the
+        real size of the conversation now in the window.
+
+    When a build answers without usage (older llama-server ignoring
+    ``include_usage``), output falls back to the previous chars/4 estimate and
+    input stays 0 rather than the turn reporting nothing at all.
+    """
+
+    def __init__(self) -> None:
+        self.round_input = 0
+        self.round_output = 0
+        self.total_input = 0
+        self.total_output = 0
+        self.round_cache_read = 0
+        self.total_cache_read = 0
+        self.context_used = 0
+
+    def add_round(self, usage: dict | None, out_chars: int) -> None:
+        usage = usage if isinstance(usage, dict) else {}
+        prompt = _as_int(usage.get("prompt_tokens"))
+        completion = _as_int(usage.get("completion_tokens"))
+        details = usage.get("prompt_tokens_details")
+        cached = _as_int(details.get("cached_tokens")) if isinstance(details, dict) else 0
+        if prompt or completion:
+            # Clamp: a build that reports cached > prompt must not make input negative.
+            cached = min(cached, prompt)
+            self.round_input = prompt - cached
+            self.round_cache_read = cached
+            self.round_output = completion
+            self.context_used = prompt
+        else:
+            log.debug("llama-server round returned no usage; estimating output from characters.")
+            self.round_input = 0
+            self.round_cache_read = 0
+            self.round_output = out_chars // 4
+        self.total_input += self.round_input
+        self.total_output += self.round_output
+        self.total_cache_read += self.round_cache_read
+
+
+def _usage_line(model_key: str, tally: _Tally) -> str:
+    """On-device turns are $0; the shape matches the cloud usage frame.
+
+    ``context_used``/``context_max`` are omitted unless BOTH are known, so the
+    status bar's meter never renders against a guessed denominator.
+    """
+    from server.local import llama_server
+
+    payload: dict = {
+        "input_tokens": tally.round_input,
+        "output_tokens": tally.round_output,
+        "total_input": tally.total_input,
+        "total_output": tally.total_output,
+        "cache_read_tokens": tally.round_cache_read,
+        "total_cache_read": tally.total_cache_read,
+        "estimated_cost_usd": 0.0,
+        "model": model_key,
+    }
+    ctx_max = llama_server.resident_n_ctx()
+    if tally.context_used and ctx_max:
+        payload["context_used"] = tally.context_used
+        payload["context_max"] = ctx_max
+    return "data: " + ndjson_dumps({"usage": payload}) + "\n\n"
+
+
+def _note_context(session_id: str, tally: _Tally) -> None:
+    """Record the round's true prompt size against the session, the same way the
+    cloud loop does, so the Stats panel's context bar (served from /api/costs)
+    also reflects an on-device turn."""
+    from server.local import llama_server
+
+    ctx_max = llama_server.resident_n_ctx()
+    if not (tally.context_used and ctx_max):
+        return
+    try:
+        from server.chat.loop_hints import note_prompt_tokens
+
+        note_prompt_tokens(session_id, tally.context_used, ctx_max)
+    except Exception as e:  # never let bookkeeping disrupt a turn
+        log.debug("Could not record local prompt tokens: %s", e)
 
 
 def _to_openai_messages(system_prompt: str, messages: list[dict]) -> list[dict]:
@@ -375,7 +461,7 @@ class _CallAccumulator:
 
 async def _stream_round(base_url: str, payload: dict):
     """One generation round. Yields ``("text"|"thinking", piece)`` as it decodes,
-    then ``("done", {"calls": [...], "finish_reason": str})``.
+    then ``("done", {"calls": [...], "finish_reason": str, "usage": {...}})``.
 
     Raises RuntimeError on transport/HTTP failure so the caller can surface it.
     """
@@ -383,9 +469,16 @@ async def _stream_round(base_url: str, payload: dict):
 
     acc = _CallAccumulator()
     finish_reason = None
+    usage: dict = {}
     async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
         async with client.stream(
-            "POST", f"{base_url}/v1/chat/completions", json={**payload, "stream": True}
+            "POST",
+            f"{base_url}/v1/chat/completions",
+            # include_usage is what makes llama-server append a final chunk
+            # carrying prompt/completion token counts. WITHOUT it the stream ends
+            # with only a `timings` object, which is why on-device turns used to
+            # report 0 input tokens and a chars/4 guess for output.
+            json={**payload, "stream": True, "stream_options": {"include_usage": True}},
         ) as resp:
             if resp.status_code != 200:
                 body = (await resp.aread()).decode(errors="replace")
@@ -402,6 +495,10 @@ async def _stream_round(base_url: str, payload: dict):
                     continue
                 if obj.get("error"):
                     raise RuntimeError(f"llama-server error: {str(obj['error'])[:400]}")
+                # The usage chunk arrives last and carries an EMPTY choices list,
+                # so it must be read before the delta handling below.
+                if isinstance(obj.get("usage"), dict):
+                    usage = obj["usage"]
                 choices = obj.get("choices") or [{}]
                 choice = choices[0] if choices else {}
                 delta = choice.get("delta") or {}
@@ -413,7 +510,7 @@ async def _stream_round(base_url: str, payload: dict):
                     acc.feed(delta["tool_calls"])
                 if choice.get("finish_reason"):
                     finish_reason = choice["finish_reason"]
-    yield ("done", {"calls": acc.finish(), "finish_reason": finish_reason})
+    yield ("done", {"calls": acc.finish(), "finish_reason": finish_reason, "usage": usage})
 
 
 async def _run_loop(
@@ -426,11 +523,17 @@ async def _run_loop(
     session_id: str,
     start_round: int = 0,
     memory_ctx: dict | None = None,
+    tally: _Tally | None = None,
 ):
-    """The agentic loop, shared by fresh turns and approval resumes."""
+    """The agentic loop, shared by fresh turns and approval resumes.
+
+    ``tally`` carries token totals across an approval pause so the counter keeps
+    climbing on the resumed half of the turn instead of restarting at zero.
+    """
     out_chars = 0
     thinking_on = bool(tool_ctx.get("thinking", False))
     props_by_tool = _schema_props(schemas)
+    tally = tally or _Tally()
 
     for rnd in range(start_round, _MAX_TOOL_ROUNDS):
         payload: dict = {"model": model_key, "messages": convo, "max_tokens": 4096}
@@ -447,6 +550,8 @@ async def _run_loop(
 
         thinking_open = False
         calls: list[dict] = []
+        round_usage: dict | None = None
+        round_chars = 0
         try:
             async for kind, piece in _stream_round(base_url, payload):
                 if kind == "thinking":
@@ -459,9 +564,11 @@ async def _run_loop(
                         thinking_open = False
                         yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
                     out_chars += len(piece)
+                    round_chars += len(piece)
                     yield f"data: {ndjson_dumps({'text': piece})}\n\n"
                 else:  # ("done", {...})
                     calls = piece.get("calls") or []
+                    round_usage = piece.get("usage")
         except Exception as e:
             if thinking_open:
                 yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
@@ -471,6 +578,13 @@ async def _run_loop(
             return
         if thinking_open:  # reasoned but produced no answer text this round
             yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
+
+        # One usage frame per round, like the cloud loop: the counter and the
+        # context meter then update while a tool turn is still running, instead
+        # of staying blank until the very last round.
+        tally.add_round(round_usage, round_chars)
+        _note_context(session_id, tally)
+        yield _usage_line(model_key, tally)
 
         if not calls:
             if out_chars == 0:
@@ -486,7 +600,6 @@ async def _run_loop(
                     rnd,
                 )
                 yield f"data: {ndjson_dumps({'text': '(No answer: the model ended its turn without producing any text. Try again, or switch model — some fine-tunes stall after a tool result.)'})}\n\n"
-            yield _usage_line(model_key, out_chars // 4)
             yield "data: [DONE]\n\n"
             return
 
@@ -548,6 +661,7 @@ async def _run_loop(
                 "names_by_id": names_by_id,
                 "next_round": rnd + 1,
                 "memory_ctx": memory_ctx,
+                "tally": tally,
             }
             yield "data: [DONE]\n\n"
             return
@@ -555,7 +669,6 @@ async def _run_loop(
         convo.extend(_tool_results_to_messages(tool_results, names_by_id))
 
     yield f"data: {ndjson_dumps({'text': '(Reached the local tool-call round limit without a final answer.)'})}\n\n"
-    yield _usage_line(model_key, out_chars // 4)
     yield "data: [DONE]\n\n"
 
 
@@ -659,6 +772,7 @@ async def resume_chat(session_id: str, approved_tool_result, session_approvals: 
         session_id=session_id,
         start_round=paused["next_round"],
         memory_ctx=mem,
+        tally=paused.get("tally"),
     ):
         yield chunk
     if mem and not has_pause(session_id):

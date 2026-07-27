@@ -183,7 +183,16 @@ def test_resume_fires_hooks_on_completion_not_on_repause(monkeypatch):
         }
 
     async def _fake_repause(
-        model_key, base_url, convo, schemas, tool_ctx, *, session_id, start_round=0, memory_ctx=None
+        model_key,
+        base_url,
+        convo,
+        schemas,
+        tool_ctx,
+        *,
+        session_id,
+        start_round=0,
+        memory_ctx=None,
+        tally=None,
     ):
         STREAM._paused[session_id] = {
             "base_url": "http://stub",
@@ -193,7 +202,16 @@ def test_resume_fires_hooks_on_completion_not_on_repause(monkeypatch):
         yield "data: [DONE]\n\n"
 
     async def _fake_done(
-        model_key, base_url, convo, schemas, tool_ctx, *, session_id, start_round=0, memory_ctx=None
+        model_key,
+        base_url,
+        convo,
+        schemas,
+        tool_ctx,
+        *,
+        session_id,
+        start_round=0,
+        memory_ctx=None,
+        tally=None,
     ):
         yield "data: [DONE]\n\n"
 

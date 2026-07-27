@@ -183,18 +183,45 @@ def test_call_accumulator_survives_bad_json():
 
 def _fake_rounds(*rounds):
     """Stand in for _stream_round. Each round is a list of (kind, piece) plus an
-    implicit terminating ("done", {...}) built from its trailing calls entry."""
+    implicit terminating ("done", {...}) built from its trailing calls entry.
+
+    A round may carry a third element: the OpenAI-shaped ``usage`` dict
+    llama-server appends when asked for it. Omitting it stands in for a build
+    that reports no usage at all.
+    """
     box = {"i": 0}
 
     async def gen(base_url, payload):
         i = min(box["i"], len(rounds) - 1)
         box["i"] = i + 1
-        pieces, calls = rounds[i]
+        pieces, calls, *rest = rounds[i]
         for kind, piece in pieces:
             yield (kind, piece)
-        yield ("done", {"calls": calls, "finish_reason": "tool_calls" if calls else "stop"})
+        yield (
+            "done",
+            {
+                "calls": calls,
+                "finish_reason": "tool_calls" if calls else "stop",
+                "usage": rest[0] if rest else {},
+            },
+        )
 
     return gen
+
+
+def _usage_frames(blob: str) -> list[dict]:
+    """Every usage payload in a drained SSE blob, in order."""
+    out = []
+    for line in blob.splitlines():
+        if not line.startswith("data: ") or line[6:].strip() == "[DONE]":
+            continue
+        try:
+            obj = json.loads(line[6:])
+        except json.JSONDecodeError:
+            continue
+        if "usage" in obj:
+            out.append(obj["usage"])
+    return out
 
 
 def _events(blob: str) -> dict:
@@ -453,6 +480,205 @@ def test_transport_error_surfaces_without_usage(monkeypatch):
     assert blob.strip().endswith("data: [DONE]")
 
 
+# ── token accounting ─────────────────────────────────────────────────────────
+# On-device turns used to report a hardcoded 0 input tokens and a chars/4 guess
+# for output, so the chat counter read "0 in" and the context meter stayed empty.
+# llama-server reports real counts when the request asks for them.
+
+
+def _fake_httpx(monkeypatch, lines: list[str], captured: dict) -> None:
+    """Replace httpx.AsyncClient with one that replays ``lines`` as an SSE body."""
+    import httpx
+
+    class _Resp:
+        status_code = 200
+
+        async def aiter_lines(self):
+            for line in lines:
+                yield line
+
+        async def aread(self):  # pragma: no cover - only used for non-200
+            return b""
+
+    class _Stream:
+        async def __aenter__(self):
+            return _Resp()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _Client:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        def stream(self, method, url, json=None):
+            captured["url"] = url
+            captured["json"] = json
+            return _Stream()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+
+
+def test_stream_round_asks_for_usage_and_reads_the_final_chunk(monkeypatch):
+    """include_usage is what makes llama-server send token counts at all, and its
+    usage chunk carries an EMPTY choices list — so it has to be read before the
+    per-choice delta handling or it is dropped."""
+    lines = [
+        'data: {"choices":[{"delta":{"content":"hi"}}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+        'data: {"choices":[],"usage":{"prompt_tokens":23,"completion_tokens":16,'
+        '"total_tokens":39,"prompt_tokens_details":{"cached_tokens":18}}}',
+        "data: [DONE]",
+    ]
+    captured: dict = {}
+    _fake_httpx(monkeypatch, lines, captured)
+
+    async def run():
+        return [ev async for ev in SS._stream_round("http://x", {"model": "k"})]
+
+    events = asyncio.run(run())
+    assert captured["json"]["stream"] is True
+    assert captured["json"]["stream_options"] == {"include_usage": True}
+    assert ("text", "hi") in events
+    kind, done = events[-1]
+    assert kind == "done"
+    assert done["finish_reason"] == "stop"
+    assert done["usage"]["prompt_tokens"] == 23
+    assert done["usage"]["completion_tokens"] == 16
+
+
+def test_usage_frame_reports_measured_tokens_and_context(monkeypatch):
+    monkeypatch.setattr(LS, "resident_n_ctx", lambda: 32768)
+    usage = {"prompt_tokens": 1200, "completion_tokens": 716}
+    monkeypatch.setattr(SS, "_stream_round", _fake_rounds(([("text", "answer")], [], usage)))
+    blob = "".join(_drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="s")))
+    (frame,) = _usage_frames(blob)
+    assert frame["input_tokens"] == 1200
+    assert frame["output_tokens"] == 716
+    assert frame["total_input"] == 1200
+    assert frame["total_output"] == 716
+    assert frame["estimated_cost_usd"] == 0.0
+    # Full prompt vs the process's --ctx-size drives the status bar's meter.
+    assert frame["context_used"] == 1200
+    assert frame["context_max"] == 32768
+
+
+def test_cached_prefix_counts_as_cache_read_not_fresh_input(monkeypatch):
+    """--cache-reuse means a follow-up round re-sends a prompt it does not
+    re-prefill; counting the whole thing as input would inflate every round."""
+    monkeypatch.setattr(LS, "resident_n_ctx", lambda: 16384)
+    usage = {
+        "prompt_tokens": 5000,
+        "completion_tokens": 40,
+        "prompt_tokens_details": {"cached_tokens": 4800},
+    }
+    monkeypatch.setattr(SS, "_stream_round", _fake_rounds(([("text", "ok")], [], usage)))
+    blob = "".join(_drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="s")))
+    (frame,) = _usage_frames(blob)
+    assert frame["input_tokens"] == 200
+    assert frame["cache_read_tokens"] == 4800
+    # The meter still shows the whole conversation, cached or not.
+    assert frame["context_used"] == 5000
+
+
+def test_usage_accumulates_across_tool_rounds(monkeypatch):
+    """One frame per round, with running totals — the counter climbs during a
+    tool turn instead of staying blank until the last round."""
+    monkeypatch.setattr(LS, "resident_n_ctx", lambda: 32768)
+    calls = [{"id": "c1", "name": "ws_read_file", "input": {"path": "a.py"}}]
+    monkeypatch.setattr(
+        SS,
+        "_stream_round",
+        _fake_rounds(
+            ([], calls, {"prompt_tokens": 900, "completion_tokens": 30}),
+            ([("text", "done")], [], {"prompt_tokens": 1500, "completion_tokens": 50}),
+        ),
+    )
+
+    async def fake_round(tool_uses, **kw):
+        return ([{"tool_use_id": "c1", "content": "file body"}], [], False, False)
+
+    monkeypatch.setattr(SS, "run_tool_round", fake_round)
+    blob = "".join(_drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="s")))
+    first, second = _usage_frames(blob)
+    assert (first["input_tokens"], first["total_input"]) == (900, 900)
+    assert (second["input_tokens"], second["total_input"]) == (1500, 2400)
+    assert second["total_output"] == 80
+    # The meter tracks the LATEST prompt size, not the sum.
+    assert second["context_used"] == 1500
+
+
+def test_resume_continues_the_token_tally(monkeypatch):
+    """An approval pause splits a turn across two requests; the counter must not
+    restart at zero on the second half."""
+    monkeypatch.setattr(LS, "resident_n_ctx", lambda: 32768)
+    calls = [{"id": "c1", "name": "shell_command", "input": {"command": "rm -rf x"}}]
+    monkeypatch.setattr(
+        SS,
+        "_stream_round",
+        _fake_rounds(
+            ([], calls, {"prompt_tokens": 700, "completion_tokens": 25}),
+            ([("text", "after")], [], {"prompt_tokens": 1100, "completion_tokens": 15}),
+        ),
+    )
+
+    async def pauses(tool_uses, **kw):
+        return ([{"tool_use_id": "c1", "content": "pending"}], [], True, False)
+
+    monkeypatch.setattr(SS, "run_tool_round", pauses)
+    _drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="s"))
+    assert SS.has_pause("s")
+    blob = "".join(
+        _drain(lambda: SS.resume_chat("s", {"tool_use_id": "c1", "content": "approved"}))
+    )
+    (frame,) = _usage_frames(blob)
+    assert frame["total_input"] == 1800  # 700 before the pause + 1100 after
+    assert frame["total_output"] == 40
+
+
+def test_usage_falls_back_to_a_char_estimate_when_the_build_sends_none(monkeypatch):
+    """An older llama-server that ignores include_usage must still report
+    something, and must not claim a context reading it does not have."""
+    monkeypatch.setattr(LS, "resident_n_ctx", lambda: 32768)
+    monkeypatch.setattr(SS, "_stream_round", _fake_rounds(([("text", "x" * 400)], [])))
+    blob = "".join(_drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="s")))
+    (frame,) = _usage_frames(blob)
+    assert frame["input_tokens"] == 0
+    assert frame["output_tokens"] == 100  # 400 chars / 4
+    assert "context_used" not in frame and "context_max" not in frame
+
+
+def test_context_is_recorded_for_the_stats_panel(monkeypatch):
+    """The Stats panel reads context from /api/costs, which reads the same
+    per-session record the cloud loop keeps."""
+    from server.chat.loop_hints import context_estimate, reset_session
+
+    monkeypatch.setattr(LS, "resident_n_ctx", lambda: 65536)
+    reset_session("stats-sess")
+    usage = {"prompt_tokens": 4321, "completion_tokens": 10}
+    monkeypatch.setattr(SS, "_stream_round", _fake_rounds(([("text", "ok")], [], usage)))
+    _drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="stats-sess"))
+    assert context_estimate("stats-sess") == (4321, 65536)
+    reset_session("stats-sess")
+
+
+def test_no_context_fields_when_no_model_server_is_resident(monkeypatch):
+    """resident_n_ctx() is None between runs; the frame must still be valid."""
+    monkeypatch.setattr(LS, "resident_n_ctx", lambda: None)
+    usage = {"prompt_tokens": 100, "completion_tokens": 5}
+    monkeypatch.setattr(SS, "_stream_round", _fake_rounds(([("text", "ok")], [], usage)))
+    blob = "".join(_drain(lambda: SS._run_loop("k", "http://x", [], [], {}, session_id="s")))
+    (frame,) = _usage_frames(blob)
+    assert frame["input_tokens"] == 100
+    assert "context_max" not in frame
+
+
 def test_start_failure_is_reported_to_the_client(monkeypatch):
     def boom(key, n_ctx=None):
         raise LS.LlamaServerUnavailable("llama-server is not installed")
@@ -550,8 +776,25 @@ def test_ensure_serving_honors_sticky_requested_ctx(monkeypatch):
     # And the memory-critical flags are present.
     assert "--jinja" in cmd
     assert cmd[cmd.index("--parallel") + 1] == "1"
+    # The context meter's denominator must be the size actually launched with.
+    assert LS.resident_n_ctx() == 65536
     LS._state.update(key=None, port=None, n_ctx=None)
     LS._proc = None
+
+
+def test_resident_n_ctx_is_none_once_the_process_is_gone():
+    class DeadProc:
+        def poll(self):
+            return 1
+
+    LS._proc = DeadProc()
+    LS._state.update(key="local_gemma", port=1234, n_ctx=32768)
+    try:
+        assert LS.resident_n_ctx() is None  # stale size must not reach the meter
+    finally:
+        LS._state.update(key=None, port=None, n_ctx=None)
+        LS._proc = None
+    assert LS.resident_n_ctx() is None
 
 
 def test_requested_n_ctx_setter_ignores_none():
