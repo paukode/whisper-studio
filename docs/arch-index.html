@@ -30,6 +30,11 @@
         question (embed, KNN, rerank, graph hop, grounding). The store feeds the KNN.</figcaption>
     </figure>
 
+    <figure class="shot wide">
+      <img src="assets/img/entity-graph.png" alt="The relationship graph with a selected file's shared entities">
+      <figcaption><strong>Entity-linked files.</strong> The graph and the detail panel are both built from the extracted-entity tables, which is why the panel can name the exact entities two files share.</figcaption>
+    </figure>
+
     <h2 id="the-build-flow">The build flow</h2>
     <p><code>build(ws_path)</code> is serialized per workspace with a lock, so a user-triggered build
       and the daily scheduled refresh can never race the same SQLite index. It walks the tree, decides
