@@ -161,3 +161,29 @@ kbd, .kbd {
 
 /* Section intro spacing helper */
 .doc > section { margin-bottom: 8px; }
+
+/* ---------------------------------------------------------------
+   Screenshots
+
+   Figures are full-bleed within the prose column and scroll-free:
+   the image scales down rather than forcing the page to scroll
+   sideways on narrow viewports. Captions carry the explanation, so
+   alt text can stay short.
+   --------------------------------------------------------------- */
+.doc figure.shot { margin: 0 0 26px; }
+.doc figure.shot img {
+  display: block; width: 100%; height: auto;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-surface);
+}
+.doc figure.shot figcaption {
+  margin-top: 10px; font-size: 13.5px; line-height: 1.6;
+  color: var(--text-secondary);
+}
+.doc figure.shot figcaption strong { color: var(--text-primary); font-weight: 600; }
+
+/* Wide shots (the full three-pane app) earn a little more room than the
+   prose measure on large screens, without breaking the column on small. */
+@media (min-width: 1100px) {
+  .doc figure.shot.wide { margin-left: -40px; margin-right: -40px; }
+}
