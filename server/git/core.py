@@ -319,18 +319,6 @@ def get_cached_head(path: str) -> str:
     return git_watcher.get(f"head:{path}", lambda: get_head(path))
 
 
-def get_cached_default_branch(path: str) -> str:
-    from server.git.watcher import git_watcher
-
-    return git_watcher.get(f"default_branch:{path}", lambda: get_default_branch(path))
-
-
-def get_cached_remote_url(path: str) -> str | None:
-    from server.git.watcher import git_watcher
-
-    return git_watcher.get(f"remote_url:{path}", lambda: get_remote_url(path))
-
-
 def normalize_git_remote_url(url: str) -> str | None:
     """Normalize git remote URL to canonical 'host/owner/repo' form.
 

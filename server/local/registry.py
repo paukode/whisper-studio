@@ -143,8 +143,3 @@ def local_models() -> dict[str, dict]:
         entry.setdefault("label", key)
         usable[key] = entry
     return usable
-
-
-def local_ids() -> dict[str, str]:
-    """``{key: sentinel id}`` for every usable local model."""
-    return {k: m["id"] for k, m in local_models().items()}

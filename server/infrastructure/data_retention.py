@@ -185,12 +185,6 @@ def set_enabled(enabled: bool) -> str:
     return mode
 
 
-def _reset_client_cache() -> None:
-    """Test hook / region-change escape hatch."""
-    with _clients_lock:
-        _clients.clear()
-
-
 def _error_response(e: ClientError) -> JSONResponse:
     code = e.response.get("Error", {}).get("Code", "")
     if code == "AccessDeniedException":

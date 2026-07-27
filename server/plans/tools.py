@@ -28,5 +28,3 @@ PLAN_TOOLS = [
         },
     },
 ]
-
-PLAN_TOOL_NAMES = {t["name"] for t in PLAN_TOOLS}

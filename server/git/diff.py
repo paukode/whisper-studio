@@ -25,7 +25,6 @@ MAX_FILES = 50  # Per-file detail limit
 MAX_DIFF_SIZE_BYTES = 1_000_000  # 1MB — skip files larger than this
 MAX_LINES_PER_FILE = 400  # GitHub's auto-load limit
 MAX_FILES_FOR_DETAILS = 500  # Skip per-file details if more files than this
-MAX_UNTRACKED_FILES = 20_000
 SINGLE_FILE_DIFF_TIMEOUT_S = 3
 
 

@@ -37,23 +37,6 @@ __all__ = ["build_system_prompt", "build_system_prompt_split", "get_registry"]
 
 log = logging.getLogger("whisper-studio")
 
-# Appended when the Ultracode effort mode is active (Opus 4.8 / Fable 5). It is
-# more than an effort value: it directs the model to orchestrate parallel
-# subagents on substantive work, mirroring Claude Code's dynamic workflows.
-ULTRACODE_DIRECTIVE = (
-    "\n\n## Ultracode mode\n"
-    "Ultracode mode is active — optimise for the most thorough, correct result; "
-    "token cost is not a constraint. For substantive, multi-part, or long-horizon "
-    "tasks, decompose the work and orchestrate parallel subagents with the "
-    "`spawn_agent` and `team_create` tools rather than doing everything sequentially "
-    "in one context. Write every agent task as a self-contained brief (the agent "
-    "sees none of this conversation): objective restated from the user's request, "
-    "scope and inputs, constraints, and the expected output format with acceptance "
-    "criteria. Fan out independent workstreams, then verify and reconcile their "
-    "results before answering. For trivial or conversational turns, just answer "
-    "directly — do not spawn agents for simple work."
-)
-
 
 class PromptLayer(IntEnum):
     """Priority layers for prompt sections. Lower number = higher priority = earlier in prompt."""
