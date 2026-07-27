@@ -5,6 +5,12 @@ chat client to Claude (via Amazon Bedrock), and a full development
 environment — file tree, Monaco editor, integrated terminal, Git,
 LSP — in a single browser tab served by a single local process.
 
+![Whisper Studio: chat, editor and terminal in one window](docs/assets/img/hero.png)
+
+*Chat, editor and terminal in a single tab. The answer above was generated
+on-device — note the `$0.0000` turn cost and the `Gemma 4 12B (Local)` model
+chip.*
+
 > **Transcription runs entirely on your machine.** The speech model
 > loads into memory on first record and runs locally on CPU/GPU. Audio
 > never leaves the laptop. Amazon Bedrock is only used for the chat
@@ -56,6 +62,15 @@ Deploy setup is in [`docs/README.md`](docs/README.md).
 - **Persistent sessions** in SQLite (WAL) and **cron-style background
   jobs** whose output streams back into the originating chat.
 
+![Live transcription with two speakers separated and named](docs/assets/img/transcription-diarization.png)
+
+*Live transcription with diarization. Speakers are separated automatically and
+renamed by clicking the label; the assistant on the left summarised the
+transcript without it ever leaving the machine.*
+
+More screenshots, one per feature, are in the
+**[tutorials](https://paukode.github.io/whisper-studio/tut-first-chat.html)**.
+
 ## Quick start
 
 If you already have Python 3.10+, Homebrew, Git, and the AWS CLI configured:
@@ -68,10 +83,18 @@ bash setup.sh
 
 `setup.sh` provisions an isolated `venv/`, installs Node into it via
 `nodeenv`, fetches frontend deps, builds the bundle, and serves the app
-on a single port. Open the URL it prints, click the gear icon, and set
-your **Bedrock Region** and **Default Model**. Type "hello" in chat — if
-Claude responds, you're done. Transcription needs no setup; the speech
-model auto-downloads on first record.
+on a single port. Open the URL it prints and click the gear icon to set your
+**Bedrock Region**:
+
+![Settings on the API Keys tab, showing Bedrock Region](docs/assets/img/settings-api-keys.png)
+
+Pick the model from the **model chip** in the composer toolbar rather than in
+Settings — cloud and on-device models sit in the same list:
+
+![The model picker listing Claude, GPT and on-device models](docs/assets/img/model-picker.png)
+
+Then type "hello" in chat — if the model responds, you're done. Transcription
+needs no setup; the speech model auto-downloads on first record.
 
 For the Vite dev server with hot-module reload, use `bash setup.sh --dev`.
 
@@ -176,6 +199,12 @@ through a server-side nonce approval flow, and wraps shell + Python
 execution in `sandbox-exec(5)`. Plugins are opt-in, and the only outbound
 call the backend makes on its own is to Amazon Bedrock for chat — no
 telemetry.
+
+In the default permission mode, every command the assistant wants to run stops
+for approval first, showing the exact command, its working directory, and a
+risk rating:
+
+![An approval card asking to run pytest, with Yes, Yes-all, No and Block](docs/assets/img/approval-card.png)
 
 Full boundary table: **[Security model](https://paukode.github.io/whisper-studio/ref-security.html)**,
 with the deeper rationale in
