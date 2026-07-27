@@ -64,5 +64,3 @@ export function getFileIcon(path: string): string {
   const ext = name.slice(dotIdx);
   return FILE_ICONS[ext] ?? '📄';
 }
-
-export { FILE_ICONS };

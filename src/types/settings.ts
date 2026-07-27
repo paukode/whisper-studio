@@ -18,11 +18,3 @@ export interface AppConfig {
   /** Per-capability backend overrides, consulted only in hybrid mode. */
   backends: Partial<Record<IndexCapability, string>>;
 }
-
-export interface MCPServer {
-  name: string;
-  command: string;
-  args: string[];
-  env?: Record<string, string>;
-  status: 'running' | 'stopped' | 'error';
-}

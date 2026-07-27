@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyTeamProgressToMessage,
-  findMatchingTeamReport,
   findMatchingTeamReports,
   foldTeamProgressIntoMap,
   foldTeamResultsInto,
@@ -157,36 +156,6 @@ describe('foldTeamProgressIntoMap', () => {
       } as TeamProgressEvent)!;
     }
     expect(map.t6.agents.a1.events.length).toBeLessThanOrEqual(400);
-  });
-});
-
-describe('findMatchingTeamReport', () => {
-  const report = {
-    team_id: 'abc', team_name: 'audit', status: 'running' as const,
-    agents: {}, agentOrder: [],
-  };
-
-  it('matches by team_id from the team_create result JSON', () => {
-    const tools: ToolUseEvent[] = [{
-      toolId: '1', toolName: 'team_create', status: 'complete',
-      input: { team_name: 'other' }, result: JSON.stringify({ team_id: 'abc' }),
-    }];
-    expect(findMatchingTeamReport(tools, { abc: report })?.team_id).toBe('abc');
-  });
-
-  it('falls back to team_name while the tool is still running', () => {
-    const tools: ToolUseEvent[] = [{
-      toolId: '1', toolName: 'team_create', status: 'running',
-      input: { team_name: 'audit' },
-    }];
-    expect(findMatchingTeamReport(tools, { abc: report })?.team_id).toBe('abc');
-  });
-
-  it('returns null when nothing matches', () => {
-    const tools: ToolUseEvent[] = [{
-      toolId: '1', toolName: 'spawn_agent', status: 'complete', input: {},
-    }];
-    expect(findMatchingTeamReport(tools, { abc: report })).toBeNull();
   });
 });
 

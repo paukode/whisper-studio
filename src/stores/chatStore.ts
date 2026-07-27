@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import type { ChatMessage, Attachment, ApprovalCategory, ToolUseEvent, PreviewKind, RiskHint, TeamProgressEvent, TeamReportData } from '@/types/chat';
+import type { ChatMessage, ApprovalCategory, ToolUseEvent, PreviewKind, RiskHint, TeamProgressEvent, TeamReportData } from '@/types/chat';
 import { foldTeamProgressIntoMap, foldTeamResultsInto } from '@/hooks/chatStream/teamProgress';
 
 /**
@@ -36,7 +36,6 @@ export interface ChatState {
    *  StreamingMessage; taken (and cleared) at commit time so the report ends
    *  up on the final assistant message and persists with chat_history. */
   liveTeamReports: Record<string, TeamReportData>;
-  pendingAttachments: Attachment[];
 
   /** Queue of pending approvals (FIFO) */
   approvalQueue: PendingApproval[];
@@ -86,8 +85,6 @@ export interface ChatState {
   /** Atomically stop streaming and add the final message in one render pass. */
   finishStream: (message?: ChatMessage) => void;
   clearMessages: () => void;
-  addAttachment: (attachment: Attachment) => void;
-  removeAttachment: (id: string) => void;
 
   // Message editing
   /** Delete a single message at index */
@@ -143,7 +140,6 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   currentThinkingContent: '',
   currentStreamToolUse: [],
   liveTeamReports: {},
-  pendingAttachments: [],
   approvalQueue: [],
   currentApproval: null,
   sessionApprovals: { ...DEFAULT_SESSION_APPROVALS },
@@ -285,18 +281,6 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       currentThinkingContent: '',
       isStreaming: false,
     });
-  },
-
-  addAttachment: (attachment: Attachment) => {
-    set((state) => ({
-      pendingAttachments: [...state.pendingAttachments, attachment],
-    }));
-  },
-
-  removeAttachment: (id: string) => {
-    set((state) => ({
-      pendingAttachments: state.pendingAttachments.filter((a) => a.id !== id),
-    }));
   },
 
   // ── Message editing ──

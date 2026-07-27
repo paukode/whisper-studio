@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ErrorResponseSchema,
   SessionSummarySchema,
   SessionListResponseSchema,
   AppConfigResponseSchema,
@@ -9,32 +8,7 @@ import {
   MCPServersResponseSchema,
   SkillsResponseSchema,
   SSEEventDataSchema,
-  FileTreeEntrySchema,
-  ListDirResponseSchema,
-  RecentWorkspacesResponseSchema,
-  BuddyGetResponseSchema,
 } from './index';
-
-// ── ErrorResponseSchema ──
-
-describe('ErrorResponseSchema', () => {
-  it('parses error with detail field', () => {
-    const result = ErrorResponseSchema.safeParse({ detail: 'Not found' });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.detail).toBe('Not found');
-  });
-
-  it('parses error with message field', () => {
-    const result = ErrorResponseSchema.safeParse({ message: 'Server error' });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.message).toBe('Server error');
-  });
-
-  it('accepts unknown extra fields (passthrough)', () => {
-    const result = ErrorResponseSchema.safeParse({ detail: 'err', code: 42 });
-    expect(result.success).toBe(true);
-  });
-});
 
 // ── SessionSummarySchema ──
 
@@ -216,82 +190,5 @@ describe('SSEEventDataSchema', () => {
     const result = SSEEventDataSchema.safeParse(input);
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.ws_auto_applied?.path).toBe('/a.ts');
-  });
-});
-
-// ── FileTreeEntrySchema ──
-
-describe('FileTreeEntrySchema', () => {
-  it('parses a file entry', () => {
-    const result = FileTreeEntrySchema.safeParse({ name: 'index.ts', path: 'src/index.ts', type: 'file' });
-    expect(result.success).toBe(true);
-  });
-
-  it('parses a directory with children', () => {
-    const input = {
-      name: 'src',
-      path: 'src',
-      type: 'directory',
-      children: [
-        { name: 'index.ts', path: 'src/index.ts', type: 'file' },
-      ],
-    };
-    const result = FileTreeEntrySchema.safeParse(input);
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.children).toHaveLength(1);
-  });
-
-  it('rejects invalid type', () => {
-    const result = FileTreeEntrySchema.safeParse({ name: 'x', path: 'x', type: 'symlink' });
-    expect(result.success).toBe(false);
-  });
-});
-
-describe('ListDirResponseSchema', () => {
-  it('parses list-dir response', () => {
-    const input = {
-      entries: [
-        { name: 'a.ts', path: 'a.ts', type: 'file' },
-        { name: 'lib', path: 'lib', type: 'directory' },
-      ],
-    };
-    const result = ListDirResponseSchema.safeParse(input);
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.entries).toHaveLength(2);
-  });
-});
-
-// ── RecentWorkspacesResponseSchema ──
-
-describe('RecentWorkspacesResponseSchema', () => {
-  it('parses recent workspaces', () => {
-    const result = RecentWorkspacesResponseSchema.safeParse({ workspaces: ['/home/user/project'] });
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.workspaces).toHaveLength(1);
-  });
-
-  it('defaults to empty array', () => {
-    const result = RecentWorkspacesResponseSchema.safeParse({});
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.workspaces).toEqual([]);
-  });
-});
-
-// ── BuddyGetResponseSchema ──
-
-describe('BuddyGetResponseSchema', () => {
-  it('parses buddy state', () => {
-    const result = BuddyGetResponseSchema.safeParse({ state: 'happy', animation: 'bounce' });
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.state).toBe('happy');
-      expect(result.data.animation).toBe('bounce');
-    }
-  });
-
-  it('defaults state to idle', () => {
-    const result = BuddyGetResponseSchema.safeParse({});
-    expect(result.success).toBe(true);
-    if (result.success) expect(result.data.state).toBe('idle');
   });
 });

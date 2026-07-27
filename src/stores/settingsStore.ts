@@ -150,7 +150,6 @@ export interface SettingsState {
 
   /* Models */
   models: ModelEntry[];
-  defaultModel: string;
   selectedModel: string;
   /** Which on-device model is actually RESIDENT in server memory right now, or
    *  null if none. Distinct from selectedModel: in local/hybrid mode a local
@@ -202,7 +201,6 @@ export interface SettingsState {
    *  copy (the PATCH + rollback is owned by useMcpToggle). */
   setMcpServerEnabled: (name: string, enabled: boolean) => void;
   updateConfig: (partial: Partial<AppConfig>) => void;
-  setConfig: (config: AppConfig) => void;
   setSelectedModel: (model: string) => void;
   setLoadedLocalModel: (model: string | null) => void;
   setEffortLevel: (level: string) => void;
@@ -250,7 +248,6 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   config: { ...defaultConfig },
   isLoading: false,
   models: [],
-  defaultModel: 'opus4.8',
   // Hydrate from the persisted choice so there's no flash of the wrong model
   // before loadModels resolves; loadModels then validates it against the list.
   selectedModel: readSelectedModel() ?? 'opus4.8',
@@ -341,7 +338,6 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
         const allowed = models.find((m) => m.key === chosen)?.effort_levels ?? [];
         return {
           models,
-          defaultModel: def,
           selectedModel: chosen,
           // Reconcile effort to whatever the chosen model supports.
           ...(allowed.length ? { effortLevel: clampEffort(state.effortLevel, allowed) } : {}),
@@ -413,10 +409,6 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
     set((state) => ({
       config: { ...state.config, ...partial },
     }));
-  },
-
-  setConfig: (config) => {
-    set({ config });
   },
 
   setMcpServerEnabled: (name, enabled) => {

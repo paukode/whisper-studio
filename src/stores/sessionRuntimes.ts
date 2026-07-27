@@ -88,10 +88,6 @@ export function getRuntime(sessionId: string | null): RuntimeEntry {
   return entry;
 }
 
-export function hasRuntime(sessionId: string): boolean {
-  return runtimes.has(sessionId);
-}
-
 export const getChatStore = (sessionId: string | null): StoreApi<ChatState> =>
   getRuntime(sessionId).chat;
 
@@ -125,16 +121,6 @@ export const getActiveTranscriptionStore = (): StoreApi<TranscriptionState> =>
 // ── Activity ───────────────────────────────────────────────────────────
 
 export type SessionActivity = 'streaming' | 'approval' | 'recording' | null;
-
-export function activityFor(sessionId: string): SessionActivity {
-  if (useRecordingStore.getState().recordingSessionId === sessionId) return 'recording';
-  const entry = runtimes.get(sessionId);
-  if (!entry) return null;
-  const chat = entry.chat.getState();
-  if (chat.currentApproval !== null) return 'approval';
-  if (chat.isStreaming) return 'streaming';
-  return null;
-}
 
 /** Reactive activity state for one session row (sidebar badges). */
 export function useSessionActivity(sessionId: string): SessionActivity {

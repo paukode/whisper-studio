@@ -11,5 +11,3 @@ export const STORAGE_KEYS = {
   /** Workspace connect dialog size + position (resizable popup) */
   WS_DIALOG_GEOMETRY: 'whisper_ws_dialog_geometry',
 } as const;
-
-export type StorageKey = (typeof STORAGE_KEYS)[keyof typeof STORAGE_KEYS];

@@ -13,8 +13,6 @@ export const SessionSummarySchema = z.object({
 
 export const SessionListResponseSchema = z.array(SessionSummarySchema);
 
-export type SessionSummaryParsed = z.infer<typeof SessionSummarySchema>;
-
 /** GET /api/sessions/search: sessions whose message or transcript text
  *  matches, each with a one-line snippet around the first hit. */
 export const SessionSearchResponseSchema = z.object({

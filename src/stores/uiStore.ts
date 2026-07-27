@@ -49,15 +49,9 @@ export interface DialogFormField {
   options?: Array<string | { value: string; label: string }>;
 }
 
-export interface DialogWizardStep {
-  name: string;
-  fields?: DialogFormField[];
-  body?: string;
-}
-
 export interface DialogEntry {
   id: string;
-  kind: 'confirm' | 'form' | 'wizard' | 'open';
+  kind: 'confirm' | 'form' | 'open';
   title?: string | false;
   message?: string;
   body?: ReactNode;
@@ -66,7 +60,6 @@ export interface DialogEntry {
   confirmText?: string;
   cancelText?: string;
   fields?: DialogFormField[];
-  steps?: DialogWizardStep[];
   _resolve?: (value: unknown) => void;
 }
 
@@ -452,44 +445,6 @@ export function dialogConfirm(opts: {
       danger: opts.danger,
       confirmText: opts.confirmText,
       cancelText: opts.cancelText,
-      _resolve: resolve as (v: unknown) => void,
-    });
-  });
-}
-
-/** Show a form dialog. Resolves to form data object or `null` (cancel). */
-export function dialogForm(opts: {
-  title?: string;
-  size?: 'sm' | 'md' | 'lg';
-  fields: DialogFormField[];
-  submitText?: string;
-  cancelText?: string;
-}): Promise<Record<string, string | boolean> | null> {
-  return new Promise((resolve) => {
-    useUIStore.getState().pushDialog({
-      kind: 'form',
-      title: opts.title ?? 'Form',
-      size: opts.size ?? 'sm',
-      fields: opts.fields,
-      confirmText: opts.submitText ?? 'Submit',
-      cancelText: opts.cancelText,
-      _resolve: resolve as (v: unknown) => void,
-    });
-  });
-}
-
-/** Show a multi-step wizard. Resolves to accumulated data or `null` (cancel). */
-export function dialogWizard(opts: {
-  title?: string;
-  size?: 'sm' | 'md' | 'lg';
-  steps: DialogWizardStep[];
-}): Promise<Record<string, unknown> | null> {
-  return new Promise((resolve) => {
-    useUIStore.getState().pushDialog({
-      kind: 'wizard',
-      title: opts.title ?? 'Setup',
-      size: opts.size ?? 'md',
-      steps: opts.steps,
       _resolve: resolve as (v: unknown) => void,
     });
   });

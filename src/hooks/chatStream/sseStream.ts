@@ -212,16 +212,7 @@ export async function readSSEStream(
             // here covers tools that bypass that path (e.g. acceptEdits or
             // bypassPermissions modes where writes complete inline) and is
             // a no-op for read-only tools because the listener is debounced.
-            if (!isError && (
-              toolName === 'ws_create_file' ||
-              toolName === 'ws_write_file' ||
-              toolName === 'ws_delete' ||
-              toolName === 'ws_rename' ||
-              toolName === 'ws_move' ||
-              toolName === 'ws_mkdir' ||
-              toolName === 'ws_copy' ||
-              toolName === 'ws_duplicate'
-            )) {
+            if (!isError && (toolName === 'ws_create_file' || toolName === 'ws_write_file')) {
               window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
             }
           }

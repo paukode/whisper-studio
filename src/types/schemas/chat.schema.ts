@@ -181,5 +181,3 @@ export const SSEEventDataSchema = z.object({
   // Tasks
   todo_update: z.unknown().optional(),
 }).passthrough();
-
-export type SSEEventDataParsed = z.infer<typeof SSEEventDataSchema>;
