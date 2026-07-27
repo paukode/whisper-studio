@@ -111,7 +111,7 @@
       gate's decisions surface as <code>goal_eval</code> and <code>goal_cap_reached</code> frames. The REST
       surface is small: <code>GET / POST / DELETE /api/sessions/{session_id}/goal</code>.</p>
     <div class="spec">
-      <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate(GateContext) → GateDecision</code>; the two-phase logic and the cap. <code>build_context_from_text</code> is the workflow-runtime entry point.</dd>
+      <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate(GateContext) → GateDecision</code>; the two-phase logic and the cap. Callers build their own <code>GateContext</code>.</dd>
       <dt><code class="path">server/goals/evaluator.py</code></dt><dd>The Haiku verdict — note <code>provider</code> is keyword-only.</dd>
       <dt><code class="path">server/goals/store.py</code> · <code class="path">tail.py</code></dt><dd>The goal on the sessions row; the provider-neutral transcript renderer.</dd>
       <dt><code class="path">server/goals/cron_verify.py</code></dt><dd>Verify-before-report for scheduled runs.</dd>

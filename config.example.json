@@ -139,7 +139,6 @@
   "permission_mode": "default",
   "permission_explainer_enabled": true,
   "model_mode": "cloud",
-  "local_backend": "auto",
   "backends": {},
   "local_mode": false,
   "effort_level": "max",

@@ -164,11 +164,7 @@ picker.
 Tool calling and the thinking channel come from `llama-server`, which uses
 each model's own chat template and upstream's per-family parsers — so a new
 family works without app changes. `setup.sh` installs it (Homebrew on
-macOS); build 10090 or newer is required for current architectures. Set
-`local_backend` to `llama_server`, `in_process`, or `auto` (default) to
-choose the backend; `auto` prefers `llama-server` and falls back to the
-in-process `llama-cpp-python` runtime, whose tool/thinking parsing only
-supports Gemma.
+macOS); build 10090 or newer is required for current architectures.
 
 ## Usage
 
