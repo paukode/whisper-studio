@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 import pytest
 
@@ -730,6 +731,36 @@ def test_reap_orphans_kills_only_our_model_servers(monkeypatch):
     monkeypatch.setattr(LS.os, "kill", lambda pid, sig: killed.append(pid))
     assert LS.reap_orphans() == 1
     assert killed == [111]  # not 222 (user's own), not 333 (not llama-server)
+
+
+def test_reap_orphans_matches_a_symlinked_models_dir(monkeypatch, tmp_path):
+    """A checkout behind a symlink (worktree under /tmp, symlinked home or dev
+    directory) gives MODELS_DIR two spellings. We spawn the child with the
+    unresolved one, so a realpath-only marker misses our own orphan and leaks a
+    server holding gigabytes — exactly what reaping exists to prevent."""
+    import server.local.runtime as L
+
+    (tmp_path / "real").mkdir()
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+    unresolved = str(tmp_path / "link" / "models")
+    resolved = os.path.realpath(unresolved)
+    assert unresolved != resolved  # the premise of the bug
+
+    monkeypatch.setattr(L, "MODELS_DIR", unresolved)
+
+    class R:
+        # 111 as we spawn it, 222 as ps would show it after resolution.
+        stdout = (
+            f"  111 /opt/homebrew/bin/llama-server --model {unresolved}/g/g.gguf --jinja\n"
+            f"  222 /opt/homebrew/bin/llama-server --model {resolved}/g/g.gguf --jinja\n"
+            "  333 /opt/homebrew/bin/llama-server --model /home/me/other/model.gguf\n"
+        )
+
+    monkeypatch.setattr(LS.subprocess, "run", lambda *a, **k: R())
+    killed = []
+    monkeypatch.setattr(LS.os, "kill", lambda pid, sig: killed.append(pid))
+    assert LS.reap_orphans() == 2
+    assert killed == [111, 222]  # still not 333 (the user's own)
 
 
 def test_reap_orphans_survives_a_dead_pid(monkeypatch):
