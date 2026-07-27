@@ -402,14 +402,19 @@ def reap_orphans() -> int:
         log.debug("Could not scan for llama-server orphans: %s", e)
         return 0
 
-    marker = os.path.realpath(MODELS_DIR)
+    # Both spellings of the models directory count. The child is spawned with
+    # MODELS_DIR joined as-is (runtime.gguf_path), so that is the path ps reports;
+    # when the checkout sits behind a symlink (a worktree under /tmp, a symlinked
+    # home or dev directory) the resolved path is a different string, and matching
+    # on realpath alone walks straight past our own orphan.
+    markers = {MODELS_DIR, os.path.realpath(MODELS_DIR)}
     killed = 0
     for line in out.splitlines():
         line = line.strip()
         if not line or "llama-server" not in line:
             continue
         pid_str, _, args = line.partition(" ")
-        if not pid_str.isdigit() or marker not in args:
+        if not pid_str.isdigit() or not any(m in args for m in markers):
             continue
         pid = int(pid_str)
         if pid == os.getpid():
