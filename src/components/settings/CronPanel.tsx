@@ -451,7 +451,9 @@ const JobCard: React.FC<JobCardProps> = ({
         <span style={{ opacity: 0.7 }}>
           {job.run_state === 'failed' ? '⚠ ' : '✓ '}
           last run {formatAgo(job.last_run, now)}
-          {typeof job.run_count === 'number' && job.run_count > 0 ? ` · ${job.run_count} runs` : ''}
+          {typeof job.run_count === 'number' && job.run_count > 0
+            ? ` · ${job.run_count} ${job.run_count === 1 ? 'run' : 'runs'}`
+            : ''}
         </span>
       </div>
 
