@@ -32,6 +32,11 @@
         <em>POST /api/approval/execute</em> step verifies that nonce before running anything.</figcaption>
     </figure>
 
+    <figure class="shot">
+      <img src="assets/img/approval-card.png" alt="An approval card rendered from a pending nonce">
+      <figcaption><strong>The approval flow, as the user sees it.</strong> The card is rendered from a pending server-side nonce; nothing runs until one of these four buttons resolves it.</figcaption>
+    </figure>
+
     <h2 id="permission-modes">The six permission modes</h2>
     <p>The current mode lives in <code class="path">data/permissions.json</code> and is read by
       <code class="path">server/security/permissions.py</code>. It is a single dial that sets the

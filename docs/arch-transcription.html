@@ -36,6 +36,11 @@
         <em>speaker_update</em> edge is the diarizer correcting itself after re-clustering.</figcaption>
     </figure>
 
+    <figure class="shot wide">
+      <img src="assets/img/transcription-diarization.png" alt="Diarized transcript output with named speakers">
+      <figcaption><strong>What the pipeline produces.</strong> Speaker turns from the diarizer, each with a timestamp, rendered in the transcript panel.</figcaption>
+    </figure>
+
     <h2 id="the-channel">The channel</h2>
     <p>A recording session is a WebSocket to
       <code>/ws?session_id=...&amp;backend=...&amp;dictation=...</code>. Before the handshake completes,
