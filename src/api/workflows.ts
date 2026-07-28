@@ -1,5 +1,5 @@
 /** REST client for the workflow runtime (WS-D). */
-import { get, post } from '@/api/client';
+import { get, post, del } from '@/api/client';
 
 export interface WorkflowRun {
   run_id: string;
@@ -25,6 +25,24 @@ export const launchRun = (body: { script?: string; name?: string; session_id: st
   post<{ run_id: string; status: string }>('/api/workflows/runs', body);
 
 export const stopRun = (runId: string) => post<{ stopped: boolean }>(`/api/workflows/runs/${encodeURIComponent(runId)}/stop`, {});
+
+/** Saved workflow summary as returned by GET /api/workflows/saved. */
+export interface SavedWorkflow {
+  name: string;
+  description: string;
+  phases: Array<{ title?: string } | string>;
+  trusted: boolean;
+}
+
+export const listSaved = () => get<{ saved: SavedWorkflow[] }>('/api/workflows/saved');
+
+/** Trust a saved workflow: runs by name skip the approval preview and nested
+ *  `workflow(name)` calls inside other scripts are allowed to load it. */
+export const approveSaved = (name: string) =>
+  post<{ approved: boolean }>(`/api/workflows/saved/${encodeURIComponent(name)}/approve`, {});
+
+export const deleteSaved = (name: string) =>
+  del<{ deleted: boolean }>(`/api/workflows/saved/${encodeURIComponent(name)}`);
 
 /** Subscribe to a run's live SSE events. Returns an unsubscribe fn.
  *  On a transient drop we let EventSource auto-reconnect (it resumes with a
