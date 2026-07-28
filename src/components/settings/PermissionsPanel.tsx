@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { useUIStore } from '@/stores/uiStore';
 import { get, put, post, del } from '@/api/client';
 import { PERMISSION_MODES } from '@/utils/permissionModes';
 import { useSaveStatus } from '@/hooks/useSaveStatus';
@@ -51,16 +49,6 @@ export const PermissionsPanel: React.FC = () => {
   // editor closing on a successful save).
   const saveMode = useSaveStatus();
   const ruleStatus = useSaveStatus();
-
-  // Auto mode only does something when the classifier flag is on (the Auto
-  // Mode tab owns the toggle). Shares the tab's query key so both panels see
-  // the same cached answer.
-  const autoRules = useQuery({
-    queryKey: ['auto-mode-rules'],
-    queryFn: () => get<{ enabled: boolean }>('/api/auto-mode/rules'),
-    staleTime: 30_000,
-  });
-  const classifierEnabled = autoRules.data?.enabled ?? true; // no warning while unknown
 
   // Load permissions on mount
   useEffect(() => {
@@ -154,19 +142,6 @@ export const PermissionsPanel: React.FC = () => {
             <option key={m.value} value={m.value}>{m.label}</option>
           ))}
         </select>
-        {mode === 'auto' && !classifierEnabled && (
-          <p className="settings-hint" role="alert" style={{ marginTop: 8, color: 'var(--warning, #b45309)' }}>
-            The Auto Mode classifier is disabled, so this mode currently asks
-            for every write.{' '}
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => useUIStore.getState().openSettings('auto-mode')}
-            >
-              Enable it in Auto Mode
-            </button>
-          </p>
-        )}
         <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
           <button className="btn btn-primary btn-sm" onClick={handleSaveMode}>Save Mode</button>
           <SaveStatus status={saveMode} />

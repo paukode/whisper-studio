@@ -19,7 +19,7 @@ Why ``router`` and ``executor`` live here:
   bound the name — works during ``__init__.py`` evaluation because the
   binding happens BEFORE the submodule imports below.
 
-External importers (server/main.py, server/auto_mode.py, server/doctor.py,
+External importers (server/main.py, server/doctor.py,
 server/agents/runtime.py, tests/test_chat_truncation.py)
 keep reading the same names off ``server.chat`` thanks to the re-exports here.
 """

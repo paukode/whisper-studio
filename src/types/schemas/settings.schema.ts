@@ -14,7 +14,6 @@ export const AppConfigResponseSchema = z.object({
   effort_level: z.string().optional().default('high'),
   brief_mode: z.boolean().optional().default(false),
   permission_mode: z.string().optional().default('default'),
-  auto_mode: z.boolean().optional().default(false),
   transcription_backend: z.enum(['whisper', 'streaming']).optional().default('streaming'),
   // Where indexing/RAG capabilities run: cloud (Bedrock) | hybrid (per-capability) | local (on-device).
   model_mode: z.enum(['cloud', 'hybrid', 'local']).optional().default('cloud'),

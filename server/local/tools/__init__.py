@@ -27,8 +27,8 @@ SAFETY INVARIANT (load-bearing — do not break):
 
 Local mode stays fully offline: ``run_tool_round`` passes ``model_id=""`` so the
 permission LLM explainer never fires (it is gated on a truthy model_id). The
-auto-mode classifier only runs if the user has ``auto_mode_enabled`` globally —
-off by default; see the morning report for that one caveat.
+auto-mode classifier is gated the same way, so under the ``auto`` permission
+mode the offline path falls back to asking instead of calling Bedrock.
 """
 
 from __future__ import annotations

@@ -485,12 +485,14 @@ async def process_tool_results(
                 auto_allow_trusted,
             )
             if decision is None:
-                # mode == "auto" and nothing else resolved it — only invoke the
-                # classifier for actions that actually need approval (read-only
-                # tools never reach this point). model_id is empty for the
-                # offline local-model path, which must stay Bedrock-free.
+                # mode == "auto" and nothing else resolved it — selecting the
+                # Auto permission mode IS the opt-in, so the classifier runs
+                # here with no separate enable flag. Only actions that actually
+                # need approval reach this point (read-only tools resolve
+                # earlier). model_id is empty for the offline local-model path,
+                # which must stay Bedrock-free and falls back to asking.
                 cfg = config or {}
-                if model_id and cfg.get("auto_mode_enabled"):
+                if model_id:
                     verdict = await classify_tool_call(state.tool_name, ws_parsed, cfg, model_id)
                     decision = "allow" if verdict.get("decision") == "allow" else "ask"
                 else:

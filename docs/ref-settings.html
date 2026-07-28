@@ -208,7 +208,7 @@
       <thead><tr><th>Value</th><th>Behavior</th></tr></thead>
       <tbody>
         <tr><td><code>default</code></td><td>Reads run freely; writes ask for approval.</td></tr>
-        <tr><td><code>auto</code></td><td>A classifier decides per-tool, per-call (rules audited in the Auto Mode tab, edited via config_set).</td></tr>
+        <tr><td><code>auto</code></td><td>A classifier decides per-tool, per-call; it runs whenever this mode is selected (rules edited via config_set).</td></tr>
         <tr><td><code>plan</code></td><td>Read-only. The assistant plans but never executes.</td></tr>
         <tr><td><code>acceptEdits</code></td><td>File edits auto-approve; deletes and shell commands still ask.</td></tr>
         <tr><td><code>bypassPermissions</code></td><td>Everything runs without prompts.</td></tr>
@@ -216,10 +216,9 @@
       </tbody>
     </table></div>
     <p>The <code>auto</code> mode reads three companion keys - <code>auto_mode_allow</code>,
-      <code>auto_mode_soft_deny</code>, and <code>auto_mode_environment</code> - which the Auto Mode
-      tab displays read-only; edit them with config_set in chat or in <code class="path">config.json</code>.
-      The classifier itself only runs when <code>auto_mode_enabled</code> is <code>true</code>
-      (a config-only key, default <code>false</code>). See
+      <code>auto_mode_soft_deny</code>, and <code>auto_mode_environment</code> - edited with
+      config_set in chat or in <code class="path">config.json</code>. Selecting the mode is the
+      opt-in: the classifier runs on every call that would otherwise ask. See
       <a href="arch-approval.html">Approval &amp; permissions</a> for the classifier and nonce flow.</p>
 
     <h2 id="tavily">The Tavily key</h2>

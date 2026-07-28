@@ -10,7 +10,6 @@ import { HooksPanel } from './HooksPanel';
 import { CronPanel } from './CronPanel';
 import { PluginsPanel } from './PluginsPanel';
 import { StatsPanel } from './StatsPanel';
-import { AutoModePanel } from './AutoModePanel';
 import { ModelModePanel } from './ModelModePanel';
 import { FeatureFlagsPanel } from './FeatureFlagsPanel';
 import { PreviewSettings } from './PreviewSettings';
@@ -26,7 +25,6 @@ export type SettingsTabId =
   | 'permissions'
   | 'hooks'
   | 'cron'
-  | 'auto-mode'
   | 'plugins'
   | 'stats'
   | 'costs'
@@ -50,7 +48,6 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { id: 'permissions', label: 'Permissions' },
   { id: 'hooks', label: 'Hooks' },
   { id: 'cron', label: 'Scheduled Tasks' },
-  { id: 'auto-mode', label: 'Auto Mode' },
   { id: 'plugins', label: 'Plugins' },
   { id: 'stats', label: 'Stats' },
   { id: 'costs', label: 'Costs' },
@@ -71,7 +68,6 @@ const TAB_COMPONENTS: Record<SettingsTabId, React.FC> = {
   permissions: PermissionsPanel,
   hooks: HooksPanel,
   cron: CronPanel,
-  'auto-mode': AutoModePanel,
   plugins: PluginsPanel,
   stats: StatsPanel,
   costs: CostsPanel,

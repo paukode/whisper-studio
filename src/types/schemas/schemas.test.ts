@@ -63,7 +63,6 @@ describe('AppConfigResponseSchema', () => {
       effort_level: 'high',
       brief_mode: true,
       permission_mode: 'plan',
-      auto_mode: true,
     };
     const result = AppConfigResponseSchema.safeParse(input);
     expect(result.success).toBe(true);

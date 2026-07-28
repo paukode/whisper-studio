@@ -98,7 +98,6 @@ DEFAULTS = {
     # capabilities fall back to the cloud backend.
     "backends": {},
     "effort_level": "high",
-    "auto_mode_enabled": False,
     "auto_mode_allow": [],
     "auto_mode_soft_deny": [],
     "auto_mode_environment": [],
@@ -145,7 +144,6 @@ PROJECT_SETTINGS_KEYS = frozenset(
         "brief_mode",
         "permission_mode",
         "permission_explainer_enabled",
-        "auto_mode_enabled",
         "auto_mode_allow",
         "auto_mode_soft_deny",
         "auto_mode_environment",

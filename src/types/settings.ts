@@ -10,7 +10,6 @@ export interface AppConfig {
   effortLevel: string;
   briefMode: boolean;
   permissionMode: string;
-  autoModeEnabled: boolean;
   /** Live ASR engine: 'whisper' (utterance) or 'streaming' (Parakeet). */
   transcriptionBackend: string;
   /** Where indexing/RAG runs: cloud (Bedrock) | hybrid | local (on-device). */

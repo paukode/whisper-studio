@@ -142,7 +142,6 @@
   "backends": {},
   "local_mode": false,
   "effort_level": "max",
-  "auto_mode_enabled": false,
   "auto_mode_allow": [],
   "auto_mode_soft_deny": [],
   "auto_mode_environment": [],

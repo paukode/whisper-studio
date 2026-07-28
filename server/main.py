@@ -11,7 +11,6 @@ from server.approval.bootstrap import register_defaults as register_approval_def
 from server.approval.router import router as approval_router
 from server.attachments import cleanup_loop
 from server.attachments import router as attachments_router
-from server.auto_mode import router as auto_mode_router
 
 # server.ask_user is a tool-descriptor module only — it has no HTTP
 # handlers, so there's nothing to mount. Import elsewhere only when
@@ -301,7 +300,6 @@ app.include_router(lsp_router)
 app.include_router(lsp_proxy_router)
 app.include_router(terminal_router)
 app.include_router(buddy_router)
-app.include_router(auto_mode_router)
 app.include_router(doctor_router)
 app.include_router(git_router)
 app.include_router(feature_flags_router)
