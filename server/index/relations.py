@@ -37,23 +37,23 @@ _SYSTEM = (
 
 # Default on-device model used when the "local" engine is selected. Gemma 4 12B
 # (the general instruct model), not the coder variant.
-_LOCAL_MODEL_KEY = "local_gemma"
-
-
 def extract_relations(
     text: str, entity_names: list[str], engine: str = "haiku"
 ) -> list[tuple[str, str, str, float]]:
     """Return ``[(source, target, type, score)]`` with endpoints drawn from
     ``entity_names`` (canonical spelling) and ``score`` the 1–5 strength. Empty on
     any failure or when there are fewer than two entities. ``engine`` is the
-    per-workspace choice ("haiku" cloud / "local" on-device Gemma); anything else
-    extracts nothing."""
+    per-workspace choice: "haiku" (cloud) or an on-device model key (see
+    ``engines.resolve_local_model``); anything else extracts nothing."""
+    from . import engines as _engines
+
     names = [n for n in dict.fromkeys(entity_names) if n][:TYPED_RELATIONS_MAX_ENTITIES]
     if len(names) < 2 or not (text or "").strip():
         return []
     user = f"ENTITIES:\n{', '.join(names)}\n\nTEXT:\n{text[:TYPED_RELATIONS_MAX_CHARS]}"
-    if engine == "local":
-        return _extract_via_local(user, names)
+    local_key = _engines.resolve_local_model(engine)
+    if local_key:
+        return _extract_via_local(user, names, local_key)
     if engine == "haiku":
         return _extract_via_haiku(user, names)
     return []  # "none" / unknown — nothing to extract
@@ -87,21 +87,21 @@ def _extract_via_haiku(user: str, names: list[str]) -> list[tuple[str, str, str]
         return []
 
 
-def _extract_via_local(user: str, names: list[str]) -> list[tuple[str, str, str]]:
-    """On-device path: the local Gemma model via llama.cpp. Generation is
+def _extract_via_local(user: str, names: list[str], model_key: str) -> list[tuple[str, str, str]]:
+    """On-device path: the chosen local model via llama.cpp. Generation is
     serialised on the single model executor (shared with chat), so this also
     makes indexing noticeably slower than the cloud path — the trade for
     keeping file contents on the device."""
     try:
         from server.local import runtime as local_rt
 
-        if not local_rt.is_downloaded(_LOCAL_MODEL_KEY):
+        if not local_rt.is_downloaded(model_key):
             log.warning(
                 "typed-relation local engine: %s not downloaded; skipping relations",
-                _LOCAL_MODEL_KEY,
+                model_key,
             )
             return []
-        out = local_rt.complete(_LOCAL_MODEL_KEY, _SYSTEM, user, max_tokens=1500)
+        out = local_rt.complete(model_key, _SYSTEM, user, max_tokens=1500)
         return parse_relations(out, names)
     except Exception as e:
         log.warning("typed-relation extraction (local) failed: %s", e)

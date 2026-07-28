@@ -227,6 +227,16 @@ async def index_remove(request: Request):
     return {"removed": True}
 
 
+@router.get("/engines")
+async def get_index_engines():
+    """The engine choices for the LLM index passes (relationship mapping,
+    entity descriptions, chunk headers): cloud Haiku plus every on-device
+    model from the config, with download state for the picker badges."""
+    from . import engines
+
+    return {"engines": engines.engine_catalog()}
+
+
 @router.get("/settings")
 async def get_index_settings(request: Request):
     """This workspace's own index settings (schedule, typed relations, background

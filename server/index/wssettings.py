@@ -24,6 +24,9 @@ from . import paths, store
 
 FREQUENCIES = ("daily", "every_n_days", "weekly")
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+# Engine values also accept any on-device model key from the local registry
+# ("local_gemma", "local_qwen35_9b", ...) — see engines.is_llm_engine. The
+# tuples below hold only the pass-specific sentinels.
 ENGINES = ("none", "haiku", "local")
 # Relations may additionally be extracted natively by GLiNER2 (no LLM). This is
 # independent of ner_model: a workspace can use GLiNER2 for entities but keep an
@@ -87,21 +90,31 @@ def _validated(raw) -> dict:
     wd = str(sch.get("weekday", "mon")).lower()
     out["schedule"]["weekday"] = wd if wd in WEEKDAYS else "mon"
 
+    from . import engines as _engines
+
+    def _norm_engine(value, allowed: tuple, fallback: str) -> str:
+        """A sentinel from ``allowed``, or any local-registry model key."""
+        eng = str(value).lower()
+        if eng in allowed or _engines.resolve_local_model(eng):
+            return eng
+        return fallback
+
     tr = raw.get("typed_relations") if isinstance(raw.get("typed_relations"), dict) else {}
     out["typed_relations"]["enabled"] = bool(tr.get("enabled", False))
-    eng = str(tr.get("engine", "none")).lower()
-    out["typed_relations"]["engine"] = eng if eng in RELATION_ENGINES else "none"
+    out["typed_relations"]["engine"] = _norm_engine(
+        tr.get("engine", "none"), RELATION_ENGINES, "none"
+    )
 
     ed = raw.get("entity_descriptions") if isinstance(raw.get("entity_descriptions"), dict) else {}
     out["entity_descriptions"]["enabled"] = bool(ed.get("enabled", False))
-    eng_d = str(ed.get("engine", "none")).lower()
-    out["entity_descriptions"]["engine"] = eng_d if eng_d in ENGINES else "none"
+    out["entity_descriptions"]["engine"] = _norm_engine(ed.get("engine", "none"), ENGINES, "none")
 
     cc = raw.get("chunk_context") if isinstance(raw.get("chunk_context"), dict) else {}
     mode = str(cc.get("mode", "filename")).lower()
     out["chunk_context"]["mode"] = mode if mode in CONTEXT_MODES else "filename"
-    eng_c = str(cc.get("engine", "local")).lower()
-    out["chunk_context"]["engine"] = eng_c if eng_c in CONTEXT_ENGINES else "local"
+    out["chunk_context"]["engine"] = _norm_engine(
+        cc.get("engine", "local"), CONTEXT_ENGINES, "local"
+    )
 
     nm = str(raw.get("ner_model", "gliner")).lower()
     out["ner_model"] = nm if nm in NER_MODELS else "gliner"

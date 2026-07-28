@@ -88,6 +88,23 @@ export interface IndexStatus {
   last_indexed_at?: string | null;
 }
 
+/** An engine value for the index's LLM passes: 'haiku' (cloud), any on-device
+ *  model key from the config ('local_gemma', 'local_qwen35_9b', ...), the
+ *  legacy 'local' alias for local_gemma, or the pass-specific sentinels
+ *  'none' / 'gliner2'. The catalog comes from GET /api/workspace/index/engines. */
+export type IndexEngine = string;
+
+export interface IndexEngineOption {
+  key: string;
+  label: string;
+  local: boolean;
+  downloaded: boolean;
+}
+
+export function indexEngines(): Promise<{ engines: IndexEngineOption[] }> {
+  return get<{ engines: IndexEngineOption[] }>('/api/workspace/index/engines');
+}
+
 /** Per-workspace index settings (each indexed folder has its own). */
 export interface IndexSettings {
   schedule: {
@@ -97,12 +114,12 @@ export interface IndexSettings {
     interval_days: number;
     weekday: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
   };
-  typed_relations: { enabled: boolean; engine: 'none' | 'haiku' | 'local' | 'gliner2' };
+  typed_relations: { enabled: boolean; engine: IndexEngine };
   /** LLM-written one-liners for graph entities; runs at the end of the next
    *  index refresh. Engine set excludes gliner2 (it is an extractor, not a
    *  text generator). */
-  entity_descriptions: { enabled: boolean; engine: 'none' | 'haiku' | 'local' };
-  chunk_context: { mode: 'off' | 'filename' | 'llm'; engine: 'haiku' | 'local' };
+  entity_descriptions: { enabled: boolean; engine: IndexEngine };
+  chunk_context: { mode: 'off' | 'filename' | 'llm'; engine: IndexEngine };
   /** On-device NER model: gliner_large (default, best multilingual) or GLiNER2
    *  (English-strong). The entity label set (business vs code) is auto-picked
    *  per file on the backend. */

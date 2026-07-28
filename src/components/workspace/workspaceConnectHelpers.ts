@@ -1,9 +1,6 @@
 // Shared types and pure helpers for the workspace connect dialog and its
 // browser / recent-item subcomponents. No React, no state.
 
-// On-device model for typed-relation extraction (mirrors server _LOCAL_MODEL_KEY).
-export const LOCAL_RELATIONS_MODEL = 'local_gemma';
-
 export interface BrowseEntry {
   name: string;
   mtime: number;

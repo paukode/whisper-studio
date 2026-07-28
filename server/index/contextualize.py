@@ -8,9 +8,9 @@ still embeds — and retrieves — with that context. Only the embedding input i
 contextualized; the stored chunk text stays raw.
 
 Same engine switch as ``relations.py`` / ``descriptions.py``: "haiku" (Bedrock,
-cloud) or "local" (on-device Gemma). Best-effort — any failure yields an empty
-context for that chunk and never breaks indexing (the chunk still embeds on its
-own text).
+cloud) or an on-device model key from the local registry. Best-effort — any
+failure yields an empty context for that chunk and never breaks indexing (the
+chunk still embeds on its own text).
 """
 
 import logging
@@ -29,7 +29,6 @@ _DOC_HEAD_CHARS = 4000  # bound the per-call doc context (whole file for small d
 # Keep the header short: prepended to the chunk, it shares the embedder's 512-token
 # window, so an overlong header would truncate the tail of a near-max chunk.
 _MAX_CONTEXT_CHARS = 200
-_LOCAL_MODEL_KEY = "local_gemma"
 
 
 def contextualize_chunks(
@@ -37,9 +36,12 @@ def contextualize_chunks(
 ) -> list[str]:
     """Return one situating context string per chunk (parallel to
     ``chunk_texts``); "" for a chunk the model couldn't contextualize. ``engine``
-    is "haiku" (cloud) or "local" (on-device Gemma); anything else returns all
-    empty (caller then embeds the bare chunk)."""
-    if engine not in ("haiku", "local") or not chunk_texts:
+    is "haiku" (cloud) or an on-device model key (see
+    ``engines.resolve_local_model``); anything else returns all empty (caller
+    then embeds the bare chunk)."""
+    from . import engines as _engines
+
+    if not _engines.is_llm_engine(engine) or not chunk_texts:
         return [""] * len(chunk_texts)
     doc_head = (doc_text or "")[:_DOC_HEAD_CHARS]
     out: list[str] = []
@@ -57,16 +59,17 @@ def _build_user(filename: str, doc_head: str, chunk: str) -> str:
 
 
 def _complete(system: str, user: str, engine: str) -> str:
+    from . import engines as _engines
+
     try:
-        if engine == "local":
+        local_key = _engines.resolve_local_model(engine)
+        if local_key:
             from server.local import runtime as local_rt
 
-            if not local_rt.is_downloaded(_LOCAL_MODEL_KEY):
-                log.warning(
-                    "chunk contextualization: %s not downloaded; skipping", _LOCAL_MODEL_KEY
-                )
+            if not local_rt.is_downloaded(local_key):
+                log.warning("chunk contextualization: %s not downloaded; skipping", local_key)
                 return ""
-            return local_rt.complete(_LOCAL_MODEL_KEY, system, user, max_tokens=120)
+            return local_rt.complete(local_key, system, user, max_tokens=120)
         import json
 
         from server.chat.infra import _get_bedrock_client, _get_chat_models

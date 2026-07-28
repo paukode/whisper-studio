@@ -31,15 +31,15 @@ _SYSTEM = (
 # per entity. Each batch returns a JSON array mapping back to its inputs.
 _BATCH = 12
 
-_LOCAL_MODEL_KEY = "local_gemma"
-
 
 def describe_entities(items: list[dict], engine: str = "haiku") -> list[dict]:
     """``items`` is ``[{name, label, contexts: [str]}]``. Returns
     ``[{name, label, description}]`` for the entities the model described.
-    ``engine`` is "haiku" (cloud) or "local" (on-device Gemma); anything else
-    returns nothing."""
-    if engine not in ("haiku", "local") or not items:
+    ``engine`` is "haiku" (cloud) or an on-device model key (see
+    ``engines.resolve_local_model``); anything else returns nothing."""
+    from . import engines as _engines
+
+    if not _engines.is_llm_engine(engine) or not items:
         return []
     out: list[dict] = []
     for i in range(0, len(items), _BATCH):
@@ -58,14 +58,17 @@ def _build_user(batch: list[dict]) -> str:
 
 
 def _complete(system: str, user: str, engine: str) -> str:
+    from . import engines as _engines
+
     try:
-        if engine == "local":
+        local_key = _engines.resolve_local_model(engine)
+        if local_key:
             from server.local import runtime as local_rt
 
-            if not local_rt.is_downloaded(_LOCAL_MODEL_KEY):
-                log.warning("entity descriptions: %s not downloaded; skipping", _LOCAL_MODEL_KEY)
+            if not local_rt.is_downloaded(local_key):
+                log.warning("entity descriptions: %s not downloaded; skipping", local_key)
                 return ""
-            return local_rt.complete(_LOCAL_MODEL_KEY, system, user, max_tokens=1200)
+            return local_rt.complete(local_key, system, user, max_tokens=1200)
         from server.chat.infra import _get_bedrock_client, _get_chat_models
 
         model_id = _get_chat_models().get("haiku")
