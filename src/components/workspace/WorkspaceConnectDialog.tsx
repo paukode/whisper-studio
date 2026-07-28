@@ -193,19 +193,25 @@ export const WorkspaceConnectDialog: React.FC = () => {
 
   // Choosing the on-device engine: make sure Gemma is downloaded first (behind
   // the shared banner, which offers Cancel). On cancel/failure, fall back to
-  // "none" so the folder simply has no engine selected yet.
+  // "none" so the folder simply has no engine selected yet. Shared by the
+  // relationship engine and the entity-descriptions engine, which both run
+  // the same local model.
   const handleEngineChange = useCallback(
-    async (wsPath: string, value: IndexSettings['typed_relations']['engine']) => {
+    async (
+      wsPath: string,
+      field: 'typed_relations' | 'entity_descriptions',
+      value: IndexSettings['typed_relations']['engine'],
+    ) => {
       if (value !== 'local') {
-        updateOne(wsPath, { typed_relations: { engine: value } });
+        updateOne(wsPath, { [field]: { engine: value } });
         return;
       }
       if (await localModelDownloaded(LOCAL_RELATIONS_MODEL)) {
-        updateOne(wsPath, { typed_relations: { engine: 'local' } });
+        updateOne(wsPath, { [field]: { engine: 'local' } });
         return;
       }
       const outcome = await downloadLocalModel(LOCAL_RELATIONS_MODEL, 'Gemma 4 12B (Local)');
-      updateOne(wsPath, { typed_relations: { engine: outcome === 'ready' ? 'local' : 'none' } });
+      updateOne(wsPath, { [field]: { engine: outcome === 'ready' ? 'local' : 'none' } });
     },
     [updateOne],
   );
@@ -570,7 +576,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
       onReindex={(e) => void handleReindex(e, wsPath)}
       onRemoveIndex={(e) => void handleRemoveIndex(e, wsPath)}
       onChange={(patch) => updateOne(wsPath, patch)}
-      onEngineChange={(v) => void handleEngineChange(wsPath, v)}
+      onEngineChange={(v) => void handleEngineChange(wsPath, 'typed_relations', v)}
+      onDescriptionsEngineChange={(v) => void handleEngineChange(wsPath, 'entity_descriptions', v)}
     />
   );
 
@@ -694,7 +701,8 @@ export const WorkspaceConnectDialog: React.FC = () => {
                     settings={newFolderSettings}
                     agentSupported={agentSupported}
                     onChange={(patch) => updateOne(normalizedPath, patch)}
-                    onEngineChange={(v) => void handleEngineChange(normalizedPath, v)}
+                    onEngineChange={(v) => void handleEngineChange(normalizedPath, 'typed_relations', v)}
+                    onDescriptionsEngineChange={(v) => void handleEngineChange(normalizedPath, 'entity_descriptions', v)}
                   />
                 </div>
               ) : (

@@ -22,6 +22,7 @@ export interface RecentWorkspaceItemProps {
   onRemoveIndex: (e: React.MouseEvent) => void;
   onChange: React.ComponentProps<typeof IndexSettingsPanel>['onChange'];
   onEngineChange: React.ComponentProps<typeof IndexSettingsPanel>['onEngineChange'];
+  onDescriptionsEngineChange: React.ComponentProps<typeof IndexSettingsPanel>['onDescriptionsEngineChange'];
 }
 
 export const RecentWorkspaceItem: React.FC<RecentWorkspaceItemProps> = ({
@@ -39,6 +40,7 @@ export const RecentWorkspaceItem: React.FC<RecentWorkspaceItemProps> = ({
   onRemoveIndex,
   onChange,
   onEngineChange,
+  onDescriptionsEngineChange,
 }) => {
   const name = wsPath.split('/').filter(Boolean).pop() || wsPath;
   const building = !!st?.building;
@@ -130,6 +132,7 @@ export const RecentWorkspaceItem: React.FC<RecentWorkspaceItemProps> = ({
                 agentSupported={agentSupported}
                 onChange={onChange}
                 onEngineChange={onEngineChange}
+                onDescriptionsEngineChange={onDescriptionsEngineChange}
               />
               {indexed && !building && (
                 <button

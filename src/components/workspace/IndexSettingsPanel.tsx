@@ -9,6 +9,8 @@ interface IndexSettingsPanelProps {
   /** Engine changes route through the dialog so it can download Gemma first
    *  when the on-device engine is picked. */
   onEngineChange: (engine: IndexSettings['typed_relations']['engine']) => void;
+  /** Same Gemma-download routing for the entity-descriptions engine. */
+  onDescriptionsEngineChange: (engine: IndexSettings['entity_descriptions']['engine']) => void;
 }
 
 const WEEKDAYS = [
@@ -23,7 +25,7 @@ const WEEKDAYS = [
  * the new-folder section of the connect dialog, so a folder is configured the
  * same way before or after it lands in Recent.
  */
-export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings: s, agentSupported, onChange, onEngineChange }) => (
+export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings: s, agentSupported, onChange, onEngineChange, onDescriptionsEngineChange }) => (
   <div className="ws-menu-settings">
     <label className="ws-menu-line">
       <input
@@ -115,6 +117,33 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
     {s.typed_relations.enabled && s.typed_relations.engine === 'gliner2' && (
       <span className="ws-menu-hint">
         Fully on-device and fast (a small extractor model, no language model), but finds far fewer relationships than Haiku or Gemma. Best when speed and privacy matter more than depth.
+      </span>
+    )}
+    <label className="ws-menu-line">
+      <input
+        type="checkbox"
+        checked={s.entity_descriptions?.enabled ?? false}
+        onChange={(e) => onChange({ entity_descriptions: { enabled: e.target.checked } })}
+      />
+      Write short AI descriptions for people, companies, and topics
+    </label>
+    {s.entity_descriptions?.enabled && (
+      <label className="ws-menu-line" style={{ marginLeft: 22 }}>
+        Written by
+        <select
+          value={s.entity_descriptions.engine}
+          onChange={(e) => onDescriptionsEngineChange(e.target.value as IndexSettings['entity_descriptions']['engine'])}
+        >
+          <option value="none">Choose an engine…</option>
+          <option value="haiku">Amazon Bedrock (Haiku), faster</option>
+          <option value="local">On-device Gemma, private but slower</option>
+        </select>
+      </label>
+    )}
+    {s.entity_descriptions?.enabled && (
+      <span className="ws-menu-hint">
+        One-line summaries shown on entities in the knowledge graph, written at
+        the end of the next index refresh.
       </span>
     )}
     <label className="ws-menu-line">

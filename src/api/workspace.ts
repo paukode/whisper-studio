@@ -98,6 +98,10 @@ export interface IndexSettings {
     weekday: 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
   };
   typed_relations: { enabled: boolean; engine: 'none' | 'haiku' | 'local' | 'gliner2' };
+  /** LLM-written one-liners for graph entities; runs at the end of the next
+   *  index refresh. Engine set excludes gliner2 (it is an extractor, not a
+   *  text generator). */
+  entity_descriptions: { enabled: boolean; engine: 'none' | 'haiku' | 'local' };
   chunk_context: { mode: 'off' | 'filename' | 'llm'; engine: 'haiku' | 'local' };
   /** On-device NER model: gliner_large (default, best multilingual) or GLiNER2
    *  (English-strong). The entity label set (business vs code) is auto-picked
@@ -108,6 +112,7 @@ export interface IndexSettings {
 export type IndexSettingsPatch = {
   schedule?: Partial<IndexSettings['schedule']>;
   typed_relations?: Partial<IndexSettings['typed_relations']>;
+  entity_descriptions?: Partial<IndexSettings['entity_descriptions']>;
   chunk_context?: Partial<IndexSettings['chunk_context']>;
   ner_model?: IndexSettings['ner_model'];
   refresh_when_closed?: boolean;
