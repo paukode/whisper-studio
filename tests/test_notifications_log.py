@@ -110,3 +110,41 @@ def test_route_tool_choke_point_records_with_origin():
 def test_mark_read_rejects_non_numeric_ids(client):
     r = client.post("/api/notifications/read", json={"ids": ["abc"]})
     assert r.status_code == 400
+
+
+def test_hide_excludes_from_list_and_unread():
+    for i in range(3):
+        notif.record_notification(message=f"n{i}", source="chat")
+    target = notif.list_notifications()[0]["id"]
+    assert notif.hide([target]) == 1
+    remaining = notif.list_notifications()
+    assert len(remaining) == 2
+    assert target not in [r["id"] for r in remaining]
+    # A hidden row is also read, so it never haunts the badge.
+    assert notif.unread_count() == 2
+    # Hiding again is a no-op.
+    assert notif.hide([target]) == 0
+
+
+def test_clear_all_hides_everything_but_keeps_rows():
+    for i in range(3):
+        notif.record_notification(message=f"n{i}", source="agent")
+    assert notif.clear_all() == 3
+    assert notif.list_notifications() == []
+    assert notif.unread_count() == 0
+    with notif._get_conn() as conn:
+        kept = conn.execute("SELECT COUNT(*) AS n FROM notifications").fetchone()["n"]
+    assert kept == 3  # soft-hide: rows stay for the 30-day GC
+
+
+def test_hide_and_clear_http_surface(client):
+    notif.record_notification(message="a", source="chat")
+    notif.record_notification(message="b", source="chat")
+    rows = client.get("/api/notifications").json()["notifications"]
+    r = client.post("/api/notifications/hide", json={"ids": [rows[0]["id"]]})
+    assert r.json() == {"hidden": 1}
+    assert client.post("/api/notifications/hide", json={}).status_code == 400
+    assert client.post("/api/notifications/hide", json={"ids": []}).status_code == 400
+    assert client.post("/api/notifications/hide", json={"ids": ["x"]}).status_code == 400
+    assert client.post("/api/notifications/clear", json={}).json() == {"cleared": 1}
+    assert client.get("/api/notifications").json()["notifications"] == []

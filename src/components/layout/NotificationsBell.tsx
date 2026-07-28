@@ -17,13 +17,15 @@ interface NotificationRow {
 /**
  * Header bell over the durable notification log (`notify_user` writes it via
  * server/notifications.py; toasts stay ephemeral). The badge polls the unread
- * count so results delivered while the user was away are visible on return;
- * the dropdown lists recent notifications, jumps to the source session on
- * click, and offers mark-all-read.
+ * count so results delivered while the user was away are visible on return.
+ * The dropdown lists notifications with an All/Unread filter, per-row
+ * mark-read and hide, mark-all-read, and clear-all (soft-hide: rows keep
+ * living in sessions.db until the 30-day GC).
  */
 export const NotificationsBell: React.FC = () => {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState<'all' | 'unread'>('all');
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const unreadQuery = useQuery({
@@ -35,9 +37,11 @@ export const NotificationsBell: React.FC = () => {
   const unread = unreadQuery.data?.unread ?? 0;
 
   const listQuery = useQuery({
-    queryKey: ['notifications-list'],
+    queryKey: ['notifications-list', filter],
     queryFn: () =>
-      get<{ notifications: NotificationRow[] }>('/api/notifications?limit=50'),
+      get<{ notifications: NotificationRow[] }>(
+        `/api/notifications?limit=50${filter === 'unread' ? '&unread_only=true' : ''}`,
+      ),
     enabled: open,
   });
 
@@ -82,15 +86,35 @@ export const NotificationsBell: React.FC = () => {
     refresh();
   };
 
-  const openNotification = async (n: NotificationRow) => {
-    if (!n.read_at) {
-      try {
-        await post('/api/notifications/read', { ids: [n.id] });
-      } catch {
-        /* best-effort */
-      }
-      refresh();
+  const clearAll = async () => {
+    try {
+      await post('/api/notifications/clear', {});
+    } catch {
+      /* best-effort */
     }
+    refresh();
+  };
+
+  const markRead = async (id: number) => {
+    try {
+      await post('/api/notifications/read', { ids: [id] });
+    } catch {
+      /* best-effort */
+    }
+    refresh();
+  };
+
+  const hideOne = async (id: number) => {
+    try {
+      await post('/api/notifications/hide', { ids: [id] });
+    } catch {
+      /* best-effort */
+    }
+    refresh();
+  };
+
+  const openNotification = async (n: NotificationRow) => {
+    if (!n.read_at) void markRead(n.id);
     if (n.session_id) {
       setOpen(false);
       void useSessionStore.getState().switchSession(n.session_id);
@@ -122,11 +146,20 @@ export const NotificationsBell: React.FC = () => {
           <div className="notif-head">
             <span className="notif-title">Notifications</span>
             <div className="notif-head-actions">
-              {unread > 0 && (
-                <button className="btn btn-sm" type="button" onClick={() => void markAllRead()}>
-                  Mark all read
-                </button>
-              )}
+              <button
+                className={`notif-tab${filter === 'all' ? ' active' : ''}`}
+                type="button"
+                onClick={() => setFilter('all')}
+              >
+                All
+              </button>
+              <button
+                className={`notif-tab${filter === 'unread' ? ' active' : ''}`}
+                type="button"
+                onClick={() => setFilter('unread')}
+              >
+                Unread{unread > 0 ? ` ${unread}` : ''}
+              </button>
               <button className="bg-tasks-close" type="button" onClick={() => setOpen(false)} title="Close">
                 ✕
               </button>
@@ -136,27 +169,72 @@ export const NotificationsBell: React.FC = () => {
             {listQuery.isLoading && <div className="notif-empty">Loading…</div>}
             {!listQuery.isLoading && rows.length === 0 && (
               <div className="notif-empty">
-                Nothing yet. Results the assistant flags with <code>notify_user</code>
-                {' '}(chat, agents, and scheduled tasks) land here.
+                {filter === 'unread' ? (
+                  'Nothing unread.'
+                ) : (
+                  <>
+                    Nothing yet. Results the assistant flags with <code>notify_user</code>
+                    {' '}(chat, agents, and scheduled tasks) land here.
+                  </>
+                )}
               </div>
             )}
             {rows.map((n) => (
-              <button
-                key={n.id}
-                type="button"
-                className={`notif-row${n.read_at ? '' : ' notif-row-unread'}`}
-                onClick={() => void openNotification(n)}
-                title={n.session_id ? 'Open the session this came from' : undefined}
-              >
-                <span className={`notif-source notif-source-${n.source}`}>{n.source}</span>
-                <span className="notif-row-main">
-                  {n.title && <span className="notif-row-title">{n.title}</span>}
-                  <span className="notif-row-msg">{n.message}</span>
+              <div key={n.id} className={`notif-row${n.read_at ? '' : ' notif-row-unread'}`}>
+                <button
+                  type="button"
+                  className="notif-row-body"
+                  onClick={() => void openNotification(n)}
+                  title={n.session_id ? 'Open the session this came from' : undefined}
+                >
+                  <span className={`notif-source notif-source-${n.source}`}>{n.source}</span>
+                  <span className="notif-row-main">
+                    {n.title && <span className="notif-row-title">{n.title}</span>}
+                    <span className="notif-row-msg">{n.message}</span>
+                  </span>
+                  <span className="notif-time">{relativeTime(n.created_at)}</span>
+                </button>
+                <span className="notif-row-actions">
+                  {!n.read_at && (
+                    <button
+                      type="button"
+                      className="notif-action"
+                      title="Mark as read"
+                      onClick={() => void markRead(n.id)}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 6 9 17l-5-5"/>
+                      </svg>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="notif-action"
+                    title="Hide this notification"
+                    onClick={() => void hideOne(n.id)}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 6 6 18M6 6l12 12"/>
+                    </svg>
+                  </button>
                 </span>
-                <span className="notif-time">{relativeTime(n.created_at)}</span>
-              </button>
+              </div>
             ))}
           </div>
+          {rows.length > 0 && (
+            <div className="notif-foot">
+              {unread > 0 ? (
+                <button className="btn btn-sm" type="button" onClick={() => void markAllRead()}>
+                  Mark all read
+                </button>
+              ) : (
+                <span />
+              )}
+              <button className="btn btn-sm" type="button" onClick={() => void clearAll()}>
+                Clear all
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

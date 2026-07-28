@@ -5336,24 +5336,73 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 }
 .notif-title { font-weight: 600; font-size: var(--fs-small); color: var(--text-primary); }
 .notif-head-actions { display: flex; align-items: center; gap: 8px; }
+.notif-tab {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1px 8px;
+    font-size: var(--fs-caption);
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.notif-tab.active {
+    background: var(--accent-dim, rgba(217, 119, 87, 0.12));
+    border-color: var(--accent);
+    color: var(--accent);
+}
 .notif-body { overflow-y: auto; padding: 6px 0; }
 .notif-empty { padding: 16px 14px; color: var(--text-secondary); font-size: var(--fs-small); }
 .notif-row {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
-    width: 100%;
-    padding: 8px 14px;
-    border: none;
     border-bottom: 1px solid var(--border);
+}
+.notif-row:last-child { border-bottom: none; }
+.notif-row:hover { background: var(--bg-secondary); }
+.notif-row-unread { background: var(--accent-dim, rgba(217, 119, 87, 0.08)); }
+.notif-row-body {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    padding: 8px 4px 8px 14px;
+    border: none;
     background: none;
     text-align: left;
     cursor: pointer;
     font: inherit;
 }
-.notif-row:last-child { border-bottom: none; }
-.notif-row:hover { background: var(--bg-secondary); }
-.notif-row-unread { background: var(--accent-dim, rgba(217, 119, 87, 0.08)); }
+.notif-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 10px 0 0;
+    opacity: 0;
+}
+.notif-row:hover .notif-row-actions,
+.notif-row-actions:focus-within { opacity: 1; }
+.notif-action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 5px;
+    background: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.notif-action:hover { background: var(--bg-primary); color: var(--text-primary); }
+.notif-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+}
 .notif-source {
     font-size: 10px;
     text-transform: uppercase;
