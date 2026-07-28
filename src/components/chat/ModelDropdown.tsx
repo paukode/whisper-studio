@@ -26,6 +26,12 @@ interface ModelDropdownProps {
  * `onSelect`, and closing sibling dropdowns stays in `onToggle`. On this branch
  * on-device models carry a "Local" badge.
  */
+/** The config labels name on-device models "... (Local)". The dropdown rows
+ *  already carry the Local badge, so strip the suffix there to avoid saying it
+ *  twice; the trigger chip has no badge and keeps the full label. */
+const rowName = (m: ModelOption): string =>
+  m.is_local ? m.name.replace(/\s*\(local\)\s*$/i, '') : m.name;
+
 export const ModelDropdown: React.FC<ModelDropdownProps> = ({
   models, selectedModel, loadedLocalModel, open, onToggle, onSelect,
 }) => {
@@ -56,7 +62,7 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', flex: 1, minWidth: 0 }}>
             <span className="toolbar-dropdown-item-name">
-              {m.name}
+              {rowName(m)}
               {m.requires_data_retention && <span className="model-retention-badge">Mythos</span>}
               {m.is_local && <span className="model-local-badge">Local</span>}
               {m.is_local && loadedLocalModel === m.key && (
