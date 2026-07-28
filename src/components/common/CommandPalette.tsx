@@ -7,6 +7,7 @@ import { useDismiss } from '@/hooks/useDismiss';
 import { requestModelChange } from '@/components/chat/dataRetentionConsent';
 import { effortLabel } from '@/utils/effort';
 import { PERMISSION_MODES } from '@/utils/permissionModes';
+import { SETTINGS_TABS } from '@/components/settings/SettingsModal';
 import { put } from '@/api/client';
 
 /**
@@ -65,13 +66,9 @@ export const CommandPalette: React.FC = () => {
         run: run(() => ui.openMemoryEditor()) },
     ];
 
-    // Settings tabs
-    const tabs: Array<[string, string]> = [
-      ['apikeys', 'API Keys'], ['skills', 'Skills'], ['mcp', 'MCP'],
-      ['permissions', 'Permissions'], ['hooks', 'Hooks'], ['cron', 'Cron'],
-      ['auto-mode', 'Auto Mode'], ['plugins', 'Plugins'], ['stats', 'Stats'], ['costs', 'Costs'],
-    ];
-    for (const [id, label] of tabs) {
+    // Settings tabs — derived from the modal's own list so the palette can
+    // never drift from the tabs that actually exist.
+    for (const { id, label } of SETTINGS_TABS) {
       list.push({ id: `settings-${id}`, group: 'Settings', title: `Settings: ${label}`, keywords: 'preferences config',
         run: run(() => ui.openSettings(id)) });
     }
