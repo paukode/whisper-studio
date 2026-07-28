@@ -1,7 +1,9 @@
 import React, { useCallback, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { get, post } from '@/api/client';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { get, post, put } from '@/api/client';
 import { useUIStore } from '@/stores/uiStore';
+import { useSaveStatus } from '@/hooks/useSaveStatus';
+import { SaveStatus } from '@/components/common/SaveStatus';
 import { toError } from '@/utils/toError';
 
 interface AutoModeRulesResponse {
@@ -39,18 +41,35 @@ export const sameArr = (a: string[], b: string[]): boolean =>
  * override the defaults *per section* (an empty user-allow keeps the
  * default allow; a non-empty one replaces it).
  *
- * This panel surfaces the effective rules + the defaults so the user
- * can audit what Auto Mode will let through without having to grep
- * the server config file. Editing happens via config_set in the chat
- * (intentionally — these are sensitive rules that should be reviewed
- * with the LLM rather than tweaked in a quick form).
+ * This panel owns the master enable switch (`auto_mode_enabled` in the
+ * config — without it, selecting the Auto permission mode behaves like
+ * "ask for everything") and surfaces the effective rules + the defaults
+ * so the user can audit what Auto Mode will let through. Rule editing
+ * happens via config_set in the chat (intentionally — these are
+ * sensitive rules that should be reviewed with the LLM rather than
+ * tweaked in a quick form).
  */
 export const AutoModePanel: React.FC = () => {
+  const queryClient = useQueryClient();
   const { data, isLoading, error } = useQuery({
     queryKey: ['auto-mode-rules'],
     queryFn: fetchAutoModeRules,
     staleTime: 30_000,
   });
+  const saveEnabled = useSaveStatus();
+
+  const toggleEnabled = useCallback(
+    async (next: boolean) => {
+      await saveEnabled.run(
+        async () => {
+          await put('/api/config', { auto_mode_enabled: next });
+          await queryClient.invalidateQueries({ queryKey: ['auto-mode-rules'] });
+        },
+        { saved: next ? 'Classifier enabled' : 'Classifier disabled' },
+      );
+    },
+    [queryClient, saveEnabled],
+  );
 
   // Critique state. Independent of the read-only rules display so a
   // slow LLM round-trip doesn't block scrolling/reading the rules.
@@ -114,13 +133,22 @@ export const AutoModePanel: React.FC = () => {
   return (
     <div className="settings-form" style={{ maxWidth: 720 }}>
       <p className="settings-hint">
-        Auto Mode lets the LLM auto-approve tool calls that match the rules
-        below. <strong>Current state:</strong>{' '}
-        <span style={{ color: enabled ? 'var(--accent)' : 'var(--text-muted)' }}>
-          {enabled ? 'enabled' : 'disabled'}
-        </span>
-        . Edit via <code>config_set</code> in chat.
+        Auto Mode lets an AI classifier auto-approve tool calls that match the
+        rules below. The classifier only runs when it is enabled here; with it
+        off, the Auto permission mode falls back to asking for every write.
+        Rules are edited via <code>config_set</code> in chat.
       </p>
+
+      <label className="ws-menu-line" style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '12px 0' }}>
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={saveEnabled.state === 'saving'}
+          onChange={(e) => void toggleEnabled(e.target.checked)}
+        />
+        Enable the Auto Mode classifier
+        <SaveStatus status={saveEnabled} />
+      </label>
 
       <RuleSection
         title="Allow"
