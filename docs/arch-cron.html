@@ -148,8 +148,8 @@
       per-tool log in the existing <a href="arch-agents.html">TeamReportCard/AgentCard</a> fold.</p>
     <p>A cron run that calls <code>notify_user</code> also writes a durable <code>source='cron'</code> row to
       the <code>notifications</code> table (<a href="arch-persistence.html">migration 008</a>), so a report
-      delivered while you were away is preserved in the durable notifications log (no UI surfaces it yet;
-      it is readable over <code>GET /api/notifications</code>).</p>
+      delivered while you were away waits behind the header bell, which reads the log over
+      <code>GET /api/notifications</code>.</p>
     <p>These cards are UI-only. They are filtered out by <code>visible_chat_history</code> before the next
       prompt is built, so background firings never inflate the token bill or confuse the model. If the
       owning session was deleted or archived, <code>_resolve_target_session()</code> redirects the card to

@@ -2,8 +2,8 @@
 
 notify_user shows a 5-second toast. This table gives every notification, from
 chat turns, agents, and cron runs, a durable, queryable record that outlives
-the toast and is readable over ``GET /api/notifications`` (no UI surfaces it
-yet), so a user away from the screen can catch up.
+the toast and feeds the header bell over ``GET /api/notifications``, so a user
+away from the screen can catch up.
 """
 
 import sqlite3

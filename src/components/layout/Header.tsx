@@ -7,6 +7,7 @@ import { useBackgroundTaskStore } from '@/stores/backgroundTaskStore';
 import { recordingController } from '@/services/recordingController';
 import { CaptureSourceMenu } from '@/components/layout/CaptureSourceMenu';
 import { BackgroundTasksPanel } from '@/components/tasks/BackgroundTasksPanel';
+import { NotificationsBell } from '@/components/layout/NotificationsBell';
 import { useTheme } from '@/providers/ThemeProvider';
 import type { ThemeKey } from '@/types/theme';
 
@@ -244,6 +245,8 @@ export const Header: React.FC = () => {
           </button>
         )}
         <BackgroundTasksPanel />
+
+        <NotificationsBell />
 
         <button
           className="btn-icon"

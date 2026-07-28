@@ -138,7 +138,7 @@
         <tr><td><code>session_costs</code></td><td>One row per model turn</td><td><code>session_id</code>, <code>turn_number</code>, <code>model</code>, input / output / cache-read / cache-creation tokens, <code>cost_usd</code>, and <code>api_duration_ms</code>. Backs the cost aggregates and spend caps.</td></tr>
         <tr><td><code>cron_runs</code></td><td>One row per scheduled-task fire</td><td><code>run_id</code>, <code>job_id</code>, <code>job_name</code>, <code>session_id</code>, a <code>status</code> lease (<code>running</code> / <code>ok</code> / <code>failed</code>), timestamps, <code>duration_ms</code>, the result <code>text</code>, and the computed <code>next_run</code>.</td></tr>
         <tr><td><code>agent_tasks</code></td><td>One row per background task</td><td><code>task_id</code>, <code>kind</code> (<code>shell</code> / <code>agent</code> / <code>workflow</code>), <code>session_id</code>, <code>title</code>, a <code>status</code> lease with <code>owner_pid</code>, and kind-specific fields. The unified background-task registry (migration 007).</td></tr>
-        <tr><td><code>notifications</code></td><td>One row per <code>notify_user</code></td><td>An id, <code>session_id</code>, <code>source</code> (<code>chat</code> / <code>agent</code> / <code>cron</code>), <code>title</code>, <code>message</code>, <code>status</code>, and a <code>read_at</code> stamp. The durable log written by <code>notify_user</code> (migration 008); exposed at <code>/api/notifications</code>, with no UI consumer yet.</td></tr>
+        <tr><td><code>notifications</code></td><td>One row per <code>notify_user</code></td><td>An id, <code>session_id</code>, <code>source</code> (<code>chat</code> / <code>agent</code> / <code>cron</code>), <code>title</code>, <code>message</code>, <code>status</code>, and a <code>read_at</code> stamp. The durable log written by <code>notify_user</code> (migration 008); exposed at <code>/api/notifications</code> and surfaced by the header bell.</td></tr>
         <tr><td><code>workflow_runs</code></td><td>One row per workflow run</td><td><code>run_id</code>, <code>name</code>, <code>session_id</code>, a <code>status</code> lease, the phase list, and a token / <code>cost_usd</code> / <code>budget_usd</code> ledger for the <a href="arch-ultracode.html">ultracode workflow runtime</a> (migration 009).</td></tr>
       </tbody>
     </table></div>
@@ -146,7 +146,7 @@
       <code>workflow_runs</code> each write a <code>running</code> row that a boot-time reconcile flips to
       a terminal state (<code>failed</code> / <code>interrupted</code> / <code>stale</code>) if it is
       still open after a restart, so nothing hangs forever; <code>notifications</code> is instead the
-      durable record read over <code>GET /api/notifications</code>, with no UI consumer yet. Each table is
+      durable record behind the header bell, read over <code>GET /api/notifications</code>. Each table is
       indexed for its hot query -
       <code>session_costs</code> by <code>session_id</code> and <code>created_at</code>,
       <code>cron_runs</code> by <code>(job_id, started_at DESC)</code>, and <code>agent_tasks</code> /
