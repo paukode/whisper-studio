@@ -7,6 +7,7 @@ import { useBackgroundTaskStore } from '@/stores/backgroundTaskStore';
 import { recordingController } from '@/services/recordingController';
 import { CaptureSourceMenu } from '@/components/layout/CaptureSourceMenu';
 import { BackgroundTasksPanel } from '@/components/tasks/BackgroundTasksPanel';
+import { NotificationsBell } from '@/components/layout/NotificationsBell';
 import { useTheme } from '@/providers/ThemeProvider';
 import type { ThemeKey } from '@/types/theme';
 
@@ -30,8 +31,8 @@ const THEME_SWATCHES: Record<ThemeKey, string> = {
   'light-high-contrast': '#ffffff',
   'dark-daltonized': 'linear-gradient(135deg, #111113 50%, #3b82f6 50%)',
   'light-daltonized': 'linear-gradient(135deg, #f5f3ef 50%, #2563eb 50%)',
-  'dark-taw': 'linear-gradient(135deg, #262624 50%, #d97757 50%)',
-  'light-taw': 'linear-gradient(135deg, #faf9f5 50%, #d97757 50%)',
+  'dark-taw': 'linear-gradient(135deg, #262624 50%, #4f94d8 50%)',
+  'light-taw': 'linear-gradient(135deg, #faf9f5 50%, #1d6ec2 50%)',
 };
 
 export const Header: React.FC = () => {
@@ -244,6 +245,8 @@ export const Header: React.FC = () => {
           </button>
         )}
         <BackgroundTasksPanel />
+
+        <NotificationsBell />
 
         <button
           className="btn-icon"

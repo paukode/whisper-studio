@@ -126,12 +126,6 @@ def _get_bearer_token(region: str) -> str:
     return token
 
 
-def reset_token_cache() -> None:
-    """Drop cached tokens (test hook / force a re-mint after an auth failure)."""
-    with _token_lock:
-        _token_cache.clear()
-
-
 def build_client(region: str):
     """Fresh AsyncOpenAI client for the bedrock-mantle OpenAI endpoint with a
     current bearer token. Cheap to construct; we make a new one per turn so a

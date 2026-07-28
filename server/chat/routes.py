@@ -1,9 +1,8 @@
 """FastAPI HTTP handlers for the chat package.
 
-Five endpoints:
+Four endpoints:
 - GET  /api/models           — list configured chat models + the default
 - POST /api/generate-title   — one-shot Bedrock call to title a conversation
-- POST /api/subagent         — spawn a focused subagent (separate session)
 - POST /api/chat/btw         — quick side question, no history mutation
 - POST /api/chat             — the main streaming chat endpoint
 
@@ -581,88 +580,6 @@ async def generate_title_endpoint(request: Request):
         return {"title": "New Conversation"}
 
 
-@router.post("/api/subagent")
-async def subagent_endpoint(request: Request):
-    """
-    Feature 12: Spawn a subagent — run a task in an independent Claude session.
-    Returns the full response.
-    """
-    body = await request.json()
-    task = body.get("task", "")
-    context = body.get("context", "")
-    model_key = body.get("model", _get_default_model())
-    if not task:
-        from fastapi.responses import Response
-
-        return Response(
-            content=json.dumps({"error": "task required"}),
-            status_code=400,
-            media_type="application/json",
-        )
-
-    chat_models = _get_chat_models()
-    model_id = (
-        chat_models.get(model_key) or chat_models.get("sonnet") or next(iter(chat_models.values()))
-    )
-    bedrock = _get_bedrock_client()
-    loop = asyncio.get_event_loop()
-
-    from server.prompts.rules import append_rules
-
-    system = append_rules(
-        "You are a focused subagent. Complete the given task concisely and return results."
-    )
-    user_msg = f"{context}\n\nTask: {task}" if context else task
-
-    def _call():
-        resp = bedrock.invoke_model(
-            modelId=model_id,
-            contentType="application/json",
-            accept="application/json",
-            body=json.dumps(
-                {
-                    "anthropic_version": "bedrock-2023-05-31",
-                    "max_tokens": 8192,
-                    "system": system,
-                    "messages": [{"role": "user", "content": user_msg}],
-                }
-            ),
-        )
-        result = json.loads(resp["body"].read())
-        text = result.get("content", [{}])[0].get("text", "")
-        usage = result.get("usage", {})
-        return text, usage
-
-    session_id = body.get("session_id", "subagent")
-
-    try:
-        output, usage = await loop.run_in_executor(executor, _call)
-        # Record subagent cost to parent session
-        input_tokens = usage.get("input_tokens", 0)
-        output_tokens = usage.get("output_tokens", 0)
-        cost = _estimate_cost(model_key, input_tokens, output_tokens)
-        _record_cost_turn(
-            session_id=session_id,
-            turn_number=0,
-            model=f"{model_key}_subagent",
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cost_usd=cost,
-        )
-        return {
-            "output": output,
-            "model": model_key,
-            "usage": {
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "cost_usd": round(cost, 6),
-            },
-        }
-    except Exception as e:
-        log.error("Subagent error: %s", e)
-        return {"output": f"[Subagent Error] {e}", "model": model_key}
-
-
 @router.post("/api/teams/{team_id}/stop")
 async def stop_team_endpoint(team_id: str):
     """Cancel a running team_create fan-out. The gather task cancellation
@@ -983,17 +900,6 @@ async def chat_endpoint(request: Request):
     session_denials = body.get("session_denials", {})
     # Session-scoped tool approvals (categories pre-approved by user)
     session_approvals = body.get("session_approvals", {})
-    # Per-request MCP server allowlist. None means "use the persisted
-    # enabled flag on each server". When provided as a list (possibly
-    # empty), only those servers' tools are advertised this turn — lets
-    # the user toggle MCP per-conversation from the toolbar without
-    # rewriting the global config.
-    raw_mcp = body.get("mcp_servers")
-    mcp_enabled_names: set[str] | None
-    if isinstance(raw_mcp, list):
-        mcp_enabled_names = {str(n) for n in raw_mcp}
-    else:
-        mcp_enabled_names = None
     # Continuation turn: carries the tool_result for a tool_use that was
     # paused awaiting user approval. When set, this is a continuation
     # rather than a new user message — the LLM resumes where it paused.
@@ -1130,7 +1036,6 @@ async def chat_endpoint(request: Request):
     _advertised0, _deferred0, _core_count0 = assemble_partitioned_pool(
         plan_mode=plan_mode,
         ws_connected=bool(ws_path),
-        mcp_enabled_names=mcp_enabled_names,
         session_id=session_id,
         ultracode=ultracode_active,
     )
@@ -1471,7 +1376,6 @@ async def chat_endpoint(request: Request):
         plan_mode=plan_mode,
         mode=mode,
         ws_path=ws_path,
-        mcp_enabled_names=mcp_enabled_names,
         session_approvals=session_approvals,
         session_denials=session_denials,
         session_config=session_config,
@@ -1499,7 +1403,6 @@ async def chat_endpoint(request: Request):
         plan_mode=plan_mode,
         mode=mode,
         ws_path=ws_path,
-        mcp_enabled_names=mcp_enabled_names,
         session_approvals=session_approvals,
         session_denials=session_denials,
         session_config=session_config,
@@ -1677,7 +1580,6 @@ async def chat_endpoint(request: Request):
                 _catalog = assemble_full_catalog(
                     plan_mode=plan_mode,
                     ws_connected=bool(ws_path),
-                    mcp_enabled_names=mcp_enabled_names,
                     suppress_workspace_search=suppress_ws_search,
                 )
                 if _is_ff_enabled("progressive_tools"):

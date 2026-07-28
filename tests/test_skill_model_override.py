@@ -1,8 +1,7 @@
 """The `model:` frontmatter key is parsed and exposed via get_skill_model, and
 the forced-skill model override only fires for an available chat model.
 
-Before this change the key was parsed but never read (dead Feature 9 plumbing).
-The chat pipeline now uses it to run a forced skill's turn on its own model.
+The chat pipeline uses it to run a forced skill's turn on its own model.
 """
 
 import server.skills as sk

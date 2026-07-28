@@ -27,8 +27,8 @@ SAFETY INVARIANT (load-bearing — do not break):
 
 Local mode stays fully offline: ``run_tool_round`` passes ``model_id=""`` so the
 permission LLM explainer never fires (it is gated on a truthy model_id). The
-auto-mode classifier only runs if the user has ``auto_mode_enabled`` globally —
-off by default; see the morning report for that one caveat.
+auto-mode classifier is gated the same way, so under the ``auto`` permission
+mode the offline path falls back to asking instead of calling Bedrock.
 """
 
 from __future__ import annotations
@@ -120,7 +120,6 @@ CORE_TOOL_NAMES = {
 def get_tool_schemas(
     plan_mode: bool = False,
     ws_connected: bool = False,
-    mcp_enabled_names: set[str] | None = None,
     scope: str = "all",
     suppress_workspace_search: bool = False,
 ) -> tuple[list[dict], set[str]]:
@@ -138,7 +137,6 @@ def get_tool_schemas(
     pool = assemble_tool_pool(
         plan_mode=plan_mode,
         ws_connected=ws_connected,
-        mcp_enabled_names=mcp_enabled_names,
         suppress_workspace_search=suppress_workspace_search,
     )
     if scope in ("core", "core_web"):

@@ -19,16 +19,6 @@ export interface WorkflowRun {
   journal?: Array<Record<string, unknown>>;
 }
 
-export interface SavedWorkflow {
-  name: string;
-  description: string;
-  phases: unknown[];
-  trusted: boolean;
-}
-
-export const listRuns = (sessionId?: string) =>
-  get<{ runs: WorkflowRun[] }>(`/api/workflows/runs${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`);
-
 export const getRun = (runId: string) => get<WorkflowRun>(`/api/workflows/runs/${encodeURIComponent(runId)}`);
 
 export const launchRun = (body: { script?: string; name?: string; session_id: string; args?: unknown; budget_usd?: number | null; model_id?: string }) =>
@@ -36,9 +26,23 @@ export const launchRun = (body: { script?: string; name?: string; session_id: st
 
 export const stopRun = (runId: string) => post<{ stopped: boolean }>(`/api/workflows/runs/${encodeURIComponent(runId)}/stop`, {});
 
+/** Saved workflow summary as returned by GET /api/workflows/saved. */
+export interface SavedWorkflow {
+  name: string;
+  description: string;
+  phases: Array<{ title?: string } | string>;
+  trusted: boolean;
+}
+
 export const listSaved = () => get<{ saved: SavedWorkflow[] }>('/api/workflows/saved');
-export const approveSaved = (name: string) => post<{ approved: boolean }>(`/api/workflows/saved/${encodeURIComponent(name)}/approve`, {});
-export const deleteSaved = (name: string) => del<{ deleted: boolean }>(`/api/workflows/saved/${encodeURIComponent(name)}`);
+
+/** Trust a saved workflow: runs by name skip the approval preview and nested
+ *  `workflow(name)` calls inside other scripts are allowed to load it. */
+export const approveSaved = (name: string) =>
+  post<{ approved: boolean }>(`/api/workflows/saved/${encodeURIComponent(name)}/approve`, {});
+
+export const deleteSaved = (name: string) =>
+  del<{ deleted: boolean }>(`/api/workflows/saved/${encodeURIComponent(name)}`);
 
 /** Subscribe to a run's live SSE events. Returns an unsubscribe fn.
  *  On a transient drop we let EventSource auto-reconnect (it resumes with a

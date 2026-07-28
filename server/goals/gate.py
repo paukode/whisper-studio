@@ -158,17 +158,3 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
         },
         source="evaluator",
     )
-
-
-def build_context_from_text(
-    goal: str, tail_text: str, provider: str, *, session_id: str = ""
-) -> GateContext:
-    """Convenience for WS-D: gate a workflow's completion against a pre-rendered
-    journal tail without importing chat internals. Wraps the tail as a single
-    synthetic assistant message so the evaluator's renderer handles it."""
-    return GateContext(
-        session_id=session_id,
-        messages=[{"role": "assistant", "content": tail_text}],
-        goal=goal,
-        provider=provider,
-    )

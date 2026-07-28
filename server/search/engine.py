@@ -74,15 +74,6 @@ def get_rg_path() -> str:
     )
 
 
-def has_ripgrep() -> bool:
-    """Check if ripgrep is available (does not raise)."""
-    try:
-        get_rg_path()
-        return True
-    except RuntimeError:
-        return False
-
-
 # ---------------------------------------------------------------------------
 # Low-level ripgrep invocation
 # ---------------------------------------------------------------------------

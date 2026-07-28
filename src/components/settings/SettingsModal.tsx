@@ -10,21 +10,21 @@ import { HooksPanel } from './HooksPanel';
 import { CronPanel } from './CronPanel';
 import { PluginsPanel } from './PluginsPanel';
 import { StatsPanel } from './StatsPanel';
-import { AutoModePanel } from './AutoModePanel';
 import { ModelModePanel } from './ModelModePanel';
 import { FeatureFlagsPanel } from './FeatureFlagsPanel';
 import { PreviewSettings } from './PreviewSettings';
+import { WorkflowsPanel } from './WorkflowsPanel';
 
 export type SettingsTabId =
   | 'apikeys'
   | 'model-mode'
   | 'feature-flags'
   | 'skills'
+  | 'workflows'
   | 'mcp'
   | 'permissions'
   | 'hooks'
   | 'cron'
-  | 'auto-mode'
   | 'plugins'
   | 'stats'
   | 'costs'
@@ -35,21 +35,25 @@ interface SettingsTab {
   label: string;
 }
 
-const TABS: SettingsTab[] = [
+/** The single source of truth for settings tabs. The command palette derives
+ *  its "Settings: …" entries from this list, so a new tab surfaces there
+ *  automatically with the same label. */
+export const SETTINGS_TABS: SettingsTab[] = [
   { id: 'apikeys', label: 'API Keys' },
   { id: 'model-mode', label: 'Model Mode' },
   { id: 'feature-flags', label: 'Feature Flags' },
   { id: 'skills', label: 'Skills' },
+  { id: 'workflows', label: 'Workflows' },
   { id: 'mcp', label: 'MCP' },
   { id: 'permissions', label: 'Permissions' },
   { id: 'hooks', label: 'Hooks' },
   { id: 'cron', label: 'Scheduled Tasks' },
-  { id: 'auto-mode', label: 'Auto Mode' },
   { id: 'plugins', label: 'Plugins' },
   { id: 'stats', label: 'Stats' },
   { id: 'costs', label: 'Costs' },
   { id: 'preview', label: 'Live Preview' },
 ];
+const TABS = SETTINGS_TABS;
 
 /**
  * Map tab IDs to their panel components.
@@ -59,11 +63,11 @@ const TAB_COMPONENTS: Record<SettingsTabId, React.FC> = {
   'model-mode': ModelModePanel,
   'feature-flags': FeatureFlagsPanel,
   skills: SkillsPanel,
+  workflows: WorkflowsPanel,
   mcp: MCPSettings,
   permissions: PermissionsPanel,
   hooks: HooksPanel,
   cron: CronPanel,
-  'auto-mode': AutoModePanel,
   plugins: PluginsPanel,
   stats: StatsPanel,
   costs: CostsPanel,

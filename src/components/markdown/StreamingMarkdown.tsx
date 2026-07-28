@@ -9,11 +9,9 @@ import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
 import { attachWsFileHandlers } from '@/utils/wsFileLinks';
 import { toStepNarration } from '@/utils/stepNarration';
 
-// Local Marked instance with `breaks: true` so newlines become <br>
-// during streaming. Previously this was a module-scope
-// `marked.setOptions({ breaks: true })` call which mutated the global
-// marked config and bled into MarkdownRenderer, MarkdownPreview, etc.
-// Local instance keeps the option scoped to this component.
+// Local Marked instance with `breaks: true` so newlines become <br> during
+// streaming. Scoped here so it never mutates the global marked config shared
+// with MarkdownRenderer / MarkdownPreview.
 const streamingParser = new Marked({ breaks: true });
 const renderer = new marked.Renderer();
 renderer.code = renderCodeBlock;

@@ -176,9 +176,8 @@
       idle stream. This replaced a 15-second frontend interval, so the Git panel refetches only when
       state actually moved. If HEAD changed, the watcher re-resolves which branch ref to watch, so
       switching branches keeps working.</p>
-    <p>The same cache backs the hot read helpers <code>get_cached_branch()</code>,
-      <code>get_cached_head()</code>, <code>get_cached_default_branch()</code>, and
-      <code>get_cached_remote_url()</code>. Because the watcher invalidates on the exact files those
+    <p>The same cache backs the hot read helpers <code>get_cached_branch()</code> and
+      <code>get_cached_head()</code>. Because the watcher invalidates on the exact files those
       values derive from, they stay correct with no timer and no manual invalidation.</p>
 
     <h2 id="git-rest">Git REST endpoints</h2>
@@ -189,7 +188,6 @@
       <dt><code class="path">GET /api/git/status</code></dt><dd>Branch, clean flag, and a per-file status list for indicators.</dd>
       <dt><code class="path">GET /api/git/changes</code></dt><dd>Combined status + diff in one round trip, behind a 1-second TTL LRU cache that absorbs the assistant's tool-loop and the panel's auto-poll.</dd>
       <dt><code class="path">GET /api/git/branch</code></dt><dd>Current branch, default branch, and whether they match.</dd>
-      <dt><code class="path">GET /api/git/diff</code></dt><dd>Diff summary (file count, lines added/removed, per-file stats) for the panel.</dd>
       <dt><code class="path">GET /api/git/show</code></dt><dd>The HEAD version of a file, for side-by-side diffing in the editor.</dd>
       <dt><code class="path">POST /api/git/restore</code></dt><dd>Undo changes to a single tracked file, or remove an untracked one.</dd>
       <dt><code class="path">GET / POST /api/git/worktrees</code></dt><dd>List worktrees, add one, or remove one (never the active workspace).</dd>

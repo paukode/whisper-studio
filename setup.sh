@@ -283,7 +283,7 @@ check_prod_prerequisites() {
 
 FRESH=0
 # Production is the default: a bare `bash setup.sh` builds the frontend and
-# serves it from the backend (what `--prod` used to do). Pass `--dev` for the
+# serves it from the backend, the same as passing `--prod`. Pass `--dev` for the
 # Vite dev server with HMR.
 PROD=1
 ENV_FLAG=""   # tracks an explicit --dev/--prod so passing both is rejected

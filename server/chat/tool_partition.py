@@ -1,7 +1,7 @@
 """Core/deferred tool partition for progressive disclosure.
 
-Every turn used to ship all ~70-99 tool schemas (~15-25K tokens of JSON) to
-the model. Progressive disclosure advertises a curated CORE set plus whatever
+Advertising all ~70-99 tool schemas costs ~15-25K tokens of JSON per turn.
+Progressive disclosure advertises a curated CORE set plus whatever
 this session has ACTIVATED (via tool_search or history replay); everything
 else appears only as a one-line entry in the deferred index inside the system
 prompt, discoverable and loadable on demand.

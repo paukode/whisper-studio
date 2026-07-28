@@ -184,9 +184,13 @@ def test_get_tool_schemas_exposes_full_pool_plus_web(monkeypatch):
     # user has the Memory toggle on. assemble_tool_pool re-imports is_enabled
     # per call, so patching the module attribute is honoured.
     import server.infrastructure.feature_flags as FF
+    from server.mcp import mcp_manager
 
     monkeypatch.setattr(FF, "is_enabled", lambda flag: flag == "auto_memory")
-    schemas, names = T.get_tool_schemas(plan_mode=False, ws_connected=True, mcp_enabled_names=set())
+    # Keep the pool to built-ins so the assertions below don't depend on
+    # whichever MCP servers the machine running the tests has enabled.
+    monkeypatch.setattr(mcp_manager, "get_bedrock_tools", lambda: [])
+    schemas, names = T.get_tool_schemas(plan_mode=False, ws_connected=True)
     # web tools (not in assemble_tool_pool) are declared explicitly...
     assert "web_search" in names and "web_fetch" in names
     # ...alongside the full cloud pool (sampled).

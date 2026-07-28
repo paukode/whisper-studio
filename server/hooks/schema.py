@@ -95,8 +95,8 @@ def matches(matcher: str, tool_name: str | None) -> bool:
 
 
 def _load_v1_list(items: list, by_event: dict[str, list[HookDef]], source: str) -> None:
-    """v1 flat list: [{event, tool, command}]. The old save_hooks wrote this
-    either bare or wrapped as {"hooks": [...]}, so both shapes route here."""
+    """v1 flat list: [{event, tool, command}], accepted either bare or wrapped as
+    {"hooks": [...]}; both shapes route here."""
     for item in items:
         if not isinstance(item, dict):
             continue

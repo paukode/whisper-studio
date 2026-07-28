@@ -25,7 +25,7 @@ def client():
     return TestClient(app)
 
 
-def test_list_and_detail(client):
+def test_list(client):
     a = registry.create_task("shell", session_id="s1", title="one", command="echo 1")
     b = registry.create_task("agent", session_id="s2", title="two")
     registry.finish_task(b, status="completed", result_text="done")
@@ -38,18 +38,6 @@ def test_list_and_detail(client):
 
     r = client.get("/api/background-tasks?session_id=s1&status=running")
     assert [t["task_id"] for t in r.json()["tasks"]] == [a]
-
-    r = client.get(f"/api/background-tasks/{a}")
-    assert r.json()["command"] == "echo 1"
-    assert client.get("/api/background-tasks/nope").status_code == 404
-
-
-def test_output_endpoint(tmp_path, client):
-    out = tmp_path / "o.txt"
-    out.write_text("hello output\n")
-    tid = registry.create_task("shell", session_id="s1", title="t", output_path=str(out))
-    r = client.get(f"/api/background-tasks/{tid}/output")
-    assert r.json()["output"] == "hello output\n"
 
 
 def test_stop_endpoint_kills_shell_task(tmp_path, client):

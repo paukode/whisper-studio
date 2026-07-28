@@ -265,18 +265,5 @@ def supports_thinking(key: str) -> bool:
     return bool(LOCAL_MODELS.get(key, {}).get("supports_thinking"))
 
 
-# Gemma's reasoning is emitted in a thought channel: "<|channel>thought\n
-# ...reasoning...<channel|>" followed by the answer (see the model's
-# chat_template.jinja). Enabled by rendering the template with
-# enable_thinking=True (which injects the <|think|> token).
-_THOUGHT_OPEN = "<|channel>thought"
-_THOUGHT_CLOSE = "<channel|>"
-
-
 def supports_tools(key: str) -> bool:
     return bool(LOCAL_MODELS.get(key, {}).get("supports_tools"))
-
-
-# A tool call begins with this marker; everything from it onward is the
-# <|tool_call>...<tool_call|> DSL, which must NOT be shown to the user.
-_TOOL_OPEN = "<|tool_call>"

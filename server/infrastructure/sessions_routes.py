@@ -349,54 +349,6 @@ async def branch_session(session_id: str):
     return {"new_session_id": new_id, "name": new_title}
 
 
-@router.get("/api/sessions/{session_id}/context")
-async def session_context(session_id: str):
-    """Return character/message breakdown for the session."""
-    with _get_conn() as conn:
-        row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
-    if not row:
-        return JSONResponse(status_code=404, content={"error": "not found"})
-    history = json.loads(row["chat_history"])
-    user_msgs = [m for m in history if m.get("role") == "user"]
-    asst_msgs = [m for m in history if m.get("role") == "assistant"]
-    tool_results = 0
-    tool_uses = 0
-    user_chars = 0
-    asst_chars = 0
-    tool_result_chars = 0
-    for m in history:
-        content = m.get("content", "")
-        if isinstance(content, list):
-            for b in content:
-                if isinstance(b, dict):
-                    if b.get("type") == "tool_result":
-                        tool_results += 1
-                        tool_result_chars += len(str(b.get("content", "")))
-                    elif b.get("type") == "tool_use":
-                        tool_uses += 1
-                    text = b.get("text", "") or str(b.get("content", ""))
-                    if m.get("role") == "assistant":
-                        asst_chars += len(text)
-                    else:
-                        user_chars += len(text)
-        else:
-            if m.get("role") == "user":
-                user_chars += len(str(content))
-            else:
-                asst_chars += len(str(content))
-    total = user_chars + asst_chars + tool_result_chars
-    return {
-        "total_chars": total,
-        "messages": len(history),
-        "breakdown": {
-            "user_messages": {"count": len(user_msgs), "chars": user_chars},
-            "assistant_messages": {"count": len(asst_msgs), "chars": asst_chars},
-            "tool_uses": tool_uses,
-            "tool_results": {"count": tool_results, "chars": tool_result_chars},
-        },
-    }
-
-
 @router.get("/api/sessions/{session_id}/events")
 async def session_events(session_id: str, request: Request):
     """Long-lived SSE channel for out-of-band notifications scoped to a

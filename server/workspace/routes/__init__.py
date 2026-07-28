@@ -8,15 +8,12 @@ up. Nothing in this package is part of the public API — the package
 ``__init__`` imports it solely to trigger these registrations.
 
     connection      — connect / disconnect / status
-    browse          — browse / mkdir / list-dir / search-files / pick-folder / worktrees
+    browse          — browse / mkdir / list-dir / search-files / pick-folder
     file_ops        — read / source-file / write / delete / rename / duplicate / move / copy / undo
     search          — file-history / grep
     shell           — shell / shell task stop
     os_integration  — open-with / reveal
     recent          — recent list read / remove / clear-unindexed
-
-The worktree route (``list_worktrees``) lives in ``browse`` — it shares the
-same router and needs no module of its own.
 """
 
 from . import (  # noqa: F401  (imported for @router side-effects)

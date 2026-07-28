@@ -14,26 +14,6 @@ export interface LspRange {
 
 // ── JSON-RPC 2.0 ──
 
-export interface JsonRpcRequest {
-  jsonrpc: '2.0';
-  id: number;
-  method: string;
-  params?: unknown;
-}
-
-export interface JsonRpcNotification {
-  jsonrpc: '2.0';
-  method: string;
-  params?: unknown;
-}
-
-export interface JsonRpcResponse {
-  jsonrpc: '2.0';
-  id: number;
-  result?: unknown;
-  error?: JsonRpcError;
-}
-
 export interface JsonRpcError {
   code: number;
   message: string;
@@ -81,59 +61,6 @@ export interface LspHoverResult {
   range?: LspRange;
 }
 
-// ── Location (definition, references) ──
-
-export interface LspLocation {
-  uri: string;
-  range: LspRange;
-}
-
-export interface LspLocationLink {
-  targetUri: string;
-  targetRange: LspRange;
-  targetSelectionRange?: LspRange;
-  originSelectionRange?: LspRange;
-}
-
-export type LspDefinitionResult = LspLocation | LspLocation[] | LspLocationLink[] | null;
-
-// ── Signature Help ──
-
-export interface LspParameterInfo {
-  label: string;
-  documentation?: string;
-}
-
-export interface LspSignatureInfo {
-  label: string;
-  documentation?: string;
-  parameters?: LspParameterInfo[];
-}
-
-export interface LspSignatureHelp {
-  signatures: LspSignatureInfo[];
-  activeSignature?: number;
-  activeParameter?: number;
-}
-
-// ── Document Symbols ──
-
-export interface LspDocumentSymbol {
-  name: string;
-  detail?: string;
-  kind: number;
-  range: LspRange;
-  selectionRange?: LspRange;
-  children?: LspDocumentSymbol[];
-}
-
-// ── Text Edit / Formatting ──
-
-export interface LspTextEdit {
-  range: LspRange;
-  newText: string;
-}
-
 // ── Diagnostics ──
 
 export interface LspDiagnostic {
@@ -147,10 +74,4 @@ export interface LspDiagnostic {
 export interface LspPublishDiagnosticsParams {
   uri: string;
   diagnostics: LspDiagnostic[];
-}
-
-// ── Initialize ──
-
-export interface LspInitializeResult {
-  capabilities: Record<string, unknown>;
 }

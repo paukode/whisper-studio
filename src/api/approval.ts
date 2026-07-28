@@ -14,7 +14,6 @@ export interface ApprovalOutcome {
 /**
  * Single executor for any approval action. The backend looks up the
  * action's ApprovalSpec in its registry and runs the registered function.
- * Replaces the per-action switch that lived in the old executeWsApproval.
  */
 export function executeApproval(req: { action: string; payload: Record<string, unknown> }): Promise<ApprovalOutcome> {
   return post<ApprovalOutcome>('/api/approval/execute', req);

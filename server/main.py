@@ -11,7 +11,6 @@ from server.approval.bootstrap import register_defaults as register_approval_def
 from server.approval.router import router as approval_router
 from server.attachments import cleanup_loop
 from server.attachments import router as attachments_router
-from server.auto_mode import router as auto_mode_router
 
 # server.ask_user is a tool-descriptor module only — it has no HTTP
 # handlers, so there's nothing to mount. Import elsewhere only when
@@ -84,7 +83,7 @@ def _raise_fd_soft_limit() -> None:
     """Bump RLIMIT_NOFILE soft to the hard cap so a burst of agents
     can't exhaust the macOS default of 256 file descriptors.
 
-    The cascade we used to see on team-agent spawns started here:
+    Without the bump, a team-agent spawn cascades:
         [Errno 24] Too many open files
         -> sqlite "unable to open database file"
         -> "Could not connect to bedrock-runtime…" (socket() returns 24)
@@ -301,7 +300,6 @@ app.include_router(lsp_router)
 app.include_router(lsp_proxy_router)
 app.include_router(terminal_router)
 app.include_router(buddy_router)
-app.include_router(auto_mode_router)
 app.include_router(doctor_router)
 app.include_router(git_router)
 app.include_router(feature_flags_router)
@@ -346,8 +344,7 @@ def _spa_index_response() -> Response:
 
 @app.get("/")
 async def index():
-    # Serve the React build; without one there is nothing to serve (the
-    # old vanilla-JS template fallback was removed once it went stale).
+    # Serve the React build; without one there is nothing to serve.
     return _spa_index_response()
 
 

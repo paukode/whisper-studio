@@ -68,7 +68,6 @@ const TOOL_ICON: Record<string, React.ReactNode> = {
   Grep: ICON.search,
   ws_glob: ICON.layers,
   Glob: ICON.layers,
-  ws_list_dir: ICON.folder,
   ws_list_directory: ICON.folder,
   LS: ICON.folder,
   ws_run_command: ICON.terminal,
@@ -114,7 +113,7 @@ function countFromResult(toolName: string, result?: string): string | null {
     const lines = result.split('\n').length;
     if (lines > 0) return `${lines} line${lines === 1 ? '' : 's'}`;
   }
-  if (toolName === 'ws_list_dir' || toolName === 'ws_list_directory' || toolName === 'LS') {
+  if (toolName === 'ws_list_directory' || toolName === 'LS') {
     const lines = result.split('\n').filter((l) => l.trim().length > 0).length;
     return `${lines} item${lines === 1 ? '' : 's'}`;
   }
@@ -172,7 +171,7 @@ function summariseTool(tool: ToolUseEvent): string {
     const inPath = path ? ` in ${path.split('/').pop()}` : '';
     return pattern ? `"${preview(pattern, 40)}"${inPath}` : (path ?? '(no pattern)');
   }
-  if (name === 'ws_glob' || name === 'Glob' || name === 'ws_list_dir' || name === 'ws_list_directory' || name === 'LS') {
+  if (name === 'ws_glob' || name === 'Glob' || name === 'ws_list_directory' || name === 'LS') {
     return preview((input.pattern ?? input.path ?? '') as string, 60);
   }
   if (name === 'task_create' || name === 'task_update' || name === 'TodoWrite') {

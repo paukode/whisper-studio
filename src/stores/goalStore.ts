@@ -39,8 +39,6 @@ interface GoalState {
     sessionId: string,
     v: { verdict?: string; feedback?: string; attempt?: number; cap?: number },
   ) => void;
-  /** A new user turn: zero the live attempt counter. */
-  resetAttempts: (sessionId: string) => void;
 }
 
 export const useGoalStore = create<GoalState>((set) => ({
@@ -71,11 +69,5 @@ export const useGoalStore = create<GoalState>((set) => ({
           },
         },
       };
-    }),
-  resetAttempts: (sessionId) =>
-    set((s) => {
-      const prev = s.byId[sessionId];
-      if (!prev) return s;
-      return { byId: { ...s.byId, [sessionId]: { ...prev, attempt: 0 } } };
     }),
 }));

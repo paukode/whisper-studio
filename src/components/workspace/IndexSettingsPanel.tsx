@@ -1,20 +1,38 @@
 import React from 'react';
-import type { IndexSettings, IndexSettingsPatch } from '@/api/workspace';
+import { useQuery } from '@tanstack/react-query';
+import { indexEngines } from '@/api/workspace';
+import type { IndexEngineOption, IndexSettings, IndexSettingsPatch } from '@/api/workspace';
 
 interface IndexSettingsPanelProps {
   settings: IndexSettings;
   /** Whether the background-refresh helper is supported (macOS launchd). */
   agentSupported: boolean;
   onChange: (patch: IndexSettingsPatch) => void;
-  /** Engine changes route through the dialog so it can download Gemma first
-   *  when the on-device engine is picked. */
-  onEngineChange: (engine: IndexSettings['typed_relations']['engine']) => void;
+  /** Engine changes route through the dialog so it can download the picked
+   *  on-device model first. The label is for the download banner. */
+  onEngineChange: (engine: string, label: string) => void;
+  /** Same download routing for the entity-descriptions engine. */
+  onDescriptionsEngineChange: (engine: string, label: string) => void;
 }
 
 const WEEKDAYS = [
   ['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'],
   ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday'],
 ] as const;
+
+/** Fallback while /api/workspace/index/engines loads (or if it fails):
+ *  the two engines every build ships. */
+const FALLBACK_ENGINES: IndexEngineOption[] = [
+  { key: 'haiku', label: 'Amazon Bedrock (Haiku)', local: false, downloaded: true },
+  { key: 'local_gemma', label: 'Gemma 4 12B (Local)', local: true, downloaded: false },
+];
+
+/** The stored engine value normalized for the select: the legacy 'local'
+ *  alias renders as the model it actually runs (local_gemma). */
+const displayEngine = (engine: string): string => (engine === 'local' ? 'local_gemma' : engine);
+
+const engineOptionLabel = (o: IndexEngineOption): string =>
+  o.local && !o.downloaded ? `${o.label} - downloads on first pick` : o.label;
 
 /**
  * The per-folder index settings rows — auto-refresh cadence + time, keep
@@ -23,7 +41,20 @@ const WEEKDAYS = [
  * the new-folder section of the connect dialog, so a folder is configured the
  * same way before or after it lands in Recent.
  */
-export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings: s, agentSupported, onChange, onEngineChange }) => (
+export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings: s, agentSupported, onChange, onEngineChange, onDescriptionsEngineChange }) => {
+  // Engine choices: cloud Haiku + every on-device model from the config, with
+  // download state for the "downloads on first pick" suffix. Shared cache key
+  // across every menu that renders this panel.
+  const enginesQuery = useQuery({
+    queryKey: ['index-engines'],
+    queryFn: indexEngines,
+    staleTime: 60_000,
+  });
+  const engines = enginesQuery.data?.engines ?? FALLBACK_ENGINES;
+  const engineLabel = (key: string) => engines.find((e) => e.key === key)?.label ?? key;
+  const isLocalEngine = (key: string) => engines.find((e) => e.key === displayEngine(key))?.local ?? false;
+
+  return (
   <div className="ws-menu-settings">
     <label className="ws-menu-line">
       <input
@@ -97,24 +128,53 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
       <label className="ws-menu-line" style={{ marginLeft: 22 }}>
         Build it using
         <select
-          value={s.typed_relations.engine}
-          onChange={(e) => onEngineChange(e.target.value as IndexSettings['typed_relations']['engine'])}
+          value={displayEngine(s.typed_relations.engine)}
+          onChange={(e) => onEngineChange(e.target.value, engineLabel(e.target.value))}
         >
           <option value="none">Choose an engine…</option>
-          <option value="haiku">Amazon Bedrock (Haiku), faster</option>
-          <option value="local">On-device Gemma, private but slower</option>
+          {engines.map((o) => (
+            <option key={o.key} value={o.key}>{engineOptionLabel(o)}</option>
+          ))}
           <option value="gliner2">GLiNER2 native, local and fast (fewer links)</option>
         </select>
       </label>
     )}
-    {s.typed_relations.enabled && s.typed_relations.engine === 'local' && (
+    {s.typed_relations.enabled && isLocalEngine(s.typed_relations.engine) && (
       <span className="ws-menu-hint">
-        Heavy: loads Gemma on your device, so chatting may slow down and indexing takes much longer.
+        Heavy: loads the model on your device, so chatting may slow down and indexing takes much longer.
       </span>
     )}
     {s.typed_relations.enabled && s.typed_relations.engine === 'gliner2' && (
       <span className="ws-menu-hint">
         Fully on-device and fast (a small extractor model, no language model), but finds far fewer relationships than Haiku or Gemma. Best when speed and privacy matter more than depth.
+      </span>
+    )}
+    <label className="ws-menu-line">
+      <input
+        type="checkbox"
+        checked={s.entity_descriptions?.enabled ?? false}
+        onChange={(e) => onChange({ entity_descriptions: { enabled: e.target.checked } })}
+      />
+      Write short AI descriptions for people, companies, and topics
+    </label>
+    {s.entity_descriptions?.enabled && (
+      <label className="ws-menu-line" style={{ marginLeft: 22 }}>
+        Written by
+        <select
+          value={displayEngine(s.entity_descriptions.engine)}
+          onChange={(e) => onDescriptionsEngineChange(e.target.value, engineLabel(e.target.value))}
+        >
+          <option value="none">Choose an engine…</option>
+          {engines.map((o) => (
+            <option key={o.key} value={o.key}>{engineOptionLabel(o)}</option>
+          ))}
+        </select>
+      </label>
+    )}
+    {s.entity_descriptions?.enabled && (
+      <span className="ws-menu-hint">
+        One-line summaries shown on entities in the knowledge graph, written at
+        the end of the next index refresh.
       </span>
     )}
     <label className="ws-menu-line">
@@ -132,11 +192,12 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
       <label className="ws-menu-line" style={{ marginLeft: 22 }}>
         Written by
         <select
-          value={s.chunk_context.engine}
-          onChange={(e) => onChange({ chunk_context: { engine: e.target.value as IndexSettings['chunk_context']['engine'] } })}
+          value={displayEngine(s.chunk_context.engine)}
+          onChange={(e) => onChange({ chunk_context: { engine: e.target.value } })}
         >
-          <option value="haiku">Amazon Bedrock (Haiku), faster</option>
-          <option value="local">On-device Gemma, private but slower</option>
+          {engines.map((o) => (
+            <option key={o.key} value={o.key}>{engineOptionLabel(o)}</option>
+          ))}
         </select>
       </label>
     )}
@@ -157,4 +218,5 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
       GLiNER2 is English-strong and a little faster; keep GLiNER large for multilingual documents. The entity types (business vs code) are chosen automatically per file. Changing this re-indexes the folder.
     </span>
   </div>
-);
+  );
+};

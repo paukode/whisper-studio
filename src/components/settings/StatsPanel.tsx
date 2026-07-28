@@ -28,6 +28,21 @@ interface LspStatus {
   [key: string]: unknown;
 }
 
+/**
+ * Render one /api/lsp/status value as text. The endpoint mixes scalars with
+ * arrays (`lsp_tools`) and objects (`tools`, a name → available map), so a
+ * bare String() would print "[object Object]" for the nested ones.
+ */
+function formatLspValue(value: unknown): string {
+  if (Array.isArray(value)) return value.join(', ');
+  if (value && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => (typeof v === 'boolean' ? `${k}: ${v ? 'yes' : 'no'}` : `${k}: ${String(v)}`))
+      .join(' · ');
+  }
+  return String(value);
+}
+
 export const StatsPanel: React.FC = () => {
   const api = useApi();
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
@@ -171,7 +186,7 @@ export const StatsPanel: React.FC = () => {
             <div key={key} className="settings-item">
               <div className="settings-item-info">
                 <div className="settings-item-name">{key}</div>
-                <div className="settings-item-desc">{String(value)}</div>
+                <div className="settings-item-desc">{formatLspValue(value)}</div>
               </div>
             </div>
           ))}

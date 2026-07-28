@@ -2,7 +2,7 @@
 Git integration module for Whisper.
 
 Provides git discovery, state queries, filesystem-based reads,
-config parsing, gitignore management, diff system, security,
+config parsing, diff system, security,
 repository detection, and operation tracking.
 """
 

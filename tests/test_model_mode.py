@@ -120,8 +120,8 @@ def test_fresh_config_defaults_to_cloud(monkeypatch):
 def test_config_chat_models_replace_defaults_not_union(monkeypatch):
     # config.json is the single source of truth for the model catalog: it
     # REPLACES the built-in DEFAULTS rather than unioning under them, so a key
-    # the config doesn't list (e.g. DEFAULTS' "opus4.6") is NOT injected — which
-    # is what used to surface a second "Opus 4.6" alongside a config "opus".
+    # the config doesn't list (e.g. DEFAULTS' "opus4.6") is NOT injected and
+    # cannot appear as a duplicate alongside a config entry for the same model.
     from server.infrastructure import config as cfg
 
     monkeypatch.setattr(

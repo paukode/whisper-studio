@@ -5,7 +5,6 @@ export interface WorkspacePromptCardProps {
   reason: string;
   suggested: string;
   recent: string[];
-  toolUseId: string;
 }
 
 /**

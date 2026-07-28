@@ -214,12 +214,10 @@ export function useChatStream(): UseChatStreamReturn {
       // `undefined` — JSON.stringify drops the key, and the backend treats an
       // ABSENT field as "all indexed folders" so the first question still grounds.
       // An explicit empty array (user deselected all) is preserved and means
-      // "search nothing". Previously this defaulted to `[]`, which silently
-      // disabled grounding on the first turn of every new session.
+      // "search nothing".
       selected_search_indexes:
         useIndexSearchStore.getState().selectionBySession[activeSessionId],
     };
-    // Per-request MCP override. When the chat-toolbar checklist has been
     // MCP servers are resolved by the backend from each server's persisted
     // `enabled` flag (toggled live from the Settings panel or chat toolbar via
     // useMcpToggle), so we don't send a per-request override.

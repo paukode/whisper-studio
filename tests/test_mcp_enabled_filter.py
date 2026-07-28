@@ -1,10 +1,10 @@
-"""MCP per-server `enabled` flag + per-request override contract.
+"""MCP per-server `enabled` flag contract.
 
 These tests pin the behaviour the chat path relies on for token control:
-- A server's tools are only advertised to Bedrock when the server is
-  enabled (via the persisted flag OR an explicit per-request override).
-- An empty `enabled_names` set means "no MCP tools this turn" — distinct
-  from `None`, which means "fall back to the persisted flag".
+the persisted `enabled` flag in mcp_servers.json is the single gate on a
+server's tools. It governs advertisement (get_bedrock_tools) and execution
+(call_tool) alike, so a server with the flag off contributes no tools and
+answers no calls.
 """
 
 import json
@@ -54,32 +54,8 @@ def _seed_manager_with_two_servers() -> MCPManager:
     return mgr
 
 
-def test_get_bedrock_tools_filters_by_enabled_names(isolated_mcp):
-    with open(isolated_mcp, "w") as f:
-        json.dump(
-            {
-                "servers": {
-                    "alpha": {"command": "x", "args": [], "env": {}, "enabled": True},
-                    "beta": {"command": "y", "args": [], "env": {}, "enabled": True},
-                }
-            },
-            f,
-        )
-    mgr = _seed_manager_with_two_servers()
-
-    only_alpha = mgr.get_bedrock_tools(enabled_names={"alpha"})
-    names = [t["name"] for t in only_alpha]
-    assert names == ["mcp__alpha__ping"], names
-
-    nothing = mgr.get_bedrock_tools(enabled_names=set())
-    assert nothing == []
-
-    both = mgr.get_bedrock_tools(enabled_names={"alpha", "beta"})
-    assert {t["name"] for t in both} == {"mcp__alpha__ping", "mcp__beta__echo"}
-
-
-def test_get_bedrock_tools_falls_back_to_persisted_enabled(isolated_mcp):
-    """When `enabled_names` is None, the per-server `enabled` flag wins."""
+def test_get_bedrock_tools_advertises_only_enabled_servers(isolated_mcp):
+    """The per-server `enabled` flag decides what is advertised."""
     with open(isolated_mcp, "w") as f:
         json.dump(
             {
@@ -92,9 +68,42 @@ def test_get_bedrock_tools_falls_back_to_persisted_enabled(isolated_mcp):
         )
     mgr = _seed_manager_with_two_servers()
 
-    tools = mgr.get_bedrock_tools()  # enabled_names=None
-    names = [t["name"] for t in tools]
+    names = [t["name"] for t in mgr.get_bedrock_tools()]
     assert names == ["mcp__alpha__ping"], names
+
+
+def test_get_bedrock_tools_advertises_nothing_when_all_disabled(isolated_mcp):
+    """Every flag off means no MCP tools at all — the off-by-default state."""
+    with open(isolated_mcp, "w") as f:
+        json.dump(
+            {
+                "servers": {
+                    "alpha": {"command": "x", "args": [], "env": {}, "enabled": False},
+                    "beta": {"command": "y", "args": [], "env": {}, "enabled": False},
+                }
+            },
+            f,
+        )
+    mgr = _seed_manager_with_two_servers()
+
+    assert mgr.get_bedrock_tools() == []
+
+
+def test_get_bedrock_tools_advertises_every_enabled_server(isolated_mcp):
+    with open(isolated_mcp, "w") as f:
+        json.dump(
+            {
+                "servers": {
+                    "alpha": {"command": "x", "args": [], "env": {}, "enabled": True},
+                    "beta": {"command": "y", "args": [], "env": {}, "enabled": True},
+                }
+            },
+            f,
+        )
+    mgr = _seed_manager_with_two_servers()
+
+    both = mgr.get_bedrock_tools()
+    assert {t["name"] for t in both} == {"mcp__alpha__ping", "mcp__beta__echo"}
 
 
 def test_load_config_backfills_missing_enabled_field(isolated_mcp):
@@ -154,7 +163,7 @@ def test_get_bedrock_tools_dedups_sanitized_name_collisions(isolated_mcp):
             "original_name": original,
         }
 
-    tools = mgr.get_bedrock_tools(enabled_names={"s"})
+    tools = mgr.get_bedrock_tools()
     names = [t["name"] for t in tools]
     assert names == ["mcp__s__web_search"], names  # deduped, first kept
     # The surviving advertised name resolves back via call_tool's fallback.
@@ -177,11 +186,11 @@ def test_is_server_enabled_checks_the_persisted_flag(isolated_mcp):
 
 
 def test_call_tool_refuses_disabled_server(isolated_mcp):
-    """The enabled flag must gate EXECUTION, not just advertisement. A model
+    """The enabled flag gates EXECUTION, not just advertisement. A model
     whose session history contains earlier MCP calls keeps calling those
-    tools by name even when they're no longer advertised — without the
-    execution guard, unticking a server silently did nothing for such
-    sessions ("MCP is always on")."""
+    tools by name even when they're no longer advertised, so the guard at
+    call time is what makes unticking a server take effect for such
+    sessions."""
     import asyncio
 
     with open(isolated_mcp, "w") as f:

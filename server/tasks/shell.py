@@ -1,15 +1,13 @@
 """Registry-backed background shell runner.
 
-Replaces the in-memory dict of server/background_tasks.py: every background
-command is a row in the ``agent_tasks`` registry (persistent, reconciled on
-boot) and announces its lifecycle into the owning session via
+Every background command is a row in the ``agent_tasks`` registry (persistent,
+reconciled on boot) and announces its lifecycle into the owning session via
 :func:`server.tasks.events.emit_task_event`.
 
 Process handles cannot be persisted, so live ``Popen`` objects stay in a
 module-level map; the registry row is the durable source of truth for status.
 Commands run under the same OS sandbox profile as foreground execution
-(``popen_sandboxed``) — previously background tasks silently escaped the
-sandbox that foreground commands ran under.
+(``popen_sandboxed``).
 """
 
 import logging

@@ -2,7 +2,7 @@
 
 Prefix /api/background-tasks — deliberately NOT /api/tasks, which would
 shadow the todo-tracker routes (server/tasks_tracker.py mounts /api/tasks/...).
-Backs the global BackgroundTasksPanel and the per-card stop/output actions.
+Backs the global BackgroundTasksPanel and the per-card stop action.
 """
 
 import json
@@ -31,26 +31,6 @@ async def list_background_tasks(
     for t in tasks:
         t.pop("owner_pid", None)
     return {"tasks": tasks}
-
-
-@router.get("/{task_id}")
-async def get_background_task(task_id: str):
-    task = registry.get_task(task_id)
-    if not task:
-        return _err(404, f"no background task {task_id}")
-    task.pop("owner_pid", None)
-    return task
-
-
-@router.get("/{task_id}/output")
-async def get_background_task_output(task_id: str, tail: int = 500):
-    task = registry.get_task(task_id)
-    if not task:
-        return _err(404, f"no background task {task_id}")
-    text = registry.tail_lines_of_file(task.get("output_path"), max(1, min(tail, 5000)))
-    if not text:
-        text = task.get("result_text") or ""
-    return {"task_id": task_id, "status": task["status"], "output": text}
 
 
 @router.post("/{task_id}/stop")

@@ -1,17 +1,39 @@
 import React, { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useSettingsStore } from '@/stores/settingsStore';
+import { indexEngines } from '@/api/workspace';
+import type { IndexEngineOption } from '@/api/workspace';
 import type { IndexCapability, ModelMode } from '@/types/settings';
 
-/** Hybrid-mode per-capability backend options. The first option in each list is
- *  the cloud (Bedrock) backend, which is also the resolver's fallback when a
- *  capability is left unset, so we show it as the effective default. */
-const CAPABILITIES: {
+interface Capability {
   key: IndexCapability;
   label: string;
   hint: string;
   cloudDefault: string;
   options: [string, string][];
-}[] = [
+}
+
+/** Fallback while /api/workspace/index/engines loads (or if it fails). */
+const FALLBACK_ENGINES: IndexEngineOption[] = [
+  { key: 'haiku', label: 'Claude Haiku', local: false, downloaded: true },
+  { key: 'local_gemma', label: 'Gemma 4 12B (Local)', local: true, downloaded: false },
+];
+
+const llmOption = (o: IndexEngineOption): [string, string] => [
+  o.key,
+  o.local
+    ? o.downloaded
+      ? o.label
+      : `${o.label} — downloads on first use`
+    : 'Claude Haiku — Bedrock',
+];
+
+/** Hybrid-mode per-capability backend options. The first option in each list is
+ *  the cloud (Bedrock) backend, which is also the resolver's fallback when a
+ *  capability is left unset, so we show it as the effective default. The two
+ *  LLM-backed capabilities list Haiku plus every on-device model from the
+ *  config (the same catalog as the per-folder index settings). */
+const buildCapabilities = (engines: IndexEngineOption[]): Capability[] => [
   {
     key: 'embed',
     label: 'Embeddings (search index)',
@@ -29,16 +51,24 @@ const CAPABILITIES: {
   {
     key: 'ner',
     label: 'Entity extraction',
-    hint: 'Pulls people, orgs, and topics out of documents for the graph.',
+    hint: 'Pulls people, orgs, and topics out of documents for the graph. GLiNER is the fast purpose-built extractor; a chat model reads more context but runs slower.',
     cloudDefault: 'haiku',
-    options: [['haiku', 'Claude Haiku — Bedrock'], ['gliner', 'GLiNER — on-device']],
+    options: [
+      ...engines.filter((o) => !o.local).map(llmOption),
+      ['gliner', 'GLiNER — on-device extractor'],
+      ...engines.filter((o) => o.local).map(llmOption),
+    ],
   },
   {
     key: 'index_llm',
-    label: 'Index writer (relations, headers)',
-    hint: 'Writes typed relations and contextual chunk headers during indexing.',
+    label: 'One-shot writer (summaries)',
+    hint: 'Runs one-shot map calls such as transcript condensation. Relationship mapping and chunk headers are chosen per folder in its index settings.',
     cloudDefault: 'haiku',
-    options: [['haiku', 'Claude Haiku — Bedrock'], ['local', 'On-device Gemma'], ['none', 'Off']],
+    options: [
+      ...engines.map(llmOption),
+      ['local', 'On-device — follows the active local model'],
+      ['none', 'Off'],
+    ],
   },
 ];
 
@@ -53,6 +83,14 @@ export const ModelModePanel: React.FC = () => {
   const backends = useSettingsStore((s) => s.config.backends);
   const setModelMode = useSettingsStore((s) => s.setModelMode);
   const setBackend = useSettingsStore((s) => s.setBackend);
+
+  // Same catalog (and cache key) as the per-folder index settings pickers.
+  const enginesQuery = useQuery({
+    queryKey: ['index-engines'],
+    queryFn: indexEngines,
+    staleTime: 60_000,
+  });
+  const capabilities = buildCapabilities(enginesQuery.data?.engines ?? FALLBACK_ENGINES);
 
   // Changes persist immediately, but the model picker + any loaded on-device
   // model are initialized at startup — so the running app only fully switches on
@@ -117,7 +155,7 @@ export const ModelModePanel: React.FC = () => {
 
       {mode === 'hybrid' && (
         <div className="settings-list" style={{ marginTop: 8 }}>
-          {CAPABILITIES.map((cap) => (
+          {capabilities.map((cap) => (
             <div key={cap.key} className="settings-form" style={{ marginBottom: 10 }}>
               <label htmlFor={`backend-${cap.key}`}>{cap.label}</label>
               <select

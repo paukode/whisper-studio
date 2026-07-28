@@ -212,16 +212,7 @@ export async function readSSEStream(
             // here covers tools that bypass that path (e.g. acceptEdits or
             // bypassPermissions modes where writes complete inline) and is
             // a no-op for read-only tools because the listener is debounced.
-            if (!isError && (
-              toolName === 'ws_create_file' ||
-              toolName === 'ws_write_file' ||
-              toolName === 'ws_delete' ||
-              toolName === 'ws_rename' ||
-              toolName === 'ws_move' ||
-              toolName === 'ws_mkdir' ||
-              toolName === 'ws_copy' ||
-              toolName === 'ws_duplicate'
-            )) {
+            if (!isError && (toolName === 'ws_create_file' || toolName === 'ws_write_file')) {
               window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
             }
           }
@@ -493,9 +484,8 @@ export async function readSSEStream(
           if (parsed.notify_user) {
             const n = parsed.notify_user as Record<string, string>;
             const msg = n.message ?? '';
-            // Honor the tool's declared status (the schema always offered
-            // success/warning/error; the toast previously flattened them all
-            // to info) and the title; warnings/errors linger longer.
+            // Honor the tool's declared status (success/warning/error) and title;
+            // warnings and errors linger longer.
             const type =
               n.status === 'success' || n.status === 'warning' || n.status === 'error'
                 ? n.status

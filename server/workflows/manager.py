@@ -162,7 +162,13 @@ def _make_nested_runner(session_id, model_key, model_id, effort_label):
     async def nested(name, args, parent):
         loaded = _load_trusted_saved(name)
         if not loaded:
-            return {"status": "failed", "error": f"unknown or untrusted workflow: {name}"}
+            return {
+                "status": "failed",
+                "error": (
+                    f"unknown or untrusted workflow: {name} "
+                    "(nested calls need the saved workflow trusted in Settings > Workflows)"
+                ),
+            }
         # Depth-1 child inherits the parent's REMAINING budget so nested spend
         # can't exceed the parent's cap; its usage is merged back into the parent.
         child_budget = None

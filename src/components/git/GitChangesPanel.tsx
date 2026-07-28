@@ -20,10 +20,10 @@ export interface GitChangesPanelProps {
  * Features:
  * - Shows current branch and file count badge
  * - Collapse/expand toggle with localStorage persistence
- * - Per-file line stats (+X/-Y) from /api/git/diff
+ * - Per-file line stats (+X/-Y) from /api/git/changes
  * - Discard/restore button per file with confirm dialog
  * - Click file to open in editor
- * - Auto-polls every 15s
+ * - Live refresh via the /api/git/events SSE stream (debounced 150ms)
  * - Listens for whisper-git-refresh events from SSE
  */
 export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) => {

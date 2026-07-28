@@ -57,8 +57,6 @@ CI_TOOLS: list[dict] = [
     },
 ]
 
-CI_TOOL_NAMES = {t["name"] for t in CI_TOOLS}
-
 
 def _resolve(tool_input: dict) -> tuple[str, str]:
     """(branch, cwd) — branch defaults to the workspace's current branch."""

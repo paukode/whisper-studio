@@ -1187,6 +1187,46 @@ def test_relations_local_engine_skips_when_model_missing(monkeypatch):
     assert relations.extract_relations("Bob works at Acme", ["Bob", "Acme"], "local") == []
 
 
+def test_relations_routes_to_any_local_model_key(monkeypatch):
+    """The engine value may be any local-registry model key, not just the
+    'local' alias — the picker stores the chosen key directly."""
+    import server.local.registry as reg
+    import server.local.runtime as rt
+    from server.index import relations
+
+    monkeypatch.setattr(reg, "local_models", lambda: {"local_qwen35_9b": {"label": "Qwen"}})
+    monkeypatch.setattr(rt, "is_downloaded", lambda key: True)
+    seen = {}
+
+    def fake_complete(key, system, user, max_tokens=1500):
+        seen["key"] = key
+        return '[{"source":"Bob","target":"Acme","type":"works_at"}]'
+
+    monkeypatch.setattr(rt, "complete", fake_complete)
+    rels = relations.extract_relations("Bob works at Acme", ["Bob", "Acme"], "local_qwen35_9b")
+    assert rels == [("Bob", "Acme", "works_at", 3.0)]
+    assert seen["key"] == "local_qwen35_9b"
+
+
+def test_wssettings_accepts_local_model_keys(monkeypatch):
+    """Engine validation accepts any local-registry key and still falls back
+    for unknown values; the 'local' alias survives normalization."""
+    import server.local.registry as reg
+    from server.index import wssettings
+
+    monkeypatch.setattr(reg, "local_models", lambda: {"local_qwen35_9b": {"label": "Qwen"}})
+    out = wssettings._validated(
+        {
+            "typed_relations": {"enabled": True, "engine": "local_qwen35_9b"},
+            "entity_descriptions": {"enabled": True, "engine": "local"},
+            "chunk_context": {"mode": "llm", "engine": "bogus-model"},
+        }
+    )
+    assert out["typed_relations"]["engine"] == "local_qwen35_9b"
+    assert out["entity_descriptions"]["engine"] == "local"
+    assert out["chunk_context"]["engine"] == "local"  # unknown model falls back
+
+
 def test_apply_workspace_installs_per_folder_trigger(monkeypatch):
     """scheduler.apply_workspace installs one job for the folder's own cadence
     (passing the folder as the job arg), and nothing when its schedule is off."""

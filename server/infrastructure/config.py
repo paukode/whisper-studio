@@ -92,12 +92,12 @@ DEFAULTS = {
     # chat models the picker shows (cloud hides on-device models, and vice versa).
     "model_mode": "cloud",
     # Per-capability backend overrides, consulted ONLY in "hybrid" mode.
-    # Keys: embed (cohere|qwen3), rerank (cohere|qwen3), ner (haiku|gliner),
-    # index_llm (haiku|local|none). Unset capabilities fall back to the cloud
-    # backend.
+    # Keys: embed (cohere|qwen3), rerank (cohere|qwen3), ner (haiku, gliner, or
+    # an on-device model key for LLM NER), index_llm (haiku, an on-device model
+    # key, "local" to follow the active local model, or none). Unset
+    # capabilities fall back to the cloud backend.
     "backends": {},
     "effort_level": "high",
-    "auto_mode_enabled": False,
     "auto_mode_allow": [],
     "auto_mode_soft_deny": [],
     "auto_mode_environment": [],
@@ -144,7 +144,6 @@ PROJECT_SETTINGS_KEYS = frozenset(
         "brief_mode",
         "permission_mode",
         "permission_explainer_enabled",
-        "auto_mode_enabled",
         "auto_mode_allow",
         "auto_mode_soft_deny",
         "auto_mode_environment",
@@ -330,8 +329,7 @@ def load_config(workspace_path: str | None = None) -> dict:
         # catalog it REPLACES the built-in DEFAULTS wholesale, rather than being
         # unioned key-by-key underneath it. The config file is the single source
         # of truth for the model list, so a renamed/removed model can't collide
-        # with (or be resurrected by) a hardcoded default — that key-drift union
-        # is exactly what used to surface "Opus 4.6" twice. DEFAULTS' catalog is
+        # with (or be resurrected by) a hardcoded default. DEFAULTS' catalog is
         # only the fallback when config defines no chat_models (e.g. empty/first-
         # run config).
         if isinstance(user_stored.get("chat_models"), dict) and user_stored["chat_models"]:
@@ -467,7 +465,7 @@ def set_feature_flag(flag_name: str, enabled: bool) -> None:
 
     A flag toggle should be surgical. Re-serializing the whole file via
     save_config()/json.dump reflows formatting (e.g. collapses aligned
-    chat_models one-liners) and historically flattened the rich chat_models
+    chat_models one-liners) and flattens the rich chat_models
     shape, silently dropping fields like requires_data_retention. This patches
     the flag's value in place inside the feature_flags object; it only falls
     back to a structured write when config.json has no feature_flags block at

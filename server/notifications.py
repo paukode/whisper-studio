@@ -1,10 +1,11 @@
-"""Persistent notification log behind the header bell.
+"""Persistent notification log.
 
 Single choke-point write: the ``notify_user`` branch in server/tool_router.py
 calls :func:`record_notification` best-effort, so chat turns, agent runs, and
 cron jobs (which all dispatch through ``route_tool``) land in one log with an
 ``origin`` tag. The ephemeral toast stays; this is the durable record a user
-who was away from the screen can catch up from.
+who was away from the screen can catch up from, surfaced by the header bell
+(src/components/layout/NotificationsBell.tsx) over ``GET /api/notifications``.
 """
 
 import logging
@@ -50,7 +51,7 @@ def _get_conn():
 
 
 def _ensure_table() -> None:
-    """Defensive net alongside migration 008 (tests, fresh boots)."""
+    """Defensive net alongside migrations 008/010 (tests, fresh boots)."""
     try:
         with _get_conn() as conn:
             conn.execute(
@@ -63,7 +64,8 @@ def _ensure_table() -> None:
                     message     TEXT NOT NULL,
                     status      TEXT NOT NULL DEFAULT 'normal',
                     created_at  TEXT NOT NULL,
-                    read_at     TEXT
+                    read_at     TEXT,
+                    hidden_at   TEXT
                 )
                 """
             )
@@ -71,6 +73,10 @@ def _ensure_table() -> None:
                 "CREATE INDEX IF NOT EXISTS idx_notifications_unread "
                 "ON notifications(read_at, created_at DESC)"
             )
+            try:
+                conn.execute("ALTER TABLE notifications ADD COLUMN hidden_at TEXT")
+            except sqlite3.OperationalError:
+                pass
     except sqlite3.DatabaseError as e:
         log.warning("notifications: ensure table failed: %s", e)
 
@@ -108,8 +114,11 @@ def record_notification(
 
 
 def list_notifications(*, limit: int = 50, unread_only: bool = False) -> list[dict]:
+    """Visible (non-hidden) notifications, newest first."""
     _ensure_table()
-    where = "WHERE read_at IS NULL" if unread_only else ""
+    where = "WHERE hidden_at IS NULL"
+    if unread_only:
+        where += " AND read_at IS NULL"
     try:
         with _get_conn() as conn:
             rows = conn.execute(
@@ -127,7 +136,8 @@ def unread_count() -> int:
     try:
         with _get_conn() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) AS n FROM notifications WHERE read_at IS NULL"
+                "SELECT COUNT(*) AS n FROM notifications "
+                "WHERE read_at IS NULL AND hidden_at IS NULL"
             ).fetchone()
         return int(row["n"]) if row else 0
     except sqlite3.DatabaseError:
@@ -154,6 +164,43 @@ def mark_read(ids: list[int] | None = None) -> int:
             return cur.rowcount or 0
     except sqlite3.DatabaseError as e:
         log.warning("notifications: mark_read failed: %s", e)
+        return 0
+
+
+def hide(ids: list[int]) -> int:
+    """Soft-hide specific notifications (a hidden row also counts as read)."""
+    if not ids:
+        return 0
+    _ensure_table()
+    now = _utc_now_iso()
+    try:
+        with _get_conn() as conn:
+            placeholders = ",".join("?" for _ in ids)
+            cur = conn.execute(
+                f"UPDATE notifications SET hidden_at=?, read_at=COALESCE(read_at, ?) "
+                f"WHERE id IN ({placeholders}) AND hidden_at IS NULL",
+                (now, now, *ids),
+            )
+            return cur.rowcount or 0
+    except sqlite3.DatabaseError as e:
+        log.warning("notifications: hide failed: %s", e)
+        return 0
+
+
+def clear_all() -> int:
+    """Soft-hide every visible notification (the bell's "Clear all")."""
+    _ensure_table()
+    now = _utc_now_iso()
+    try:
+        with _get_conn() as conn:
+            cur = conn.execute(
+                "UPDATE notifications SET hidden_at=?, read_at=COALESCE(read_at, ?) "
+                "WHERE hidden_at IS NULL",
+                (now, now),
+            )
+            return cur.rowcount or 0
+    except sqlite3.DatabaseError as e:
+        log.warning("notifications: clear failed: %s", e)
         return 0
 
 
@@ -205,3 +252,28 @@ async def api_mark_read(request: Request):
         )
     marked = mark_read(id_list)
     return {"marked": marked}
+
+
+@router.post("/hide")
+async def api_hide(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    ids = body.get("ids")
+    try:
+        id_list = [int(i) for i in ids] if isinstance(ids, list) else None
+    except (ValueError, TypeError):
+        id_list = None
+    if not id_list:
+        return Response(
+            content='{"error": "ids must be a non-empty list of integers"}',
+            status_code=400,
+            media_type="application/json",
+        )
+    return {"hidden": hide(id_list)}
+
+
+@router.post("/clear")
+async def api_clear():
+    return {"cleared": clear_all()}

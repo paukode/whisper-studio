@@ -294,14 +294,6 @@ export function findMatchingTeamReports(
   return matched;
 }
 
-/** First matching report (legacy singular shape); see findMatchingTeamReports. */
-export function findMatchingTeamReport(
-  tools: ToolUseEvent[],
-  teamReports: Record<string, TeamReportData> | undefined,
-): TeamReportData | null {
-  return findMatchingTeamReports(tools, teamReports)[0] ?? null;
-}
-
 /** Apply a team_progress event to a SPECIFIC assistant message identified by
  *  timestamp. Used by the background /subagent stream, whose progress card
  *  must keep updating even after the user sends more messages (so it's no

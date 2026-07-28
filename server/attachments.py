@@ -27,9 +27,8 @@ MAX_FILE_SIZE = 50 * 1024 * 1024
 MEDIA_MAX_FILE_SIZE = 200 * 1024 * 1024
 ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 # Legacy binary Office formats (.doc / .ppt) are deliberately absent: MarkItDown
-# cannot convert them, so they used to produce a silently empty "[No content]"
-# document. Left out here they fall to the binary-reject path and surface a
-# clear "unsupported file type" error instead. Their modern OOXML replacements
+# cannot convert them, so they fall to the binary-reject path and surface a
+# clear "unsupported file type" error. Their modern OOXML replacements
 # (.docx / .pptx) stay because MarkItDown does handle those.
 MARKITDOWN_EXTENSIONS = {
     ".pdf",

@@ -144,7 +144,7 @@
 
     <h2 id="storage">Storage layout</h2>
     <p>Everything lives under <code class="path">storage/index/&lt;name&gt;-&lt;hash8&gt;/</code>, one
-      readable directory per workspace, managed by <code class="path">server/index/store.py</code>.
+      readable directory per workspace, managed by <code class="path">server/index/store/</code>.
       The index is keyed <em>per embedding backend</em>, so switching between the Qwen3 and Cohere
       backends uses a separate DB and does not force a rebuild of the other. The schema holds files,
       chunks, entity nodes, node-to-chunk links, typed relations, and a small <code>meta</code>
@@ -242,7 +242,7 @@
       <dt><code class="path">server/index/extractor.py</code></dt><dd>GLiNER / Haiku entity extraction.</dd>
       <dt><code class="path">server/index/relations.py</code></dt><dd>Typed relation extraction (Haiku / local Gemma).</dd>
       <dt><code class="path">server/index/reranker.py</code></dt><dd>Qwen3 / Cohere cross-encoder reranking.</dd>
-      <dt><code class="path">server/index/store.py</code></dt><dd>SQLite storage, sqlite-vec, FTS5, the entity graph, dedup.</dd>
+      <dt><code class="path">server/index/store/</code></dt><dd>SQLite storage, sqlite-vec, FTS5, the entity graph, dedup.</dd>
       <dt><code class="path">server/index/chunker.py</code></dt><dd>Structure-aware, token-budgeted chunking.</dd>
     </div>
 

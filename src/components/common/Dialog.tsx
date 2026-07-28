@@ -25,10 +25,6 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
     return init;
   });
 
-  // Wizard state
-  const [wizardStep, setWizardStep] = useState(0);
-  const [wizardData, setWizardData] = useState<Record<string, unknown>>({});
-
   // Play the overlay's exit animation (whisper-dialog-overlay--leaving, defined
   // in dialog.css) before the dialog is removed from the stack. The promise
   // resolution is deferred by the same 200ms so the fade-out completes first.
@@ -85,9 +81,9 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [handleCancel, handleConfirm, dialog.kind]);
 
-  // Auto-focus first focusable (per wizard step). The trap below keeps Tab
-  // inside the dialog and restores focus to the trigger on close — it skips
-  // initial focus since this effect already owns it.
+  // Auto-focus the first focusable element. The trap below keeps Tab inside
+  // the dialog and restores focus to the trigger on close — it skips initial
+  // focus since this effect already owns it.
   useEffect(() => {
     const root = dialogRef.current;
     if (!root) return;
@@ -109,7 +105,7 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
       'input, select, textarea, button:not(.whisper-dialog__close)',
     );
     focusable?.focus();
-  }, [wizardStep, dialog.kind, dialog.danger]);
+  }, [dialog.kind, dialog.danger]);
 
   useFocusTrap(dialogRef, true, { initialFocus: false });
 
@@ -163,26 +159,6 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
     </>
   );
 
-  const renderWizardSteps = () => {
-    if (dialog.kind !== 'wizard' || !dialog.steps) return null;
-    return (
-      <div className="whisper-wizard-steps">
-        {dialog.steps.map((_step, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center' }}>
-            {i > 0 && (
-              <div className={`whisper-wizard-connector${i <= wizardStep ? ' whisper-wizard-connector--done' : ''}`} />
-            )}
-            <div
-              className={`whisper-wizard-step${i === wizardStep ? ' whisper-wizard-step--active' : ''}${i < wizardStep ? ' whisper-wizard-step--done' : ''}`}
-            >
-              {i < wizardStep ? '\u2713' : i + 1}
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  };
-
   const renderBody = () => {
     if (dialog.kind === 'confirm') {
       // A rich `body` ReactNode (e.g. the data-retention consent screen) takes
@@ -192,16 +168,6 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
     if (dialog.kind === 'form' && dialog.fields) {
       return renderFormFields(dialog.fields);
     }
-    if (dialog.kind === 'wizard' && dialog.steps) {
-      const currentStep = dialog.steps[wizardStep];
-      return (
-        <>
-          {renderWizardSteps()}
-          {currentStep?.fields && renderFormFields(currentStep.fields)}
-          {currentStep?.body && <div>{currentStep.body}</div>}
-        </>
-      );
-    }
     if (dialog.body) {
       return <div>{dialog.body}</div>;
     }
@@ -210,40 +176,6 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
 
   const renderFooter = () => {
     if (dialog.kind === 'open') return null;
-    if (dialog.kind === 'wizard' && dialog.steps) {
-      const isLast = wizardStep === dialog.steps.length - 1;
-      return (
-        <div className="whisper-dialog__footer">
-          <button className="btn" onClick={handleCancel} type="button">
-            Cancel
-          </button>
-          {wizardStep > 0 && (
-            <button
-              className="btn"
-              onClick={() => setWizardStep((s) => s - 1)}
-              type="button"
-            >
-              Back
-            </button>
-          )}
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              const stepData = { ...wizardData, ...formData };
-              setWizardData(stepData);
-              if (isLast) {
-                beginClose(stepData);
-              } else {
-                setWizardStep((s) => s + 1);
-              }
-            }}
-            type="button"
-          >
-            {isLast ? 'Finish' : 'Next'}
-          </button>
-        </div>
-      );
-    }
 
     return (
       <div className="whisper-dialog__footer">

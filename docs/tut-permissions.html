@@ -54,7 +54,7 @@
       <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
       <tbody>
         <tr><td><code>default</code></td><td>Reads run freely; writes ask for approval. The everyday setting.</td></tr>
-        <tr><td><code>auto</code></td><td>Reads run freely; a classifier decides per-tool, per-call whether a write is safe enough to run or should ask. Tune it under the Auto Mode tab in Settings.</td></tr>
+        <tr><td><code>auto</code></td><td>Reads run freely; a classifier decides per-tool, per-call whether a write is safe enough to run or should ask. It runs whenever this mode is selected; edit its rules with config_set in chat.</td></tr>
         <tr><td><code>plan</code></td><td>Read-only. Claude investigates and proposes a plan but never executes. File writes, deletes, commands, and merges are hard-blocked before they can dispatch.</td></tr>
         <tr><td><code>acceptEdits</code></td><td>File edits and new files auto-approve; deletes and commands still ask. Good for a focused editing session.</td></tr>
         <tr><td><code>bypassPermissions</code></td><td>Everything runs without prompts. Fastest, least guarded. Use only in a throwaway or fully trusted workspace.</td></tr>

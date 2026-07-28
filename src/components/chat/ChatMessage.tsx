@@ -294,7 +294,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
               if (tool.toolName === 'ws_workspace_prompt') {
                 const input = tool.input as {
                   reason?: string; suggested?: string;
-                  recent?: string[]; tool_use_id?: string;
+                  recent?: string[];
                 };
                 return (
                   <WorkspacePromptCard
@@ -302,7 +302,6 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
                     reason={input.reason ?? ''}
                     suggested={input.suggested ?? ''}
                     recent={input.recent ?? []}
-                    toolUseId={input.tool_use_id ?? tool.toolId}
                   />
                 );
               }

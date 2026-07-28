@@ -140,7 +140,7 @@ async def _stream_round(stream, state: dict):
       is then best-effort estimated.
     * HEARTBEAT — during any idle gap, emit an SSE comment so the browser never
       drops the connection (the cause of the ERR_NETWORK_IO_SUSPENDED / "network
-      error" failures); the chat stream previously had no keepalive.
+      error" failures).
     """
     loop = asyncio.get_event_loop()
     q: asyncio.Queue = asyncio.Queue()
@@ -288,7 +288,6 @@ def _assemble_tools(tool_ctx: dict) -> list[dict]:
     pool = assemble_tool_pool(
         plan_mode=tool_ctx.get("plan_mode", False),
         ws_connected=tool_ctx.get("ws_connected", False),
-        mcp_enabled_names=tool_ctx.get("mcp_enabled_names"),
         suppress_workspace_search=tool_ctx.get("suppress_ws_search", False),
         session_id=tool_ctx.get("session_id", ""),
         progressive=True,

@@ -212,8 +212,7 @@ def _append_message_sync(session_id: str, message: dict) -> bool:
             # creation fire-and-forget, so an out-of-band writer
             # (cron scheduler firing into a freshly created session,
             # for example) can land here before the session row
-            # exists. Previously we dropped the message; now insert
-            # a placeholder row so the message lands. The next
+            # exists. Insert a placeholder row so the message lands. The next
             # session save will fill in title / metadata.
             try:
                 conn.execute(

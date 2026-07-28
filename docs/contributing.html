@@ -50,7 +50,7 @@ ruff format .         # format</code></pre></div>
     <div class="code-block"><pre><code>whisper-studio/
 ├── server/                 FastAPI backend
 │   ├── main.py             app init, router mounting, SPA fallback
-│   ├── agent_tools.py      tool schemas sent to the model each turn
+│   ├── agent_tools/        tool schemas sent to the model each turn
 │   ├── tool_router.py      tool-call dispatch
 │   ├── chat/               chat streaming + tool orchestration
 │   ├── workspace/          file browser, atomic writes, workspace tools
@@ -99,7 +99,7 @@ ruff format .         # format</code></pre></div>
         in <code class="path">src/types/</code>, so a malformed event fails loudly rather than corrupting
         state.</dd>
       <dt>Tools have three homes</dt>
-      <dd>Tool <b>schemas</b> live in <code class="path">server/agent_tools.py</code>, <b>dispatch</b> in
+      <dd>Tool <b>schemas</b> live in <code class="path">server/agent_tools/</code>, <b>dispatch</b> in
         <code class="path">server/tool_router.py</code>, and the <b>implementation</b> in
         <code class="path">server/executors/</code>. Add a tool by touching all three.</dd>
       <dt>Never reinvent the approval flow</dt>
@@ -116,8 +116,8 @@ ruff format .         # format</code></pre></div>
       <thead><tr><th>Layer</th><th>Tech</th></tr></thead>
       <tbody>
         <tr><td>Backend</td><td>FastAPI, Uvicorn, SQLite (WAL), APScheduler</td></tr>
-        <tr><td>AI (cloud)</td><td>Amazon Bedrock - Claude Haiku 4.5, Sonnet, Opus 4.6 / 4.7 / 4.8, and GPT-5.4 / 5.5</td></tr>
-        <tr><td>AI (local)</td><td>On-device Gemma via the local model runtime (local mode)</td></tr>
+        <tr><td>AI (cloud)</td><td>Amazon Bedrock - Claude Haiku 4.5, Sonnet 4.6/5, Opus 4.6 / 4.7 / 4.8 / 5, Fable 5.0, and GPT-5.4 / 5.5 / 5.6</td></tr>
+        <tr><td>AI (local)</td><td>On-device GGUF models (Gemma, Qwen, Ministral) via llama-server (local mode)</td></tr>
         <tr><td>Transcription</td><td>mlx-whisper + Parakeet, Resemblyzer, WebRTC VAD (all on-device)</td></tr>
         <tr><td>Retrieval</td><td>GraphRAG - embeddings, reranker, entity graph, sqlite-vec (see <a href="arch-index.html">Index / GraphRAG</a>)</td></tr>
         <tr><td>Frontend</td><td>React 19, TypeScript (strict), Vite 8, Zustand, Monaco Editor, xterm.js</td></tr>

@@ -175,7 +175,7 @@ async def index_graph_all():
 async def index_graph_umap_all():
     """Cross-workspace semantic map: the unified all-workspaces graph laid out by a
     single UMAP over every indexed file's mean vector. Powers "All indexed" +
-    "UMAP map" (previously this combination fell back to one workspace)."""
+    "UMAP map"."""
     return store.all_workspaces_umap_graph()
 
 
@@ -225,6 +225,16 @@ async def index_remove(request: Request):
     except Exception:  # noqa: BLE001 — removal must succeed regardless
         pass
     return {"removed": True}
+
+
+@router.get("/engines")
+async def get_index_engines():
+    """The engine choices for the LLM index passes (relationship mapping,
+    entity descriptions, chunk headers): cloud Haiku plus every on-device
+    model from the config, with download state for the picker badges."""
+    from . import engines
+
+    return {"engines": engines.engine_catalog()}
 
 
 @router.get("/settings")

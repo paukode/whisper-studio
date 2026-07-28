@@ -1,6 +1,6 @@
 /* ================================================================
-   Whisper Studio — Dialog & Wizard Module
-   Reusable overlay dialogs, confirms, forms, multi-step wizards
+   Whisper Studio — Dialog Module
+   Reusable overlay dialogs, confirms and forms
    ================================================================ */
 
 /* ---- Overlay backdrop ---- */
@@ -228,54 +228,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-}
-
-/* ---- Wizard step indicator ---- */
-.whisper-wizard-steps {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0;
-    padding: 16px 20px 0;
-}
-
-.whisper-wizard-step {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.75em;
-    font-weight: 600;
-    border: 2px solid var(--border-strong);
-    color: var(--text-muted);
-    background: var(--bg-surface);
-    transition: all 0.2s;
-    flex-shrink: 0;
-}
-
-.whisper-wizard-step--active {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-}
-
-.whisper-wizard-step--done {
-    background: var(--accent-dim);
-    border-color: var(--accent);
-    color: var(--accent);
-}
-
-.whisper-wizard-connector {
-    width: 32px;
-    height: 2px;
-    background: var(--border);
-    flex-shrink: 0;
-}
-
-.whisper-wizard-connector--done {
-    background: var(--accent);
 }
 
 /* ================================================================

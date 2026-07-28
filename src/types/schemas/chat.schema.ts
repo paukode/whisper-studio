@@ -16,7 +16,7 @@ export const SSEEventDataSchema = z.object({
   skill_result: z.string().optional(),
   output: z.string().optional(),
 
-  // Approvals — new generic shape (replaces legacy ws_approval per-action union)
+  // Approvals — generic shape; `preview` selects the renderer.
   approval_request: z.object({
     tool_use_id: z.string(),
     action: z.string(),
@@ -181,5 +181,3 @@ export const SSEEventDataSchema = z.object({
   // Tasks
   todo_update: z.unknown().optional(),
 }).passthrough();
-
-export type SSEEventDataParsed = z.infer<typeof SSEEventDataSchema>;

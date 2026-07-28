@@ -307,10 +307,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   // wsConnected is declared earlier (used by the index-search default).
 
   // One canonical connect flow: the in-page browser dialog (it has recents,
-  // sorting, and a native-picker fallback inside it). Previously this opened
-  // the macOS native picker directly, which made the toolbar behave
-  // differently from the welcome card — same name kept so the /browse slash
-  // command wiring is untouched.
+  // sorting, and a native-picker fallback inside it). The `handleNativeBrowse`
+  // name is what the /browse slash-command wiring binds to.
   const handleNativeBrowse = useCallback(() => {
     setWsDropdownOpen(false);
     openWorkspaceConnect();

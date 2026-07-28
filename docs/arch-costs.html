@@ -22,8 +22,8 @@
     <p>Cost tracking lives in <code class="path">server/costs/</code>, a small self-contained package:
       <code class="path">tracker.py</code> (pricing, logging, aggregation, cache telemetry, the API) and
       <code class="path">budget.py</code> (cap enforcement). The
-      <a href="arch-chat-pipeline.html">chat pipeline</a> calls into both. Remaining-capacity tracking is
-      no longer a costs concern: it moved to the token-based context meter in
+      <a href="arch-chat-pipeline.html">chat pipeline</a> calls into both. Remaining-capacity tracking
+      lives outside this package, in the token-based context meter in
       <code class="path">server/chat/loop_hints.py</code> (see below). <b>Click a box</b>
       below to trace the flow from a completed turn to the Costs panel.</p>
 
@@ -165,11 +165,10 @@
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></span>
-      <div class="callout__body"><p><b>Caching no longer fools the meter.</b>
-        The old character-based forecast had to add the cached read and creation tokens back by hand to
-        see the true context size. Now every round's <code>message_start</code> usage already reports the
-        true prompt size and <code>note_prompt_tokens()</code> records it directly, so there is nothing to
-        correct for. See <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> and
+      <div class="callout__body"><p><b>The meter reads real prompt tokens.</b>
+        Every round's <code>message_start</code> usage reports the true prompt size and
+        <code>note_prompt_tokens()</code> records it directly, so cached reads and cache creation need no
+        correction. See <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> and
         <a href="arch-index.html">compaction</a>.</p></div>
     </div>
 

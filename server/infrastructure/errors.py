@@ -33,36 +33,6 @@ class WhisperAPIError(WhisperError):
         self.original_error = original_error
 
 
-class WhisperToolError(WhisperError):
-    """Error during tool execution."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        tool_name: str = "",
-        error_code: str = "TOOL_ERROR",
-        user_message: str = "",
-    ):
-        super().__init__(message, error_code=error_code, user_message=user_message)
-        self.tool_name = tool_name
-
-
-class WhisperConfigError(WhisperError):
-    """Error in configuration loading or validation."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        config_path: str = "",
-        error_code: str = "CONFIG_ERROR",
-        user_message: str = "",
-    ):
-        super().__init__(message, error_code=error_code, user_message=user_message)
-        self.config_path = config_path
-
-
 class PromptTooLongError(WhisperAPIError):
     """Bedrock rejected the request because the prompt exceeds the context window."""
 

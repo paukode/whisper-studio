@@ -11,8 +11,7 @@ import sqlite3
 import time
 import uuid
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import Response
+from fastapi import APIRouter, HTTPException
 
 log = logging.getLogger("whisper-studio")
 
@@ -307,21 +306,6 @@ def execute_task_tool(tool_name: str, tool_input: dict) -> str:
 @router.get("/{session_id}")
 async def get_tasks(session_id: str):
     return {"tasks": get_session_tasks(session_id)}
-
-
-@router.post("/{session_id}")
-async def api_create_task(session_id: str, request: Request):
-    body = await request.json()
-    subject = body.get("subject", "").strip()
-    description = body.get("description", "")
-    if not subject:
-        return Response(
-            content=json.dumps({"error": "subject required"}),
-            status_code=400,
-            media_type="application/json",
-        )
-    task = create_task(session_id, subject, description)
-    return {"task": task}
 
 
 @router.delete("/{session_id}")

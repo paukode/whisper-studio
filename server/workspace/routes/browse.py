@@ -1,5 +1,5 @@
 """Navigation and discovery endpoints: directory browsing, listing, filename
-search, the native folder picker, and worktree enumeration.
+search, and the native folder picker.
 """
 
 import json
@@ -10,7 +10,6 @@ from fastapi import Request
 from fastapi.responses import Response
 
 from .. import router
-from ..executors import _WORKTREES
 from ..filesystem import _ws_list_dir, _ws_search_files
 from ..paths import _resolve_path, _ws_validate_path
 from ..state import get_workspace_path
@@ -45,7 +44,8 @@ async def ws_browse(path: str = ""):
                 mtime = 0.0
             if os.path.isdir(full):
                 dirs.append(name)
-                # `dirs` (flat names) is kept verbatim for the legacy template.
+                # `dirs` (flat names) is kept as the fallback shape the client
+                # reads when `entries` is absent (see workspaceConnectHelpers.ts).
                 entries.append({"name": name, "mtime": mtime})
             elif os.path.isfile(full):
                 files.append({"name": name, "mtime": mtime})
@@ -174,22 +174,3 @@ async def ws_pick_folder():
         status_code=501,
         media_type="application/json",
     )
-
-
-@router.get("/worktrees")
-async def list_worktrees():
-    """Feature 8: List all active worktrees."""
-    ws = get_workspace_path()
-    if not ws:
-        return {"worktrees": []}
-    try:
-        result = subprocess.run(
-            ["git", "worktree", "list", "--porcelain"],
-            capture_output=True,
-            text=True,
-            cwd=ws,
-            timeout=10,
-        )
-        return {"worktrees": list(_WORKTREES.values()), "git_output": result.stdout.strip()}
-    except Exception as e:
-        return {"worktrees": list(_WORKTREES.values()), "error": str(e)}

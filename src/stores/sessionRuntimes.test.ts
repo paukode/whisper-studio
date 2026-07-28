@@ -11,7 +11,6 @@ import {
   getChatStore,
   getRuntime,
   getTranscriptionStore,
-  hasRuntime,
   maybeEvictIdle,
   useActiveChatStore,
   useRuntimeIndex,
@@ -122,7 +121,7 @@ describe('eviction', () => {
     expect(liveCount()).toBe(4);
     maybeEvictIdle();
     expect(liveCount()).toBe(MAX_LIVE_RUNTIMES);
-    expect(hasRuntime('e1')).toBe(false);
+    expect(useRuntimeIndex.getState().liveIds).not.toContain('e1');
     expect(save).toHaveBeenCalledWith('e1');
   });
 
@@ -154,6 +153,6 @@ describe('eviction', () => {
     entry.abort = controller;
     dropRuntime('doomed');
     expect(controller.signal.aborted).toBe(true);
-    expect(hasRuntime('doomed')).toBe(false);
+    expect(useRuntimeIndex.getState().liveIds).not.toContain('doomed');
   });
 });

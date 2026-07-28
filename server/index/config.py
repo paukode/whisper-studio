@@ -69,21 +69,14 @@ def dim_for_backend(backend: str | None) -> int:
 
 
 # ── GLiNER (zero-shot NER → knowledge-graph nodes) ───────────────────────────
-# gliner_large-v2.5 (gliner-community, Apache-2.0) is a drop-in upgrade from
-# gliner_mediumv2.1 — same predict_entities API, higher span quality. ~2× the
-# params, so per-chunk CPU latency rises; override to a *-medium-v2.5 build via
-# the env var if latency-bound. On first index it downloads into ./models;
-# the old gliner-mediumv2.1 directory can be deleted manually.
+# gliner_large-v2.5 (gliner-community, Apache-2.0). ~2x the params of a -medium
+# build, so per-chunk CPU latency rises; override to a *-medium-v2.5 build via
+# the env var if latency-bound. On first index it downloads into ./models.
 GLINER_MODEL = os.environ.get("WHISPER_INDEX_GLINER_MODEL", "gliner-community/gliner_large-v2.5")
 # GLiNER2 model id (fastino), used when a workspace selects ner_model="gliner2".
 # large-v1 is the English-strongest tier; -base-v1 (205M) is faster, -multi-v1 is
 # multilingual. Override via env.
 GLINER2_MODEL = os.environ.get("WHISPER_INDEX_GLINER2_MODEL", "fastino/gliner2-large-v1")
-# On-device NER model choices offered per workspace (wssettings.ner_model). The
-# active NER *backend* (gliner vs cloud haiku) is still chosen by model_mode; this
-# only picks WHICH local GLiNER family runs when the backend is on-device.
-NER_MODELS = ("gliner", "gliner2")
-DEFAULT_NER_MODEL = os.environ.get("WHISPER_INDEX_NER_MODEL", "gliner")
 # GLiNER2 native relation extraction over-generates on dense text (it scores many
 # predicates per entity pair) yet is sparse on real prose; keep only pairs whose
 # head+tail confidence clears this floor, then one best predicate per directed pair.

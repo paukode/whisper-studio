@@ -65,14 +65,6 @@ def is_read_only(executor_name: str) -> bool:
     return meta.get("read_only", False)
 
 
-def is_destructive(executor_name: str) -> bool:
-    """Check if an executor is destructive."""
-    meta = EXECUTOR_META.get(executor_name)
-    if meta is None:
-        return False
-    return meta.get("destructive", False)
-
-
 def emits_model_prompt(executor_name: str) -> bool:
     """Check if an executor's result is a model prompt (must skip budgeting)."""
     meta = EXECUTOR_META.get(executor_name)

@@ -28,7 +28,7 @@ export function withBrowseOption(question: string, options: string[]): string[] 
   // (/, ~/, ./, ../) or is a single slash-bearing token with no spaces
   // (e.g. "src/components/Foo.tsx"). This deliberately excludes prose that
   // merely contains a slash — "portfolio/landing page", "HTML/CSS/JS",
-  // "vs/and" — which previously triggered a bogus Browse… button.
+  // "vs/and".
   const isPathOption = (o: string) => {
     const t = o.trim();
     return /^(~|\.{0,2})?\//.test(t) || (t.includes('/') && !/\s/.test(t));

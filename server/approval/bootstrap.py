@@ -304,9 +304,9 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
     command = (payload.get("command") or "").strip()
     if not command:
         return ApprovalOutcome(ok=False, error="No command")
-    # Same validation gate as /api/workspace/shell — this approval path
-    # sandboxes but previously skipped the dangerous-pattern/sensitive-path
-    # check, so an approved command could still e.g. read ~/.ssh.
+    # Same validation gate as /api/workspace/shell: the sandbox alone does not
+    # stop an approved command from e.g. reading ~/.ssh, so the dangerous-pattern
+    # and sensitive-path checks run here too.
     warning = workspace._validate_command(command)
     if warning:
         return ApprovalOutcome(ok=False, error=warning)

@@ -218,10 +218,9 @@ async def git_events_endpoint():
 def git_changes_endpoint():
     """Combined status + diff in one round trip with a 1-second TTL cache.
 
-    Replaces two parallel calls (`/api/git/status` + `/api/git/diff`) the
-    GitChangesPanel used to make. The cache absorbs the assistant's tool
-    loop running `git status` / `git diff` repeatedly between rounds —
-    cuts subprocess count by ~70% under load."""
+    Returns status and per-file diff stats in one call. The cache absorbs the
+    assistant's tool loop running `git status` / `git diff` repeatedly between
+    rounds — cuts subprocess count by ~70% under load."""
     ws = _require_git_workspace()
     key = os.path.normpath(ws)
     now = time.monotonic()
@@ -301,29 +300,6 @@ def git_branch_endpoint():
         "branch": branch,
         "default": default,
         "is_default": branch == default,
-    }
-
-
-@router.get("/diff")
-def git_diff_endpoint():
-    """Diff summary for UI panel."""
-    ws = _require_git_workspace()
-    diff = fetch_git_diff(ws)
-    if diff is None:
-        return {"files_count": 0, "lines_added": 0, "lines_removed": 0, "per_file_stats": {}}
-    per_file = {}
-    for fname, fstat in diff.per_file_stats.items():
-        per_file[fname] = {
-            "added": fstat.added,
-            "removed": fstat.removed,
-            "is_binary": fstat.is_binary,
-            "is_untracked": fstat.is_untracked,
-        }
-    return {
-        "files_count": diff.files_count,
-        "lines_added": diff.lines_added,
-        "lines_removed": diff.lines_removed,
-        "per_file_stats": per_file,
     }
 
 

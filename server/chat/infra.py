@@ -21,8 +21,7 @@ from server.infrastructure.config import load_config
 
 # Single shared bedrock client per region. boto3 clients own a
 # connection pool and are thread-safe — creating a fresh client on
-# every invoke (which the agent runtime + team executor used to do)
-# multiplies the pool count by the number of concurrent agents and
+# every invoke multiplies the pool count by the number of concurrent agents and
 # can exhaust the macOS default soft fd limit (256). That cascade
 # is what causes [Errno 24] Too many open files, then sqlite
 # "unable to open database file", then "Could not connect to

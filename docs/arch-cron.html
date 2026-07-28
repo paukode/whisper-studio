@@ -80,8 +80,8 @@
 
     <h2 id="the-runtime">The runtime</h2>
     <p><code>init_scheduler()</code> runs once at app startup. It captures the server event loop (so
-      background threads can dispatch coroutines later), reconciles any interrupted runs, imports the
-      legacy results file, then starts an APScheduler <code>AsyncIOScheduler</code> and arms every enabled
+      background threads can dispatch coroutines later), reconciles any interrupted runs, then starts an
+      APScheduler <code>AsyncIOScheduler</code> and arms every enabled
       job. Jobs themselves live in <code class="path">data/cron_jobs.json</code>, mutated under a lock via an
       atomic temp-file write so a concurrent toggle, delete, and create can never last-write-wins over
       each other. APScheduler is an optional dependency: if it is not installed, cron is simply disabled
@@ -124,9 +124,7 @@
       older than the 15-minute stale cutoff (<code>STALE_RUN_SEC</code>) as failed, so a run interrupted by
       a restart is closed instead of hanging forever.</p>
     <p>Old runs are pruned per job to a configurable ceiling (default 200, from
-      <code>cron_max_runs_per_job</code>). A previous flat <code class="path">data/cron_results.json</code> is
-      imported once via <code>import_legacy()</code> then retired: <code>init_scheduler()</code> renames it
-      to <code>cron_results.json.imported</code> so it is never imported twice.</p>
+      <code>cron_max_runs_per_job</code>).</p>
     <div class="spec">
       <dt><code class="path">server/cron_history.py</code></dt><dd>Lease-based run store: <code>start_run</code>, <code>finish_run</code>, <code>list_runs</code>, <code>recent_runs</code>, <code>reconcile_stale</code>.</dd>
       <dt><code>cron_runs</code></dt><dd>Table keyed by <code>run_id</code>, indexed on <code>(job_id, started_at DESC)</code>; carries status, timestamps, duration, text, and next run.</dd>
@@ -150,7 +148,8 @@
       per-tool log in the existing <a href="arch-agents.html">TeamReportCard/AgentCard</a> fold.</p>
     <p>A cron run that calls <code>notify_user</code> also writes a durable <code>source='cron'</code> row to
       the <code>notifications</code> table (<a href="arch-persistence.html">migration 008</a>), so a report
-      delivered while you were away is still waiting behind the header bell.</p>
+      delivered while you were away waits behind the header bell, which reads the log over
+      <code>GET /api/notifications</code>.</p>
     <p>These cards are UI-only. They are filtered out by <code>visible_chat_history</code> before the next
       prompt is built, so background firings never inflate the token bill or confuse the model. If the
       owning session was deleted or archived, <code>_resolve_target_session()</code> redirects the card to
@@ -198,8 +197,9 @@
     <h2 id="key-files">Key files</h2>
     <div class="spec">
       <dt><code class="path">server/cron_schedule.py</code></dt><dd>Timezone resolution, the schedule union, validation, labels, triggers, and next-run projection.</dd>
-      <dt><code class="path">server/cron_scheduler.py</code></dt><dd>Scheduler lifecycle, execution, inline-in-chat delivery, the assistant tools, and the API routes.</dd>
-      <dt><code class="path">server/cron_history.py</code></dt><dd>Lease-based run history in <code>sessions.db</code>, stale reconciliation, pruning, and the legacy import.</dd>
+      <dt><code class="path">server/cron_scheduler.py</code></dt><dd>Scheduler lifecycle, execution, inline-in-chat delivery, and the assistant tools.</dd>
+      <dt><code class="path">server/cron_routes.py</code></dt><dd>The /api/cron/* HTTP handlers, registered on the shared cron_scheduler router.</dd>
+      <dt><code class="path">server/cron_history.py</code></dt><dd>Lease-based run history in <code>sessions.db</code>, stale reconciliation, and pruning.</dd>
       <dt><code class="path">server/cron_run.py</code></dt><dd>The unattended run loop: model resolution (per-job override then the Haiku-first fallback), the tool-use rounds, cooperative-stop checks, and live <code>cron_progress</code> frames.</dd>
       <dt><code class="path">server/cron_events.py</code></dt><dd>Live run progress (<code>emit_progress</code>) and cooperative stop (<code>request_stop</code> and the per-job <code>threading.Event</code>).</dd>
       <dt><code class="path">data/cron_jobs.json</code></dt><dd>The persisted job list, mutated under a lock via atomic temp-file writes.</dd>

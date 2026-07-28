@@ -1,9 +1,8 @@
 """Pause-and-resume tests for the ask_user_question tool.
 
-The bug fixed in this commit: chat.py used to NOT save _paused_sessions when
-a tool batch contained ask_user_question, so the user's answer arrived as a
-fresh user message and Bedrock saw a tool_use without a matching tool_result.
-The model then "ran to provide an answer" by hallucinating one.
+chat.py must save _paused_sessions when a tool batch contains
+ask_user_question; otherwise the user's answer arrives as a fresh user message
+and Bedrock sees a tool_use without a matching tool_result.
 
 These tests pin the contract:
   1. process_tool_results emits a placeholder tool_result for every
