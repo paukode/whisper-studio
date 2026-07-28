@@ -63,6 +63,55 @@ def _ner_backend() -> str:
         return "gliner"
 
 
+def _llm_ner_system(labels: list[str]) -> str:
+    """The shared LLM-NER instruction (cloud Haiku and on-device models alike)."""
+    label_str = ", ".join(labels)
+    return (
+        "You extract named entities from a text snippet for a knowledge graph. "
+        f"Use ONLY these entity types (verbatim): {label_str}. "
+        'Return ONLY a compact JSON array of objects {"name": ..., "label": ...}, '
+        "no prose, no code fences. Skip anything that doesn't fit a listed type. "
+        "Names must be short noun phrases copied from the text."
+    )
+
+
+def _parse_llm_entities(out_text: str, labels: list[str]) -> list[dict]:
+    """Parse an LLM NER reply into accepted entity dicts.
+
+    Canonicalizes against the ACTIVE profile's labels (not the global union), so a
+    label outside this workspace's profile is dropped — matching GLiNER's hard
+    label constraint. Casing (e.g. "api" -> "API") is still normalized."""
+    import json
+
+    out_text = (out_text or "").strip()
+    if out_text.startswith("```"):
+        out_text = out_text.strip("`")
+        out_text = out_text[out_text.find("[") : out_text.rfind("]") + 1]
+    try:
+        items = json.loads(out_text) if out_text else []
+    except Exception:  # noqa: BLE001 — NER is best-effort
+        return []
+
+    canon = {lbl.lower(): lbl for lbl in labels}
+    seen: set[str] = set()
+    result: list[dict] = []
+    for it in items if isinstance(items, list) else []:
+        if not isinstance(it, dict):
+            continue
+        name = str(it.get("name") or "").strip()
+        label = canon.get(str(it.get("label") or "").strip().lower())
+        # LLMs return no per-span confidence; synthesize a high one so the
+        # per-label floor passes and only the hard-junk gate in _accept applies.
+        if not name or not label or not _accept(name, label, 0.8):
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({"name": name, "label": label, "score": 0.8})
+    return result
+
+
 def _extract_via_haiku(snippet: str, labels: list[str]) -> list[dict]:
     """Cloud NER: ask Bedrock Claude Haiku for entities, constrained to the active
     profile's label set so graph node labels stay consistent across backends.
@@ -75,19 +124,11 @@ def _extract_via_haiku(snippet: str, labels: list[str]) -> list[dict]:
         model_id = _get_chat_models().get("haiku")
         if not model_id:
             return []
-        label_str = ", ".join(labels)
-        system = (
-            "You extract named entities from a text snippet for a knowledge graph. "
-            f"Use ONLY these entity types (verbatim): {label_str}. "
-            'Return ONLY a compact JSON array of objects {"name": ..., "label": ...}, '
-            "no prose, no code fences. Skip anything that doesn't fit a listed type. "
-            "Names must be short noun phrases copied from the text."
-        )
         body = json.dumps(
             {
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": 800,
-                "system": system,
+                "system": _llm_ner_system(labels),
                 "messages": [{"role": "user", "content": snippet}],
             }
         )
@@ -95,36 +136,28 @@ def _extract_via_haiku(snippet: str, labels: list[str]) -> list[dict]:
         payload = json.loads(resp["body"].read())
         out_text = "".join(
             b.get("text", "") for b in payload.get("content", []) if b.get("type") == "text"
-        ).strip()
-        if out_text.startswith("```"):
-            out_text = out_text.strip("`")
-            out_text = out_text[out_text.find("[") : out_text.rfind("]") + 1]
-        items = json.loads(out_text) if out_text else []
+        )
     except Exception as e:  # noqa: BLE001 — NER is best-effort
         log.debug("Haiku NER failed on a chunk: %s", e)
         return []
+    return _parse_llm_entities(out_text, labels)
 
-    # Canonicalize against the ACTIVE profile's labels (not the global union), so a
-    # label outside this workspace's profile is dropped — matching GLiNER's hard
-    # label constraint. Casing (e.g. "api" -> "API") is still normalized.
-    canon = {lbl.lower(): lbl for lbl in labels}
-    seen: set[str] = set()
-    result: list[dict] = []
-    for it in items if isinstance(items, list) else []:
-        if not isinstance(it, dict):
-            continue
-        name = str(it.get("name") or "").strip()
-        label = canon.get(str(it.get("label") or "").strip().lower())
-        # Haiku returns no per-span confidence; synthesize a high one so the
-        # per-label floor passes and only the hard-junk gate in _accept applies.
-        if not name or not label or not _accept(name, label, 0.8):
-            continue
-        key = name.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append({"name": name, "label": label, "score": 0.8})
-    return result
+
+def _extract_via_local_llm(snippet: str, labels: list[str], model_key: str) -> list[dict]:
+    """On-device LLM NER: the same prompt as the Haiku path, run on the chosen
+    local model. Skips (never downloads) when the model is absent; best-effort
+    like every NER path so a build never breaks."""
+    try:
+        from server.local import runtime as local_rt
+
+        if not local_rt.is_downloaded(model_key):
+            log.warning("LLM NER: %s not downloaded; skipping chunk", model_key)
+            return []
+        out = local_rt.complete(model_key, _llm_ner_system(labels), snippet, max_tokens=800)
+    except Exception as e:  # noqa: BLE001 — NER is best-effort
+        log.debug("local LLM NER (%s) failed on a chunk: %s", model_key, e)
+        return []
+    return _parse_llm_entities(out, labels)
 
 
 def ensure_gliner_model() -> str:
@@ -321,8 +354,9 @@ def extract_entities(
 ) -> list[dict]:
     """Return distinct entities in ``text`` as ``[{name, label, score}]``.
 
-    Routes to the active NER backend (on-device GLiNER/GLiNER2, or Claude Haiku on
-    Bedrock in cloud mode). ``labels`` is the workspace's entity profile (defaults
+    Routes to the active NER backend: on-device GLiNER/GLiNER2, Claude Haiku on
+    Bedrock, or any on-device chat model (LLM NER with the same prompt as the
+    Haiku path). ``labels`` is the workspace's entity profile (defaults
     to the business set); ``ner_model`` picks the on-device family ("gliner" default,
     or "gliner2"). Spans are kept only if they clear their label's confidence floor
     and pass the hard-junk gate; ``score`` is the model's span confidence (used
@@ -332,8 +366,15 @@ def extract_entities(
     if not text.strip():
         return []
     labels = labels or labels_for_profile(None)
-    if (backend or _ner_backend()) == "haiku":
+    eng = backend or _ner_backend()
+    if eng == "haiku":
         return _extract_via_haiku(text[:_HAIKU_MAX_CHARS], labels)
+    if eng not in ("gliner", "gliner2"):
+        from . import engines as _engines
+
+        _llm_key = _engines.resolve_local_model(eng)
+        if _llm_key:
+            return _extract_via_local_llm(text[:_HAIKU_MAX_CHARS], labels, _llm_key)
     if ner_model == "gliner2":
         return _extract_via_gliner2(text, labels)
     best: dict[str, dict] = {}  # name.lower() -> best-scoring accepted span

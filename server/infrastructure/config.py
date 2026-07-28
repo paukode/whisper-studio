@@ -92,9 +92,10 @@ DEFAULTS = {
     # chat models the picker shows (cloud hides on-device models, and vice versa).
     "model_mode": "cloud",
     # Per-capability backend overrides, consulted ONLY in "hybrid" mode.
-    # Keys: embed (cohere|qwen3), rerank (cohere|qwen3), ner (haiku|gliner),
-    # index_llm (haiku|local|none). Unset capabilities fall back to the cloud
-    # backend.
+    # Keys: embed (cohere|qwen3), rerank (cohere|qwen3), ner (haiku, gliner, or
+    # an on-device model key for LLM NER), index_llm (haiku, an on-device model
+    # key, "local" to follow the active local model, or none). Unset
+    # capabilities fall back to the cloud backend.
     "backends": {},
     "effort_level": "high",
     "auto_mode_enabled": False,

@@ -46,15 +46,19 @@ def _resolve_local_key(local_model_key: str | None) -> str:
 
 
 def resolve_map_engine(config: dict | None = None) -> str:
-    """Return the engine (``"haiku"`` or ``"local"``) for a one-shot map call
-    under the active model mode. Anything the mode resolver returns outside that
-    set (e.g. a hybrid ``"none"``) is coerced to ``"haiku"``: the map step must
-    always produce output, and ``"none"`` only means "skip optional index
+    """Return the engine for a one-shot map call under the active model mode:
+    ``"haiku"``, ``"local"`` (follow the resident on-device model), or a specific
+    on-device model key from the local registry. Anything else the mode resolver
+    returns (e.g. a hybrid ``"none"``) is coerced to ``"haiku"``: the map step
+    must always produce output, and ``"none"`` only means "skip optional index
     enrichment", not "cannot summarise"."""
     from server.infrastructure.model_mode import resolve_backend
+    from server.local import registry as local_registry
 
     engine = resolve_backend("index_llm", config)
-    return engine if engine in ("haiku", "local") else "haiku"
+    if engine in ("haiku", "local") or engine in local_registry.local_models():
+        return engine
+    return "haiku"
 
 
 def _is_claude_id(model_id: str) -> bool:
@@ -110,10 +114,13 @@ def one_shot(
     """
     engine = engine or resolve_map_engine()
 
-    if engine == "local":
-        from server.local import runtime as local_rt
+    from server.local import runtime as local_rt
 
-        key = _resolve_local_key(local_model_key)
+    if engine == "local" or local_rt.is_local_model(engine):
+        # A specific model key is an explicit user pick and wins over the
+        # resident-following heuristic; the bare "local" alias keeps following
+        # the active/resident model to avoid multi-GB load/unload cycles.
+        key = engine if engine != "local" else _resolve_local_key(local_model_key)
         # complete() would download multi-GB weights if the model is absent;
         # never let a summary request trigger that silently.
         if not local_rt.is_downloaded(key):
