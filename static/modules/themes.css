@@ -229,7 +229,7 @@
     --speaker-6: #6d28d9;           /* violet */
 }
 
-/* ---- Taw Dark (coral on warm charcoal) ---- */
+/* ---- Taw Dark (Claude blue on warm charcoal) ---- */
 [data-theme="dark-taw"] {
     --bg-primary: #1f1e1d;
     --bg-surface: #262624;
@@ -242,18 +242,18 @@
     --text-primary: #f5f4ee;
     --text-secondary: #b0aea6;
     --text-muted: #78756e;
-    --accent: #d97757;
-    --accent-dim: rgba(217,119,87,0.16);
-    --accent-hover: #e08b6f;
-    --link: #8fb0d4;
-    --link-hover: #a9c4e0;
+    --accent: #4f94d8;
+    --accent-dim: rgba(85,150,220,0.16);
+    --accent-hover: #6faae2;
+    --link: #85b7eb;
+    --link-hover: #b5d4f4;
     --accent-record: #e5453a;
     --accent-record-dim: rgba(229,69,58,0.12);
     --accent-live: #34c77b;
-    --accent-send: #d97757;
-    --accent-send-hover: #c96647;
-    --chat-user-bg: #322a26;
-    --chat-user-border: rgba(217,119,87,0.28);
+    --accent-send: #4f94d8;
+    --accent-send-hover: #3f82c4;
+    --chat-user-bg: #283039;
+    --chat-user-border: rgba(85,150,220,0.28);
     --chat-assistant-bg: #262624;
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
     --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
@@ -266,7 +266,7 @@
     --speaker-6: #d98cae;
 }
 
-/* ---- Taw Light (coral on warm ivory) ---- */
+/* ---- Taw Light (Claude blue on warm ivory) ---- */
 [data-theme="light-taw"] {
     --bg-primary: #faf9f5;
     --bg-surface: #ffffff;
@@ -279,18 +279,18 @@
     --text-primary: #1f1e1d;
     --text-secondary: #6b6862;
     --text-muted: #a3a097;
-    --accent: #cf6a48;
-    --accent-dim: rgba(217,119,87,0.12);
-    --accent-hover: #bd583a;
-    --link: #4a7fb5;
-    --link-hover: #2f6399;
+    --accent: #1d6ec2;
+    --accent-dim: rgba(29,110,194,0.12);
+    --accent-hover: #185fa5;
+    --link: #1d6ec2;
+    --link-hover: #185fa5;
     --accent-record: #d33b30;
     --accent-record-dim: rgba(211,59,48,0.08);
     --accent-live: #2f9e51;
-    --accent-send: #cf6a48;
-    --accent-send-hover: #bd583a;
-    --chat-user-bg: #f7ede7;
-    --chat-user-border: rgba(217,119,87,0.22);
+    --accent-send: #1d6ec2;
+    --accent-send-hover: #185fa5;
+    --chat-user-bg: #ecf3fb;
+    --chat-user-border: rgba(29,110,194,0.22);
     --chat-assistant-bg: #f4f2ea;
     --shadow-sm: 0 1px 3px rgba(60,50,40,0.06);
     --shadow-md: 0 4px 16px rgba(60,50,40,0.08);
