@@ -1,15 +1,40 @@
----
-name: create_program
-description: Builds a browser-based app, game, tool, dashboard, widget, or web page in HTML/CSS/JS. Use for new requests to create or make an app when the user has not already chosen a file layout; it first asks whether they want a single self-contained HTML page (delivered as an inline artifact card with preview and download) or a modular multi-file project saved to a folder. Do not use for slide decks or presentations (use presentation_builder), for requests that already specify a modular multi-file project (use frontend_design directly), or for non-web programs such as Python scripts or CLI tools (build those with workspace tools or run_python). Returns an artifact card or created project files plus a short summary of what was built.
-triggers: create app, build app, make a game, web app, dashboard, widget, web page, website, calculator, single html page
-input_schema:
-  description:
-    type: string
-    required: true
-    description: Full description of what to build, preserving all user-stated requirements such as features, style, data, and any file or folder preferences.
----
+"""create_program — the browser-app builder flow as a built-in prompt tool."""
 
-# Create Program
+from server.builtin_skills._render import render_prompt
+from server.executors import register_executor
+
+TOOL = {
+    "name": "create_program",
+    "description": (
+        "Builds a browser-based app, game, tool, dashboard, widget, or web page in "
+        "HTML/CSS/JS. Use for new requests to create or make an app when the user "
+        "has not already chosen a file layout; it first asks whether they want a "
+        "single self-contained HTML page (delivered as an inline artifact card with "
+        "preview and download) or a modular multi-file project saved to a folder. Do "
+        "not use for slide decks or presentations (use presentation_builder), for "
+        "requests that already specify a modular multi-file project (use "
+        "frontend_design directly), or for non-web programs such as Python scripts "
+        "or CLI tools (build those with workspace tools or run_python). Returns an "
+        "artifact card or created project files plus a short summary of what was "
+        "built."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "description": {
+                "type": "string",
+                "description": (
+                    "Full description of what to build, preserving all user-stated "
+                    "requirements such as features, style, data, and any file or "
+                    "folder preferences."
+                ),
+            },
+        },
+        "required": ["description"],
+    },
+}
+
+BODY = r"""# Create Program
 
 You help users create browser-based programs and apps.
 
@@ -68,4 +93,9 @@ Call `skill_invoke` with:
 
 Then follow the instructions it returns. This keeps one canonical modular flow
 (location question, task tracking, per-file approval via `ws_create_file`, closing
-summary) instead of two drifting copies.
+summary) instead of two drifting copies."""
+
+
+@register_executor("create_program", read_only=True, concurrent_safe=True, emits_prompt=True)
+def exec_create_program(tool_input, transcript, current_attachments):
+    return render_prompt(tool_input, BODY)

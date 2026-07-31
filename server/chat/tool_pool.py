@@ -20,6 +20,7 @@ import os
 
 from server.agent_tools import AGENT_TOOLS
 from server.ask_user import ALL_TOOLS as ASK_USER_TOOLS
+from server.builtin_skills import BUILTIN_SKILL_TOOLS
 from server.cron_scheduler import CRON_TOOLS
 from server.executors import is_concurrent_safe as _executor_concurrent_safe
 from server.executors.result_cache import RESULT_CACHE_TOOLS
@@ -169,6 +170,7 @@ def assemble_full_catalog(
     # Tier 1: full catalog
     builtin_tools = list(TOOLS)  # skill-based tools
     builtin_tools += CORE_EXECUTOR_TOOLS
+    builtin_tools += BUILTIN_SKILL_TOOLS
     builtin_tools += get_global_workspace_tools()
     # git_clone is the one git tool that works WITHOUT a connected workspace
     # — by design, it creates one. Always include it so the assistant can

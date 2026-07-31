@@ -1,15 +1,40 @@
----
-name: github_actions
-description: Guides the user through installing Claude into a GitHub repository's Actions CI step by step. Checks the gh CLI and its auth scopes, detects the repository from the workspace git remote, asks which repo and auth method to use (Anthropic API key or Claude OAuth token), stores the secret via gh, writes claude.yml and optionally claude-review.yml workflows pinned to anthropics/claude-code-action@v1, pushes them, and finishes with the Claude GitHub App install link. Requires a connected workspace with the gh CLI available. Use when the user wants @claude responding in issues and PRs or automated PR reviews in GitHub Actions. Do not use for debugging failing CI runs or authoring unrelated workflows; handle those directly with ws_run_command and gh.
-triggers: github actions, claude github app, github app, actions setup, ci setup, workflow setup, pr review automation, ci/cd
-input_schema:
-  repo:
-    type: string
-    required: false
-    description: Target repository as owner/repo. Optional; when omitted the skill detects it from the workspace git remote and confirms with the user.
----
+"""github_actions — the Claude-in-GitHub-Actions setup flow as a built-in prompt tool."""
 
-Set up Claude in GitHub Actions by following these steps with tools. Reuse prompts
+from server.builtin_skills._render import render_prompt
+from server.executors import register_executor
+
+TOOL = {
+    "name": "github_actions",
+    "description": (
+        "Guides the user through installing Claude into a GitHub repository's "
+        "Actions CI step by step. Checks the gh CLI and its auth scopes, detects the "
+        "repository from the workspace git remote, asks which repo and auth method "
+        "to use (Anthropic API key or Claude OAuth token), stores the secret via gh, "
+        "writes claude.yml and optionally claude-review.yml workflows pinned to "
+        "anthropics/claude-code-action@v1, pushes them, and finishes with the Claude "
+        "GitHub App install link. Requires a connected workspace with the gh CLI "
+        "available. Use when the user wants @claude responding in issues and PRs or "
+        "automated PR reviews in GitHub Actions. Do not use for debugging failing CI "
+        "runs or authoring unrelated workflows; handle those directly with "
+        "ws_run_command and gh."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "repo": {
+                "type": "string",
+                "description": (
+                    "Target repository as owner/repo. Optional; when omitted the "
+                    "skill detects it from the workspace git remote and confirms "
+                    "with the user."
+                ),
+            },
+        },
+        "required": [],
+    },
+}
+
+BODY = r"""Set up Claude in GitHub Actions by following these steps with tools. Reuse prompts
 exactly as shown. If a valid `owner/repo` was passed in `repo`, skip the Step 2
 question and use it as `REPO` after confirming it exists (Step 3 doubles as that
 check).
@@ -213,4 +238,9 @@ Once installed, mention **@claude** in any issue or PR comment to trigger it."
 
 Then a final summary listing exactly what happened: secret configured (or reused),
 workflow file(s) created, whether they were pushed (and if not, what the user still
-needs to do), and the app install link.
+needs to do), and the app install link."""
+
+
+@register_executor("github_actions", read_only=True, concurrent_safe=True, emits_prompt=True)
+def exec_github_actions(tool_input, transcript, current_attachments):
+    return render_prompt(tool_input, BODY)

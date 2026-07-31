@@ -126,6 +126,7 @@ _EXECUTOR_MODULES = (
     "server.executors.code",
     "server.executors.content",
     "server.executors.terminal_run",
+    "server.builtin_skills",  # verify_change / create_program / github_actions
     "server.executors.preview",  # metadata-only — dispatch is in tool_router.py
     "server.executors.result_cache",
     "server.search",  # ws_grep / ws_glob
