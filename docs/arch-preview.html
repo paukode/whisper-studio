@@ -130,8 +130,8 @@
     <ol class="steps">
       <li><h4>The tools drive the page</h4><p>Everything above: spawn the dev server, navigate, read the
         console and the DOM, click and type, and capture a screenshot the model can see.</p></li>
-      <li><h4>The verify-change skill decides to use them</h4><p><code class="path">skills/verify-change.md</code>
-        has a <code>ui_facing</code> branch. When a change touches rendered UI, the skill tells the model to
+      <li><h4>The built-in verify_change tool decides to use them</h4><p><code class="path">server/builtin_skills/verify_change.py</code>
+        has a <code>ui_facing</code> branch. When a change touches rendered UI, the tool tells the model to
         start (or reuse) the dev server, load the changed view, check <code>read_console_messages</code> for
         errors, <code>read_page</code> for the expected structure, drive the changed interaction and re-read
         to confirm it took, and capture a screenshot as evidence — then emit exactly <code>VERIFY PASS</code>
