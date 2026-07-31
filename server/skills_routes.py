@@ -44,16 +44,6 @@ async def skills_endpoint():
         }
         for s in _sk.SKILLS.values()
     ]
-    # Built-in tools: product-owned, always on, read-only in the panel. Shown
-    # so they stay discoverable (and @skills: mentions keep working) after
-    # their definitions moved out of the user-editable skills folder.
-    from server.builtin_skills import BUILTIN_SKILL_TOOLS
-    from server.executors.tools import CORE_EXECUTOR_TOOLS
-
-    builtins = [
-        {"name": t["name"], "description": t.get("description", "")}
-        for t in (*CORE_EXECUTOR_TOOLS, *BUILTIN_SKILL_TOOLS)
-    ]
     # Only tools from servers whose persisted `enabled` flag is on — the
     # autocomplete/skills UI must mirror the MCP ticks, not the connection
     # state (servers stay warm while disabled so re-enabling is instant).
@@ -70,7 +60,7 @@ async def skills_endpoint():
                 "server": tool_info.get("server_name", ""),
             }
         )
-    return {"skills": skills, "builtins": builtins, "mcpTools": mcp_tools}
+    return {"skills": skills, "mcpTools": mcp_tools}
 
 
 def _folder_skill_dir(name: str) -> str | None:

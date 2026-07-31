@@ -133,13 +133,6 @@ interface SkillEntry {
   trusted?: boolean;
 }
 
-/** Built-in tool listed by GET /api/skills — product-owned, always on,
- *  read-only in the Skills panel. */
-interface BuiltinEntry {
-  name: string;
-  description?: string;
-}
-
 /** Shape returned by GET /api/mcp/servers */
 interface MCPEntry {
   name: string;
@@ -175,7 +168,6 @@ export interface SettingsState {
 
   /* Skills */
   skills: SkillEntry[];
-  builtinSkills: BuiltinEntry[];
 
   /* MCP — the persisted `enabled` flag on each server is the single source of
    *  truth. Both the Settings panel and the chat-toolbar checklist toggle it
@@ -262,7 +254,6 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   loadedLocalModel: null,
   dataRetentionEnabled: false,
   skills: [],
-  builtinSkills: [],
   mcpServers: [],
   effortLevel: DEFAULT_EFFORT,
   verbosity: readVerbosity() ?? 'medium',
@@ -380,11 +371,8 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
 
   loadSkills: async () => {
     try {
-      const data = await get<{ skills: SkillEntry[]; builtins: BuiltinEntry[]; mcpTools: Array<{ name: string; description: string; server: string }> }>('/api/skills', { schema: SkillsResponseSchema });
-      set({
-        skills: Array.isArray(data.skills) ? data.skills : [],
-        builtinSkills: Array.isArray(data.builtins) ? data.builtins : [],
-      });
+      const data = await get<{ skills: SkillEntry[]; mcpTools: Array<{ name: string; description: string; server: string }> }>('/api/skills', { schema: SkillsResponseSchema });
+      set({ skills: Array.isArray(data.skills) ? data.skills : [] });
     } catch (err) {
       console.warn('Failed to load skills:', err);
       useUIStore.getState().addToast({

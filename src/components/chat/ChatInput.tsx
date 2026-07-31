@@ -299,17 +299,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const autoMemory = useSettingsStore((s) => s.autoMemory);
   const setAutoMemory = useSettingsStore((s) => s.setAutoMemory);
   const skills = useSettingsStore((s) => s.skills);
-  const builtinSkills = useSettingsStore((s) => s.builtinSkills);
   const mcpServers = useSettingsStore((s) => s.mcpServers);
-
-  // @skills: browses user skills AND the built-in tools (promoted ex-skills
-  // like summarize_transcript / verify_change), so forcing them by mention
-  // keeps working now that they no longer live in the skills folder.
-  // Memoized: zustand v5 selectors must not return fresh arrays.
-  const mentionableSkills = useMemo(
-    () => [...skills, ...builtinSkills.map((b) => ({ name: b.name, description: b.description, enabled: true }))],
-    [skills, builtinSkills],
-  );
 
   const openWorkspaceConnect = useUIStore((s) => s.openWorkspaceConnect);
   const openSettings = useUIStore((s) => s.openSettings);
@@ -369,7 +359,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     setText,
     textareaRef,
     slashCommands: SLASH_COMMANDS,
-    skills: mentionableSkills,
+    skills,
     mcpServers,
     onAttachWorkspaceFile: attachWorkspaceFileAsChip,
   });
