@@ -65,6 +65,25 @@ def local_chat_response(
     # cost after the first turn (the 32K default context accommodates it).
     local_tools_on = supports_tools(model_key)
     thinking_on = supports_thinking(model_key)
+    # Context size: the composer's CTX slider value rides on EVERY local turn,
+    # so the chip is the source of truth and a lazy server start can never run
+    # at a stale size. Without this, a backend restart wiped the in-memory
+    # sticky value and the next turn silently relaunched llama-server at the
+    # registry default while the UI showed the user's larger choice (64K chip,
+    # n_ctx=32768 exceed_context_size errors). Clamped like the load endpoint —
+    # never trust a client-supplied size. Recorded via set_requested_n_ctx so
+    # the non-chat callers (session summariser, index extraction) reuse the
+    # same size instead of bouncing the server.
+    n_ctx = body.get("local_context_window")
+    if n_ctx is not None:
+        try:
+            n_ctx = max(2048, min(int(n_ctx), 262144))
+        except (TypeError, ValueError):
+            n_ctx = None
+    if n_ctx:
+        from server.local.runtime import set_requested_n_ctx
+
+        set_requested_n_ctx(n_ctx)
     # Lean system prompt: the cloud one is tool/workspace-heavy (~2-2.5k tokens
     # the local model can't use) — drop it to speed prefill and free n_ctx,
     # keeping only project/memory context plus, when tools are on, a short marker
@@ -104,6 +123,7 @@ def local_chat_response(
             tools=local_tools_on,
             tool_ctx=tool_ctx,
             ws_path=ws_path,
+            n_ctx=n_ctx,
         ),
         media_type="text/event-stream",
     )
