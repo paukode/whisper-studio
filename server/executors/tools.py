@@ -257,10 +257,9 @@ SUMMARIZE_TRANSCRIPT_TOOL = {
         "for the chosen style, from which the assistant writes the summary. Use when "
         "the user wants quick action items, key points, a short brief, or basic "
         "meeting notes of what was said in the current session. Do not use for notes "
-        "or text the user pasted into chat, and prefer meeting_notes when the user "
-        "wants a full polished write-up to share (it produces a richer structure). "
-        "Not for attached files (use analyze_document). Returns a no-transcript "
-        "message when nothing has been transcribed yet."
+        "or text the user pasted into chat. Not for attached files (use "
+        "analyze_document). Returns a no-transcript message when nothing has been "
+        "transcribed yet."
     ),
     "input_schema": {
         "type": "object",

@@ -11,12 +11,10 @@ TOOL = {
         "has not already chosen a file layout; it first asks whether they want a "
         "single self-contained HTML page (delivered as an inline artifact card with "
         "preview and download) or a modular multi-file project saved to a folder. Do "
-        "not use for slide decks or presentations (use presentation_builder), for "
-        "requests that already specify a modular multi-file project (use "
-        "frontend_design directly), or for non-web programs such as Python scripts "
-        "or CLI tools (build those with workspace tools or run_python). Returns an "
-        "artifact card or created project files plus a short summary of what was "
-        "built."
+        "not use for slide decks or presentations, or for non-web programs such as "
+        "Python scripts or CLI tools (build those with workspace tools or "
+        "run_python). Returns an artifact card or created project files plus a "
+        "short summary of what was built."
     ),
     "input_schema": {
         "type": "object",
@@ -86,14 +84,22 @@ Wait for the user's response before continuing.
 
 ## Step 2B: Modular app
 
-The modular flow is owned by the `frontend_design` skill; do not re-implement it here.
-Call `skill_invoke` with:
-- skill_name: `frontend_design`
-- input: the user's full request, plus the chosen folder if one was already given
-
-Then follow the instructions it returns. This keeps one canonical modular flow
-(location question, task tracking, per-file approval via `ws_create_file`, closing
-summary) instead of two drifting copies."""
+1. **Location.** If the user has not already named a target folder, ask with
+   `ask_user_question` where the project should be saved (offer the connected
+   workspace when one is present, plus "Other (please specify)"). Never write
+   files without a confirmed destination.
+2. **Plan the file layout.** Keep it minimal and conventional: `index.html`,
+   `css/styles.css`, `js/main.js` (or `app.js`), plus extra modules only when
+   the feature set genuinely needs them. Track the work with the task tools
+   when the project has more than a couple of files.
+3. **Gather context.** If the request mentions a person, company, product, or
+   URL, use `web_search` or `web_fetch` first, as in Step 2A.
+4. **Create each file with `ws_create_file`** (one call per file, so the user
+   approves each write). Follow the same code quality rules as Step 2A, with
+   CSS and JS in their own files instead of inline blocks; link them relatively
+   from `index.html` so the folder opens and runs from disk.
+5. **Close with a short summary**: the folder path, each created file with a
+   one-line purpose, and how to open or serve the app."""
 
 
 @register_executor("create_program", read_only=True, concurrent_safe=True, emits_prompt=True)

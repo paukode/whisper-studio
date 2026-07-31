@@ -1308,18 +1308,18 @@ async def chat_endpoint(request: Request):
         # When the user explicitly requested a skill via @skills:NAME,
         # tell the model what arguments to pass. tool_choice (set
         # below) makes the call mandatory; this hint makes the
-        # arguments correct. For transcript-driven skills like
-        # meeting_notes / summarize_transcript / catch_up, the
+        # arguments correct. For transcript-driven skills the
         # transcript above is the obvious payload — without the
         # hint the model sometimes passes the literal question
-        # text instead.
+        # text instead. Generic on purpose: the app never names
+        # specific skills; whichever the user forced gets the rule.
         if force_skill and transcript.strip():
             parts.append(
-                f"Call the `{force_skill}` tool now. For meeting_notes, pass the "
-                f"[Transcript so far] text above as the `notes` argument. "
-                f"summarize_transcript and catch_up receive the transcript "
-                f"automatically, so call them with only their own arguments "
-                f"(e.g. `style` for summarize_transcript)."
+                f"Call the `{force_skill}` tool now. If it accepts a `notes`, "
+                f"`text`, or `transcript` argument, pass the [Transcript so far] "
+                f"text above as that argument. If it has no such argument, it "
+                f"receives the transcript automatically, so call it with only "
+                f"its own arguments."
             )
         elif force_skill:
             parts.append(
@@ -1639,8 +1639,8 @@ async def chat_endpoint(request: Request):
                     # have already called it and needs free range to
                     # use other tools (e.g. read attachments, look
                     # up a file). Without this guard a turn that
-                    # forces meeting_notes would also force it on
-                    # the follow-up round, causing an infinite call
+                    # forces a skill would also force it on the
+                    # follow-up round, causing an infinite call
                     # loop or a refusal.
                     # Additionally, only force when thinking is OFF: Bedrock
                     # rejects a forced tool_choice (type "tool"/"any") combined

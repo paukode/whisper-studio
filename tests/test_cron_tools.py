@@ -1,9 +1,10 @@
 """Tests for cron InvokeModel tool assembly (`_assemble_cron_tools`).
 
-Regression cover for the "Tool names must be unique" Bedrock error: the
-aws_boto3 skill is part of the assembled chat tool pool, and cron also prepends
-its own aws_boto3 definition, so a naive concatenation advertised the tool
-twice and failed every scheduled run.
+Regression cover for the "Tool names must be unique" Bedrock error (cron once
+prepended its own aws_boto3 shadow definition on top of the pool's) and for
+the ask_user_question drop. aws_boto3 is a native tool now — always in the
+assembled pool with its canonical schema — so assembly must advertise it
+exactly once and must not inject any private schema copy.
 """
 
 import asyncio
@@ -17,9 +18,9 @@ def _tool(name):
     return {"name": name, "description": name, "input_schema": {"type": "object"}}
 
 
-def test_aws_boto3_not_duplicated_when_pool_has_the_skill():
-    # The pool already contains aws_boto3 (from the skill catalog). cron must
-    # advertise it exactly once, or Bedrock rejects InvokeModel.
+def test_aws_boto3_not_duplicated():
+    # The pool always contains the native aws_boto3. cron must advertise it
+    # exactly once, or Bedrock rejects InvokeModel.
     pool = [_tool("aws_boto3"), _tool("web_search"), _tool("ask_user_question")]
     names = [t["name"] for t in C._assemble_cron_tools(pool)]
     assert names.count("aws_boto3") == 1
@@ -34,13 +35,18 @@ def test_ask_user_question_is_dropped():
     assert "web_search" in names
 
 
-def test_aws_boto3_present_even_when_skill_disabled():
-    # If the aws_boto3 skill is disabled, the pool won't contain it, but cron
-    # must still expose aws_boto3 with a valid schema.
-    pool = [_tool("web_search")]
+def test_aws_boto3_comes_from_the_real_pool_with_canonical_schema():
+    # aws_boto3 is a native tool: the REAL assembled pool always carries it,
+    # and cron assembly must pass the canonical schema through untouched
+    # (no private shadow copy).
+    from server.chat.tool_pool import assemble_full_catalog
+    from server.executors.tools import AWS_BOTO3_TOOL
+
+    pool = assemble_full_catalog()
     tools = C._assemble_cron_tools(pool)
     aws = [t for t in tools if t["name"] == "aws_boto3"]
     assert len(aws) == 1
+    assert aws[0] == AWS_BOTO3_TOOL
     assert aws[0]["input_schema"]["required"] == ["service", "method"]
 
 

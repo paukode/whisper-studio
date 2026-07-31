@@ -240,25 +240,31 @@
       </tbody>
     </table></div>
 
+    <h2 id="builtin-tools">Built-in core tools</h2>
+    <p>These ship as native tools — schemas in code next to their executors
+      (<code class="path">server/executors/tools.py</code> and <code class="path">server/prompt_tools/</code>),
+      always in the pool, and never listed or editable in the Skills panel:</p>
+    <ul>
+      <li><b>Command, code, and cloud execution</b> - <code>terminal_run</code>, <code>run_python</code>,
+        <code>aws_cli</code>, and <code>aws_boto3</code>. These run commands, Python, or AWS calls; the
+        mutating ones pause for approval like the other command tools.</li>
+      <li><b>Web</b> - <code>web_search</code> and <code>web_fetch</code>, listed in the
+        <a href="#web">Web</a> section above. Read-only.</li>
+      <li><b>Content</b> - <code>analyze_document</code> (attached files) and
+        <code>summarize_transcript</code> (the live session transcript).</li>
+      <li><b>Prompt tools</b> - <code>verify_change</code>, <code>create_program</code>, and
+        <code>github_actions</code>. Their result is an instruction script the model then carries out with
+        the other tools (e.g. <code>verify_change</code> ends in a deterministic
+        <code>VERIFY PASS</code>/<code>VERIFY FAIL</code> line).</li>
+    </ul>
+
     <h2 id="skill-tools">Skill-backed tools</h2>
     <p>Beyond <code>skill_invoke</code>, every skill installed under <code class="path">skills/</code> is
       <em>also</em> advertised to the model as its own top-level tool, named after the skill (dashes become
-      underscores). So the model can call, say, <code>meeting_notes</code> or <code>terminal_run</code>
-      directly, without going through <code>skill_invoke</code> first. See <a href="tut-skills.html">Skills</a>
-      for what each one does and how to add your own.</p>
-    <p>The default set ships with these skill tools:</p>
-    <ul>
-      <li><b>Command, code, and cloud execution</b> - <code>terminal_run</code>, <code>run_python</code>,
-        <code>aws_cli</code>, and <code>aws_boto3</code>. These run commands, Python, or AWS calls, so they
-        pause for approval like the other command tools.</li>
-      <li><b>Web</b> - <code>web_search</code> and <code>web_fetch</code>, listed in the
-        <a href="#web">Web</a> section above. Read-only.</li>
-      <li><b>Content and transformation</b> - <code>analyze_document</code>, <code>summarize_transcript</code>,
-        <code>meeting_notes</code>, <code>catch_up</code>, <code>translate_text</code>,
-        <code>presentation_builder</code>, <code>create_program</code>, <code>frontend_design</code>,
-        <code>github_actions</code>, <code>feature_flags_architect</code>, and <code>self_eval</code>. These
-        generate or reshape content and run without a prompt.</li>
-    </ul>
+      underscores), described by its own frontmatter. The model picks a skill the same way it picks any
+      tool — from that description and the skill's triggers; nothing in the app hardcodes when a skill
+      should be used. See <a href="tut-skills.html">Skills</a> for the bundled examples and how to add
+      your own.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p>Because this set is driven by the installed skills rather than hardcoded,

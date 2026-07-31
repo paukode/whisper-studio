@@ -51,8 +51,7 @@ SKILL_INVOKE_TOOL = {
     "name": "skill_invoke",
     "description": (
         "Invoke a named Whisper skill by name. Use this to delegate to a specialized skill "
-        "mid-conversation (e.g. invoke 'web_search' or 'summarize_transcript'). "
-        "Call skill_list first to see available skills."
+        "mid-conversation. Call skill_list first to see available skills."
     ),
     "input_schema": {
         "type": "object",

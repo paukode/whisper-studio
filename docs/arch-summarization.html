@@ -19,7 +19,7 @@
       oversized transcript with map-reduce before the model ever sees it - in cloud, local, and
       OpenAI-on-Bedrock modes alike.</p>
 
-    <p>The three summary skills work by injecting the <em>whole</em> transcript into the model's context
+    <p>The transcript summarizers work by injecting the <em>whole</em> transcript into the model's context
       so it can summarise in a single pass. That is the best-quality path while the transcript fits the
       context window. A long session can outgrow it, and the old choices were both bad: silently truncate
       (and answer from a partial transcript) or overflow the request (a hard failure). Condensation is the
@@ -37,21 +37,21 @@
         transcript when it fits.</figcaption>
     </figure>
 
-    <h2 id="skills">The summary skills</h2>
-    <p>Three folder skills turn a transcript into a written summary. None of them run anything
-      destructive - the assistant simply writes the summary. The server supplies the live or recorded
-      session transcript automatically, so these skills take no transcript text from you.</p>
+    <h2 id="skills">The transcript summarizers</h2>
+    <p>One built-in tool and two bundled skills turn a transcript into a written summary. None of them
+      run anything destructive - the assistant simply writes the summary. The server supplies the live
+      or recorded session transcript automatically, so none of them take transcript text from you.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Skill</th><th>What it does</th></tr></thead>
+      <thead><tr><th>Summarizer</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><code>summarize_transcript</code></td><td>Summarises the session transcript in one of four fixed styles - <code>action_items</code>, <code>meeting_notes</code>, <code>key_points</code>, or <code>brief</code>. Takes no text input.</td></tr>
-        <tr><td><code>meeting_notes</code></td><td>A fuller, polished write-up: overview, decisions, an owner / action / deadline table, discussion points, blockers, and next steps. Also condenses a huge pasted notes argument the same way.</td></tr>
-        <tr><td><code>catch_up</code></td><td>A plain-language recap for someone who joined late, plus suggested follow-up and clarifying questions.</td></tr>
+        <tr><td><code>summarize_transcript</code> <span class="badge badge--muted">built-in tool</span></td><td>Summarises the session transcript in one of four fixed styles - <code>action_items</code>, <code>meeting_notes</code>, <code>key_points</code>, or <code>brief</code>. Takes no text input.</td></tr>
+        <tr><td><code>meeting_notes</code> <span class="badge badge--muted">skill</span></td><td>A fuller, polished write-up: overview, decisions, an owner / action / deadline table, discussion points, blockers, and next steps. Also condenses a huge pasted notes argument the same way.</td></tr>
+        <tr><td><code>catch_up</code> <span class="badge badge--muted">skill</span></td><td>A plain-language recap for someone who joined late, plus suggested follow-up and clarifying questions.</td></tr>
       </tbody>
     </table></div>
     <p>See the <a href="tut-voice.html#summarize">Voice &amp; meetings</a> tutorial for how to invoke a
-      summary from a recording, and <a href="tut-skills.html">Skills</a> for how folder skills are
-      written and loaded.</p>
+      summary from a recording, and <a href="tut-skills.html">Skills</a> for how skills are written and
+      loaded.</p>
 
     <h2 id="when">When condensation fires</h2>
     <p>Condensation is self-gating. Below <code>threshold_chars</code> (default <b>600,000</b> characters,
@@ -134,7 +134,7 @@
       <dt><code class="path">server/summarize/mapreduce.py</code></dt><dd>The condenser: <code>maybe_condense_transcript</code>, the chunk / map / reduce flow, the cache, the bounds, and the never-empty fallback.</dd>
       <dt><code class="path">server/infrastructure/oneshot.py</code></dt><dd>The mode-aware one-shot completion, <code>resolve_map_engine</code>, and local-key resolution; raises on hard failure so the condenser can fall back explicitly.</dd>
       <dt><code class="path">server/chat/routes.py</code></dt><dd>The single condense call site in <code>chat_endpoint</code>, right after the model is resolved.</dd>
-      <dt><code class="path">server/skills.py</code></dt><dd>The <code>_TRANSCRIPT_SKILLS</code> set, the transcript-arg fallback, and the secondary condense of a huge pasted notes / text argument.</dd>
+      <dt><code class="path">server/skills.py</code></dt><dd>The <code>_TRANSCRIPT_SKILLS</code> set (skill-folder summarizers only), the transcript-arg fallback, and the secondary condense of a huge pasted notes / text argument.</dd>
       <dt><code class="path">server/local/route.py</code>, <code class="path">server/local/server_stream.py</code></dt><dd>The local path: the condensed transcript threaded through <code>tool_ctx["transcript"]</code> into the tool loop.</dd>
       <dt><code class="path">server/openai_bedrock/route.py</code>, <code class="path">server/openai_bedrock/stream.py</code></dt><dd>The OpenAI-on-Bedrock path: the same transcript threading into the tool loop.</dd>
       <dt><code class="path">server/local/runtime.py</code></dt><dd>The on-device runtime: <code>loaded_key()</code>, <code>is_downloaded()</code>, and <code>complete()</code>.</dd>
