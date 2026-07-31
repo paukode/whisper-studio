@@ -276,3 +276,65 @@ def test_run_tool_round_routes_through_the_safety_gate(monkeypatch):
     assert seen["batch"][1]["model_id"] == ""
     assert results[0]["content"] == "RESULT" and pending is False
     assert any("skill_result" in e for e in sse_events)
+
+
+# ── Per-turn context-size threading (chip → llama-server) ────────────────────
+
+
+def _run_local_chat(monkeypatch, body):
+    """Call local_chat_response with a captured stream_chat, returning the
+    kwargs it was invoked with (or None if the local path was skipped)."""
+    from server.local import route as R
+    from server.local import server_stream as S
+
+    captured = {}
+
+    def fake_stream_chat(model_key, system, messages, session_id, **kwargs):
+        captured.update(kwargs, model_key=model_key)
+
+        async def _gen():
+            yield "data: [DONE]\n\n"
+
+        return _gen()
+
+    monkeypatch.setattr(S, "stream_chat", fake_stream_chat)
+    resp = R.local_chat_response(
+        model_key="local_gemma",
+        body=body,
+        messages=[{"role": "user", "content": "hi"}],
+        session_id="s1",
+        approved_tool_result=None,
+        transcript="",
+        whisper_md_context="",
+        memory_context="",
+        session_memory_context="",
+        plan_mode=False,
+        mode="default",
+        ws_path=None,
+        session_approvals={},
+        session_denials={},
+        session_config={},
+    )
+    assert resp is not None
+    return captured
+
+
+def test_chat_turn_threads_context_window_to_server(monkeypatch):
+    """The composer chip value rides on every turn: a lazy llama-server start
+    must use it, never a stale in-memory or registry default (the 64K-chip /
+    n_ctx-32768 exceed_context_size mismatch)."""
+    captured = _run_local_chat(monkeypatch, {"local_context_window": 65536})
+    assert captured["n_ctx"] == 65536
+    # Recorded for the non-chat callers (summariser, index extraction) too.
+    assert L.requested_n_ctx() == 65536
+
+
+def test_chat_turn_clamps_and_survives_garbage_context(monkeypatch):
+    captured = _run_local_chat(monkeypatch, {"local_context_window": 10**9})
+    assert captured["n_ctx"] == 262144  # clamped to Gemma's maximum
+
+    captured = _run_local_chat(monkeypatch, {"local_context_window": "garbage"})
+    assert captured["n_ctx"] is None  # unparsable → default tiers
+
+    captured = _run_local_chat(monkeypatch, {})
+    assert captured["n_ctx"] is None  # absent → default tiers (API callers)

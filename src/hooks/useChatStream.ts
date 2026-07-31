@@ -202,6 +202,11 @@ export function useChatStream(): UseChatStreamReturn {
       // Local thinking and tools have no per-turn client flags any more: the
       // backend keys both on the model registry's capability flags, so capable
       // on-device models always think and always get the full tool pool.
+      // The CTX slider value DOES ride on every turn: it is the source of
+      // truth for the llama-server context size, so a lazy server start after
+      // a backend restart can never run at a stale size (the chip and the
+      // server always agree). Ignored by cloud models.
+      local_context_window: settings.localContextWindow,
       session_denials: store().sessionDenials,
       session_approvals: store().sessionApprovals,
       approved_tool_result: opts?.approvedToolResult ?? null,
