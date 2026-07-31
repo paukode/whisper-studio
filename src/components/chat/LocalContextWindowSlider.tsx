@@ -12,22 +12,23 @@ interface LocalContextWindowSliderProps {
   onOpen?: () => void;
 }
 
-// Context-window sizes (tokens), 16K up to Gemma's 256K maximum. 16K is the
-// default and the floor: with tools on, the tool-pool prompt alone is ~12K
-// tokens, so a smaller window overflows. Anything above 16K is allowed but
-// requires confirmation, because the KV cache grows fast with context length.
-const MARKS = [16384, 32768, 65536, 131072, 262144];
+// Context-window sizes (tokens), 32K up to Gemma's 256K maximum. 32K is the
+// default and the floor: the full tool pool is always advertised and its
+// prompt alone is ~12K tokens, so a smaller window leaves no room for the
+// transcript and conversation. Anything above 32K requires confirmation,
+// because the KV cache grows fast with context length.
+const MARKS = [32768, 65536, 131072, 262144];
 const fmt = (n: number) => `${Math.round(n / 1024)}K`;
 
 // Orb colours per size (index-aligned with MARKS). Unlike the effort slider's
 // tier hues, context size maps to MEMORY COST: teal is comfortable, warming
 // through amber to red as the KV cache grows. Separate light/dark ramps keep the
 // orb legible on both the cream and the dark composer.
-const CTX_COLORS_LIGHT = ['#1d9e75', '#ef9f27', '#ba7517', '#d85a30', '#e24b4a'];
-const CTX_COLORS_DARK = ['#5dcaa5', '#fac775', '#ef9f27', '#f0997b', '#f09595'];
+const CTX_COLORS_LIGHT = ['#1d9e75', '#ba7517', '#d85a30', '#e24b4a'];
+const CTX_COLORS_DARK = ['#5dcaa5', '#ef9f27', '#f0997b', '#f09595'];
 
 // Threshold above which we prompt for confirmation before reloading.
-const CONFIRM_ABOVE = 16384;
+const CONFIRM_ABOVE = 32768;
 
 // Recommended TOTAL system memory per context window. Measured from the model's
 // real allocation with the windowed (swa_full=false) KV cache: ~7.4 GB of
@@ -36,7 +37,6 @@ const CONFIRM_ABOVE = 16384;
 // at 256K) instead of exploding. Ranges add headroom for macOS, the app, and the
 // KV-prefix cache; a guideline, not your specific machine.
 const RECOMMENDED_MEMORY: Record<number, string> = {
-  16384: '12 to 16 GB',
   32768: '12 to 16 GB',
   65536: '12 to 16 GB',
   131072: '16 to 20 GB',

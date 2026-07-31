@@ -54,13 +54,17 @@ def local_chat_response(
             media_type="text/event-stream",
         )
 
-    local_tools_on = bool(body.get("local_tools", False))
-    # Tool scope picks how much of the pool the on-device model sees:
-    # off / core / core_web / all. Fewer tools = a much smaller prompt = faster.
-    # Default to the lean core+web set, not the full ~58-tool pool: the full pool
-    # prefills for ~50s on a 12B model (vs a few seconds for core), and the UI
-    # always sends an explicit scope, so this only backstops direct API callers.
-    tool_scope = str(body.get("local_tool_scope", "core_web"))
+    from server.local.runtime import supports_thinking, supports_tools
+
+    # No user-facing gates: like the cloud paths, a tool-capable local model
+    # always gets the full pool, and a thinking-capable one always thinks. The
+    # old per-turn toggles (local_tools / local_tool_scope / local_thinking)
+    # are gone; capability flags in the model registry are the only switch, so
+    # a model without a capability simply doesn't use it. The full pool is a
+    # stable prompt prefix, so llama-server's prefix cache absorbs the prefill
+    # cost after the first turn (the 32K default context accommodates it).
+    local_tools_on = supports_tools(model_key)
+    thinking_on = supports_thinking(model_key)
     # Lean system prompt: the cloud one is tool/workspace-heavy (~2-2.5k tokens
     # the local model can't use) — drop it to speed prefill and free n_ctx,
     # keeping only project/memory context plus, when tools are on, a short marker
@@ -84,12 +88,11 @@ def local_chat_response(
         "session_approvals": session_approvals,
         "session_denials": session_denials,
         "config": session_config,
-        "tool_scope": tool_scope,
         "suppress_ws_search": suppress_ws_search,
         "transcript": transcript,
         # Carried so the tools path renders the thinking channel (and a paused
         # turn's resume keeps the same setting), matching the plain path.
-        "thinking": bool(body.get("local_thinking", False)),
+        "thinking": thinking_on,
     }
     return StreamingResponse(
         server_stream.stream_chat(
@@ -97,7 +100,7 @@ def local_chat_response(
             local_system,
             messages,
             session_id,
-            thinking=bool(body.get("local_thinking", False)),
+            thinking=thinking_on,
             tools=local_tools_on,
             tool_ctx=tool_ctx,
             ws_path=ws_path,

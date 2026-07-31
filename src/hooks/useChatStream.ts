@@ -199,12 +199,9 @@ export function useChatStream(): UseChatStreamReturn {
       brief_mode: _supportsVerbosity ? false : settings.verbosity === 'low',
       effort_level: settings.effortLevel,
       verbosity: settings.verbosity,
-      local_thinking: settings.localThinking || false,
-      // Tools on iff a scope is selected; the scope picks which tools (Off/Core/
-      // Core+web/All). local_tools stays for the on/off gate; local_tool_scope
-      // filters the pool server-side.
-      local_tools: settings.localToolScope !== 'off',
-      local_tool_scope: settings.localToolScope,
+      // Local thinking and tools have no per-turn client flags any more: the
+      // backend keys both on the model registry's capability flags, so capable
+      // on-device models always think and always get the full tool pool.
       session_denials: store().sessionDenials,
       session_approvals: store().sessionApprovals,
       approved_tool_result: opts?.approvedToolResult ?? null,

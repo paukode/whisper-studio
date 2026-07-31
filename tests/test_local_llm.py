@@ -191,9 +191,9 @@ def test_get_tool_schemas_exposes_full_pool_plus_web(monkeypatch):
     # whichever MCP servers the machine running the tests has enabled.
     monkeypatch.setattr(mcp_manager, "get_bedrock_tools", lambda: [])
     schemas, names = T.get_tool_schemas(plan_mode=False, ws_connected=True)
-    # web tools (not in assemble_tool_pool) are declared explicitly...
+    # web tools ship natively in assemble_tool_pool...
     assert "web_search" in names and "web_fetch" in names
-    # ...alongside the full cloud pool (sampled).
+    # ...alongside the rest of the full cloud pool (sampled).
     assert "memory_write" in names and "skill_invoke" in names
     assert len(schemas) > 10
     # Gemma's OpenAI function shape with JSON-schema parameters.
@@ -204,9 +204,9 @@ def test_get_tool_schemas_exposes_full_pool_plus_web(monkeypatch):
     assert pool["function"]["parameters"].get("type") == "object"
 
 
-def test_get_tool_schemas_scopes_trim_the_pool(monkeypatch, tmp_path):
-    """The scope filter trims how much of the pool the local model sees, so the
-    user can trade capability for a smaller/faster prompt."""
+def test_get_tool_schemas_has_no_scope_gate(monkeypatch, tmp_path):
+    """The old off/core/core_web/all scope gate is gone: the local model always
+    sees the full pool, cloud parity, with no filtering knobs."""
     # Workspace + git tools only enter the pool when a connected workspace
     # resolves (and, for git, a .git dir). A bare test process has neither, so
     # point the lookup at a temp git repo. get_workspace_path is consulted via
@@ -214,29 +214,24 @@ def test_get_tool_schemas_scopes_trim_the_pool(monkeypatch, tmp_path):
     # ws_* tools) and assemble_tool_pool() (for the git check) — so both module
     # references must be patched, not just one.
     (tmp_path / ".git").mkdir()
+    import inspect
+
     import server.chat.tool_pool as TP
     import server.workspace.tools as WT
 
     monkeypatch.setattr(WT, "get_workspace_path", lambda: str(tmp_path))
     monkeypatch.setattr(TP, "get_workspace_path", lambda: str(tmp_path))
 
-    _, all_names = T.get_tool_schemas(ws_connected=True, scope="all")
-    _, core_names = T.get_tool_schemas(ws_connected=True, scope="core")
-    _, cw_names = T.get_tool_schemas(ws_connected=True, scope="core_web")
+    # The signature carries no scope parameter any more.
+    assert "scope" not in inspect.signature(T.get_tool_schemas).parameters
 
-    # core: only the curated subset, and NO web tools.
-    assert core_names <= T.CORE_TOOL_NAMES
-    assert "ws_read_file" in core_names and "git_status" in core_names
-    assert "web_search" not in core_names and "web_fetch" not in core_names
-    assert "skill_invoke" not in core_names  # a non-core pool tool is excluded
+    _, names = T.get_tool_schemas(ws_connected=True)
 
-    # core_web: the core subset PLUS the two web tools.
-    assert cw_names - {"web_search", "web_fetch"} <= T.CORE_TOOL_NAMES
-    assert "web_search" in cw_names and "web_fetch" in cw_names
-
-    # all: the whole pool — much larger than core, and includes non-core tools.
-    assert "skill_invoke" in all_names
-    assert len(all_names) > len(core_names) + 5
+    # Full pool: everyday agentic tools, web, and non-core pool tools alike.
+    assert "ws_read_file" in names and "git_status" in names
+    assert "web_search" in names and "web_fetch" in names
+    assert "skill_invoke" in names
+    assert "summarize_transcript" in names  # forced @skills mentions can run
 
 
 def test_run_tool_round_routes_through_the_safety_gate(monkeypatch):

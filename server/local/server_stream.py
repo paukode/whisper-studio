@@ -704,7 +704,6 @@ async def stream_chat(
         schemas, _ = get_tool_schemas(
             plan_mode=tool_ctx.get("plan_mode", False),
             ws_connected=tool_ctx.get("ws_connected", False),
-            scope=tool_ctx.get("tool_scope", "core_web"),
             suppress_workspace_search=tool_ctx.get("suppress_ws_search", False),
         )
 
