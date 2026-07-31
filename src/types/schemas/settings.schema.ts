@@ -80,6 +80,10 @@ export const SkillsResponseSchema = z.object({
     hasScripts: z.boolean().optional(),
     trusted: z.boolean().optional(),
   })).optional().default([]),
+  builtins: z.array(z.object({
+    name: z.string(),
+    description: z.string().optional(),
+  })).optional().default([]),
   mcpTools: z.array(z.object({
     name: z.string(),
     description: z.string(),

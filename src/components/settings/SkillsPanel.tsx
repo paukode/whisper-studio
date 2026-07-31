@@ -19,6 +19,7 @@ const badgeStyle: React.CSSProperties = {
 
 export const SkillsPanel: React.FC = () => {
   const skills = useSettingsStore((s) => s.skills);
+  const builtinSkills = useSettingsStore((s) => s.builtinSkills);
   const loadSkills = useSettingsStore((s) => s.loadSkills);
 
   // Editor state — editingSkill tracks which skill is expanded for editing (null = new skill, string = existing)
@@ -305,6 +306,31 @@ export const SkillsPanel: React.FC = () => {
           </React.Fragment>
         ))}
       </div>
+
+      {/* Built-in tools — product-owned, always on. Read-only: no edit,
+          rename, delete, or toggle. Listed for discoverability (they also
+          appear in @skills: mentions). */}
+      {builtinSkills.length > 0 && (
+        <>
+          <h3 className="settings-section-title">
+            Built-in tools
+            <span style={badgeStyle} title="Shipped with the app; always available to the assistant">always on</span>
+          </h3>
+          <div className="settings-list" id="builtinSkillsList">
+            {[...builtinSkills].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })).map((tool) => (
+              <div className="settings-item" key={tool.name}>
+                <div className="settings-item-info">
+                  <div className="settings-item-name">
+                    {tool.name}
+                    <span style={badgeStyle}>built-in</span>
+                  </div>
+                  <div className="settings-item-desc">{tool.description ?? ''}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 };
