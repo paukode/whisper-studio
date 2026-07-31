@@ -421,6 +421,13 @@ if [ ! -f config.json ] && [ -f config.example.json ]; then
     echo "  to enable the web-search skill. Everything else works without it."
 fi
 
+# Sync NEW template models into an existing config (add-only; user entries are
+# never modified or removed). This is what lets a model added to
+# config.example.json reach an install whose config.json predates it, without
+# --new — the registry-driven download loop below then pulls its weights in
+# this same run. Stdlib-only, so the system python3 is fine pre-venv.
+python3 scripts/sync_model_catalog.py . || true
+
 # Seed pricing.json from the template on first run too. The app runs fine off
 # pricing.example.json alone, but seeding gives a ready-to-edit local copy for
 # per-key rate overrides. gitignored; an existing pricing.json is left untouched.
