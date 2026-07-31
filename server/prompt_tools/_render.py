@@ -1,4 +1,4 @@
-"""Prompt rendering shared by the built-in prompt tools.
+"""Prompt rendering shared by the prompt tools.
 
 Mirrors server.skills._tool_run_skill exactly: the tool result is a model
 PROMPT (the user's arguments followed by the skill instructions), so the

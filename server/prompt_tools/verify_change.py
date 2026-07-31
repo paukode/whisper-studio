@@ -1,7 +1,7 @@
-"""verify_change — the repository verification gate as a built-in prompt tool."""
+"""verify_change — the repository verification gate as a native prompt tool."""
 
-from server.builtin_skills._render import render_prompt
 from server.executors import register_executor
+from server.prompt_tools._render import render_prompt
 
 TOOL = {
     "name": "verify_change",

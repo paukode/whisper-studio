@@ -1,7 +1,7 @@
-"""create_program — the browser-app builder flow as a built-in prompt tool."""
+"""create_program — the browser-app builder flow as a native prompt tool."""
 
-from server.builtin_skills._render import render_prompt
 from server.executors import register_executor
+from server.prompt_tools._render import render_prompt
 
 TOOL = {
     "name": "create_program",

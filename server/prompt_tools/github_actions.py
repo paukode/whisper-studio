@@ -1,7 +1,7 @@
-"""github_actions — the Claude-in-GitHub-Actions setup flow as a built-in prompt tool."""
+"""github_actions — the Claude-in-GitHub-Actions setup flow as a native prompt tool."""
 
-from server.builtin_skills._render import render_prompt
 from server.executors import register_executor
+from server.prompt_tools._render import render_prompt
 
 TOOL = {
     "name": "github_actions",
