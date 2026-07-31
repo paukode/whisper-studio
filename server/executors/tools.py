@@ -248,12 +248,93 @@ WEB_SEARCH_TOOL = {
     },
 }
 
+SUMMARIZE_TRANSCRIPT_TOOL = {
+    "name": "summarize_transcript",
+    "description": (
+        "Summarizes the live or recorded session transcript captured by this app in "
+        "one of four fixed styles. Takes no text input; the server supplies the "
+        "current transcript automatically and returns it with formatting instructions "
+        "for the chosen style, from which the assistant writes the summary. Use when "
+        "the user wants quick action items, key points, a short brief, or basic "
+        "meeting notes of what was said in the current session. Do not use for notes "
+        "or text the user pasted into chat, and prefer meeting_notes when the user "
+        "wants a full polished write-up to share (it produces a richer structure). "
+        "Not for attached files (use analyze_document). Returns a no-transcript "
+        "message when nothing has been transcribed yet."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "style": {
+                "type": "string",
+                "description": (
+                    "One of action_items (tasks and commitments with owners when "
+                    "mentioned), meeting_notes (attendees if identifiable, topics, "
+                    "decisions, actions), key_points (bulleted takeaways), or brief "
+                    "(2-3 sentences)."
+                ),
+                "enum": ["action_items", "meeting_notes", "key_points", "brief"],
+            },
+        },
+        "required": ["style"],
+    },
+}
+
+ANALYZE_DOCUMENT_TOOL = {
+    "name": "analyze_document",
+    "description": (
+        "Retrieves the content of a file the user attached to the chat so the "
+        "assistant can answer a question from it. Returns the whole document capped "
+        "at 150,000 characters, or one section in full when section is set to a "
+        "number from the attachment's outline. Use when an attached document's inline "
+        "preview was truncated (the message shows an outline plus a first slice) or a "
+        "specific section is needed in full. Do not use for small attachments already "
+        "fully visible in the conversation, for images (already visible, analyze "
+        "directly), for workspace files (use ws_read_file), or for the live session "
+        "transcript (use summarize_transcript). Results over 50KB are truncated by "
+        "the tool-result budget to a short head plus a cache-file reference, so "
+        "prefer section fetches for large documents. An unmatched filename returns "
+        "the list of available attachments."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "filename": {
+                "type": "string",
+                "description": (
+                    "Exact filename of the attachment as shown in the conversation; "
+                    "matching is exact and case-sensitive, and a mismatch returns the "
+                    "available filenames."
+                ),
+            },
+            "question": {
+                "type": "string",
+                "description": (
+                    "The analysis question or task. It is echoed back with the "
+                    "content and does not affect what is retrieved."
+                ),
+            },
+            "section": {
+                "type": "string",
+                "description": (
+                    'Section number from the attachment outline, as a string like "3". '
+                    "Returns that section in full. Only works for documents with "
+                    "headings."
+                ),
+            },
+        },
+        "required": ["filename", "question"],
+    },
+}
+
 # The always-on native pool contribution, added unconditionally by
 # server/chat/tool_pool.assemble_full_catalog.
 CORE_EXECUTOR_TOOLS = [
+    ANALYZE_DOCUMENT_TOOL,
     AWS_BOTO3_TOOL,
     AWS_CLI_TOOL,
     RUN_PYTHON_TOOL,
+    SUMMARIZE_TRANSCRIPT_TOOL,
     TERMINAL_RUN_TOOL,
     WEB_FETCH_TOOL,
     WEB_SEARCH_TOOL,
