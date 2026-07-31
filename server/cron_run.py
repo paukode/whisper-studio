@@ -93,30 +93,13 @@ def _finish_stopped(
 def _assemble_cron_tools(pool: list[dict]) -> list[dict]:
     """Tool list for an unattended cron InvokeModel call.
 
-    aws_boto3 is always made available to cron runs (even if its skill is
-    disabled in the catalog) by prepending our own definition. The aws_boto3
-    skill is ALSO part of the assembled pool, so it is filtered out before
-    prepending — otherwise the tool is advertised twice and Bedrock rejects the
-    request with "Tool names must be unique". ask_user_question is dropped too:
-    it pauses for a human reply that never comes in an unattended run and would
-    hang the job forever.
+    ask_user_question is dropped: it pauses for a human reply that never comes
+    in an unattended run and would hang the job forever. Everything else passes
+    through unchanged — aws_boto3 is a native tool now, always present in the
+    assembled pool with its canonical schema, so the old always-inject shadow
+    definition (from when it was a disableable skill) is gone.
     """
-    aws_boto3_tool = {
-        "name": "aws_boto3",
-        "description": "Execute a read-only AWS boto3 API call.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "service": {"type": "string"},
-                "method": {"type": "string"},
-                "params": {"type": "object", "default": {}},
-                "region": {"type": "string", "default": "us-east-1"},
-            },
-            "required": ["service", "method"],
-        },
-    }
-    excluded = {"aws_boto3", "ask_user_question"}
-    return [aws_boto3_tool] + [t for t in pool if t["name"] not in excluded]
+    return [t for t in pool if t["name"] != "ask_user_question"]
 
 
 def _merge_notifications(notifications: list[str], tail: str) -> str:

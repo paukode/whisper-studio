@@ -1,19 +1,44 @@
----
-name: verify_change
-description: Runs the repository's full verification gate (ruff, pytest, tsc + vite build, vitest, eslint) and, for UI-facing changes, drives the live browser preview, then reports a single deterministic PASS/FAIL verdict. Use before claiming a code change is done, when a goal or completion gate needs proof the work actually holds, or when the user asks to "verify", "run the checks", "make sure it works", or "check CI". The final line is exactly "VERIFY PASS" or "VERIFY FAIL: <reason>" so the goal evaluator and Stop hooks can key on it.
-triggers: verify, verify change, run the checks, run the gate, check CI, make sure it works, does it build, run the tests, confirm it works, is it passing
-input_schema:
-  scope:
-    type: string
-    required: false
-    description: Optional path or area to focus the checks on (e.g. "server/goals" or "the hooks panel"). When omitted, verify the whole change set.
-  ui_facing:
-    type: boolean
-    required: false
-    description: Set true when the change affects rendered UI so the browser preview is exercised in addition to the CI gate.
----
+"""verify_change — the repository verification gate as a native prompt tool."""
 
-# Verify a change
+from server.executors import register_executor
+from server.prompt_tools._render import render_prompt
+
+TOOL = {
+    "name": "verify_change",
+    "description": (
+        "Runs the repository's full verification gate (ruff, pytest, tsc + vite "
+        "build, vitest, eslint) and, for UI-facing changes, drives the live browser "
+        "preview, then reports a single deterministic PASS/FAIL verdict. Use before "
+        "claiming a code change is done, when a goal or completion gate needs proof "
+        'the work actually holds, or when the user asks to "verify", "run the '
+        'checks", "make sure it works", or "check CI". The final line is exactly '
+        '"VERIFY PASS" or "VERIFY FAIL: <reason>" so the goal evaluator and Stop '
+        "hooks can key on it."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "scope": {
+                "type": "string",
+                "description": (
+                    "Optional path or area to focus the checks on (e.g. "
+                    '"server/goals" or "the hooks panel"). When omitted, verify the '
+                    "whole change set."
+                ),
+            },
+            "ui_facing": {
+                "type": "boolean",
+                "description": (
+                    "Set true when the change affects rendered UI so the browser "
+                    "preview is exercised in addition to the CI gate."
+                ),
+            },
+        },
+        "required": [],
+    },
+}
+
+BODY = r"""# Verify a change
 
 Prove the current change actually holds by running the repository's verification
 gate yourself, in order, and reporting one deterministic verdict. Do not claim
@@ -64,4 +89,9 @@ one of these as the final line, nothing after it:
 
 Never emit both. Never soften a real failure into a pass. A flaky or
 environment-only failure that you could not resolve is still a FAIL with the
-reason stated — the evaluator weighs this token above any prose claim of "done".
+reason stated — the evaluator weighs this token above any prose claim of "done"."""
+
+
+@register_executor("verify_change", read_only=True, concurrent_safe=True, emits_prompt=True)
+def exec_verify_change(tool_input, transcript, current_attachments):
+    return render_prompt(tool_input, BODY)

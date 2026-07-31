@@ -25,9 +25,12 @@ SKILLS_CONFIG_PATH = os.path.join(DATA_DIR, "skills_config.json")
 SKILLS: dict = {}
 TOOLS: list[dict] = []
 
-# Transcript-driven skills whose primary input can overflow the context window
-# and therefore may need map-reduce condensation (see server.summarize.mapreduce).
-_TRANSCRIPT_SKILLS = {"meeting_notes", "summarize_transcript", "catch_up"}
+# Transcript-driven skills whose primary text argument can overflow the context
+# window and therefore may need map-reduce condensation (see
+# server.summarize.mapreduce). Applies only to tools loaded from the skills
+# folder; the summarize_transcript built-in takes no text argument (the server
+# passes the transcript separately, condensed upstream in routes.py).
+_TRANSCRIPT_SKILLS = {"meeting_notes", "catch_up"}
 
 
 def load_skills(skills_dir: str = None) -> dict:

@@ -69,7 +69,7 @@ CREATE_ARTIFACT_TOOL = {
         "Use this after generating a complete single-file HTML document. The html "
         "field must be a complete, standalone HTML document with <!DOCTYPE html>. "
         "For a new request to build an app, program, tool, game, or dashboard, "
-        "prefer the create_program skill first so the user can choose a single "
+        "prefer the create_program tool first so the user can choose a single "
         "page or a modular project; use create_artifact once the HTML is ready."
     ),
     "input_schema": {

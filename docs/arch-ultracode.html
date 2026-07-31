@@ -162,7 +162,7 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
       <div class="callout__body"><p>Workflow subagents can reach every session-connected tool - the same
         <a href="arch-tools.html">tool router and executors</a> the chat pipeline uses - so a workflow agent
-        can read files, run the verify-change skill, search the index, or drive the browser, exactly like a
+        can read files, run the built-in verify_change tool, search the index, or drive the browser, exactly like a
         hand-spawned <a href="arch-agents.html">sub-agent</a>.</p></div>
     </div>
 
@@ -218,7 +218,7 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       <dt><a href="arch-agents.html">Provider-agnostic agents</a></dt><dd>Every <code>agent()</code> is a <code>run_agent</code> call, so workflows inherit Claude/GPT parity, usage accounting, effort, structured output, and worktree isolation.</dd>
       <dt><a href="arch-cron.html">The task registry</a></dt><dd>A workflow run and a CI watch are rows in the unified background-task registry, so they appear in the tasks panel and the header running-count pill.</dd>
       <dt><a href="arch-tools.html">Tool disclosure and hooks</a></dt><dd>The workflow and CI tools surface only in the ultracode tier; workflow subagents still pass through the same Pre/PostToolUse hooks and tool executors.</dd>
-      <dt>The verify-change skill</dt><dd>Generated fix workflows end by running the repo's verification gate, which emits a deterministic <code>VERIFY PASS</code> / <code>VERIFY FAIL</code> line - the same skill the goal completion gate keys on.</dd>
+      <dt>The built-in verify_change tool</dt><dd>Generated fix workflows end by running the repo's verification gate, which emits a deterministic <code>VERIFY PASS</code> / <code>VERIFY FAIL</code> line - the same tool the goal completion gate keys on.</dd>
     </div>
 
     <h2 id="key-files">Key files</h2>

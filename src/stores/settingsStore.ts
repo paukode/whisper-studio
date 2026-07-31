@@ -12,17 +12,18 @@ import {
 import { useUIStore } from './uiStore';
 import { clampEffort, normalizeEffort, DEFAULT_EFFORT } from '@/utils/effort';
 
-/** Local-model context-window bounds (tokens). 16K is the floor AND the default:
- *  with tools on, the tool-pool prompt alone is ~12K tokens, so anything smaller
- *  overflows. The chat-input slider raises it incrementally up to Gemma's 256K
- *  maximum (which reloads the model); going above 16K prompts a memory
- *  confirmation. MIN === DEFAULT also means any stale sub-16K value in
- *  localStorage is coerced back up to 16K on read. Persisted to localStorage
- *  since the settings store has no persist middleware. */
+/** Local-model context-window bounds (tokens). 32K is the floor AND the default:
+ *  the full tool pool is always advertised and its prompt alone is ~12K tokens,
+ *  so anything smaller leaves no room for transcript + conversation. The
+ *  chat-input slider raises it incrementally up to Gemma's 256K maximum (which
+ *  reloads the model); going above 32K prompts a memory confirmation.
+ *  MIN === DEFAULT also means any stale sub-32K value in localStorage is
+ *  coerced back up to 32K on read. Persisted to localStorage since the
+ *  settings store has no persist middleware. */
 const LOCAL_CTX_KEY = 'whisper.localContextWindow';
-export const LOCAL_CTX_MIN = 16384;
+export const LOCAL_CTX_MIN = 32768;
 export const LOCAL_CTX_MAX = 262144;
-export const LOCAL_CTX_DEFAULT = 16384;
+export const LOCAL_CTX_DEFAULT = 32768;
 
 function readLocalContextWindow(): number {
   try {
@@ -74,26 +75,6 @@ function persistVerbosity(v: string): void {
     localStorage.setItem(VERBOSITY_KEY, v);
   } catch {
     /* private mode / quota — keep the in-memory value anyway */
-  }
-}
-
-/** Which tools the local (Gemma) model may use this turn:
- *  - 'off'      — no tools (pure chat)
- *  - 'core'     — a small high-value set (read/search/edit files, run, git, memory)
- *  - 'core_web' — the core set plus web search + fetch
- *  - 'all'      — the full ~64-tool pool (parity with cloud; heaviest prompt)
- *  Fewer tools = a much smaller prompt = faster on-device. Persisted to
- *  localStorage so the choice survives a refresh. Default 'off' (opt-in). */
-export type LocalToolScope = 'off' | 'core' | 'core_web' | 'all';
-const LOCAL_TOOL_SCOPE_KEY = 'whisper.localToolScope';
-const TOOL_SCOPES: readonly LocalToolScope[] = ['off', 'core', 'core_web', 'all'];
-
-function readLocalToolScope(): LocalToolScope {
-  try {
-    const v = localStorage.getItem(LOCAL_TOOL_SCOPE_KEY) as LocalToolScope | null;
-    return v && TOOL_SCOPES.includes(v) ? v : 'off';
-  } catch {
-    return 'off';
   }
 }
 
@@ -180,12 +161,6 @@ export interface SettingsState {
   verbosity: string;
   planMode: boolean;
   autoMemory: boolean;
-  /** Local-model thinking toggle (opt-in reasoning for on-device models that
-   *  support it, e.g. Gemma). Client-only, sent per chat turn. */
-  localThinking: boolean;
-  /** Local-model tools toggle (opt-in tool use for on-device models, off by
-   *  default to keep local fully offline). Client-only, sent per chat turn. */
-  localToolScope: LocalToolScope;
   /** Local-model context window (tokens). Drives the chat-input slider; changing
    *  it reloads the on-device model at the new size. Persisted to localStorage. */
   localContextWindow: number;
@@ -211,8 +186,6 @@ export interface SettingsState {
   setModelMode: (mode: AppConfig['modelMode']) => void;
   /** Set a hybrid-mode per-capability backend override, persisting to config. */
   setBackend: (capability: IndexCapability, backend: string) => void;
-  setLocalThinking: (on: boolean) => void;
-  setLocalToolScope: (scope: LocalToolScope) => void;
   setLocalContextWindow: (size: number) => void;
 }
 
@@ -260,8 +233,6 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   planMode: false,
   // Global memory defaults ON (matches config.example.json feature_flags.auto_memory).
   autoMemory: true,
-  localThinking: false,
-  localToolScope: readLocalToolScope(),
   localContextWindow: readLocalContextWindow(),
 
   loadConfig: async () => {
@@ -481,19 +452,6 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
       set((s) => ({ config: { ...s.config, backends: prev } }));
       useUIStore.getState().addToast({ type: 'error', message: 'Could not update backend', duration: 3000 });
     });
-  },
-
-  setLocalThinking: (on) => {
-    set({ localThinking: on });
-  },
-
-  setLocalToolScope: (scope) => {
-    try {
-      localStorage.setItem(LOCAL_TOOL_SCOPE_KEY, scope);
-    } catch {
-      /* private mode / quota — keep the in-memory value anyway */
-    }
-    set({ localToolScope: scope });
   },
 
   setLocalContextWindow: (size) => {

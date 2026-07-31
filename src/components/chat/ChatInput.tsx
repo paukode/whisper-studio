@@ -19,7 +19,6 @@ import { useIndexSearchStore } from '@/stores/indexSearchStore';
 import { toError } from '@/utils/toError';
 import { EffortPicker } from './EffortPicker';
 import { ResponseLengthPicker } from './ResponseLengthPicker';
-import { LocalToggles } from './LocalToggles';
 import { LocalContextWindowSlider } from './LocalContextWindowSlider';
 import { ModeDropdown } from './ModeDropdown';
 import { ModelDropdown } from './ModelDropdown';
@@ -822,13 +821,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
           onManage={() => { setModeOpen(false); openSettings('permissions'); }}
         />
 
-        {/* Local-model controls — render only for on-device models. */}
-        <LocalToggles
-          onOpen={() => {
-            setModelOpen(false); setWsDropdownOpen(false);
-            setModeOpen(false); setMoreOpen(false);
-          }}
-        />
+        {/* Local-model controls — render only for on-device models. Thinking
+            and tools have no toggles: capable models always think and always
+            get the full tool pool, like the cloud models. */}
         <LocalContextWindowSlider
           onOpen={() => {
             setModelOpen(false); setWsDropdownOpen(false);

@@ -1,8 +1,8 @@
 """Map-reduce condensation for oversized transcripts.
 
-Transcript-driven skills (meeting_notes, summarize_transcript, catch_up) inject
-the whole transcript into the model's context so it can summarise it in one
-pass. That is the best quality while the transcript fits the context window.
+Transcript-driven tools and skills (the summarize_transcript built-in, plus
+transcript-taking user skills) inject the whole transcript into the model's
+context so it can summarise it in one pass. That is the best quality while the transcript fits the context window.
 When it does not fit, the alternatives are to truncate it silently (a wrong
 answer) or to overflow the request (a hard failure). Instead this module does
 the "map" half of map-reduce: split the transcript into overlapping chunks,

@@ -4,7 +4,7 @@ The autofix never writes or pushes on its own. It diagnoses the failure and
 emits a WS-D workflow *script*; that script is handed to the user through the
 same preview/approve path as any workflow (budget cap, journal, run card). On
 approval, D drives it: a fix agent applies the minimal edits, then the
-verify_change skill (WS-E) proves the gate passes before the user commits.
+verify_change tool (WS-E) proves the gate passes before the user commits.
 
 This is the capstone tie-together: J diagnoses, D gates + runs, E verifies.
 """
@@ -58,7 +58,7 @@ def build_autofix_script(branch: str, findings: list[dict]) -> str:
         ");\n"
         "phase('Verify')\n"
         "const verify = await agent(\n"
-        "  `Run the repository verification gate using the verify_change skill and `\n"
+        "  `Run the repository verification gate using the verify_change tool and `\n"
         "  + `report the final line verbatim (exactly \\`VERIFY PASS\\` or `\n"
         "  + `\\`VERIFY FAIL: <reason>\\`). Do not commit or push.`,\n"
         "  { label: 'verify' }\n"

@@ -5,9 +5,8 @@ the tool pool, the executor, the permission checks, and the approval system.
 NOTHING here is copied — we only bridge between the model server's
 OpenAI-shaped calls and the existing pipeline:
 
-  1. ``get_tool_schemas`` exposes the full cloud tool pool (plus web_search /
-     web_fetch, which the cloud advertises natively and so aren't in the pool)
-     in OpenAI function format, which is what llama-server expects.
+  1. ``get_tool_schemas`` exposes the full cloud tool pool in OpenAI function
+     format, which is what llama-server expects.
   2. ``run_tool_round`` runs the parsed calls through ``execute_tool_batch`` +
      ``process_tool_results`` — the exact same two calls the cloud loop makes.
 
@@ -42,43 +41,6 @@ log = logging.getLogger("whisper-studio")
 
 # ── Tool declarations ────────────────────────────────────────────────────────
 
-# web_search / web_fetch are registered executors (server/executors/web.py) but
-# are NOT in assemble_tool_pool (the cloud model gets web access natively). The
-# local model has no native web, so we declare them explicitly; they dispatch
-# through the same execute_tool_batch → route_tool → EXECUTORS path as the rest.
-_WEB_TOOL_SCHEMAS: list[dict] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": (
-                "Search the web for current, up-to-date information — recent events, "
-                "weather, prices, news, or anything not in your training data. Returns "
-                "the top results with titles, URLs, and snippets."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string", "description": "The search query."}},
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "web_fetch",
-            "description": "Fetch and read the readable text content of a web page given its URL.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string", "description": "The full URL of the page to fetch."}
-                },
-                "required": ["url"],
-            },
-        },
-    },
-]
-
 
 def _to_openai_fn(anthropic_tool: dict) -> dict:
     """An Anthropic tool ({name, description, input_schema}) → an OpenAI
@@ -95,43 +57,20 @@ def _to_openai_fn(anthropic_tool: dict) -> dict:
     }
 
 
-# A small, high-value subset of the pool for the "core" tool scope: the
-# everyday agentic actions (read/search/edit files, run commands, inspect git,
-# remember things). Declaring only these keeps the prompt ~1.5K tokens instead
-# of ~8K, so on-device turns prefill far faster. Writes/commands are still gated
-# by the approval system. Names are a subset of assemble_tool_pool's output;
-# any not present in a given request (e.g. ws_* without a workspace) are simply
-# absent. Web tools are added separately via the 'core_web' / 'all' scopes.
-CORE_TOOL_NAMES = {
-    "ws_read_file",
-    "ws_grep",
-    "ws_glob",
-    "ws_list_directory",
-    "ws_edit_file",
-    "ws_write_file",
-    "ws_run_command",
-    "git_status",
-    "git_diff",
-    "memory_read",
-    "memory_write",
-}
-
-
 def get_tool_schemas(
     plan_mode: bool = False,
     ws_connected: bool = False,
-    scope: str = "all",
     suppress_workspace_search: bool = False,
 ) -> tuple[list[dict], set[str]]:
-    """The tool pool in OpenAI function format, filtered by ``scope``:
-      - 'all'      — full cloud pool + web tools (parity; heaviest prompt)
-      - 'core'     — just CORE_TOOL_NAMES (no web)
-      - 'core_web' — CORE_TOOL_NAMES + web search/fetch
+    """The full tool pool in OpenAI function format — cloud parity, no scopes.
+
+    The old off/core/core_web/all scope gate is gone: a tool-capable local
+    model always sees the same pool the cloud paths get. The pool is a stable
+    prompt prefix, so llama-server's prefix cache absorbs the prefill cost
+    after the first turn; the 32K default context accommodates the schemas.
 
     Returns ``(schemas, valid_names)``. ``valid_names`` discards hallucinated
-    tool names the model might emit. The cloud pool itself is
-    unchanged — this only chooses how much of it the on-device model sees, so
-    the user can trade capability for speed."""
+    tool names the model might emit."""
     from server.chat.tool_pool import assemble_tool_pool
 
     pool = assemble_tool_pool(
@@ -139,11 +78,7 @@ def get_tool_schemas(
         ws_connected=ws_connected,
         suppress_workspace_search=suppress_workspace_search,
     )
-    if scope in ("core", "core_web"):
-        pool = [t for t in pool if t["name"] in CORE_TOOL_NAMES]
-    web = list(_WEB_TOOL_SCHEMAS) if scope in ("all", "core_web") else []
-
-    schemas = web + [_to_openai_fn(t) for t in pool]
+    schemas = [_to_openai_fn(t) for t in pool]
     names = {s["function"]["name"] for s in schemas}
     return schemas, names
 

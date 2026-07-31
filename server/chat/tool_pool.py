@@ -23,11 +23,13 @@ from server.ask_user import ALL_TOOLS as ASK_USER_TOOLS
 from server.cron_scheduler import CRON_TOOLS
 from server.executors import is_concurrent_safe as _executor_concurrent_safe
 from server.executors.result_cache import RESULT_CACHE_TOOLS
+from server.executors.tools import CORE_EXECUTOR_TOOLS
 from server.git.tools import get_git_tools
 from server.lsp import LSP_TOOLS
 from server.mcp import mcp_manager
 from server.notebook import NOTEBOOK_TOOLS
 from server.plans.tools import PLAN_TOOLS
+from server.prompt_tools import PROMPT_TOOLS
 from server.skills import TOOLS
 from server.tasks_tracker import TASK_TOOLS
 from server.tool_executor import _PLAN_MODE_BLOCKED
@@ -167,6 +169,8 @@ def assemble_full_catalog(
     """
     # Tier 1: full catalog
     builtin_tools = list(TOOLS)  # skill-based tools
+    builtin_tools += CORE_EXECUTOR_TOOLS
+    builtin_tools += PROMPT_TOOLS
     builtin_tools += get_global_workspace_tools()
     # git_clone is the one git tool that works WITHOUT a connected workspace
     # — by design, it creates one. Always include it so the assistant can

@@ -229,7 +229,9 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
     # in-process runtime) > the model default. Without the sticky tier a lazy
     # chat-turn start would restart the server back down at 16K even though the
     # badge says 32K/64K.
-    target_ctx = int(n_ctx or requested_n_ctx() or meta.get("ctx") or 16384)
+    # 32K floor: with the full tool pool always advertised (~12K tokens of
+    # schemas), 16K left almost no room for transcript + conversation.
+    target_ctx = int(n_ctx or requested_n_ctx() or meta.get("ctx") or 32768)
 
     with _lock:
         if (

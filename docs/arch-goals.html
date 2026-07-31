@@ -72,7 +72,7 @@
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
       <div class="callout__body"><p>The evaluator weighs a deterministic signal above prose: the
-        <code>verify-change</code> skill (<code class="path">skills/verify-change.md</code>) runs the repo's
+        built-in <code>verify_change</code> tool (<code class="path">server/prompt_tools/verify_change.py</code>) runs the repo's
         real verification gate and ends with exactly <code>VERIFY PASS</code> or <code>VERIFY FAIL:
         &lt;reason&gt;</code>. That is the same line a generated <a href="arch-ultracode.html">CI autofix
         workflow</a> finishes on — proof beats a confident-sounding summary.</p></div>
@@ -80,7 +80,7 @@
 
     <h2 id="ui-verify">Full-stack goals: verifying the UI</h2>
     <p>For a change that touches rendered UI, that verification is not just tsc-and-tests — the
-      <code>verify-change</code> skill's <code>ui_facing</code> branch drives the
+      built-in <code>verify_change</code> tool's <code>ui_facing</code> branch drives the
       <a href="arch-preview.html">live preview</a>: it spins up your dev server, loads the changed view,
       checks the browser console for errors, drives the changed interaction, and captures a screenshot before
       emitting its verdict. Because the gate weights that verdict above prose, a goal on full-stack work will
