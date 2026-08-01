@@ -72,6 +72,26 @@ export function buildDisplayQuestion(
   return opts?.forceSkill ? `@${opts.forceSkill}${shown ? ' ' + shown : ''}` : shown;
 }
 
+/** History rows shipped to /api/chat (capped to the last 40). Per-message
+ *  attachment ids ride along so the backend can re-inject each file's content
+ *  at its original position — attachments are session state, not turn state.
+ *  Names only feed the "no longer available" marker for unresolvable ids. */
+export function buildHistoryPayload(
+  allMessages: ChatMessage[],
+  isContinuation: boolean,
+): Array<Record<string, unknown>> {
+  const history = allMessages
+    .slice(0, isContinuation ? allMessages.length : -1)
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .map(m => ({
+      role: m.role,
+      content: m.content,
+      ...(m.attachmentIds?.length ? { attachmentIds: m.attachmentIds } : {}),
+      ...(m.attachmentNames?.length ? { attachmentNames: m.attachmentNames } : {}),
+    }));
+  return history.length > 40 ? history.slice(-40) : history;
+}
+
 /** The user-facing parallelism ceiling: how many sessions may be ACTIVE
  *  (streaming / mid-approval / recording) at once. */
 export const MAX_ACTIVE_SESSIONS = 3;
@@ -170,16 +190,7 @@ export function useChatStream(): UseChatStreamReturn {
     // (role='cron_event') are filtered here too — the backend filters
     // again via visible_chat_history() as defence-in-depth, but it's
     // wasteful to ship them over the wire.
-    const allMessages = store().messages;
-    const history = allMessages
-      .slice(0, isContinuation ? allMessages.length : -1)
-      .filter(m => m.role === 'user' || m.role === 'assistant')
-      .map(m => ({
-        role: m.role,
-        content: m.content,
-      }));
-    // Cap to 40 entries
-    const cappedHistory = history.length > 40 ? history.slice(-40) : history;
+    const cappedHistory = buildHistoryPayload(store().messages, isContinuation);
 
     // Unified "Response length" control (Brief/Normal/Detailed) is stored as
     // verbosity (low/medium/high). Apply it per model: GPT-5.x uses text.verbosity
@@ -193,6 +204,7 @@ export function useChatStream(): UseChatStreamReturn {
       transcript,
       history: cappedHistory,
       attachment_ids: opts?.attachmentIds ?? [],
+      attachment_names: opts?.attachmentNames ?? [],
       model: settings.selectedModel,
       force_skill: opts?.forceSkill ?? null,
       session_id: activeSessionId,

@@ -48,8 +48,10 @@ export interface ChatMessage {
   taskEvent?: TaskEventPayload;
   attachments?: Attachment[];
   attachmentNames?: string[];
-  /** Backend attachment ids for this message, so a regenerate/edit-resend
-   *  can re-attach the same files instead of dropping them. */
+  /** Backend attachment ids for this message. Shipped with every turn's
+   *  history so the backend re-injects the files' content at this message's
+   *  position (attachments are session state), and reused by
+   *  regenerate/edit-resend to re-attach the same files. */
   attachmentIds?: string[];
   thinking?: ThinkingBlock[];
   toolUse?: ToolUseEvent[];
