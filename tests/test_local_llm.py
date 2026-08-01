@@ -278,6 +278,56 @@ def test_run_tool_round_routes_through_the_safety_gate(monkeypatch):
     assert any("skill_result" in e for e in sse_events)
 
 
+def test_run_tool_round_threads_session_attachments(monkeypatch):
+    """The local/OpenAI tool path used to hardcode attachments={}, so
+    analyze_document answered "No documents attached." even on the turn a
+    file was attached. It must load the session's bound attachments from the
+    durable store instead."""
+    import time
+    import uuid
+
+    import server.tool_executor as TE
+    from server import attachment_store
+
+    sid = f"local-att-{uuid.uuid4()}"
+    aid = str(uuid.uuid4())
+    attachment_store.save_attachment(
+        aid,
+        {
+            "kind": "document",
+            "filename": "brief.md",
+            "text": "the brief",
+            "created": time.time(),
+        },
+    )
+    attachment_store.bind_to_session([aid], sid)
+
+    seen = {}
+
+    async def fake_batch(tool_uses, **kw):
+        seen["attachments"] = kw.get("attachments")
+        return []
+
+    async def fake_process(states, budget_fn, **kw):
+        return ([], [], False, False)
+
+    monkeypatch.setattr(TE, "execute_tool_batch", fake_batch)
+    monkeypatch.setattr(TE, "process_tool_results", fake_process)
+
+    asyncio.run(
+        T.run_tool_round(
+            [{"type": "tool_use", "id": "c1", "name": "analyze_document", "input": {}}],
+            session_id=sid,
+            session_approvals={},
+            session_denials={},
+            config={},
+        )
+    )
+    assert aid in seen["attachments"]
+    assert seen["attachments"][aid]["filename"] == "brief.md"
+    attachment_store.delete_session_attachments(sid)
+
+
 # ── Per-turn context-size threading (chip → llama-server) ────────────────────
 
 

@@ -1059,89 +1059,40 @@ async def chat_endpoint(request: Request):
     # Filter out UI-only rows (cron_event, etc.) before building the
     # Bedrock messages array — those are persisted in chat_history for
     # replay-on-resume but must never enter Claude's context.
+    from server.chat.attachment_context import (
+        collect_history_attachment_ids,
+        ensure_attachments_present,
+        rebuild_history_message,
+        render_attachment_blocks,
+    )
     from server.infrastructure.sessions import visible_chat_history
 
-    messages = []
-    for msg in visible_chat_history(chat_history):
-        messages.append({"role": msg["role"], "content": msg["content"]})
+    # History rows carry per-message attachmentIds; rebuild re-injects each
+    # attachment's content at its original position, so a file attached on an
+    # earlier turn is still literally in the context now (attachments are
+    # session state, not turn state).
+    _visible_history = visible_chat_history(chat_history)
+    messages = [rebuild_history_message(msg) for msg in _visible_history]
 
     # Resolve @file:/@file mentions — inline the referenced file so the model
     # has the content directly instead of hunting for it with tools.
     if ws_path:
         question = _resolve_at_file_mentions(question, ws_path)
 
-    # Resolve attachments.
-    #
-    # Each document attachment's text is capped before injection. markitdown
-    # turns a typical xlsx into several MB of markdown — a single such file
-    # alone blows past Bedrock's 200k-token input window, the model rejects
-    # the call, reactive compaction has nothing to compact (only one message
-    # in the history), and the user sees "Conversation too long even after
-    # compaction" on what looks like the first turn. Cap at 150k chars
-    # (~37k tokens) per file: small enough to coexist with system prompt +
-    # tools + reply budget, large enough for any real-world spreadsheet
-    # header + first several thousand rows. The full text stays in the
-    # in-memory cache so a future "show me more of <file>" tool could
-    # fetch additional ranges.
-    MAX_ATTACHMENT_CHARS = 150_000
+    # Resolve this turn's attachments (rendering + per-file caps live in
+    # attachment_context, shared with the history rebuild above). A missing id
+    # yields an explicit unavailability marker, never a silent skip. Binding
+    # writes the session id onto every referenced attachment and slides its
+    # 30-day retention window; it must happen before the local/OpenAI dispatch
+    # below so their tool paths see the files via the durable store.
+    attachment_texts, image_blocks = render_attachment_blocks(
+        attachment_ids, body.get("attachment_names", [])
+    )
+    _referenced_ids = collect_history_attachment_ids(_visible_history) + attachment_ids
+    if _referenced_ids:
+        from server.attachment_store import bind_to_session
 
-    attachment_texts = []
-    image_blocks = []
-    for aid in attachment_ids:
-        att = attachments.get(aid)
-        if not att:
-            continue
-        if att["kind"] == "image":
-            image_blocks.append(
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": att["media_type"],
-                        "data": att["data"],
-                    },
-                }
-            )
-            # Text-only models (the local Gemma build) can't read the pixels, so
-            # surface any OCR'd text as a sibling text part. Vision models still
-            # get the image block above.
-            ocr_text = att.get("ocr_text")
-            if ocr_text:
-                attachment_texts.append(
-                    f"[Image: {att['filename']} — transcribed text]\n{ocr_text}"
-                )
-        elif att["kind"] == "document":
-            doc_text = att["text"]
-            full_len = len(doc_text)
-            if full_len > MAX_ATTACHMENT_CHARS:
-                # Lead with the heading outline + the first slice, and point the
-                # model at the analyze_document tool to pull specific sections in
-                # full instead of blindly truncating the tail.
-                head = doc_text[:MAX_ATTACHMENT_CHARS]
-                outline = att.get("outline") or ""
-                note = (
-                    f"\n\n[Showing the first {MAX_ATTACHMENT_CHARS:,} of "
-                    f"{full_len:,} characters. Call the analyze_document tool "
-                    f"with section=<number from the outline> to read a specific "
-                    f"section in full.]"
-                )
-                doc_text = f"[Outline]\n{outline}\n\n{head}{note}" if outline else head + note
-            attachment_texts.append(f"[File: {att['filename']}]\n{doc_text}")
-            # Video documents carry retained keyframes — surface them as image
-            # blocks so vision models can see the actual frames (hybrid video
-            # understanding), on top of the transcript + OCR text above. The
-            # sampler already bounds this to <= 20 frames per video.
-            for fr in att.get("frames", []):
-                image_blocks.append(
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": fr.get("media_type", "image/jpeg"),
-                            "data": fr["data"],
-                        },
-                    }
-                )
+        await asyncio.to_thread(bind_to_session, _referenced_ids, session_id)
 
     # Grounding state for this turn. Set in the fresh-turn branch below; stays
     # None/False on approval-resume turns (grounding isn't recomputed there).
@@ -1349,6 +1300,14 @@ async def chat_endpoint(request: Request):
         except Exception as _e:
             log.warning("completion injection failed: %s", _e)
 
+        # Safety net for the frontend's history cap: a session attachment whose
+        # attach-turn message fell off the capped history gets re-injected as a
+        # leading message. Fresh turns only — approval resumes restore the
+        # paused message list, which already carries whatever it carried.
+        # Presence detection is by filename marker, so the live message we just
+        # appended (and every rebuilt history row) is never duplicated.
+        messages = ensure_attachments_present(messages, session_id)
+
     # On-device models bypass Bedrock entirely (isolated local runtime). Branch
     # BEFORE compaction — compaction itself calls Bedrock, so a local turn must
     # never reach it. System prompt + messages are already built above. The
@@ -1411,12 +1370,24 @@ async def chat_endpoint(request: Request):
     if _openai_resp is not None:
         return _prepend_grounding_event(_openai_resp, grounding_meta)
 
-    current_attachments = {aid: attachments[aid] for aid in attachment_ids if aid in attachments}
+    # Tool access (analyze_document) covers EVERY attachment bound to this
+    # session, not just this turn's ids — the durable store is the source of
+    # truth (text/outline only; image bytes stay out of the tool dict), with
+    # this turn's hot in-memory records overlaid.
+    from server.attachment_store import load_session_attachments
+
+    current_attachments = await asyncio.to_thread(load_session_attachments, session_id)
+    current_attachments.update(
+        {aid: attachments[aid] for aid in attachment_ids if aid in attachments}
+    )
     loop = asyncio.get_event_loop()
 
     # Feature 2: Claude-based compaction
     if estimate_message_size(messages) > COMPACT_TRIGGER_CHARS:
         messages = await compact_messages_with_claude(messages, model_id, session_id=session_id)
+        # Compaction can summarize an attach-turn message away; restore any
+        # session attachment that no longer appears in the context.
+        messages = ensure_attachments_present(messages, session_id)
 
     # Final safety net: drop any orphaned tool_use/tool_result blocks left by an
     # interrupted turn or a compaction that split a pair. Bedrock rejects the
@@ -1967,6 +1938,7 @@ async def chat_endpoint(request: Request):
                         messages = await compact_messages_with_claude(
                             messages, model_id, session_id=session_id
                         )
+                        messages = ensure_attachments_present(messages, session_id)
                     continue
 
                 if stop_reason != "tool_use" or not tool_uses:
@@ -2206,6 +2178,11 @@ async def chat_endpoint(request: Request):
                     messages = await compact_messages_with_claude(
                         messages, model_id, session_id=session_id
                     )
+                    # Restore any attachment the summary swallowed. The
+                    # REACTIVE PromptTooLong path above deliberately does not
+                    # re-inject (it must shrink, and analyze_document still
+                    # has session-wide access as the fallback).
+                    messages = ensure_attachments_present(messages, session_id)
             finally:
                 # SSE generator torn down mid-round (Stop / tab-close aborts
                 # the fetch) or the round finished — either way stop the reader

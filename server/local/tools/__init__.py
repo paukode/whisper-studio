@@ -114,19 +114,24 @@ async def run_tool_round(
     """
     import asyncio
 
+    from server.attachment_store import load_session_attachments
     from server.chat import executor as tool_thread_pool
     from server.chat.budget import make_budget_tool_result
     from server.chat.tool_pool import _is_tool_concurrent_safe
     from server.tool_executor import execute_tool_batch, process_tool_results
 
     loop = asyncio.get_event_loop()
+    # Session-wide attachment access for analyze_document — the same store the
+    # cloud loop reads, so a file attached on any earlier turn stays fetchable
+    # here too (text/outline only; image bytes stay out of the tool dict).
+    session_attachments = await asyncio.to_thread(load_session_attachments, session_id)
     states = await execute_tool_batch(
         tool_uses,
         is_concurrent_safe=_is_tool_concurrent_safe,
         loop=loop,
         executor=tool_thread_pool,
         transcript=transcript,
-        attachments={},
+        attachments=session_attachments,
         session_id=session_id,
         session_denials=session_denials or {},
         # "" for the local path (offline: no classifier/explainer Bedrock
