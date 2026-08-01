@@ -391,6 +391,12 @@ def _delete_session_sync(session_id: str) -> None:
             # that has only seen _ensure_db lacks the table — and has no cost
             # rows to delete. Same tolerance as ensure_cron_inbox's pinned UPDATE.
             pass
+        try:
+            conn.execute("DELETE FROM attachments WHERE session_id = ?", (session_id,))
+        except sqlite3.OperationalError:
+            # attachments comes from migration 011 / attachment_store's
+            # _ensure_table; a database that predates both has no rows.
+            pass
 
     # Cron jobs owned by this session must not silently die: disable + flag
     # them orphaned (re-homeable) and repoint their run history to the inbox

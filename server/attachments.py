@@ -9,6 +9,7 @@ import uuid
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import Response
 
+from server import attachment_store
 from server.extract import build_outline, convert_document, ocr_image_bytes
 from server.extract.media import extract_media, is_media_ext
 
@@ -16,9 +17,10 @@ log = logging.getLogger("whisper-studio")
 
 router = APIRouter(tags=["attachments"])
 
-# In-memory storage with TTL. 3 hours so a message's files survive long
-# enough to be re-attached on a later regenerate / edit-resend within the
-# same running session.
+# In-memory hot cache in front of the durable store (attachment_store.py).
+# Every upload is written through to sessions.db; this dict only saves the
+# sqlite read on same-process turns. The TTL sweeps the cache, not the store —
+# a session-bound attachment stays retrievable for the store's 30-day window.
 attachments: dict[str, dict] = {}
 ATTACHMENT_TTL = 3 * 3600
 MAX_FILE_SIZE = 50 * 1024 * 1024
@@ -145,6 +147,20 @@ async def cleanup_loop():
         expired = [k for k, v in attachments.items() if now - v["created"] > ATTACHMENT_TTL]
         for k in expired:
             del attachments[k]
+        # Durable-store sweep: orphaned uploads past the short TTL and bound
+        # attachments idle past the 30-day retention window.
+        try:
+            swept = await asyncio.to_thread(attachment_store.gc, now)
+            if swept:
+                log.info("attachment store GC removed %d expired row(s)", swept)
+        except Exception:
+            log.warning("attachment store GC failed", exc_info=True)
+
+
+async def _store(aid: str, record: dict) -> None:
+    """Cache the record in memory and write it through to the durable store."""
+    attachments[aid] = record
+    await asyncio.to_thread(attachment_store.save_attachment, aid, record)
 
 
 @router.post("/api/upload")
@@ -175,14 +191,17 @@ async def upload_endpoint(files: list[UploadFile] = File(...)):
             # OCR the image so text-only chat models (the local Gemma build)
             # get readable text; vision models still receive the image block.
             ocr_text = await asyncio.to_thread(ocr_image_bytes, img_data)
-            attachments[aid] = {
-                "kind": "image",
-                "filename": filename,
-                "media_type": media_type,
-                "data": base64.b64encode(img_data).decode(),
-                "ocr_text": ocr_text,
-                "created": time.time(),
-            }
+            await _store(
+                aid,
+                {
+                    "kind": "image",
+                    "filename": filename,
+                    "media_type": media_type,
+                    "data": base64.b64encode(img_data).decode(),
+                    "ocr_text": ocr_text,
+                    "created": time.time(),
+                },
+            )
             results.append({"id": aid, "filename": filename, "type": "image"})
         elif is_media_ext(ext):
             # Audio/video: transcribe locally (and OCR sampled video frames).
@@ -195,7 +214,7 @@ async def upload_endpoint(files: list[UploadFile] = File(...)):
             rec = _make_document_record(filename, text)
             if frames:
                 rec["frames"] = frames
-            attachments[aid] = rec
+            await _store(aid, rec)
             results.append(
                 {
                     "id": aid,
@@ -208,8 +227,9 @@ async def upload_endpoint(files: list[UploadFile] = File(...)):
             text = await asyncio.to_thread(convert_document, content, ext, filename)
             # Only Markdown/prose formats get a heading outline; code and data
             # dumps (where "#" is a comment or literal) skip it.
-            attachments[aid] = _make_document_record(
-                filename, text, outline=ext in OUTLINE_EXTENSIONS
+            await _store(
+                aid,
+                _make_document_record(filename, text, outline=ext in OUTLINE_EXTENSIONS),
             )
             results.append({"id": aid, "filename": filename, "type": ext.lstrip(".")})
         else:
@@ -228,8 +248,9 @@ async def upload_endpoint(files: list[UploadFile] = File(...)):
                 )
             # Plaintext fallback: never outline (a leading "#" here is not a
             # Markdown heading).
-            attachments[aid] = _make_document_record(
-                filename, text or "[Empty file]", outline=False
+            await _store(
+                aid,
+                _make_document_record(filename, text or "[Empty file]", outline=False),
             )
             results.append({"id": aid, "filename": filename, "type": ext.lstrip(".") or "text"})
 
