@@ -19,7 +19,7 @@
       endpoint builds the prompt, calls the model, and drives an agentic tool loop - emitting Server-Sent
       Events the whole way.</p>
 
-    <p>The entire turn is one coherent state machine in <code class="path">server/chat/routes.py</code>.
+    <p>Turn assembly lives in <code class="path">server/chat/routes.py</code>; the agentic loop itself is the unified turn engine in <code class="path">server/chat/engine/runner.py</code>, shared verbatim by Claude, GPT, and local models.
       <b>Click a box</b> below to trace a path - for example, click <em>Streaming loop</em> to see
       everything a single round can reach.</p>
 
@@ -105,7 +105,7 @@
       <li><b>Permission checks.</b> Every tool is evaluated against the current
         <a href="arch-approval.html">permission mode</a> and per-tool rules - allow, ask, or deny.</li>
       <li><b>Approval gate.</b> A tool that needs consent issues a nonce, pauses the turn (state is
-        stashed in <code>_paused_sessions</code>), and waits for the client to confirm.</li>
+        stashed in the unified pause store, <code class="path">server/chat/engine/pause.py</code>), and waits for the client to confirm.</li>
       <li><b>Hooks.</b> Hooks are a blocking subsystem (<code class="path">server/hooks/</code>):
         <code>run_hooks(event, payload)</code> fires <code>PreToolUse</code>, which can
         <em>deny</em> or <em>rewrite</em> a call, and <code>PostToolUse</code>, which can inject
@@ -135,8 +135,10 @@
 
     <h2 id="compaction-persistence">Compaction &amp; persistence</h2>
     <p>If a prompt grows too long mid-stream, <b>reactive compaction</b> drops the oldest message
-      pairs (or summarizes them via Haiku) and retries - so a long agentic session degrades gracefully
-      instead of erroring. When the turn ends, the assistant message is appended and the session is
+      pairs (or summarizes them via the session's own model through <code>one_shot</code>) and
+      retries. When even that cannot fit, the engine runs one final no-tools <b>salvage round</b> on
+      a hard-trimmed tail, so a long agentic session ends with a synthesized answer instead of an
+      error. When the turn ends, the assistant message is appended and the session is
       UPSERTed into SQLite under a per-session lock, so background <code>cron_event</code> rows are
       never clobbered. Those cron rows render in the chat but are filtered by
       <code>visible_chat_history</code> before the next prompt, so they never inflate the token bill.
@@ -144,7 +146,8 @@
 
     <h2 id="key-files">Key files</h2>
     <div class="spec">
-      <dt><code class="path">server/chat/routes.py</code></dt><dd>The SSE streaming endpoint and turn state machine.</dd>
+      <dt><code class="path">server/chat/routes.py</code></dt><dd>The SSE endpoint and turn assembly (parsing, grounding, attachments, system prompt, adapter selection).</dd>
+      <dt><code class="path">server/chat/engine/</code></dt><dd>The unified turn engine: the loop (runner.py), provider adapters (anthropic/openai/local), TurnPolicy presets, the pause store, and window accounting.</dd>
       <dt><code class="path">server/chat/tool_pool.py</code></dt><dd>Assembles the per-turn tool catalogue (mode filter + dedup); with the <code>progressive_tools</code> flag it splits the catalogue into a core prefix plus a deferred, session-activated index.</dd>
       <dt><code class="path">server/chat/caching.py</code></dt><dd>System-prompt resolution with cache-aligned splits, plus the moving <code>annotate_messages_cache</code> checkpoint on conversation history.</dd>
       <dt><code class="path">server/hooks/</code></dt><dd>The blocking hook engine: <code>run_hooks</code> (Pre/PostToolUse) and the <code>check_stop_hooks</code> end-of-turn gate.</dd>
