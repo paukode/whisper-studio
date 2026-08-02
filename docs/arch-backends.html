@@ -26,11 +26,12 @@
 
     <figure class="diagram-figure wide">
       <div id="backends-diagram" class="diagram"></div>
-      <figcaption>The model-key decision chain. On-device and OpenAI turns branch off and return early;
-        only the Anthropic path runs the retry, compaction, and cost-tracking machinery.</figcaption>
+      <figcaption>The model-key decision chain. The key only selects a provider adapter; every turn
+        then runs on the same engine, so compaction, rescue, cost tracking, and the SSE contract are
+        identical for Claude, GPT, and local models.</figcaption>
     </figure>
 
-    <h2 id="the-decision">One key, three paths</h2>
+    <h2 id="the-decision">One key, one engine, three adapters</h2>
     <p>The toolbar model key is latched on the first turn of a session, so switching models in Settings
       never disrupts an in-flight conversation. Once the system prompt and messages are assembled, the
       endpoint asks two yes/no questions in order, and the first "yes" wins:</p>
@@ -101,10 +102,11 @@
       history grows large. See <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.)</p>
 
     <h3 id="cost">Cost tracking</h3>
-    <p>Because the Anthropic path is the only one that bills a cloud provider per token, it is where cost
-      tracking runs. Every round logs input, output, and prompt-cache token counts and an estimated USD
-      cost (via <code>estimate_cost</code>), which feeds the session and daily spend caps. If a cap is
-      exceeded, the turn stops with an error. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</p>
+    <p>Cost tracking runs in the engine for every provider. Each round logs input, output, and
+      prompt-cache token counts and an estimated USD cost (via <code>estimate_cost</code>; OpenAI's
+      cached tokens are a subset of its input tokens and are billed once, local rounds record at $0),
+      which feeds the session and daily spend caps. If a cap is exceeded, the turn stops with an
+      error. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</p>
 
     <h2 id="local">On-device models</h2>
     <p>The local backend (<code class="path">server/local/</code>) runs a quantized GGUF model entirely
@@ -228,15 +230,16 @@
     </div>
 
     <h2 id="openai">OpenAI on Bedrock</h2>
-    <p>The OpenAI backend (<code class="path">server/openai_bedrock/</code>) runs GPT-5.x models. They
-      are invoked through Bedrock but in OpenAI request/response format (the Responses API shape), which
-      is why they are a separate provider rather than a variant of the Anthropic path.</p>
+    <p>GPT-5.x models are invoked through Bedrock but in OpenAI request/response format (the
+      Responses API shape on the bedrock-mantle endpoint). Their turns run on the same engine as
+      everything else through the adapter in <code class="path">server/chat/engine/openai.py</code>,
+      which owns the mantle stream quirks (early release, heartbeats) and prompt-too-long detection
+      against the model's real input window.</p>
     <dl class="spec">
-      <dt><code class="path">server/openai_bedrock/route.py</code></dt>
-      <dd>The bridge the endpoint calls. Detects an OpenAI key and returns <code>stream_openai_chat(...)</code>,
-        or <code>resume_openai_chat(...)</code> for an approval resume.</dd>
       <dt><code class="path">server/openai_bedrock/runtime.py</code></dt>
-      <dd>Backend detection (<code>is_openai_model</code>), region resolution, and the effort and
+      <dd>The runtime plumbing the adapter builds on: backend detection (<code>is_openai_model</code>),
+        bearer-token auth and client construction (streaming + a sync twin for one-shot calls like
+        compaction summaries), region resolution, request-mapping helpers, and the effort and
         verbosity mappings below.</dd>
     </dl>
     <p>Two GPT-5.x-specific controls are mapped from the app's own settings:</p>
