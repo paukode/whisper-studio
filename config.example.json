@@ -133,6 +133,19 @@
       "dir": "qwen3.5-9b",
       "ctx": 32768
     },
+    "local_deepseek_v4_9b": {
+      "id": "local:qwen3.5-9b-deepseek-v4-flash",
+      "label": "DeepSeek V4 9B Distill (Local)",
+      "thinking": "none",
+      "effort_tier": "none",
+      "is_local": true,
+      "supports_thinking": true,
+      "supports_tools": true,
+      "repo_id": "Jackrong/Qwen3.5-9B-DeepSeek-V4-Flash-GGUF",
+      "filename": "Qwen3.5-9B-DeepSeek-V4-Flash-Q4_K_M.gguf",
+      "dir": "qwen3.5-9b-deepseek-v4-flash",
+      "ctx": 32768
+    },
     "local_ministral3_14b": {
       "id": "local:ministral3-14",
       "label": "Ministral 3 14B (Local)",
