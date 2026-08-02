@@ -136,7 +136,7 @@
       <dt><code class="path">server/chat/routes.py</code></dt><dd>The single condense call site in <code>chat_endpoint</code>, right after the model is resolved.</dd>
       <dt><code class="path">server/skills.py</code></dt><dd>The <code>_TRANSCRIPT_SKILLS</code> set (skill-folder summarizers only), the transcript-arg fallback, and the secondary condense of a huge pasted notes / text argument.</dd>
       <dt><code class="path">server/local/route.py</code>, <code class="path">server/local/server_stream.py</code></dt><dd>The local path: the condensed transcript threaded through <code>tool_ctx["transcript"]</code> into the tool loop.</dd>
-      <dt><code class="path">server/openai_bedrock/route.py</code>, <code class="path">server/openai_bedrock/stream.py</code></dt><dd>The OpenAI-on-Bedrock path: the same transcript threading into the tool loop.</dd>
+      <dt><code class="path">server/chat/engine/runner.py</code></dt><dd>The unified turn engine threads the (condensed) transcript into tool execution identically for every provider.</dd>
       <dt><code class="path">server/local/runtime.py</code></dt><dd>The on-device runtime: <code>loaded_key()</code>, <code>is_downloaded()</code>, and <code>complete()</code>.</dd>
     </div>
 
