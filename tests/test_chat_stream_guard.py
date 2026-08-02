@@ -44,18 +44,14 @@ def test_second_new_turn_409s_while_streaming(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    # Force the cloud Anthropic path regardless of this machine's config.json
-    # default model. The 409 guard lives on the cloud branch; with a local_mode
-    # config (default_chat_model=local_gemma) local_chat_response() returns a
-    # StreamingResponse and short-circuits before the guard, and an OpenAI
-    # default would do the same via openai_chat_response(). Neutralizing both
-    # bridges makes a model-less POST reach the _active_chat_streams guard
-    # deterministically. (Patch the modules the endpoint imports at call time.)
+    # Force the unified engine path regardless of this machine's config.json
+    # default model: with a local_mode config (default_chat_model=local_gemma)
+    # local_chat_response() returns a StreamingResponse and short-circuits
+    # before the guard. GPT models share the engine path (and its guard) since
+    # the P3 cutover, so only the local bridge needs neutralizing.
     import server.local.route as local_route
-    import server.openai_bedrock.route as openai_route
 
     monkeypatch.setattr(local_route, "local_chat_response", lambda **kw: None)
-    monkeypatch.setattr(openai_route, "openai_chat_response", lambda **kw: None)
 
     app = FastAPI()
     app.include_router(routes.router)

@@ -119,12 +119,13 @@ def test_session_events_forwards_cron_progress_as_team_progress():
 
 
 def test_chat_drainer_skips_cron_progress():
-    """The in-turn drainer must skip cron_progress (double delivery)."""
+    """The in-turn drainer must skip cron_progress (double delivery). The
+    drainer lives in the unified turn engine since the P2/P3 cutover."""
     import inspect
 
-    import server.chat.routes as routes
+    import server.chat.engine.runner as runner
 
-    src = inspect.getsource(routes)
+    src = inspect.getsource(runner)
     assert '"cron_progress",' in src
 
 
