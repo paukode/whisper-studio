@@ -143,6 +143,19 @@ def build_client(region: str):
     )
 
 
+def build_sync_client(region: str):
+    """Blocking twin of build_client, for worker-thread one-shot calls
+    (compaction summaries and other non-streaming utility completions)."""
+    from openai import OpenAI
+
+    return OpenAI(
+        api_key=_get_bearer_token(region),
+        base_url=_BASE_URL.format(region=region),
+        timeout=120.0,
+        max_retries=1,
+    )
+
+
 def translate_tools(tool_pool: list[dict]) -> list[dict]:
     """Anthropic-style tool defs {name, description, input_schema} -> OpenAI
     Responses FLAT function tools {type, name, description, parameters}.
