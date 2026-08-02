@@ -20,6 +20,12 @@ import os
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+# Deterministic executor registry: the app imports every executor module at
+# startup; tests import modules piecemeal, so whether analyze_document (etc.)
+# is registered would otherwise depend on which tests ran first in the
+# session — making the pinned skill_result frames order-dependent.
+import server.executors.content  # noqa: F401 — registers analyze_document et al.
+
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "golden_fixtures")
 
 # ── Scripted Bedrock stand-ins ────────────────────────────────────────────────
@@ -150,7 +156,6 @@ def run_chat_turn(monkeypatch, fake_client, body):
     import server.chat.engine.anthropic as engine_anthropic_mod
     import server.chat.routes as routes_mod
     import server.local.route as local_route
-    import server.openai_bedrock.route as openai_route
 
     # Patch every module-level binding of the client getter — the route, the
     # compaction summarizer, and the engine's Anthropic adapter. Missing one
@@ -161,7 +166,6 @@ def run_chat_turn(monkeypatch, fake_client, body):
     monkeypatch.setattr(engine_anthropic_mod, "_get_bedrock_client", lambda: fake_client)
     # Keep the turn on the cloud Anthropic branch regardless of local config.
     monkeypatch.setattr(local_route, "local_chat_response", lambda **kw: None)
-    monkeypatch.setattr(openai_route, "openai_chat_response", lambda **kw: None)
 
     # Hermetic: post-turn fire-and-forget hooks (memory extraction, session
     # memory, dream consolidation, title gen) must not run — they would build

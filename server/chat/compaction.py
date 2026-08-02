@@ -233,6 +233,7 @@ async def compact_messages_with_claude(
     messages: list,
     model_id: str,
     session_id: str = "",
+    model_key: str = "",
 ) -> list:
     """Intelligent context compaction with 3 strategies:
 
@@ -310,15 +311,46 @@ async def compact_messages_with_claude(
         + "\n\n".join(history_text)
     )
 
+    _summary_system = (
+        "You produce concise conversation summaries. "
+        "Do not use em dashes or en dashes; prefer commas, "
+        "parentheses, a colon, or a short spaced hyphen."
+    )
+
     try:
         # Resolve at call time to dodge the __init__.py partial-init window
         # (this module is imported BEFORE `executor` is bound on the package).
         from server.chat import executor as _executor
 
-        bedrock = _get_bedrock_client()
         loop = asyncio.get_event_loop()
 
         def _call():
+            # Provider-aware summarizer: when the caller names the session's
+            # model key, one_shot routes the summary through that same model
+            # (Claude via Bedrock, GPT via mantle, local via llama-server) —
+            # so a GPT or local turn never depends on the Anthropic path.
+            if model_key:
+                try:
+                    from server.infrastructure.oneshot import one_shot
+                    from server.local.runtime import is_local_model
+
+                    if is_local_model(model_key):
+                        return one_shot(
+                            _summary_system, summary_prompt, max_tokens=1024, engine=model_key
+                        )
+                    return one_shot(
+                        _summary_system,
+                        summary_prompt,
+                        max_tokens=1024,
+                        engine="cloud",
+                        cloud_model_key=model_key,
+                    )
+                except Exception as os_err:
+                    log.warning(
+                        "one_shot compaction summarizer failed (%s); trying direct Bedrock",
+                        os_err,
+                    )
+            bedrock = _get_bedrock_client()
             resp = bedrock.invoke_model(
                 modelId=model_id,
                 contentType="application/json",
@@ -327,11 +359,7 @@ async def compact_messages_with_claude(
                     {
                         "anthropic_version": "bedrock-2023-05-31",
                         "max_tokens": 1024,
-                        "system": (
-                            "You produce concise conversation summaries. "
-                            "Do not use em dashes or en dashes; prefer commas, "
-                            "parentheses, a colon, or a short spaced hyphen."
-                        ),
+                        "system": _summary_system,
                         "messages": [{"role": "user", "content": summary_prompt}],
                     }
                 ),

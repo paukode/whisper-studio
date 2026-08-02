@@ -104,8 +104,9 @@ def one_shot(
     ``run_in_executor`` when calling from the event loop). Raises on hard
     failure (no cloud model id, local model not downloaded, transport error, or
     an empty result) so callers can fall back. ``engine`` defaults to
-    :func:`resolve_map_engine`. Only the Anthropic body shape is supported, so
-    the cloud model must be a Claude id (never a gpt/fable key).
+    :func:`resolve_map_engine`. Cloud keys may be Claude (Bedrock Anthropic
+    body) or GPT (OpenAI Responses on mantle); anything else falls back to a
+    Claude model.
 
     ``local_model_key`` names the on-device model for a local map call; when
     unset the resolver follows the resident/first-downloaded model (see
@@ -129,6 +130,15 @@ def one_shot(
         if not out:
             raise RuntimeError("local one-shot completion returned empty")
         return out
+
+    # OpenAI-on-Bedrock cloud key: run the one-shot through the Responses API
+    # on mantle with the same model, so provider-aware callers (compaction)
+    # keep a GPT session entirely on its own model. Failures raise, matching
+    # this function's contract — callers own their fallbacks.
+    from server.openai_bedrock.runtime import is_openai_model
+
+    if is_openai_model(cloud_model_key):
+        return _openai_one_shot(cloud_model_key, system, user, max_tokens)
 
     # cloud / haiku
     from server.chat.infra import _get_bedrock_client, _get_chat_models
@@ -164,3 +174,27 @@ def one_shot(
     if not text:
         raise RuntimeError("cloud one-shot completion returned no text")
     return text
+
+
+def _openai_one_shot(model_key: str, system: str, user: str, max_tokens: int) -> str:
+    """One blocking Responses-API completion on bedrock-mantle. Raises on
+    failure or an empty result (one_shot's contract)."""
+    from server.chat.infra import _get_chat_models
+    from server.openai_bedrock.runtime import build_sync_client, region_for
+
+    model_id = _get_chat_models().get(model_key)
+    if not model_id:
+        raise RuntimeError(f"openai one-shot: model key {model_key!r} not configured")
+    client = build_sync_client(region_for(model_key))
+    resp = client.responses.create(
+        model=model_id,
+        instructions=system,
+        input=user,
+        max_output_tokens=max(16, max_tokens),
+        reasoning={"effort": "low"},
+        store=False,
+    )
+    out = (getattr(resp, "output_text", "") or "").strip()
+    if not out:
+        raise RuntimeError("openai one-shot completion returned empty")
+    return out

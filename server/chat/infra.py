@@ -84,13 +84,19 @@ def _estimate_cost(
     output_tokens: int,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    cached_in_input: bool = False,
 ) -> float:
-    """Estimate USD cost for a Bedrock call using the cost tracker's pricing,
-    including prompt-cache read/write tokens (both default 0)."""
+    """Estimate USD cost for a model call using the cost tracker's pricing,
+    including prompt-cache read/write tokens (both default 0).
+
+    ``cached_in_input``: OpenAI reports cached tokens as a subset of
+    input_tokens (bill the cached share once at the cache-read rate);
+    Anthropic's buckets are disjoint (the default)."""
     return _estimate_cost_fn(
         model_key,
         input_tokens,
         output_tokens,
         cache_read_tokens,
         cache_creation_tokens,
+        cached_in_input=cached_in_input,
     )

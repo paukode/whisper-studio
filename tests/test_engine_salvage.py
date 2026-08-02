@@ -76,9 +76,7 @@ def test_reactive_trim_still_retries_long_histories(monkeypatch):
         [[msg_start(), *text_block("Recovered."), *msg_end()]],
         rejections=1,
     )
-    lines = run_chat_turn(
-        monkeypatch, client, {"question": "next", "history": history}
-    )
+    lines = run_chat_turn(monkeypatch, client, {"question": "next", "history": history})
     joined = "\n".join(lines)
     assert "Recovered." in joined
     assert "Compacting context (prompt too long)" in joined
