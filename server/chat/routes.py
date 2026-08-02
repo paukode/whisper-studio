@@ -6,14 +6,12 @@ Four endpoints:
 - POST /api/chat/btw         — quick side question, no history mutation
 - POST /api/chat             — the main streaming chat endpoint
 
-The big one (``/api/chat``) is a single coherent state machine: it runs
-the turn loop, streams SSE events, persists paused-session state for
-approval/question pauses, and threads tool execution through the agent
-event bus. Pulling pieces out would create more glue than it removes,
-so it stays intact here.
-
-``_paused_sessions`` lives in this module because only ``chat_endpoint``
-reads or writes it (paused turns resume via the same endpoint).
+The big one (``/api/chat``) is turn ASSEMBLY only: request parsing, model
+resolution, transcript condensation, grounding, attachment re-injection,
+system prompt building, and the local/OpenAI dispatch split. The agentic
+loop itself — rounds, compaction, tool execution, pauses — lives in
+``server/chat/engine`` (one loop shared by every provider) and is handed
+the assembled TurnContext at the end of this endpoint.
 """
 
 import asyncio
@@ -22,7 +20,6 @@ import json
 import logging
 import os
 import re as _re
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -32,17 +29,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from server.attachments import attachments
 from server.costs.tracker import record_turn as _record_cost_turn
 from server.hooks import run_hooks
-from server.infrastructure.async_tasks import spawn
-from server.infrastructure.bedrock_retry import invoke_stream_with_retry
 from server.infrastructure.config import latch_session
-from server.infrastructure.errors import (
-    PromptTooLongError,
-    WhisperAPIError,
-    classify_bedrock_error,
-)
 from server.security.permissions import get_mode
-from server.tool_executor import execute_tool_batch, process_tool_results
-from server.utils import BoundedUUIDSet, ndjson_dumps
+from server.utils import ndjson_dumps
 from server.whisper_md import get_whisper_md_context
 from server.workspace import (
     _ws_validate_path,
@@ -64,11 +53,9 @@ _QUERY_REWRITE_TIMEOUT_S = (
 _RERANK_COLD_BUDGET_S = 40  # extra grounding headroom for the reranker's first-turn cold model load
 
 
-from .budget import make_budget_tool_result  # noqa: E402
 from .compaction import (  # noqa: E402
     COMPACT_TRIGGER_CHARS,
     compact_messages_with_claude,
-    ensure_valid_start,
     estimate_message_size,
     sanitize_tool_pairs,
 )
@@ -79,7 +66,6 @@ from .infra import (  # noqa: E402
     _get_chat_models,
     _get_default_model,
 )
-from .tool_pool import _is_tool_concurrent_safe  # noqa: E402
 
 log = logging.getLogger("whisper-studio")
 
@@ -104,28 +90,6 @@ def _prepend_grounding_event(resp, meta):
 
     resp.body_iterator = _gen()
     return resp
-
-
-def _strip_partial_tool_use(content: list[dict]) -> list[dict]:
-    """Prepare an assistant turn for a ``max_tokens`` continuation.
-
-    ``max_tokens`` can cut the model off mid-tool-call, leaving one or more
-    (possibly partial) ``tool_use`` blocks in the assistant turn. Appending
-    that turn followed by a text-only "continue" prompt — with no matching
-    ``tool_result`` — makes Bedrock reject the next request non-retryably
-    ("tool_use ids were found without tool_result blocks immediately after").
-    Drop the tool_use blocks, keeping the text/thinking the model already
-    produced.
-
-    Returns the input unchanged when it holds no tool_use block (preserving the
-    prior behavior). If stripping empties the turn (a bare partial tool_use with
-    no text/thinking preamble), fall back to a minimal text block so the
-    assistant message is never empty — Bedrock rejects empty content too.
-    """
-    if not any(b.get("type") == "tool_use" for b in content):
-        return content
-    kept = [b for b in content if b.get("type") != "tool_use"]
-    return kept or [{"type": "text", "text": "(continuing)"}]
 
 
 async def _rewrite_query_for_retrieval(question: str, history: list[dict]) -> str | None:
@@ -170,17 +134,14 @@ async def _rewrite_query_for_retrieval(question: str, history: list[dict]) -> st
         return None
 
 
-# Paused-session store: when a turn stops on a ws_approval pause, we keep the
-# in-memory `messages` list (which contains the assistant message with all
-# tool_use blocks) plus the pre-computed placeholder tool_results keyed by
-# session_id. The continuation turn pops this state, substitutes the approved
-# tool_use_id's real result, and resumes the loop. Kept in-process memory —
-# not durable across restarts, but paused approvals are short-lived anyway.
-_paused_sessions: dict[str, dict] = {}
-
-# One-shot per process: warns when prompt_caching is on but no round has ever
-# read from cache (see the canary in the message_delta handler).
-_CACHE_CANARY = {"fired": False}
+# Paused-session store: when a turn stops on a ws_approval pause, the engine
+# stashes the in-memory `messages` list plus the pre-computed placeholder
+# tool_results keyed by session_id (see server/chat/engine/pause.py — one
+# store shared by every provider path). The continuation turn pops this state,
+# substitutes the approved tool_use_id's real result, and resumes the loop.
+# Aliased here because the reset endpoint and several tests reach it as
+# ``routes._paused_sessions``.
+from server.chat.engine.pause import paused_sessions as _paused_sessions  # noqa: E402
 
 # Session id -> monotonic start time of its in-flight NEW-turn stream. Guards
 # the pause/resume state above against a second concurrent turn for the same
@@ -963,7 +924,6 @@ async def chat_endpoint(request: Request):
     # build_system_prompt(ultracode=...).
     from server.infrastructure.effort import (
         DEFAULT_EFFORT,
-        api_effort,
         clamp_effort,
         effort_levels_for,
         is_ultracode,
@@ -1395,8 +1355,6 @@ async def chat_endpoint(request: Request):
     # turn (fresh + approval-resume), after compaction, on the exact list sent.
     messages = sanitize_tool_pairs(messages)
 
-    bedrock_client = _get_bedrock_client()
-
     # Same-session double-stream guard. Two NEW turns streaming for one
     # session would corrupt _paused_sessions (approval pause/resume state).
     # Approval continuations are exempt: the auto-allow path fires its
@@ -1461,746 +1419,58 @@ async def chat_endpoint(request: Request):
         elif isinstance(_last["content"], list):
             _last["content"].append({"type": "text", "text": _note})
 
-    async def stream_response():
-        nonlocal messages
-        max_rounds = 50
+    # ── Unified turn engine ──────────────────────────────────────────────────
+    # The agentic loop lives in server/chat/engine (one loop for every
+    # provider); this route only assembles the turn and hands it off.
+    from server.chat.engine.anthropic import AnthropicAdapter
+    from server.chat.engine.policy import CHAT_POLICY
+    from server.chat.engine.runner import TurnContext, run_turn
 
-        # Feature 11/17: cumulative token tracking
-        total_input_tokens = 0
-        total_output_tokens = 0
-        # Prompt-cache token tracking (0 unless caching is on and hits/writes occur)
-        total_cache_read = 0
-        total_cache_creation = 0
+    adapter = AnthropicAdapter(
+        model_key=model_key,
+        model_id=model_id,
+        system_prompt=system_prompt,
+        system_static=system_static,
+        system_dynamic=system_dynamic,
+        caching_on=_caching_on,
+        cache_ttl=_cache_ttl,
+        effort_label=effort_label,
+        force_skill=force_skill,
+        loop=loop,
+        executor=executor,
+    )
 
-        # Completion gate (WS-E): how many times the gate (Stop hooks + goal
-        # evaluator) forced this turn to keep going. Capped so a stuck check
-        # can't loop forever. A new user turn resets the cross-turn counter.
-        stop_blocks_used = 0
-        from server.goals import DEFAULT_MAX_CONSECUTIVE_BLOCKS
-        from server.goals import store as _goal_store
+    def _heartbeat():
+        _stream_heartbeat[session_id] = time.monotonic()
 
-        _goal_cap = DEFAULT_MAX_CONSECUTIVE_BLOCKS
-        try:
-            from server.infrastructure import config as _cfg
-
-            _goal_cap = int(_cfg.get("goal_max_consecutive_blocks", _goal_cap))
-        except Exception:
-            pass
-        _goal_row = _goal_store.get_goal(session_id)
-        goal_text = _goal_row["goal"]
-        if is_new_turn and goal_text:
-            _goal_store.reset_for_new_turn(session_id)
-
-        # BoundedUUIDSet: replay protection — skip duplicate tool_use IDs
-        _seen_tool_ids = BoundedUUIDSet(capacity=256)
-
-        if attachment_texts:
-            yield f"data: {ndjson_dumps({'resolved_content': user_text})}\n\n"
-
-        # Progressive disclosure telemetry: what this turn advertises vs
-        # defers, and roughly how many schema tokens the deferral saves.
-        if _deferred0:
-            yield f"data: {ndjson_dumps({'tool_pool': {'advertised': len(_advertised0), 'deferred': len(_deferred0), 'total': len(_advertised0) + len(_deferred0), 'deferred_tokens_est': _deferred_tokens_est}})}\n\n"
-
-        for round_num in range(max_rounds):
-            is_last_round = round_num == max_rounds - 1
-
-            # Wind-down: tell the model when the round cap is near so it
-            # consolidates instead of getting cut off mid-plan. Persisted
-            # into history on purpose — a request-only injection would fork
-            # the token prefix and break the moving cache checkpoint.
-            from server.chat.loop_hints import inject_reminder, near_cap_reminder
-
-            _reminder = near_cap_reminder(max_rounds - round_num)
-            if _reminder and inject_reminder(messages, _reminder):
-                log.info("Injected near-cap reminder (%d rounds left)", max_rounds - round_num)
-
-            # Heartbeat the slot each round so a long multi-round turn is never
-            # mistaken for an abandoned stream and reclaimed by a concurrent turn.
-            if is_new_turn:
-                _stream_heartbeat[session_id] = time.monotonic()
-
-            # If the client connection has gone away (tab closed, hard refresh),
-            # stop now so guarded_stream's finally frees the stream slot promptly
-            # instead of looping or parking. A *suspended* connection is not
-            # detected here (the socket stays half-open); the stale-slot reclaim
-            # in the double-stream guard is the backstop for that case.
-            if await request.is_disconnected():
-                log.info("Client disconnected mid-stream (session %s); ending", session_id)
-                return
-
-            # Cost budget check before each round
-            from server.costs.budget import check_budget
-
-            budget_exceeded = check_budget(session_id)
-            if budget_exceeded:
-                yield f"data: {ndjson_dumps({'budget_warning': budget_exceeded.message, 'budget_kind': budget_exceeded.kind, 'budget_limit': budget_exceeded.limit, 'budget_current': budget_exceeded.current})}\n\n"
-                yield f"data: {ndjson_dumps({'text': f'[Budget exceeded] {budget_exceeded.message}'})}\n\n"
-                yield "data: [DONE]\n\n"
-                return
-
-            def call_bedrock_stream(
-                messages=messages, is_last_round=is_last_round, round_num=round_num
-            ):
-                # Progressive disclosure: core + this session's activations.
-                # Reassembled every round, so a tool_search activation in
-                # round N is advertised in round N+1 automatically.
-                from server.chat.tool_partition import partition_pool
-                from server.chat.tool_pool import assemble_full_catalog
-
-                _catalog = assemble_full_catalog(
-                    plan_mode=plan_mode,
-                    ws_connected=bool(ws_path),
-                    suppress_workspace_search=suppress_ws_search,
-                )
-                if _is_ff_enabled("progressive_tools"):
-                    from server.chat.tool_activation import get_ordered
-
-                    all_tools, _, core_count = partition_pool(_catalog, get_ordered(session_id))
-                else:
-                    all_tools, core_count = _catalog, None
-                body = {
-                    "anthropic_version": "bedrock-2023-05-31",
-                    "max_tokens": 128000,
-                    "system": system_prompt,
-                    "messages": messages,
-                }
-                # Effort → adaptive thinking + output_config.effort (Extra=xhigh,
-                # Ultracode=xhigh, Max=max, etc). Models with no effort tier
-                # (Haiku) send neither — thinking is omitted entirely.
-                if effort_label is not None:
-                    body["thinking"] = {"type": "adaptive"}
-                    body["output_config"] = {"effort": api_effort(effort_label)}
-                if not is_last_round:
-                    # Prompt caching: checkpoint on the LAST tool and on the
-                    # STATIC system block (cache order is tools -> system ->
-                    # messages). Only when tools are present: the static system
-                    # block alone (~1.4K tokens) is below the 4096-token minimum,
-                    # but tools (~7.6K) precede it, lifting the cumulative prefix
-                    # above the minimum so it caches. On the final round (no
-                    # tools) we leave system as the plain string.
-                    # Truthy (not `is not None`): an empty static block must NOT
-                    # be cached — a zero-length cached prefix is a wasted cache
-                    # breakpoint the fallback prompt-split can produce.
-                    if _caching_on and all_tools and system_static:
-                        from server.chat.caching import (
-                            annotate_messages_cache,
-                            cached_tools_and_system,
-                        )
-
-                        body["tools"], body["system"] = cached_tools_and_system(
-                            all_tools,
-                            system_static,
-                            system_dynamic,
-                            _cache_ttl,
-                            core_count=core_count
-                            if core_count is not None and core_count < len(all_tools)
-                            else None,
-                        )
-                        # Third breakpoint: moving checkpoint on the last
-                        # message so the growing history reads from cache
-                        # round over round instead of being re-billed raw.
-                        # Request-only copy — the shared list stays clean for
-                        # persistence and the non-Anthropic replay paths.
-                        body["messages"] = annotate_messages_cache(messages, _cache_ttl)
-                    else:
-                        body["tools"] = all_tools
-                    # Force the requested skill ONLY on the first
-                    # round of the turn. After that the model may
-                    # have already called it and needs free range to
-                    # use other tools (e.g. read attachments, look
-                    # up a file). Without this guard a turn that
-                    # forces a skill would also force it on the
-                    # follow-up round, causing an infinite call
-                    # loop or a refusal.
-                    # Additionally, only force when thinking is OFF: Bedrock
-                    # rejects a forced tool_choice (type "tool"/"any") combined
-                    # with extended/adaptive thinking with a ValidationException
-                    # ("Invalid request sent to model"), and effort-tier models
-                    # (e.g. opus4.8) always send thinking. The explicit "Call the
-                    # `X` tool now" instruction injected into the user message
-                    # above makes thinking models invoke the skill reliably
-                    # without forcing.
-                    if (
-                        force_skill
-                        and round_num == 0
-                        and "thinking" not in body
-                        and any(t.get("name") == force_skill for t in all_tools)
-                    ):
-                        body["tool_choice"] = {"type": "tool", "name": force_skill}
-                return bedrock_client.invoke_model_with_response_stream(
-                    modelId=model_id,
-                    contentType="application/json",
-                    accept="application/json",
-                    body=json.dumps(body),
-                )
-
-            # Retry wrapper with reactive compaction on prompt-too-long
-            try:
-                response = await invoke_stream_with_retry(
-                    bedrock_client,
-                    call_fn=call_bedrock_stream,
-                    loop=loop,
-                    executor=executor,
-                    on_retry=lambda attempt, err, delay: None,
-                )
-            except PromptTooLongError:
-                # Reactive compaction: strip oldest messages and retry
-                log.warning("Prompt too long — applying reactive compaction")
-                yield f"data: {ndjson_dumps({'status': 'Compacting context (prompt too long)...'})}\n\n"
-                if len(messages) > 4:
-                    # Drop the 2 oldest messages, then re-anchor to a clean user
-                    # turn so the retry never begins with an orphaned
-                    # tool_result (Bedrock rejects that non-retryably).
-                    messages = ensure_valid_start(messages[2:])
-                    messages = await compact_messages_with_claude(
-                        messages, model_id, session_id=session_id
-                    )
-                    messages = sanitize_tool_pairs(messages)
-                    continue  # Retry the round
-                else:
-                    yield f"data: {ndjson_dumps({'error': 'Conversation too long even after compaction. Please start a new session.'})}\n\n"
-                    yield "data: [DONE]\n\n"
-                    return
-            except WhisperAPIError as api_err:
-                yield f"data: {ndjson_dumps({'error': api_err.user_message})}\n\n"
-                yield "data: [DONE]\n\n"
-                return
-
-            content_blocks = []
-            current_block = None
-            stop_reason = "end_turn"
-            round_input_tokens = 0
-            round_output_tokens = 0
-            round_cache_read = 0
-            round_cache_creation = 0
-
-            q = asyncio.Queue()
-            # Stop flag for the reader thread below. Set from the round's
-            # finally (generator teardown on Stop / tab-close) so the reader
-            # stops iterating the Bedrock EventStream instead of draining (and
-            # billing) it to completion into a queue nothing reads while holding
-            # one of the shared executor's threads.
-            _stop_reading = threading.Event()
-            _batch_task: asyncio.Task | None = None
-
-            # Bedrock surfaces mid-stream failures as non-chunk events keyed by
-            # the exception type (lowercase first letter). Map to the canonical
-            # name so classify_bedrock_error routes them correctly instead of us
-            # silently dropping them (which looked like an empty end_turn turn).
-            _stream_error_keys = {
-                "internalServerException": "InternalServerException",
-                "modelStreamErrorException": "ModelStreamErrorException",
-                "validationException": "ValidationException",
-                "throttlingException": "ThrottlingException",
-                "serviceUnavailableException": "ServiceUnavailableException",
-            }
-
-            def _read_stream(
-                response=response,
-                _stream_error_keys=_stream_error_keys,
-                q=q,
-                _stop=_stop_reading,
-            ):
-                try:
-                    stream = response.get("body")
-                    for event in stream:
-                        # Abandoned mid-round (client disconnect / Stop): drop the
-                        # rest of the stream instead of buffering it forever.
-                        if _stop.is_set():
-                            return
-                        chunk = event.get("chunk")
-                        if not chunk:
-                            for ekey, canonical in _stream_error_keys.items():
-                                if ekey in event:
-                                    msg = (event[ekey] or {}).get("message", canonical)
-                                    q.put_nowait(
-                                        classify_bedrock_error(Exception(f"{canonical}: {msg}"))
-                                    )
-                                    return
-                            continue
-                        data = json.loads(chunk["bytes"].decode("utf-8"))
-                        q.put_nowait(data)
-                    if not _stop.is_set():
-                        q.put_nowait(None)
-                except Exception as e:
-                    # A close() from the teardown path aborts the blocking read;
-                    # don't surface that as a spurious error to a gone consumer.
-                    if not _stop.is_set():
-                        q.put_nowait(e)
-
-            loop.run_in_executor(executor, _read_stream)
-
-            try:
-                while True:
-                    data = await q.get()
-                    if data is None:
-                        break
-                    if isinstance(data, Exception):
-                        # Surface mid-stream Bedrock errors as a clean SSE error
-                        # (matching the invoke-time path above) instead of crashing
-                        # the generator with no terminating [DONE].
-                        api_err = (
-                            data
-                            if isinstance(data, WhisperAPIError)
-                            else classify_bedrock_error(data)
-                        )
-                        log.warning("Bedrock stream error: %s", api_err)
-                        yield f"data: {ndjson_dumps({'error': api_err.user_message})}\n\n"
-                        yield "data: [DONE]\n\n"
-                        return
-                    event_type = data.get("type")
-
-                    if event_type == "message_start":
-                        usage = data.get("message", {}).get("usage", {})
-                        # With caching, input_tokens is the NON-cached remainder;
-                        # cached tokens arrive in these separate fields.
-                        round_input_tokens += usage.get("input_tokens", 0)
-                        round_cache_read += usage.get("cache_read_input_tokens", 0)
-                        round_cache_creation += usage.get("cache_creation_input_tokens", 0)
-
-                    elif event_type == "content_block_start":
-                        block = data.get("content_block", {})
-                        current_block = {
-                            "type": block.get("type"),
-                            "text": "",
-                            "id": block.get("id", ""),
-                            "name": block.get("name", ""),
-                            "input_json": "",
-                            "signature": "",
-                        }
-                        content_blocks.append(current_block)
-                        if current_block["type"] == "tool_use":
-                            yield f"data: {ndjson_dumps({'skill': current_block['name'], 'input': {}})}\n\n"
-                        elif current_block["type"] == "thinking":
-                            yield f"data: {ndjson_dumps({'thinking_start': True})}\n\n"
-
-                    elif event_type == "content_block_delta":
-                        delta = data.get("delta", {})
-                        if (
-                            delta.get("type") == "thinking_delta"
-                            and current_block
-                            and current_block["type"] == "thinking"
-                        ):
-                            text = delta.get("thinking", "")
-                            current_block["text"] += text
-                            yield f"data: {ndjson_dumps({'thinking': text})}\n\n"
-                        elif (
-                            delta.get("type") == "signature_delta"
-                            and current_block
-                            and current_block["type"] == "thinking"
-                        ):
-                            current_block["signature"] += delta.get("signature", "")
-                        elif (
-                            delta.get("type") == "text_delta"
-                            and current_block
-                            and current_block["type"] == "text"
-                        ):
-                            text = delta.get("text", "")
-                            current_block["text"] += text
-                            yield f"data: {ndjson_dumps({'text': text})}\n\n"
-                        elif (
-                            delta.get("type") == "input_json_delta"
-                            and current_block
-                            and current_block["type"] == "tool_use"
-                        ):
-                            current_block["input_json"] += delta.get("partial_json", "")
-
-                    elif event_type == "content_block_stop":
-                        if current_block and current_block["type"] == "thinking":
-                            yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
-                        elif current_block and current_block["type"] == "tool_use":
-                            try:
-                                parsed_input = (
-                                    json.loads(current_block["input_json"])
-                                    if current_block["input_json"]
-                                    else {}
-                                )
-                            except json.JSONDecodeError:
-                                parsed_input = {}
-                            current_block["parsed_input"] = parsed_input
-                            yield f"data: {ndjson_dumps({'skill_input': current_block['name'], 'input': parsed_input})}\n\n"
-
-                    elif event_type == "message_delta":
-                        stop_reason = data.get("delta", {}).get("stop_reason", stop_reason)
-                        usage = data.get("usage", {})
-                        round_output_tokens += usage.get("output_tokens", 0)
-                        total_input_tokens += round_input_tokens
-                        total_output_tokens += round_output_tokens
-                        total_cache_read += round_cache_read
-                        total_cache_creation += round_cache_creation
-                        # Cost includes cache reads (~0.1x) and writes (~1.25x).
-                        cost = _estimate_cost(
-                            model_key,
-                            total_input_tokens,
-                            total_output_tokens,
-                            total_cache_read,
-                            total_cache_creation,
-                        )
-                        # True prompt size this round (real tokens, not the
-                        # char estimate): feeds the context meter and the
-                        # token-based compaction nudge.
-                        from server.chat.loop_hints import context_window_for, note_prompt_tokens
-
-                        _ctx_max = context_window_for(model_key)
-                        _prompt_tokens = (
-                            round_input_tokens + round_cache_read + round_cache_creation
-                        )
-                        note_prompt_tokens(session_id, _prompt_tokens, _ctx_max)
-                        # One-shot canary: caching enabled but nothing ever
-                        # reads from cache — the breakpoints are misplaced or
-                        # the TTL expired between rounds. Round 3+ so cold
-                        # first-writes don't false-alarm.
-                        if (
-                            _caching_on
-                            and round_num >= 2
-                            and total_cache_read == 0
-                            and not _CACHE_CANARY["fired"]
-                        ):
-                            _CACHE_CANARY["fired"] = True
-                            log.warning(
-                                "prompt_caching is ON but cache_read is still 0 after %d "
-                                "rounds — checkpoints may be misplaced or the cache prefix "
-                                "is churning (tool pool / system prompt instability)",
-                                round_num + 1,
-                            )
-                        yield f"data: {ndjson_dumps({'usage': {'input_tokens': round_input_tokens, 'output_tokens': round_output_tokens, 'total_input': total_input_tokens, 'total_output': total_output_tokens, 'cache_read_tokens': round_cache_read, 'cache_creation_tokens': round_cache_creation, 'total_cache_read': total_cache_read, 'total_cache_creation': total_cache_creation, 'estimated_cost_usd': round(cost, 6), 'model': model_key, 'context_used': _prompt_tokens, 'context_max': _ctx_max}})}\n\n"
-
-                        # Persist cost to SQLite
-                        _record_cost_turn(
-                            session_id=session_id,
-                            turn_number=round_num,
-                            model=model_key,
-                            input_tokens=round_input_tokens,
-                            output_tokens=round_output_tokens,
-                            cache_read_tokens=round_cache_read,
-                            cache_creation_tokens=round_cache_creation,
-                            cost_usd=_estimate_cost(
-                                model_key,
-                                round_input_tokens,
-                                round_output_tokens,
-                                round_cache_read,
-                                round_cache_creation,
-                            ),
-                        )
-
-                result_content = []
-                for b in content_blocks:
-                    if b["type"] == "thinking":
-                        result_content.append(
-                            {
-                                "type": "thinking",
-                                "thinking": b["text"],
-                                "signature": b.get("signature", ""),
-                            }
-                        )
-                    elif b["type"] == "text":
-                        result_content.append({"type": "text", "text": b["text"]})
-                    elif b["type"] == "tool_use":
-                        parsed_input = b.get("parsed_input", {})
-                        result_content.append(
-                            {
-                                "type": "tool_use",
-                                "id": b["id"],
-                                "name": b["name"],
-                                "input": parsed_input,
-                            }
-                        )
-
-                tool_uses_raw = [b for b in result_content if b["type"] == "tool_use"]
-                # Dedup: skip any tool_use IDs already seen this stream (replay protection)
-                tool_uses = []
-                for _tu in tool_uses_raw:
-                    if not _seen_tool_ids.has(_tu["id"]):
-                        _seen_tool_ids.add(_tu["id"])
-                        tool_uses.append(_tu)
-
-                if stop_reason == "max_tokens":
-                    # A tool_use can be cut off mid-call here; feeding it back with a
-                    # text-only continue prompt (no tool_result) is a non-retryable
-                    # Bedrock error, so strip any tool_use blocks first.
-                    messages.append(
-                        {"role": "assistant", "content": _strip_partial_tool_use(result_content)}
-                    )
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Continue exactly where you left off. Do not repeat anything. "
-                                "IMPORTANT: If you were in the middle of a code block (```html or similar), "
-                                "continue the code directly — do NOT close and reopen the fence, do NOT add explanation text "
-                                "before or inside the code. Just continue the code from the exact point it was cut off. "
-                                "The output will be concatenated to your previous response."
-                            ),
-                        }
-                    )
-                    if estimate_message_size(messages) > COMPACT_TRIGGER_CHARS:
-                        messages = await compact_messages_with_claude(
-                            messages, model_id, session_id=session_id
-                        )
-                        messages = ensure_attachments_present(messages, session_id)
-                    continue
-
-                if stop_reason != "tool_use" or not tool_uses:
-                    # Completion gate (WS-E): Stop hooks + goal evaluator. A block
-                    # means the goal isn't met (or a Stop hook refused) — inject
-                    # the feedback and loop again so the model keeps working toward
-                    # the goal. Bounded by the consecutive-block cap.
-                    if not is_last_round and stop_blocks_used < _goal_cap:
-                        from server.goals import GateContext
-                        from server.goals.gate import run_completion_gate
-
-                        _gate = await run_completion_gate(
-                            GateContext(
-                                session_id=session_id,
-                                messages=messages,
-                                goal=goal_text,
-                                provider="anthropic",
-                                model_id=model_id,
-                                workspace=ws_path,
-                                attempt=stop_blocks_used,
-                                max_consecutive_blocks=_goal_cap,
-                            )
-                        )
-                        if _gate.frame:
-                            yield f"data: {ndjson_dumps(_gate.frame)}\n\n"
-                        if _gate.block:
-                            stop_blocks_used += 1
-                            # Sanitize the assistant turn before re-injecting: drop
-                            # any partial tool_use (stop_reason != tool_use here) and
-                            # guarantee non-empty text, else Bedrock rejects the next
-                            # request with an empty/malformed assistant message.
-                            _assistant = _strip_partial_tool_use(result_content)
-                            _has_text = isinstance(_assistant, list) and any(
-                                isinstance(b, dict)
-                                and b.get("type") == "text"
-                                and (b.get("text") or "").strip()
-                                for b in _assistant
-                            )
-                            if not _has_text:
-                                _assistant = [{"type": "text", "text": "(continuing)"}]
-                            messages.append({"role": "assistant", "content": _assistant})
-                            messages.append(
-                                {
-                                    "role": "user",
-                                    "content": f"[completion gate] {_gate.feedback}",
-                                }
-                            )
-                            continue
-
-                    log.info(
-                        "Stream ending: stop_reason=%s, tool_uses=%d, round=%d",
-                        stop_reason,
-                        len(tool_uses),
-                        round_num,
-                    )
-                    # The buddy companion is purely cosmetic now — it makes no LLM
-                    # calls and never touches the chat turn. Reactions happen
-                    # client-side on pet (see BuddyWidget).
-
-                    # Memory extraction (fire-and-forget background tasks).
-                    # Runs without a workspace too: extraction then routes to the
-                    # global tier only.
-                    if _is_ff_enabled("auto_memory"):
-                        from server.memory.extract import maybe_extract_memory
-
-                        spawn(
-                            maybe_extract_memory(
-                                messages=messages,
-                                session_id=session_id,
-                                ws_path=ws_path,
-                                model_id=model_id,
-                            ),
-                            name="auto-memory-extract",
-                        )
-                    if _is_ff_enabled("session_memory"):
-                        from server.memory.session_memory import maybe_update_session_memory
-
-                        spawn(
-                            maybe_update_session_memory(
-                                messages=messages,
-                                session_id=session_id,
-                                model_id=model_id,
-                            ),
-                            name="session-memory-update",
-                        )
-                    # Record session for dream consolidation and run it when a
-                    # tier is due (flag-gated inside; covers global + project)
-                    if _is_ff_enabled("dream_consolidation"):
-                        from server.memory.dream import record_and_maybe_dream
-
-                        spawn(
-                            record_and_maybe_dream(ws_path, model_id=model_id),
-                            name="dream-consolidation",
-                        )
-
-                    yield "data: [DONE]\n\n"
-                    return
-
-                messages.append({"role": "assistant", "content": result_content})
-
-                # Execute tools via StreamingToolExecutor. While the batch runs,
-                # drain the agent event_bus so team_create / spawn_agent activity
-                # surfaces to the UI in real time instead of arriving in a burst
-                # after the whole tool returns.
-                from server.agents.event_bus import event_bus as _agent_event_bus
-
-                _event_queue = _agent_event_bus.subscribe(session_id)
-                _batch_task = asyncio.create_task(
-                    execute_tool_batch(
-                        tool_uses,
-                        is_concurrent_safe=_is_tool_concurrent_safe,
-                        loop=loop,
-                        executor=executor,
-                        transcript=transcript,
-                        attachments=current_attachments,
-                        session_id=session_id,
-                        session_denials=session_denials,
-                        model_id=model_id,
-                        plan_mode=plan_mode,
-                        mode=mode,
-                        # Subagents inherit the turn's clamped effort so an
-                        # ultracode parent no longer fans out to plain children.
-                        effort_label=effort_label,
-                    )
-                )
-
-                def _route_event(ev: dict) -> dict | None:
-                    """Dispatch event_bus events to the right SSE key based on
-                    their ``type`` discriminator. Agent runtime events have
-                    no ``type`` field (they look like progress payloads).
-                    Cron and memory events publish with a ``type`` but are
-                    delivered by the long-lived
-                    ``/api/sessions/{id}/events`` stream instead — skipping
-                    them here prevents double delivery (a background memory
-                    extraction can finish while a later turn's tool batch has
-                    this drainer subscribed, and a memory_event wrapped as
-                    team_progress fails the frontend's frame schema)."""
-                    if ev.get("type") in (
-                        "cron_event",
-                        "memory_event",
-                        "task_event",
-                        "cron_progress",
-                        "ci_progress",
-                        "ci_result",
-                    ):
-                        return None
-                    return {"team_progress": ev}
-
-                try:
-                    while not _batch_task.done():
-                        try:
-                            _ev = await asyncio.wait_for(_event_queue.get(), timeout=0.05)
-                            _payload = _route_event(_ev)
-                            if _payload is not None:
-                                yield f"data: {ndjson_dumps(_payload)}\n\n"
-                        except asyncio.TimeoutError:
-                            pass
-                    # Drain any events queued after the loop noticed completion
-                    while not _event_queue.empty():
-                        _ev = _event_queue.get_nowait()
-                        _payload = _route_event(_ev)
-                        if _payload is not None:
-                            yield f"data: {ndjson_dumps(_payload)}\n\n"
-                    states = _batch_task.result()
-                finally:
-                    _agent_event_bus.unsubscribe(session_id, _event_queue)
-
-                truncation_events: list[dict] = []
-                (
-                    tool_results,
-                    sse_events,
-                    has_pending_approval,
-                    has_user_question,
-                ) = await process_tool_results(
-                    states,
-                    budget_fn=make_budget_tool_result(truncation_events),
-                    session_approvals=session_approvals,
-                    config=session_config,
-                    model_id=model_id,
-                    recent_messages=[m for m in messages if m.get("role") == "assistant"][-3:],
-                    mode=mode,
-                )
-
-                # Flush SSE events to the stream
-                for evt in sse_events:
-                    yield f"data: {evt}\n\n"
-                # Surface tool-result truncations so the UI can show a "view full
-                # output" affordance instead of silently dropping data.
-                for trunc_evt in truncation_events:
-                    yield f"data: {ndjson_dumps(trunc_evt)}\n\n"
-
-                if has_user_question:
-                    # Mirror the approval pause/resume: stash the paused
-                    # conversation so when the user answers (via the question
-                    # card), the continuation turn can rebuild a well-formed
-                    # Bedrock request with the placeholders replaced by the
-                    # user's actual answers. Without this, Bedrock would see a
-                    # tool_use with no matching tool_result and start
-                    # hallucinating answers on the user's behalf.
-                    _paused_sessions[session_id] = {
-                        "messages": list(messages),
-                        "pending_tool_results": list(tool_results),
-                    }
-                    yield "data: [DONE]\n\n"
-                    return
-
-                if has_pending_approval:
-                    # Stash the paused conversation so the continuation turn can
-                    # rebuild a well-formed Bedrock request. `messages` now ends
-                    # with the assistant message containing every tool_use id;
-                    # `tool_results` contains placeholder entries for every
-                    # un-executed sibling, produced by process_tool_results.
-                    _paused_sessions[session_id] = {
-                        "messages": list(messages),
-                        "pending_tool_results": list(tool_results),
-                    }
-                    yield "data: [DONE]\n\n"
-                    return
-
-                log.info("Round %d: %d tool results, continuing loop", round_num, len(tool_results))
-
-                if not tool_results:
-                    log.warning("No tool results to send back — ending stream")
-                    yield "data: [DONE]\n\n"
-                    return
-
-                messages.append({"role": "user", "content": tool_results})
-
-                # Feature 2: Compact if needed — char estimate, supplemented
-                # by TOKEN truth: the per-round usage said the prompt crossed
-                # 80% of the model's window (fires once per session).
-                from server.chat.loop_hints import should_nudge_compaction
-
-                if estimate_message_size(
-                    messages
-                ) > COMPACT_TRIGGER_CHARS or should_nudge_compaction(session_id):
-                    messages = await compact_messages_with_claude(
-                        messages, model_id, session_id=session_id
-                    )
-                    # Restore any attachment the summary swallowed. The
-                    # REACTIVE PromptTooLong path above deliberately does not
-                    # re-inject (it must shrink, and analyze_document still
-                    # has session-wide access as the fallback).
-                    messages = ensure_attachments_present(messages, session_id)
-            finally:
-                # SSE generator torn down mid-round (Stop / tab-close aborts
-                # the fetch) or the round finished — either way stop the reader
-                # thread and release its Bedrock EventStream promptly, then
-                # cancel the tool batch if one is still in flight. Mirrors the
-                # subagent stream's finally cancellation (server/local/stream.py).
-                _stop_reading.set()
-                try:
-                    _body = response.get("body")
-                    if _body is not None:
-                        _body.close()
-                except Exception:
-                    pass
-                if _batch_task is not None and not _batch_task.done():
-                    _batch_task.cancel()
-
-        yield f"data: {ndjson_dumps({'text': '(Reached maximum tool rounds)'})}\n\n"
-        yield "data: [DONE]\n\n"
+    turn_ctx = TurnContext(
+        session_id=session_id,
+        model_key=model_key,
+        model_id=model_id,
+        messages=messages,
+        adapter=adapter,
+        policy=CHAT_POLICY,
+        loop=loop,
+        executor=executor,
+        plan_mode=plan_mode,
+        mode=mode,
+        ws_path=ws_path,
+        suppress_ws_search=suppress_ws_search,
+        effort_label=effort_label,
+        transcript=transcript,
+        current_attachments=current_attachments,
+        session_denials=session_denials,
+        session_approvals=session_approvals,
+        session_config=session_config,
+        attachment_texts=attachment_texts,
+        user_text=user_text,
+        advertised_count=len(_advertised0),
+        deferred_count=len(_deferred0),
+        deferred_tokens_est=_deferred_tokens_est,
+        is_new_turn=is_new_turn,
+        heartbeat=_heartbeat if is_new_turn else None,
+        is_disconnected=request.is_disconnected,
+    )
 
     async def guarded_stream():
         # The discard must survive every exit path (normal [DONE], client
@@ -2215,7 +1485,7 @@ async def chat_endpoint(request: Request):
             # used for local/openai, which don't hold an _active_chat_streams slot.
             if grounding_meta:
                 yield f"data: {ndjson_dumps({'grounding': grounding_meta})}\n\n"
-            async for chunk in stream_response():
+            async for chunk in run_turn(turn_ctx):
                 yield chunk
         finally:
             if is_new_turn and _active_chat_streams.get(session_id) == stream_token:
