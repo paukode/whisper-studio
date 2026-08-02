@@ -67,15 +67,15 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Model</th><th>Path</th><th>Notes</th></tr></thead>
       <tbody>
-        <tr><td>Claude (Haiku / Sonnet / Opus)</td><td>Main Anthropic path</td><td>Bedrock streaming + the full tool loop below.</td></tr>
-        <tr><td>GPT-5.x</td><td><code class="path">server/openai_bedrock/</code></td><td>OpenAI request/response format over Bedrock; returns early.</td></tr>
-        <tr><td>On-device Gemma</td><td><code class="path">server/local/</code></td><td>Runs locally on a dedicated executor thread; returns early.</td></tr>
+        <tr><td>Claude (Haiku / Sonnet / Opus)</td><td>Anthropic adapter</td><td>Bedrock streaming; the engine loop below.</td></tr>
+        <tr><td>GPT-5.x</td><td><code class="path">server/openai_bedrock/</code></td><td>OpenAI Responses format over bedrock-mantle; same engine via its adapter.</td></tr>
+        <tr><td>On-device Gemma</td><td><code class="path">server/local/</code></td><td>llama-server subprocess; same engine via the LocalAdapter (offline policy).</td></tr>
       </tbody>
     </table></div>
     <p>See <a href="arch-backends.html">Model backends &amp; modes</a> for the full picture.</p>
 
     <h2 id="the-streaming-loop">The streaming loop</h2>
-    <p>The Anthropic path enters a loop of up to <b>50 rounds</b>. Each round:</p>
+    <p>The engine enters a loop of up to <b>50 rounds</b> (the CHAT policy; the same loop serves every provider). Each round:</p>
     <ol class="steps">
       <li><h4>Check the budget</h4><p>If the session or daily <a href="arch-costs.html">cost cap</a>
         is exceeded, emit an error and finish.</p></li>
