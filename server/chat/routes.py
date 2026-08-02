@@ -1303,32 +1303,10 @@ async def chat_endpoint(request: Request):
     if _local_resp is not None:
         return _prepend_grounding_event(_local_resp, grounding_meta)
 
-    # OpenAI-on-Bedrock path (GPT-5.5 / GPT-5.4). Like the local bridge, this
-    # returns a StreamingResponse for an OpenAI model (fresh turn or approval
-    # resume) or None to fall through to the Bedrock/Anthropic path. It must run
-    # BEFORE compaction (compaction calls Bedrock; an OpenAI turn must not).
-    from server.openai_bedrock.route import openai_chat_response
-
-    _openai_resp = openai_chat_response(
-        model_key=model_key,
-        model_id=model_id,
-        body=body,
-        messages=messages,
-        session_id=session_id,
-        approved_tool_result=approved_tool_result,
-        transcript=transcript,
-        system_prompt=system_prompt,
-        effort_label=effort_label,
-        plan_mode=plan_mode,
-        mode=mode,
-        ws_path=ws_path,
-        session_approvals=session_approvals,
-        session_denials=session_denials,
-        session_config=session_config,
-        suppress_ws_search=suppress_ws_search,
-    )
-    if _openai_resp is not None:
-        return _prepend_grounding_event(_openai_resp, grounding_meta)
+    # OpenAI models (GPT-5.x) run on the SAME engine path as Claude below —
+    # the provider split happens at adapter selection. Compaction is safe for
+    # them now: its summarizer routes through one_shot with the session's own
+    # model instead of hard-calling Bedrock Anthropic.
 
     # Tool access (analyze_document) covers EVERY attachment bound to this
     # session, not just this turn's ids — the durable store is the source of
@@ -1342,9 +1320,11 @@ async def chat_endpoint(request: Request):
     )
     loop = asyncio.get_event_loop()
 
-    # Feature 2: Claude-based compaction
+    # Pre-flight proactive compaction (provider-aware summarizer).
     if estimate_message_size(messages) > COMPACT_TRIGGER_CHARS:
-        messages = await compact_messages_with_claude(messages, model_id, session_id=session_id)
+        messages = await compact_messages_with_claude(
+            messages, model_id, session_id=session_id, model_key=model_key
+        )
         # Compaction can summarize an attach-turn message away; restore any
         # session attachment that no longer appears in the context.
         messages = ensure_attachments_present(messages, session_id)
@@ -1421,24 +1401,39 @@ async def chat_endpoint(request: Request):
 
     # ── Unified turn engine ──────────────────────────────────────────────────
     # The agentic loop lives in server/chat/engine (one loop for every
-    # provider); this route only assembles the turn and hands it off.
-    from server.chat.engine.anthropic import AnthropicAdapter
+    # provider); this route only assembles the turn, picks the provider
+    # adapter, and hands it off.
     from server.chat.engine.policy import CHAT_POLICY
     from server.chat.engine.runner import TurnContext, run_turn
 
-    adapter = AnthropicAdapter(
-        model_key=model_key,
-        model_id=model_id,
-        system_prompt=system_prompt,
-        system_static=system_static,
-        system_dynamic=system_dynamic,
-        caching_on=_caching_on,
-        cache_ttl=_cache_ttl,
-        effort_label=effort_label,
-        force_skill=force_skill,
-        loop=loop,
-        executor=executor,
-    )
+    _provider = _get_chat_model_meta().get(model_key, {}).get("provider", "anthropic")
+    if _provider == "openai_bedrock":
+        from server.chat.engine.openai import OpenAIResponsesAdapter
+
+        adapter = OpenAIResponsesAdapter(
+            model_key=model_key,
+            model_id=model_id,
+            system_prompt=system_prompt,
+            effort_label=effort_label,
+            session_id=session_id,
+            body=body,
+        )
+    else:
+        from server.chat.engine.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter(
+            model_key=model_key,
+            model_id=model_id,
+            system_prompt=system_prompt,
+            system_static=system_static,
+            system_dynamic=system_dynamic,
+            caching_on=_caching_on,
+            cache_ttl=_cache_ttl,
+            effort_label=effort_label,
+            force_skill=force_skill,
+            loop=loop,
+            executor=executor,
+        )
 
     def _heartbeat():
         _stream_heartbeat[session_id] = time.monotonic()
