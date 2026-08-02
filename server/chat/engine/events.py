@@ -45,6 +45,14 @@ class ThinkingStop:
 
 
 @dataclass(frozen=True)
+class ToolCallStart:
+    """A tool call has begun streaming (arguments not yet complete). The UI
+    shows the running tool immediately; the complete call follows."""
+
+    name: str
+
+
+@dataclass(frozen=True)
 class ToolCall:
     """One complete tool call (adapters buffer argument deltas themselves —
     the engine never sees partial JSON)."""
@@ -91,14 +99,28 @@ class Heartbeat:
     pass
 
 
+@dataclass(frozen=True)
+class RoundResult:
+    """Terminal event of a successful round: the provider-canonical assistant
+    content (Anthropic block shapes — text/thinking/tool_use), the stop
+    reason, and the round's token usage. Always the LAST event an adapter
+    yields for a round; the engine appends ``content`` to the conversation."""
+
+    stop_reason: str
+    content: list = field(default_factory=list)
+    usage: Usage = field(default_factory=Usage)
+
+
 RoundEvent = (
     TextDelta
     | ThinkingStart
     | ThinkingDelta
     | ThinkingStop
+    | ToolCallStart
     | ToolCall
     | Usage
     | RoundError
     | Incomplete
     | Heartbeat
+    | RoundResult
 )
