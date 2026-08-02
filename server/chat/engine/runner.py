@@ -90,6 +90,13 @@ class TurnContext:
     deferred_count: int = 0
     deferred_tokens_est: int = 0
     is_new_turn: bool = True
+    # Model id handed to the tool executor / permission pipeline. None means
+    # ctx.model_id; the local path passes "" so the permission explainer and
+    # auto-mode classifier stay offline (they gate on a truthy model id).
+    tool_exec_model_id: str | None = None
+    # Post-turn memory hooks override; None uses the engine's generic hooks.
+    # The local path supplies its own (offline-aware model_mode gating).
+    memory_hooks: Callable[[list], None] | None = None
     # Callbacks into route-owned state (None outside interactive chat).
     heartbeat: Callable[[], None] | None = None
     is_disconnected: Callable[[], Any] | None = None  # async
@@ -372,7 +379,11 @@ async def run_turn(ctx: TurnContext):
             if stop_reason != "tool_use" or not tool_uses:
                 # Completion gate (WS-E): Stop hooks + goal evaluator. A block
                 # injects the feedback and loops again, bounded by the cap.
-                if not is_last_round and stop_blocks_used < _goal_cap:
+                if (
+                    not is_last_round
+                    and stop_blocks_used < _goal_cap
+                    and ctx.policy.completion_gate
+                ):
                     from server.goals import GateContext
                     from server.goals.gate import run_completion_gate
 
@@ -418,7 +429,10 @@ async def run_turn(ctx: TurnContext):
                 )
 
                 # Post-turn memory hooks (fire-and-forget background tasks).
-                _fire_memory_hooks(messages, session_id, ctx.ws_path, ctx.model_id)
+                if ctx.memory_hooks is not None:
+                    ctx.memory_hooks(messages)
+                else:
+                    _fire_memory_hooks(messages, session_id, ctx.ws_path, ctx.model_id)
 
                 yield "data: [DONE]\n\n"
                 return
@@ -439,7 +453,9 @@ async def run_turn(ctx: TurnContext):
                     attachments=ctx.current_attachments,
                     session_id=session_id,
                     session_denials=ctx.session_denials,
-                    model_id=ctx.model_id,
+                    model_id=ctx.model_id
+                    if ctx.tool_exec_model_id is None
+                    else ctx.tool_exec_model_id,
                     plan_mode=ctx.plan_mode,
                     mode=ctx.mode,
                     # Subagents inherit the turn's clamped effort so an
@@ -492,7 +508,7 @@ async def run_turn(ctx: TurnContext):
                 budget_fn=make_budget_tool_result(truncation_events),
                 session_approvals=ctx.session_approvals,
                 config=ctx.session_config,
-                model_id=ctx.model_id,
+                model_id=ctx.model_id if ctx.tool_exec_model_id is None else ctx.tool_exec_model_id,
                 recent_messages=[m for m in messages if m.get("role") == "assistant"][-3:],
                 mode=ctx.mode,
             )
