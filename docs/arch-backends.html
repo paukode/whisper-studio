@@ -44,32 +44,30 @@
           on-device.</p>
       </li>
       <li>
-        <h4>Is it an OpenAI model?</h4>
-        <p>Otherwise the endpoint calls <code>openai_chat_response(...)</code>
-          (<code class="path">server/openai_bedrock/route.py</code>). If <code>is_openai_model()</code>
-          matches (its <code>chat_model_meta</code> carries <code>provider == "openai_bedrock"</code>),
-          the turn is served in OpenAI request/response format over Bedrock.</p>
-      </li>
-      <li>
-        <h4>Otherwise: the Anthropic path</h4>
-        <p>If both bridges return <code>None</code>, the default Claude path continues in the endpoint:
-          Bedrock streaming plus the full agentic tool loop, retry wrapper, reactive compaction, and
-          per-turn cost tracking.</p>
+        <h4>Cloud models: one engine, two adapters</h4>
+        <p>Claude and GPT turns run on the SAME unified turn engine
+          (<code class="path">server/chat/engine/runner.py</code>). The endpoint picks the provider
+          adapter from <code>chat_model_meta</code> (<code>provider == "openai_bedrock"</code> selects
+          the Responses adapter in <code class="path">server/chat/engine/openai.py</code>; everything
+          else uses the Bedrock adapter in <code class="path">server/chat/engine/anthropic.py</code>)
+          and hands the assembled turn to <code>run_turn(...)</code>.</p>
       </li>
     </ol>
 
-    <div class="callout callout--warn">
+    <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p><b>The early return is load-bearing.</b> Both bridges must be
-        reached <em>before</em> compaction, because compaction itself calls Bedrock (via Claude). A
-        local or OpenAI turn must never touch that. Each side path is therefore self-contained: it
-        builds its own prompt, runs its own tool loop, and yields its own SSE frames.</p></div>
+      <div class="callout__body"><p><b>One loop, thin adapters.</b> Rounds, budgets, wind-down
+        reminders, proactive/reactive compaction, the salvage round, tool execution through the shared
+        safety gate, approval pauses, and cost accounting all live in the engine and behave identically
+        for every provider. Adapters own only the wire protocol. Compaction summarizes through
+        <code>one_shot</code> with the session's own model, so no provider depends on another.</p></div>
     </div>
 
-    <h2 id="anthropic-path">The Anthropic path (default)</h2>
-    <p>This is the path most turns take, running Claude Haiku, Sonnet, or Opus. It is where the streaming
-      loop from <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> lives, so the
-      backend-specific parts are the Bedrock client and the resilience wrappers around each round.</p>
+    <h2 id="anthropic-path">The Anthropic adapter (default)</h2>
+    <p>This is the adapter most turns use, running Claude Haiku, Sonnet, or Opus. The engine loop from
+      <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> drives it, so the
+      backend-specific parts are the Bedrock client, the request body (prompt-cache checkpoints,
+      effort/thinking), and the resilience wrappers around each round.</p>
 
     <h3 id="bedrock-client">The shared Bedrock client</h3>
     <p>All Bedrock traffic goes through a process-wide singleton <code>boto3</code>
@@ -122,19 +120,19 @@
     <dl class="spec">
       <dt><code class="path">server/local/route.py</code></dt>
       <dd>The bridge the endpoint calls. Detects a local key, then returns
-        <code>server_stream.stream_chat(...)</code> for a fresh turn, or
-        <code>server_stream.resume_chat(...)</code> when an approval continuation arrives for a paused
-        local turn. It also builds the lean system prompt and the per-request <code>tool_ctx</code>.</dd>
+        the unified engine with the <code>LocalAdapter</code>
+        (<code class="path">server/chat/engine/local.py</code>) under the offline LOCAL policy. It also
+        builds the lean system prompt and threads the composer's context-size request.</dd>
       <dt><code class="path">server/local/llama_server.py</code></dt>
       <dd>The subprocess lifecycle: locating the binary (PATH, then Homebrew) and checking its build,
         <code>ensure_serving(key, n_ctx)</code> to start / reuse / restart it, the <code>/health</code>
         wait, <code>stop()</code>, orphan reaping, and a non-streaming <code>complete(...)</code> for
         non-chat callers. It knows nothing about chat, tools, or SSE.</dd>
       <dt><code class="path">server/local/server_stream.py</code></dt>
-      <dd>The SSE adapter and the agentic tool loop: streams <code>/v1/chat/completions</code>,
-        reassembles streamed <code>tool_calls</code> deltas into complete calls, runs them through the
-        shared executor, and emits the same event frames the frontend already consumes. It also holds
-        the paused-turn state and fires the post-turn memory hooks.</dd>
+      <dd>llama-server protocol helpers the LocalAdapter builds on: the
+        <code>/v1/chat/completions</code> SSE parser, the streamed <code>tool_calls</code> accumulator,
+        loose-argument coercion, tool-result message rendering, and the local post-turn memory hooks.
+        The agentic loop itself lives in the unified engine.</dd>
       <dt><code class="path">server/local/registry.py</code></dt>
       <dd>The effective model registry: built-in defaults merged with every <code>is_local</code> entry
         in config's <code>chat_models</code>, config winning per key.</dd>

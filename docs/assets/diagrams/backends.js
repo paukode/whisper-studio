@@ -12,7 +12,7 @@ WSDiagram.mount("backends-diagram", {
     { id: "islocal", group: "model", col: 1, row: 1.5, label: "is_local?", sub: "registry member", desc: "is_local_model(): the key is in the on-device registry (built-ins merged with is_local config entries)." },
     { id: "local", group: "local", col: 2, row: 0, label: "Local runtime", sub: "on-device GGUF", desc: "server_stream.stream_chat over a llama-server subprocess. Returns early, before compaction." },
     { id: "isopenai", group: "model", col: 2, row: 2.5, label: "is_openai?", sub: "provider check", desc: "is_openai_model(): true when chat_model_meta.provider == 'openai_bedrock'." },
-    { id: "openai", group: "external", kind: "external", col: 3, row: 1.5, label: "OpenAI on Bedrock", sub: "GPT-5.x", desc: "stream_openai_chat: OpenAI Responses format over Bedrock. Returns early, before compaction." },
+    { id: "openai", group: "external", kind: "external", col: 3, row: 1.5, label: "OpenAI on Bedrock", sub: "GPT-5.x", desc: "OpenAIResponsesAdapter: OpenAI Responses format over Bedrock, on the unified turn engine." },
     { id: "anth", group: "external", kind: "external", col: 3, row: 3, label: "Anthropic path", sub: "Claude", desc: "The default path: Claude Haiku / Sonnet / Opus via Bedrock streaming and the full tool loop." },
     { id: "retry", group: "server", col: 4, row: 3, label: "Retry + compaction", sub: "bedrock_retry.py", desc: "invoke_stream_with_retry: exponential backoff on throttling, reactive compaction on PromptTooLongError." },
     { id: "cost", group: "persist", kind: "store", col: 4, row: 2, label: "Cost tracking", sub: "per turn", desc: "Each Anthropic round logs token usage and estimated USD against the session and daily caps." },
