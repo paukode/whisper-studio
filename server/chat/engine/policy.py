@@ -21,7 +21,12 @@ class TurnPolicy:
     # Whether an unrescuable turn gets one final no-tools round on a hard-
     # trimmed context (synthesize from what remains) instead of a bare error.
     salvage_round: bool = True
+    # Completion gate (Stop hooks + goal evaluator). Off for the local preset:
+    # the gate's evaluator may call a cloud model, and a local turn must stay
+    # fully offline (parity with the pre-engine local loop, which had no gate).
+    completion_gate: bool = True
 
 
 CHAT_POLICY = TurnPolicy()
+LOCAL_POLICY = TurnPolicy(completion_gate=False)
 CRON_POLICY = TurnPolicy(max_rounds=30, salvage_round=False)

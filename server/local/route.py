@@ -6,8 +6,10 @@ are built. This function decides whether the turn is a local (on-device) one —
 fresh or an approval resume — and returns the ``StreamingResponse``, or ``None``
 to let the cloud Claude path proceed.
 
-This MUST be reached BEFORE compaction in the endpoint: compaction itself calls
-Bedrock, and a local turn must never reach it.
+Local turns run on the unified turn engine (server/chat/engine) through the
+LocalAdapter with the LOCAL policy: no completion gate, an empty tool-executor
+model id (permission explainer stays offline), and compaction that summarizes
+via the resident on-device model — the path stays fully offline end to end.
 """
 
 from __future__ import annotations
@@ -39,20 +41,10 @@ def local_chat_response(
     if not is_local_model(model_key):
         return None
 
-    from server.local import server_stream
-
-    # Approval continuation for a paused local tool turn: the action already ran
-    # server-side via /api/approval/execute, so just resume the loop with the
-    # result. (The cloud approved_tool_result path uses a separate
-    # _paused_sessions dict, so it never touches local state.) Note: the resume
-    # reuses the paused turn's tool_ctx, so strict_rag suppression (if it was
-    # active on the original turn) intentionally carries over — unlike the cloud
-    # resume, which recomputes suppress_ws_search as False.
-    if approved_tool_result and server_stream.has_pause(session_id):
-        return StreamingResponse(
-            server_stream.resume_chat(session_id, approved_tool_result, session_approvals),
-            media_type="text/event-stream",
-        )
+    # Approval continuations flow through the SAME generic branch as the cloud
+    # paths now: routes.py rebuilds the canonical messages from the unified
+    # pause store before calling here, so a local resume is just a normal
+    # engine turn continuing from the restored history.
 
     from server.local.runtime import supports_thinking, supports_tools
 
@@ -96,34 +88,65 @@ def local_chat_response(
         tools=local_tools_on,
         ws_path=ws_path or "",
     )
-    # Tool context mirrors what the cloud loop computes per request, so the local
-    # model sees the same tool pool and reuses the same executor + approval
-    # pipeline. model_id is intentionally absent (local stays offline; the
-    # approval gate is structural, not model-dependent).
-    tool_ctx = {
-        "plan_mode": plan_mode,
-        "mode": mode,
-        "ws_connected": bool(ws_path),
-        "session_approvals": session_approvals,
-        "session_denials": session_denials,
-        "config": session_config,
-        "suppress_ws_search": suppress_ws_search,
-        "transcript": transcript,
-        # Carried so the tools path renders the thinking channel (and a paused
-        # turn's resume keeps the same setting), matching the plain path.
-        "thinking": thinking_on,
-    }
-    return StreamingResponse(
-        server_stream.stream_chat(
-            model_key,
-            local_system,
-            messages,
-            session_id,
+
+    async def _engine_turn():
+        import asyncio
+
+        from server.attachment_store import load_session_attachments
+        from server.chat import executor as tool_thread_pool
+        from server.chat.engine.local import LocalAdapter
+        from server.chat.engine.policy import LOCAL_POLICY
+        from server.chat.engine.runner import TurnContext, run_turn
+        from server.local import llama_server
+        from server.local.server_stream import _spawn_memory_hooks
+        from server.utils import ndjson_dumps
+
+        # Cold start loads gigabytes; keep it off the event loop.
+        try:
+            base_url = await asyncio.get_running_loop().run_in_executor(
+                None, llama_server.ensure_serving, model_key, n_ctx
+            )
+        except Exception as e:
+            yield f"data: {ndjson_dumps({'error': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        adapter = LocalAdapter(
+            model_key=model_key,
+            base_url=base_url,
+            system_prompt=local_system,
             thinking=thinking_on,
-            tools=local_tools_on,
-            tool_ctx=tool_ctx,
+            tools_enabled=local_tools_on,
+        )
+        current_attachments = await asyncio.to_thread(load_session_attachments, session_id)
+        turn_ctx = TurnContext(
+            session_id=session_id,
+            model_key=model_key,
+            # The local memory/cost plumbing keys on the model KEY, and the
+            # engine's generic hooks are overridden below anyway.
+            model_id=model_key,
+            messages=messages,
+            adapter=adapter,
+            policy=LOCAL_POLICY,
+            loop=asyncio.get_running_loop(),
+            executor=tool_thread_pool,
+            plan_mode=plan_mode,
+            mode=mode,
             ws_path=ws_path,
-            n_ctx=n_ctx,
-        ),
-        media_type="text/event-stream",
-    )
+            suppress_ws_search=suppress_ws_search,
+            transcript=transcript,
+            current_attachments=current_attachments,
+            session_denials=session_denials,
+            session_approvals=session_approvals,
+            session_config=session_config,
+            is_new_turn=approved_tool_result is None,
+            # Offline invariants: no permission-explainer model, and the
+            # local-aware memory hooks (model_mode gating) instead of the
+            # generic cloud ones.
+            tool_exec_model_id="",
+            memory_hooks=lambda msgs: _spawn_memory_hooks(model_key, msgs, session_id, ws_path),
+        )
+        async for chunk in run_turn(turn_ctx):
+            yield chunk
+
+    return StreamingResponse(_engine_turn(), media_type="text/event-stream")

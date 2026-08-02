@@ -44,7 +44,18 @@ def context_window(model_key: str, meta: dict | None = None) -> int | None:
     if m.get("context_window"):
         return int(m["context_window"])
     if m.get("is_local"):
-        return None  # resolved from the live n_ctx by the local adapter
+        # Live truth first: the running llama-server's actual n_ctx, then the
+        # sticky requested size (composer CTX chip), then the registry ctx.
+        try:
+            from server.local import llama_server
+            from server.local.runtime import requested_n_ctx
+
+            n = llama_server.resident_n_ctx() or requested_n_ctx()
+            if n:
+                return int(n)
+        except Exception:  # noqa: BLE001 — best-effort resolution
+            pass
+        return int(m["ctx"]) if m.get("ctx") else None
     return FAMILY_DEFAULTS.get(m.get("provider") or "anthropic", _FALLBACK)
 
 
