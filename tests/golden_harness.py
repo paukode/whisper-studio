@@ -147,12 +147,18 @@ def msg_end(stop_reason="end_turn", output_tokens=50):
 def run_chat_turn(monkeypatch, fake_client, body):
     """POST /api/chat against a scripted client; return raw SSE data lines."""
     import server.chat.compaction as compaction_mod
+    import server.chat.engine.anthropic as engine_anthropic_mod
     import server.chat.routes as routes_mod
     import server.local.route as local_route
     import server.openai_bedrock.route as openai_route
 
-    monkeypatch.setattr(routes_mod, "_get_bedrock_client", lambda: fake_client)
+    # Patch every module-level binding of the client getter — the route, the
+    # compaction summarizer, and the engine's Anthropic adapter. Missing one
+    # would silently send the scripted turn to REAL Bedrock.
+    if hasattr(routes_mod, "_get_bedrock_client"):
+        monkeypatch.setattr(routes_mod, "_get_bedrock_client", lambda: fake_client)
     monkeypatch.setattr(compaction_mod, "_get_bedrock_client", lambda: fake_client)
+    monkeypatch.setattr(engine_anthropic_mod, "_get_bedrock_client", lambda: fake_client)
     # Keep the turn on the cloud Anthropic branch regardless of local config.
     monkeypatch.setattr(local_route, "local_chat_response", lambda **kw: None)
     monkeypatch.setattr(openai_route, "openai_chat_response", lambda **kw: None)
@@ -160,7 +166,10 @@ def run_chat_turn(monkeypatch, fake_client, body):
     # Hermetic: post-turn fire-and-forget hooks (memory extraction, session
     # memory, dream consolidation, title gen) must not run — they would build
     # their own REAL bedrock clients in the background. Closing the coroutine
-    # suppresses the un-awaited warning.
+    # suppresses the un-awaited warning. Patched at the source module so both
+    # the route's own spawns and the engine's post-turn hooks are covered.
+    import server.infrastructure.async_tasks as async_tasks_mod
+
     def _swallow(coro, *, name=None):
         coro.close()
 
@@ -170,7 +179,9 @@ def run_chat_turn(monkeypatch, fake_client, body):
 
         return _T()
 
-    monkeypatch.setattr(routes_mod, "spawn", _swallow)
+    monkeypatch.setattr(async_tasks_mod, "spawn", _swallow)
+    if hasattr(routes_mod, "spawn"):
+        monkeypatch.setattr(routes_mod, "spawn", _swallow)
 
     routes_mod._active_chat_streams.clear()
 
