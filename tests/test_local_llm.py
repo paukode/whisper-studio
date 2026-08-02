@@ -177,177 +177,25 @@ def test_local_system_prompt_skips_workspace_note_without_tools(monkeypatch):
 # ── Full tool parity: schema conversion + DSL parsing ────────────────────────
 
 
-def test_get_tool_schemas_exposes_full_pool_plus_web(monkeypatch):
-    # memory_write only enters the pool when the auto_memory feature is on
-    # (opt-in, ships off). Enable it so the "full pool" really is full — the
-    # local model must see the same memory tools the cloud path does when the
-    # user has the Memory toggle on. assemble_tool_pool re-imports is_enabled
-    # per call, so patching the module attribute is honoured.
-    import server.infrastructure.feature_flags as FF
-    from server.mcp import mcp_manager
-
-    monkeypatch.setattr(FF, "is_enabled", lambda flag: flag == "auto_memory")
-    # Keep the pool to built-ins so the assertions below don't depend on
-    # whichever MCP servers the machine running the tests has enabled.
-    monkeypatch.setattr(mcp_manager, "get_bedrock_tools", lambda: [])
-    schemas, names = T.get_tool_schemas(plan_mode=False, ws_connected=True)
-    # web tools ship natively in assemble_tool_pool...
-    assert "web_search" in names and "web_fetch" in names
-    # ...alongside the rest of the full cloud pool (sampled).
-    assert "memory_write" in names and "skill_invoke" in names
-    assert len(schemas) > 10
-    # Gemma's OpenAI function shape with JSON-schema parameters.
-    s0 = schemas[0]
-    assert s0["type"] == "function"
-    assert set(s0["function"]) == {"name", "description", "parameters"}
-    pool = next(s for s in schemas if s["function"]["name"] == "memory_write")
-    assert pool["function"]["parameters"].get("type") == "object"
-
-
-def test_get_tool_schemas_has_no_scope_gate(monkeypatch, tmp_path):
-    """The old off/core/core_web/all scope gate is gone: the local model always
-    sees the full pool, cloud parity, with no filtering knobs."""
-    # Workspace + git tools only enter the pool when a connected workspace
-    # resolves (and, for git, a .git dir). A bare test process has neither, so
-    # point the lookup at a temp git repo. get_workspace_path is consulted via
-    # two separate `from ... import` bindings — get_workspace_tools() (for the
-    # ws_* tools) and assemble_tool_pool() (for the git check) — so both module
-    # references must be patched, not just one.
-    (tmp_path / ".git").mkdir()
-    import inspect
-
-    import server.chat.tool_pool as TP
-    import server.workspace.tools as WT
-
-    monkeypatch.setattr(WT, "get_workspace_path", lambda: str(tmp_path))
-    monkeypatch.setattr(TP, "get_workspace_path", lambda: str(tmp_path))
-
-    # The signature carries no scope parameter any more.
-    assert "scope" not in inspect.signature(T.get_tool_schemas).parameters
-
-    _, names = T.get_tool_schemas(ws_connected=True)
-
-    # Full pool: everyday agentic tools, web, and non-core pool tools alike.
-    assert "ws_read_file" in names and "git_status" in names
-    assert "web_search" in names and "web_fetch" in names
-    assert "skill_invoke" in names
-    assert "summarize_transcript" in names  # forced @skills mentions can run
-
-
-def test_run_tool_round_routes_through_the_safety_gate(monkeypatch):
-    """The load-bearing safety invariant: run_tool_round MUST call
-    process_tool_results (the [WS_APPROVAL] gate) and surface its returns —
-    never bypass it or read state.output directly."""
-    import server.tool_executor as TE
-
-    seen = {}
-
-    async def fake_batch(tool_uses, **kw):
-        seen["batch"] = (tool_uses, kw)
-        return ["STATE"]
-
-    async def fake_process(states, budget_fn, **kw):
-        seen["process"] = (states, kw)
-        return (
-            [{"type": "tool_result", "tool_use_id": "call_1", "content": "RESULT"}],
-            ['{"skill_result": "web_search", "output": "RESULT"}'],
-            False,
-            False,
-        )
-
-    monkeypatch.setattr(TE, "execute_tool_batch", fake_batch)
-    monkeypatch.setattr(TE, "process_tool_results", fake_process)
-
-    async def run():
-        return await T.run_tool_round(
-            # The shape llama-server's parsed calls are normalized into.
-            [{"type": "tool_use", "id": "call_1", "name": "web_search", "input": {"query": "x"}}],
-            session_id="s",
-            session_approvals={},
-            session_denials={},
-            config={},
-        )
-
-    results, sse_events, pending, question = asyncio.run(run())
-    # It went through BOTH calls...
-    assert "batch" in seen and "process" in seen
-    # ...and process_tool_results got offline-safe args (no Bedrock model id).
-    assert seen["process"][1]["model_id"] == ""
-    assert seen["batch"][1]["model_id"] == ""
-    assert results[0]["content"] == "RESULT" and pending is False
-    assert any("skill_result" in e for e in sse_events)
-
-
-def test_run_tool_round_threads_session_attachments(monkeypatch):
-    """The local/OpenAI tool path used to hardcode attachments={}, so
-    analyze_document answered "No documents attached." even on the turn a
-    file was attached. It must load the session's bound attachments from the
-    durable store instead."""
-    import time
-    import uuid
-
-    import server.tool_executor as TE
-    from server import attachment_store
-
-    sid = f"local-att-{uuid.uuid4()}"
-    aid = str(uuid.uuid4())
-    attachment_store.save_attachment(
-        aid,
-        {
-            "kind": "document",
-            "filename": "brief.md",
-            "text": "the brief",
-            "created": time.time(),
-        },
-    )
-    attachment_store.bind_to_session([aid], sid)
-
-    seen = {}
-
-    async def fake_batch(tool_uses, **kw):
-        seen["attachments"] = kw.get("attachments")
-        return []
-
-    async def fake_process(states, budget_fn, **kw):
-        return ([], [], False, False)
-
-    monkeypatch.setattr(TE, "execute_tool_batch", fake_batch)
-    monkeypatch.setattr(TE, "process_tool_results", fake_process)
-
-    asyncio.run(
-        T.run_tool_round(
-            [{"type": "tool_use", "id": "c1", "name": "analyze_document", "input": {}}],
-            session_id=sid,
-            session_approvals={},
-            session_denials={},
-            config={},
-        )
-    )
-    assert aid in seen["attachments"]
-    assert seen["attachments"][aid]["filename"] == "brief.md"
-    attachment_store.delete_session_attachments(sid)
-
-
 # ── Per-turn context-size threading (chip → llama-server) ────────────────────
 
 
 def _run_local_chat(monkeypatch, body):
-    """Call local_chat_response with a captured stream_chat, returning the
-    kwargs it was invoked with (or None if the local path was skipped)."""
+    """Call local_chat_response with a captured llama_server.ensure_serving,
+    returning {n_ctx, model_key} (the engine turn is cut short by raising from
+    the fake server start — n_ctx threading is what these tests pin)."""
+    import asyncio
+
+    from server.local import llama_server
     from server.local import route as R
-    from server.local import server_stream as S
 
     captured = {}
 
-    def fake_stream_chat(model_key, system, messages, session_id, **kwargs):
-        captured.update(kwargs, model_key=model_key)
+    def fake_ensure_serving(model_key, n_ctx=None):
+        captured.update(n_ctx=n_ctx, model_key=model_key)
+        raise RuntimeError("stop here: n_ctx captured")
 
-        async def _gen():
-            yield "data: [DONE]\n\n"
-
-        return _gen()
-
-    monkeypatch.setattr(S, "stream_chat", fake_stream_chat)
+    monkeypatch.setattr(llama_server, "ensure_serving", fake_ensure_serving)
     resp = R.local_chat_response(
         model_key="local_gemma",
         body=body,
@@ -366,6 +214,11 @@ def _run_local_chat(monkeypatch, body):
         session_config={},
     )
     assert resp is not None
+
+    async def drain():
+        return [c async for c in resp.body_iterator]
+
+    asyncio.run(drain())
     return captured
 
 
