@@ -255,7 +255,7 @@ async def run_turn(ctx: TurnContext):
                     trim_attempts += 1
                     messages = ensure_valid_start(messages[2:])
                     messages = await compact_messages_with_claude(
-                        messages, ctx.model_id, session_id=session_id
+                        messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
                     )
                     messages = sanitize_tool_pairs(messages)
                     continue  # retry the round
@@ -304,12 +304,14 @@ async def run_turn(ctx: TurnContext):
             total_output_tokens += round_output_tokens
             total_cache_read += round_cache_read
             total_cache_creation += round_cache_creation
+            _cached_in_input = getattr(ctx.adapter, "cached_in_input", False)
             cost = _estimate_cost(
                 ctx.model_key,
                 total_input_tokens,
                 total_output_tokens,
                 total_cache_read,
                 total_cache_creation,
+                cached_in_input=_cached_in_input,
             )
             from server.chat.loop_hints import context_window_for, note_prompt_tokens
 
@@ -331,6 +333,7 @@ async def run_turn(ctx: TurnContext):
                     round_output_tokens,
                     round_cache_read,
                     round_cache_creation,
+                    cached_in_input=_cached_in_input,
                 ),
             )
 
@@ -361,7 +364,7 @@ async def run_turn(ctx: TurnContext):
                 )
                 if estimate_message_size(messages) > COMPACT_TRIGGER_CHARS:
                     messages = await compact_messages_with_claude(
-                        messages, ctx.model_id, session_id=session_id
+                        messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
                     )
                     messages = ensure_attachments_present(messages, session_id)
                 continue
@@ -527,7 +530,7 @@ async def run_turn(ctx: TurnContext):
                 session_id
             ):
                 messages = await compact_messages_with_claude(
-                    messages, ctx.model_id, session_id=session_id
+                    messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
                 )
                 # Restore any attachment the summary swallowed. The REACTIVE
                 # path above deliberately does not re-inject (it must shrink;
