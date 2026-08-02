@@ -177,6 +177,14 @@ def _infer_thinking_default(key: str) -> str:
     return "budget"
 
 
+def _as_int(v) -> int | None:
+    """Coerce a config-supplied number to int, or None if absent/malformed."""
+    try:
+        return int(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
     """Split a chat_models map into (ids, meta).
 
@@ -198,6 +206,8 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
                 "thinking": _infer_thinking_default(key),
                 "requires_data_retention": False,
                 "effort_tier": infer_effort_tier(key),
+                "context_window": None,
+                "max_output": None,
             }
         elif isinstance(val, dict) and isinstance(val.get("id"), str):
             model_id = val["id"]
@@ -249,6 +259,12 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
                 "filename": val.get("filename"),
                 "dir": val.get("dir"),
                 "ctx": val.get("ctx"),
+                # Context accounting (turn engine): the model's total input
+                # window and max output tokens. Absent ⇒ per-family defaults
+                # (see server/chat/engine/windows.py); local models resolve
+                # from the live n_ctx instead.
+                "context_window": _as_int(val.get("context_window")),
+                "max_output": _as_int(val.get("max_output")),
             }
         # Silently skip malformed entries — a typo in config.json shouldn't
         # take the server down. The model just won't appear in the picker.

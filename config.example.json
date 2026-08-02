@@ -7,32 +7,38 @@
     "fable5.0": {
       "id": "global.anthropic.claude-fable-5",
       "label": "Fable 5.0",
+      "context_window": 200000,
       "thinking": "adaptive",
       "requires_data_retention": true
     },
     "opus5.0": {
       "id": "global.anthropic.claude-opus-5",
       "label": "Opus 5",
+      "context_window": 200000,
       "thinking": "adaptive"
     },
     "opus4.8": {
       "id": "global.anthropic.claude-opus-4-8",
       "label": "Opus 4.8",
+      "context_window": 200000,
       "thinking": "adaptive"
     },
     "sonnet5": {
       "id": "global.anthropic.claude-sonnet-5",
       "label": "Sonnet 5",
+      "context_window": 200000,
       "thinking": "adaptive"
     },
     "haiku": {
       "id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
       "label": "Haiku 4.5",
+      "context_window": 200000,
       "thinking": "budget"
     },
     "gpt5.6-sol": {
       "id": "openai.gpt-5.6-sol",
       "label": "GPT-5.6 Sol",
+      "context_window": 278528,
       "thinking": "adaptive",
       "provider": "openai_bedrock",
       "effort_tier": "openai",
@@ -41,6 +47,7 @@
     "gpt5.6-terra": {
       "id": "openai.gpt-5.6-terra",
       "label": "GPT-5.6 Terra",
+      "context_window": 278528,
       "thinking": "adaptive",
       "provider": "openai_bedrock",
       "effort_tier": "openai",
@@ -49,6 +56,7 @@
     "gpt5.6-luna": {
       "id": "openai.gpt-5.6-luna",
       "label": "GPT-5.6 Luna",
+      "context_window": 278528,
       "thinking": "adaptive",
       "provider": "openai_bedrock",
       "effort_tier": "openai",
@@ -57,21 +65,25 @@
     "opus4.7": {
       "id": "global.anthropic.claude-opus-4-7",
       "label": "Opus 4.7",
+      "context_window": 200000,
       "thinking": "adaptive"
     },
     "opus4.6": {
       "id": "global.anthropic.claude-opus-4-6-v1",
       "label": "Opus 4.6",
+      "context_window": 200000,
       "thinking": "budget"
     },
     "sonnet": {
       "id": "global.anthropic.claude-sonnet-4-6",
       "label": "Sonnet 4.6",
+      "context_window": 200000,
       "thinking": "budget"
     },
     "gpt5.5": {
       "id": "openai.gpt-5.5",
       "label": "GPT-5.5",
+      "context_window": 278528,
       "thinking": "adaptive",
       "provider": "openai_bedrock",
       "effort_tier": "openai",
@@ -79,7 +91,8 @@
     },
     "gpt5.4": {
       "id": "openai.gpt-5.4",
-      "label": "GPT-5.4"
+      "label": "GPT-5.4",
+      "context_window": 278528
     },
     "local_gemma": {
       "id": "local:gemma-4-12b-it-qat-q4_0",

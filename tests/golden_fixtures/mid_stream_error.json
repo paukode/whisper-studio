@@ -1,0 +1,17 @@
+[
+  {
+    "tool_pool": {
+      "advertised": 0,
+      "deferred": 0,
+      "total": 0,
+      "deferred_tokens_est": 0
+    }
+  },
+  {
+    "text": "partial"
+  },
+  {
+    "error": "API error: InternalServerException: boom"
+  },
+  "[DONE]"
+]
