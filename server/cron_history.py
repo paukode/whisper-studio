@@ -13,10 +13,11 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
+from server.infrastructure.paths import storage_root
+
 log = logging.getLogger("whisper-studio")
 
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-STORAGE_DIR = os.path.join(BASE_DIR, "storage")
+STORAGE_DIR = storage_root()
 DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
 
 # Runs left in 'running' longer than this on startup are treated as

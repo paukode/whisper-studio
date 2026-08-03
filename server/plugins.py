@@ -15,14 +15,13 @@ import sys
 
 from fastapi import APIRouter, FastAPI, HTTPException
 
-from server.infrastructure.paths import data_root
+from server.infrastructure.paths import data_root, plugins_root
 
 log = logging.getLogger("whisper-studio")
 
 router = APIRouter(prefix="/api/plugins", tags=["plugins"])
 
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-PLUGINS_DIR = os.path.join(BASE_DIR, "plugins")
+PLUGINS_DIR = plugins_root()
 DATA_DIR = data_root()
 PLUGINS_CONFIG_PATH = os.path.join(DATA_DIR, "plugins_config.json")
 

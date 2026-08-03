@@ -7,11 +7,13 @@ keep parity with the rest of the backend (WHISPER_* knobs elsewhere).
 
 import os
 
-# Local model directories — weights cached under ./models like whisper/parakeet,
-# downloaded at setup. Sentinels are the real weight/config files (verified
-# against the repo layout) so the "already present" check can't drift.
-_SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MODELS_DIR = os.path.join(_SCRIPT_DIR, "models")
+from server.infrastructure.paths import models_root
+
+# Local model directories — weights cached under the app-home models/ dir like
+# whisper/parakeet, downloaded at setup. Sentinels are the real weight/config
+# files (verified against the repo layout) so the "already present" check can't
+# drift.
+MODELS_DIR = models_root()
 EMBED_MODEL_DIR = os.path.join(MODELS_DIR, "qwen3-embedding-0.6b")
 EMBED_SENTINEL = os.path.join(EMBED_MODEL_DIR, "model.safetensors")
 GLINER_MODEL_DIR = os.path.join(MODELS_DIR, "gliner-large-v2.5")

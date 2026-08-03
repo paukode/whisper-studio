@@ -22,11 +22,11 @@ import time
 
 from server import folder_skills
 from server.git.executor import _GIT_URL_RE
+from server.infrastructure.paths import skills_root
 
 log = logging.getLogger("whisper-studio")
 
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-SKILLS_DIR = os.path.join(BASE_DIR, "skills")
+SKILLS_DIR = skills_root()
 
 _CLONE_TIMEOUT_S = 300
 _GIT_OP_TIMEOUT_S = 120

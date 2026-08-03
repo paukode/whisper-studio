@@ -16,8 +16,9 @@ import hashlib
 import os
 import re
 
-SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-INDEX_DATA_DIR = os.path.join(SCRIPT_DIR, "storage", "index")
+from server.infrastructure.paths import storage_root
+
+INDEX_DATA_DIR = os.path.join(storage_root(), "index")
 
 
 def _hash(ws_path: str) -> str:

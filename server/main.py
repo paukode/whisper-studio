@@ -32,6 +32,7 @@ from server.infrastructure.boot_status import health_payload, record_boot_error
 from server.infrastructure.config import router as config_router
 from server.infrastructure.data_retention import router as data_retention_router
 from server.infrastructure.feature_flags import router as feature_flags_router
+from server.infrastructure.paths import bootstrap_home
 from server.infrastructure.result_cache import router as result_cache_router
 from server.infrastructure.sessions import router as sessions_router
 from server.lsp import router as lsp_router
@@ -61,6 +62,19 @@ from server.workspace import router as workspace_router
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("whisper-studio")
+
+# ── Packaged-app bootstrap ───────────────────────────────────────────────────
+# Runs at import, before anything reads config.json or spawns a subprocess:
+#  * bootstrap_home() seeds $WHISPER_HOME (config/pricing/rules/skills + the
+#    directory tree) on first run; a no-op in a dev checkout (env unset).
+#  * WHISPER_BIN_DIR (the bundle's binary dir) is prepended to PATH so
+#    library-internal spawns that we can't route through
+#    server/infrastructure/binaries.py — e.g. mlx_whisper's bare "ffmpeg"
+#    call — resolve under launchd's minimal PATH.
+bootstrap_home()
+_BIN_DIR = os.environ.get("WHISPER_BIN_DIR", "").strip()
+if _BIN_DIR and _BIN_DIR not in os.environ.get("PATH", "").split(os.pathsep):
+    os.environ["PATH"] = _BIN_DIR + os.pathsep + os.environ.get("PATH", "")
 
 
 class _QuietPollAccessLog(logging.Filter):
@@ -239,6 +253,9 @@ async def lifespan(app):
     from server.index import agent as index_agent
 
     index_agent.mark_app_running()
+    # If the app moved or was updated since the agent was registered, the plist
+    # bakes stale paths (interpreter, code dir, log path) — re-register it.
+    index_agent.heal_if_stale()
     yield
     index_agent.mark_app_stopped()
     git_watcher.stop()

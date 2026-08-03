@@ -20,11 +20,11 @@ import numpy as np
 
 from server.audio_buffer import UtteranceBuffer
 from server.infrastructure.config import get as config_get
+from server.infrastructure.paths import models_root
 
 log = logging.getLogger("whisper-studio")
 
-SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MODELS_DIR = os.path.join(SCRIPT_DIR, "models")
+MODELS_DIR = models_root()
 WHISPER_MODEL_DIR = os.path.join(MODELS_DIR, "whisper-large-v3-turbo")
 WHISPER_REPO_ID = "mlx-community/whisper-large-v3-turbo"
 

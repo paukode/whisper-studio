@@ -82,8 +82,18 @@ async def ws_grep_endpoint(request: Request):
             media_type="application/json",
         )
     try:
+        # Shared resolver (WHISPER_RG_PATH -> PATH -> pip ripgrep wheel); a bare
+        # "rg" would miss all of those under a packaged app's minimal PATH.
+        # Imported lazily: the server.search package pulls server.workspace back
+        # in at import time, so a top-level import here is circular.
+        from server.search.engine import get_rg_path
+
+        try:
+            rg_bin = get_rg_path()
+        except RuntimeError as e:
+            raise FileNotFoundError(str(e)) from e  # -> the grep fallback below
         result = subprocess.run(
-            ["rg", "--json", "--max-count", "3", "-m", str(limit), "-i", pattern, search_dir],
+            [rg_bin, "--json", "--max-count", "3", "-m", str(limit), "-i", pattern, search_dir],
             capture_output=True,
             text=True,
             timeout=15,

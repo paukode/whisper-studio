@@ -19,18 +19,29 @@ import subprocess
 import sys
 import time
 
+from server.infrastructure.paths import logs_root, repo_root
+
 from . import paths, store, wssettings
 
 log = logging.getLogger("whisper-studio")
 
 _LABEL = "com.whisperstudio.indexrefresh"
 _PLIST_PATH = os.path.expanduser(f"~/Library/LaunchAgents/{_LABEL}.plist")
-_REPO_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_VENV_PY = os.path.join(_REPO_DIR, "venv", "bin", "python")
+# The worker runs the SAME interpreter as the server (the dev venv python or
+# the bundled runtime), from the code dir — no venv layout is assumed.
+_REPO_DIR = repo_root()
 _STORAGE = os.path.dirname(paths.INDEX_DATA_DIR)
 _PID_PATH = os.path.join(_STORAGE, ".server.pid")
-_LOG_PATH = os.path.join(_STORAGE, "index_agent.log")
 _PY_WEEKDAY = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+
+
+def _agent_log_path() -> str:
+    """Where the launchd worker logs. A packaged install (WHISPER_HOME set)
+    logs under <app_home>/logs/; the dev checkout keeps the historical
+    storage/ location."""
+    if os.environ.get("WHISPER_HOME", "").strip():
+        return os.path.join(logs_root(), "index_agent.log")
+    return os.path.join(_STORAGE, "index_agent.log")
 
 
 # ── app-running detection (PID file written by the server lifespan) ──────────
@@ -90,19 +101,42 @@ def _wake_intervals() -> list[dict]:
 
 # ── plist / (un)install ───────────────────────────────────────────────────────
 def _plist_dict(intervals: list[dict]) -> dict:
-    return {
+    log_path = _agent_log_path()
+    plist = {
         "Label": _LABEL,
-        "ProgramArguments": [_VENV_PY, "-m", "server.index.agent", "run"],
+        "ProgramArguments": [sys.executable, "-m", "server.index.agent", "run"],
         "WorkingDirectory": _REPO_DIR,
         "StartCalendarInterval": intervals,
-        "StandardOutPath": _LOG_PATH,
-        "StandardErrorPath": _LOG_PATH,
+        "StandardOutPath": log_path,
+        "StandardErrorPath": log_path,
         "RunAtLoad": False,
     }
+    # The worker must resolve the same app home (config, storage, models) as
+    # the server that registered it; launchd starts with a bare environment.
+    env = {
+        k: v
+        for k in ("WHISPER_HOME", "WHISPER_DATA_DIR", "WHISPER_BIN_DIR")
+        if (v := os.environ.get(k, "").strip())
+    }
+    if env:
+        plist["EnvironmentVariables"] = env
+    return plist
 
 
 def is_installed() -> bool:
     return os.path.exists(_PLIST_PATH)
+
+
+def _plist_stale(intervals: list[dict]) -> bool:
+    """True when the on-disk plist differs from what we'd write now — the app
+    or its interpreter moved, the app home changed, or the hours changed —
+    so registration re-writes it and moves/updates self-heal."""
+    try:
+        with open(_PLIST_PATH, "rb") as f:
+            current = plistlib.load(f)
+    except Exception:  # noqa: BLE001 — missing/corrupt plist: rewrite it
+        return True
+    return current != _plist_dict(intervals)
 
 
 def _launchctl(*args: str) -> None:
@@ -114,6 +148,7 @@ def _launchctl(*args: str) -> None:
 
 def _write_and_load(intervals: list[dict]) -> None:
     os.makedirs(os.path.dirname(_PLIST_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(_agent_log_path()), exist_ok=True)
     with open(_PLIST_PATH, "wb") as f:
         plistlib.dump(_plist_dict(intervals), f)
     _launchctl("unload", _PLIST_PATH)
@@ -135,14 +170,29 @@ def uninstall() -> dict:
 def sync() -> dict:
     """Install/refresh the agent if any folder opted in (wake at their hours), or
     remove it if none did. Called whenever a workspace's settings change. macOS
-    only."""
+    only. Rewrites the plist only when its content differs from what we'd
+    write now, so a stale registration (moved app, new interpreter, changed
+    WHISPER_HOME) self-heals without churning launchctl on every call."""
     if sys.platform != "darwin":
         return {"installed": False, "supported": False}
     intervals = _wake_intervals()
     if not intervals:
         return uninstall()
-    _write_and_load(intervals)
+    if _plist_stale(intervals):
+        _write_and_load(intervals)
     return {"installed": True, "supported": True}
+
+
+def heal_if_stale() -> None:
+    """Startup self-heal: if an agent is registered but its plist no longer
+    matches what we'd write (the app moved, was updated, or the app home
+    changed), re-register it. No-op when nothing is installed. Best-effort."""
+    if sys.platform != "darwin" or not is_installed():
+        return
+    try:
+        sync()
+    except Exception as e:  # noqa: BLE001
+        log.warning("Index agent self-heal failed: %s", e)
 
 
 def regenerate() -> None:

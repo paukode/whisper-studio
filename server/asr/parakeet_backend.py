@@ -30,13 +30,13 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 from server.audio_buffer import UtteranceBuffer
+from server.infrastructure.paths import models_root
 
 log = logging.getLogger("whisper-studio")
 
 SAMPLE_RATE = 16000
 
-SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MODELS_DIR = os.path.join(SCRIPT_DIR, "models")
+MODELS_DIR = models_root()
 PARAKEET_MODEL_DIR = os.path.join(MODELS_DIR, "parakeet-tdt-0.6b-v3")
 PARAKEET_REPO_ID = "mlx-community/parakeet-tdt-0.6b-v3"
 

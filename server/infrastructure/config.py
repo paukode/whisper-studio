@@ -23,15 +23,17 @@ import time
 from fastapi import APIRouter, Request
 
 from server.infrastructure.effort import infer_effort_tier, normalize_effort
+from server.infrastructure.paths import config_dir, repo_root
 
 log = logging.getLogger("whisper-studio")
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
-CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config.json"
-)
-EXAMPLE_CONFIG_PATH = os.path.join(os.path.dirname(CONFIG_PATH), "config.example.json")
+# The user's live config follows the app home (WHISPER_HOME in a packaged
+# install, the repo root in a dev checkout); the committed template always
+# stays with the code.
+CONFIG_PATH = os.path.join(config_dir(), "config.json")
+EXAMPLE_CONFIG_PATH = os.path.join(repo_root(), "config.example.json")
 
 # The chat-model catalog has ONE source of truth: config.example.json (the
 # template setup.sh copies to the user's config.json). The code keeps no second

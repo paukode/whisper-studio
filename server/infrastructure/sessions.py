@@ -8,12 +8,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
+from server.infrastructure.paths import storage_root
+
 log = logging.getLogger("whisper-studio")
 
 router = APIRouter(tags=["sessions"])
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-STORAGE_DIR = os.path.join(BASE_DIR, "storage")
+STORAGE_DIR = storage_root()
 DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
 
 # Roles that are part of the *prompt* sent to Claude. Anything else

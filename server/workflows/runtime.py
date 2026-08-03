@@ -17,8 +17,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
 
+from server.infrastructure.binaries import resolve
 from server.workflows import rpc
 from server.workflows.journal import Journal, call_hash
 
@@ -32,7 +32,7 @@ _HARNESS = os.path.join(os.path.dirname(__file__), "harness", "harness.mjs")
 
 
 def _node_bin() -> str:
-    return shutil.which("node") or "/usr/local/bin/node"
+    return resolve("node", "WHISPER_NODE_PATH") or "/usr/local/bin/node"
 
 
 # --disallow-code-generation-from-strings makes eval()/new Function() throw in
@@ -50,8 +50,14 @@ def _node_argv(*extra: str) -> list[str]:
 
 def _scrubbed_env() -> dict:
     # The harness has no network/fs need — hand it a minimal env with NO cloud
-    # credentials, so even a hostile script cannot exfiltrate them.
-    return {"PATH": "/usr/local/bin:/usr/bin:/bin:/sbin", "NODE_NO_WARNINGS": "1"}
+    # credentials, so even a hostile script cannot exfiltrate them. The resolved
+    # node's own directory is prepended so a node outside the hardcoded system
+    # dirs (nvm, Homebrew, the app bundle) still finds itself and its helpers.
+    path = "/usr/local/bin:/usr/bin:/bin:/sbin"
+    node_dir = os.path.dirname(_node_bin())
+    if node_dir and node_dir not in path.split(os.pathsep):
+        path = node_dir + os.pathsep + path
+    return {"PATH": path, "NODE_NO_WARNINGS": "1"}
 
 
 def parse_workflow(source: str, *, timeout: float = 10) -> dict:
