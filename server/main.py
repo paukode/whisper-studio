@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -194,6 +195,40 @@ def _warm_transcription_models() -> None:
         log.warning("Parakeet warmup failed: %s", e)
 
 
+def _start_parent_watchdog() -> None:
+    """Exit when the process that launched us is gone.
+
+    The macOS app shell sets WHISPER_PARENT_PID to its own pid. Its quit path
+    SIGTERMs us, but a SIGKILLed or crashed shell sends nothing — the backend
+    would linger headless, holding the port and any resident model. Reparenting
+    (getppid() changing away from the shell's pid) is the reliable signal; on
+    it, stop llama-server and exit. Not started in dev (env var unset)."""
+    raw = os.environ.get("WHISPER_PARENT_PID", "").strip()
+    if not raw:
+        return
+    try:
+        parent_pid = int(raw)
+    except ValueError:
+        log.warning("Ignoring non-numeric WHISPER_PARENT_PID=%r", raw)
+        return
+
+    def _watch() -> None:
+        import time
+
+        while os.getppid() == parent_pid:
+            time.sleep(5)
+        log.info("Parent shell (pid %d) is gone; shutting down", parent_pid)
+        try:
+            from server.local import llama_server
+
+            llama_server.stop()
+        except Exception:
+            pass
+        os._exit(0)
+
+    threading.Thread(target=_watch, name="parent-watchdog", daemon=True).start()
+
+
 @asynccontextmanager
 async def lifespan(app):
     # Installed here (not at import) so it survives uvicorn's own logging
@@ -233,6 +268,7 @@ async def lifespan(app):
     # everything lazily anyway, so a warmup failure only costs the first
     # user a wait — best-effort by design.
     spawn(asyncio.to_thread(_warm_transcription_models), name="model-warmup")
+    _start_parent_watchdog()
     # Unified background-task framework: capture the server loop for
     # thread-safe session-event emission, then reconcile leases left
     # 'running' by a previous server process (dead shell pids fail cleanly,

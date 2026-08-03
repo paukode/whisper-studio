@@ -69,9 +69,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     private var logPath = ""
     private var healthDeadline = Date()
 
+    // Retained so the sources stay armed for the app's lifetime.
+    private var signalSources: [DispatchSourceSignal] = []
+
     // MARK: Lifecycle
 
+    /// A raw SIGTERM/SIGINT (logout, `kill`) skips AppKit's terminate flow, so
+    /// applicationWillTerminate would never run and the backend (plus any
+    /// llama-server under it) would be orphaned. Route both signals into the
+    /// normal quit path instead.
+    private func installSignalHandlers() {
+        for sig in [SIGTERM, SIGINT] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler { NSApp.terminate(nil) }
+            source.resume()
+            signalSources.append(source)
+        }
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        installSignalHandlers()
         buildMainMenu()
 
         guard let resourcesURL = Bundle.main.resourceURL else {
@@ -164,6 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         procEnv["WHISPER_FFMPEG_PATH"] = binDir.appendingPathComponent("ffmpeg").path
         procEnv["WHISPER_FFPROBE_PATH"] = binDir.appendingPathComponent("ffprobe").path
         procEnv["WHISPER_NODE_PATH"] = binDir.appendingPathComponent("node").path
+        // Lets the backend notice when the shell dies without any signal at
+        // all (SIGKILL, crash) and shut itself down instead of lingering.
+        procEnv["WHISPER_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
         let inheritedPath = procEnv["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         procEnv["PATH"] = binDir.path + ":" + inheritedPath
         procEnv["PYTHONUNBUFFERED"] = "1"
