@@ -42,6 +42,7 @@ from server.mcp import router as mcp_router
 from server.memory import init_memory
 from server.memory.router import memory_router
 from server.migrations.runner import run_migrations
+from server.models_manager import router as models_manager_router
 from server.notifications import router as notifications_router
 from server.plans.routes import router as plans_router
 from server.plugins import init_plugins
@@ -176,8 +177,16 @@ def _warm_transcription_models() -> None:
     """
     from server.asr import get_backend, resolve_name
     from server.infrastructure.config import get as config_get
+    from server.models_manager import catalog
 
     if resolve_name(config_get("transcription_backend")) != "parakeet":
+        return
+    # Warm only when the weights are already on disk. preload() would otherwise
+    # trigger the 2.3 GB download at boot — on a fresh install downloading is
+    # the user's call (Models panel or first record), never a boot side-effect.
+    entry = catalog.get_entry("parakeet")
+    if entry is None or not catalog.is_installed(entry):
+        log.info("Parakeet not downloaded yet; skipping startup warmup")
         return
     try:
         get_backend("parakeet").preload()
@@ -312,6 +321,7 @@ app.include_router(tasks_router)
 app.include_router(background_tasks_router)
 app.include_router(notifications_router)
 app.include_router(cron_router)
+app.include_router(models_manager_router)
 app.include_router(index_router)
 app.include_router(plugins_router)
 app.include_router(lsp_router)

@@ -11,6 +11,7 @@ import { CronPanel } from './CronPanel';
 import { PluginsPanel } from './PluginsPanel';
 import { StatsPanel } from './StatsPanel';
 import { ModelModePanel } from './ModelModePanel';
+import { ModelsPanel } from './ModelsPanel';
 import { FeatureFlagsPanel } from './FeatureFlagsPanel';
 import { PreviewSettings } from './PreviewSettings';
 import { WorkflowsPanel } from './WorkflowsPanel';
@@ -18,6 +19,7 @@ import { WorkflowsPanel } from './WorkflowsPanel';
 export type SettingsTabId =
   | 'apikeys'
   | 'model-mode'
+  | 'models'
   | 'feature-flags'
   | 'skills'
   | 'workflows'
@@ -41,6 +43,7 @@ interface SettingsTab {
 export const SETTINGS_TABS: SettingsTab[] = [
   { id: 'apikeys', label: 'API Keys' },
   { id: 'model-mode', label: 'Model Mode' },
+  { id: 'models', label: 'Models' },
   { id: 'feature-flags', label: 'Feature Flags' },
   { id: 'skills', label: 'Skills' },
   { id: 'workflows', label: 'Workflows' },
@@ -61,6 +64,7 @@ const TABS = SETTINGS_TABS;
 const TAB_COMPONENTS: Record<SettingsTabId, React.FC> = {
   apikeys: APISettings,
   'model-mode': ModelModePanel,
+  models: ModelsPanel,
   'feature-flags': FeatureFlagsPanel,
   skills: SkillsPanel,
   workflows: WorkflowsPanel,
