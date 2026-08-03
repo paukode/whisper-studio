@@ -171,9 +171,12 @@ else
     mkdir -p "$LLAMA_DIR/src" "$LLAMA_BIN_DIR"
     tar -xzf "$DL_DIR/$LLAMA_ASSET" -C "$LLAMA_DIR/src"
     # llama-server plus every dylib/metallib travel together (@rpath-relative).
-    find "$LLAMA_DIR/src" -type f \
+    # cp -RP keeps the versioned-symlink chains (libggml.dylib -> libggml.0.dylib
+    # -> libggml.0.18.0.dylib) that the loader resolves; a plain -type f copy
+    # drops them and llama-server fails at dyld time.
+    find "$LLAMA_DIR/src" \( -type f -o -type l \) \
         \( -name 'llama-server' -o -name '*.dylib' -o -name '*.metallib' \) \
-        -exec cp {} "$LLAMA_BIN_DIR/" \;
+        -exec cp -RP {} "$LLAMA_BIN_DIR/" \;
     [[ -f "$LLAMA_BIN_DIR/llama-server" ]] \
         || die "llama-server not found inside $LLAMA_ASSET"
     chmod +x "$LLAMA_BIN_DIR/llama-server"
