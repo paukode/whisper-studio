@@ -70,3 +70,7 @@ uv.lock
 # The editor writes ${workspace}/WHISPER.md as user-specific context
 # for the model. Different users want different contents — don't track.
 WHISPER.md
+
+# macOS app packaging (macapp/build_app.sh) work dirs and output
+build-app/
+dist-app/
