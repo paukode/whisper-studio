@@ -275,9 +275,13 @@ PYEOF
 fi
 cp "$ICON_DIR/AppIcon.icns" "$RES_DIR/AppIcon.icns"
 
-# f.4: Python runtime.
+# f.4: Python runtime. Bytecode caches are excluded: the shell redirects
+# runtime .pyc writes to WHISPER_HOME via PYTHONPYCACHEPREFIX (a post-signing
+# write inside Resources/ would break the bundle seal), and with that prefix
+# set Python ignores in-tree __pycache__ anyway — they'd be dead weight.
 substep "copying python runtime"
-rsync -a --delete "$PY_DIR/" "$RES_DIR/python/"
+rsync -a --delete --exclude '__pycache__/' --exclude '*.pyc' \
+    "$PY_DIR/" "$RES_DIR/python/"
 rm -f "$RES_DIR/python/.requirements.sha256"
 
 # f.5: backend tree.

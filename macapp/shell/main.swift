@@ -188,6 +188,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let inheritedPath = procEnv["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin"
         procEnv["PATH"] = binDir.path + ":" + inheritedPath
         procEnv["PYTHONUNBUFFERED"] = "1"
+        // Bytecode caches must never land inside the signed bundle — a single
+        // .pyc write after signing invalidates the whole app seal.
+        procEnv["PYTHONPYCACHEPREFIX"] = whisperHome + "/pycache"
 
         let proc = Process()
         proc.executableURL = pythonBin
