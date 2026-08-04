@@ -80,6 +80,67 @@ describe('ConfigEditorDialog', () => {
     expect(list.textContent).toContain('line 3, column 3');
   });
 
+  it('does NOT close on a backdrop (overlay) click', async () => {
+    const { onClose } = renderDialog();
+    await screen.findByRole('textbox', { name: 'config.json contents' });
+    const overlay = screen.getByRole('dialog', { name: 'Edit config.json' });
+
+    fireEvent.mouseDown(overlay);
+    fireEvent.click(overlay);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('does NOT close when a selection drag starts in the textarea and releases on the backdrop', async () => {
+    const { onClose } = renderDialog();
+    const box = await screen.findByRole('textbox', { name: 'config.json contents' });
+    const overlay = screen.getByRole('dialog', { name: 'Edit config.json' });
+
+    // Press starts inside the editor; the click on release targets the overlay
+    // (the mousedown/mouseup common ancestor) — the exact reported trigger.
+    fireEvent.mouseDown(box);
+    fireEvent.click(overlay);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('DOES close on the Cancel button', async () => {
+    const { onClose } = renderDialog();
+    await screen.findByRole('textbox', { name: 'config.json contents' });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('DOES close on Escape', async () => {
+    const { onClose } = renderDialog();
+    await screen.findByRole('textbox', { name: 'config.json contents' });
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('closing (Cancel) does not bubble to the hosting Settings modal', async () => {
+    const onClose = vi.fn();
+    const parentClick = vi.fn();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // Simulate the real nesting: the editor portals to <body> but its React
+    // parent chain runs through the Settings modal, so a stray bubbling click
+    // could reach a Settings-level handler. The dialog's own stopPropagation
+    // must keep its clicks from ever reaching that parent.
+    render(
+      <QueryClientProvider client={qc}>
+        <div data-testid="settings-parent" onClick={parentClick}>
+          <ConfigEditorDialog onClose={onClose} />
+        </div>
+      </QueryClientProvider>,
+    );
+    await screen.findByRole('textbox', { name: 'config.json contents' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(parentClick).not.toHaveBeenCalled();
+  });
+
   it('saves, toasts, invalidates the model queries and closes on success', async () => {
     const { onClose, qc } = renderDialog();
     const invalidate = vi.spyOn(qc, 'invalidateQueries');
@@ -92,7 +153,9 @@ describe('ConfigEditorDialog', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(api.put).toHaveBeenCalledWith('/api/config/raw', { text: next });
     expect(useUIStore.getState().toasts.map((t) => t.message)).toContain('config.json saved');
-    const invalidated = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
+    const invalidated = invalidate.mock.calls.map(
+      (c) => (c[0] as { queryKey: string[] }).queryKey[0],
+    );
     expect(invalidated).toEqual(
       expect.arrayContaining(['models-manager-catalog', 'models-manager-status', 'index-engines']),
     );

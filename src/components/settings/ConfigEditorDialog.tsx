@@ -90,13 +90,13 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
   }, [onClose]);
 
   return (
+    // No backdrop-click-to-close: a click on the dark overlay does nothing, so a
+    // text selection inside the editor that releases outside the dialog can
+    // never dismiss it. Closes only via Cancel, the toast-on-save, or Escape.
     <div
       role="dialog"
       aria-modal="true"
       aria-label="Edit config.json"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
       style={{
         position: 'fixed',
         inset: 0,
@@ -107,6 +107,9 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
         zIndex: 1100,
       }}
     >
+      {/* stopPropagation keeps the dialog's own clicks (Cancel/Save, text
+          selection) from bubbling up the React tree to the Settings modal that
+          hosts this portal — closing the editor must not close Settings. */}
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
