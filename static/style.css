@@ -2804,6 +2804,14 @@ input.segment-speaker {
     height: 100%; background: var(--accent); border-radius: 4px;
     transition: width 0.25s ease;
 }
+/* Error state (a model download failed): red edge, the failure message
+   replaces the progress track, Cancel doubles as Dismiss. */
+.model-loading-banner--error { border-color: var(--accent-record, #e5484d); }
+.model-loading-banner--error .model-loading-banner__row { margin-bottom: 0; }
+.model-loading-banner__detail {
+    margin-top: 8px; font-size: var(--fs-small); color: var(--text-secondary);
+    overflow-wrap: anywhere; max-height: 4.5em; overflow: hidden;
+}
 
 /* /effort indicator in toolbar */
 .effort-badge {

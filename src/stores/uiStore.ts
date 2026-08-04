@@ -105,10 +105,21 @@ export interface UIState {
   /* /btw popup */
   btwPopup: { question: string; answer: string } | null;
 
-  /* Local-mode "loading model into memory" banner. null when idle. The
-   * progress bar fills to `progress` (0..1); stage 'ready' triggers the
-   * auto-hide. Driven by websocket model_loading/model_unloaded events. */
-  modelLoading: { label: string; progress: number; stage: 'start' | 'downloading' | 'loading' | 'ready'; onCancel?: () => void } | null;
+  /* Shared model load/download banner. null when idle. The progress bar
+   * fills to `progress` (0..1); stage 'ready' triggers the auto-hide and
+   * stage 'error' renders the failure (detail carries the message) with a
+   * Dismiss affordance. While downloading, `detail` is an optional second
+   * clause on the label line (e.g. "1.1 GB of 2.5 GB · model 1 of 2").
+   * Driven by websocket model_loading/model_unloaded events, the local chat
+   * model flows (api/localModel), and the pre-recording model gate
+   * (services/recordingModels). */
+  modelLoading: {
+    label: string;
+    progress: number;
+    stage: 'start' | 'downloading' | 'loading' | 'ready' | 'error';
+    detail?: string;
+    onCancel?: () => void;
+  } | null;
 
   /* Dialog stack */
   dialogStack: DialogEntry[];

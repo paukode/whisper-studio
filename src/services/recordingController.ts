@@ -16,6 +16,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useRecordingStore } from '@/stores/recordingStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
+import { ensureRecordingModels } from '@/services/recordingModels';
 import { countActiveSessions, getTranscriptionStore } from '@/stores/sessionRuntimes';
 import { MAX_ACTIVE_SESSIONS } from '@/hooks/useChatStream';
 
@@ -51,6 +52,10 @@ let pingTimer: ReturnType<typeof setInterval> | null = null;
  *  recordingStore.recordingSessionId; this mirror avoids store reads in
  *  the per-chunk hot path. */
 let owningSessionId: string | null = null;
+/** True while the pre-recording model gate downloads weights. A second
+ *  record click during the wait must not start a second gate — the
+ *  banner's Cancel is the way out. */
+let modelGateActive = false;
 
 const ownerStore = () => getTranscriptionStore(owningSessionId).getState();
 
@@ -189,6 +194,7 @@ function startWatchdog(): void {
 async function start(sessionId: string): Promise<void> {
   const rec = useRecordingStore.getState();
   if (rec.recordingSessionId) return; // one mic, one recording
+  if (modelGateActive) return; // already downloading the models for a start
 
   // The 3-active-sessions ceiling counts recording as an activity.
   if (countActiveSessions(sessionId) >= MAX_ACTIVE_SESSIONS) {
@@ -200,6 +206,23 @@ async function start(sessionId: string): Promise<void> {
     });
     return;
   }
+
+  // The speech models this session needs (active ASR engine + speaker
+  // encoder) must be on disk BEFORE the mic and websocket open — otherwise
+  // the websocket blocks silently while the server downloads gigabytes.
+  // Installed: one cheap status GET and we fall straight through. Missing:
+  // the gate downloads with a progress banner and resolves 'ready' so the
+  // recording continues without a second click; on cancel or error nothing
+  // was started yet, so the record button is simply idle again. The
+  // server-side lazy download stays as the fallback.
+  modelGateActive = true;
+  try {
+    if ((await ensureRecordingModels()) !== 'ready') return;
+  } finally {
+    modelGateActive = false;
+  }
+  // The wait can be minutes long — make sure nothing else grabbed the mic.
+  if (useRecordingStore.getState().recordingSessionId) return;
 
   owningSessionId = sessionId;
   rec.setRecordingSession(sessionId);

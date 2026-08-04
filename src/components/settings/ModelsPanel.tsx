@@ -9,6 +9,7 @@ import {
 } from '@/api/models';
 import type { ManagedModel, ManagedModelGroup } from '@/api/models';
 import { useUIStore } from '@/stores/uiStore';
+import { humanSize } from '@/utils/humanSize';
 import { ConfirmDialog } from './ConfirmDialog';
 
 const GROUPS: { id: ManagedModelGroup; label: string; hint: string }[] = [
@@ -28,14 +29,6 @@ const GROUPS: { id: ManagedModelGroup; label: string; hint: string }[] = [
     hint: 'On-device chat model weights (GGUF), served by the local model server.',
   },
 ];
-
-/** 1.5 GB / 85 MB style, decimal units to match download-size conventions. */
-const humanSize = (n: number | null | undefined): string => {
-  if (!n || n <= 0) return '—';
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
-  if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
-  return `${Math.max(1, Math.round(n / 1e3))} KB`;
-};
 
 const chipStyle = (fg: string, bg: string): React.CSSProperties => ({
   fontSize: 11,
