@@ -6,20 +6,30 @@ import { ApiError } from '@/types/api';
 import { useUIStore } from '@/stores/uiStore';
 
 /**
- * In-app config.json editor (Settings > Models "config.json" link).
+ * In-app config editor (Settings > Models "config.json" link).
+ *
+ * Since the config split the editor edits the USER layer (config.user.json) —
+ * only the user's deltas: added local models, region/keys/flags, per-field
+ * overrides, and a hide-list. It merges on top of the app's built-in catalog
+ * (config.example.json), which updates with each release. A second, read-only
+ * "Effective config (merged)" tab shows the fully merged result so the user can
+ * see the shipped models next to their own and copy a shipped entry down to
+ * override it.
  *
  * Deliberately a plain monospace textarea, not the workspace MonacoEditor:
- * that component is coupled to workspace state (LSP client keyed on the
- * connected workspace, per-tab view-state cache, uiStore ws fields) and
- * config.json lives outside any workspace. The server validates on save —
- * JSON syntax (with line/column) plus structural rules — and returns every
- * problem at once as newline-separated messages, rendered as a monospace
- * list inside the dialog.
+ * that component is coupled to workspace state and the config lives outside any
+ * workspace. The server validates on save — JSON syntax (with line/column) plus
+ * structural rules — and returns every problem at once as newline-separated
+ * messages, rendered as a monospace list inside the dialog.
  */
 
 interface RawConfig {
-  text: string;
+  /** The USER-layer file text (config.user.json), edited here. */
+  user_text: string;
+  /** Path of the USER-layer file being edited. */
   path: string;
+  /** Read-only pretty JSON of the fully merged effective config. */
+  effective_text: string;
 }
 
 interface SaveRawConfigResult {
@@ -33,10 +43,13 @@ export const fetchRawConfig = () => get<RawConfig>('/api/config/raw');
 export const saveRawConfig = (text: string) =>
   put<SaveRawConfigResult>('/api/config/raw', { text });
 
+type Tab = 'user' | 'effective';
+
 export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const queryClient = useQueryClient();
   const addToast = useUIStore((s) => s.addToast);
   const [text, setText] = useState('');
+  const [tab, setTab] = useState<Tab>('user');
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -53,7 +66,7 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
   const [seededAt, setSeededAt] = useState(0);
   if (data !== undefined && dataUpdatedAt !== seededAt) {
     setSeededAt(dataUpdatedAt);
-    setText(data.text);
+    setText(data.user_text);
   }
 
   const handleSave = useCallback(async () => {
@@ -66,10 +79,10 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
       void queryClient.invalidateQueries({ queryKey: ['models-manager-catalog'] });
       void queryClient.invalidateQueries({ queryKey: ['models-manager-status'] });
       void queryClient.invalidateQueries({ queryKey: ['index-engines'] });
-      addToast({ type: 'success', message: 'config.json saved' });
+      addToast({ type: 'success', message: 'Config saved' });
       onClose();
     } catch (e) {
-      const message = e instanceof ApiError ? e.message : 'Could not save config.json.';
+      const message = e instanceof ApiError ? e.message : 'Could not save your config.';
       // The server packs every validation problem into one newline-separated
       // detail string; render them as a list.
       setErrors(message.split('\n').filter((line) => line.trim().length > 0));
@@ -89,6 +102,38 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
+  const tabButton = (id: Tab, label: string) => (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={tab === id}
+      onClick={() => setTab(id)}
+      className="btn btn-sm"
+      style={{
+        background: tab === id ? 'var(--surface-2, #333)' : 'transparent',
+        borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent',
+        borderRadius: 0,
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  const boxStyle: React.CSSProperties = {
+    height: 340,
+    width: '100%',
+    fontFamily: 'var(--font-mono, monospace)',
+    fontSize: '0.85em',
+    lineHeight: 1.5,
+    background: 'var(--bg-secondary)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    padding: 12,
+    resize: 'vertical',
+    whiteSpace: 'pre',
+  };
+
   return (
     // No backdrop-click-to-close: a click on the dark overlay does nothing, so a
     // text selection inside the editor that releases outside the dialog can
@@ -96,7 +141,7 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Edit config.json"
+      aria-label="Edit your config"
       style={{
         position: 'fixed',
         inset: 0,
@@ -123,44 +168,57 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
           gap: 12,
         }}
       >
-        <strong>config.json</strong>
+        <strong>Your config</strong>
         <p className="settings-hint" style={{ margin: 0 }}>
-          {data?.path ?? 'Loading…'}. Add local chat models under <code>chat_models</code> with{' '}
+          Your personal config. It merges on top of the app&apos;s built-in models, which update
+          with each release. Add local chat models under <code>chat_models</code> with{' '}
           <code>{'"is_local": true'}</code>, <code>repo_id</code>, <code>filename</code> and{' '}
-          <code>dir</code>. Saving validates the file and applies it immediately.
+          <code>dir</code>; hide a shipped model by adding its key to{' '}
+          <code>chat_models_disabled</code>. Saving validates and applies immediately.
         </p>
+        <div style={{ fontSize: '0.8em', color: 'var(--text-secondary, #aaa)' }}>
+          {data?.path ?? 'Loading…'}
+        </div>
         {isError && (
           <p role="alert" style={{ color: 'var(--accent-record, #e5484d)', margin: 0 }}>
-            Could not load config.json.
+            Could not load your config.
           </p>
         )}
+
+        <div role="tablist" aria-label="Config view" style={{ display: 'flex', gap: 4 }}>
+          {tabButton('user', 'Your config')}
+          {tabButton('effective', 'Effective config (merged)')}
+        </div>
+
         {isLoading ? (
           <div aria-busy="true">
             <span className="skeleton skeleton-text" style={{ width: '90%' }} />
             <span className="skeleton skeleton-text" style={{ width: '75%' }} />
           </div>
-        ) : (
+        ) : tab === 'user' ? (
           <textarea
-            aria-label="config.json contents"
+            aria-label="Your config contents"
             spellCheck={false}
-            style={{
-              height: 360,
-              width: '100%',
-              fontFamily: 'var(--font-mono, monospace)',
-              fontSize: '0.85em',
-              lineHeight: 1.5,
-              background: 'var(--bg-secondary)',
-              color: 'var(--text-primary)',
-              border: '1px solid var(--border)',
-              borderRadius: 6,
-              padding: 12,
-              resize: 'vertical',
-              whiteSpace: 'pre',
-            }}
+            style={boxStyle}
             value={text}
             onChange={(e) => setText(e.target.value)}
           />
+        ) : (
+          <>
+            <p className="settings-hint" style={{ margin: 0, fontSize: '0.8em' }}>
+              Read-only. The fully merged result — the app&apos;s built-in models plus yours. Copy
+              an entry here into <strong>Your config</strong> to override its fields.
+            </p>
+            <textarea
+              aria-label="Effective config (merged)"
+              readOnly
+              spellCheck={false}
+              style={{ ...boxStyle, opacity: 0.9 }}
+              value={data?.effective_text ?? ''}
+            />
+          </>
         )}
+
         {errors.length > 0 && (
           <ul
             role="alert"
@@ -188,7 +246,8 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
             className="btn btn-primary btn-sm"
             type="button"
             onClick={() => void handleSave()}
-            disabled={saving || isLoading}
+            disabled={saving || isLoading || tab !== 'user'}
+            title={tab !== 'user' ? 'Switch to "Your config" to edit and save' : undefined}
           >
             {saving ? 'Saving…' : 'Save'}
           </button>
@@ -199,7 +258,8 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
 };
 
 /** Inline "config.json" hyperlink that opens the editor dialog. Drop it into
- *  any helper sentence: "Add models by editing <ConfigJsonLink />." */
+ *  any helper sentence: "Add models by editing <ConfigJsonLink />." The label
+ *  stays "config.json" (the name users know); it opens the user config layer. */
 export const ConfigJsonLink: React.FC = () => {
   const [open, setOpen] = useState(false);
   return (

@@ -32,11 +32,14 @@ VALID_LOCAL_MODEL = {
 
 @pytest.fixture()
 def cfg_path(tmp_path, monkeypatch):
-    """Point the config module at a throwaway config.json and reset the
-    per-session backup latch so each test starts fresh."""
-    path = tmp_path / "config.json"
+    """Point the config module at a throwaway config.user.json (the editor's
+    target since the config split) and reset the per-session backup latch so each
+    test starts fresh. CONFIG_PATH (legacy) is aimed at a nonexistent file so the
+    path resolver deterministically uses the user layer."""
+    path = tmp_path / "config.user.json"
     path.write_text(json.dumps({"model_mode": "cloud"}, indent=2) + "\n")
-    monkeypatch.setattr(config_mod, "CONFIG_PATH", str(path))
+    monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(path))
+    monkeypatch.setattr(config_mod, "CONFIG_PATH", str(tmp_path / "config.json"))
     monkeypatch.setattr(config_raw_routes, "_backup_done", False)
     config_mod._invalidate_cache()
     yield path
@@ -61,16 +64,24 @@ def backups(cfg_path) -> list[str]:
 # ── GET ──────────────────────────────────────────────────────────────────
 
 
-def test_get_returns_literal_text_and_path(client, cfg_path):
+def test_get_returns_user_text_path_and_effective(client, cfg_path):
     body = client.get("/api/config/raw").json()
-    assert body["text"] == cfg_path.read_text()
+    # The USER layer text is returned verbatim, at its path …
+    assert body["user_text"] == cfg_path.read_text()
     assert body["path"] == str(cfg_path)
+    # … alongside a read-only effective view merging the SYSTEM catalog, so the
+    # UI can show shipped models next to the user's. A shipped model must appear.
+    effective = json.loads(body["effective_text"])
+    assert "chat_models" in effective
+    assert "opus4.8" in effective["chat_models"]  # from config.example.json (SYSTEM)
 
 
 def test_get_missing_file_returns_empty_object(client, cfg_path):
     cfg_path.unlink()
     body = client.get("/api/config/raw").json()
-    assert json.loads(body["text"]) == {}
+    assert json.loads(body["user_text"]) == {}
+    # The effective view still resolves (SYSTEM + DEFAULTS) with no user layer.
+    assert "opus4.8" in json.loads(body["effective_text"])["chat_models"]
 
 
 # ── PUT: syntax validation ───────────────────────────────────────────────
@@ -121,7 +132,9 @@ def test_put_reports_every_structural_problem_at_once(client):
     # One line per problem, each naming the exact entry/field.
     assert any('"model_mode"' in ln for ln in lines)
     assert any('"bedrock_region"' in ln for ln in lines)
-    assert 'chat_models.broken_local: local model is missing a non-empty string "filename"' in joined
+    assert (
+        'chat_models.broken_local: local model is missing a non-empty string "filename"' in joined
+    )
     assert 'chat_models.broken_local: local model is missing a non-empty string "dir"' in joined
     assert '"repo_id"' not in joined  # the present field is not flagged
     assert any("broken_local" in ln and '"ctx"' in ln for ln in lines)
@@ -147,7 +160,15 @@ def test_put_builtin_local_key_may_omit_weight_fields(client):
     """A config entry for a BUILT-IN local model (registry fills repo_id/
     filename/dir) may carry just an override like ctx."""
     text = json.dumps(
-        {"chat_models": {"local_gemma": {"id": "local:gemma-4-12b-it-qat-q4_0", "is_local": True, "ctx": 16384}}}
+        {
+            "chat_models": {
+                "local_gemma": {
+                    "id": "local:gemma-4-12b-it-qat-q4_0",
+                    "is_local": True,
+                    "ctx": 16384,
+                }
+            }
+        }
     )
     r = put_text(client, text)
     assert r.status_code == 200, r.json()
@@ -156,6 +177,33 @@ def test_put_builtin_local_key_may_omit_weight_fields(client):
 
 def test_put_unknown_keys_are_allowed(client):
     r = put_text(client, '{"totally_new_setting": {"nested": true}}')
+    assert r.status_code == 200
+
+
+# ── PUT: chat_models_disabled (hide-list) ────────────────────────────────
+
+
+def test_put_disabled_must_be_a_list_of_strings(client):
+    r = put_text(client, json.dumps({"chat_models_disabled": "haiku"}))
+    assert r.status_code == 400
+    assert "chat_models_disabled" in r.json()["detail"]
+
+    r = put_text(client, json.dumps({"chat_models_disabled": ["haiku", 7]}))
+    assert r.status_code == 400
+    assert "chat_models_disabled" in r.json()["detail"]
+
+
+def test_put_disabled_unknown_name_warns_but_saves(client):
+    # An unknown model name in the hide-list is a warning, not a hard failure:
+    # the save still succeeds (e.g. pre-disabling a model a future release ships).
+    r = put_text(client, json.dumps({"chat_models_disabled": ["not_a_real_model"]}))
+    assert r.status_code == 200
+
+
+def test_put_disabled_known_system_name_saves(client):
+    # "opus4.8" ships in config.example.json (the SYSTEM catalog), so hiding it
+    # is a known key and saves cleanly.
+    r = put_text(client, json.dumps({"chat_models_disabled": ["opus4.8"]}))
     assert r.status_code == 200
 
 

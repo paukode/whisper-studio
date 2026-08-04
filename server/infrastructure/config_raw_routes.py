@@ -1,18 +1,23 @@
-"""Raw config.json editing over the API (the Settings "config.json" editor).
+"""Raw USER-config editing over the API (the Settings config editor).
 
-``GET /api/config/raw`` returns the file text verbatim; ``PUT`` validates it —
-JSON syntax first (with line/column), then structure (mirroring the local-model
-rules in server/local/registry.py plus a few known scalars) — reporting EVERY
-problem at once, and only then writes through the config module's persist
-machinery (atomic write + cache invalidation) so the in-memory config, the
-local-model registry, and the models catalog stay coherent.
+The editor edits the USER layer — config.user.json (or the legacy config.json
+while that is still the active user layer). ``GET /api/config/raw`` returns the
+user layer text, its path, AND a read-only view of the fully merged effective
+config (so the UI can show the shipped models + the user's own side by side).
+``PUT`` validates the submitted text — JSON syntax first (with line/column), then
+structure (mirroring the local-model rules in server/local/registry.py, a few
+known scalars, and the chat_models_disabled hide-list) — reporting EVERY problem
+at once, and only then writes through the config module's persist machinery
+(atomic write + cache invalidation) so the in-memory config, the local-model
+registry, and the models catalog stay coherent.
 
 Validation errors come back as a 400 whose ``detail`` is a newline-separated
 list of human messages — the UI renders it as a monospace list, and the shared
-API client already surfaces string details as the error message.
+API client already surfaces string details as the error message. An unknown name
+in chat_models_disabled is a WARNING (logged, not blocking) rather than an error.
 
 Safety rail: the first successful save of a server session snapshots the
-previous file to ``config.json.bak.<timestamp>`` next to it, using the same
+previous file to ``<user-config>.bak.<timestamp>`` next to it, using the same
 naming convention as setup.sh's pre-overwrite backups.
 """
 
@@ -95,9 +100,35 @@ def _validate_chat_model_entry(key: str, val, errors: list[str]) -> None:
         errors.append(f'{where}: "ctx" must be a positive integer (context window in tokens).')
 
 
+def _known_model_keys(data: dict) -> set[str]:
+    """Every model key the effective catalog could expose: the SYSTEM catalog,
+    the entries in the submitted user config, and the built-in local keys. Used
+    to warn (not fail) about chat_models_disabled names that match nothing."""
+    keys: set[str] = set()
+    try:
+        from server.infrastructure.config import _system_config
+
+        system_cm = _system_config().get("chat_models")
+        if isinstance(system_cm, dict):
+            keys.update(system_cm)
+    except Exception:  # pragma: no cover - defensive
+        pass
+    cm = data.get("chat_models")
+    if isinstance(cm, dict):
+        keys.update(cm)
+    try:
+        from server.local.registry import BUILTIN_LOCAL_MODELS
+
+        keys.update(BUILTIN_LOCAL_MODELS)
+    except Exception:  # pragma: no cover - defensive
+        pass
+    return keys
+
+
 def _validate_structure(data) -> list[str]:
     """Every structural problem in the parsed config, not just the first.
-    Unknown keys are fine — the config is extensible by design."""
+    Unknown keys are fine — the config is extensible by design. An unknown
+    chat_models_disabled name is logged as a warning, not returned as an error."""
     if not isinstance(data, dict):
         return ["The top level must be a JSON object: { ... }."]
 
@@ -115,37 +146,65 @@ def _validate_structure(data) -> list[str]:
     elif isinstance(chat_models, dict):
         for key, val in chat_models.items():
             _validate_chat_model_entry(key, val, errors)
+
+    disabled = data.get("chat_models_disabled")
+    if disabled is not None:
+        if not isinstance(disabled, list) or not all(isinstance(x, str) for x in disabled):
+            errors.append('"chat_models_disabled" must be a list of model-key strings.')
+        else:
+            known = _known_model_keys(data)
+            unknown = [k for k in disabled if k not in known]
+            if unknown:
+                # Not fatal: the user may be pre-disabling a model that a future
+                # app version ships, or just made a typo. Warn, don't block.
+                log.warning(
+                    "chat_models_disabled names no known model: %s", ", ".join(sorted(unknown))
+                )
     return errors
 
 
 def _backup_once() -> None:
-    """Timestamped safety copy of the current file before the session's first
-    raw save (same naming as setup.sh: config.json.bak.<YYYYmmddHHMMSS>)."""
+    """Timestamped safety copy of the current user-config file before the
+    session's first raw save (same naming as setup.sh: <file>.bak.<YYYYmmddHHMMSS>)."""
     global _backup_done
     if _backup_done:
         return
-    path = config_mod.CONFIG_PATH
+    path = config_mod._active_user_config_path()
     if os.path.exists(path):
         backup = f"{path}.bak.{time.strftime('%Y%m%d%H%M%S')}"
         try:
             shutil.copyfile(path, backup)
-            log.info("Backed up config.json to %s before the first raw save.", backup)
+            log.info("Backed up %s to %s before the first raw save.", path, backup)
         except OSError as e:  # best-effort: the user asked to save
-            log.warning("Could not back up config.json before saving: %s", e)
+            log.warning("Could not back up %s before saving: %s", path, e)
             return  # leave _backup_done False so the next save retries
     _backup_done = True
 
 
+def _effective_text() -> str:
+    """Pretty JSON of the fully merged, read-only effective config (secret
+    masked). Best-effort — an empty object if the merge somehow fails, so the
+    editor's user pane still loads."""
+    from server.workspace import get_workspace_path
+
+    try:
+        return json.dumps(config_mod.effective_config_view(get_workspace_path()), indent=2) + "\n"
+    except Exception as e:  # pragma: no cover - defensive
+        log.warning("Could not build effective config view: %s", e)
+        return "{\n}\n"
+
+
 @router.get("/raw")
 async def get_raw_config():
-    """The literal on-disk config.json text (an empty object when missing)."""
-    path = config_mod.CONFIG_PATH
+    """The USER layer text and path, plus a read-only view of the fully merged
+    effective config so the UI can show the shipped models next to the user's."""
+    path = config_mod._active_user_config_path()
     try:
         with open(path) as f:
-            text = f.read()
+            user_text = f.read()
     except FileNotFoundError:
-        text = "{\n}\n"
-    return {"text": text, "path": path}
+        user_text = "{\n}\n"
+    return {"user_text": user_text, "path": path, "effective_text": _effective_text()}
 
 
 @router.put("/raw")
@@ -154,7 +213,7 @@ async def put_raw_config(request: Request):
     text = body.get("text") if isinstance(body, dict) else None
     if not isinstance(text, str):
         raise HTTPException(
-            status_code=400, detail='Body must be {"text": "<config.json contents>"}.'
+            status_code=400, detail='Body must be {"text": "<config.user.json contents>"}.'
         )
 
     try:
@@ -172,15 +231,17 @@ async def put_raw_config(request: Request):
     _backup_once()
     # Through the config module's own persist path: atomic write + cache
     # invalidation, so the local-model registry and models catalog re-read
-    # the new contents on their next query.
+    # the new contents on their next query. Targets the active user layer.
     config_mod._write_config_text(text if text.endswith("\n") else text + "\n")
-    log.info("config.json saved via the raw editor (%d bytes).", len(text))
+    log.info(
+        "%s saved via the raw editor (%d bytes).", config_mod._active_user_config_path(), len(text)
+    )
 
     from server.local.registry import local_models
 
     return {
         "ok": True,
-        "path": config_mod.CONFIG_PATH,
+        "path": config_mod._active_user_config_path(),
         # Post-save registry view, so the UI can confirm a new model landed.
         "local_models": sorted(local_models().keys()),
     }

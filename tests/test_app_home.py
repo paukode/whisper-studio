@@ -83,11 +83,14 @@ def test_bootstrap_home_seeds_tree_and_files(monkeypatch, tmp_path):
         assert (home / sub).is_dir(), f"missing {sub}/"
 
     root = paths.repo_root()
-    with open(os.path.join(root, "config.example.json")) as f:
-        example_cfg = json.load(f)
-    with open(home / "config.json") as f:
-        seeded_cfg = json.load(f)
-    assert seeded_cfg == example_cfg
+    # After the config split, a fresh install gets an EMPTY user layer
+    # (config.user.json = {}); the shipped catalog comes from the SYSTEM layer
+    # (config.example.json), not a copied-down config.json. So config.json is NOT
+    # seeded any more.
+    with open(home / "config.user.json") as f:
+        seeded_user = json.load(f)
+    assert seeded_user == {}
+    assert not (home / "config.json").exists()
 
     with open(os.path.join(root, "pricing.example.json")) as f:
         example_pricing = json.load(f)
@@ -107,15 +110,17 @@ def test_bootstrap_home_is_idempotent_and_never_overwrites(monkeypatch, tmp_path
     monkeypatch.setenv("WHISPER_HOME", str(home))
     paths.bootstrap_home()
 
-    # User edits after the first boot must survive every later boot.
-    (home / "config.json").write_text('{"mine": true}')
+    # User edits after the first boot must survive every later boot. The user
+    # layer is config.user.json now (bootstrap created it as {}); the migration
+    # never overwrites an existing config.user.json.
+    (home / "config.user.json").write_text('{"mine": true}')
     (home / "PROMPT_RULES.md").write_text("no emoji")
     marker = home / "skills" / "my-own-skill.md"
     marker.write_text("---\nname: mine\n---\n")
     seeded = sorted(os.listdir(home / "skills"))
 
     paths.bootstrap_home()
-    assert json.loads((home / "config.json").read_text()) == {"mine": True}
+    assert json.loads((home / "config.user.json").read_text()) == {"mine": True}
     assert (home / "PROMPT_RULES.md").read_text() == "no emoji"
     assert sorted(os.listdir(home / "skills")) == seeded
 
@@ -134,12 +139,15 @@ def test_config_path_constant_follows_whisper_home(monkeypatch, tmp_path):
     try:
         importlib.reload(config)
         assert config.CONFIG_PATH == os.path.join(home, "config.json")
+        # The user layer (config.user.json) follows the app home too.
+        assert config.USER_CONFIG_PATH == os.path.join(home, "config.user.json")
         # The committed template stays with the code, not the app home.
         assert config.EXAMPLE_CONFIG_PATH == os.path.join(paths.repo_root(), "config.example.json")
     finally:
         monkeypatch.delenv("WHISPER_HOME", raising=False)
         importlib.reload(config)
     assert config.CONFIG_PATH == os.path.join(paths.repo_root(), "config.json")
+    assert config.USER_CONFIG_PATH == os.path.join(paths.repo_root(), "config.user.json")
 
 
 def test_bootstrap_seeds_plugins_and_restores_protected(tmp_path, monkeypatch):

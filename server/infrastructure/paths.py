@@ -127,10 +127,22 @@ def bootstrap_home() -> None:
             os.makedirs(d, exist_ok=True)
         except OSError as e:
             log.warning("Could not create %s: %s", d, e)
-    # config.json / pricing.json start as copies of the committed templates;
-    # PROMPT_RULES.md starts as the repo/bundle copy. All live at repo_root()
-    # (the read-only code dir in a bundle) and are only copied when missing.
-    _seed_file(os.path.join(repo_root(), "config.example.json"), os.path.join(home, "config.json"))
+    # The user's config is a two-layer split: the SYSTEM catalog + defaults ship
+    # in the read-only config.example.json (repo_root()), and only the user's
+    # deltas live in config.user.json. migrate_user_config() creates an empty
+    # config.user.json on a fresh install and, on an upgrade, splits any legacy
+    # monolithic config.json into config.user.json (backing it up first). We do
+    # NOT seed config.json from the example any more — that copy is exactly what
+    # shadowed shipped model/pricing updates after first run.
+    try:
+        from server.infrastructure.config import migrate_user_config
+
+        migrate_user_config()
+    except Exception as e:  # never block boot on the config split
+        log.warning("Config migration/seed skipped: %s", e)
+    # pricing.json still starts as a copy of the committed template (pricing stays
+    # SYSTEM-seeded — there is no user pricing layer); PROMPT_RULES.md too. Both
+    # live at repo_root() (read-only in a bundle) and are only copied when missing.
     _seed_file(
         os.path.join(repo_root(), "pricing.example.json"), os.path.join(home, "pricing.json")
     )

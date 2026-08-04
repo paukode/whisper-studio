@@ -16,7 +16,12 @@ vi.mock('@/api/client', () => api);
 import { ConfigEditorDialog, ConfigJsonLink } from './ConfigEditorDialog';
 import { useUIStore } from '@/stores/uiStore';
 
-const RAW = { text: '{\n  "model_mode": "cloud"\n}\n', path: '/home/user/config.json' };
+const RAW = {
+  user_text: '{\n  "model_mode": "cloud"\n}\n',
+  path: '/home/user/config.user.json',
+  effective_text:
+    '{\n  "model_mode": "cloud",\n  "chat_models": {\n    "opus4.8": { "id": "global.anthropic.claude-opus-4-8" }\n  }\n}\n',
+};
 
 function renderDialog(onClose = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -36,12 +41,43 @@ beforeEach(() => {
 });
 
 describe('ConfigEditorDialog', () => {
-  it('loads the current config.json text and path into the editor', async () => {
+  it('loads the user config text and path into the editor', async () => {
     renderDialog();
-    const box = await screen.findByRole('textbox', { name: 'config.json contents' });
-    expect(box).toHaveValue(RAW.text);
-    expect(screen.getByText(/\/home\/user\/config\.json/)).toBeInTheDocument();
+    const box = await screen.findByRole('textbox', { name: 'Your config contents' });
+    expect(box).toHaveValue(RAW.user_text);
+    expect(screen.getByText(/\/home\/user\/config\.user\.json/)).toBeInTheDocument();
     expect(api.get).toHaveBeenCalledWith('/api/config/raw');
+  });
+
+  it('shows the read-only effective (merged) view on its tab, listing shipped models', async () => {
+    renderDialog();
+    await screen.findByRole('textbox', { name: 'Your config contents' });
+    // Switch to the effective tab.
+    fireEvent.click(screen.getByRole('tab', { name: 'Effective config (merged)' }));
+    const effective = await screen.findByRole('textbox', { name: 'Effective config (merged)' });
+    // It is read-only and shows a shipped model the user never declared.
+    expect(effective).toHaveAttribute('readonly');
+    expect(effective).toHaveValue(RAW.effective_text);
+    expect((effective as HTMLTextAreaElement).value).toContain('opus4.8');
+    // Save is disabled while viewing the merged (read-only) config.
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('saves a chat_models_disabled hide-list from the user config', async () => {
+    const { qc } = renderDialog();
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    const box = await screen.findByRole('textbox', { name: 'Your config contents' });
+    const next = '{\n  "chat_models_disabled": ["opus4.8"]\n}\n';
+    fireEvent.change(box, { target: { value: next } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() =>
+      expect(api.put).toHaveBeenCalledWith('/api/config/raw', { text: next }),
+    );
+    // The catalog is refreshed so the hidden model drops out of the picker.
+    const invalidated = invalidate.mock.calls.map(
+      (c) => (c[0] as { queryKey: string[] }).queryKey[0],
+    );
+    expect(invalidated).toContain('models-manager-catalog');
   });
 
   it('renders every server validation problem as a list and stays open', async () => {
@@ -50,7 +86,7 @@ describe('ConfigEditorDialog', () => {
       '"model_mode" must be one of "cloud", "hybrid" or "local".';
     api.put.mockRejectedValue(new ApiError(400, detail, '/api/config/raw', 'PUT'));
     const { onClose } = renderDialog();
-    await screen.findByRole('textbox', { name: 'config.json contents' });
+    await screen.findByRole('textbox', { name: 'Your config contents' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -72,7 +108,7 @@ describe('ConfigEditorDialog', () => {
       ),
     );
     renderDialog();
-    const box = await screen.findByRole('textbox', { name: 'config.json contents' });
+    const box = await screen.findByRole('textbox', { name: 'Your config contents' });
     fireEvent.change(box, { target: { value: '{\n  "a": 1,\n  oops\n}' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -82,8 +118,8 @@ describe('ConfigEditorDialog', () => {
 
   it('does NOT close on a backdrop (overlay) click', async () => {
     const { onClose } = renderDialog();
-    await screen.findByRole('textbox', { name: 'config.json contents' });
-    const overlay = screen.getByRole('dialog', { name: 'Edit config.json' });
+    await screen.findByRole('textbox', { name: 'Your config contents' });
+    const overlay = screen.getByRole('dialog', { name: 'Edit your config' });
 
     fireEvent.mouseDown(overlay);
     fireEvent.click(overlay);
@@ -93,8 +129,8 @@ describe('ConfigEditorDialog', () => {
 
   it('does NOT close when a selection drag starts in the textarea and releases on the backdrop', async () => {
     const { onClose } = renderDialog();
-    const box = await screen.findByRole('textbox', { name: 'config.json contents' });
-    const overlay = screen.getByRole('dialog', { name: 'Edit config.json' });
+    const box = await screen.findByRole('textbox', { name: 'Your config contents' });
+    const overlay = screen.getByRole('dialog', { name: 'Edit your config' });
 
     // Press starts inside the editor; the click on release targets the overlay
     // (the mousedown/mouseup common ancestor) — the exact reported trigger.
@@ -106,14 +142,14 @@ describe('ConfigEditorDialog', () => {
 
   it('DOES close on the Cancel button', async () => {
     const { onClose } = renderDialog();
-    await screen.findByRole('textbox', { name: 'config.json contents' });
+    await screen.findByRole('textbox', { name: 'Your config contents' });
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it('DOES close on Escape', async () => {
     const { onClose } = renderDialog();
-    await screen.findByRole('textbox', { name: 'config.json contents' });
+    await screen.findByRole('textbox', { name: 'Your config contents' });
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -133,7 +169,7 @@ describe('ConfigEditorDialog', () => {
         </div>
       </QueryClientProvider>,
     );
-    await screen.findByRole('textbox', { name: 'config.json contents' });
+    await screen.findByRole('textbox', { name: 'Your config contents' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
@@ -144,7 +180,7 @@ describe('ConfigEditorDialog', () => {
   it('saves, toasts, invalidates the model queries and closes on success', async () => {
     const { onClose, qc } = renderDialog();
     const invalidate = vi.spyOn(qc, 'invalidateQueries');
-    const box = await screen.findByRole('textbox', { name: 'config.json contents' });
+    const box = await screen.findByRole('textbox', { name: 'Your config contents' });
 
     const next = '{\n  "chat_models": {}\n}\n';
     fireEvent.change(box, { target: { value: next } });
@@ -152,7 +188,7 @@ describe('ConfigEditorDialog', () => {
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(api.put).toHaveBeenCalledWith('/api/config/raw', { text: next });
-    expect(useUIStore.getState().toasts.map((t) => t.message)).toContain('config.json saved');
+    expect(useUIStore.getState().toasts.map((t) => t.message)).toContain('Config saved');
     const invalidated = invalidate.mock.calls.map(
       (c) => (c[0] as { queryKey: string[] }).queryKey[0],
     );
@@ -174,7 +210,7 @@ describe('ConfigJsonLink', () => {
     );
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'config.json' }));
-    expect(await screen.findByRole('dialog', { name: 'Edit config.json' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Edit your config' })).toBeInTheDocument();
     // The dialog portals to document.body — never nested inside the <p>.
     expect(screen.getByRole('dialog').closest('p')).toBeNull();
   });
