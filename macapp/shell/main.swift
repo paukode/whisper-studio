@@ -5,6 +5,7 @@
 //   * spawn the bundled Python backend (Resources/backend, Resources/python)
 //   * wait for /health, then show the SPA in a WKWebView
 //   * forward mic-capture permission to the OS TCC prompt
+//   * bridge native system/app audio capture to the page (NativeAudioCapture.swift)
 //   * shut the backend down cleanly on quit (SIGTERM, then SIGKILL)
 
 import AppKit
@@ -71,6 +72,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     // Retained so the sources stay armed for the app's lifetime.
     private var signalSources: [DispatchSourceSignal] = []
+
+    // Native system/app audio capture bridge (Core Audio process taps).
+    private let nativeAudioBridge = NativeAudioBridge()
 
     // MARK: Lifecycle
 
@@ -151,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        nativeAudioBridge.shutdown()
         shutdownBackend()
     }
 
@@ -325,9 +330,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
         let config = WKWebViewConfiguration()
         config.mediaTypesRequiringUserActionForPlayback = []
+        // Native audio bridge: availability marker (documentStart user script)
+        // plus the "nativeAudio" message handler.
+        nativeAudioBridge.install(into: config)
 
         let view = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 1440, height: 900), configuration: config)
+        nativeAudioBridge.webView = view
         view.uiDelegate = self
         view.navigationDelegate = self
         view.allowsBackForwardNavigationGestures = true

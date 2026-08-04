@@ -34,6 +34,8 @@
 	</array>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Whisper Studio records other apps' audio only when you choose a system or app source for transcription.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Whisper Studio transcribes speech on-device; the microphone is only used when you press record.</string>
 	<key>NSPrincipalClass</key>

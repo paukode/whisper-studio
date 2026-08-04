@@ -426,6 +426,7 @@ body {
 }
 .capture-source-icon.mic { color: var(--accent-live); }
 .capture-source-icon.tab { color: var(--accent); }
+.capture-source-icon.native { color: var(--accent); }
 .capture-source-text { flex: 1; min-width: 0; }
 .capture-source-name { font-size: var(--fs-small); font-weight: 600; color: var(--text-primary); }
 .capture-source-sub {
@@ -451,6 +452,14 @@ body {
     border: 1px solid var(--accent-record);
 }
 .capture-source-action.remove:hover { background: rgba(229,72,77,0.1); }
+
+/* Native (macOS shell) per-app source list — refreshed on menu open;
+   scrolls past a handful of entries so the popover stays compact. */
+.capture-source-apps { max-height: 220px; overflow-y: auto; }
+.capture-source-empty {
+    padding: 8px; font-size: var(--fs-caption);
+    color: var(--text-muted); line-height: 1.5;
+}
 
 .capture-source-hint {
     display: flex; align-items: flex-start; gap: 7px;

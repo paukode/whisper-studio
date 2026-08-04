@@ -14,9 +14,17 @@
  */
 import { useSessionStore } from '@/stores/sessionStore';
 import { useRecordingStore } from '@/stores/recordingStore';
+import type { NativeSourceSelection } from '@/stores/recordingStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { ensureRecordingModels } from '@/services/recordingModels';
+import {
+  isNativeAudioAvailable,
+  listNativeAudioSources,
+  startNativeCapture,
+  stopNativeCapture,
+} from '@/services/nativeAudioSource';
+import { NativeAudioMixer } from '@/services/nativeAudioMixer';
 import { countActiveSessions, getTranscriptionStore } from '@/stores/sessionRuntimes';
 import { MAX_ACTIVE_SESSIONS } from '@/hooks/useChatStream';
 
@@ -56,6 +64,11 @@ let owningSessionId: string | null = null;
  *  record click during the wait must not start a second gate — the
  *  banner's Cancel is the way out. */
 let modelGateActive = false;
+/** Buffers native (shell-captured) samples between mic worklet frames in
+ *  mixed mode. Null in mic-only and native-only modes. */
+let nativeMixer: NativeAudioMixer | null = null;
+/** True while the shell's process-tap capture is live. */
+let nativeCaptureRunning = false;
 
 const ownerStore = () => getTranscriptionStore(owningSessionId).getState();
 
@@ -100,6 +113,71 @@ function onTranscriptResult(text: string, speaker: string, chunkId?: number): vo
       freshIndex: 0,
     });
   }
+}
+
+// ── Native (shell) audio source ─────────────────────────────────────────
+
+/** App pids go stale across relaunches; re-resolve the armed selection by
+ *  bundle id against a fresh source list, falling back to the stored pid.
+ *  System audio (-1) passes straight through. */
+async function resolveNativePid(sel: NativeSourceSelection): Promise<number> {
+  if (sel.pid === -1) return -1;
+  try {
+    const sources = await listNativeAudioSources();
+    const match =
+      (sel.bundleID ? sources.find((s) => s.bundleID === sel.bundleID) : undefined) ??
+      sources.find((s) => s.pid === sel.pid);
+    if (match) return match.pid;
+  } catch {
+    // Enumeration failed — the stored pid is still worth a try.
+  }
+  return sel.pid;
+}
+
+/** Decoded native chunk (16 kHz mono Float32). Mixed mode buffers it for the
+ *  mic worklet (the mic is the clock master); native-only mode has no mic
+ *  clock, so the chunks drive the chunker/websocket directly. */
+function handleNativeAudio(samples: Float32Array): void {
+  if (!useRecordingStore.getState().isRecording) return;
+  if (nativeMixer) {
+    nativeMixer.push(samples);
+    return;
+  }
+  pcmBuffer.push(samples);
+  pcmBufferLen += samples.length;
+  if (pcmBufferLen >= chunkSamples) flushPcmBuffer();
+}
+
+/** Mid-recording native failure (the shell already stopped the tap).
+ *  Mixed mode degrades to mic-only; native-only mode has nothing left to
+ *  record, so the recording stops (and saves) cleanly. */
+function handleNativeError(message: string): void {
+  nativeCaptureRunning = false;
+  const wasMixed = nativeMixer !== null;
+  nativeMixer = null;
+  useUIStore.getState().addToast({
+    type: 'error',
+    message: `Native audio capture failed: ${message}`,
+    duration: 8000,
+  });
+  if (!useRecordingStore.getState().isRecording) return;
+  if (wasMixed) {
+    const rec = useRecordingStore.getState();
+    const tabLive = !!rec.tabStream
+      ?.getAudioTracks()
+      .some((t) => t.readyState === 'live');
+    rec.setActiveSourceLabel(tabLive ? 'Mic + Tab' : 'Mic');
+  } else {
+    stop();
+  }
+}
+
+function buildSourceLabel(mic: boolean, nativeName: string | null, tab: boolean): string {
+  const parts: string[] = [];
+  if (mic) parts.push('Mic');
+  if (nativeName) parts.push(nativeName);
+  if (tab) parts.push('Tab');
+  return parts.join(' + ') || 'Mic';
 }
 
 function stopPing(): void {
@@ -238,56 +316,114 @@ async function start(sessionId: string): Promise<void> {
   connectWS();
 
   try {
-    // Refcounted acquisition — if the chat-input mic is already running,
-    // this returns the same MediaStream + AudioContext so both pipelines
-    // tap one device instead of fighting for it.
-    const { stream: micStream, context } = await rec.acquireMic('header-recorder');
+    // ── Source plan ──────────────────────────────────────────────────
+    // Three modes: mic only (default), mic + native source (mixed), or
+    // native source only. The native source is the shell's Core Audio
+    // process tap (system audio or one app); the mic can only be off
+    // when a native source stands in for it.
+    const armed = useRecordingStore.getState();
+    const nativeSel = armed.nativeSource;
+    const nativeWanted = !!nativeSel && isNativeAudioAvailable();
+    const micWanted = armed.micEnabled || !nativeWanted;
 
-    // Vite BASE_URL so the worklet resolves in dev ('/') and prod
-    // ('/static/dist/') — hardcoding '/pcm-processor.js' hits the SPA
-    // fallback in prod and gets index.html back.
-    await context.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-processor.js`);
-    // Explicit mono: any stereo source (e.g. tab audio) is downmixed
-    // (L+R) into channel 0 rather than having its right channel dropped,
-    // since the worklet only forwards channel 0.
-    workletNode = new AudioWorkletNode(context, 'pcm-processor', {
-      channelCount: 1,
-      channelCountMode: 'explicit',
-      channelInterpretation: 'speakers',
-    });
-
-    workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
-      if (!useRecordingStore.getState().isRecording) return;
-      pcmBuffer.push(e.data);
-      pcmBufferLen += e.data.length;
-      if (pcmBufferLen >= chunkSamples) flushPcmBuffer();
-    };
-
-    // Mic source — if the user set up an OS-level aggregate device
-    // (BlackHole + mic), this stream already mixes system audio in.
-    context.createMediaStreamSource(micStream).connect(workletNode);
-
-    // Optional Chrome-tab audio, armed from the source picker before
-    // recording. Summed into the SAME worklet input as the mic, so the
-    // websocket / VAD / ASR pipeline downstream is unchanged (one mono
-    // stream) and speaker diarization separates the voices. The user's
-    // headphones keep the tab audio from looping back through the mic.
-    const tabStream = useRecordingStore.getState().tabStream;
-    const tabTrack = tabStream?.getAudioTracks()[0] ?? null;
-    if (tabStream && tabTrack && tabTrack.readyState === 'live') {
-      tabSourceNode = context.createMediaStreamSource(tabStream);
-      tabSourceNode.connect(workletNode);
-      // "Stop sharing" ends the track — detach the dead source so it
-      // doesn't linger in the graph for the rest of the recording.
-      tabTrack.addEventListener('ended', () => {
-        if (tabSourceNode) {
-          tabSourceNode.disconnect();
-          tabSourceNode = null;
-        }
-      });
+    // Native capture first: its failure modes (TCC denial, app quit) are
+    // cheap to surface before the mic is opened. In mixed mode the samples
+    // buffer in the mixer until the mic worklet starts pulling them.
+    let nativeName: string | null = null;
+    if (nativeWanted && nativeSel) {
+      try {
+        const pid = await resolveNativePid(nativeSel);
+        nativeMixer = micWanted ? new NativeAudioMixer() : null;
+        await startNativeCapture(pid, {
+          onAudio: handleNativeAudio,
+          onError: handleNativeError,
+          onStopped: () => {
+            nativeCaptureRunning = false;
+          },
+        });
+        nativeCaptureRunning = true;
+        nativeName = nativeSel.name;
+      } catch (err) {
+        nativeMixer = null;
+        // Native-only: no other source can carry the recording.
+        if (!micWanted) throw err;
+        // Mixed: degrade to mic-only and say so — the message from the
+        // shell is actionable (System Settings path on TCC denial).
+        const detail = err instanceof Error ? err.message : String(err);
+        useUIStore.getState().addToast({
+          type: 'error',
+          message: `Native audio source unavailable — recording with microphone only. ${detail}`,
+          duration: 8000,
+        });
+      }
     }
 
-    workletNode.connect(context.destination);
+    let tabMixed = false;
+    if (micWanted) {
+      // Refcounted acquisition — if the chat-input mic is already running,
+      // this returns the same MediaStream + AudioContext so both pipelines
+      // tap one device instead of fighting for it.
+      const { stream: micStream, context } = await rec.acquireMic('header-recorder');
+
+      // Vite BASE_URL so the worklet resolves in dev ('/') and prod
+      // ('/static/dist/') — hardcoding '/pcm-processor.js' hits the SPA
+      // fallback in prod and gets index.html back.
+      await context.audioWorklet.addModule(`${import.meta.env.BASE_URL}pcm-processor.js`);
+      // Explicit mono: any stereo source (e.g. tab audio) is downmixed
+      // (L+R) into channel 0 rather than having its right channel dropped,
+      // since the worklet only forwards channel 0.
+      workletNode = new AudioWorkletNode(context, 'pcm-processor', {
+        channelCount: 1,
+        channelCountMode: 'explicit',
+        channelInterpretation: 'speakers',
+      });
+
+      workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
+        if (!useRecordingStore.getState().isRecording) return;
+        // Mic is the clock master: each frame pulls the same number of
+        // buffered native samples (summed + clamped); underruns mix
+        // silence, >500 ms backlogs drop their oldest samples.
+        const frame =
+          nativeCaptureRunning && nativeMixer ? nativeMixer.mixInto(e.data) : e.data;
+        pcmBuffer.push(frame);
+        pcmBufferLen += frame.length;
+        if (pcmBufferLen >= chunkSamples) flushPcmBuffer();
+      };
+
+      // Mic source — if the user set up an OS-level aggregate device
+      // (BlackHole + mic), this stream already mixes system audio in.
+      context.createMediaStreamSource(micStream).connect(workletNode);
+
+      // Optional Chrome-tab audio, armed from the source picker before
+      // recording. Summed into the SAME worklet input as the mic, so the
+      // websocket / VAD / ASR pipeline downstream is unchanged (one mono
+      // stream) and speaker diarization separates the voices. The user's
+      // headphones keep the tab audio from looping back through the mic.
+      const tabStream = useRecordingStore.getState().tabStream;
+      const tabTrack = tabStream?.getAudioTracks()[0] ?? null;
+      if (tabStream && tabTrack && tabTrack.readyState === 'live') {
+        tabSourceNode = context.createMediaStreamSource(tabStream);
+        tabSourceNode.connect(workletNode);
+        tabMixed = true;
+        // "Stop sharing" ends the track — detach the dead source so it
+        // doesn't linger in the graph for the rest of the recording.
+        tabTrack.addEventListener('ended', () => {
+          if (tabSourceNode) {
+            tabSourceNode.disconnect();
+            tabSourceNode = null;
+          }
+        });
+      }
+
+      workletNode.connect(context.destination);
+    }
+    // Native-only mode: no getUserMedia, no AudioContext, no worklet — the
+    // shell's chunks feed the chunker directly (see handleNativeAudio), so
+    // recording needs no microphone permission at all.
+
+    useRecordingStore
+      .getState()
+      .setActiveSourceLabel(buildSourceLabel(micWanted, nativeName, tabMixed));
 
     startWatchdog();
   } catch (err) {
@@ -317,10 +453,16 @@ async function start(sessionId: string): Promise<void> {
       tabSourceNode.disconnect();
       tabSourceNode = null;
     }
+    if (nativeCaptureRunning) {
+      nativeCaptureRunning = false;
+      void stopNativeCapture();
+    }
+    nativeMixer = null;
     const store = useRecordingStore.getState();
     store.setConnected(false);
     store.setRecording(false);
     store.setRecordingSession(null);
+    store.setActiveSourceLabel(null);
     owningSessionId = null;
     void store.releaseMic('header-recorder');
     store.releaseTabAudio();
@@ -348,6 +490,15 @@ function stop(): void {
     tabSourceNode.disconnect();
     tabSourceNode = null;
   }
+  // Native capture: tell the shell to drain and destroy the tap. Chunks
+  // that race in before onStopped are dropped by handleNativeAudio's
+  // isRecording check.
+  if (nativeCaptureRunning) {
+    nativeCaptureRunning = false;
+    void stopNativeCapture();
+  }
+  nativeMixer = null;
+  rec.setActiveSourceLabel(null);
   void rec.releaseMic('header-recorder');
   // The tab stream belongs to this recording only (not shared like the
   // mic), so tear it down here — the next recording re-arms it.

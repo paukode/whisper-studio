@@ -41,6 +41,73 @@ timestamp line per launch ("Show Logs" in the Whisper Studio menu reveals it).
 The shell polls `/health` for up to 120 s before showing the UI, and on quit
 sends SIGTERM, waits up to 15 s, then SIGKILLs the backend.
 
+## Audio sources (native system/app capture)
+
+The shell can capture the Mac's audio OUTPUT and feed it to transcription,
+alongside or instead of the microphone. In the app, open the headphones menu
+next to Record:
+
+- **Microphone** — always available; can be turned off only while a native
+  source is armed ("native only" mode, which never calls getUserMedia).
+- **System audio** — everything the Mac plays (our own process is excluded).
+- **One app** (e.g. Zoom) — the per-app list shows processes currently
+  producing audio and refreshes each time the menu opens.
+
+The selection persists across launches. All sources are mixed into ONE
+16 kHz mono stream in the frontend, so the backend websocket contract is
+unchanged and speaker diarization separates the voices. Wear headphones so
+captured playback is not picked up a second time by the mic.
+
+Implementation: Core Audio process taps (`CATapDescription` +
+`AudioHardwareCreateProcessTap` + a private aggregate device + IOProc) in
+`macapp/shell/NativeAudioCapture.swift`, converted to 16 kHz mono Int16 with
+`AVAudioConverter` and pushed to the SPA over a WKWebView bridge
+(`window.webkit.messageHandlers.nativeAudio` /
+`window.__whisperNativeAudio`). The frontend wrapper is
+`src/services/nativeAudioSource.ts`.
+
+**Requirements and permission**
+
+- macOS **14.4 or later** (the taps API). On older systems the shell injects
+  `available:false` and the menu shows no native section.
+- TCC: the first capture start triggers the OS **System Audio Recording**
+  prompt (`NSAudioCaptureUsageDescription` in `Info.plist`). If denied, the
+  UI shows an actionable error; re-enable under
+  System Settings > Privacy & Security > Screen & System Audio Recording.
+
+**Enumeration smoke test (no TCC needed)**
+
+```bash
+swiftc -D SMOKE_CLI -target arm64-apple-macos14 \
+    macapp/shell/NativeAudioCapture.swift macapp/shell/smoke_list_sources.swift \
+    -o /tmp/smoke_list_sources \
+    -framework AppKit -framework WebKit -framework CoreAudio \
+    -framework AudioToolbox -framework AVFoundation
+/tmp/smoke_list_sources   # JSON: System audio + apps currently playing
+```
+
+**Manual test checklist**
+
+1. Build and launch the app, play music (Music/Safari/`afplay`), open the
+   headphones menu → the playing app appears in "This Mac".
+2. Pick **System audio**, press Record — first time, expect the OS
+   permission prompt; accept. Speak AND keep the music playing: the
+   transcript should contain the music's lyrics/speech and your voice, with
+   diarization splitting speakers. The header shows "Mic + System audio".
+3. Stop. Pick the app source instead (e.g. the browser playing a video) —
+   only that app's audio should be transcribed alongside the mic.
+4. Turn the microphone **off** (allowed while a native source is armed) and
+   record — transcript comes from the native source alone; no mic permission
+   prompt appears on a fresh install in this mode.
+5. Zoom two-device test: join a meeting from a second device, wear
+   headphones on the Mac, arm "Zoom" + mic, record — both sides of the call
+   land in the transcript as separate speakers.
+6. Deny the TCC permission (System Settings) and start a capture — a toast
+   explains where to re-enable it; with the mic still on, recording
+   continues mic-only.
+7. Quit the app mid-capture — no stray "Whisper Studio Capture" device stays
+   behind (check Audio MIDI Setup).
+
 ## Signing and notarization
 
 Default is ad-hoc signing (`SIGN_IDENTITY=-`): runs locally, but other Macs
@@ -77,6 +144,8 @@ Version comes from `git describe --tags --always`, falling back to `0.1.0`.
 - `gh` and `git` tooling is not bundled; those features need Command Line
   Tools / Homebrew installs on the host.
 - Chrome-tab capture stays in the browser: use "Open in Browser" from the
-  Whisper Studio menu for flows that need a real Chrome tab.
+  Whisper Studio menu for flows that need a real Chrome tab. Inside the
+  shell, native system/app capture (see "Audio sources" above) covers the
+  meeting use case instead, so the tab row is hidden there.
 - The app icon is a plain solid-colour placeholder.
 - Intel Macs are unsupported (arm64-only binaries throughout).
