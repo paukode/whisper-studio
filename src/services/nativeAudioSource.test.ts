@@ -138,6 +138,17 @@ describe('startNativeCapture / stopNativeCapture', () => {
     await expect(retry).resolves.toBeUndefined();
   });
 
+  it('posts the bundleID for app captures so the shell can re-resolve pids', async () => {
+    const promise = startNativeCapture(
+      42,
+      { onAudio: vi.fn(), onError: vi.fn() },
+      'us.zoom.xos',
+    );
+    expect(posted).toEqual([{ cmd: 'start', pid: 42, bundleID: 'us.zoom.xos' }]);
+    native().onStarted();
+    await expect(promise).resolves.toBeUndefined();
+  });
+
   it('delivers decoded Float32 chunks to onAudio', async () => {
     const frames: Float32Array[] = [];
     const promise = startNativeCapture(-1, {
@@ -150,6 +161,41 @@ describe('startNativeCapture / stopNativeCapture', () => {
     expect(frames).toHaveLength(1);
     expect(frames[0][0]).toBeCloseTo(0.5, 5);
     expect(frames[0][1]).toBeCloseTo(-0.5, 5);
+  });
+
+  it('passes the shell rms through to onAudio, and omits it when absent', async () => {
+    const levels: (number | undefined)[] = [];
+    const promise = startNativeCapture(-1, {
+      onAudio: (_samples, rms) => levels.push(rms),
+      onError: vi.fn(),
+    });
+    native().onStarted();
+    await promise;
+    native().onAudio(encodeInt16([16384]), 1, 0.25);
+    native().onAudio(encodeInt16([16384]), 1); // old shell: no rms argument
+    expect(levels).toEqual([0.25, undefined]);
+  });
+
+  it('routes onWarning to the handler without ending the capture', async () => {
+    const onAudio = vi.fn();
+    const onWarning = vi.fn();
+    const onError = vi.fn();
+    const promise = startNativeCapture(-1, { onAudio, onError, onWarning });
+    native().onStarted();
+    await promise;
+    native().onWarning('System audio capture is producing no sound.');
+    expect(onWarning).toHaveBeenCalledWith('System audio capture is producing no sound.');
+    expect(onError).not.toHaveBeenCalled();
+    // The capture is still live — audio keeps flowing after the warning.
+    native().onAudio(encodeInt16([1]), 1);
+    expect(onAudio).toHaveBeenCalledTimes(1);
+  });
+
+  it('tolerates onWarning when no handler was registered', async () => {
+    const promise = startNativeCapture(-1, { onAudio: vi.fn(), onError: vi.fn() });
+    native().onStarted();
+    await promise;
+    expect(() => native().onWarning('silent')).not.toThrow();
   });
 
   it('routes a mid-capture error to onError and stops delivering audio', async () => {

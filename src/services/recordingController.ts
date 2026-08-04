@@ -126,7 +126,9 @@ async function resolveNativePid(sel: NativeSourceSelection): Promise<number> {
     const sources = await listNativeAudioSources();
     const match =
       (sel.bundleID ? sources.find((s) => s.bundleID === sel.bundleID) : undefined) ??
-      sources.find((s) => s.pid === sel.pid);
+      // Grouped rows carry ALL of an app's audio pids — the armed pid may
+      // be any of them, not just the row's representative first pid.
+      sources.find((s) => s.pid === sel.pid || (s.pids?.includes(sel.pid) ?? false));
     if (match) return match.pid;
   } catch {
     // Enumeration failed — the stored pid is still worth a try.
@@ -134,18 +136,55 @@ async function resolveNativePid(sel: NativeSourceSelection): Promise<number> {
   return sel.pid;
 }
 
+/** Fallback RMS for chunks from older shells that don't send one. */
+function computeRms(samples: Float32Array): number {
+  if (samples.length === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+  return Math.sqrt(sum / samples.length);
+}
+
+/** One console line per recording when the mixer misbehaves — the mic path
+ *  must stay alive regardless, so mixer failures are logged, not thrown. */
+let mixerFailureLogged = false;
+
 /** Decoded native chunk (16 kHz mono Float32). Mixed mode buffers it for the
  *  mic worklet (the mic is the clock master); native-only mode has no mic
  *  clock, so the chunks drive the chunker/websocket directly. */
-function handleNativeAudio(samples: Float32Array): void {
+function handleNativeAudio(samples: Float32Array, rms?: number): void {
   if (!useRecordingStore.getState().isRecording) return;
+  useRecordingStore.getState().setNativeLevel(rms ?? computeRms(samples));
   if (nativeMixer) {
-    nativeMixer.push(samples);
+    // Fail-open: a mixer fault must never take the MIC down with it. Drop
+    // this native chunk and keep recording; the worklet handler below keeps
+    // forwarding mic frames whether or not the mixer has data.
+    try {
+      nativeMixer.push(samples);
+    } catch (err) {
+      if (!mixerFailureLogged) {
+        mixerFailureLogged = true;
+        console.error('[record] native mixer push failed — dropping native audio:', err);
+      }
+    }
     return;
   }
   pcmBuffer.push(samples);
   pcmBufferLen += samples.length;
   if (pcmBufferLen >= chunkSamples) flushPcmBuffer();
+}
+
+/** Silent-capture advisory from the shell (tap running, nothing but zeros).
+ *  The capture keeps going; surface an actionable warning toast (persists
+ *  to the notification bell via source: 'recording'). */
+function handleNativeWarning(message: string): void {
+  useRecordingStore.getState().setNativeLevel(0);
+  useUIStore.getState().addToast({
+    type: 'warning',
+    message,
+    duration: 10000,
+    key: 'native-silent-capture',
+    source: 'recording',
+  });
 }
 
 /** Mid-recording native failure (the shell already stopped the tap).
@@ -155,6 +194,7 @@ function handleNativeError(message: string): void {
   nativeCaptureRunning = false;
   const wasMixed = nativeMixer !== null;
   nativeMixer = null;
+  useRecordingStore.getState().setNativeLevel(0);
   useUIStore.getState().addToast({
     type: 'error',
     message: `Native audio capture failed: ${message}`,
@@ -336,13 +376,22 @@ async function start(sessionId: string): Promise<void> {
       try {
         const pid = await resolveNativePid(nativeSel);
         nativeMixer = micWanted ? new NativeAudioMixer() : null;
-        await startNativeCapture(pid, {
-          onAudio: handleNativeAudio,
-          onError: handleNativeError,
-          onStopped: () => {
-            nativeCaptureRunning = false;
+        mixerFailureLogged = false;
+        await startNativeCapture(
+          pid,
+          {
+            onAudio: handleNativeAudio,
+            onError: handleNativeError,
+            onWarning: handleNativeWarning,
+            onStopped: () => {
+              nativeCaptureRunning = false;
+              useRecordingStore.getState().setNativeLevel(0);
+            },
           },
-        });
+          // App captures re-resolve by bundle id in the shell too (the pid
+          // may be stale, and one app can span several audio processes).
+          pid >= 0 ? nativeSel.bundleID : undefined,
+        );
         nativeCaptureRunning = true;
         nativeName = nativeSel.name;
       } catch (err) {
@@ -386,8 +435,27 @@ async function start(sessionId: string): Promise<void> {
         // Mic is the clock master: each frame pulls the same number of
         // buffered native samples (summed + clamped); underruns mix
         // silence, >500 ms backlogs drop their oldest samples.
-        const frame =
-          nativeCaptureRunning && nativeMixer ? nativeMixer.mixInto(e.data) : e.data;
+        //
+        // FAIL-OPEN INVARIANT: the mic frame reaches the chunker on every
+        // path. If the mixer throws, mixing is disabled for the rest of the
+        // recording and the raw mic frame is forwarded — a broken/silent
+        // native source must never take the microphone down with it.
+        let frame = e.data;
+        if (nativeCaptureRunning && nativeMixer) {
+          try {
+            frame = nativeMixer.mixInto(e.data);
+          } catch (err) {
+            nativeMixer = null;
+            frame = e.data;
+            if (!mixerFailureLogged) {
+              mixerFailureLogged = true;
+              console.error(
+                '[record] native mixer failed — continuing with the microphone only:',
+                err,
+              );
+            }
+          }
+        }
         pcmBuffer.push(frame);
         pcmBufferLen += frame.length;
         if (pcmBufferLen >= chunkSamples) flushPcmBuffer();
@@ -462,6 +530,7 @@ async function start(sessionId: string): Promise<void> {
     }
     nativeMixer = null;
     const store = useRecordingStore.getState();
+    store.setNativeLevel(0);
     store.setConnected(false);
     store.setRecording(false);
     store.setRecordingSession(null);
@@ -501,6 +570,7 @@ function stop(): void {
     void stopNativeCapture();
   }
   nativeMixer = null;
+  rec.setNativeLevel(0);
   rec.setActiveSourceLabel(null);
   void rec.releaseMic('header-recorder');
   // The tab stream belongs to this recording only (not shared like the

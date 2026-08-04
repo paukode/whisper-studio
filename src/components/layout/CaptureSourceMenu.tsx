@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useRecordingStore } from '@/stores/recordingStore';
+import { useRecordingStore, NATIVE_LEVEL_ACTIVE_THRESHOLD } from '@/stores/recordingStore';
 import { useUIStore } from '@/stores/uiStore';
 import {
   isNativeAudioAvailable,
@@ -47,6 +47,29 @@ const SpeakerIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   </svg>
 );
 
+/** Tiny 3-bar activity meter shown on the ACTIVE native source row while
+ *  recording, driven by the shell's per-chunk rms (recordingStore.nativeLevel).
+ *  Dimmed when the source is silent — the visual answer to "is any audio
+ *  actually coming through?". Exported for tests. */
+export const NativeLevelMeter: React.FC<{ level: number }> = ({ level }) => {
+  const active = level > NATIVE_LEVEL_ACTIVE_THRESHOLD;
+  const lit = !active ? 0 : level > 0.1 ? 3 : level > 0.02 ? 2 : 1;
+  return (
+    <span
+      className={`native-level-meter${active ? ' active' : ''}`}
+      role="img"
+      aria-label={active ? 'Audio detected from this source' : 'No audio from this source'}
+      data-testid="native-level-meter"
+      data-lit={lit}
+      title={active ? 'Audio detected' : 'No audio detected yet'}
+    >
+      <span className={`native-level-bar${lit >= 1 ? ' lit' : ''}`} />
+      <span className={`native-level-bar${lit >= 2 ? ' lit' : ''}`} />
+      <span className={`native-level-bar${lit >= 3 ? ' lit' : ''}`} />
+    </span>
+  );
+};
+
 const AppWindowIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -61,6 +84,7 @@ export const CaptureSourceMenu: React.FC = () => {
   const acquireTabAudio = useRecordingStore((s) => s.acquireTabAudio);
   const releaseTabAudio = useRecordingStore((s) => s.releaseTabAudio);
   const nativeSource = useRecordingStore((s) => s.nativeSource);
+  const nativeLevel = useRecordingStore((s) => s.nativeLevel);
   const micEnabled = useRecordingStore((s) => s.micEnabled);
   const setNativeSource = useRecordingStore((s) => s.setNativeSource);
   const setMicEnabled = useRecordingStore((s) => s.setMicEnabled);
@@ -240,7 +264,10 @@ export const CaptureSourceMenu: React.FC = () => {
                 <SpeakerIcon />
               </span>
               <div className="capture-source-text">
-                <div className="capture-source-name">System audio</div>
+                <div className="capture-source-name">
+                  System audio
+                  {systemActive && isRecording && <NativeLevelMeter level={nativeLevel} />}
+                </div>
                 <div className="capture-source-sub">
                   {systemActive ? 'Capturing everything the Mac plays' : 'Everything the Mac plays'}
                 </div>
@@ -275,7 +302,10 @@ export const CaptureSourceMenu: React.FC = () => {
                     <AppWindowIcon />
                   </span>
                   <div className="capture-source-text">
-                    <div className="capture-source-name">{nativeSource.name}</div>
+                    <div className="capture-source-name">
+                      {nativeSource.name}
+                      {isRecording && <NativeLevelMeter level={nativeLevel} />}
+                    </div>
                     <div className="capture-source-sub">Not playing audio right now</div>
                   </div>
                   <button
@@ -295,7 +325,10 @@ export const CaptureSourceMenu: React.FC = () => {
                     <AppWindowIcon />
                   </span>
                   <div className="capture-source-text">
-                    <div className="capture-source-name">{app.name}</div>
+                    <div className="capture-source-name">
+                      {app.name}
+                      {isActiveApp(app) && isRecording && <NativeLevelMeter level={nativeLevel} />}
+                    </div>
                     <div className="capture-source-sub">
                       {isActiveApp(app) ? 'Capturing this app' : 'App audio output'}
                     </div>

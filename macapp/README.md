@@ -49,9 +49,23 @@ next to Record:
 
 - **Microphone** — always available; can be turned off only while a native
   source is armed ("native only" mode, which never calls getUserMedia).
-- **System audio** — everything the Mac plays (our own process is excluded).
-- **One app** (e.g. Zoom) — the per-app list shows processes currently
-  producing audio and refreshes each time the menu opens.
+- **System audio** — everything the Mac plays. EVERY process belonging to
+  Whisper Studio itself (shell, its WebKit GPU/media helpers, the spawned
+  backend tree) is excluded from the tap.
+- **One app** (e.g. Zoom) — the per-app list shows USER-FACING APPS currently
+  producing audio and refreshes each time the menu opens. Helper processes
+  ("Google Chrome Helper", WebKit XPC services) are grouped into their app;
+  one row can span several audio pids, and starting a capture re-resolves and
+  taps all of them. Processes with no .app ancestor keep their process name
+  (e.g. `afplay`). Whisper Studio itself never appears in the list.
+
+While recording, the active native source row shows a small 3-bar activity
+meter (driven by the live capture level), and the header's source label gets
+a green dot while the native capture is audibly delivering sound. If a
+capture starts but stays silent for 5 seconds (no callbacks, or only zero
+samples — the classic symptom of a revoked/denied System Audio Recording
+permission), a warning toast explains where to fix it; it persists to the
+notification bell.
 
 The selection persists across launches. All sources are mixed into ONE
 16 kHz mono stream in the frontend, so the backend websocket contract is
@@ -59,12 +73,20 @@ unchanged and speaker diarization separates the voices. Wear headphones so
 captured playback is not picked up a second time by the mic.
 
 Implementation: Core Audio process taps (`CATapDescription` +
-`AudioHardwareCreateProcessTap` + a private aggregate device + IOProc) in
-`macapp/shell/NativeAudioCapture.swift`, converted to 16 kHz mono Int16 with
-`AVAudioConverter` and pushed to the SPA over a WKWebView bridge
+`AudioHardwareCreateProcessTap` + a private TAP-ONLY aggregate device +
+IOProc) in `macapp/shell/NativeAudioCapture.swift`, converted to 16 kHz mono
+Int16 with `AVAudioConverter` and pushed to the SPA over a WKWebView bridge
 (`window.webkit.messageHandlers.nativeAudio` /
 `window.__whisperNativeAudio`). The frontend wrapper is
 `src/services/nativeAudioSource.ts`.
+
+The aggregate device contains NO physical sub-devices: including the real
+output device opens an IO path to the user's speakers/headphones (Bluetooth
+headsets flip into call mode and the app shows up in the audio chain). Only
+if the tap-only aggregate fails does the shell fall back to including the
+default output device — and then every output buffer is zero-filled in the
+IOProc and the tap's input buffers are located by format rather than assumed
+at index 0. The default input/output devices are never modified.
 
 **Requirements and permission**
 
@@ -83,29 +105,48 @@ swiftc -D SMOKE_CLI -target arm64-apple-macos14 \
     -o /tmp/smoke_list_sources \
     -framework AppKit -framework WebKit -framework CoreAudio \
     -framework AudioToolbox -framework AVFoundation
-/tmp/smoke_list_sources   # JSON: System audio + apps currently playing
+/tmp/smoke_list_sources            # JSON: System audio + grouped app rows
+/tmp/smoke_list_sources --assert   # grouping / self-exclusion assertions
 ```
+
+With `afplay` playing, the list must contain an `afplay` row (process name,
+no bundle); with Chrome playing, ONE "Google Chrome" row (helpers grouped),
+never a bare "helper" row; and never any Whisper Studio row.
 
 **Manual test checklist**
 
 1. Build and launch the app, play music (Music/Safari/`afplay`), open the
-   headphones menu → the playing app appears in "This Mac".
+   headphones menu → the playing app appears in "This Mac" under its real
+   app name. Chrome shows as ONE "Google Chrome" row (no "helper" rows), and
+   no "Whisper Studio"/"Whisper Studio Graphics and Media" row ever appears.
 2. Pick **System audio**, press Record — first time, expect the OS
    permission prompt; accept. Speak AND keep the music playing: the
    transcript should contain the music's lyrics/speech and your voice, with
-   diarization splitting speakers. The header shows "Mic + System audio".
-3. Stop. Pick the app source instead (e.g. the browser playing a video) —
-   only that app's audio should be transcribed alongside the mic.
-4. Turn the microphone **off** (allowed while a native source is armed) and
+   diarization splitting speakers. The header shows "Mic + System audio"
+   with a green live dot while captured audio is audible, and the source
+   menu's active row shows a moving 3-bar level meter.
+3. While recording with headphones on, playback must stay untouched: no
+   device switch in System Settings > Sound, no Bluetooth headset dropping
+   into call-quality audio, no audio "routing through" Whisper Studio
+   (the aggregate is tap-only; check `backend.log` for "tap-only aggregate"
+   in the `[native-audio]` capture-started line).
+4. Stop. Pick the app source instead (e.g. the browser playing a video) —
+   only that app's audio should be transcribed alongside the mic, including
+   audio played by the app's helper processes (a second Chrome tab/window).
+5. Turn the microphone **off** (allowed while a native source is armed) and
    record — transcript comes from the native source alone; no mic permission
    prompt appears on a fresh install in this mode.
-5. Zoom two-device test: join a meeting from a second device, wear
+6. Zoom two-device test: join a meeting from a second device, wear
    headphones on the Mac, arm "Zoom" + mic, record — both sides of the call
    land in the transcript as separate speakers.
-6. Deny the TCC permission (System Settings) and start a capture — a toast
-   explains where to re-enable it; with the mic still on, recording
-   continues mic-only.
-7. Quit the app mid-capture — no stray "Whisper Studio Capture" device stays
+7. Deny the TCC permission (System Settings) and start a capture — either
+   the start fails with a toast pointing at System Settings, or (macOS
+   versions where a denied tap starts silently) a warning toast appears
+   after ~5 s: "System audio capture is producing no sound…" — and it lands
+   in the notification bell. The MIC KEEPS RECORDING either way: with the
+   mic on, the transcript keeps growing mic-only while the native side is
+   silent or degraded.
+8. Quit the app mid-capture — no stray "Whisper Studio Capture" device stays
    behind (check Audio MIDI Setup).
 
 ## Signing and notarization

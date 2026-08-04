@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
-import { useRecordingStore } from '@/stores/recordingStore';
+import { useRecordingStore, NATIVE_LEVEL_ACTIVE_THRESHOLD } from '@/stores/recordingStore';
 import { useActiveTranscriptionStore } from '@/stores/sessionRuntimes';
 import { useBackgroundTaskStore } from '@/stores/backgroundTaskStore';
 import { recordingController } from '@/services/recordingController';
@@ -48,6 +48,7 @@ export const Header: React.FC = () => {
   const isRecording = useRecordingStore((s) => s.isRecording);
   const recordingSessionId = useRecordingStore((s) => s.recordingSessionId);
   const activeSourceLabel = useRecordingStore((s) => s.activeSourceLabel);
+  const nativeLevel = useRecordingStore((s) => s.nativeLevel);
   const wsConnected = useRecordingStore((s) => s.isConnected);
   const segments = useActiveTranscriptionStore((s) => s.segments);
   const runningTaskCount = useBackgroundTaskStore((s) => s.runningCount);
@@ -145,6 +146,15 @@ export const Header: React.FC = () => {
           * and updates it if a native source drops out mid-recording. */}
         <span className="audio-source-label" id="audioSourceLabel">
           {isRecording ? (activeSourceLabel ?? 'Mic') : ''}
+          {/* Subtle live dot: the NATIVE capture (system/app tap) is
+            * currently delivering audible audio, per the shell's rms. */}
+          {isRecording && nativeLevel > NATIVE_LEVEL_ACTIVE_THRESHOLD && (
+            <span
+              className="native-live-dot"
+              data-testid="native-live-dot"
+              title="System audio is being captured"
+            />
+          )}
         </span>
       </div>
 

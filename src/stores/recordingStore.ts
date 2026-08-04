@@ -32,6 +32,18 @@ export interface NativeSourceSelection {
 
 const CAPTURE_PREF_KEY = 'whisper-native-capture-source';
 
+/** RMS above this counts as "the native source is audibly producing sound"
+ *  (~ -54 dBFS). Drives the live dots in the header and the source menu. */
+export const NATIVE_LEVEL_ACTIVE_THRESHOLD = 0.002;
+
+/** Quantize a raw RMS so repeated near-identical chunks don't re-render
+ *  every subscriber 5-10 times a second. 0.001 steps keep resolution below
+ *  the activity threshold while still deduplicating steady levels. */
+function quantizeLevel(level: number): number {
+  if (!Number.isFinite(level) || level <= 0) return 0;
+  return Math.round(Math.min(level, 1) * 1000) / 1000;
+}
+
 interface CapturePrefs {
   nativeSource: NativeSourceSelection | null;
   micEnabled: boolean;
@@ -95,6 +107,10 @@ export interface RecordingState {
    *  "Mic + Zoom"), set by the recording controller at start and shown in
    *  the header's recording indicator. Null when idle. */
   activeSourceLabel: string | null;
+  /** Live RMS level ([0, 1], quantized) of the NATIVE capture, fed by the
+   *  recording controller from the shell's per-chunk rms. 0 when idle or
+   *  when the native source is silent. Drives the activity indicators. */
+  nativeLevel: number;
   // Actions
   setRecording: (recording: boolean) => void;
   setRecordingSession: (sessionId: string | null) => void;
@@ -106,6 +122,9 @@ export interface RecordingState {
    *  source is armed. */
   setMicEnabled: (enabled: boolean) => void;
   setActiveSourceLabel: (label: string | null) => void;
+  /** Update the live native-capture level (no-op when the quantized value
+   *  is unchanged, so chunk-rate calls don't thrash subscribers). */
+  setNativeLevel: (level: number) => void;
   /** Capture a browser tab's audio (Chrome/Edge only). Requests display
    *  media WITH video so Chrome offers the "Also share tab audio"
    *  checkbox, then keeps only the audio track. Rejects with
@@ -149,6 +168,7 @@ export const useRecordingStore = create<RecordingState>()((set, get) => ({
   tabStream: null,
   ...loadCapturePrefs(),
   activeSourceLabel: null,
+  nativeLevel: 0,
 
   setRecording: (recording: boolean) => {
     set({ isRecording: recording });
@@ -178,6 +198,11 @@ export const useRecordingStore = create<RecordingState>()((set, get) => ({
 
   setActiveSourceLabel: (label: string | null) => {
     set({ activeSourceLabel: label });
+  },
+
+  setNativeLevel: (level: number) => {
+    const quantized = quantizeLevel(level);
+    if (get().nativeLevel !== quantized) set({ nativeLevel: quantized });
   },
 
   acquireTabAudio: async () => {
@@ -250,6 +275,7 @@ export const useRecordingStore = create<RecordingState>()((set, get) => ({
       audioContext: null,
       tabStream: null,
       activeSourceLabel: null,
+      nativeLevel: 0,
     });
   },
 

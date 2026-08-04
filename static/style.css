@@ -469,6 +469,37 @@ body {
 }
 .capture-source-hint svg { flex-shrink: 0; margin-top: 1px; }
 
+/* Live activity meter on the ACTIVE native source row (3 tiny bars driven
+   by the shell's per-chunk rms). Dimmed while the source is silent. */
+.native-level-meter {
+    display: inline-flex; align-items: flex-end; gap: 2px;
+    height: 10px; margin-left: 7px; vertical-align: baseline;
+}
+.native-level-bar {
+    width: 3px; height: 3px; border-radius: 1px;
+    background: var(--border); transition: height 0.15s ease, background 0.15s ease;
+}
+.native-level-meter .native-level-bar.lit { background: var(--accent-live); }
+.native-level-meter.active .native-level-bar:nth-child(1).lit { height: 4px; }
+.native-level-meter.active .native-level-bar:nth-child(2).lit { height: 7px; }
+.native-level-meter.active .native-level-bar:nth-child(3).lit { height: 10px; }
+.native-level-meter.active .native-level-bar.lit {
+    animation: nativeLevelPulse 1.1s ease-in-out infinite;
+}
+@keyframes nativeLevelPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+}
+
+/* Subtle live dot on the header recording label: the native (system/app)
+   capture is currently delivering audible audio. */
+.native-live-dot {
+    display: inline-block; width: 6px; height: 6px; margin-left: 6px;
+    border-radius: 50%; background: var(--accent-live);
+    animation: pulse 1.4s ease-in-out infinite;
+    vertical-align: middle;
+}
+
 .btn-send {
     background: var(--accent-send); color: white;
     border: none; border-radius: 10px;

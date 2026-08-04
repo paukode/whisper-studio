@@ -12,24 +12,32 @@
  *      window.__WHISPER_NATIVE_AUDIO = { platform: "macos", available: bool }
  *    Absence of the object means "not running in the shell".
  *  - page → shell: window.webkit.messageHandlers.nativeAudio.postMessage
- *      {cmd:"list"} | {cmd:"start", pid:-1|N} | {cmd:"stop"}
+ *      {cmd:"list"} | {cmd:"start", pid:-1|N, bundleID?} | {cmd:"stop"}
  *  - shell → page callbacks on window.__whisperNativeAudio:
- *      onSources(json), onStarted(), onAudio(base64, sampleCount),
- *      onError(message), onStopped()
+ *      onSources(json), onStarted(), onAudio(base64, sampleCount, rms?),
+ *      onWarning(message), onError(message), onStopped()
+ *    rms and onWarning are newer than the rest — both sides treat them as
+ *    optional so old shell + new page (and vice versa) keep working.
  */
 
 export interface NativeAudioSourceInfo {
-  /** -1 = whole-system audio; otherwise the process id of one app. */
+  /** -1 = whole-system audio; otherwise the first process id of one app. */
   pid: number;
   name: string;
   bundleID?: string;
+  /** ALL audio pids of the app (helpers included). Newer shells only. */
+  pids?: number[];
 }
 
 export interface NativeCaptureHandlers {
-  /** Decoded 16 kHz mono Float32 samples in [-1, 1]. */
-  onAudio: (samples: Float32Array) => void;
+  /** Decoded 16 kHz mono Float32 samples in [-1, 1]. `rms` is the shell's
+   *  root-mean-square level for the chunk in [0, 1] (older shells omit it). */
+  onAudio: (samples: Float32Array, rms?: number) => void;
   /** Capture failed mid-stream (the shell has already stopped cleanly). */
   onError: (message: string) => void;
+  /** Capture is running but silent (no callbacks / all-zero samples for
+   *  5 s). The capture keeps running; this is advisory. */
+  onWarning?: (message: string) => void;
   onStopped?: () => void;
 }
 
@@ -41,7 +49,8 @@ interface NativeBridgeMarker {
 interface NativeCallbacks {
   onSources: (sources: NativeAudioSourceInfo[]) => void;
   onStarted: () => void;
-  onAudio: (base64: string, sampleCount: number) => void;
+  onAudio: (base64: string, sampleCount: number, rms?: number) => void;
+  onWarning: (message: string) => void;
   onError: (message: string) => void;
   onStopped: () => void;
 }
@@ -118,13 +127,24 @@ function ensureCallbacksInstalled(): void {
       pendingStart = null;
       pending?.resolve();
     },
-    onAudio(base64, sampleCount) {
+    onAudio(base64, sampleCount, rms) {
       const handlers = activeHandlers;
       if (!handlers) return;
       try {
-        handlers.onAudio(decodeNativeAudioChunk(base64, sampleCount));
+        const level = typeof rms === 'number' && Number.isFinite(rms) ? rms : undefined;
+        handlers.onAudio(decodeNativeAudioChunk(base64, sampleCount), level);
       } catch (err) {
         console.error('[native-audio] failed to decode chunk:', err);
+      }
+    },
+    onWarning(message) {
+      // Advisory only (e.g. "capture is silent") — the capture keeps
+      // running, so never settle start/stop promises from here.
+      const text = typeof message === 'string' && message ? message : 'Native audio warning.';
+      try {
+        activeHandlers?.onWarning?.(text);
+      } catch (err) {
+        console.error('[native-audio] onWarning handler failed:', err);
       }
     },
     onError(message) {
@@ -197,8 +217,16 @@ export function listNativeAudioSources(
  * confirms the tap is running; rejects if the shell reports an error first
  * (including a TCC permission denial). No timeout: the first start can block
  * on the OS permission prompt for as long as the user takes to answer it.
+ *
+ * `bundleID` (app captures only) lets the shell re-resolve the app at start
+ * time — the armed pid may be stale, and one app can span several audio
+ * processes (helpers); the shell taps all of them.
  */
-export function startNativeCapture(pid: number, handlers: NativeCaptureHandlers): Promise<void> {
+export function startNativeCapture(
+  pid: number,
+  handlers: NativeCaptureHandlers,
+  bundleID?: string,
+): Promise<void> {
   ensureCallbacksInstalled();
   if (pendingStart || activeHandlers) {
     return Promise.reject(new Error('Native audio capture is already active.'));
@@ -210,7 +238,7 @@ export function startNativeCapture(pid: number, handlers: NativeCaptureHandlers)
     };
     activeHandlers = handlers;
     try {
-      postToNative({ cmd: 'start', pid });
+      postToNative(bundleID !== undefined ? { cmd: 'start', pid, bundleID } : { cmd: 'start', pid });
     } catch (err) {
       pendingStart = null;
       activeHandlers = null;
