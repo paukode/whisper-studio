@@ -35,8 +35,9 @@ export type EnsureModelsResult = 'ready' | 'cancelled' | 'error';
 
 const POLL_MS = 1000;
 /** Consecutive non-409 failures to (re)start one model's download before the
- *  gate gives up. 409s never count: they mean "already downloading/installed"
- *  or "both download slots busy", all of which the poll resolves naturally. */
+ *  gate gives up. 409s never count: they mean "already installed", which the
+ *  poll resolves naturally. (Capacity is no longer a 409 — the server queues
+ *  the download and reports state 'queued' instead.) */
 const MAX_FAILED_STARTS = 5;
 /** How long the error banner stays up before auto-hiding. */
 const ERROR_BANNER_MS = 8000;
@@ -92,10 +93,10 @@ export async function ensureRecordingModels(): Promise<EnsureModelsResult> {
   const ui = useUIStore.getState;
   const total = missing.length;
   let remaining = [...missing];
-  /** Keys whose download we know ran (started by us, or observed running).
-   *  If such a key later reads 'absent' with no error, it was cancelled
-   *  externally (Settings > Models) — the gate stands down instead of
-   *  restarting it against the user's wishes. */
+  /** Keys whose download we know is in flight — running OR queued (started by
+   *  us, or observed). If such a key later reads 'absent' with no error, it
+   *  was cancelled/dequeued externally (Settings > Models) — the gate stands
+   *  down instead of restarting it against the user's wishes. */
   const sawDownloading = new Set<string>();
   const failedStarts = new Map<string, number>();
   let cancelRequested = false;
@@ -119,6 +120,18 @@ export async function ensureRecordingModels(): Promise<EnsureModelsResult> {
   const updateBanner = (st: StatusMap) => {
     const key = remaining[0];
     const s = st[key];
+    if (s?.state === 'queued') {
+      // Waiting for a download slot (the server runs at most two at a time
+      // and queues the rest) — no bytes are moving yet.
+      ui().setModelLoading({
+        label: labelOf(key),
+        progress: 0,
+        stage: 'downloading',
+        detail: 'Waiting for other downloads to finish…',
+        onCancel,
+      });
+      return;
+    }
     const bytes = s?.bytes_on_disk ?? 0;
     const est = s?.size_bytes_estimate ?? 0;
     // Server-computed fraction — the same number Settings > Models and the
@@ -158,8 +171,8 @@ export async function ensureRecordingModels(): Promise<EnsureModelsResult> {
       failedStarts.delete(key);
       return 'ok';
     } catch (e) {
-      // 409 is benign: already downloading, already installed, or both
-      // download slots busy — the poll below resolves all three.
+      // 409 is benign: it now only means "already installed" (duplicate
+      // starts and full slots return 200) — the poll below resolves it.
       if (isConflict(e)) return 'wait';
       const n = (failedStarts.get(key) ?? 0) + 1;
       failedStarts.set(key, n);
@@ -171,11 +184,11 @@ export async function ensureRecordingModels(): Promise<EnsureModelsResult> {
     }
   };
 
-  // Kick off every missing download (at most two run server-side; any
-  // beyond that get a benign 409 now and are retried from the poll).
+  // Kick off every missing download (at most two run server-side; the rest
+  // enter the server's FIFO queue and start as slots free up).
   for (const key of missing) {
-    if (status[key].state === 'downloading') {
-      sawDownloading.add(key); // already running (e.g. via Settings > Models)
+    if (status[key].state === 'downloading' || status[key].state === 'queued') {
+      sawDownloading.add(key); // already in flight (e.g. via Settings > Models)
       continue;
     }
     if ((await tryStart(key)) === 'fail') return 'error';
@@ -206,18 +219,21 @@ export async function ensureRecordingModels(): Promise<EnsureModelsResult> {
         failGate(key, s.error);
         return 'error';
       }
-      if (s.state === 'downloading') {
+      if (s.state === 'downloading' || s.state === 'queued') {
+        // Queued counts as in-flight: the server's poll-driven pump starts it
+        // when a slot frees, so there is nothing for the gate to do but wait.
         sawDownloading.add(key);
         continue;
       }
       // state === 'absent':
       if (sawDownloading.has(key)) {
-        // Was downloading, now gone with no error recorded: cancelled from
-        // Settings > Models. Respect it and stand down entirely.
+        // Was downloading or queued, now gone with no error recorded:
+        // cancelled from Settings > Models. Respect it and stand down entirely.
         onCancel();
         return 'cancelled';
       }
-      // Never got a download slot (two-slot cap) — try again now.
+      // The start request never landed (e.g. transient network error) — try
+      // again now; the server will run it or queue it.
       if ((await tryStart(key)) === 'fail') return 'error';
     }
 

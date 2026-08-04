@@ -43,6 +43,8 @@ async def get_catalog():
                 # this, never its own bytes/size arithmetic.
                 "progress": manager.progress_of(entry, state),
                 "state": state,
+                # 1-based position while state == "queued", else null.
+                "queue_position": manager.queue_position(entry.key),
                 "error": error,
             }
         )
@@ -61,6 +63,7 @@ async def get_status():
             "bytes_on_disk": bytes_on_disk(entry),
             "size_bytes_estimate": sizes.estimate(entry),
             "progress": manager.progress_of(entry, state),
+            "queue_position": manager.queue_position(entry.key),
             "error": error,
         }
     return {"models": out}
@@ -68,22 +71,33 @@ async def get_status():
 
 @router.post("/{key}/download")
 async def start_download(key: str):
+    """Start a download — or queue it when both slots are busy (HTTP 200
+    either way; only "already installed" is a 409). A duplicate request for a
+    running/queued download is a benign no-op reporting the current state."""
     entry = _entry_or_404(key)
     try:
-        manager.start_download(entry)
+        result = manager.start_download(entry)
     except manager.Conflict as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    return {"started": True, "key": key, "state": "downloading"}
+    queued = result in ("queued", "already_queued")
+    return {
+        "started": result == "started",
+        "queued": queued,
+        "key": key,
+        "state": "queued" if queued else "downloading",
+        "queue_position": manager.queue_position(key),
+    }
 
 
 @router.post("/{key}/cancel")
 async def cancel_download(key: str):
+    """Cancel a running download, or dequeue a queued one."""
     entry = _entry_or_404(key)
     try:
-        manager.cancel(entry)
+        result = manager.cancel(entry)
     except manager.Conflict as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    return {"cancelled": True, "key": key}
+    return {"cancelled": True, "dequeued": result == "dequeued", "key": key}
 
 
 @router.delete("/{key}")
@@ -96,4 +110,6 @@ async def delete_model(key: str):
     message = "Model deleted."
     if result.get("stopped_llama_server"):
         message = "Stopped the local model server that was serving this model, then deleted it."
+    elif result.get("dequeued") and not result.get("deleted"):
+        message = "Removed from the download queue; nothing was on disk yet."
     return {**result, "key": key, "message": message}

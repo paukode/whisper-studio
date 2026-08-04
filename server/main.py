@@ -31,6 +31,7 @@ from server.index import router as index_router
 from server.infrastructure.async_tasks import spawn
 from server.infrastructure.boot_status import health_payload, record_boot_error
 from server.infrastructure.config import router as config_router
+from server.infrastructure.config_raw_routes import router as config_raw_router
 from server.infrastructure.data_retention import router as data_retention_router
 from server.infrastructure.feature_flags import router as feature_flags_router
 from server.infrastructure.paths import bootstrap_home
@@ -337,6 +338,7 @@ app.middleware("http")(origin_guard)
 
 # Mount all routers
 app.include_router(config_router)
+app.include_router(config_raw_router)
 app.include_router(data_retention_router)
 app.include_router(result_cache_router)
 app.include_router(mcp_router)

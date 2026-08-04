@@ -16,14 +16,25 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 
 const entry = (
-  state: 'absent' | 'downloading' | 'installed' | 'error',
+  state: 'absent' | 'queued' | 'downloading' | 'installed' | 'error',
   bytes = 0,
   est: number | null = null,
   error: string | null = null,
   // The server-computed shared fraction; defaults mirror the backend's
-  // progress_of so most snapshots stay terse.
-  progress: number | null = state === 'installed' ? 1 : est ? Math.min(0.99, bytes / est) : null,
-) => ({ state, bytes_on_disk: bytes, size_bytes_estimate: est, progress, error });
+  // progress_of so most snapshots stay terse (queued has no run → null).
+  progress: number | null = state === 'installed'
+    ? 1
+    : state !== 'queued' && est
+      ? Math.min(0.99, bytes / est)
+      : null,
+) => ({
+  state,
+  bytes_on_disk: bytes,
+  size_bytes_estimate: est,
+  progress,
+  queue_position: state === 'queued' ? 1 : null,
+  error,
+});
 
 const CATALOG = {
   models: [
@@ -202,6 +213,61 @@ describe('ensureRecordingModels', () => {
 
     // The error banner auto-hides.
     await vi.advanceTimersByTimeAsync(8000);
+    expect(useUIStore.getState().modelLoading).toBeNull();
+  });
+
+  it('shows the waiting banner while queued, then normal progress once downloading', async () => {
+    vi.useFakeTimers();
+    mockApi([
+      { parakeet: entry('absent', 0, 2_500_000_000), ecapa_speaker: entry('installed', 1, 1) },
+      // Both server slots are busy with other downloads: the gate's start
+      // request queued the model instead of erroring.
+      { parakeet: entry('queued', 0, 2_500_000_000), ecapa_speaker: entry('installed', 1, 1) },
+      {
+        parakeet: entry('downloading', 500_000_000, 2_500_000_000, null, 0.2),
+        ecapa_speaker: entry('installed', 1, 1),
+      },
+      {
+        parakeet: entry('installed', 2_500_000_000, 2_500_000_000),
+        ecapa_speaker: entry('installed', 1, 1),
+      },
+    ]);
+
+    const gate = ensureRecordingModels();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(postedUrls()).toEqual(['/api/models/parakeet/download']);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    let banner = useUIStore.getState().modelLoading;
+    expect(banner?.stage).toBe('downloading');
+    expect(banner?.label).toBe('Parakeet TDT 0.6B v3');
+    expect(banner?.detail).toBe('Waiting for other downloads to finish…');
+    expect(banner?.progress).toBe(0);
+
+    // The queued download must NOT be restarted — the server pump owns it.
+    expect(postedUrls()).toEqual(['/api/models/parakeet/download']);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    banner = useUIStore.getState().modelLoading;
+    expect(banner?.detail).toBe('500 MB of 2.5 GB');
+    expect(banner?.progress).toBeCloseTo(0.2, 5);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(gate).resolves.toBe('ready');
+  });
+
+  it('stands down when a QUEUED download is dequeued from Settings > Models', async () => {
+    vi.useFakeTimers();
+    mockApi([
+      { parakeet: entry('absent', 0, 2_500_000_000), ecapa_speaker: entry('installed', 1, 1) },
+      { parakeet: entry('queued', 0, 2_500_000_000), ecapa_speaker: entry('installed', 1, 1) },
+      // Queued, then gone with no error: the user cancelled it in Settings.
+      { parakeet: entry('absent', 0, 2_500_000_000), ecapa_speaker: entry('installed', 1, 1) },
+    ]);
+
+    const gate = ensureRecordingModels();
+    await vi.advanceTimersByTimeAsync(2000);
+    await expect(gate).resolves.toBe('cancelled');
     expect(useUIStore.getState().modelLoading).toBeNull();
   });
 

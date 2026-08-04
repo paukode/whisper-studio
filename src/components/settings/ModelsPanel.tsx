@@ -10,6 +10,7 @@ import {
 import type { ManagedModel, ManagedModelGroup } from '@/api/models';
 import { useUIStore } from '@/stores/uiStore';
 import { humanSize } from '@/utils/humanSize';
+import { ConfigJsonLink } from './ConfigEditorDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 
 const GROUPS: { id: ManagedModelGroup; label: string; hint: string }[] = [
@@ -40,7 +41,25 @@ const chipStyle = (fg: string, bg: string): React.CSSProperties => ({
   background: bg,
 });
 
+/** 1 → "1st", 2 → "2nd", 3 → "3rd", 4 → "4th" (11–13 stay "th"). */
+const ordinal = (n: number): string => {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  const suffix = { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] ?? 'th';
+  return `${n}${suffix}`;
+};
+
+/** A download that is running or waiting for a slot — rows that poll + Cancel. */
+const isActive = (state: ManagedModel['state']) => state === 'downloading' || state === 'queued';
+
 const StatusChip: React.FC<{ model: ManagedModel }> = ({ model }) => {
+  if (model.state === 'queued') {
+    return (
+      <span style={chipStyle('var(--text-secondary, #888)', 'rgba(128,128,128,0.12)')}>
+        Queued{model.queue_position != null ? ` (${ordinal(model.queue_position)})` : ''}
+      </span>
+    );
+  }
   if (model.state === 'downloading') {
     // Server-computed fraction (bytes/estimate, capped, monotonic) — the same
     // number the chat and recording banners render. Never recomputed here.
@@ -94,23 +113,23 @@ export const ModelsPanel: React.FC = () => {
     queryKey: ['models-manager-catalog'],
     queryFn: fetchModelsCatalog,
   });
-  const catalogDownloading = (catalogQuery.data?.models ?? []).some(
-    (m) => m.state === 'downloading',
-  );
+  // Poll while anything is downloading OR queued: the server pumps its queue
+  // on status polls, so polling is what makes a queued model start at all.
+  const catalogActive = (catalogQuery.data?.models ?? []).some((m) => isActive(m.state));
 
   const statusQuery = useQuery({
     queryKey: ['models-manager-status'],
     queryFn: fetchModelsStatus,
-    enabled: catalogDownloading,
-    // Poll at 1s while its own payload still shows a download; the interval
-    // stops itself the moment everything is idle, even before the catalog
-    // refetch below lands.
+    enabled: catalogActive,
+    // Poll at 1s while its own payload still shows a running or queued
+    // download; the interval stops itself the moment everything is idle,
+    // even before the catalog refetch below lands.
     refetchInterval: (query) => {
       const status = query.state.data?.models;
-      const stillDownloading = status
-        ? Object.values(status).some((s) => s.state === 'downloading')
+      const stillActive = status
+        ? Object.values(status).some((s) => isActive(s.state))
         : true;
-      return stillDownloading ? 1000 : false;
+      return stillActive ? 1000 : false;
     },
   });
 
@@ -118,13 +137,12 @@ export const ModelsPanel: React.FC = () => {
   // catalog once so `enabled` above flips off and installed/error rows show
   // authoritative catalog data.
   const statusIdle =
-    !!statusQuery.data &&
-    !Object.values(statusQuery.data.models).some((s) => s.state === 'downloading');
+    !!statusQuery.data && !Object.values(statusQuery.data.models).some((s) => isActive(s.state));
   useEffect(() => {
-    if (catalogDownloading && statusIdle) {
+    if (catalogActive && statusIdle) {
       void queryClient.invalidateQueries({ queryKey: ['models-manager-catalog'] });
     }
-  }, [catalogDownloading, statusIdle, queryClient]);
+  }, [catalogActive, statusIdle, queryClient]);
 
   // Per key, trust whichever source answered more recently: the 1s status
   // poll during a download, the full catalog otherwise (fresh after actions,
@@ -171,8 +189,28 @@ export const ModelsPanel: React.FC = () => {
     [addToast, refresh],
   );
 
+  const downloadingCount = models.filter((m) => m.state === 'downloading').length;
+
   const onDownload = (m: ManagedModel) =>
-    void run(m.key, () => startModelDownload(m.key), `Could not start ${m.label}`);
+    void run(
+      m.key,
+      async () => {
+        const res = await startModelDownload(m.key);
+        if (res.queued) {
+          // Queueing is not an error — a quick heads-up is all it needs.
+          const ahead = downloadingCount + Math.max((res.queue_position ?? 1) - 1, 0);
+          addToast({
+            type: 'info',
+            message:
+              ahead > 0
+                ? `${m.label} queued behind ${ahead} download${ahead === 1 ? '' : 's'}`
+                : `${m.label} queued`,
+            persist: false,
+          });
+        }
+      },
+      `Could not start ${m.label}`,
+    );
   const onCancel = (m: ManagedModel) =>
     void run(m.key, () => cancelModelDownload(m.key), `Could not cancel ${m.label}`);
   const onDelete = (m: ManagedModel) =>
@@ -201,8 +239,8 @@ export const ModelsPanel: React.FC = () => {
 
       <p className="settings-empty" style={{ marginBottom: 8 }}>
         Model weights are stored locally and downloaded from Hugging Face on demand. Up to two
-        downloads run at a time; a cancelled download keeps its partial files and resumes on the
-        next attempt.
+        downloads run at a time; further requests queue up and start automatically. A cancelled
+        download keeps its partial files and resumes on the next attempt.
       </p>
 
       {catalogQuery.error && (
@@ -220,6 +258,12 @@ export const ModelsPanel: React.FC = () => {
             <h4 style={{ margin: '12px 0 2px' }}>{group.label}</h4>
             <p className="settings-empty" style={{ margin: '0 0 6px' }}>
               {group.hint}
+              {group.id === 'local-chat' && (
+                <>
+                  {' '}
+                  Add models by editing <ConfigJsonLink />.
+                </>
+              )}
             </p>
             <div className="settings-list">
               {rows.map((m) => {
@@ -241,7 +285,9 @@ export const ModelsPanel: React.FC = () => {
                           ? `${humanSize(m.bytes_on_disk)} on disk`
                           : m.state === 'downloading'
                             ? `${humanSize(m.bytes_on_disk)} of ${humanSize(m.size_bytes_estimate)}`
-                            : `${humanSize(m.size_bytes_estimate)} download`}
+                            : m.state === 'queued'
+                              ? `${humanSize(m.size_bytes_estimate)} download · starts when a slot frees`
+                              : `${humanSize(m.size_bytes_estimate)} download`}
                         {partial ? ` · ${humanSize(m.bytes_on_disk)} partial on disk` : ''}
                       </div>
                       {m.state === 'error' && m.error && (
@@ -255,7 +301,9 @@ export const ModelsPanel: React.FC = () => {
                       )}
                     </div>
                     <div className="settings-item-actions" style={{ display: 'flex', gap: 6 }}>
-                      {m.state === 'downloading' ? (
+                      {isActive(m.state) ? (
+                        // Cancel works on queued rows too: the backend just
+                        // dequeues them (no worker ran, partials untouched).
                         <button
                           className="btn btn-sm"
                           type="button"

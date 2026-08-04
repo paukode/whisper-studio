@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import threading
 import time
 
@@ -441,8 +442,21 @@ def save_config(config: dict):
 
 
 def _write_config_text(text: str) -> None:
-    with open(CONFIG_PATH, "w") as f:
-        f.write(text)
+    """Persist raw config.json text ATOMICALLY (temp file + rename in the same
+    directory), so a crash mid-write can never leave a truncated config, then
+    drop the in-memory cache so the next load_config() sees the new contents."""
+    directory = os.path.dirname(CONFIG_PATH) or "."
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".config.json.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, CONFIG_PATH)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     _invalidate_cache()
 
 
