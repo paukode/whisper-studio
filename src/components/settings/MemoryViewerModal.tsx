@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, put, post, del as apiDel } from '@/api/client';
 import { ApiError } from '@/types/api';
 import { useUIStore } from '@/stores/uiStore';
+import { useBackdropDismiss } from '@/hooks/useBackdropDismiss';
 
 interface MemoryFileMeta {
   filename: string;
@@ -151,12 +152,10 @@ export const MemoryViewerModal: React.FC<MemoryViewerModalProps> = ({ isOpen, on
     [selected, closeFile, refresh, addToast],
   );
 
-  const handleOverlayClick = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (e.target === e.currentTarget) onClose();
-    },
-    [onClose],
-  );
+  // Dismiss only on a genuine backdrop press (mousedown AND click both land on
+  // the overlay). A naive e.target===e.currentTarget check wrongly closes when a
+  // selection drag starts inside the content and releases on the backdrop.
+  const backdrop = useBackdropDismiss(onClose);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -175,7 +174,7 @@ export const MemoryViewerModal: React.FC<MemoryViewerModalProps> = ({ isOpen, on
   const projectAvailable = listing?.workspace_connected ?? false;
 
   return (
-    <div className="settings-overlay" id="memoryViewerOverlay" onClick={handleOverlayClick}>
+    <div className="settings-overlay" id="memoryViewerOverlay" {...backdrop}>
       <div
         className="settings-container"
         style={{ maxWidth: 760 }}

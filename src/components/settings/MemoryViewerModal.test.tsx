@@ -131,3 +131,33 @@ describe('MemoryViewerModal — two-tier browser', () => {
     expect(projectTab.disabled).toBe(true);
   });
 });
+
+describe('MemoryViewerModal — backdrop dismissal', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('closes on a genuine backdrop press (mousedown + click on the overlay)', () => {
+    const onClose = vi.fn();
+    const { container } = renderModal({ onClose });
+    const overlay = container.querySelector('.settings-overlay') as HTMLElement;
+    expect(overlay).toBeTruthy();
+
+    fireEvent.mouseDown(overlay);
+    fireEvent.click(overlay);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT close when a selection starts inside the content and releases on the backdrop', () => {
+    const onClose = vi.fn();
+    const { container } = renderModal({ onClose });
+    const overlay = container.querySelector('.settings-overlay') as HTMLElement;
+    const heading = screen.getByRole('heading', { name: 'Memory' });
+
+    // Press begins on the content; the resulting click (on release outside)
+    // targets the overlay — the historical "select text, release outside" bug.
+    fireEvent.mouseDown(heading);
+    fireEvent.click(overlay);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});

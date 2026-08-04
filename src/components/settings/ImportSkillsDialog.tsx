@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { post } from '@/api/client';
+import { useBackdropDismiss } from '@/hooks/useBackdropDismiss';
 
 interface PreviewSkill {
   subpath: string;
@@ -100,6 +101,11 @@ export const ImportSkillsDialog: React.FC<{
     });
   }, [skills, filter, searchDesc]);
 
+  // Dismiss only on a genuine backdrop press (mousedown AND click both on the
+  // overlay), so selecting text in the URL/filter inputs and releasing outside
+  // does not close the dialog.
+  const backdrop = useBackdropDismiss(onClose);
+
   return (
     <div
       role="dialog"
@@ -113,7 +119,7 @@ export const ImportSkillsDialog: React.FC<{
         justifyContent: 'center',
         zIndex: 1000,
       }}
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         onClick={(e) => e.stopPropagation()}
