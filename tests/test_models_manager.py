@@ -304,6 +304,111 @@ def test_completed_download_reports_installed(client, home, fake_spawn):
     assert st["error"] is None
 
 
+# ── liveness + stall (a dead/hung worker must never stay "downloading") ──────
+
+
+def test_killed_worker_becomes_error_not_stuck(client, fake_spawn, monkeypatch):
+    """The core bug: a worker that dies WITHOUT poll() observing the exit must
+    flip to 'error', not sit at 'downloading' forever. The PID liveness backstop
+    (os.kill(pid, 0)) catches it even when poll() stays None."""
+    client.post("/api/models/whisper/download")
+    # poll() stays None (blind to the exit); the PID is gone.
+    monkeypatch.setattr(manager, "_pid_alive", lambda pid: False)
+    st = client.get("/api/models/status").json()["models"]["whisper"]
+    assert st["state"] == "error"
+    assert st["error"]
+    # The freed slot is usable again — a retry starts cleanly.
+    assert client.post("/api/models/whisper/download").json()["started"] is True
+
+
+def test_worker_raises_surfaces_reason_and_exit_code(client, home, fake_spawn):
+    """A worker that exits non-zero surfaces its ``DOWNLOAD FAILED:`` reason plus
+    the exit code, not a bare traceback fragment."""
+    client.post("/api/models/gliner/download")
+    # The worker writes a traceback then its reason line, then exits 1.
+    with open(manager._log_path("gliner"), "w") as f:
+        f.write("Traceback (most recent call last):\n  ...\n")
+        f.write("DOWNLOAD FAILED: repository not found on Hugging Face (check repo_id)\n")
+    fake_spawn["gliner"].rc = 1
+    st = client.get("/api/models/status").json()["models"]["gliner"]
+    assert st["state"] == "error"
+    assert "exit code 1" in st["error"]
+    assert "repository not found" in st["error"]
+
+
+def test_stall_no_progress_and_worker_gone_becomes_error(client, home, fake_spawn, monkeypatch):
+    """No byte progress for the stall window AND the worker gone → error (rather
+    than an eternal 0%). Uses a tiny window so the test doesn't wait 2 minutes."""
+    monkeypatch.setattr(manager, "STALL_TIMEOUT_SEC", 60.0)
+    client.post("/api/models/whisper/download")
+    # First poll records a zero-byte baseline and arms the stall clock.
+    client.get("/api/models/status")
+    # No bytes ever land; the worker has vanished (poll blind, PID gone).
+    monkeypatch.setattr(manager, "_pid_alive", lambda pid: False)
+    with manager._lock:
+        manager._jobs["whisper"].last_progress_at -= 120  # window elapsed
+    st = client.get("/api/models/status").json()["models"]["whisper"]
+    assert st["state"] == "error"
+    assert st["error"]
+
+
+def test_stall_alive_but_wedged_worker_is_terminated(client, home, fake_spawn, monkeypatch):
+    """A worker still alive by PID but producing no bytes for the window is
+    wedged: it is terminated (frees the slot) and reported as a stall — never
+    left downloading forever. A progressing download resets the clock."""
+    monkeypatch.setattr(manager, "STALL_TIMEOUT_SEC", 60.0)
+    monkeypatch.setattr(manager, "_pid_alive", lambda pid: True)
+    client.post("/api/models/whisper/download")
+    client.get("/api/models/status")  # baseline, clock armed
+    with manager._lock:
+        manager._jobs["whisper"].last_progress_at -= 120  # no growth, window elapsed
+    st = client.get("/api/models/status").json()["models"]["whisper"]
+    assert st["state"] == "error"
+    assert "stall" in st["error"].lower()
+    assert fake_spawn["whisper"].terminated is True
+
+
+def test_progressing_download_is_never_flagged_as_stalled(client, home, fake_spawn, monkeypatch):
+    """Bytes still growing must keep the download alive even past the window —
+    a slow-but-progressing transfer is not a stall."""
+    monkeypatch.setattr(manager, "STALL_TIMEOUT_SEC", 0.0)  # any elapsed would trip a stall
+    monkeypatch.setattr(manager, "_pid_alive", lambda pid: True)
+    client.post("/api/models/parakeet/download")
+    part = home / "models" / get_entry("parakeet").dir_name / "model.safetensors.incomplete"
+    part.parent.mkdir(parents=True, exist_ok=True)
+    for n in (1000, 2000, 3000):
+        part.write_bytes(b"y" * n)  # growth on every poll
+        st = client.get("/api/models/status").json()["models"]["parakeet"]
+        assert st["state"] == "downloading"
+    assert fake_spawn["parakeet"].terminated is False
+
+
+def test_retry_after_error_restarts_cleanly(client, fake_spawn):
+    """Retry (a fresh download POST) clears the dead job's error and starts a
+    new worker — the user can recover a model stuck by a failed download."""
+    client.post("/api/models/whisper/download")
+    fake_spawn["whisper"].rc = 1
+    assert client.get("/api/models/status").json()["models"]["whisper"]["state"] == "error"
+    r = client.post("/api/models/whisper/download")
+    assert r.status_code == 200 and r.json()["started"] is True
+    st = client.get("/api/models/status").json()["models"]["whisper"]
+    assert st["state"] == "downloading"
+    assert st["error"] is None
+
+
+def test_error_does_not_block_queue_pump(client, fake_spawn):
+    """A failed running download frees its slot: the queued key must start on the
+    same poll, exactly as a clean completion would."""
+    client.post("/api/models/whisper/download")
+    client.post("/api/models/parakeet/download")
+    client.post("/api/models/qwen3_embed/download")  # queued (position 1)
+    fake_spawn["whisper"].rc = 1  # running download errors out
+    st = client.get("/api/models/status").json()["models"]
+    assert st["whisper"]["state"] == "error"
+    assert st["qwen3_embed"]["state"] == "downloading"
+    assert "qwen3_embed" in fake_spawn  # the pump ran despite the error
+
+
 # ── cancel ───────────────────────────────────────────────────────────────
 
 

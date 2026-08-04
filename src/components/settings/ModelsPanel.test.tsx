@@ -181,4 +181,49 @@ describe('ModelsPanel', () => {
     expect(screen.getByText(/756 KB partial on disk/)).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Download' })).toHaveLength(2);
   });
+
+  it('makes a failed download recoverable: Error message, Retry, and Delete', async () => {
+    // A local chat model whose download died: this is the reported bug's row.
+    api.get.mockImplementation((url: string) =>
+      url === '/api/models/catalog'
+        ? Promise.resolve({
+            models: [
+              {
+                key: 'local_qwen',
+                label: 'Qwen3.6 27B (Local)',
+                group: 'local-chat',
+                repo_id: 'unsloth/Qwen3.6-27B-GGUF',
+                installed: false,
+                size_bytes_estimate: 16_000_000_000,
+                bytes_on_disk: 512_000, // a dead attempt left partials
+                progress: 0,
+                state: 'error',
+                error: 'Download failed (with exit code 1): repository not found on Hugging Face',
+                queue_position: null,
+              },
+            ],
+          })
+        : Promise.resolve({ models: {} }),
+    );
+    renderPanel();
+    await screen.findByText('Qwen3.6 27B (Local)');
+
+    // The error chip and the expandable message both surface the reason.
+    expect(screen.getByText('Error')).toBeInTheDocument();
+    expect(screen.getByText(/repository not found on Hugging Face/)).toBeInTheDocument();
+
+    // Retry re-POSTs the download (the backend clears the dead job and restarts).
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/api/models/local_qwen/download'),
+    );
+
+    // Delete is offered too (error + partials): it opens the confirm dialog,
+    // then clears the stranded download's partials server-side.
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('Delete Qwen3.6 27B (Local)?')).toBeInTheDocument();
+    const deleteButtons = screen.getAllByRole('button', { name: 'Delete' });
+    fireEvent.click(deleteButtons[deleteButtons.length - 1]); // the dialog's confirm
+    await waitFor(() => expect(api.del).toHaveBeenCalledWith('/api/models/local_qwen'));
+  });
 });

@@ -323,18 +323,33 @@ export const ModelsPanel: React.FC = () => {
                           Delete
                         </button>
                       ) : (
-                        // Delete is for installed models only. A not-downloaded
-                        // model with partial bytes keeps just Download: the
-                        // partials are hf resume state, and the next download
-                        // picks them up (the info text above still shows them).
-                        <button
-                          className="btn btn-primary btn-sm"
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => onDownload(m)}
-                        >
-                          {m.state === 'error' ? 'Retry' : 'Download'}
-                        </button>
+                        // Not active and not installed: Download/Retry, always.
+                        // A plain not-downloaded model with partial bytes keeps
+                        // JUST Download — the partials are hf resume state the
+                        // next attempt picks up. But a FAILED download also
+                        // offers Delete: it lets the user clear a dead job's
+                        // partials and recover a model this bug once stranded.
+                        <>
+                          <button
+                            className="btn btn-primary btn-sm"
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => onDownload(m)}
+                          >
+                            {m.state === 'error' ? 'Retry' : 'Download'}
+                          </button>
+                          {m.state === 'error' && m.bytes_on_disk > 0 && (
+                            <button
+                              className="btn btn-sm"
+                              type="button"
+                              disabled={isBusy}
+                              style={{ color: 'var(--accent-record, #e5484d)' }}
+                              onClick={() => setConfirmDelete(m)}
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>

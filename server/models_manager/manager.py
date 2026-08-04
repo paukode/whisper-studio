@@ -48,20 +48,45 @@ log = logging.getLogger("whisper-studio")
 # the app (transcription, chat) keeps its share of bandwidth and IOPS.
 MAX_CONCURRENT = 2
 
+# A downloading job whose worker has produced no new bytes for this long is
+# declared failed rather than left sitting at a stuck percent forever. A
+# download that is still pulling bytes resets this clock on every reap, so a
+# slow-but-progressing transfer is never flagged. Kept as a module global so a
+# smaller machine can tune it and tests can shrink it.
+STALL_TIMEOUT_SEC = 120.0
+
 
 class Conflict(Exception):
     """A request that is valid but impossible right now (HTTP 409)."""
 
 
 class _Job:
-    __slots__ = ("key", "proc", "log_path", "started_at", "cancelled")
+    __slots__ = (
+        "key",
+        "proc",
+        "pid",
+        "log_path",
+        "started_at",
+        "cancelled",
+        "last_bytes",
+        "last_progress_at",
+    )
 
     def __init__(self, key: str, proc: subprocess.Popen, log_path: str) -> None:
         self.key = key
         self.proc = proc
+        # The worker PID, kept explicitly so liveness can be probed directly
+        # (os.kill(pid, 0)) even in the case where the Popen handle never
+        # observes the exit — a dead worker must never read as "downloading".
+        self.pid = getattr(proc, "pid", None)
         self.log_path = log_path
         self.started_at = time.time()
         self.cancelled = False
+        # Stall accounting: the most bytes seen on disk for this run and when
+        # that high-water last advanced. Starting at -1 makes the first reap
+        # record a baseline (and arm the stall clock) even at zero bytes.
+        self.last_bytes = -1
+        self.last_progress_at = self.started_at
 
 
 _jobs: dict[str, _Job] = {}
@@ -101,12 +126,83 @@ def _spawn_worker(key: str, log_path: str) -> subprocess.Popen:
         )
 
 
-def _log_tail(log_path: str, lines: int = 12) -> str:
+def _failure_reason(log_path: str) -> str:
+    """The worker's short, actionable failure reason, or '' when there is none.
+
+    The worker writes ``DOWNLOAD FAILED: <reason>`` as its final line before a
+    non-zero exit (see worker.py), so a handled failure becomes a sentence the
+    user can act on. Only that marker line is trusted: a worker that was killed
+    (cancel, SIGKILL, OOM) never writes one, and the tail of its log is just
+    library noise — for those the generic exit-code message is more honest.
+    """
     try:
         with open(log_path, errors="replace") as f:
-            return "".join(f.readlines()[-lines:]).strip()
+            lines = [ln.strip() for ln in f if ln.strip()]
     except OSError:
         return ""
+    marker = "DOWNLOAD FAILED:"
+    for ln in reversed(lines):
+        if ln.startswith(marker):
+            return ln[len(marker) :].strip()
+    return ""
+
+
+def _failure_message(log_path: str, rc: int | None) -> str:
+    """A UI-facing error: the worker's reason plus how it ended (exit code, or
+    "unexpectedly" when the process vanished without an observed exit)."""
+    reason = _failure_reason(log_path)
+    how = "unexpectedly" if rc is None else f"with exit code {rc}"
+    if reason:
+        return f"Download failed ({how}): {reason}"
+    return f"Download worker exited {how}. See Settings > Models for the log."
+
+
+def _pid_alive(pid: int | None) -> bool:
+    """Whether the worker process still exists. ``os.kill(pid, 0)`` probes the
+    PID without sending a real signal — the liveness backstop for the case where
+    ``Popen.poll()`` cannot see the exit. An unknown PID is assumed alive (a
+    missing PID alone never condemns a job). Module-level so tests can stub it."""
+    if pid is None:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # exists, just not ours to signal
+        return True
+    except OSError:  # ambiguous errno — be conservative, don't declare it dead
+        return True
+    return True
+
+
+def _note_byte_progress(job: _Job, entry: ModelEntry | None, now: float) -> bool:
+    """Fold the current on-disk size into the job's stall clock; return whether
+    bytes grew since the last reap. Any growth resets the clock, so a download
+    that is still transferring can never be mistaken for a stall."""
+    cur = bytes_on_disk(entry) if entry is not None else 0
+    if cur > job.last_bytes:
+        job.last_bytes = cur
+        job.last_progress_at = now
+        return True
+    return False
+
+
+def _terminate(job: _Job) -> None:
+    """Best-effort stop of a worker process: terminate, then kill if it lingers.
+    Must be called WITHOUT holding ``_lock`` — it can wait on the process."""
+    try:
+        if job.proc.poll() is None:
+            job.proc.terminate()
+            try:
+                job.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                job.proc.kill()
+                try:
+                    job.proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:  # pragma: no cover - defensive
+                    log.error("Download worker for %s would not die.", job.key)
+    except Exception as e:  # pragma: no cover - defensive
+        log.warning("Error terminating worker for %s: %s", job.key, e)
 
 
 def _drop_partial_sentinel(entry: ModelEntry) -> None:
@@ -129,24 +225,72 @@ def _drop_partial_sentinel(entry: ModelEntry) -> None:
 
 
 def reap() -> None:
-    """Fold finished workers into terminal states (called before every read),
-    then pump the queue — a reaped job frees a slot for the next queued key."""
+    """Fold finished, dead, or stalled workers into terminal states (called
+    before every read), then pump the queue — a reaped job frees a slot.
+
+    A job leaves ``downloading`` three ways, and only a clean success (or an
+    explicit cancel) is silent; every other exit records an actionable error:
+
+      1. the worker exited on its own — ``poll()`` returns an exit code;
+      2. the worker is gone even though ``poll()`` never saw the exit — the PID
+         liveness backstop (``os.kill(pid, 0)``) catches it;
+      3. the worker is wedged — no new bytes for ``STALL_TIMEOUT_SEC`` — so it is
+         terminated and reported rather than left at a stuck percent forever.
+
+    This is what turns a dead or hung download into a visible error the user can
+    retry, instead of an eternal "downloading" the UI can only spin on.
+    """
     failed: list[str] = []
+    to_terminate: list[_Job] = []
+    now = time.time()
     with _lock:
         for key in list(_jobs):
             job = _jobs[key]
             rc = job.proc.poll()
-            if rc is None:
+
+            if rc is not None:
+                # (1) The worker exited on its own.
+                del _jobs[key]
+                if job.cancelled or rc == 0:
+                    _errors.pop(key, None)
+                    continue
+                _errors[key] = _failure_message(job.log_path, rc)
+                _progress_max.pop(key, None)  # run over — next run re-measures
+                log.warning("Model download %s failed (rc=%s).", key, rc)
+                failed.append(key)
                 continue
+
+            # poll() reports the worker as still running. It can still be a job
+            # the user must be freed from.
+            entry = get_entry(key)
+            if entry is not None and is_installed(entry):
+                # Finished (sentinel present); the exit just hasn't been observed
+                # yet. Leave it for the rc==0 sweep on the next poll.
+                continue
+
+            grew = _note_byte_progress(job, entry, now)
+            alive = _pid_alive(job.pid)
+            stalled = (not grew) and (now - job.last_progress_at) >= STALL_TIMEOUT_SEC
+            if alive and not stalled:
+                continue  # genuinely downloading (or still within the stall grace)
+
+            # (2) gone without an observed exit, or (3) wedged with no progress.
             del _jobs[key]
-            if job.cancelled or rc == 0:
-                _errors.pop(key, None)
-                continue
-            tail = _log_tail(job.log_path)
-            _errors[key] = tail or f"Download worker exited with code {rc}."
-            _progress_max.pop(key, None)  # run over — next run re-measures
-            log.warning("Model download %s failed (rc=%s).", key, rc)
+            _progress_max.pop(key, None)
+            if alive:  # (3) wedged: stop it (outside the lock) and report a stall
+                to_terminate.append(job)
+                _errors[key] = (
+                    f"Download stalled: no progress for over {int(STALL_TIMEOUT_SEC)}s. "
+                    "The worker was stopped; use Retry to resume."
+                )
+                log.warning("Model download %s stalled; terminating worker.", key)
+            else:  # (2) worker vanished
+                _errors[key] = _failure_message(job.log_path, None)
+                log.warning("Model download %s worker vanished (pid=%s).", key, job.pid)
             failed.append(key)
+
+    for job in to_terminate:
+        _terminate(job)
     for key in failed:
         entry = get_entry(key)
         if entry is not None:
@@ -293,16 +437,7 @@ def cancel(entry: ModelEntry) -> str:
     if job is None:
         raise Conflict("This model is not downloading or queued.")
     job.cancelled = True
-    if job.proc.poll() is None:
-        job.proc.terminate()
-        try:
-            job.proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            job.proc.kill()
-            try:
-                job.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:  # pragma: no cover - defensive
-                log.error("Download worker for %s would not die.", entry.key)
+    _terminate(job)
     # rc == 0 means the download actually completed before the terminate
     # landed — then the sentinel is legitimate and stays.
     if job.proc.poll() != 0:
