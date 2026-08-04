@@ -242,8 +242,12 @@ plutil -lint -s "$CONTENTS_DIR/Info.plist" || die "generated Info.plist is inval
 # f.2: shell binary.
 cp "$BUILD_DIR/shell/WhisperStudio" "$CONTENTS_DIR/MacOS/WhisperStudio"
 
-# f.3: placeholder icon (solid colour, generated with the bundled Python —
-# pure stdlib PNG writer, then sips + iconutil).
+# f.3: app icon. The real icon lives in the repo (macapp/icon/AppIcon.icns,
+# built from icon.svg — Taw Light "W." monogram); the generated solid-colour
+# placeholder below is only the fallback if it is ever removed.
+if [[ -f "$MACAPP_DIR/icon/AppIcon.icns" ]]; then
+    cp "$MACAPP_DIR/icon/AppIcon.icns" "$RES_DIR/AppIcon.icns"
+else
 ICON_DIR="$BUILD_DIR/icon"
 if [[ ! -f "$ICON_DIR/AppIcon.icns" ]]; then
     substep "generating placeholder AppIcon.icns"
@@ -274,6 +278,7 @@ PYEOF
     iconutil -c icns "$ICON_DIR/AppIcon.iconset" -o "$ICON_DIR/AppIcon.icns"
 fi
 cp "$ICON_DIR/AppIcon.icns" "$RES_DIR/AppIcon.icns"
+fi
 
 # f.4: Python runtime. Bytecode caches are excluded: the shell redirects
 # runtime .pyc writes to WHISPER_HOME via PYTHONPYCACHEPREFIX (a post-signing
