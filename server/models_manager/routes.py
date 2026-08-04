@@ -39,6 +39,9 @@ async def get_catalog():
                 "installed": state == "installed",
                 "size_bytes_estimate": sizes.estimate(entry),
                 "bytes_on_disk": bytes_on_disk(entry),
+                # The one shared progress fraction — every surface renders
+                # this, never its own bytes/size arithmetic.
+                "progress": manager.progress_of(entry, state),
                 "state": state,
                 "error": error,
             }
@@ -57,6 +60,7 @@ async def get_status():
             "state": state,
             "bytes_on_disk": bytes_on_disk(entry),
             "size_bytes_estimate": sizes.estimate(entry),
+            "progress": manager.progress_of(entry, state),
             "error": error,
         }
     return {"models": out}

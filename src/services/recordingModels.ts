@@ -121,7 +121,9 @@ export async function ensureRecordingModels(): Promise<EnsureModelsResult> {
     const s = st[key];
     const bytes = s?.bytes_on_disk ?? 0;
     const est = s?.size_bytes_estimate ?? 0;
-    const progress = est > 0 ? Math.min(0.99, bytes / est) : 0;
+    // Server-computed fraction — the same number Settings > Models and the
+    // local-chat banner show. Never recomputed here from bytes/estimate.
+    const progress = s?.progress ?? 0;
     const done = bytes > 0 ? humanSize(bytes) : '0 MB';
     const size = est > 0 ? `${done} of ${humanSize(est)}` : done;
     const position = total > 1 ? ` · model ${total - remaining.length + 1} of ${total}` : '';

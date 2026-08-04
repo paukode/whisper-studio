@@ -25,9 +25,11 @@ import threading
 import time
 
 from server.infrastructure.paths import data_root, repo_root
+from server.models_manager import sizes
 from server.models_manager.catalog import (
     GROUP_LOCAL_CHAT,
     ModelEntry,
+    bytes_on_disk,
     entries,
     get_entry,
     is_installed,
@@ -58,6 +60,11 @@ class _Job:
 
 _jobs: dict[str, _Job] = {}
 _errors: dict[str, str] = {}  # key -> last failure, cleared on retry/delete
+# key -> monotonic high-water progress fraction for the current download run.
+# The raw bytes/estimate ratio can walk BACKWARDS mid-run (the real HF size
+# lands and replaces a smaller fallback estimate); this mark keeps the number
+# shown to the user from regressing. Cleared at every run boundary.
+_progress_max: dict[str, float] = {}
 _lock = threading.Lock()
 
 
@@ -127,6 +134,7 @@ def reap() -> None:
                 continue
             tail = _log_tail(job.log_path)
             _errors[key] = tail or f"Download worker exited with code {rc}."
+            _progress_max.pop(key, None)  # run over — next run re-measures
             log.warning("Model download %s failed (rc=%s).", key, rc)
             failed.append(key)
     for key in failed:
@@ -148,6 +156,36 @@ def state_of(entry: ModelEntry) -> tuple[str, str | None]:
     return "absent", None
 
 
+def progress_of(entry: ModelEntry, state: str | None = None) -> float | None:
+    """THE download-progress fraction — the one number every surface shows.
+
+    Settings > Models, the pre-recording gate, and the local-chat loading
+    banner must all render this, never their own bytes/size arithmetic.
+    Semantics:
+      - ``1.0`` once the sentinel says installed;
+      - otherwise ``bytes_on_disk / estimate`` capped at ``0.99`` (bytes on
+        disk include hf bookkeeping like ``.cache``/``.incomplete`` files, so
+        the raw ratio can overshoot before the download is actually done);
+      - monotonic per run via the high-water mark (the estimate can be revised
+        upward mid-run, which would otherwise walk the percent backwards);
+      - ``None`` while no size estimate exists yet.
+    """
+    if state is None:
+        state, _ = state_of(entry)
+    if state == "installed":
+        with _lock:
+            _progress_max.pop(entry.key, None)
+        return 1.0
+    est = sizes.estimate(entry)
+    if not est or est <= 0:
+        return None
+    frac = min(0.99, bytes_on_disk(entry) / est)
+    with _lock:
+        frac = max(frac, _progress_max.get(entry.key, 0.0))
+        _progress_max[entry.key] = frac
+    return round(frac, 4)
+
+
 def start_download(entry: ModelEntry) -> None:
     reap()
     if is_installed(entry):
@@ -163,6 +201,9 @@ def start_download(entry: ModelEntry) -> None:
         proc = _spawn_worker(entry.key, log_path)
         _jobs[entry.key] = _Job(entry.key, proc, log_path)
         _errors.pop(entry.key, None)
+        # New run: drop the previous run's high-water mark. Partial bytes on
+        # disk immediately re-derive an equal-or-honest fraction from real data.
+        _progress_max.pop(entry.key, None)
     log.info("Model download started: %s (%s).", entry.key, entry.repo_id)
 
 
@@ -189,6 +230,8 @@ def cancel(entry: ModelEntry) -> None:
     if job.proc.poll() != 0:
         _drop_partial_sentinel(entry)
     _errors.pop(entry.key, None)
+    with _lock:
+        _progress_max.pop(entry.key, None)
     log.info("Model download cancelled: %s.", entry.key)
 
 
@@ -237,5 +280,6 @@ def delete(entry: ModelEntry) -> dict:
 
     with _lock:
         _errors.pop(entry.key, None)
+        _progress_max.pop(entry.key, None)
     log.info("Model deleted: %s (%s).", entry.key, root)
     return {"deleted": True, "stopped_llama_server": stopped}

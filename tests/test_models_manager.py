@@ -40,6 +40,7 @@ ENTRY_FIELDS = {
     "installed",
     "size_bytes_estimate",
     "bytes_on_disk",
+    "progress",
     "state",
     "error",
 }
@@ -77,6 +78,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(sizes, "prefetch", lambda entries: None)
     manager._jobs.clear()
     manager._errors.clear()
+    manager._progress_max.clear()
     return tmp_path
 
 
@@ -320,4 +322,74 @@ def test_status_covers_catalog_and_tracks_progress(client, home, fake_spawn):
     assert status["parakeet"]["state"] == "downloading"
     assert status["parakeet"]["bytes_on_disk"] >= 1000
     for key in catalog_keys:
-        assert {"state", "bytes_on_disk", "size_bytes_estimate", "error"} <= set(status[key])
+        assert {"state", "bytes_on_disk", "size_bytes_estimate", "progress", "error"} <= set(
+            status[key]
+        )
+
+
+# ── shared progress (the ONE number every surface shows) ────────────────
+
+
+def write_partial(home, key: str, nbytes: int) -> None:
+    """Simulate hf's partial download bytes in the entry's directory."""
+    part = home / "models" / get_entry(key).dir_name / "blob.incomplete"
+    part.parent.mkdir(parents=True, exist_ok=True)
+    part.write_bytes(b"x" * nbytes)
+
+
+def test_progress_matches_bytes_over_estimate_everywhere(client, home, monkeypatch, fake_spawn):
+    """/status and /catalog serve the identical manager-computed fraction."""
+    monkeypatch.setattr(sizes, "estimate", lambda e: 1000)
+    write_partial(home, "parakeet", 250)
+    client.post("/api/models/parakeet/download")
+    st = client.get("/api/models/status").json()["models"]["parakeet"]
+    cat = {m["key"]: m for m in client.get("/api/models/catalog").json()["models"]}["parakeet"]
+    assert st["progress"] == 0.25
+    assert cat["progress"] == 0.25
+
+
+def test_progress_caps_at_99_until_installed(home, monkeypatch):
+    """bytes_on_disk includes hf bookkeeping, so it can overshoot the estimate
+    before the download is done — the number must sit at 0.99, never 100,
+    until the sentinel check says installed."""
+    entry = get_entry("parakeet")
+    monkeypatch.setattr(sizes, "estimate", lambda e: 1000)
+    write_partial(home, "parakeet", 5000)
+    assert manager.progress_of(entry) == 0.99
+    install_fake(home, "parakeet")
+    assert manager.progress_of(entry) == 1.0
+
+
+def test_progress_none_without_estimate(home, monkeypatch):
+    monkeypatch.setattr(sizes, "estimate", lambda e: None)
+    assert manager.progress_of(get_entry("parakeet")) is None
+
+
+def test_progress_never_goes_backwards_within_a_run(client, home, monkeypatch, fake_spawn):
+    """Mid-run the real HF size can replace a smaller fallback estimate; the
+    raw ratio drops but the displayed number must hold its high-water mark."""
+    entry = get_entry("parakeet")
+    est = {"v": 1000}
+    monkeypatch.setattr(sizes, "estimate", lambda e: est["v"])
+    write_partial(home, "parakeet", 500)
+    client.post("/api/models/parakeet/download")
+    assert manager.progress_of(entry) == 0.5
+    est["v"] = 2000  # estimate revised upward mid-run: raw ratio halves
+    assert manager.progress_of(entry) == 0.5
+    write_partial(home, "parakeet", 1500)  # bytes catch up past the mark
+    assert manager.progress_of(entry) == 0.75
+
+
+def test_progress_highwater_resets_between_runs(client, home, monkeypatch, fake_spawn):
+    entry = get_entry("parakeet")
+    est = {"v": 1000}
+    monkeypatch.setattr(sizes, "estimate", lambda e: est["v"])
+    write_partial(home, "parakeet", 900)
+    client.post("/api/models/parakeet/download")
+    assert manager.progress_of(entry) == 0.9
+    client.post("/api/models/parakeet/cancel")
+    # A new run against a (now honest) bigger estimate starts from real bytes,
+    # not from the previous run's mark.
+    est["v"] = 9000
+    client.post("/api/models/parakeet/download")
+    assert manager.progress_of(entry) == 0.1

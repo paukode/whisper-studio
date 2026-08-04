@@ -42,10 +42,9 @@ const chipStyle = (fg: string, bg: string): React.CSSProperties => ({
 
 const StatusChip: React.FC<{ model: ManagedModel }> = ({ model }) => {
   if (model.state === 'downloading') {
-    const pct =
-      model.size_bytes_estimate && model.size_bytes_estimate > 0
-        ? Math.min(99, Math.floor((model.bytes_on_disk / model.size_bytes_estimate) * 100))
-        : null;
+    // Server-computed fraction (bytes/estimate, capped, monotonic) — the same
+    // number the chat and recording banners render. Never recomputed here.
+    const pct = model.progress !== null ? Math.round(model.progress * 100) : null;
     return (
       <span style={chipStyle('var(--accent)', 'var(--accent-dim, rgba(99,102,241,0.15))')}>
         Downloading {pct !== null ? `${pct}%` : humanSize(model.bytes_on_disk)}
@@ -276,28 +275,18 @@ export const ModelsPanel: React.FC = () => {
                           Delete
                         </button>
                       ) : (
-                        <>
-                          <button
-                            className="btn btn-primary btn-sm"
-                            type="button"
-                            disabled={isBusy}
-                            onClick={() => onDownload(m)}
-                          >
-                            {m.state === 'error' ? 'Retry' : 'Download'}
-                          </button>
-                          {partial && (
-                            <button
-                              className="btn btn-sm"
-                              type="button"
-                              disabled={isBusy}
-                              style={{ color: 'var(--accent-record, #e5484d)' }}
-                              onClick={() => setConfirmDelete(m)}
-                              title="Remove the partial files on disk"
-                            >
-                              Delete
-                            </button>
-                          )}
-                        </>
+                        // Delete is for installed models only. A not-downloaded
+                        // model with partial bytes keeps just Download: the
+                        // partials are hf resume state, and the next download
+                        // picks them up (the info text above still shows them).
+                        <button
+                          className="btn btn-primary btn-sm"
+                          type="button"
+                          disabled={isBusy}
+                          onClick={() => onDownload(m)}
+                        >
+                          {m.state === 'error' ? 'Retry' : 'Download'}
+                        </button>
                       )}
                     </div>
                   </div>

@@ -296,8 +296,13 @@ async def local_model_load(model: str, n_ctx: int | None = None):
     """Stream load progress for an on-device model as SSE. The frontend opens
     this when a local model is selected (and when the context-window slider
     changes), to drive the loading banner. ``n_ctx`` optionally sets the context
-    window — a changed value reloads the model at that size. The load itself is
-    opaque, so the bar is a time ramp that snaps to ready on finish."""
+    window — a changed value reloads the model at that size.
+
+    Progress semantics: while the GGUF is still downloading, the streamed
+    fraction is ``models_manager.progress_of`` — the SAME computation Settings >
+    Models polls — so the banner and the Models tab agree by construction. The
+    load-into-memory phase that follows is opaque (llama.cpp reports nothing),
+    so only that short phase is a time ramp, capped below done."""
     from server.local import runtime as local_llm
 
     if not local_llm.is_local_model(model):
@@ -310,11 +315,6 @@ async def local_model_load(model: str, n_ctx: int | None = None):
         n_ctx = max(2048, min(int(n_ctx), 262144))
 
     label = local_llm.local_model_meta(model).get("label", model)
-    # First run (no GGUF on disk) means load_sync downloads several GB before it
-    # can load. load_sync is opaque, so we can't tell download-done from
-    # load-start; the whole pre-ready phase is reported as 'downloading' when a
-    # fetch is needed, so the banner reads "Downloading ..." instead of looking
-    # like a stalled load.
     busy_stage = "downloading" if not local_llm.is_downloaded(model) else "loading"
 
     # Record the explicit choice so BOTH backends honor it on later lazy starts.
@@ -324,15 +324,26 @@ async def local_model_load(model: str, n_ctx: int | None = None):
         loop = asyncio.get_event_loop()
         yield f"data: {ndjson_dumps({'stage': busy_stage, 'progress': 0.0, 'label': label})}\n\n"
         from server.local import llama_server
+        from server.models_manager import manager as models_manager
+        from server.models_manager.catalog import get_entry as catalog_entry
 
+        entry = catalog_entry(model)  # local-chat keys are catalog keys
         # Starts (or restarts at the new context size) the model server. Runs on a
         # plain I/O thread — it is a subprocess wait, not model work.
         load_future = loop.run_in_executor(None, llama_server.ensure_serving, model, n_ctx)
-        p = 0.0
-        while not load_future.done() and p < 0.9:
+        ramp = 0.0
+        while not load_future.done():
             await asyncio.sleep(0.4)
-            p = min(0.9, p + 0.05)
-            yield f"data: {ndjson_dumps({'stage': busy_stage, 'progress': round(p, 2), 'label': label})}\n\n"
+            if load_future.done():
+                break
+            if not local_llm.is_downloaded(model):
+                # Download phase: the shared manager number, never a ramp.
+                frac = (models_manager.progress_of(entry) if entry is not None else None) or 0.0
+                yield f"data: {ndjson_dumps({'stage': 'downloading', 'progress': frac, 'label': label})}\n\n"
+            else:
+                # Memory-load phase: opaque, short — a capped time ramp.
+                ramp = min(0.9, ramp + 0.05)
+                yield f"data: {ndjson_dumps({'stage': 'loading', 'progress': round(ramp, 2), 'label': label})}\n\n"
         try:
             await load_future
             yield f"data: {ndjson_dumps({'stage': 'ready', 'progress': 1.0, 'label': label})}\n\n"
@@ -375,14 +386,20 @@ async def local_model_download(model: str):
             yield "data: [DONE]\n\n"
             return
         yield f"data: {ndjson_dumps({'stage': 'downloading', 'progress': 0.0, 'label': label})}\n\n"
+        from server.models_manager import manager as models_manager
+        from server.models_manager.catalog import get_entry as catalog_entry
+
+        entry = catalog_entry(model)  # local-chat keys are catalog keys
         # Default executor (plain I/O thread), NOT local_llm.executor — a multi-GB
         # fetch must not occupy the model thread and stall chat.
         fut = loop.run_in_executor(None, local_llm.ensure_downloaded, model)
-        p = 0.0
-        while not fut.done() and p < 0.9:
+        while not fut.done():
             await asyncio.sleep(0.5)
-            p = min(0.9, p + 0.03)
-            yield f"data: {ndjson_dumps({'stage': 'downloading', 'progress': round(p, 2), 'label': label})}\n\n"
+            if fut.done():
+                break
+            # The shared manager number — same as Settings > Models shows.
+            frac = (models_manager.progress_of(entry) if entry is not None else None) or 0.0
+            yield f"data: {ndjson_dumps({'stage': 'downloading', 'progress': frac, 'label': label})}\n\n"
         try:
             await fut
             yield f"data: {ndjson_dumps({'stage': 'ready', 'progress': 1.0, 'label': label})}\n\n"
