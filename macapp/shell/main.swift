@@ -76,6 +76,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // Native system/app audio capture bridge (Core Audio process taps).
     private let nativeAudioBridge = NativeAudioBridge()
 
+    // Saves WKDownloads (exports, blob anchors with `download`) into
+    // ~/Downloads and reports the result to the page (DownloadHandler.swift).
+    private let downloadHandler = DownloadHandler()
+
     // MARK: Lifecycle
 
     /// A raw SIGTERM/SIGINT (logout, `kill`) skips AppKit's terminate flow, so
@@ -337,6 +341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let view = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 1440, height: 900), configuration: config)
         nativeAudioBridge.webView = view
+        downloadHandler.webView = view
         view.uiDelegate = self
         view.navigationDelegate = self
         view.allowsBackForwardNavigationGestures = true
@@ -471,8 +476,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        // target=_blank and window.open: hand the URL to the default browser.
-        if let url = navigationAction.request.url {
+        // target=_blank and window.open: hand real web links to the default
+        // browser. blob:/data:/about: URLs are in-page content the external
+        // browser cannot resolve (a blob: URL only means something inside
+        // this web view) — never leak those out of the app.
+        if let url = navigationAction.request.url,
+            let scheme = url.scheme?.lowercased(),
+            ["http", "https", "mailto", "tel"].contains(scheme)
+        {
             NSWorkspace.shared.open(url)
         }
         return nil
@@ -535,6 +546,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
+        // Anchor clicks carrying the `download` attribute (every export in
+        // the SPA goes through src/utils/downloadFile.ts) mark the action
+        // shouldPerformDownload. WKWebView has no default download handling,
+        // so without this the web view would NAVIGATE to the blob and render
+        // raw markdown over the app. Route it into a WKDownload instead.
+        if navigationAction.shouldPerformDownload {
+            decisionHandler(.download)
+            return
+        }
         guard let url = navigationAction.request.url else {
             decisionHandler(.allow)
             return
@@ -553,7 +573,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             decisionHandler(.cancel)
             return
         }
+        // Everything else — including blob:/data: navigations that are NOT
+        // downloads — stays inside the web view; nothing but real web links
+        // is ever handed to the external browser.
         decisionHandler(.allow)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+    ) {
+        // Server-driven downloads: a response the web view cannot render
+        // (e.g. a zip) or an explicit Content-Disposition attachment (e.g.
+        // /api/costs/export) must become a WKDownload, not a navigation.
+        if !navigationResponse.canShowMIMEType {
+            decisionHandler(.download)
+            return
+        }
+        if let http = navigationResponse.response as? HTTPURLResponse,
+            let disposition = http.value(forHTTPHeaderField: "Content-Disposition"),
+            disposition.lowercased().contains("attachment")
+        {
+            decisionHandler(.download)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    func webView(
+        _ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload
+    ) {
+        downloadHandler.attach(download)
+    }
+
+    func webView(
+        _ webView: WKWebView, navigationResponse: WKNavigationResponse,
+        didBecome download: WKDownload
+    ) {
+        downloadHandler.attach(download)
     }
 
     // MARK: Fatal startup errors

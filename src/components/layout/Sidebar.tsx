@@ -9,6 +9,7 @@ import * as sessionsApi from '@/api/sessions';
 import { fetchRecentRuns } from '@/api/cron';
 import { formatMessageTimestamp, formatSegmentTimestamp } from '@/utils/formatTimestamp';
 import { stripMarkdownTitle } from '@/utils/stripMarkdownTitle';
+import { downloadFile } from '@/utils/downloadFile';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 
 type ExportFormat = 'conversation-txt' | 'transcript-txt' | 'combined-md';
@@ -317,12 +318,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
           filename = `conversation-${slug}-${Date.now()}.md`;
         }
 
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
+        downloadFile(blob, filename);
         addToast({ type: 'success', message: 'Exported.', duration: 2000, persist: false });
       } catch {
         addToast({ type: 'error', message: 'Failed to export session.', duration: 3000 });

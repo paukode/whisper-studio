@@ -1,5 +1,6 @@
 import { marked } from 'marked';
 import type { ChatMessage as ChatMessageType, CronEventPayload } from '@/types/chat';
+import { downloadFile } from '@/utils/downloadFile';
 
 /** Rescue cron_event rows persisted under the older flat shape. Returns
  *  null if the row doesn't carry the minimum cron fields. */
@@ -58,13 +59,7 @@ export function exportSingleMessage(message: ChatMessageType): void {
     md += `---\n*Tokens: ${message._usage.input_tokens.toLocaleString()} in / ${message._usage.output_tokens.toLocaleString()} out*\n`;
   }
 
-  const blob = new Blob([md], { type: 'text/markdown' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `message-${Date.now()}.md`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadFile(md, `message-${Date.now()}.md`, 'text/markdown');
 }
 
 /**

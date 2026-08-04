@@ -15,6 +15,7 @@ import type { UseChatStreamReturn } from '@/hooks/useChatStream';
 import { requestModelChange } from '@/components/chat/dataRetentionConsent';
 import { ContextReportPanel, type ContextReport } from '@/components/chat/ContextReportPanel';
 import { clampEffort, effortLabel, EFFORT_ORDER } from '@/utils/effort';
+import { downloadFile } from '@/utils/downloadFile';
 import { useTheme } from '@/providers/ThemeProvider';
 import type { ThemeKey } from '@/types/theme';
 import {
@@ -303,13 +304,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       case 'export': {
         const messages = getChatStore(sessionId).getState().messages;
         const exported = messages.map((m) => `[${m.role}] ${m.content}`).join('\n\n---\n\n');
-        const blob = new Blob([exported], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `chat-export-${Date.now()}.txt`;
-        a.click();
-        URL.revokeObjectURL(url);
+        downloadFile(exported, `chat-export-${Date.now()}.txt`, 'text/plain');
         addToast({ type: 'success', message: 'Chat exported.', duration: 2000, persist: false });
         return true;
       }

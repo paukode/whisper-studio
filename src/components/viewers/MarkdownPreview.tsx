@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { readFile } from '@/api/workspace';
 import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
+import { downloadFile } from '@/utils/downloadFile';
 
 export interface MarkdownPreviewProps {
   filePath: string;
@@ -58,16 +59,11 @@ export const MarkdownPreview: React.FC<MarkdownPreviewProps> = ({ filePath, cont
 
   const handleDownloadHtml = useCallback(() => {
     const title = escapeHtml(fileName);
-    const blob = new Blob(
-      [`<!DOCTYPE html><html><head><title>${title}</title></head><body>${html}</body></html>`],
-      { type: 'text/html' },
+    downloadFile(
+      `<!DOCTYPE html><html><head><title>${title}</title></head><body>${html}</body></html>`,
+      fileName.replace(/\.(md|mdx)$/i, '.html'),
+      'text/html',
     );
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName.replace(/\.(md|mdx)$/i, '.html');
-    a.click();
-    URL.revokeObjectURL(url);
   }, [fileName, html]);
 
   if (isLoading) {

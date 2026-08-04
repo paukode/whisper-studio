@@ -12,6 +12,7 @@ import { ChatInput } from './ChatInput';
 import { GoalBanner } from './GoalBanner';
 import { ApprovalBanner } from './ApprovalBanner';
 import { formatMessageTimestamp, formatSegmentTimestamp } from '@/utils/formatTimestamp';
+import { downloadFile } from '@/utils/downloadFile';
 import { useTaskStore, type SessionTask } from '@/stores/taskStore';
 import { fetchSessionTasks } from '@/api/tasks';
 import { permissionModeLabel } from '@/utils/permissionModes';
@@ -242,13 +243,7 @@ export const ChatPanel: React.FC = () => {
       }
     }
 
-    const blob = new Blob([md], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `conversation-${currentSessionId ?? 'export'}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadFile(md, `conversation-${currentSessionId ?? 'export'}.md`, 'text/markdown');
   }, [allMessages, currentSessionId]);
 
   return (

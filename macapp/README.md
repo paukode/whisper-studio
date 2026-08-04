@@ -149,6 +149,62 @@ never a bare "helper" row; and never any Whisper Studio row.
 8. Quit the app mid-capture — no stray "Whisper Studio Capture" device stays
    behind (check Audio MIDI Setup).
 
+## Downloads (exports)
+
+WKWebView has no default download behavior — without explicit handling, an
+export click would just navigate the web view to the generated blob and
+render raw markdown over the app. The shell therefore routes downloads
+natively:
+
+- Every export in the SPA (chat/transcript Export buttons, sidebar session
+  export menu, message export, costs export, HTML artifact downloads,
+  `/export`) goes through one shared helper, `src/utils/downloadFile.ts`,
+  which clicks a temporary anchor with the `download` attribute. In
+  browsers that downloads normally; in the shell it marks the navigation
+  action `shouldPerformDownload`.
+- `main.swift` turns such navigation actions — and any response with an
+  unrenderable MIME type or a `Content-Disposition: attachment` header —
+  into a `WKDownload`, delegated to `macapp/shell/DownloadHandler.swift`.
+- Files are saved into `~/Downloads` with the suggested filename, never
+  overwriting: collisions get `name (2).ext`, `name (3).ext`, … suffixes.
+  No save panel is shown.
+- On completion the shell calls the page hook `window.__whisperShellToast`
+  (registered in `src/services/shellToastBridge.ts`): a "Saved to
+  Downloads: <file>" toast appears and persists to the notification bell
+  (source "export"). Failures raise an error toast with the reason. If the
+  hook is missing (older cached page), the shell logs to stderr and stays
+  silent — no alert, no crash.
+
+**Permission**: the first write into `~/Downloads` triggers the standard
+macOS "wants to access your Downloads folder" consent prompt. For a
+non-sandboxed app this needs no Info.plist usage key and no entitlement —
+the TCC prompt is automatic (there is no purpose-string key for the
+Downloads folder; sandboxed apps would instead need the
+`com.apple.security.files.downloads.read-write` entitlement, which does not
+apply here). If access was denied, re-enable it under System Settings >
+Privacy & Security > Files & Folders.
+
+**Dedupe smoke test (no app launch needed)**
+
+```bash
+swiftc -D DOWNLOAD_SMOKE_CLI -parse-as-library \
+    -target arm64-apple-macos14 \
+    macapp/shell/DownloadHandler.swift -o /tmp/smoke_download \
+    -framework WebKit
+/tmp/smoke_download   # destination-dedupe + JS-escaping assertions
+```
+
+**Manual test checklist**
+
+1. Open a chat with messages and click Export — first time, expect the OS
+   "access your Downloads folder" prompt; accept. The file (e.g.
+   `conversation-<session>.md`) lands in `~/Downloads`, and the app UI
+   stays put (no raw markdown page).
+2. Click Export again — a second file appears with a
+   ` (2)` suffix (`conversation-<session> (2).md`); nothing is overwritten.
+3. A "Saved to Downloads: <filename>" toast appears for each export and the
+   messages are kept in the header notification bell.
+
 ## Signing and notarization
 
 Default is ad-hoc signing (`SIGN_IDENTITY=-`): runs locally, but other Macs
