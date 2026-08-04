@@ -6,26 +6,33 @@ import { useSessionStore } from '@/stores/sessionStore';
 interface NotificationRow {
   id: number;
   session_id: string;
-  source: 'chat' | 'agent' | 'cron';
+  /** Origin slug: "chat" / "agent" / "cron" plus app-side sources ("app", "model-download", ...). */
+  source: string;
   title: string;
   message: string;
   status: string;
   created_at: string;
   read_at: string | null;
+  /** Identical notifications fired in a burst merge into one row with this repeat count. */
+  count: number;
 }
 
 /**
  * Header bell over the durable notification log (`notify_user` writes it via
- * server/notifications.py; toasts stay ephemeral). The badge polls the unread
+ * server/notifications.py at the route_tool choke point; user-facing toasts
+ * POST themselves in via the uiStore's addToast). The badge polls the unread
  * count so results delivered while the user was away are visible on return.
  * The dropdown lists notifications with an All/Unread filter, per-row
  * mark-read and hide, mark-all-read, and clear-all (soft-hide: rows keep
- * living in sessions.db until the 30-day GC).
+ * living in sessions.db until the 30-day GC). Long bodies are clamped to
+ * three lines; clicking a row expands it in place (and marks it read), where
+ * a session-linked row also offers "Open session".
  */
 export const NotificationsBell: React.FC = () => {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const unreadQuery = useQuery({
@@ -113,12 +120,17 @@ export const NotificationsBell: React.FC = () => {
     refresh();
   };
 
-  const openNotification = async (n: NotificationRow) => {
+  // Row click: expand/collapse the full body in place. Reading the details is
+  // what marks the row read.
+  const toggleExpand = (n: NotificationRow) => {
     if (!n.read_at) void markRead(n.id);
-    if (n.session_id) {
-      setOpen(false);
-      void useSessionStore.getState().switchSession(n.session_id);
-    }
+    setExpandedId((prev) => (prev === n.id ? null : n.id));
+  };
+
+  const openSession = (n: NotificationRow) => {
+    if (!n.session_id) return;
+    setOpen(false);
+    void useSessionStore.getState().switchSession(n.session_id);
   };
 
   const rows = listQuery.data?.notifications ?? [];
@@ -180,18 +192,49 @@ export const NotificationsBell: React.FC = () => {
               </div>
             )}
             {rows.map((n) => (
-              <div key={n.id} className={`notif-row${n.read_at ? '' : ' notif-row-unread'}`}>
+              <div
+                key={n.id}
+                className={`notif-row${n.read_at ? '' : ' notif-row-unread'}${expandedId === n.id ? ' notif-row-expanded' : ''}`}
+              >
                 <button
                   type="button"
                   className="notif-row-body"
-                  onClick={() => void openNotification(n)}
-                  title={n.session_id ? 'Open the session this came from' : undefined}
+                  onClick={() => toggleExpand(n)}
+                  aria-expanded={expandedId === n.id}
+                  title={expandedId === n.id ? 'Collapse' : 'Show full notification'}
                 >
+                  <span className={`notif-dot notif-dot-${severity(n.status)}`} aria-hidden="true" />
                   <span className={`notif-source notif-source-${n.source}`}>{n.source}</span>
                   <span className="notif-row-main">
                     {n.title && <span className="notif-row-title">{n.title}</span>}
                     <span className="notif-row-msg">{n.message}</span>
+                    {expandedId === n.id && n.session_id && (
+                      <span className="notif-row-links">
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          className="notif-open-session"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openSession(n);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.stopPropagation();
+                              openSession(n);
+                            }
+                          }}
+                        >
+                          Open session
+                        </span>
+                      </span>
+                    )}
                   </span>
+                  {(n.count ?? 1) > 1 && (
+                    <span className="notif-count" title={`Repeated ${n.count} times`}>
+                      ×{n.count}
+                    </span>
+                  )}
                   <span className="notif-time">{relativeTime(n.created_at)}</span>
                 </button>
                 <span className="notif-row-actions">
@@ -240,6 +283,12 @@ export const NotificationsBell: React.FC = () => {
     </div>
   );
 };
+
+/** Map a stored status onto a severity bucket for the row's colored dot. */
+function severity(status: string): 'success' | 'error' | 'warning' | 'info' {
+  if (status === 'success' || status === 'error' || status === 'warning') return status;
+  return 'info';
+}
 
 /** Compact relative timestamp; falls back to the date beyond a week. */
 function relativeTime(iso: string): string {

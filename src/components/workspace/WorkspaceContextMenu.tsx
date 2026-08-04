@@ -177,13 +177,13 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
     const wsRoot = useUIStore.getState().wsPath;
     const absolutePath = wsRoot ? `${wsRoot}/${path}` : path;
     void navigator.clipboard.writeText(absolutePath);
-    useUIStore.getState().addToast({ type: 'success', message: 'Path copied', duration: 1500 });
+    useUIStore.getState().addToast({ type: 'success', message: 'Path copied', duration: 1500, persist: false });
     onClose();
   }, [path, onClose]);
 
   const handleCopyRelativePath = useCallback(() => {
     void navigator.clipboard.writeText(path);
-    useUIStore.getState().addToast({ type: 'success', message: 'Relative path copied', duration: 1500 });
+    useUIStore.getState().addToast({ type: 'success', message: 'Relative path copied', duration: 1500, persist: false });
     onClose();
   }, [path, onClose]);
 
@@ -467,14 +467,14 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
   const handleCut = useCallback(() => {
     _clipboard = { operation: 'cut', paths: [path] };
     window.dispatchEvent(new CustomEvent('workspace-clipboard-change', { detail: _clipboard }));
-    useUIStore.getState().addToast({ type: 'info', message: `Cut: ${fileName}`, duration: 1500 });
+    useUIStore.getState().addToast({ type: 'info', message: `Cut: ${fileName}`, duration: 1500, persist: false });
     onClose();
   }, [path, fileName, onClose]);
 
   const handleCopyFile = useCallback(() => {
     _clipboard = { operation: 'copy', paths: [path] };
     window.dispatchEvent(new CustomEvent('workspace-clipboard-change', { detail: _clipboard }));
-    useUIStore.getState().addToast({ type: 'info', message: `Copied: ${fileName}`, duration: 1500 });
+    useUIStore.getState().addToast({ type: 'info', message: `Copied: ${fileName}`, duration: 1500, persist: false });
     onClose();
   }, [path, fileName, onClose]);
 

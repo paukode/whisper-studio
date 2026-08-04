@@ -211,7 +211,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
     async (path: string) => {
       try {
         await saveTab(path);
-        useUIStore.getState().addToast({ type: 'success', message: 'File saved', duration: 2000 });
+        useUIStore.getState().addToast({ type: 'success', message: 'File saved', duration: 2000, persist: false });
       } catch (err) {
         useUIStore.getState().addToast({ type: 'error', message: toError(err).message });
       }

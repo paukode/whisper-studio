@@ -102,7 +102,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       const filePath = cmd.slice(5);
       const question = parts.slice(1).join(' ').trim();
       if (!filePath) {
-        addToast({ type: 'info', message: 'Usage: /file:path [question]', duration: 3000 });
+        addToast({ type: 'info', message: 'Usage: /file:path [question]', duration: 3000, persist: false });
         return true;
       }
       const fileName = filePath.split('/').pop() || filePath;
@@ -154,21 +154,21 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       case 'effort': {
         const allowed = models.find((m) => m.key === selectedModel)?.effort_levels ?? [];
         if (allowed.length === 0) {
-          addToast({ type: 'info', message: 'This model has no effort level', duration: 2500 });
+          addToast({ type: 'info', message: 'This model has no effort level', duration: 2500, persist: false });
           return true;
         }
         // Accept the raw API name `xhigh` as an alias for the Extra label.
         const key = arg === 'xhigh' ? 'extra' : arg;
         if (key && allowed.includes(key)) {
           setEffortLevel(key);
-          addToast({ type: 'success', message: `Effort set to ${effortLabel(key)}`, duration: 2000 });
+          addToast({ type: 'success', message: `Effort set to ${effortLabel(key)}`, duration: 2000, persist: false });
         } else if (key && EFFORT_ORDER.includes(key as never)) {
           // Valid level, just not on this model — clamp to nearest lower.
           const clamped = clampEffort(key, allowed);
           setEffortLevel(clamped);
-          addToast({ type: 'info', message: `${effortLabel(key)} isn't available here; set to ${effortLabel(clamped)}`, duration: 3000 });
+          addToast({ type: 'info', message: `${effortLabel(key)} isn't available here; set to ${effortLabel(clamped)}`, duration: 3000, persist: false });
         } else {
-          addToast({ type: 'info', message: `Usage: /effort ${allowed.map(effortLabel).join('|')}`, duration: 3000 });
+          addToast({ type: 'info', message: `Usage: /effort ${allowed.map(effortLabel).join('|')}`, duration: 3000, persist: false });
         }
         return true;
       }
@@ -184,12 +184,12 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           const pickedLabel = models.find((m) => m.key === arg)?.name ?? arg;
           void requestModelChange(arg).then((switched) => {
             if (switched) {
-              addToast({ type: 'success', message: `Model set to ${pickedLabel}`, duration: 2000 });
+              addToast({ type: 'success', message: `Model set to ${pickedLabel}`, duration: 2000, persist: false });
             }
           });
         } else {
           const usage = validKeys.length > 0 ? validKeys.join('|') : 'haiku|sonnet|opus4.8';
-          addToast({ type: 'info', message: `Usage: /model ${usage}`, duration: 3000 });
+          addToast({ type: 'info', message: `Usage: /model ${usage}`, duration: 3000, persist: false });
         }
         return true;
       }
@@ -206,9 +206,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         if (next) {
           setVerbosity(next);
           const label = next === 'low' ? 'Brief' : next === 'medium' ? 'Normal' : 'Detailed';
-          addToast({ type: 'success', message: `Response length: ${label}`, duration: 2000 });
+          addToast({ type: 'success', message: `Response length: ${label}`, duration: 2000, persist: false });
         } else {
-          addToast({ type: 'info', message: 'Usage: /verbosity brief|normal|detailed', duration: 3000 });
+          addToast({ type: 'info', message: 'Usage: /verbosity brief|normal|detailed', duration: 3000, persist: false });
         }
         return true;
       }
@@ -222,9 +222,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           // dispatched a StorageEvent, which never fires in the tab that wrote
           // it, so /theme silently did nothing until a reload.
           setTheme(arg as ThemeKey);
-          addToast({ type: 'success', message: `Theme set to ${arg}`, duration: 2000 });
+          addToast({ type: 'success', message: `Theme set to ${arg}`, duration: 2000, persist: false });
         } else {
-          addToast({ type: 'info', message: `Usage: /theme ${validThemes.join('|')}`, duration: 4000 });
+          addToast({ type: 'info', message: `Usage: /theme ${validThemes.join('|')}`, duration: 4000, persist: false });
         }
         return true;
       }
@@ -310,7 +310,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         a.download = `chat-export-${Date.now()}.txt`;
         a.click();
         URL.revokeObjectURL(url);
-        addToast({ type: 'success', message: 'Chat exported.', duration: 2000 });
+        addToast({ type: 'success', message: 'Chat exported.', duration: 2000, persist: false });
         return true;
       }
       case 'skills': {
@@ -319,11 +319,11 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       }
       case 'btw': {
         if (!arg) {
-          addToast({ type: 'info', message: 'Usage: /btw <question>', duration: 3000 });
+          addToast({ type: 'info', message: 'Usage: /btw <question>', duration: 3000, persist: false });
           return true;
         }
         const fullQuestion = input.slice(5).trim();
-        addToast({ type: 'info', message: `Asking: ${fullQuestion}…`, duration: 3000 });
+        addToast({ type: 'info', message: `Asking: ${fullQuestion}…`, duration: 3000, persist: false });
         void (async () => {
           try {
             const response = await fetch('/api/chat/btw', {
@@ -375,20 +375,20 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: newTitle, customTitle: true }),
           }).catch(() => {});
-          addToast({ type: 'success', message: `Session renamed to "${newTitle}"`, duration: 2000 });
+          addToast({ type: 'success', message: `Session renamed to "${newTitle}"`, duration: 2000, persist: false });
         } else {
-          addToast({ type: 'info', message: 'Usage: /rename <new title>', duration: 3000 });
+          addToast({ type: 'info', message: 'Usage: /rename <new title>', duration: 3000, persist: false });
         }
         return true;
       }
       case 'workflow': {
         if (!sessionId) {
-          addToast({ type: 'info', message: 'Open a session first.', duration: 2000 });
+          addToast({ type: 'info', message: 'Open a session first.', duration: 2000, persist: false });
           return true;
         }
         const wfName = input.slice(10).trim().split(/\s+/)[0]; // after "/workflow "
         if (!wfName) {
-          addToast({ type: 'info', message: 'Usage: /workflow <saved-name>', duration: 3000 });
+          addToast({ type: 'info', message: 'Usage: /workflow <saved-name>', duration: 3000, persist: false });
           return true;
         }
         void (async () => {
@@ -408,7 +408,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       }
       case 'ci': {
         if (!sessionId) {
-          addToast({ type: 'info', message: 'Open a session first.', duration: 2000 });
+          addToast({ type: 'info', message: 'Open a session first.', duration: 2000, persist: false });
           return true;
         }
         const parts = input.slice(3).trim().split(/\s+/).filter(Boolean); // after "/ci"
@@ -449,16 +449,16 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       }
       case 'goal': {
         if (!sessionId) {
-          addToast({ type: 'info', message: 'Open a session first.', duration: 2000 });
+          addToast({ type: 'info', message: 'Open a session first.', duration: 2000, persist: false });
           return true;
         }
         const goalText = input.slice(6).trim(); // everything after "/goal "
         if (goalText.toLowerCase() === 'clear') {
           useGoalStore.getState().clearGoal(sessionId);
           void fetch(`/api/sessions/${sessionId}/goal`, { method: 'DELETE' }).catch(() => {});
-          addToast({ type: 'success', message: 'Goal cleared.', duration: 2000 });
+          addToast({ type: 'success', message: 'Goal cleared.', duration: 2000, persist: false });
         } else if (!goalText) {
-          addToast({ type: 'info', message: 'Usage: /goal <text>  ·  /goal clear', duration: 3000 });
+          addToast({ type: 'info', message: 'Usage: /goal <text>  ·  /goal clear', duration: 3000, persist: false });
         } else {
           useGoalStore.getState().setGoal(sessionId, goalText, true);
           void fetch(`/api/sessions/${sessionId}/goal`, {
@@ -466,21 +466,21 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ goal: goalText }),
           }).catch(() => {});
-          addToast({ type: 'success', message: 'Goal set — the loop will work toward it.', duration: 2500 });
+          addToast({ type: 'success', message: 'Goal set — the loop will work toward it.', duration: 2500, persist: false });
         }
         return true;
       }
       case 'memory': {
         if (arg === 'on') {
           setAutoMemory(true);
-          addToast({ type: 'success', message: 'Memory enabled', duration: 2000 });
+          addToast({ type: 'success', message: 'Memory enabled', duration: 2000, persist: false });
         } else if (arg === 'off') {
           setAutoMemory(false);
-          addToast({ type: 'success', message: 'Memory disabled', duration: 2000 });
+          addToast({ type: 'success', message: 'Memory disabled', duration: 2000, persist: false });
         } else if (arg === 'status') {
-          addToast({ type: 'info', message: `Memory is ${autoMemory ? 'enabled' : 'disabled'}`, duration: 2000 });
+          addToast({ type: 'info', message: `Memory is ${autoMemory ? 'enabled' : 'disabled'}`, duration: 2000, persist: false });
         } else {
-          addToast({ type: 'info', message: 'Usage: /memory on|off|status', duration: 3000 });
+          addToast({ type: 'info', message: 'Usage: /memory on|off|status', duration: 3000, persist: false });
         }
         return true;
       }
@@ -514,7 +514,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       }
       case 'clear': {
         getChatStore(sessionId).getState().clearMessages();
-        addToast({ type: 'info', message: 'Chat cleared', duration: 2000 });
+        addToast({ type: 'info', message: 'Chat cleared', duration: 2000, persist: false });
         return true;
       }
       case 'settings': {
@@ -529,12 +529,12 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         if (!('Notification' in window)) {
           addToast({ type: 'warning', message: 'Notifications not supported in this browser', duration: 3000 });
         } else if (Notification.permission === 'granted') {
-          addToast({ type: 'info', message: 'Notifications are already enabled', duration: 2000 });
+          addToast({ type: 'info', message: 'Notifications are already enabled', duration: 2000, persist: false });
         } else if (Notification.permission === 'denied') {
           addToast({ type: 'warning', message: 'Notifications blocked. Reset site permissions in browser settings.', duration: 4000 });
         } else {
           void Notification.requestPermission().then(perm => {
-            if (perm === 'granted') addToast({ type: 'success', message: 'Notifications enabled', duration: 2000 });
+            if (perm === 'granted') addToast({ type: 'success', message: 'Notifications enabled', duration: 2000, persist: false });
             else addToast({ type: 'warning', message: 'Notifications blocked', duration: 3000 });
           });
         }
@@ -551,7 +551,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         // NOT block the composer — the user can keep chatting while it works.
         const task = input.slice('/subagent '.length).trim();
         if (!task) {
-          addToast({ type: 'info', message: 'Usage: /subagent <task>', duration: 3000 });
+          addToast({ type: 'info', message: 'Usage: /subagent <task>', duration: 3000, persist: false });
           return true;
         }
         const chat = () => getChatStore(sessionId).getState();

@@ -20,7 +20,10 @@ const entry = (
   bytes = 0,
   est: number | null = null,
   error: string | null = null,
-) => ({ state, bytes_on_disk: bytes, size_bytes_estimate: est, error });
+  // The server-computed shared fraction; defaults mirror the backend's
+  // progress_of so most snapshots stay terse.
+  progress: number | null = state === 'installed' ? 1 : est ? Math.min(0.99, bytes / est) : null,
+) => ({ state, bytes_on_disk: bytes, size_bytes_estimate: est, progress, error });
 
 const CATALOG = {
   models: [
@@ -98,7 +101,10 @@ describe('ensureRecordingModels', () => {
         ecapa_speaker: entry('absent', 0, 50_000_000),
       },
       {
-        parakeet: entry('downloading', 1_050_000_000, 2_500_000_000),
+        // progress is the server's monotonic number — deliberately different
+        // from the raw bytes/est ratio (0.42) to pin that the banner renders
+        // the shared field, never local arithmetic.
+        parakeet: entry('downloading', 1_050_000_000, 2_500_000_000, null, 0.45),
         ecapa_speaker: entry('downloading', 0, 50_000_000),
       },
       {
@@ -134,7 +140,8 @@ describe('ensureRecordingModels', () => {
     await vi.advanceTimersByTimeAsync(1000);
     banner = useUIStore.getState().modelLoading;
     expect(banner?.detail).toBe('1.1 GB of 2.5 GB · model 1 of 2');
-    expect(banner?.progress).toBeCloseTo(0.42, 5);
+    // The server's shared progress field (0.45), not bytes/est (0.42).
+    expect(banner?.progress).toBeCloseTo(0.45, 5);
 
     await vi.advanceTimersByTimeAsync(1000);
     banner = useUIStore.getState().modelLoading;

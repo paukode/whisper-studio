@@ -231,7 +231,8 @@ function toastMemoryEvent(sid: string, ev: MemoryEventPayload): void {
   // Lazy import avoids a cycle (uiStore has no dependency back on runtimes,
   // but keep the import local to the event path anyway).
   void import('./uiStore').then(({ useUIStore }) => {
-    useUIStore.getState().addToast({ type: 'info', message, key });
+    // persist:false — per-turn memory telemetry would flood the bell.
+    useUIStore.getState().addToast({ type: 'info', message, key, persist: false });
   });
 }
 

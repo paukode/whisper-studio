@@ -1,15 +1,20 @@
 """Persistent notification log.
 
-Single choke-point write: the ``notify_user`` branch in server/tool_router.py
-calls :func:`record_notification` best-effort, so chat turns, agent runs, and
-cron jobs (which all dispatch through ``route_tool``) land in one log with an
-``origin`` tag. The ephemeral toast stays; this is the durable record a user
-who was away from the screen can catch up from, surfaced by the header bell
+Two write paths land in one log: the ``notify_user`` branch in
+server/tool_router.py calls :func:`record_notification` best-effort (chat
+turns, agent runs, and cron jobs all dispatch through ``route_tool``), and
+frontend toasts POST themselves here (``POST /api/notifications``, wired
+centrally in the uiStore's addToast) so the bell keeps a reviewable history
+after the 5-second toast is gone. Each row carries an ``source`` slug
+("chat", "cron", "app", "model-download", ...). Identical rows fired in a
+tight loop collapse into one entry with a repeat ``count`` (see
+:data:`DEDUPE_WINDOW_SECONDS`). Surfaced by the header bell
 (src/components/layout/NotificationsBell.tsx) over ``GET /api/notifications``.
 """
 
 import logging
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -27,7 +32,18 @@ STORAGE_DIR = storage_root()
 DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
 
 RETENTION_DAYS = 30
-_VALID_SOURCES = ("chat", "agent", "cron")
+# Identical (source, title, message, status) rows arriving within this many
+# seconds of the previous occurrence merge into it: count += 1 and the row's
+# created_at slides forward. A steady drip of the same failure therefore
+# stays ONE bell entry while it keeps firing.
+DEDUPE_WINDOW_SECONDS = 5.0
+_VALID_STATUSES = ("normal", "info", "success", "warning", "error")
+
+
+def _slug_source(source: str) -> str:
+    """Normalize a source tag to a lowercase slug; empty/garbage → "app"."""
+    s = re.sub(r"[^a-z0-9_-]+", "-", (source or "").strip().lower()).strip("-")
+    return s[:32] or "app"
 
 
 def _utc_now_iso() -> str:
@@ -52,7 +68,7 @@ def _get_conn():
 
 
 def _ensure_table() -> None:
-    """Defensive net alongside migrations 008/010 (tests, fresh boots)."""
+    """Defensive net alongside migrations 008/010/012 (tests, fresh boots)."""
     try:
         with _get_conn() as conn:
             conn.execute(
@@ -60,13 +76,14 @@ def _ensure_table() -> None:
                 CREATE TABLE IF NOT EXISTS notifications (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id  TEXT,
-                    source      TEXT NOT NULL CHECK (source IN ('chat', 'agent', 'cron')),
+                    source      TEXT NOT NULL,
                     title       TEXT,
                     message     TEXT NOT NULL,
                     status      TEXT NOT NULL DEFAULT 'normal',
                     created_at  TEXT NOT NULL,
                     read_at     TEXT,
-                    hidden_at   TEXT
+                    hidden_at   TEXT,
+                    count       INTEGER NOT NULL DEFAULT 1
                 )
                 """
             )
@@ -74,12 +91,56 @@ def _ensure_table() -> None:
                 "CREATE INDEX IF NOT EXISTS idx_notifications_unread "
                 "ON notifications(read_at, created_at DESC)"
             )
-            try:
-                conn.execute("ALTER TABLE notifications ADD COLUMN hidden_at TEXT")
-            except sqlite3.OperationalError:
-                pass
+            for alter in (
+                "ALTER TABLE notifications ADD COLUMN hidden_at TEXT",
+                "ALTER TABLE notifications ADD COLUMN count INTEGER NOT NULL DEFAULT 1",
+            ):
+                try:
+                    conn.execute(alter)
+                except sqlite3.OperationalError:
+                    pass
     except sqlite3.DatabaseError as e:
         log.warning("notifications: ensure table failed: %s", e)
+
+
+def _insert_or_bump(
+    conn: sqlite3.Connection,
+    *,
+    session_id: str,
+    source: str,
+    title: str,
+    message: str,
+    status: str,
+) -> dict:
+    """Dedupe-aware write. Returns {"id": int, "deduped": bool}."""
+    now = _utc_now_iso()
+    cutoff = (
+        (datetime.now(timezone.utc) - timedelta(seconds=DEDUPE_WINDOW_SECONDS))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    row = conn.execute(
+        "SELECT id FROM notifications WHERE hidden_at IS NULL "
+        "AND source=? AND title=? AND message=? AND status=? AND created_at >= ? "
+        "ORDER BY id DESC LIMIT 1",
+        (source, title, message, status, cutoff),
+    ).fetchone()
+    if row:
+        # A repeat is a NEW occurrence: slide created_at (so the row stays
+        # current and the window keeps absorbing the burst) and clear read_at
+        # so the badge re-lights if the user had already seen the older one.
+        conn.execute(
+            "UPDATE notifications SET count = count + 1, created_at = ?, read_at = NULL "
+            "WHERE id = ?",
+            (now, row["id"]),
+        )
+        return {"id": int(row["id"]), "deduped": True}
+    cur = conn.execute(
+        "INSERT INTO notifications (session_id, source, title, message, status, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (session_id, source, title, message, status, now),
+    )
+    return {"id": int(cur.lastrowid or 0), "deduped": False}
 
 
 def record_notification(
@@ -89,29 +150,33 @@ def record_notification(
     title: str = "",
     message: str,
     status: str = "normal",
-) -> None:
-    """Best-effort durable write; never raises into the tool path."""
+) -> dict | None:
+    """Best-effort durable write; never raises into the tool path.
+
+    Returns {"id": ..., "deduped": ...} on success, None on failure.
+    """
     if not message:
-        return
-    if source not in _VALID_SOURCES:
-        source = "chat"
+        return None
+    source = _slug_source(source)
     _ensure_table()
+    fields = {
+        "session_id": session_id or "",
+        "title": (title or "")[:200],
+        "message": message[:4000],
+        "status": status if status in _VALID_STATUSES else "normal",
+    }
     try:
         with _get_conn() as conn:
-            conn.execute(
-                "INSERT INTO notifications (session_id, source, title, message, status, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    session_id or "",
-                    source,
-                    (title or "")[:200],
-                    message[:4000],
-                    status or "normal",
-                    _utc_now_iso(),
-                ),
-            )
+            try:
+                return _insert_or_bump(conn, source=source, **fields)
+            except sqlite3.IntegrityError:
+                # Pre-012 table (CHECK source IN ('chat','agent','cron')) that
+                # _ensure_table's CREATE IF NOT EXISTS could not relax: keep
+                # the row rather than the tag.
+                return _insert_or_bump(conn, source="chat", **fields)
     except sqlite3.DatabaseError as e:
         log.warning("notifications: record failed: %s", e)
+        return None
 
 
 def list_notifications(*, limit: int = 50, unread_only: bool = False) -> list[dict]:
@@ -223,6 +288,42 @@ def gc_old(days: int = RETENTION_DAYS) -> int:
 @router.get("")
 async def api_list(limit: int = 50, unread_only: bool = False):
     return {"notifications": list_notifications(limit=limit, unread_only=unread_only)}
+
+
+@router.post("")
+async def api_record(request: Request):
+    """Record an app-originated (frontend toast) notification.
+
+    Body: {message: str, title?: str, source?: str, status?: str,
+    session_id?: str}. Server-originated notifications (notify_user) never
+    come through here — they are recorded at the route_tool choke point.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    message = body.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return Response(
+            content='{"error": "message is required"}',
+            status_code=400,
+            media_type="application/json",
+        )
+
+    def _str(key: str) -> str:
+        v = body.get(key)
+        return v if isinstance(v, str) else ""
+
+    result = record_notification(
+        session_id=_str("session_id"),
+        source=_str("source") or "app",
+        title=_str("title"),
+        message=message,
+        status=_str("status"),
+    )
+    if result is None:
+        return {"ok": False, "id": None, "deduped": False}
+    return {"ok": True, **result}
 
 
 @router.get("/unread-count")

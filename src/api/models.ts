@@ -13,6 +13,10 @@ export interface ManagedModel {
   installed: boolean;
   size_bytes_estimate: number | null;
   bytes_on_disk: number;
+  /** Server-computed download fraction (0..0.99 in flight, 1 when installed,
+   *  null with no size estimate). THE number every surface shows — never
+   *  recompute it client-side from bytes/estimate. */
+  progress: number | null;
   state: ManagedModelState;
   error: string | null;
 }
@@ -21,6 +25,8 @@ export interface ManagedModelStatus {
   state: ManagedModelState;
   bytes_on_disk: number;
   size_bytes_estimate: number | null;
+  /** See ManagedModel.progress — the shared server-computed fraction. */
+  progress: number | null;
   error: string | null;
 }
 

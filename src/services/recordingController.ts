@@ -159,6 +159,7 @@ function handleNativeError(message: string): void {
     type: 'error',
     message: `Native audio capture failed: ${message}`,
     duration: 8000,
+    source: 'recording',
   });
   if (!useRecordingStore.getState().isRecording) return;
   if (wasMixed) {
@@ -281,6 +282,7 @@ async function start(sessionId: string): Promise<void> {
       message: `${MAX_ACTIVE_SESSIONS} sessions are already active. Stop one before starting a recording.`,
       duration: 5000,
       key: 'parallel-cap',
+      source: 'recording',
     });
     return;
   }
@@ -354,6 +356,7 @@ async function start(sessionId: string): Promise<void> {
           type: 'error',
           message: `Native audio source unavailable — recording with microphone only. ${detail}`,
           duration: 8000,
+          source: 'recording',
         });
       }
     }
@@ -442,7 +445,7 @@ async function start(sessionId: string): Promise<void> {
         : errName === 'NotFoundError'
           ? 'No microphone found. Connect or select an input device in your system sound settings.'
           : `Recording failed to start: ${detail}`;
-    useUIStore.getState().addToast({ type: 'error', message, duration: 8000 });
+    useUIStore.getState().addToast({ type: 'error', message, duration: 8000, source: 'recording' });
     stopWatchdog();
     stopPing();
     if (ws) {

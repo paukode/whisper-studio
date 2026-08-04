@@ -5446,6 +5446,44 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     overflow: hidden;
 }
 .notif-row-unread .notif-row-msg { color: var(--text-primary); }
+/* Click-to-expand: lift the 3-line clamp and show the full body in place. */
+.notif-row-expanded .notif-row-msg {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+/* Severity dot (mirrors the toast accent colors in modules/toast.css). */
+.notif-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 6px;
+}
+.notif-dot-success { background: var(--accent-live); }
+.notif-dot-error   { background: var(--accent-record); }
+.notif-dot-warning { background: var(--accent); }
+.notif-dot-info    { background: #3b82f6; }
+/* Repeat count for identical notifications merged in a burst. */
+.notif-count {
+    font-size: var(--fs-caption);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0 5px;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+.notif-row-links { margin-top: 6px; }
+.notif-open-session {
+    display: inline-block;
+    font-size: var(--fs-caption);
+    color: var(--accent);
+    cursor: pointer;
+}
+.notif-open-session:hover { text-decoration: underline; }
 .notif-time { font-size: var(--fs-caption); color: var(--text-muted); flex-shrink: 0; margin-top: 2px; }
 
 /* ============================================================

@@ -296,7 +296,7 @@ export const ChatPanel: React.FC = () => {
               title="Reset session approval rules"
               onClick={() => {
                 getActiveChatStore().getState().resetSessionApprovals();
-                useUIStore.getState().addToast({ type: 'info', message: 'Session approval rules reset', duration: 2000 });
+                useUIStore.getState().addToast({ type: 'info', message: 'Session approval rules reset', duration: 2000, persist: false });
               }}
             >
               Reset Approvals

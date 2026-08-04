@@ -67,7 +67,7 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
     if (!currentSessionId) return;
     try {
       await post(`/api/chat/sessions/${encodeURIComponent(currentSessionId)}/reset`, {});
-      addToast({ type: 'success', message: 'Session reset. You can send a new message now.', duration: 4000 });
+      addToast({ type: 'success', message: 'Session reset. You can send a new message now.', duration: 4000, persist: false });
     } catch {
       addToast({ type: 'error', message: 'Could not reset the session.', duration: 4000 });
     }

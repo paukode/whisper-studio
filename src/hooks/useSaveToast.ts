@@ -20,7 +20,9 @@ export function useSaveToast() {
     async (fn: () => Promise<unknown>, messages?: SaveToastMessages): Promise<boolean> => {
       try {
         await fn();
-        addToast({ type: 'success', message: messages?.success ?? 'Saved' });
+        // Save confirmations are transient UI feedback — keep them out of
+        // the bell's history (failures below DO persist).
+        addToast({ type: 'success', message: messages?.success ?? 'Saved', persist: false });
         return true;
       } catch (err) {
         const reason = err instanceof Error && err.message ? err.message : '';

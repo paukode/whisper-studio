@@ -160,7 +160,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
         // drop the children of every expanded folder (see mergeFileTree).
         const rootEntries = await listDir('.');
         mergeFileTree(rootEntries);
-        useUIStore.getState().addToast({ type: 'success', message: `Renamed to ${newName.trim()}`, duration: 2000 });
+        useUIStore.getState().addToast({ type: 'success', message: `Renamed to ${newName.trim()}`, duration: 2000, persist: false });
       } catch (err) {
         useUIStore.getState().addToast({ type: 'error', message: toError(err).message });
       }
