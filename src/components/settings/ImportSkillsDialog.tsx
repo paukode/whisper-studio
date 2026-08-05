@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { post } from '@/api/client';
+import { useBackdropDismiss } from '@/hooks/useBackdropDismiss';
 
 interface PreviewSkill {
   subpath: string;
@@ -16,16 +17,36 @@ interface ImportResult {
   errors: Array<{ subpath: string; reason: string }>;
 }
 
+type Mode = 'git' | 'local';
+
 const errMsg = (e: unknown): string =>
   e instanceof Error ? e.message : String(e);
 
-/** Import folder skills from a git URL: preview the repo's skills, select some,
- *  and import them into /skills/ (hot-reloaded, no restart). */
+/** Read a JSON error body ({error} or {detail}) from a failed multipart
+ *  response, falling back to the status text. */
+async function readError(resp: Response): Promise<string> {
+  try {
+    const body = (await resp.json()) as { error?: string; detail?: string };
+    return body.error || body.detail || `HTTP ${resp.status}`;
+  } catch {
+    return `HTTP ${resp.status}`;
+  }
+}
+
+/** Import folder skills from a git URL OR a local folder: preview the available
+ *  skills, select some, and import them into /skills/ (hot-reloaded, no restart).
+ *  The two modes share the same select→import UX. */
 export const ImportSkillsDialog: React.FC<{
   onClose: () => void;
   onImported: () => void;
 }> = ({ onClose, onImported }) => {
+  const [mode, setMode] = useState<Mode>('git');
   const [url, setUrl] = useState('');
+  // Files chosen via the local-folder picker (each carries webkitRelativePath).
+  const [localFiles, setLocalFiles] = useState<File[]>([]);
+  const [folderLabel, setFolderLabel] = useState('');
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [skills, setSkills] = useState<PreviewSkill[]>([]);
@@ -35,18 +56,59 @@ export const ImportSkillsDialog: React.FC<{
   const [searchDesc, setSearchDesc] = useState(false);
   const [summary, setSummary] = useState('');
 
-  const doPreview = async () => {
-    setLoading(true);
+  const resetResults = () => {
     setError('');
     setSummary('');
     setSkills([]);
     setSelected(new Set());
+  };
+
+  const switchMode = (next: Mode) => {
+    if (next === mode) return;
+    setMode(next);
+    resetResults();
+    setFilter('');
+  };
+
+  const doPreviewGit = async () => {
+    setLoading(true);
+    resetResults();
     try {
       const r = await post<{ skills: PreviewSkill[] }>('/api/skills/import/preview', {
         url: url.trim(),
       });
       setSkills(r.skills ?? []);
       if ((r.skills ?? []).length === 0) setError('No skills found in that repository.');
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Build a multipart body preserving each file's folder-relative path (sent as
+  // the part filename) so the backend can reconstruct the picked tree.
+  const buildForm = (files: File[]): FormData => {
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f, f.webkitRelativePath || f.name);
+    return fd;
+  };
+
+  const onFolderPicked = async (files: File[]) => {
+    setLocalFiles(files);
+    const first = files[0]?.webkitRelativePath ?? '';
+    setFolderLabel(first ? first.split('/')[0] : `${files.length} files`);
+    setLoading(true);
+    resetResults();
+    try {
+      const resp = await fetch('/api/skills/import/local/preview', {
+        method: 'POST',
+        body: buildForm(files),
+      });
+      if (!resp.ok) throw new Error(await readError(resp));
+      const r = (await resp.json()) as { skills: PreviewSkill[] };
+      setSkills(r.skills ?? []);
+      if ((r.skills ?? []).length === 0) setError('No skills found in that folder.');
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -62,28 +124,42 @@ export const ImportSkillsDialog: React.FC<{
       return next;
     });
 
+  const applyResult = (r: ImportResult) => {
+    onImported();
+    // Clean success: close the dialog. If some skills hit conflicts/errors,
+    // keep it open with a summary so the user can enable overwrite and retry.
+    if (r.conflicts.length === 0 && r.errors.length === 0) {
+      onClose();
+      return;
+    }
+    const parts = [`Imported ${r.imported.length}`];
+    if (r.conflicts.length)
+      parts.push(`${r.conflicts.length} already existed (enable overwrite to replace)`);
+    if (r.errors.length) parts.push(`${r.errors.length} failed`);
+    setSummary(parts.join(' · '));
+  };
+
   const doImport = async () => {
     if (selected.size === 0) return;
     setLoading(true);
     setError('');
     setSummary('');
     try {
-      const r = await post<ImportResult>('/api/skills/import', {
-        url: url.trim(),
-        subpaths: [...selected],
-        overwrite,
-      });
-      onImported();
-      // Clean success: close the dialog. If some skills hit conflicts/errors,
-      // keep it open with a summary so the user can enable overwrite and retry.
-      if (r.conflicts.length === 0 && r.errors.length === 0) {
-        onClose();
-        return;
+      if (mode === 'git') {
+        const r = await post<ImportResult>('/api/skills/import', {
+          url: url.trim(),
+          subpaths: [...selected],
+          overwrite,
+        });
+        applyResult(r);
+      } else {
+        const fd = buildForm(localFiles);
+        fd.append('subpaths', JSON.stringify([...selected]));
+        fd.append('overwrite', overwrite ? 'true' : 'false');
+        const resp = await fetch('/api/skills/import/local', { method: 'POST', body: fd });
+        if (!resp.ok) throw new Error(await readError(resp));
+        applyResult((await resp.json()) as ImportResult);
       }
-      const parts = [`Imported ${r.imported.length}`];
-      if (r.conflicts.length) parts.push(`${r.conflicts.length} already existed (enable overwrite to replace)`);
-      if (r.errors.length) parts.push(`${r.errors.length} failed`);
-      setSummary(parts.join(' · '));
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -100,6 +176,21 @@ export const ImportSkillsDialog: React.FC<{
     });
   }, [skills, filter, searchDesc]);
 
+  // Dismiss only on a genuine backdrop press (mousedown AND click both on the
+  // overlay), so selecting text in the URL/filter inputs and releasing outside
+  // does not close the dialog.
+  const backdrop = useBackdropDismiss(onClose);
+
+  const tabStyle = (active: boolean): React.CSSProperties => ({
+    padding: '5px 12px',
+    borderRadius: '8px',
+    border: '1px solid var(--border, #333)',
+    background: active ? 'var(--accent, #47f)' : 'transparent',
+    color: active ? '#fff' : 'var(--text-primary, #eee)',
+    cursor: 'pointer',
+    fontSize: '13px',
+  });
+
   return (
     <div
       role="dialog"
@@ -113,7 +204,7 @@ export const ImportSkillsDialog: React.FC<{
         justifyContent: 'center',
         zIndex: 1000,
       }}
-      onClick={onClose}
+      {...backdrop}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -130,33 +221,94 @@ export const ImportSkillsDialog: React.FC<{
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <strong>Import skills from Git</strong>
+          <strong>Import skills</strong>
           <button className="btn btn-sm" onClick={onClose} type="button" aria-label="Close">
             &times;
           </button>
         </div>
 
-        <div style={{ display: 'flex', gap: '6px' }}>
-          <input
-            type="text"
-            className="settings-input"
-            style={{ flex: 1, padding: '6px 8px' }}
-            placeholder="https://github.com/owner/repo"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void doPreview();
-            }}
-          />
+        {/* Source mode selector */}
+        <div role="tablist" aria-label="Import source" style={{ display: 'flex', gap: '6px' }}>
           <button
-            className="btn btn-sm"
-            onClick={() => void doPreview()}
-            disabled={loading || !url.trim()}
             type="button"
+            role="tab"
+            aria-selected={mode === 'git'}
+            style={tabStyle(mode === 'git')}
+            onClick={() => switchMode('git')}
           >
-            {loading && skills.length === 0 ? 'Loading…' : 'Preview'}
+            From Git
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'local'}
+            style={tabStyle(mode === 'local')}
+            onClick={() => switchMode('local')}
+          >
+            From local folder
           </button>
         </div>
+
+        {mode === 'git' ? (
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <input
+              type="text"
+              className="settings-input"
+              style={{ flex: 1, padding: '6px 8px' }}
+              placeholder="https://github.com/owner/repo"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void doPreviewGit();
+              }}
+            />
+            <button
+              className="btn btn-sm"
+              onClick={() => void doPreviewGit()}
+              disabled={loading || !url.trim()}
+              type="button"
+            >
+              {loading && skills.length === 0 ? 'Loading…' : 'Preview'}
+            </button>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button
+              className="btn btn-sm"
+              type="button"
+              disabled={loading}
+              onClick={() => folderInputRef.current?.click()}
+            >
+              {loading && skills.length === 0 ? 'Scanning…' : 'Choose folder…'}
+            </button>
+            {folderLabel && (
+              <span style={{ fontSize: '12px', opacity: 0.7 }}>
+                <span style={{ fontFamily: 'var(--font-mono, monospace)' }}>{folderLabel}</span>
+              </span>
+            )}
+            <input
+              ref={(el) => {
+                folderInputRef.current = el;
+                // webkitdirectory is not in the React attribute types; set it
+                // imperatively so the picker selects a whole directory tree.
+                if (el) {
+                  el.setAttribute('webkitdirectory', '');
+                  el.setAttribute('directory', '');
+                }
+              }}
+              type="file"
+              multiple
+              aria-label="Choose skills folder"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                // Allow re-picking the same folder later.
+                e.target.value = '';
+                if (files.length) void onFolderPicked(files);
+              }}
+            />
+          </div>
+        )}
 
         {error && <div style={{ color: 'var(--accent-record, #e57)' }}>{error}</div>}
         {summary && <div style={{ color: 'var(--text-success, #5c8)' }}>{summary}</div>}

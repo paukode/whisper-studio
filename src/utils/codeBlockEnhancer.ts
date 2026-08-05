@@ -41,6 +41,7 @@ import typescript from 'highlight.js/lib/languages/typescript';
 import xml from 'highlight.js/lib/languages/xml';
 import yaml from 'highlight.js/lib/languages/yaml';
 import { openHtmlSandboxed } from '@/utils/openHtmlSandboxed';
+import { downloadFile } from '@/utils/downloadFile';
 
 // Register a curated language set (core build keeps the bundle lean vs. the
 // all-languages default). Each module registers its own aliases too — e.g.
@@ -173,16 +174,9 @@ export function attachCodeBlockHandlers(container: HTMLElement): () => void {
       case 'open':
         openHtmlSandboxed(code);
         break;
-      case 'download': {
-        const blob = new Blob([code], { type: 'text/html' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'program.html';
-        a.click();
-        URL.revokeObjectURL(url);
+      case 'download':
+        downloadFile(code, 'program.html', 'text/html');
         break;
-      }
     }
   };
 
@@ -227,13 +221,7 @@ function showPreviewOverlay(html: string): void {
   downloadBtn.className = 'btn-sm';
   downloadBtn.textContent = 'Download';
   downloadBtn.addEventListener('click', () => {
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'program.html';
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadFile(html, 'program.html', 'text/html');
   });
 
   const closeBtn = document.createElement('button');

@@ -40,6 +40,7 @@ export async function loadLocalModel(model: string, label: string, nCtx?: number
             type: 'error',
             message: `Failed to load ${label}: ${String(msg.error ?? 'unknown error')}`,
             duration: 8000,
+            source: 'local-model',
           });
         } else {
           ui().setModelLoading({
@@ -52,7 +53,7 @@ export async function loadLocalModel(model: string, label: string, nCtx?: number
     }
   } catch (e) {
     ok = false;
-    ui().addToast({ type: 'error', message: `Failed to load ${label}`, duration: 6000 });
+    ui().addToast({ type: 'error', message: `Failed to load ${label}`, duration: 6000, source: 'local-model' });
     console.warn('loadLocalModel failed:', e);
   }
   // Record residency so the UI knows this model is now loaded (and a re-select
@@ -111,7 +112,7 @@ export async function downloadLocalModel(model: string, label: string): Promise<
         try { msg = JSON.parse(payload); } catch { continue; }
         if (msg.stage === 'error') {
           result = 'error';
-          ui().addToast({ type: 'error', message: `Failed to download ${label}: ${String(msg.error ?? 'unknown error')}`, duration: 8000 });
+          ui().addToast({ type: 'error', message: `Failed to download ${label}: ${String(msg.error ?? 'unknown error')}`, duration: 8000, source: 'model-download' });
         } else {
           if (msg.stage === 'ready') result = 'ready';
           ui().setModelLoading({
@@ -128,7 +129,7 @@ export async function downloadLocalModel(model: string, label: string): Promise<
       result = 'cancelled';
     } else {
       result = 'error';
-      ui().addToast({ type: 'error', message: `Failed to download ${label}`, duration: 6000 });
+      ui().addToast({ type: 'error', message: `Failed to download ${label}`, duration: 6000, source: 'model-download' });
       console.warn('downloadLocalModel failed:', e);
     }
   }

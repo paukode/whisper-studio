@@ -6,13 +6,14 @@ import { useUIStore } from '@/stores/uiStore';
 import { getActiveTranscriptionStore } from '@/stores/sessionRuntimes';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { ChatMessage } from './ChatMessage';
-import { computeTaskCheckpoints } from './TaskCard';
+import { resolveTaskCheckpoints } from './TaskCard';
 import { StreamingMessage } from './StreamingMessage';
 import { ChatInput } from './ChatInput';
 import { GoalBanner } from './GoalBanner';
 import { ApprovalBanner } from './ApprovalBanner';
 import { formatMessageTimestamp, formatSegmentTimestamp } from '@/utils/formatTimestamp';
-import { useTaskStore, type SessionTask } from '@/stores/taskStore';
+import { downloadFile } from '@/utils/downloadFile';
+import { useTaskStore } from '@/stores/taskStore';
 import { fetchSessionTasks } from '@/api/tasks';
 import { permissionModeLabel } from '@/utils/permissionModes';
 
@@ -62,11 +63,15 @@ export const ChatPanel: React.FC = () => {
   // says this session has no tasks (authoritatively hydrated empty), suppress
   // all rows so an inline count can never disagree with an empty drawer.
   const sessionTasks = useTaskStore((s) => (currentSessionId ? s.tasksBySession[currentSessionId] : undefined));
-  const taskCheckpoints = useMemo<Map<number, SessionTask[]>>(
-    () => (sessionTasks !== undefined && sessionTasks.length === 0
-      ? new Map<number, SessionTask[]>()
-      : computeTaskCheckpoints(allMessages)),
-    [allMessages, sessionTasks],
+  // Bind the most-recent (current) Tasks row to the authoritative task store —
+  // the same single source the Tasks panel reads — so the inline chip's count
+  // and "all done" always match the panel and can never freeze at a stale
+  // "N/M in progress". Earlier checkpoints stay historical. `liveCheckpointIdx`
+  // is the message whose row renders live (-1 while streaming, when the live
+  // StreamingMessage row is current instead). See resolveTaskCheckpoints.
+  const { checkpoints: taskCheckpoints, liveIdx: liveCheckpointIdx } = useMemo(
+    () => resolveTaskCheckpoints(allMessages, sessionTasks, isStreaming),
+    [allMessages, sessionTasks, isStreaming],
   );
 
   // Keys of messages whose committed bubble must NOT replay the msgIn entrance
@@ -242,13 +247,7 @@ export const ChatPanel: React.FC = () => {
       }
     }
 
-    const blob = new Blob([md], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `conversation-${currentSessionId ?? 'export'}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadFile(md, `conversation-${currentSessionId ?? 'export'}.md`, 'text/markdown');
   }, [allMessages, currentSessionId]);
 
   return (
@@ -296,7 +295,7 @@ export const ChatPanel: React.FC = () => {
               title="Reset session approval rules"
               onClick={() => {
                 getActiveChatStore().getState().resetSessionApprovals();
-                useUIStore.getState().addToast({ type: 'info', message: 'Session approval rules reset', duration: 2000 });
+                useUIStore.getState().addToast({ type: 'info', message: 'Session approval rules reset', duration: 2000, persist: false });
               }}
             >
               Reset Approvals
@@ -375,6 +374,7 @@ export const ChatPanel: React.FC = () => {
               message={msg}
               index={idx}
               taskCheckpoint={taskCheckpoints.get(idx) ?? null}
+              taskCheckpointLive={idx === liveCheckpointIdx}
               noEnter={noEnterKeys.has(key)}
             />
           );

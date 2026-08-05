@@ -1,0 +1,22 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.55" stop-color="#faf9f5"/>
+      <stop offset="1" stop-color="#f0eee6"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a7fd4"/>
+      <stop offset="1" stop-color="#1d6ec2"/>
+    </linearGradient>
+  </defs>
+  <!-- macOS rounded square: 824x824 content on the 1024 grid -->
+  <rect x="100" y="100" width="824" height="824" rx="186"
+        fill="url(#paper)" stroke="rgba(0,0,0,0.07)" stroke-width="3"/>
+  <!-- W monogram (Taw Light accent) -->
+  <polyline points="254,352 366,672 488,392 610,672 722,352"
+            fill="none" stroke="url(#ink)" stroke-width="86"
+            stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- record dot as the period of "W.", baseline-aligned -->
+  <circle cx="794" cy="671" r="44" fill="#d33b30"/>
+</svg>

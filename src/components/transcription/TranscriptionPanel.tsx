@@ -7,6 +7,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { useChatStream } from '@/hooks/useChatStream';
 import { put } from '@/api/client';
 import { TranscriptSegment, getSpeakerClass } from './TranscriptSegment';
+import { downloadFile } from '@/utils/downloadFile';
 
 /** Custom event src/services/recordingController.ts listens for to
  *  live-switch the ASR engine on the active recording's WebSocket (no
@@ -262,13 +263,7 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
     const text = segments
       .map((s) => `[${getSpeakerDisplayName(s.speaker)}] ${s.text}`)
       .join('\n');
-    const blob = new Blob([text], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `transcript-${currentSessionId ?? 'export'}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadFile(text, `transcript-${currentSessionId ?? 'export'}.txt`, 'text/plain');
   }, [segments, getSpeakerDisplayName, currentSessionId]);
 
   const handleClear = useCallback(() => {

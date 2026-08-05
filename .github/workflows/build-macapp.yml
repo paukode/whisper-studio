@@ -1,0 +1,140 @@
+# ============================================================================
+# Build the macOS app (Apple Silicon) — assembles dist-app/Whisper Studio.app
+# and the drag-to-install DMG on every change that affects the shipped app,
+# entirely via macapp/build_app.sh + macapp/make_dmg.sh (the same scripts used
+# locally, so CI and a laptop build are byte-for-byte the same process).
+#
+# Runner: macos-15 GitHub-hosted runners are arm64 (M-series); the build
+# script refuses to run anywhere else, which is the correct failure mode.
+#
+# Signing / notarization are OPTIONAL and driven by repo secrets:
+#   MACOS_CERT_P12         base64 of a Developer ID Application .p12
+#   MACOS_CERT_PASSWORD    password for that .p12
+#   APPLE_ID / APPLE_TEAM_ID / APPLE_APP_PASSWORD   notarytool credentials
+#                          (app-specific password; or migrate to an App Store
+#                          Connect API key later)
+# With no secrets configured the build falls back to ad-hoc signing — the DMG
+# still works on the building account's machines and as a PR smoke artifact,
+# but other Macs will hit Gatekeeper. Add the secrets to ship real releases.
+#
+# Outputs: the DMG as a workflow artifact on every run; on a v* tag push it
+# is also attached to a GitHub release.
+# ============================================================================
+name: Build macOS app
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'server/**'
+      - 'src/**'
+      - 'public/**'
+      - 'skills/**'
+      - 'plugins/**'
+      - 'macapp/**'
+      - 'requirements.txt'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
+      - 'index.html'
+      - 'config.example.json'
+      - 'pricing.example.json'
+      - '.github/workflows/build-macapp.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Assemble .app + DMG (arm64)
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      # Secrets are not readable inside `if:` expressions on steps below, so
+      # surface their presence as booleans once, here.
+      HAS_CERT: ${{ secrets.MACOS_CERT_P12 != '' }}
+      HAS_NOTARY: ${{ secrets.APPLE_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # make_dmg.sh / build_app.sh version the artifact via `git describe`.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install frontend deps
+        run: npm ci --no-audit --no-fund
+
+      # The big time sinks in build_app.sh are (1) the pip install of the full
+      # ML stack into the standalone runtime and (2) the pinned third-party
+      # downloads (python runtime, llama.cpp, ffmpeg, node). Both cache well:
+      # pip by requirements.txt, downloads by the pins inside build_app.sh.
+      - name: Cache pip wheels
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/pip
+          key: macapp-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Cache pinned downloads
+        uses: actions/cache@v4
+        with:
+          path: build-app/downloads
+          key: macapp-downloads-${{ hashFiles('macapp/build_app.sh') }}
+
+      - name: Import Developer ID certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PW: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PW="$(uuidgen)"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$CERT_PW" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PW" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
+          [ -n "$IDENTITY" ] || { echo "no Developer ID identity in p12"; exit 1; }
+          echo "SIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Build Whisper Studio.app
+        run: bash macapp/build_app.sh   # ad-hoc unless SIGN_IDENTITY was set above
+
+      - name: Notarize and staple
+        if: env.HAS_CERT == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent "dist-app/Whisper Studio.app" \
+            "$RUNNER_TEMP/WhisperStudio.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/WhisperStudio.zip" --wait \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD"
+          xcrun stapler staple "dist-app/Whisper Studio.app"
+
+      - name: Make DMG
+        run: bash macapp/make_dmg.sh
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WhisperStudio-dmg
+          path: dist-app/*.dmg
+          if-no-files-found: error
+
+      - name: Attach DMG to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist-app/*.dmg --generate-notes

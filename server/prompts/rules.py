@@ -10,11 +10,12 @@ import logging
 import os
 import threading
 
+from server.infrastructure.paths import config_dir
+
 log = logging.getLogger("whisper-studio")
 
-# repo root = .../server/prompts/rules.py -> up three
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-RULES_PATH = os.path.join(_ROOT, "PROMPT_RULES.md")
+# App home: WHISPER_HOME in a packaged install, the repo root in a dev checkout.
+RULES_PATH = os.path.join(config_dir(), "PROMPT_RULES.md")
 
 _lock = threading.Lock()
 _cache: dict = {"text": "", "mtime": -1.0}

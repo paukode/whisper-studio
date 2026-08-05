@@ -117,11 +117,11 @@ def test_fresh_config_defaults_to_cloud(monkeypatch):
         cfg._invalidate_cache()
 
 
-def test_config_chat_models_replace_defaults_not_union(monkeypatch):
-    # config.json is the single source of truth for the model catalog: it
-    # REPLACES the built-in DEFAULTS rather than unioning under them, so a key
-    # the config doesn't list (e.g. DEFAULTS' "opus4.6") is NOT injected and
-    # cannot appear as a duplicate alongside a config entry for the same model.
+def test_user_chat_models_merge_additively_over_system(monkeypatch):
+    # After the config split, the SYSTEM catalog (config.example.json) always
+    # appears; a USER entry ADDS a new key or overrides individual fields of a
+    # shipped one via a per-key/per-field deep-merge — it no longer REPLACES the
+    # catalog wholesale. This is the headline behavior change.
     from server.infrastructure import config as cfg
 
     monkeypatch.setattr(
@@ -129,25 +129,53 @@ def test_config_chat_models_replace_defaults_not_union(monkeypatch):
         "_load_user_config",
         lambda: {
             "chat_models": {
-                "opus": {
-                    "id": "global.anthropic.claude-opus-4-6-v1",
-                    "label": "Opus 4.6",
-                    "thinking": "budget",
+                # A brand-new user model (not shipped).
+                "my_local": {
+                    "id": "local:my-local",
+                    "label": "My Local",
+                    "is_local": True,
+                    "repo_id": "acme/my-local",
+                    "filename": "m.gguf",
+                    "dir": "my-local",
+                    "ctx": 8192,
                 },
+                # A per-field override of a shipped model: change only the label,
+                # leaving the shipped id/thinking intact.
+                "haiku": {"label": "My Haiku"},
             },
-            "default_chat_model": "opus",
         },
     )
     cfg._invalidate_cache()
     try:
         c = cfg.load_config()
         ids, meta = c["chat_models"], c["chat_model_meta"]
-        # Only the config's model exists — DEFAULTS (haiku/sonnet/opus4.6/...) are
-        # not merged in.
-        assert list(ids.keys()) == ["opus"]
-        assert "opus4.6" not in ids and "haiku" not in ids
-        assert [k for k, m in meta.items() if m.get("label") == "Opus 4.6"] == ["opus"]
-        assert c["default_chat_model"] == "opus"
+        # Shipped models are still present …
+        assert "opus4.8" in ids and "sonnet" in ids and "haiku" in ids
+        # … the user's new model was added …
+        assert ids["my_local"] == "local:my-local"
+        # … and the per-field override applied without dropping the shipped id.
+        assert meta["haiku"]["label"] == "My Haiku"
+        assert ids["haiku"].startswith("global.anthropic.claude-haiku")
+    finally:
+        cfg._invalidate_cache()
+
+
+def test_chat_models_disabled_hides_a_system_model(monkeypatch):
+    # A key listed in chat_models_disabled is dropped from the effective catalog
+    # after the merge, letting a user hide a shipped model they don't want.
+    from server.infrastructure import config as cfg
+
+    monkeypatch.setattr(
+        cfg,
+        "_load_user_config",
+        lambda: {"chat_models_disabled": ["haiku", "sonnet"]},
+    )
+    cfg._invalidate_cache()
+    try:
+        ids = cfg.load_config()["chat_models"]
+        assert "haiku" not in ids and "sonnet" not in ids
+        # Non-hidden shipped models remain.
+        assert "opus4.8" in ids
     finally:
         cfg._invalidate_cache()
 

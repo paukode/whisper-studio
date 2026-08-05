@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -30,8 +31,10 @@ from server.index import router as index_router
 from server.infrastructure.async_tasks import spawn
 from server.infrastructure.boot_status import health_payload, record_boot_error
 from server.infrastructure.config import router as config_router
+from server.infrastructure.config_raw_routes import router as config_raw_router
 from server.infrastructure.data_retention import router as data_retention_router
 from server.infrastructure.feature_flags import router as feature_flags_router
+from server.infrastructure.paths import bootstrap_home
 from server.infrastructure.result_cache import router as result_cache_router
 from server.infrastructure.sessions import router as sessions_router
 from server.lsp import router as lsp_router
@@ -41,6 +44,7 @@ from server.mcp import router as mcp_router
 from server.memory import init_memory
 from server.memory.router import memory_router
 from server.migrations.runner import run_migrations
+from server.models_manager import router as models_manager_router
 from server.notifications import router as notifications_router
 from server.plans.routes import router as plans_router
 from server.plugins import init_plugins
@@ -61,6 +65,25 @@ from server.workspace import router as workspace_router
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("whisper-studio")
+
+# ── Packaged-app bootstrap ───────────────────────────────────────────────────
+# Runs at import, before anything reads config.json or spawns a subprocess:
+#  * bootstrap_home() seeds $WHISPER_HOME (config/pricing/rules/skills + the
+#    directory tree) on first run; a no-op in a dev checkout (env unset).
+#  * WHISPER_BIN_DIR (the bundle's binary dir) is prepended to PATH so
+#    library-internal spawns that we can't route through
+#    server/infrastructure/binaries.py — e.g. mlx_whisper's bare "ffmpeg"
+#    call — resolve under launchd's minimal PATH.
+bootstrap_home()
+_BIN_DIR = os.environ.get("WHISPER_BIN_DIR", "").strip()
+if _BIN_DIR and _BIN_DIR not in os.environ.get("PATH", "").split(os.pathsep):
+    os.environ["PATH"] = _BIN_DIR + os.pathsep + os.environ.get("PATH", "")
+# Widen PATH with the user's real tool locations (Homebrew, pipx, nvm, …) so
+# user-configured MCP server commands and other spawns resolve under the
+# minimal PATH a GUI-launched .app inherits. Packaged mode only.
+from server.infrastructure.binaries import enrich_gui_launch_path  # noqa: E402
+
+enrich_gui_launch_path()
 
 
 class _QuietPollAccessLog(logging.Filter):
@@ -162,13 +185,55 @@ def _warm_transcription_models() -> None:
     """
     from server.asr import get_backend, resolve_name
     from server.infrastructure.config import get as config_get
+    from server.models_manager import catalog
 
     if resolve_name(config_get("transcription_backend")) != "parakeet":
+        return
+    # Warm only when the weights are already on disk. preload() would otherwise
+    # trigger the 2.3 GB download at boot — on a fresh install downloading is
+    # the user's call (Models panel or first record), never a boot side-effect.
+    entry = catalog.get_entry("parakeet")
+    if entry is None or not catalog.is_installed(entry):
+        log.info("Parakeet not downloaded yet; skipping startup warmup")
         return
     try:
         get_backend("parakeet").preload()
     except Exception as e:
         log.warning("Parakeet warmup failed: %s", e)
+
+
+def _start_parent_watchdog() -> None:
+    """Exit when the process that launched us is gone.
+
+    The macOS app shell sets WHISPER_PARENT_PID to its own pid. Its quit path
+    SIGTERMs us, but a SIGKILLed or crashed shell sends nothing — the backend
+    would linger headless, holding the port and any resident model. Reparenting
+    (getppid() changing away from the shell's pid) is the reliable signal; on
+    it, stop llama-server and exit. Not started in dev (env var unset)."""
+    raw = os.environ.get("WHISPER_PARENT_PID", "").strip()
+    if not raw:
+        return
+    try:
+        parent_pid = int(raw)
+    except ValueError:
+        log.warning("Ignoring non-numeric WHISPER_PARENT_PID=%r", raw)
+        return
+
+    def _watch() -> None:
+        import time
+
+        while os.getppid() == parent_pid:
+            time.sleep(5)
+        log.info("Parent shell (pid %d) is gone; shutting down", parent_pid)
+        try:
+            from server.local import llama_server
+
+            llama_server.stop()
+        except Exception:
+            pass
+        os._exit(0)
+
+    threading.Thread(target=_watch, name="parent-watchdog", daemon=True).start()
 
 
 @asynccontextmanager
@@ -210,6 +275,7 @@ async def lifespan(app):
     # everything lazily anyway, so a warmup failure only costs the first
     # user a wait — best-effort by design.
     spawn(asyncio.to_thread(_warm_transcription_models), name="model-warmup")
+    _start_parent_watchdog()
     # Unified background-task framework: capture the server loop for
     # thread-safe session-event emission, then reconcile leases left
     # 'running' by a previous server process (dead shell pids fail cleanly,
@@ -239,6 +305,9 @@ async def lifespan(app):
     from server.index import agent as index_agent
 
     index_agent.mark_app_running()
+    # If the app moved or was updated since the agent was registered, the plist
+    # bakes stale paths (interpreter, code dir, log path) — re-register it.
+    index_agent.heal_if_stale()
     yield
     index_agent.mark_app_stopped()
     git_watcher.stop()
@@ -275,6 +344,7 @@ app.middleware("http")(origin_guard)
 
 # Mount all routers
 app.include_router(config_router)
+app.include_router(config_raw_router)
 app.include_router(data_retention_router)
 app.include_router(result_cache_router)
 app.include_router(mcp_router)
@@ -295,6 +365,7 @@ app.include_router(tasks_router)
 app.include_router(background_tasks_router)
 app.include_router(notifications_router)
 app.include_router(cron_router)
+app.include_router(models_manager_router)
 app.include_router(index_router)
 app.include_router(plugins_router)
 app.include_router(lsp_router)

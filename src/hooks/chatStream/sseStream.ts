@@ -314,6 +314,7 @@ export async function readSSEStream(
                     type: 'error',
                     message: `Auto-approved "${approval.action}" failed: ${detail}`,
                     priority: TOAST_PRIORITY.high,
+                    source: 'chat',
                   });
                   await sendApprovalContinuation(approval, sessionId, true, signal, {
                     ok: false,
@@ -334,6 +335,7 @@ export async function readSSEStream(
                     type: 'error',
                     message: `Failed to record denial for "${approval.action}": ${toError(err).message}`,
                     priority: TOAST_PRIORITY.high,
+                    source: 'chat',
                   });
                 }
               })();
@@ -491,7 +493,12 @@ export async function readSSEStream(
                 ? n.status
                 : ('info' as const);
             const duration = type === 'warning' || type === 'error' ? 9000 : 5000;
-            useUIStore.getState().addToast({ type, title: n.title || undefined, message: msg, duration });
+            // persist:false — notify_user is already recorded in the durable
+            // log at the route_tool choke point; persisting here would
+            // double-log every notification under a second source.
+            useUIStore
+              .getState()
+              .addToast({ type, title: n.title || undefined, message: msg, duration, persist: false });
           }
 
           // ── status (mid-turn progress notice, e.g. "Compacting context…") ──
@@ -508,6 +515,8 @@ export async function readSSEStream(
               message: statusMsg,
               duration: 4000,
               key: 'stream-status',
+              // Mid-turn progress notice: transient by nature, never logged.
+              persist: false,
             });
           }
 
@@ -543,6 +552,7 @@ export async function readSSEStream(
               duration: 0,
               priority: TOAST_PRIORITY.high,
               key: 'budget-warning',
+              source: 'chat',
             });
           }
 
@@ -619,6 +629,7 @@ export async function readSSEStream(
               message: `Tool "${tool}"${sizeText}; ${keptText}.`,
               duration: 8000,
               key: `truncate-${tool}`,
+              source: 'chat',
               ...(t.cache_filename
                 ? {
                     action: {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUIStore, type DialogEntry, type DialogFormField } from '@/stores/uiStore';
 import { useFocusTrap } from '@/hooks/useDismiss';
+import { useBackdropDismiss } from '@/hooks/useBackdropDismiss';
 
 /** Renders the topmost dialog from the stack */
 export const DialogHost: React.FC = () => {
@@ -38,9 +39,12 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
     },
     [dialog.id, resolveDialog],
   );
-  useEffect(() => () => {
-    if (closeTimer.current !== null) clearTimeout(closeTimer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (closeTimer.current !== null) clearTimeout(closeTimer.current);
+    },
+    [],
+  );
 
   const handleCancel = useCallback(() => {
     beginClose(null);
@@ -65,7 +69,10 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
   // Escape key handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); handleCancel(); }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleCancel();
+      }
       if (e.key === 'Enter' && dialog.kind === 'confirm') {
         // Only treat a bare Enter as "confirm" when focus is NOT on a button.
         // If the user tabbed to (or auto-focus put them on) Cancel, let the
@@ -109,6 +116,11 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
 
   useFocusTrap(dialogRef, true, { initialFocus: false });
 
+  // Backdrop-click cancels, but only on a genuine backdrop press (mousedown AND
+  // mouseup on the overlay). A selection drag that starts inside the dialog and
+  // releases over the backdrop must not dismiss it.
+  const backdrop = useBackdropDismiss(handleCancel);
+
   const sizeClass = dialog.size ? ` whisper-dialog--${dialog.size}` : ' whisper-dialog--md';
   const dangerClass = dialog.danger ? ' whisper-dialog--danger' : '';
 
@@ -135,7 +147,11 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
               {f.options?.map((opt) => {
                 const val = typeof opt === 'string' ? opt : opt.value;
                 const label = typeof opt === 'string' ? opt : opt.label;
-                return <option key={val} value={val}>{label}</option>;
+                return (
+                  <option key={val} value={val}>
+                    {label}
+                  </option>
+                );
               })}
             </select>
           ) : f.type === 'textarea' ? (
@@ -179,18 +195,10 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
 
     return (
       <div className="whisper-dialog__footer">
-        <button
-          className="btn"
-          onClick={handleCancel}
-          type="button"
-        >
+        <button className="btn" onClick={handleCancel} type="button">
           {dialog.cancelText ?? 'Cancel'}
         </button>
-        <button
-          className="btn btn-primary"
-          onClick={handleConfirm}
-          type="button"
-        >
+        <button className="btn btn-primary" onClick={handleConfirm} type="button">
           {dialog.confirmText ?? (dialog.kind === 'form' ? 'Submit' : 'Confirm')}
         </button>
       </div>
@@ -200,7 +208,7 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
   return (
     <div
       className={`whisper-dialog-overlay${leaving ? ' whisper-dialog-overlay--leaving' : ''}`}
-      onClick={handleCancel}
+      {...backdrop}
     >
       <div
         className={`whisper-dialog${sizeClass}${dangerClass}`}
@@ -212,8 +220,15 @@ const DialogRenderer: React.FC<{ dialog: DialogEntry }> = ({ dialog }) => {
       >
         {dialog.title !== false && (
           <div className="whisper-dialog__header">
-            <h2 className="whisper-dialog__title" id={`dialog-title-${dialog.id}`}>{dialog.title || ''}</h2>
-            <button className="whisper-dialog__close" onClick={handleCancel} type="button" aria-label="Close">
+            <h2 className="whisper-dialog__title" id={`dialog-title-${dialog.id}`}>
+              {dialog.title || ''}
+            </h2>
+            <button
+              className="whisper-dialog__close"
+              onClick={handleCancel}
+              type="button"
+              aria-label="Close"
+            >
               &times;
             </button>
           </div>

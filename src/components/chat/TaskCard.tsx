@@ -26,6 +26,11 @@ export interface TaskCardProps {
   /** Precomputed cumulative checkpoint to display (committed rows). When set,
    *  it is authoritative and the store/fallback are not consulted. */
   tasks?: SessionTask[];
+  /** A committed checkpoint that is NOT the current/live row — a past snapshot.
+   *  It keeps its point-in-time count but never shows a live "in progress"
+   *  spinner (only the current row does), so an old checkpoint can't sit stuck
+   *  "in progress" after the run has moved on or finished. */
+  historical?: boolean;
 }
 
 /** Fallback: derive the cumulative task list from a message's task tool calls
@@ -117,7 +122,49 @@ export function computeTaskCheckpoints(
   return result;
 }
 
-export const TaskCard: React.FC<TaskCardProps> = ({ tools, tasks: tasksProp }) => {
+/**
+ * Resolve the Tasks rows the conversation shows and which one is "live".
+ *
+ * Builds the per-message historical checkpoints (`computeTaskCheckpoints`), then
+ * binds the CURRENT row — the most-recent checkpoint — to the authoritative task
+ * store (`sessionTasks`, the same source the Tasks panel reads). This is the
+ * single-source fix for the inline chip: its done/total and "all done" always
+ * match the panel and can never freeze at a stale "N/M in progress" derived from
+ * a partial set of this turn's tool calls. Earlier checkpoints keep their
+ * historical point-in-time snapshot and render non-live (no spinner).
+ *
+ * `liveIdx` is the message index of the one committed row that renders live, or
+ * -1 when none does:
+ *  - `sessionTasks === undefined` (store not hydrated): derived checkpoints are
+ *    used as-is, none is bound live.
+ *  - `sessionTasks === []` (authoritatively empty): all rows suppressed.
+ *  - streaming: the live StreamingMessage row is the current one, so every
+ *    committed row stays historical to avoid a duplicate chip.
+ */
+export function resolveTaskCheckpoints(
+  messages: ReadonlyArray<{ toolUse?: ToolUseEvent[] }>,
+  sessionTasks: SessionTask[] | undefined,
+  isStreaming: boolean,
+): { checkpoints: Map<number, SessionTask[]>; liveIdx: number } {
+  if (sessionTasks !== undefined && sessionTasks.length === 0) {
+    return { checkpoints: new Map<number, SessionTask[]>(), liveIdx: -1 };
+  }
+  const checkpoints = computeTaskCheckpoints(messages);
+  if (checkpoints.size === 0) return { checkpoints, liveIdx: -1 };
+  // Bind the current row to the store only once it is hydrated (defined &
+  // non-empty) and the turn has settled. While streaming, the live
+  // StreamingMessage row is the current one; before hydration we have no
+  // trustworthy store snapshot — so in both cases every committed row stays
+  // historical (no live "in progress" spinner) and keeps its derived count.
+  if (isStreaming || sessionTasks === undefined) {
+    return { checkpoints, liveIdx: -1 };
+  }
+  const lastIdx = Math.max(...checkpoints.keys());
+  checkpoints.set(lastIdx, sessionTasks);
+  return { checkpoints, liveIdx: lastIdx };
+}
+
+export const TaskCard: React.FC<TaskCardProps> = ({ tools, tasks: tasksProp, historical }) => {
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
   const storeTasks = useTaskStore((s) => (currentSessionId ? s.tasksBySession[currentSessionId] : undefined));
   const openPanel = useDockStore((s) => s.openPanel);
@@ -132,12 +179,16 @@ export const TaskCard: React.FC<TaskCardProps> = ({ tools, tasks: tasksProp }) =
   const { done, total, active } = taskProgress(tasks);
   const pct = total ? Math.round((done / total) * 100) : 0;
   const allDone = total > 0 && done === total;
-  const stateText = allDone ? 'all done' : active ? 'in progress' : 'pending';
+  // Only the current/live row reflects a running task. A historical checkpoint
+  // is a past snapshot, so it never shows the "in progress" spinner — otherwise
+  // an old row stays stuck "in progress" after the run has advanced or ended.
+  const showActive = active && !historical;
+  const stateText = allDone ? 'all done' : showActive ? 'in progress' : 'pending';
 
   return (
     <button
       type="button"
-      className={`task-row${active ? ' active' : ''}${allDone ? ' done' : ''}`}
+      className={`task-row${showActive ? ' active' : ''}${allDone ? ' done' : ''}`}
       onClick={() => openPanel({ id: 'tasks', kind: 'tasks', title: 'Tasks' })}
       title="Open the tasks panel"
       aria-label={`Tasks: ${done} of ${total} done, ${stateText}. Open the tasks panel.`}
@@ -149,7 +200,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ tools, tasks: tasksProp }) =
       <span className="task-row-label">Tasks</span>
       <span className="task-row-count">{done}/{total}</span>
       <span className="task-row-bar" aria-hidden="true"><span className="task-row-bar-fill" style={{ width: `${pct}%` }} /></span>
-      {active && <span className="task-row-status">in progress</span>}
+      {showActive && <span className="task-row-status">in progress</span>}
       {allDone && <span className="task-row-status done">all done</span>}
       <span className="task-row-open" aria-hidden="true">
         Open

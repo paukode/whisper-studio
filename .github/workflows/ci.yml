@@ -1,11 +1,18 @@
 name: CI
 
-# Gates every push and PR on the backend test suite (which now includes the
+# Gates every PR on the backend test suite (which now includes the
 # file-size-budget and package-re-export guardrails) plus the frontend
 # typecheck / unit tests / production build.
+#
+# Triggers are scoped so a PR from a same-repo branch runs each check ONCE:
+# push builds only main + version tags (post-merge / release), while
+# pull_request covers the review gate. Listing both unscoped ran every check
+# twice on PRs.
 
 on:
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
 
 jobs:

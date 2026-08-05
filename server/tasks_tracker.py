@@ -13,6 +13,8 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 
+from server.infrastructure.paths import storage_root
+
 log = logging.getLogger("whisper-studio")
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -23,7 +25,7 @@ _task_store: dict[str, list[dict]] = {}
 TASK_STATUSES = {"pending", "in_progress", "completed", "deleted"}
 
 # Use the same DB as sessions
-_STORAGE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "storage")
+_STORAGE_DIR = storage_root()
 _DB_PATH = os.path.join(_STORAGE_DIR, "sessions.db")
 
 

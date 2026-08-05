@@ -38,10 +38,12 @@ def test_record_and_list_roundtrip():
 
 
 def test_empty_message_and_bad_source_handled():
-    notif.record_notification(message="", source="cron")
+    assert notif.record_notification(message="", source="cron") is None
     assert notif.list_notifications() == []
-    notif.record_notification(message="x", source="martian")
-    assert notif.list_notifications()[0]["source"] == "chat"  # coerced
+    notif.record_notification(message="x", source="Model Download!!")
+    assert notif.list_notifications()[0]["source"] == "model-download"  # slugified
+    notif.record_notification(message="y", source="???")
+    assert notif.list_notifications()[0]["source"] == "app"  # garbage → app
 
 
 def test_unread_count_and_mark_read():
@@ -135,6 +137,108 @@ def test_clear_all_hides_everything_but_keeps_rows():
     with notif._get_conn() as conn:
         kept = conn.execute("SELECT COUNT(*) AS n FROM notifications").fetchone()["n"]
     assert kept == 3  # soft-hide: rows stay for the 30-day GC
+
+
+def test_dedupe_merges_identical_within_window():
+    r1 = notif.record_notification(message="boom", title="Fail", source="app", status="error")
+    notif.mark_read([r1["id"]])
+    r2 = notif.record_notification(message="boom", title="Fail", source="app", status="error")
+    assert r1["deduped"] is False
+    assert r2 == {"id": r1["id"], "deduped": True}
+    rows = notif.list_notifications()
+    assert len(rows) == 1
+    assert rows[0]["count"] == 2
+    # A repeat is a new occurrence: the merged row goes unread again.
+    assert rows[0]["read_at"] is None
+    assert notif.unread_count() == 1
+    # A different body does NOT merge.
+    notif.record_notification(message="other", title="Fail", source="app", status="error")
+    assert len(notif.list_notifications()) == 2
+
+
+def test_dedupe_window_expires():
+    notif.record_notification(message="boom", source="app", status="error")
+    stale = (
+        (datetime.now(timezone.utc) - timedelta(seconds=notif.DEDUPE_WINDOW_SECONDS + 1))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    with notif._get_conn() as conn:
+        conn.execute("UPDATE notifications SET created_at=?", (stale,))
+    r = notif.record_notification(message="boom", source="app", status="error")
+    assert r["deduped"] is False
+    rows = notif.list_notifications()
+    assert len(rows) == 2
+    assert all(row["count"] == 1 for row in rows)
+
+
+def test_post_endpoint_records_app_notification(client):
+    r = client.post(
+        "/api/notifications",
+        json={
+            "message": "Download failed",
+            "title": "Gemma 12B",
+            "source": "model-download",
+            "status": "error",
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True and data["deduped"] is False and isinstance(data["id"], int)
+    row = client.get("/api/notifications").json()["notifications"][0]
+    assert row["source"] == "model-download"
+    assert row["title"] == "Gemma 12B"
+    assert row["status"] == "error"
+    assert row["count"] == 1
+    # Same payload again inside the window → merged, repeat count bumped.
+    r2 = client.post(
+        "/api/notifications",
+        json={
+            "message": "Download failed",
+            "title": "Gemma 12B",
+            "source": "model-download",
+            "status": "error",
+        },
+    )
+    assert r2.json() == {"ok": True, "id": data["id"], "deduped": True}
+    rows = client.get("/api/notifications").json()["notifications"]
+    assert len(rows) == 1
+    assert rows[0]["count"] == 2
+
+
+def test_post_endpoint_defaults_and_validation(client):
+    assert client.post("/api/notifications", json={}).status_code == 400
+    assert client.post("/api/notifications", json={"message": "   "}).status_code == 400
+    assert client.post("/api/notifications", json={"message": 42}).status_code == 400
+    r = client.post("/api/notifications", json={"message": "hi", "status": "martian"})
+    assert r.status_code == 200
+    row = client.get("/api/notifications").json()["notifications"][0]
+    assert row["source"] == "app"  # default for frontend posts
+    assert row["status"] == "normal"  # unknown status coerced
+
+
+def test_legacy_check_constraint_falls_back_to_chat():
+    """A pre-012 DB (source CHECK) still gets the row, tagged chat."""
+    with notif._get_conn() as conn:
+        conn.execute(
+            """
+            CREATE TABLE notifications (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id  TEXT,
+                source      TEXT NOT NULL CHECK (source IN ('chat', 'agent', 'cron')),
+                title       TEXT,
+                message     TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'normal',
+                created_at  TEXT NOT NULL,
+                read_at     TEXT,
+                hidden_at   TEXT,
+                count       INTEGER NOT NULL DEFAULT 1
+            )
+            """
+        )
+    r = notif.record_notification(message="hello", source="model-download")
+    assert r is not None and r["deduped"] is False
+    assert notif.list_notifications()[0]["source"] == "chat"
 
 
 def test_hide_and_clear_http_surface(client):

@@ -4,6 +4,7 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { indexEngines } from '@/api/workspace';
 import type { IndexEngineOption } from '@/api/workspace';
 import type { IndexCapability, ModelMode } from '@/types/settings';
+import { ConfigJsonLink } from './ConfigEditorDialog';
 
 interface Capability {
   key: IndexCapability;
@@ -177,6 +178,10 @@ export const ModelModePanel: React.FC = () => {
       <p className="settings-hint" style={{ marginTop: 12 }}>
         Index storage is per embedder: a folder indexed with one embedder isn't re-indexed when you
         switch — the other index stays put. Re-index a folder once under a backend to search it there.
+      </p>
+
+      <p className="settings-hint" style={{ marginTop: 4 }}>
+        On-device chat models come from your config. Add one by editing <ConfigJsonLink />.
       </p>
     </div>
   );

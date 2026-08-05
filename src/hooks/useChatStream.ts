@@ -149,6 +149,7 @@ export function useChatStream(): UseChatStreamReturn {
         message: `${MAX_ACTIVE_SESSIONS} sessions are already active. Wait for one to finish (or stop it) before starting another.`,
         duration: 5000,
         key: 'parallel-cap',
+        source: 'chat',
       });
       return;
     }
@@ -263,6 +264,7 @@ export function useChatStream(): UseChatStreamReturn {
           message: msg,
           duration: 6000,
           key: 'parallel-409',
+          source: 'chat',
         });
         return;
       }

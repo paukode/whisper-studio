@@ -19,12 +19,13 @@ from contextlib import contextmanager
 from fastapi import APIRouter
 from fastapi.responses import Response
 
+from server.infrastructure.paths import config_dir, repo_root, storage_root
+
 log = logging.getLogger("whisper-studio")
 
 router = APIRouter(prefix="/api/costs", tags=["costs"])
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-STORAGE_DIR = os.path.join(BASE_DIR, "storage")
+STORAGE_DIR = storage_root()
 DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
 
 # ── Model pricing (USD per 1M tokens) ────────────────────────────────
@@ -43,8 +44,8 @@ DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
 #   cache_read / cache_write — optional (default 0.0); prompt-cache read/write
 #   cached_in_input          — optional bool; OpenAI convention where
 #                              input_tokens already includes the cached portion
-PRICING_EXAMPLE_PATH = os.path.join(BASE_DIR, "pricing.example.json")
-PRICING_PATH = os.path.join(BASE_DIR, "pricing.json")
+PRICING_EXAMPLE_PATH = os.path.join(repo_root(), "pricing.example.json")
+PRICING_PATH = os.path.join(config_dir(), "pricing.json")
 
 # Numeric rate fields kept when normalizing an entry (all default to 0.0 except
 # input/output, which are required).

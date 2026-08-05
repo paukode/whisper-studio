@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 from server import folder_skills
 from server.executors import EXECUTORS, emits_model_prompt
-from server.infrastructure.paths import data_root
+from server.infrastructure.paths import data_root, skills_root
 from server.mcp import mcp_manager
 
 log = logging.getLogger("whisper-studio")
@@ -16,8 +16,7 @@ router = APIRouter(prefix="/api/skills", tags=["skills"])
 # separately in server/main.py. Both routers' handlers live in skills_routes.
 whisper_md_router = APIRouter(prefix="/api/whisper-md", tags=["whisper-md"])
 
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-SKILLS_DIR = os.path.join(BASE_DIR, "skills")
+SKILLS_DIR = skills_root()
 DATA_DIR = data_root()
 SKILLS_CONFIG_PATH = os.path.join(DATA_DIR, "skills_config.json")
 

@@ -21,6 +21,65 @@ const MIC_CONSTRAINTS: MediaStreamConstraints = {
   },
 };
 
+/** An armed native (shell-captured) audio source. pid -1 = whole-system
+ *  audio; otherwise one specific app. App pids go stale across relaunches,
+ *  so the recording controller re-resolves by bundleID at start(). */
+export interface NativeSourceSelection {
+  pid: number;
+  name: string;
+  bundleID?: string;
+}
+
+const CAPTURE_PREF_KEY = 'whisper-native-capture-source';
+
+/** RMS above this counts as "the native source is audibly producing sound"
+ *  (~ -54 dBFS). Drives the live dots in the header and the source menu. */
+export const NATIVE_LEVEL_ACTIVE_THRESHOLD = 0.002;
+
+/** Quantize a raw RMS so repeated near-identical chunks don't re-render
+ *  every subscriber 5-10 times a second. 0.001 steps keep resolution below
+ *  the activity threshold while still deduplicating steady levels. */
+function quantizeLevel(level: number): number {
+  if (!Number.isFinite(level) || level <= 0) return 0;
+  return Math.round(Math.min(level, 1) * 1000) / 1000;
+}
+
+interface CapturePrefs {
+  nativeSource: NativeSourceSelection | null;
+  micEnabled: boolean;
+}
+
+function loadCapturePrefs(): CapturePrefs {
+  try {
+    const raw = localStorage.getItem(CAPTURE_PREF_KEY);
+    if (!raw) return { nativeSource: null, micEnabled: true };
+    const parsed = JSON.parse(raw) as Partial<CapturePrefs>;
+    const src = parsed.nativeSource;
+    const nativeSource =
+      src && typeof src.pid === 'number' && typeof src.name === 'string'
+        ? {
+            pid: src.pid,
+            name: src.name,
+            ...(typeof src.bundleID === 'string' ? { bundleID: src.bundleID } : {}),
+          }
+        : null;
+    // Never restore a "no sources at all" state: mic can only be off while
+    // a native source stands in for it.
+    const micEnabled = parsed.micEnabled === false && nativeSource !== null ? false : true;
+    return { nativeSource, micEnabled };
+  } catch {
+    return { nativeSource: null, micEnabled: true };
+  }
+}
+
+function saveCapturePrefs(prefs: CapturePrefs): void {
+  try {
+    localStorage.setItem(CAPTURE_PREF_KEY, JSON.stringify(prefs));
+  } catch {
+    // localStorage unavailable — selection just won't persist.
+  }
+}
+
 export interface RecordingState {
   isRecording: boolean;
   isConnected: boolean;
@@ -36,10 +95,36 @@ export interface RecordingState {
    *  recording controller mixes it into the same mono worklet input as
    *  the mic at start(). Null when only the mic is captured. */
   tabStream: MediaStream | null;
+  /** Armed native (shell) audio source: system audio or one app. Selected in
+   *  CaptureSourceMenu, consumed by the recording controller at start().
+   *  Persisted to localStorage. Null = no native source. */
+  nativeSource: NativeSourceSelection | null;
+  /** Whether the microphone participates in the next recording. Only
+   *  allowed to be false while a native source is armed ("native only"
+   *  mode — start() then skips getUserMedia entirely). */
+  micEnabled: boolean;
+  /** Human-readable description of the LIVE recording's sources (e.g.
+   *  "Mic + Zoom"), set by the recording controller at start and shown in
+   *  the header's recording indicator. Null when idle. */
+  activeSourceLabel: string | null;
+  /** Live RMS level ([0, 1], quantized) of the NATIVE capture, fed by the
+   *  recording controller from the shell's per-chunk rms. 0 when idle or
+   *  when the native source is silent. Drives the activity indicators. */
+  nativeLevel: number;
   // Actions
   setRecording: (recording: boolean) => void;
   setRecordingSession: (sessionId: string | null) => void;
   setConnected: (connected: boolean) => void;
+  /** Arm/disarm the native source. Disarming forces the mic back on so the
+   *  next recording always has at least one source. */
+  setNativeSource: (source: NativeSourceSelection | null) => void;
+  /** Toggle mic participation. Turning it off is ignored unless a native
+   *  source is armed. */
+  setMicEnabled: (enabled: boolean) => void;
+  setActiveSourceLabel: (label: string | null) => void;
+  /** Update the live native-capture level (no-op when the quantized value
+   *  is unchanged, so chunk-rate calls don't thrash subscribers). */
+  setNativeLevel: (level: number) => void;
   /** Capture a browser tab's audio (Chrome/Edge only). Requests display
    *  media WITH video so Chrome offers the "Also share tab audio"
    *  checkbox, then keeps only the audio track. Rejects with
@@ -81,6 +166,9 @@ export const useRecordingStore = create<RecordingState>()((set, get) => ({
   micStream: null,
   audioContext: null,
   tabStream: null,
+  ...loadCapturePrefs(),
+  activeSourceLabel: null,
+  nativeLevel: 0,
 
   setRecording: (recording: boolean) => {
     set({ isRecording: recording });
@@ -92,6 +180,29 @@ export const useRecordingStore = create<RecordingState>()((set, get) => ({
 
   setConnected: (connected: boolean) => {
     set({ isConnected: connected });
+  },
+
+  setNativeSource: (source: NativeSourceSelection | null) => {
+    const micEnabled = source ? get().micEnabled : true;
+    set({ nativeSource: source, micEnabled });
+    saveCapturePrefs({ nativeSource: source, micEnabled });
+  },
+
+  setMicEnabled: (enabled: boolean) => {
+    const { nativeSource } = get();
+    // Mic off is only meaningful while a native source stands in for it.
+    const micEnabled = enabled || !nativeSource;
+    set({ micEnabled });
+    saveCapturePrefs({ nativeSource, micEnabled });
+  },
+
+  setActiveSourceLabel: (label: string | null) => {
+    set({ activeSourceLabel: label });
+  },
+
+  setNativeLevel: (level: number) => {
+    const quantized = quantizeLevel(level);
+    if (get().nativeLevel !== quantized) set({ nativeLevel: quantized });
   },
 
   acquireTabAudio: async () => {
@@ -154,6 +265,8 @@ export const useRecordingStore = create<RecordingState>()((set, get) => ({
     _owners.clear();
     _micPromise = null;
 
+    // nativeSource/micEnabled survive: they are armed preferences, not
+    // live resources (the controller owns starting/stopping the capture).
     set({
       isRecording: false,
       isConnected: false,
@@ -161,6 +274,8 @@ export const useRecordingStore = create<RecordingState>()((set, get) => ({
       micStream: null,
       audioContext: null,
       tabStream: null,
+      activeSourceLabel: null,
+      nativeLevel: 0,
     });
   },
 

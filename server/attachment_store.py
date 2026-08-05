@@ -27,10 +27,11 @@ import sqlite3
 import time
 from contextlib import contextmanager
 
+from server.infrastructure.paths import storage_root
+
 log = logging.getLogger("whisper-studio")
 
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-STORAGE_DIR = os.path.join(BASE_DIR, "storage")
+STORAGE_DIR = storage_root()
 DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
 
 # Bound attachments survive this long past their last referencing turn.

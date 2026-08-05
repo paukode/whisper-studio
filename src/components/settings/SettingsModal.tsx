@@ -11,6 +11,7 @@ import { CronPanel } from './CronPanel';
 import { PluginsPanel } from './PluginsPanel';
 import { StatsPanel } from './StatsPanel';
 import { ModelModePanel } from './ModelModePanel';
+import { ModelsPanel } from './ModelsPanel';
 import { FeatureFlagsPanel } from './FeatureFlagsPanel';
 import { PreviewSettings } from './PreviewSettings';
 import { WorkflowsPanel } from './WorkflowsPanel';
@@ -18,6 +19,7 @@ import { WorkflowsPanel } from './WorkflowsPanel';
 export type SettingsTabId =
   | 'apikeys'
   | 'model-mode'
+  | 'models'
   | 'feature-flags'
   | 'skills'
   | 'workflows'
@@ -41,6 +43,7 @@ interface SettingsTab {
 export const SETTINGS_TABS: SettingsTab[] = [
   { id: 'apikeys', label: 'API Keys' },
   { id: 'model-mode', label: 'Model Mode' },
+  { id: 'models', label: 'Models' },
   { id: 'feature-flags', label: 'Feature Flags' },
   { id: 'skills', label: 'Skills' },
   { id: 'workflows', label: 'Workflows' },
@@ -61,6 +64,7 @@ const TABS = SETTINGS_TABS;
 const TAB_COMPONENTS: Record<SettingsTabId, React.FC> = {
   apikeys: APISettings,
   'model-mode': ModelModePanel,
+  models: ModelsPanel,
   'feature-flags': FeatureFlagsPanel,
   skills: SkillsPanel,
   workflows: WorkflowsPanel,
@@ -81,13 +85,16 @@ export const SettingsModal: React.FC = () => {
   const openSettings = useUIStore((s) => s.openSettings);
   const modalRef = useRef<HTMLDivElement>(null);
 
-  const activeTabId = (TABS.some((t) => t.id === settingsTab)
-    ? settingsTab
-    : 'apikeys') as SettingsTabId;
+  const activeTabId = (
+    TABS.some((t) => t.id === settingsTab) ? settingsTab : 'apikeys'
+  ) as SettingsTabId;
 
   const ActiveTabComponent = TAB_COMPONENTS[activeTabId];
 
-  // Escape closes; outside-click is already handled by the overlay onClick.
+  // Escape closes (a deliberate, explicit gesture). The modal does NOT close on
+  // a backdrop click, a mouse-leave, or focus loss — the overlay has no dismiss
+  // handler — so selecting text and releasing the mouse outside the window can
+  // never make Settings disappear. It closes only via the × button or Escape.
   // The focus trap keeps Tab inside and restores focus to the trigger
   // (e.g. the header gear) on close — it owns initial focus too.
   useDismiss(modalRef, closeSettings, { enabled: settingsOpen, outsideClick: false });
@@ -96,18 +103,13 @@ export const SettingsModal: React.FC = () => {
   if (!settingsOpen) return null;
 
   return (
-    <div
-      className="settings-overlay"
-      onClick={closeSettings}
-      role="presentation"
-    >
+    <div className="settings-overlay" role="presentation">
       <div
         className="settings-container"
         ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="settings-header">
           <h2 id="settings-title">Settings</h2>

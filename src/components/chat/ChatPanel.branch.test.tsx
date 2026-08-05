@@ -68,7 +68,7 @@ vi.mock('./ChatMessage', () => ({ ChatMessage: () => null }));
 vi.mock('./StreamingMessage', () => ({ StreamingMessage: () => null }));
 vi.mock('./ChatInput', () => ({ ChatInput: () => null }));
 vi.mock('./ApprovalBanner', () => ({ ApprovalBanner: () => null }));
-vi.mock('./TaskCard', () => ({ computeTaskCheckpoints: () => new Map() }));
+vi.mock('./TaskCard', () => ({ resolveTaskCheckpoints: () => ({ checkpoints: new Map(), liveIdx: -1 }) }));
 
 import { ChatPanel } from './ChatPanel';
 

@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef } from 'react';
 import { openHtmlSandboxed } from '@/utils/openHtmlSandboxed';
+import { downloadFile } from '@/utils/downloadFile';
 
 interface ProgramArtifactCardProps {
   title: string;
@@ -24,18 +25,12 @@ export const ProgramArtifactCard: React.FC<ProgramArtifactCardProps> = ({
   }, []);
 
   const handleDownload = useCallback(() => {
-    const blob = new Blob([html], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
     const filename =
       title
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/(^-|-$)/g, '') || 'program';
-    a.download = `${filename}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadFile(html, `${filename}.html`, 'text/html');
   }, [html, title]);
 
   const handleOpenNewTab = useCallback(() => {

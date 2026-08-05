@@ -19,13 +19,13 @@ import logging
 import os
 from collections.abc import Mapping
 
+from server.infrastructure.paths import models_root
+
 log = logging.getLogger("whisper-studio")
 
-# This file is server/local/runtime.py, so the repo root is THREE levels up
-# (local → server → root). models/ lives at the repo root, alongside the ASR
-# models — keep this in sync if the file ever moves deeper/shallower.
-SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MODELS_DIR = os.path.join(SCRIPT_DIR, "models")
+# models/ lives under the app home (WHISPER_HOME in a packaged install, the
+# repo root in a dev checkout), alongside the ASR models.
+MODELS_DIR = models_root()
 
 
 # Supported on-device models. Keys are prefixed ``local_`` by convention so they

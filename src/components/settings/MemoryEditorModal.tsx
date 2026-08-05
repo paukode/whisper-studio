@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { get, put, del as apiDel } from '@/api/client';
 import { ApiError } from '@/types/api';
+import { useBackdropDismiss } from '@/hooks/useBackdropDismiss';
 
 interface MemoryEditorModalProps {
   isOpen: boolean;
@@ -72,9 +73,10 @@ export const MemoryEditorModal: React.FC<MemoryEditorModalProps> = ({ isOpen, on
     }
   }, []);
 
-  const handleOverlayClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) onClose();
-  }, [onClose]);
+  // Dismiss only on a genuine backdrop press (mousedown AND click both land on
+  // the overlay). A naive e.target===e.currentTarget check wrongly closes when a
+  // selection drag starts inside the content and releases on the backdrop.
+  const backdrop = useBackdropDismiss(onClose);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -88,7 +90,7 @@ export const MemoryEditorModal: React.FC<MemoryEditorModalProps> = ({ isOpen, on
   if (!isOpen) return null;
 
   return (
-    <div className="settings-overlay" id="memoryOverlay" onClick={handleOverlayClick}>
+    <div className="settings-overlay" id="memoryOverlay" {...backdrop}>
       <div className="settings-container" style={{ maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
           <h2>Project Memory (WHISPER.md)</h2>

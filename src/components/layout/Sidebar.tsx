@@ -9,6 +9,7 @@ import * as sessionsApi from '@/api/sessions';
 import { fetchRecentRuns } from '@/api/cron';
 import { formatMessageTimestamp, formatSegmentTimestamp } from '@/utils/formatTimestamp';
 import { stripMarkdownTitle } from '@/utils/stripMarkdownTitle';
+import { downloadFile } from '@/utils/downloadFile';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 
 type ExportFormat = 'conversation-txt' | 'transcript-txt' | 'combined-md';
@@ -243,7 +244,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle, customTitle: true }),
       }).catch(() => {});
-      addToast({ type: 'success', message: `Session renamed to "${newTitle}"`, duration: 2000 });
+      addToast({ type: 'success', message: `Session renamed to "${newTitle}"`, duration: 2000, persist: false });
     }
     setRenamingId(null);
   }, [renamingId, renameValue, addToast]);
@@ -270,7 +271,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
 
         if (format === 'conversation-txt') {
           if (messages.length === 0) {
-            addToast({ type: 'info', message: 'No chat messages to export.', duration: 2500 });
+            addToast({ type: 'info', message: 'No chat messages to export.', duration: 2500, persist: false });
             return;
           }
           const text = messages.map((m) => `[${m.role}] ${m.content}`).join('\n\n---\n\n');
@@ -278,7 +279,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
           filename = `chat-export-${slug}-${Date.now()}.txt`;
         } else if (format === 'transcript-txt') {
           if (segments.length === 0) {
-            addToast({ type: 'info', message: 'No transcript to export.', duration: 2500 });
+            addToast({ type: 'info', message: 'No transcript to export.', duration: 2500, persist: false });
             return;
           }
           const text = segments
@@ -290,7 +291,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
           // combined-md — chat + transcript in one Markdown file. Bail
           // if both are empty; otherwise include whichever sections exist.
           if (messages.length === 0 && segments.length === 0) {
-            addToast({ type: 'info', message: 'Nothing to export.', duration: 2500 });
+            addToast({ type: 'info', message: 'Nothing to export.', duration: 2500, persist: false });
             return;
           }
           let md = `# Conversation Export\n\n`;
@@ -317,13 +318,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
           filename = `conversation-${slug}-${Date.now()}.md`;
         }
 
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
-        addToast({ type: 'success', message: 'Exported.', duration: 2000 });
+        downloadFile(blob, filename);
+        addToast({ type: 'success', message: 'Exported.', duration: 2000, persist: false });
       } catch {
         addToast({ type: 'error', message: 'Failed to export session.', duration: 3000 });
       }

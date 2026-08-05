@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, put, post } from '@/api/client';
+import { downloadUrl } from '@/utils/downloadFile';
 
 interface CostSummary {
   total_cost_usd?: number;
@@ -121,11 +122,7 @@ export const CostsPanel: React.FC = () => {
   }, [queryClient]);
 
   const handleExport = useCallback((format: 'csv' | 'json') => {
-    const url = `/api/costs/export?format=${format}`;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `costs-export.${format}`;
-    a.click();
+    downloadUrl(`/api/costs/export?format=${format}`, `costs-export.${format}`);
   }, []);
 
   // Compute max daily cost for bar chart scaling

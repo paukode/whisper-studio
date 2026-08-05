@@ -61,15 +61,23 @@
 /* Step narration (Option C): each action ("Let me…", "Now…") on its own line
    as a compact activity log. Each step is a <p> prefixed with a chevron; the
    chevron and the leading cue phrase carry .agent-step-cue and are muted. A
-   hanging indent keeps wrapped lines aligned past the chevron gutter. */
-.markdown-content.step-narration p {
+   hanging indent keeps wrapped lines aligned past the chevron gutter.
+
+   Scope every step rule to `p:has(.agent-step-cue)` — the paragraphs the
+   pre-processor actually rewrote into steps — NOT to every `<p>` in the
+   container. The `.step-narration` class rides on all assistant messages
+   (the `stepFormat` prop is always on), but `toStepNarration` is a no-op for
+   ordinary prose, so a normal answer has no chevron spans. Targeting bare
+   `p` here leaked the negative `text-indent` hanging indent onto normal
+   prose: first line flush, every wrapped line + paragraph indented ~1em. */
+.markdown-content.step-narration p:has(.agent-step-cue) {
     margin: 0.28em 0;
     line-height: 1.5;
     padding-left: 1.1em;
     text-indent: -1.1em;
 }
-.markdown-content.step-narration p:first-child { margin-top: 0; }
-.markdown-content.step-narration p:last-child { margin-bottom: 0; }
+.markdown-content.step-narration p:has(.agent-step-cue):first-child { margin-top: 0; }
+.markdown-content.step-narration p:has(.agent-step-cue):last-child { margin-bottom: 0; }
 .agent-step-cue { color: var(--text-muted); }
 /* Compact the agent/team event log rendering to caption size. */
 .team-event-text .markdown-content { font-size: var(--fs-caption); line-height: 1.45; }

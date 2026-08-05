@@ -1,13 +1,27 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useRecordingStore } from '@/stores/recordingStore';
+import { useRecordingStore, NATIVE_LEVEL_ACTIVE_THRESHOLD } from '@/stores/recordingStore';
 import { useUIStore } from '@/stores/uiStore';
+import {
+  isNativeAudioAvailable,
+  listNativeAudioSources,
+  type NativeAudioSourceInfo,
+} from '@/services/nativeAudioSource';
 
-// In-app audio-source picker. The microphone is always captured; this
-// lets the user ADD an optional Chrome/Edge tab-audio source, which the
-// recording controller mixes into the same mono stream at start()
-// (see recordingController.start()). It complements — does not replace —
-// the older OS-level BlackHole aggregate-device path described at the top
-// of Header.tsx: no system setup required, but Chrome/Edge only.
+// In-app audio-source picker.
+//
+// Browser build: the microphone is always captured; the user can ADD an
+// optional Chrome/Edge tab-audio source, which the recording controller
+// mixes into the same mono stream at start() (see recordingController).
+// It complements — does not replace — the older OS-level BlackHole
+// aggregate-device path described at the top of Header.tsx.
+//
+// macOS shell build (window.__WHISPER_NATIVE_AUDIO.available): a "This Mac"
+// section additionally offers native output capture via Core Audio process
+// taps — "System audio" (everything) or one running app (e.g. Zoom). One
+// native source at a time, combinable with the mic; turning the mic off
+// while a native source is armed gives "native only" mode (no getUserMedia
+// at all). The selection persists via recordingStore. When the bridge is
+// absent this section disappears and the menu renders exactly as before.
 
 const TAB_AUDIO_SUPPORTED =
   typeof navigator !== 'undefined' &&
@@ -25,17 +39,65 @@ const HeadphonesIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   </svg>
 );
 
+const SpeakerIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+  </svg>
+);
+
+/** Tiny 3-bar activity meter shown on the ACTIVE native source row while
+ *  recording, driven by the shell's per-chunk rms (recordingStore.nativeLevel).
+ *  Dimmed when the source is silent — the visual answer to "is any audio
+ *  actually coming through?". Exported for tests. */
+export const NativeLevelMeter: React.FC<{ level: number }> = ({ level }) => {
+  const active = level > NATIVE_LEVEL_ACTIVE_THRESHOLD;
+  const lit = !active ? 0 : level > 0.1 ? 3 : level > 0.02 ? 2 : 1;
+  return (
+    <span
+      className={`native-level-meter${active ? ' active' : ''}`}
+      role="img"
+      aria-label={active ? 'Audio detected from this source' : 'No audio from this source'}
+      data-testid="native-level-meter"
+      data-lit={lit}
+      title={active ? 'Audio detected' : 'No audio detected yet'}
+    >
+      <span className={`native-level-bar${lit >= 1 ? ' lit' : ''}`} />
+      <span className={`native-level-bar${lit >= 2 ? ' lit' : ''}`} />
+      <span className={`native-level-bar${lit >= 3 ? ' lit' : ''}`} />
+    </span>
+  );
+};
+
+const AppWindowIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <line x1="10" y1="4" x2="10" y2="8" />
+    <line x1="3" y1="8" x2="21" y2="8" />
+  </svg>
+);
+
 export const CaptureSourceMenu: React.FC = () => {
   const tabStream = useRecordingStore((s) => s.tabStream);
   const isRecording = useRecordingStore((s) => s.isRecording);
   const acquireTabAudio = useRecordingStore((s) => s.acquireTabAudio);
   const releaseTabAudio = useRecordingStore((s) => s.releaseTabAudio);
+  const nativeSource = useRecordingStore((s) => s.nativeSource);
+  const nativeLevel = useRecordingStore((s) => s.nativeLevel);
+  const micEnabled = useRecordingStore((s) => s.micEnabled);
+  const setNativeSource = useRecordingStore((s) => s.setNativeSource);
+  const setMicEnabled = useRecordingStore((s) => s.setMicEnabled);
   const addToast = useUIStore((s) => s.addToast);
 
   const [open, setOpen] = useState(false);
+  const [nativeApps, setNativeApps] = useState<NativeAudioSourceInfo[]>([]);
+  const [nativeScanning, setNativeScanning] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
+  const nativeAvailable = isNativeAudioAvailable();
   const tabActive = !!tabStream;
+  const hasExtraSource = tabActive || !!nativeSource;
 
   useEffect(() => {
     if (!open) return;
@@ -46,7 +108,32 @@ export const CaptureSourceMenu: React.FC = () => {
     return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
 
-  const handleToggle = useCallback(() => setOpen((o) => !o), []);
+  // Refresh the per-app list every time the menu opens: pids and the set of
+  // audio-producing apps change constantly, so a stale list is worse than a
+  // brief "Scanning…" state. Sequence-guarded so a slow scan can't clobber
+  // the results of a newer one.
+  const scanSeq = useRef(0);
+  const refreshNativeSources = useCallback(() => {
+    if (!isNativeAudioAvailable()) return;
+    scanSeq.current += 1;
+    const seq = scanSeq.current;
+    setNativeScanning(true);
+    listNativeAudioSources()
+      .then((sources) => {
+        if (seq === scanSeq.current) setNativeApps(sources.filter((s) => s.pid >= 0));
+      })
+      .catch(() => {
+        if (seq === scanSeq.current) setNativeApps([]);
+      })
+      .finally(() => {
+        if (seq === scanSeq.current) setNativeScanning(false);
+      });
+  }, []);
+
+  const handleToggle = useCallback(() => {
+    if (!open) refreshNativeSources();
+    setOpen(!open);
+  }, [open, refreshNativeSources]);
 
   const handleChooseTab = useCallback(async () => {
     try {
@@ -80,6 +167,24 @@ export const CaptureSourceMenu: React.FC = () => {
 
   const handleRemoveTab = useCallback(() => releaseTabAudio(), [releaseTabAudio]);
 
+  const handleUseSystemAudio = useCallback(() => {
+    setNativeSource({ pid: -1, name: 'System audio' });
+  }, [setNativeSource]);
+
+  const handleUseApp = useCallback(
+    (app: NativeAudioSourceInfo) => {
+      setNativeSource({ pid: app.pid, name: app.name, bundleID: app.bundleID });
+    },
+    [setNativeSource],
+  );
+
+  const handleStopNative = useCallback(() => setNativeSource(null), [setNativeSource]);
+
+  const handleToggleMic = useCallback(
+    () => setMicEnabled(!useRecordingStore.getState().micEnabled),
+    [setMicEnabled],
+  );
+
   // Why the "Choose tab" action can't be used right now (null = usable).
   const tabDisabledReason = !TAB_AUDIO_SUPPORTED
     ? 'Only Chrome and Edge can share tab audio'
@@ -89,10 +194,23 @@ export const CaptureSourceMenu: React.FC = () => {
         ? 'Stop recording to add a source'
         : null;
 
+  const nativeDisabledReason = isRecording ? 'Stop recording to change sources' : null;
+
+  const systemActive = nativeSource?.pid === -1;
+  const isActiveApp = (app: NativeAudioSourceInfo): boolean =>
+    !!nativeSource &&
+    nativeSource.pid !== -1 &&
+    (nativeSource.bundleID ? nativeSource.bundleID === app.bundleID : nativeSource.pid === app.pid);
+
+  // The armed app may not be in the freshly scanned list (quit, or silent
+  // right now) — still show it so the user can see and clear the selection.
+  const armedAppMissing =
+    !!nativeSource && nativeSource.pid !== -1 && !nativeApps.some((a) => isActiveApp(a));
+
   return (
     <div className="capture-source-wrap" ref={wrapRef}>
       <button
-        className={`btn-icon capture-source-btn${tabActive ? ' has-tab' : ''}`}
+        className={`btn-icon capture-source-btn${hasExtraSource ? ' has-tab' : ''}`}
         title="Audio sources"
         aria-label="Audio sources"
         aria-expanded={open}
@@ -116,47 +234,181 @@ export const CaptureSourceMenu: React.FC = () => {
           </span>
           <div className="capture-source-text">
             <div className="capture-source-name">Microphone</div>
-            <div className="capture-source-sub">Your headset or laptop mic</div>
-          </div>
-          <span className="capture-source-badge on">On</span>
-        </div>
-
-        <div className="capture-source-row">
-          <span className="capture-source-icon tab">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="4" width="18" height="16" rx="2" />
-              <line x1="3" y1="9" x2="21" y2="9" />
-              <circle cx="6.5" cy="6.5" r="0.5" />
-            </svg>
-          </span>
-          <div className="capture-source-text">
-            <div className="capture-source-name">Chrome tab audio</div>
             <div className="capture-source-sub">
-              {tabActive
-                ? 'Capturing a browser tab'
-                : (tabDisabledReason ?? 'Not added yet')}
+              {micEnabled
+                ? 'Your headset or laptop mic'
+                : `Off — using ${nativeSource?.name ?? 'the native source'} only`}
             </div>
           </div>
-          {tabActive ? (
-            <button className="capture-source-action remove" onClick={handleRemoveTab} type="button">
-              Stop
+          {nativeSource ? (
+            <button
+              className={`capture-source-action${micEnabled ? ' remove' : ''}`}
+              onClick={handleToggleMic}
+              type="button"
+              disabled={!!nativeDisabledReason}
+              title={nativeDisabledReason ?? undefined}
+            >
+              {micEnabled ? 'Turn off' : 'Turn on'}
             </button>
           ) : (
-            <button
-              className="capture-source-action"
-              onClick={handleChooseTab}
-              type="button"
-              disabled={!!tabDisabledReason}
-              title={tabDisabledReason ?? undefined}
-            >
-              Choose tab
-            </button>
+            <span className="capture-source-badge on">On</span>
           )}
         </div>
 
+        {nativeAvailable && (
+          <>
+            <div className="capture-source-title">This Mac</div>
+
+            <div className="capture-source-row">
+              <span className="capture-source-icon native">
+                <SpeakerIcon />
+              </span>
+              <div className="capture-source-text">
+                <div className="capture-source-name">
+                  System audio
+                  {systemActive && isRecording && <NativeLevelMeter level={nativeLevel} />}
+                </div>
+                <div className="capture-source-sub">
+                  {systemActive ? 'Capturing everything the Mac plays' : 'Everything the Mac plays'}
+                </div>
+              </div>
+              {systemActive ? (
+                <button
+                  className="capture-source-action remove"
+                  onClick={handleStopNative}
+                  type="button"
+                  disabled={!!nativeDisabledReason}
+                  title={nativeDisabledReason ?? undefined}
+                >
+                  Stop
+                </button>
+              ) : (
+                <button
+                  className="capture-source-action"
+                  onClick={handleUseSystemAudio}
+                  type="button"
+                  disabled={!!nativeDisabledReason}
+                  title={nativeDisabledReason ?? undefined}
+                >
+                  Use
+                </button>
+              )}
+            </div>
+
+            <div className="capture-source-apps">
+              {armedAppMissing && nativeSource && (
+                <div className="capture-source-row">
+                  <span className="capture-source-icon native">
+                    <AppWindowIcon />
+                  </span>
+                  <div className="capture-source-text">
+                    <div className="capture-source-name">
+                      {nativeSource.name}
+                      {isRecording && <NativeLevelMeter level={nativeLevel} />}
+                    </div>
+                    <div className="capture-source-sub">Not playing audio right now</div>
+                  </div>
+                  <button
+                    className="capture-source-action remove"
+                    onClick={handleStopNative}
+                    type="button"
+                    disabled={!!nativeDisabledReason}
+                    title={nativeDisabledReason ?? undefined}
+                  >
+                    Stop
+                  </button>
+                </div>
+              )}
+              {nativeApps.map((app) => (
+                <div className="capture-source-row" key={app.bundleID ?? `pid-${app.pid}`}>
+                  <span className="capture-source-icon native">
+                    <AppWindowIcon />
+                  </span>
+                  <div className="capture-source-text">
+                    <div className="capture-source-name">
+                      {app.name}
+                      {isActiveApp(app) && isRecording && <NativeLevelMeter level={nativeLevel} />}
+                    </div>
+                    <div className="capture-source-sub">
+                      {isActiveApp(app) ? 'Capturing this app' : 'App audio output'}
+                    </div>
+                  </div>
+                  {isActiveApp(app) ? (
+                    <button
+                      className="capture-source-action remove"
+                      onClick={handleStopNative}
+                      type="button"
+                      disabled={!!nativeDisabledReason}
+                      title={nativeDisabledReason ?? undefined}
+                    >
+                      Stop
+                    </button>
+                  ) : (
+                    <button
+                      className="capture-source-action"
+                      onClick={() => handleUseApp(app)}
+                      type="button"
+                      disabled={!!nativeDisabledReason}
+                      title={nativeDisabledReason ?? undefined}
+                    >
+                      Use
+                    </button>
+                  )}
+                </div>
+              ))}
+              {nativeScanning && nativeApps.length === 0 && (
+                <div className="capture-source-empty">Scanning for apps playing audio…</div>
+              )}
+              {!nativeScanning && nativeApps.length === 0 && !armedAppMissing && (
+                <div className="capture-source-empty">
+                  No apps are playing audio right now. Start playback (e.g. join the call), then
+                  reopen this menu.
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {!nativeAvailable && (
+          <div className="capture-source-row">
+            <span className="capture-source-icon tab">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <line x1="3" y1="9" x2="21" y2="9" />
+                <circle cx="6.5" cy="6.5" r="0.5" />
+              </svg>
+            </span>
+            <div className="capture-source-text">
+              <div className="capture-source-name">Chrome tab audio</div>
+              <div className="capture-source-sub">
+                {tabActive
+                  ? 'Capturing a browser tab'
+                  : (tabDisabledReason ?? 'Not added yet')}
+              </div>
+            </div>
+            {tabActive ? (
+              <button className="capture-source-action remove" onClick={handleRemoveTab} type="button">
+                Stop
+              </button>
+            ) : (
+              <button
+                className="capture-source-action"
+                onClick={handleChooseTab}
+                type="button"
+                disabled={!!tabDisabledReason}
+                title={tabDisabledReason ?? undefined}
+              >
+                Choose tab
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="capture-source-hint">
           <HeadphonesIcon size={14} />
-          <span>Wear headphones so the tab's sound isn't picked up twice by your mic.</span>
+          <span>
+            Wear headphones so captured audio isn&apos;t picked up twice by your mic.
+          </span>
         </div>
       </div>
     </div>

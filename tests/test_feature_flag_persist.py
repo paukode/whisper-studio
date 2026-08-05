@@ -32,6 +32,9 @@ def test_toggling_flag_preserves_rich_chat_models(tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
     cfg.write_text(json.dumps(RICH_CONFIG))
     monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg))
+    # Pin the user layer to this throwaway file (config.json is still a valid
+    # active user layer) so the path resolver never falls through to the repo.
+    monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
     config_mod._invalidate_cache()
 
     app = FastAPI()
@@ -72,6 +75,9 @@ def test_toggle_changes_only_the_one_boolean(tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
     cfg.write_text(HAND_FORMATTED)
     monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg))
+    # Pin the user layer to this throwaway file (config.json is still a valid
+    # active user layer) so the path resolver never falls through to the repo.
+    monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
     config_mod._invalidate_cache()
 
     config_mod.set_feature_flag("companion", True)
@@ -86,6 +92,9 @@ def test_toggle_other_flag_leaves_companion_and_formatting(tmp_path, monkeypatch
     cfg = tmp_path / "config.json"
     cfg.write_text(HAND_FORMATTED)
     monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg))
+    # Pin the user layer to this throwaway file (config.json is still a valid
+    # active user layer) so the path resolver never falls through to the repo.
+    monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
     config_mod._invalidate_cache()
 
     config_mod.set_feature_flag("auto_memory", False)
@@ -99,6 +108,9 @@ def test_toggle_inserts_absent_flag_without_reflowing_rest(tmp_path, monkeypatch
     cfg = tmp_path / "config.json"
     cfg.write_text(HAND_FORMATTED)
     monkeypatch.setattr(config_mod, "CONFIG_PATH", str(cfg))
+    # Pin the user layer to this throwaway file (config.json is still a valid
+    # active user layer) so the path resolver never falls through to the repo.
+    monkeypatch.setattr(config_mod, "USER_CONFIG_PATH", str(cfg))
     config_mod._invalidate_cache()
 
     config_mod.set_feature_flag("dream_consolidation", True)

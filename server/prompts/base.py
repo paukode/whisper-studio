@@ -15,6 +15,12 @@ BASE = (
     # Output style rules (no emojis, no em dashes, etc.) now come from the
     # user-editable PROMPT_RULES.md, injected as the "user_rules" prompt section.
     "Elaborate when the question asks for detail or explanation. "
+    # Keep multi-step work moving: the loop resumes you after each tool call, so a
+    # bare progress update with no tool call ends your turn. Guards against the
+    # "I'll continue and report back" premature stop.
+    "When a task takes several steps, keep working until it is done or you truly need the user's "
+    "input. Do not end your turn just to announce progress or say you will continue; either take "
+    "the next action now, or stop only because the task is complete or you have a real question. "
     "Tools prefixed with 'mcp_' reach external services the user connected; reach for them "
     "when the question needs current, authoritative documentation rather than recall."
 )

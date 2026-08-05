@@ -162,7 +162,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         id = list.plans?.[0]?.id as string | undefined;
       }
       if (!id) {
-        useUIStore.getState().addToast({ type: 'info', message: 'No plan to approve yet.' });
+        useUIStore.getState().addToast({ type: 'info', message: 'No plan to approve yet.', persist: false });
         return;
       }
       const md = await fetch(`/api/plans/${encodeURIComponent(id)}`).then((r) => (r.ok ? r.text() : null));

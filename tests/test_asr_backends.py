@@ -112,6 +112,13 @@ def _warm_calls(monkeypatch, backend_name):
         monkeypatch.setattr(diar, "preload", lambda: calls.append("diarization"))
     except Exception:
         pass
+    # Warmup only fires when the weights are already downloaded; force that so
+    # the test exercises the engine-routing logic regardless of whether the
+    # 2.3 GB Parakeet weights physically exist under app_home (they never do
+    # under a throwaway WHISPER_HOME / on CI).
+    from server.models_manager import catalog as _catalog
+
+    monkeypatch.setattr(_catalog, "is_installed", lambda entry: True)
     conf = {"transcription_backend": backend_name, "local_mode": False}
     monkeypatch.setattr(cfg, "get", lambda k, default=None: conf.get(k, default))
     main._warm_transcription_models()

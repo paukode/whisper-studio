@@ -10,6 +10,8 @@ interface PreviewStatus {
   stage: string | null;
   error: string | null;
   log_tail: string[];
+  /** True inside the packaged .app, where the browser ships in the bundle. */
+  packaged?: boolean;
 }
 
 interface PreviewSessionInfo {
@@ -87,8 +89,10 @@ export const PreviewSettings: React.FC = () => {
           <div className="settings-item-desc">
             Lets the assistant spin up a dev server, drive a real headless browser against it, and
             validate changes with screenshots, console output, and network activity — the same tools
-            used to build this feature. Downloads Playwright and a ~150-300MB Chromium browser, and
-            lets the assistant control it.
+            used to build this feature.{' '}
+            {status.packaged
+              ? 'The browser ships inside the app; enabling this downloads nothing.'
+              : 'Downloads Playwright and a ~150-300MB Chromium browser, and lets the assistant control it.'}
           </div>
           {status.error && (
             <div style={{ color: 'var(--accent-record)', fontSize: '13px', marginTop: '6px' }}>

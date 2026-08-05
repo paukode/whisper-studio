@@ -31,6 +31,8 @@ import shutil
 import subprocess
 import tempfile
 
+from server.infrastructure.binaries import resolve as resolve_binary
+
 log = logging.getLogger("whisper-studio")
 
 AUDIO_EXTENSIONS = {
@@ -216,7 +218,7 @@ def _video_duration(path: str) -> float:
     try:
         out = subprocess.run(
             [
-                "ffprobe",
+                resolve_binary("ffprobe", "WHISPER_FFPROBE_PATH") or "ffprobe",
                 "-v",
                 "error",
                 "-show_entries",
@@ -273,7 +275,7 @@ def _sample_video_frames(path: str) -> tuple[str, list[dict]]:
     tmpdir = tempfile.mkdtemp(prefix="frames_")
     try:
         cmd = [
-            "ffmpeg",
+            resolve_binary("ffmpeg", "WHISPER_FFMPEG_PATH") or "ffmpeg",
             "-nostdin",
             "-i",
             path,

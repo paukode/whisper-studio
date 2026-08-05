@@ -33,10 +33,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
+from server.infrastructure.paths import models_root
+
 log = logging.getLogger("whisper-studio")
 
-SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MODELS_DIR = os.path.join(SCRIPT_DIR, "models")
+MODELS_DIR = models_root()
 SPEAKER_MODEL_DIR = os.path.join(MODELS_DIR, "spkrec-ecapa-voxceleb")
 SPEAKER_REPO_ID = "speechbrain/spkrec-ecapa-voxceleb"
 

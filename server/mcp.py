@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
@@ -14,6 +15,34 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 DATA_DIR = data_root()
 MCP_CONFIG_PATH = os.path.join(DATA_DIR, "mcp_servers.json")
+
+
+def _unwrap_exc(e: BaseException) -> str:
+    """Human-meaningful message for a connect failure, unwrapping ExceptionGroups.
+
+    The MCP client contexts (stdio_client / ClientSession) run their transport
+    inside an anyio task group. When a connect fails — the command exits
+    immediately, a socket is refused, a file is missing — the failure bubbles up
+    as a ``BaseExceptionGroup`` whose ``str()`` is the useless
+    "unhandled errors in a TaskGroup (1 sub-exception)", hiding the real cause.
+
+    Recurse into the group's first child (groups can nest) until we reach a
+    non-group leaf, and return ITS message so the UI shows something actionable
+    (e.g. the underlying FileNotFoundError / connection-reset text). A plain
+    (non-group) exception is returned verbatim, preserving prior behavior.
+    Detection is via the ``exceptions`` attribute so it works on both the 3.11+
+    builtin ``ExceptionGroup`` and anyio's backport without a version import.
+    """
+    seen: set[int] = set()
+    cur: BaseException = e
+    while id(cur) not in seen:
+        seen.add(id(cur))
+        children = getattr(cur, "exceptions", None)
+        if not children:
+            break
+        cur = children[0]
+    msg = str(cur).strip()
+    return msg or cur.__class__.__name__
 
 
 class MCPManager:
@@ -34,21 +63,22 @@ class MCPManager:
         return self._lock
 
     def load_config(self) -> dict:
-        """Read mcp_servers.json. Backfills `enabled: false` for any server
-        missing the flag, so the default at first run is OFF (token cost
-        of an MCP server is non-trivial — ~1.5–5k tokens per server in the
-        Bedrock tool list — and the user must opt in explicitly)."""
+        """Read mcp_servers.json. Backfills `enabled: true` for any server
+        missing the flag: a configured server is ON unless the user turned
+        it off. Disabling is a first-class, immediate action (the switch in
+        Settings → MCP stops the server at runtime), so opt-out replaces the
+        old opt-in default."""
         try:
             with open(MCP_CONFIG_PATH) as f:
                 servers = json.load(f).get("servers", {})
         except Exception:
             return {}
         # One-time backfill: any pre-existing server without the field
-        # gets enabled=false. Persist back so the file is explicit.
+        # gets enabled=true. Persist back so the file is explicit.
         changed = False
         for _name, conf in servers.items():
             if isinstance(conf, dict) and "enabled" not in conf:
-                conf["enabled"] = False
+                conf["enabled"] = True
                 changed = True
         if changed:
             try:
@@ -63,25 +93,36 @@ class MCPManager:
             json.dump({"servers": servers}, f, indent=2)
 
     def is_server_enabled(self, name: str) -> bool:
-        """Whether a server's tools should be advertised to Bedrock by
-        default. Falls through to false when unknown — the caller can still
-        force a server on for one request via the per-request override."""
+        """Whether a server should be running and its tools advertised.
+        A configured server missing the flag counts as enabled (the
+        backfill makes it explicit on next save); an unknown server is
+        not enabled."""
         config = self.load_config()
         entry = config.get(name)
         if not isinstance(entry, dict):
             return False
-        return bool(entry.get("enabled", False))
+        return bool(entry.get("enabled", True))
 
     def globally_enabled_servers(self) -> set[str]:
-        """The set of servers currently marked enabled in the config file.
-        Used as the default when a chat request omits an `mcp_servers`
-        override."""
+        """The set of servers currently marked enabled in the config file
+        (missing flag counts as enabled)."""
         config = self.load_config()
         return {
             name
             for name, conf in config.items()
-            if isinstance(conf, dict) and bool(conf.get("enabled", False))
+            if isinstance(conf, dict) and bool(conf.get("enabled", True))
         }
+
+    @staticmethod
+    def _resolve_command(command: str, path: str | None) -> str | None:
+        """Absolute path to an MCP server's launch command, or None if missing.
+        An absolute command must exist and be executable; a bare name is looked
+        up on ``path`` (the enriched PATH)."""
+        if not command:
+            return None
+        if os.path.isabs(command):
+            return command if (os.path.isfile(command) and os.access(command, os.X_OK)) else None
+        return shutil.which(command, path=path)
 
     async def start_server(self, name: str, config: dict):
         from mcp import StdioServerParameters
@@ -95,7 +136,27 @@ class MCPManager:
             return
 
         env = {**os.environ, **env_vars}
-        params = StdioServerParameters(command=command, args=args, env=env)
+        # Resolve the command up front so a missing executable yields an
+        # actionable message instead of a raw "[Errno 2] No such file or
+        # directory" from the spawn. A GUI-launched .app has a minimal PATH;
+        # main.py widens it (enrich_gui_launch_path), and we resolve against
+        # that same PATH here.
+        resolved = self._resolve_command(command, env.get("PATH"))
+        if resolved is None:
+            msg = (
+                f'Command "{command}" was not found. Install it and make sure it is on '
+                f"your PATH, or set the full path to the executable in Settings > MCP."
+            )
+            log.error("MCP server '%s': %s", name, msg)
+            async with self._get_lock():
+                self._sessions[name] = {
+                    "status": "error",
+                    "error": msg,
+                    "config": config,
+                    "tools": {},
+                }
+            return
+        params = StdioServerParameters(command=resolved, args=args, env=env)
 
         # The MCP client contexts (stdio_client, ClientSession) open anyio task
         # groups / cancel scopes bound to the task that ENTERS them, so they
@@ -109,14 +170,25 @@ class MCPManager:
         ready: asyncio.Future = loop.create_future()
         stop_event = asyncio.Event()
         async with self._get_lock():
+            # Idempotent: enabling an already-connected server (e.g. a
+            # double toggle, or enable racing the startup start_all) must
+            # not spawn a second _serve task that would orphan the first
+            # connection's subprocess when it overwrites _sessions[name].
+            existing = self._sessions.get(name)
+            if existing is not None and existing.get("status") == "connected":
+                return
             task = asyncio.create_task(self._serve(name, params, config, ready, stop_event))
             try:
                 await ready
             except Exception as e:
-                log.error("MCP server '%s' failed to start: %s", name, e)
+                # Unwrap the anyio ExceptionGroup so the stored error is the real
+                # cause, not "unhandled errors in a TaskGroup". This message is
+                # what get_status() surfaces to the UI.
+                msg = _unwrap_exc(e)
+                log.error("MCP server '%s' failed to start: %s", name, msg)
                 self._sessions[name] = {
                     "status": "error",
-                    "error": str(e),
+                    "error": msg,
                     "config": config,
                     "tools": {},
                 }
@@ -195,9 +267,11 @@ class MCPManager:
                 await stop_event.wait()
         except Exception as e:
             if not ready.done():
+                # start_server awaits `ready` and unwraps this via _unwrap_exc
+                # before storing/surfacing it.
                 ready.set_exception(e)
             else:
-                log.warning("MCP server '%s' connection ended: %s", name, e)
+                log.warning("MCP server '%s' connection ended: %s", name, _unwrap_exc(e))
         finally:
             # If we still own the published session (a clean stop_server pop
             # already removed it; an unexpected death did not), drop our
@@ -241,8 +315,16 @@ class MCPManager:
                 log.warning("Error stopping MCP server '%s': %s", name, e)
 
     async def start_all(self):
+        """Start every ENABLED server. Disabled servers stay stopped —
+        the enabled flag now controls the runtime connection itself, not
+        just tool advertisement, so a toggle takes effect immediately and
+        survives restarts symmetrically."""
         config = self.load_config()
         for name, server_config in config.items():
+            if not isinstance(server_config, dict):
+                continue
+            if not bool(server_config.get("enabled", True)):
+                continue
             await self.start_server(name, server_config)
 
     async def stop_all(self):
@@ -267,8 +349,8 @@ class MCPManager:
         # sessions ("MCP is always on").
         if not self.is_server_enabled(server_name):
             return (
-                f"[MCP] Server '{server_name}' is disabled. Enable it in the "
-                "chat toolbar's MCP menu or Settings → MCP to use this tool."
+                f"[MCP] Server '{server_name}' is disabled. Enable it in "
+                "Settings → MCP to use this tool."
             )
         original_name = tool_info["original_name"]
         session_info = self._sessions.get(server_name)
@@ -305,11 +387,12 @@ class MCPManager:
         matches what call_tool() will accept at execution time (it enforces
         the same flag via is_server_enabled).
 
-        Each MCP tool definition costs ~150–200 tokens in the Bedrock
-        request, so filtering here is the leverage point for the user's
-        "MCP off by default, opt-in" request — the connection itself
-        stays warm so a server can be re-enabled without paying a cold
-        start; only the tool advertisement is gated.
+        Disabling now also STOPS the server at runtime (its tools leave
+        _tools when the connection unwinds), so this flag check is defense
+        in depth: it keeps the pool correct in the window before a slow
+        disconnect finishes, or if a stop failed and left the connection up.
+        Because the pool is assembled per turn, a toggle takes effect on the
+        very next message with no restart.
         """
         enabled_servers = self.globally_enabled_servers()
 
@@ -423,18 +506,14 @@ async def mcp_servers_status():
             "command": conf.get("command", ""),
             "args": conf.get("args", []),
             "env": conf.get("env", {}),
-            "enabled": bool(conf.get("enabled", False)),
+            "enabled": bool(conf.get("enabled", True)),
             "status": s["status"],
             "tools": s.get("tools", []),
             "error": s.get("error"),
         }
-    # Tool count when ALL servers are enabled — gives the settings panel
-    # a sense of "if I turned everything on, this many tools would be in
-    # the Bedrock request". The actual default for a chat request is the
-    # subset whose `enabled` flag is true. Counted directly from the warm
-    # connections (deduped by sanitized name, as get_bedrock_tools does)
-    # rather than via get_bedrock_tools, which now refuses to advertise
-    # persisted-disabled servers and so can no longer project the ceiling.
+    # Live MCP tool count: disabled servers are disconnected, so _tools
+    # holds exactly the connected (enabled) servers' tools. Deduped by
+    # sanitized name, matching what get_bedrock_tools advertises.
     total_mcp_tools = len({mcp_manager._sanitize_tool_name(k) for k in mcp_manager._tools})
     return {"servers": servers, "total_mcp_tools": total_mcp_tools}
 
@@ -454,13 +533,16 @@ async def mcp_add_server(request: Request):
         )
 
     config = mcp_manager.load_config()
-    config[name] = {"command": command, "args": args, "env": env}
+    # New servers are enabled by default and started immediately below, so
+    # they are usable on the very next message — no app restart.
+    config[name] = {"command": command, "args": args, "env": env, "enabled": True}
     mcp_manager.save_config(config)
 
     await mcp_manager.start_server(name, config[name])
     status = mcp_manager.get_status().get(name, {})
     return {
         "name": name,
+        "enabled": True,
         "status": status.get("status"),
         "tools": status.get("tools", []),
         "error": status.get("error"),
@@ -469,9 +551,11 @@ async def mcp_add_server(request: Request):
 
 @router.patch("/servers/{name}")
 async def mcp_patch_server(name: str, request: Request):
-    """Toggle the per-server `enabled` flag. Distinct from PUT (which
-    rewrites the whole server entry); used by the Settings → MCP
-    checkbox and the chat-toolbar 'remember this' link."""
+    """Toggle the per-server `enabled` flag AND apply it live: enabling
+    connects the server, disabling disconnects it, so the change is real
+    for the next message with no app restart. Distinct from PUT (which
+    rewrites the whole server entry); the enable/disable switch lives in
+    Settings → MCP (the composer no longer has an MCP tick)."""
     body = await request.json()
     config = mcp_manager.load_config()
     if name not in config:
@@ -483,7 +567,22 @@ async def mcp_patch_server(name: str, request: Request):
     if "enabled" in body:
         config[name]["enabled"] = bool(body["enabled"])
     mcp_manager.save_config(config)
-    return {"name": name, "enabled": bool(config[name].get("enabled", False))}
+    enabled = bool(config[name].get("enabled", True))
+    # Apply the flag to the runtime connection. A failed connect is not an
+    # HTTP error: the flag IS persisted, and the caller gets the live
+    # status ("error" + message) to surface in the UI.
+    if enabled:
+        await mcp_manager.start_server(name, config[name])
+    else:
+        await mcp_manager.stop_server(name)
+    status = mcp_manager.get_status().get(name, {})
+    return {
+        "name": name,
+        "enabled": enabled,
+        "status": status.get("status", "stopped"),
+        "tools": status.get("tools", []),
+        "error": status.get("error"),
+    }
 
 
 @router.delete("/servers/{name}")
@@ -505,11 +604,16 @@ async def mcp_restart_server(name: str):
             media_type="application/json",
         )
     await mcp_manager.stop_server(name)
-    await mcp_manager.start_server(name, config[name])
+    # A disabled server must stay stopped: with disabled == disconnected,
+    # a Restart that reconnected it would show a green dot under an Off
+    # switch. Restart only cycles servers that are enabled.
+    if bool(config[name].get("enabled", True)):
+        await mcp_manager.start_server(name, config[name])
     status = mcp_manager.get_status().get(name, {})
     return {
         "name": name,
-        "status": status.get("status"),
+        "enabled": bool(config[name].get("enabled", True)),
+        "status": status.get("status", "stopped"),
         "tools": status.get("tools", []),
         "error": status.get("error"),
     }
@@ -532,12 +636,11 @@ async def mcp_update_server(name: str, request: Request):
     args = body.get("args", old.get("args", []))
     env = body.get("env", old.get("env", {}))
     # Preserve the persisted `enabled` flag. Rebuilding the entry as
-    # {command, args, env} only would drop it, and load_config()'s backfill
-    # would then persist enabled=false — silently unticking an enabled server
-    # on every edit or rename (its tools vanish from the Bedrock request and
-    # call_tool returns "[MCP] Server ... is disabled"). The Settings UI uses
-    # PUT for both in-place edit and rename, so carry the flag in both branches.
-    enabled = bool(old.get("enabled", False))
+    # {command, args, env} only would drop it — silently flipping the
+    # server's state on every edit or rename. The Settings UI uses PUT for
+    # both in-place edit and rename, so carry the flag in both branches
+    # (missing flag counts as enabled, matching load_config's backfill).
+    enabled = bool(old.get("enabled", True))
     await mcp_manager.stop_server(name)
     if new_name and new_name != name:
         config.pop(name)
@@ -557,11 +660,15 @@ async def mcp_update_server(name: str, request: Request):
         }
         target_name = name
     mcp_manager.save_config(config)
-    await mcp_manager.start_server(target_name, config[target_name])
+    # Reconnect with the new config only if the server is enabled — a
+    # disabled server stays stopped through edits and renames.
+    if enabled:
+        await mcp_manager.start_server(target_name, config[target_name])
     status = mcp_manager.get_status().get(target_name, {})
     return {
         "name": target_name,
-        "status": status.get("status"),
+        "enabled": enabled,
+        "status": status.get("status", "stopped"),
         "tools": status.get("tools", []),
         "error": status.get("error"),
     }

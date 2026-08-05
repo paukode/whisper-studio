@@ -1,4 +1,5 @@
-import React, { useCallback } from 'react';
+import React from 'react';
+import { useBackdropDismiss } from '@/hooks/useBackdropDismiss';
 
 export interface BtwPopupProps {
   question: string;
@@ -11,14 +12,15 @@ export interface BtwPopupProps {
  * Shows the question and answer with an X button to dismiss.
  */
 export const BtwPopup: React.FC<BtwPopupProps> = ({ question, answer, onClose }) => {
-  const handleOverlayClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) onClose();
-  }, [onClose]);
+  // Dismiss only on a genuine backdrop press (mousedown AND click both on the
+  // overlay), so selecting the answer text and releasing outside the card does
+  // not close the popup.
+  const backdrop = useBackdropDismiss(onClose);
 
   return (
     <div
       className="btw-popup-overlay"
-      onClick={handleOverlayClick}
+      {...backdrop}
       style={{
         position: 'fixed',
         inset: 0,

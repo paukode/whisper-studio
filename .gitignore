@@ -11,6 +11,12 @@ htmlcov/
 data/
 storage/
 config.json
+# config.user.json is the per-user layer (deltas over the shipped
+# config.example.json); config.json.pre-split is the renamed legacy monolith
+# left behind by the one-time migration. Both are runtime, per-user files.
+config.user.json
+config.user.json.bak.*
+config.json.pre-split
 # setup.sh --new writes config.json.bak.<timestamp> backups at the repo root;
 # they contain the live Tavily API key, so keep them untracked.
 config.json.bak.*
@@ -70,3 +76,7 @@ uv.lock
 # The editor writes ${workspace}/WHISPER.md as user-specific context
 # for the model. Different users want different contents — don't track.
 WHISPER.md
+
+# macOS app packaging (macapp/build_app.sh) work dirs and output
+build-app/
+dist-app/

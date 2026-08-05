@@ -376,6 +376,26 @@ async def run_turn(ctx: TurnContext):
                     messages = ensure_attachments_present(messages, session_id)
                 continue
 
+            if stop_reason == "pause_turn" and result_content:
+                # Anthropic paused a long-running turn: adaptive-thinking or
+                # long tool streams can run past the stream window, and the API
+                # returns pause_turn to hand the turn back mid-work. The turn is
+                # NOT complete. Resubmit the accumulated (well-formed, resumable)
+                # assistant content so the model continues from where it paused.
+                # Treating pause_turn as terminal is exactly the "chat stops for
+                # no reason mid-task, no error" bug. Bounded by the round cap
+                # like any other round (a pause storm burns rounds, never loops
+                # forever); each pause is logged so a stall is visible.
+                log.info(
+                    "stop_reason=pause_turn (round %d) — resubmitting to continue the turn",
+                    round_num,
+                )
+                messages.append({"role": "assistant", "content": result_content})
+                continue
+
+            # Everything left here is a genuine end-of-turn (end_turn,
+            # stop_sequence, refusal) or an unknown stop reason we conservatively
+            # treat as terminal rather than risk an unbounded resubmit loop.
             if stop_reason != "tool_use" or not tool_uses:
                 # Completion gate (WS-E): Stop hooks + goal evaluator. A block
                 # injects the feedback and loops again, bounded by the cap.

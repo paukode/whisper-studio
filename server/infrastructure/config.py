@@ -1,9 +1,26 @@
-"""Configuration management with 3-layer merge and session-latching support.
+"""Configuration management with a layered merge and session-latching support.
 
 Config layers (lowest to highest priority):
-  1. DEFAULTS — built-in fallbacks
-  2. User config — config.json (global user preferences)
-  3. Project config — .whisper/settings.json in workspace root (per-project)
+  1. DEFAULTS — built-in fallbacks (code)
+  2. SYSTEM — the bundle's config.example.json at repo_root() (read-only; ships
+     inside the .app and updates with every app version). The app-owned model
+     catalog + shipped defaults.
+  3. USER — config.user.json in the app home (the user owns it; survives app
+     updates; the in-settings editor writes here). Holds only the user's deltas:
+     added local models, region/keys/flags, per-field overrides, and a hide-list.
+     Back-compat: when config.user.json is absent but a legacy config.json exists
+     (a dev checkout, or a packaged install that hasn't migrated yet), the legacy
+     config.json IS the user layer until migrate_user_config() runs.
+  4. PROJECT — .whisper/settings.json in the workspace root (per-project)
+  5. ENV — sensitive secrets from environment variables
+
+``chat_models`` is an ADDITIVE per-key deep-merge across SYSTEM and USER: the
+shipped catalog always appears, and a user entry adds a new key or overrides
+specific fields of a shipped entry. ``chat_models_disabled`` (a list of keys in
+the USER and PROJECT layers) drops shipped models the user doesn't want after
+the merge. The PROJECT layer still replaces the catalog wholesale, matching its
+historical semantics. Pricing stays SYSTEM-only (pricing.json) — there is no
+user pricing layer, because user-added local models are always $0.
 
 The latching system caches config snapshots per session so that mid-session
 settings changes don't disrupt an active conversation or invalidate prompt caches.
@@ -17,41 +34,68 @@ import json
 import logging
 import os
 import re
+import shutil
+import tempfile
 import threading
 import time
 
 from fastapi import APIRouter, Request
 
 from server.infrastructure.effort import infer_effort_tier, normalize_effort
+from server.infrastructure.paths import config_dir, repo_root
 
 log = logging.getLogger("whisper-studio")
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
-CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config.json"
-)
-EXAMPLE_CONFIG_PATH = os.path.join(os.path.dirname(CONFIG_PATH), "config.example.json")
+# The user's live config follows the app home (WHISPER_HOME in a packaged
+# install, the repo root in a dev checkout); the committed template always
+# stays with the code.
+#
+# USER_CONFIG_PATH (config.user.json) is the user layer the app writes to going
+# forward. CONFIG_PATH (config.json) is the legacy monolith: it acts as the user
+# layer only until migrate_user_config() splits it (see _active_user_config_path).
+USER_CONFIG_PATH = os.path.join(config_dir(), "config.user.json")
+CONFIG_PATH = os.path.join(config_dir(), "config.json")
+EXAMPLE_CONFIG_PATH = os.path.join(repo_root(), "config.example.json")
 
-# The chat-model catalog has ONE source of truth: config.example.json (the
-# template setup.sh copies to the user's config.json). The code keeps no second
-# copy of it; we read the template's catalog here purely as the fallback for a
-# config that defines no chat_models. Cached after the first read.
-_seed_models_cache: dict | None = None
+# The SYSTEM layer is the full config.example.json (the app-owned catalog +
+# shipped defaults). It is read-only in the bundle, so we cache it keyed on the
+# file's mtime — a rebuilt bundle (new mtime) is picked up, but steady-state
+# loads never re-read from disk.
+_system_cache: dict | None = None
+_system_cache_key: tuple | None = None
+
+
+def _system_config() -> dict:
+    """The full SYSTEM layer: config.example.json parsed as a config dict.
+    Returns {} (degraded, not a crash) if the template is missing or unreadable.
+    Cached on (path, mtime) so tests that swap EXAMPLE_CONFIG_PATH still work."""
+    global _system_cache, _system_cache_key
+    path = EXAMPLE_CONFIG_PATH
+    try:
+        key = (path, os.path.getmtime(path))
+    except OSError:
+        key = (path, None)
+    if _system_cache is not None and _system_cache_key == key:
+        return _system_cache
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+    _system_cache = data
+    _system_cache_key = key
+    return data
 
 
 def _seed_chat_models() -> dict:
-    """The chat-model catalog from config.example.json (the canonical template),
-    used as the fallback when a config defines none. Returns {} (degraded, not a
-    crash) if the template is missing or unreadable."""
-    global _seed_models_cache
-    if _seed_models_cache is None:
-        try:
-            with open(EXAMPLE_CONFIG_PATH) as f:
-                _seed_models_cache = json.load(f).get("chat_models") or {}
-        except Exception:
-            _seed_models_cache = {}
-    return _seed_models_cache
+    """The chat-model catalog from the SYSTEM layer (config.example.json), used
+    as the ultimate fallback for DEFAULTS when no layer defines chat_models.
+    Returns {} (degraded, not a crash) if the template is missing/unreadable."""
+    return _system_config().get("chat_models") or {}
 
 
 DEFAULTS = {
@@ -68,15 +112,20 @@ DEFAULTS = {
     # a mid-recording change doesn't swap models on a live session.
     "transcription_backend": "streaming",
     "bedrock_region": "us-east-1",
-    # Chat-model catalog: the single source of truth is config.example.json
-    # (copied to config.json by setup.sh). Loaded here ONLY as the fallback for a
-    # config that defines no chat_models; a config.json's chat_models REPLACES
-    # this wholesale (see load_config), so the code keeps no divergent copy and
-    # there's nothing to drift against (this is what fixed the us.* vs global.*
-    # mismatch and the duplicate Opus 4.6). To add/change a model, edit
-    # config.example.json. Rich shape {key:{id,label,thinking,...}}; legacy flat
-    # {key:"id"} is still accepted (see _normalize_chat_models).
+    # Chat-model catalog. The app-owned catalog lives in config.example.json (the
+    # SYSTEM layer); this DEFAULTS copy is sourced from it so the two can't drift,
+    # and serves only as the ultimate fallback when no layer defines chat_models.
+    # SYSTEM and USER deep-merge ADDITIVELY per key (see load_config): the shipped
+    # catalog always appears and a USER entry adds a key or overrides fields of a
+    # shipped one. To add/change a shipped model, edit config.example.json; users
+    # add their own via config.user.json. Rich shape {key:{id,label,thinking,...}};
+    # legacy flat {key:"id"} is still accepted (see _normalize_chat_models).
     "chat_models": _seed_chat_models(),
+    # Model keys to HIDE from the effective catalog after the SYSTEM+USER merge.
+    # Lets a user drop a shipped model they don't want without deleting it from
+    # the app-owned catalog. Honored in the USER and PROJECT layers (unioned);
+    # unknown names are ignored. Default [] = show system models + the user's own.
+    "chat_models_disabled": [],
     "default_chat_model": "opus4.8",
     "brief_mode": False,
     "permission_mode": "default",  # default | auto | plan | acceptEdits | bypassPermissions | dontAsk
@@ -139,6 +188,7 @@ PROJECT_SETTINGS_KEYS = frozenset(
     {
         "bedrock_region",
         "chat_models",
+        "chat_models_disabled",
         "default_chat_model",
         "effort_level",
         "brief_mode",
@@ -272,7 +322,11 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
 
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
-    """Merge overlay into base. Nested dicts are merged recursively; lists replace."""
+    """Merge overlay into base. Nested dicts are merged recursively; lists replace.
+
+    ``chat_models`` (a dict of per-model dicts) therefore deep-merges ADDITIVELY
+    across layers for free: SYSTEM's shipped entries are preserved and a USER
+    entry adds a key or overrides individual fields of a shipped one."""
     result = dict(base)
     for key, value in overlay.items():
         if isinstance(value, dict) and isinstance(result.get(key), dict):
@@ -282,13 +336,50 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
     return result
 
 
+def _active_user_config_path() -> str:
+    """The file that IS the user layer right now.
+
+    config.user.json once it exists (post-migration, or a packaged install whose
+    boot created it); otherwise the legacy config.json when only that exists (a
+    dev checkout, or a packaged install that hasn't migrated yet); otherwise
+    config.user.json — the canonical target for a first write on a clean home.
+    Reading the module attributes each call keeps it monkeypatch-friendly."""
+    if os.path.exists(USER_CONFIG_PATH):
+        return USER_CONFIG_PATH
+    if os.path.exists(CONFIG_PATH):
+        return CONFIG_PATH
+    return USER_CONFIG_PATH
+
+
 def _load_user_config() -> dict:
-    """Load user-level config.json from disk."""
+    """Load the USER layer from disk (config.user.json, or the legacy config.json
+    while that is still the active user layer)."""
     try:
-        with open(CONFIG_PATH) as f:
-            return json.load(f)
+        with open(_active_user_config_path()) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def _disabled_keys(layer: dict) -> set[str]:
+    """The valid string entries of a layer's ``chat_models_disabled`` list.
+    Non-list values and non-string entries are ignored (validation lives in the
+    raw editor); this is the tolerant runtime read."""
+    lst = layer.get("chat_models_disabled")
+    if not isinstance(lst, list):
+        return set()
+    return {x for x in lst if isinstance(x, str)}
+
+
+def _apply_disabled(cfg: dict, disabled: set[str]) -> None:
+    """Drop hidden model keys from ``cfg['chat_models']``, replacing the dict with
+    a filtered copy (never mutating the possibly-shared/cached original)."""
+    if not disabled:
+        return
+    cm = cfg.get("chat_models")
+    if isinstance(cm, dict):
+        cfg["chat_models"] = {k: v for k, v in cm.items() if k not in disabled}
 
 
 def _load_project_config(workspace_path: str | None = None) -> dict:
@@ -320,18 +411,18 @@ def _env_overlay() -> dict:
 
 
 def load_config(workspace_path: str | None = None) -> dict:
-    """Load merged config: DEFAULTS → user config → project config → env.
+    """Load merged config: DEFAULTS → SYSTEM → USER → project → env.
 
-    Uses a short TTL cache for the user layer. Project layer is always
-    read fresh (it changes when workspace changes). Env-var overlay is
-    re-read on every load so a rotated key takes effect without a
-    restart.
+    Uses a short TTL cache for the DEFAULTS+SYSTEM+USER result. Project layer is
+    always read fresh (it changes when workspace changes). Env-var overlay is
+    re-read on every load so a rotated key takes effect without a restart.
     """
     global _config_cache, _config_cache_mtime
 
     now = time.monotonic()
 
-    # Layer 1+2: DEFAULTS + user config (cached)
+    # Layers 1-3: DEFAULTS + SYSTEM (config.example.json) + USER (config.user.json
+    # or the legacy config.json). Cached together.
     with _config_cache_lock:
         if _config_cache is not None and (now - _config_cache_mtime) < _CONFIG_CACHE_TTL:
             user_merged = _config_cache
@@ -339,34 +430,43 @@ def load_config(workspace_path: str | None = None) -> dict:
             user_merged = None
 
     if user_merged is None:
+        system_stored = _system_config()
         user_stored = _load_user_config()
-        user_merged = _deep_merge(DEFAULTS, user_stored)
-        # chat_models is CONFIG-AUTHORITATIVE: when config.json provides a model
-        # catalog it REPLACES the built-in DEFAULTS wholesale, rather than being
-        # unioned key-by-key underneath it. The config file is the single source
-        # of truth for the model list, so a renamed/removed model can't collide
-        # with (or be resurrected by) a hardcoded default. DEFAULTS' catalog is
-        # only the fallback when config defines no chat_models (e.g. empty/first-
-        # run config).
-        if isinstance(user_stored.get("chat_models"), dict) and user_stored["chat_models"]:
-            user_merged["chat_models"] = user_stored["chat_models"]
+        # DEFAULTS → SYSTEM → USER. Because _deep_merge recurses into nested
+        # dicts, chat_models merges ADDITIVELY per key/field with no special
+        # case: SYSTEM's shipped catalog stays, and a USER entry adds a key or
+        # overrides individual fields of a shipped one. (DEFAULTS' catalog is
+        # sourced from SYSTEM, so merging it first is a harmless no-op and only
+        # matters as the fallback when SYSTEM has none.)
+        user_merged = _deep_merge(DEFAULTS, system_stored)
+        user_merged = _deep_merge(user_merged, user_stored)
+        # Hide-list: drop the models the USER asked to hide from the merged
+        # catalog. (Project adds its own below.)
+        _apply_disabled(user_merged, _disabled_keys(user_stored))
         # Backward compat: local_mode predates model_mode. If the user runs an
         # on-device config (local_mode on) but never set model_mode, follow
         # local_mode so their on-device models stay visible/usable instead of
-        # being hidden by the cloud default. An explicit model_mode always wins.
+        # being hidden by the cloud default. Keyed on the USER layer (SYSTEM
+        # always ships model_mode, so the merged value is never "absent");
+        # an explicit user model_mode always wins.
         if "model_mode" not in user_stored and user_merged.get("local_mode"):
             user_merged["model_mode"] = "local"
         with _config_cache_lock:
             _config_cache = user_merged
             _config_cache_mtime = now
 
-    # Layer 3: project config (not cached — workspace can change)
+    # Layer 4: project config (not cached — workspace can change)
     project_stored = _load_project_config(workspace_path)
     merged = _deep_merge(user_merged, project_stored) if project_stored else dict(user_merged)
-    # Project config is config-authoritative for the catalog too: a project that
-    # lists chat_models replaces, it doesn't union onto the user/DEFAULTS catalog.
+    # Project config keeps its historical wholesale-replace semantics for the
+    # catalog: a project that lists chat_models replaces the merged SYSTEM+USER
+    # catalog rather than unioning onto it.
     if isinstance(project_stored.get("chat_models"), dict) and project_stored["chat_models"]:
         merged["chat_models"] = project_stored["chat_models"]
+    # Apply the project's hide-list on top of the (possibly replaced) catalog.
+    # _apply_disabled replaces the dict reference, so the cached user_merged
+    # catalog is never mutated.
+    _apply_disabled(merged, _disabled_keys(project_stored))
 
     # Layer 4: environment-variable overlay (highest priority).
     # Re-read every call — cheap and lets a rotated key apply
@@ -432,16 +532,192 @@ def _invalidate_cache():
         _config_cache = None
 
 
+def _atomic_write(path: str, text: str) -> None:
+    """Write ``text`` to ``path`` ATOMICALLY (temp file + rename in the same
+    directory), so a crash mid-write can never leave a truncated file."""
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".config.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def save_config(config: dict):
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(config, f, indent=2)
+    """Persist the USER layer (config.user.json, or the legacy config.json while
+    that is still the active user layer)."""
+    _atomic_write(_active_user_config_path(), json.dumps(config, indent=2))
     _invalidate_cache()
 
 
 def _write_config_text(text: str) -> None:
-    with open(CONFIG_PATH, "w") as f:
-        f.write(text)
+    """Persist raw USER-layer text ATOMICALLY, then drop the in-memory cache so
+    the next load_config() sees the new contents. Targets the active user layer
+    file (config.user.json going forward, or the legacy config.json until the
+    split runs)."""
+    _atomic_write(_active_user_config_path(), text)
     _invalidate_cache()
+
+
+def migrate_user_config() -> bool:
+    """One-time, idempotent split of a monolithic config.json into a
+    config.user.json that holds only the user's deltas.
+
+    - If config.user.json already exists: no-op (already migrated / user layer
+      present). Never overwritten.
+    - If only a legacy config.json exists: back it up to config.json.bak.<ts>,
+      write config.user.json with the user's deltas (chat_models entries that are
+      genuinely new or that differ from the SYSTEM catalog, plus ALL non-catalog
+      keys verbatim, including chat_models_disabled), then rename the legacy file
+      to config.json.pre-split so it can't be double-read as a stale layer.
+    - If neither exists (fresh install): create config.user.json as {} — the
+      shipped catalog comes from the SYSTEM layer, so nothing is copied down.
+
+    Returns True only when it performed an actual legacy→user migration.
+    """
+    # Resolve the home at CALL time (not the import-frozen module constants) so a
+    # packaged boot always migrates within the live WHISPER_HOME even if the
+    # module was imported before the env was set.
+    home = config_dir()
+    user_path = os.path.join(home, "config.user.json")
+    legacy_path = os.path.join(home, "config.json")
+
+    if os.path.exists(user_path):
+        return False
+
+    if not os.path.exists(legacy_path):
+        # Fresh install: an empty user layer; SYSTEM supplies the catalog.
+        try:
+            _atomic_write(user_path, "{}\n")
+            _invalidate_cache()
+        except OSError as e:
+            log.warning("Could not create %s: %s", user_path, e)
+        return False
+
+    try:
+        with open(legacy_path) as f:
+            legacy = json.load(f)
+    except Exception as e:
+        log.warning("Could not read legacy config.json for migration: %s", e)
+        return False
+    if not isinstance(legacy, dict):
+        legacy = {}
+
+    # Timestamped backup (setup.sh's config.json.bak.<YYYYmmddHHMMSS> convention).
+    backup = f"{legacy_path}.bak.{time.strftime('%Y%m%d%H%M%S')}"
+    try:
+        shutil.copyfile(legacy_path, backup)
+        log.info("Backed up %s to %s before the config split.", legacy_path, backup)
+    except OSError as e:
+        log.warning("Could not back up %s before migration: %s", legacy_path, e)
+
+    system_catalog = _system_config().get("chat_models")
+    if not isinstance(system_catalog, dict):
+        system_catalog = {}
+
+    user_cfg: dict = {}
+    for key, value in legacy.items():
+        if key == "chat_models":
+            continue
+        # Every non-catalog key is user-owned — carried over verbatim (region,
+        # api keys, model_mode, flags, data_dir, chat_models_disabled, …).
+        user_cfg[key] = value
+
+    legacy_cm = legacy.get("chat_models")
+    if isinstance(legacy_cm, dict):
+        # Keep only genuine additions (key absent from SYSTEM) and real overrides
+        # (value differs deeply from the SYSTEM entry). Redundant copies of a
+        # shipped entry are dropped so future SYSTEM updates flow through.
+        delta = {
+            k: v for k, v in legacy_cm.items() if k not in system_catalog or v != system_catalog[k]
+        }
+        if delta:
+            user_cfg["chat_models"] = delta
+
+    try:
+        _atomic_write(user_path, json.dumps(user_cfg, indent=2) + "\n")
+    except OSError as e:
+        log.warning("Could not write %s during migration: %s", user_path, e)
+        return False
+
+    # Rename the legacy file out of the way so it is not read as a stale layer.
+    # The .bak already preserves the original contents.
+    try:
+        os.replace(legacy_path, f"{legacy_path}.pre-split")
+    except OSError as e:
+        log.warning("Could not rename %s after migration: %s", legacy_path, e)
+
+    _invalidate_cache()
+    log.info(
+        "Migrated config.json -> config.user.json (%d top-level key(s), %d chat_models delta).",
+        len(user_cfg),
+        len(user_cfg.get("chat_models", {})),
+    )
+    return True
+
+
+def unfiltered_chat_models() -> tuple[dict, dict]:
+    """The normalized ``(ids, meta)`` of the DEFAULTS→SYSTEM→USER chat catalog
+    WITHOUT the ``chat_models_disabled`` hide-list applied.
+
+    Weight-management surfaces read this instead of load_config(): the local
+    registry (and through it the Settings > Models download manager) must keep
+    serving a disabled model so its weights stay manageable — disabling only
+    hides a model from the composer picker, it never strands gigabytes on disk.
+    The picker path (/api/models via load_config) keeps the filtered view."""
+    system_cm = _system_config().get("chat_models")
+    if not isinstance(system_cm, dict) or not system_cm:
+        system_cm = DEFAULTS.get("chat_models") or {}
+    user_cm = _load_user_config().get("chat_models")
+    merged = _deep_merge(system_cm, user_cm) if isinstance(user_cm, dict) else dict(system_cm)
+    return _normalize_chat_models(merged)
+
+
+def _merged_rich_chat_models(workspace_path: str | None = None) -> dict:
+    """The effective chat_models catalog in its RICH on-disk shape (not the
+    flattened {key: id} form load_config returns). Mirrors load_config's catalog
+    logic exactly — additive SYSTEM+USER deep-merge, user hide-list, project
+    wholesale-replace, project hide-list — so the editor's effective view shows
+    entries the user can copy down verbatim to override."""
+    system_cm = _system_config().get("chat_models")
+    if not isinstance(system_cm, dict) or not system_cm:
+        system_cm = DEFAULTS.get("chat_models") or {}
+
+    user_stored = _load_user_config()
+    user_cm = user_stored.get("chat_models")
+    merged = _deep_merge(system_cm, user_cm) if isinstance(user_cm, dict) else dict(system_cm)
+    for k in _disabled_keys(user_stored):
+        merged.pop(k, None)
+
+    project_stored = _load_project_config(workspace_path)
+    proj_cm = project_stored.get("chat_models")
+    if isinstance(proj_cm, dict) and proj_cm:
+        merged = dict(proj_cm)
+    for k in _disabled_keys(project_stored):
+        merged.pop(k, None)
+    return merged
+
+
+def effective_config_view(workspace_path: str | None = None) -> dict:
+    """A read-only, human-readable view of the fully merged config for the
+    editor's 'Effective config (merged)' pane. It is the DEFAULTS→SYSTEM→USER→
+    PROJECT→ENV result, but with the RICH chat_models catalog (so a user can copy
+    a shipped entry down to override it) and the Tavily secret masked. Never
+    written anywhere."""
+    merged = dict(load_config(workspace_path))
+    merged["chat_models"] = _merged_rich_chat_models(workspace_path)
+    merged.pop("chat_model_meta", None)  # derived; noise in a human view
+    key = merged.get("tavily_api_key")
+    if key:
+        merged["tavily_api_key"] = (key[:4] + "..." + key[-4:]) if len(key) > 8 else "***"
+    return merged
 
 
 def _json_object_span(text: str, key: str) -> tuple[int, int] | None:
@@ -476,7 +752,7 @@ def _json_object_span(text: str, key: str) -> tuple[int, int] | None:
 
 
 def set_feature_flag(flag_name: str, enabled: bool) -> None:
-    """Toggle ONE feature flag in config.json, changing only that boolean and
+    """Toggle ONE feature flag in the USER config, changing only that boolean and
     preserving every other byte and all formatting.
 
     A flag toggle should be surgical. Re-serializing the whole file via
@@ -484,11 +760,12 @@ def set_feature_flag(flag_name: str, enabled: bool) -> None:
     chat_models one-liners) and flattens the rich chat_models
     shape, silently dropping fields like requires_data_retention. This patches
     the flag's value in place inside the feature_flags object; it only falls
-    back to a structured write when config.json has no feature_flags block at
-    all (rare/first-run)."""
+    back to a structured write when the file has no feature_flags block at
+    all (rare/first-run). Targets the active user layer (config.user.json, or the
+    legacy config.json until the split runs)."""
     literal = "true" if enabled else "false"
     try:
-        with open(CONFIG_PATH) as f:
+        with open(_active_user_config_path()) as f:
             text = f.read()
     except FileNotFoundError:
         text = ""

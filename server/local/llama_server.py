@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import signal
 import socket
 import subprocess
 import threading
 import time
+
+from server.infrastructure.binaries import resolve
 
 log = logging.getLogger("whisper-studio")
 
@@ -58,15 +59,11 @@ class LlamaServerUnavailable(RuntimeError):
 
 
 def binary_path() -> str | None:
-    """Absolute path to ``llama-server``, or None if it isn't installed."""
-    found = shutil.which("llama-server")
-    if found:
-        return found
-    for d in _FALLBACK_DIRS:
-        candidate = os.path.join(d, "llama-server")
-        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            return candidate
-    return None
+    """Absolute path to ``llama-server``, or None if it isn't installed.
+
+    ``WHISPER_LLAMA_SERVER_PATH`` (the packaged app's pinned binary) wins,
+    then PATH, then the Homebrew dirs."""
+    return resolve("llama-server", "WHISPER_LLAMA_SERVER_PATH", _FALLBACK_DIRS)
 
 
 def installed_build() -> int | None:

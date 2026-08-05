@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { create } from 'zustand';
+import { persistToastNotification } from '@/api/notify';
 
 export const TOAST_PRIORITY = { immediate: 0, high: 1, medium: 2, low: 3 } as const;
 export type ToastPriority = (typeof TOAST_PRIORITY)[keyof typeof TOAST_PRIORITY];
@@ -36,6 +37,16 @@ export interface Toast {
   shownAt?: number;
   /** Whether toast is exiting (for animation) */
   leaving?: boolean;
+  /**
+   * Also record this toast in the persistent notification log behind the
+   * header bell (default). Pass `false` for inherently transient feedback —
+   * progress ticks, "copied"/"saved" confirmations, slash-command usage
+   * hints — and for toasts whose event is ALREADY recorded server-side
+   * (notify_user), which would otherwise double-log.
+   */
+  persist?: boolean;
+  /** Origin slug for the persistent log (e.g. "chat", "model-download"). Defaults to "app". */
+  source?: string;
 }
 
 /* ── Dialog types ── */
@@ -105,10 +116,21 @@ export interface UIState {
   /* /btw popup */
   btwPopup: { question: string; answer: string } | null;
 
-  /* Local-mode "loading model into memory" banner. null when idle. The
-   * progress bar fills to `progress` (0..1); stage 'ready' triggers the
-   * auto-hide. Driven by websocket model_loading/model_unloaded events. */
-  modelLoading: { label: string; progress: number; stage: 'start' | 'downloading' | 'loading' | 'ready'; onCancel?: () => void } | null;
+  /* Shared model load/download banner. null when idle. The progress bar
+   * fills to `progress` (0..1); stage 'ready' triggers the auto-hide and
+   * stage 'error' renders the failure (detail carries the message) with a
+   * Dismiss affordance. While downloading, `detail` is an optional second
+   * clause on the label line (e.g. "1.1 GB of 2.5 GB · model 1 of 2").
+   * Driven by websocket model_loading/model_unloaded events, the local chat
+   * model flows (api/localModel), and the pre-recording model gate
+   * (services/recordingModels). */
+  modelLoading: {
+    label: string;
+    progress: number;
+    stage: 'start' | 'downloading' | 'loading' | 'ready' | 'error';
+    detail?: string;
+    onCancel?: () => void;
+  } | null;
 
   /* Dialog stack */
   dialogStack: DialogEntry[];
@@ -275,6 +297,16 @@ export const useUIStore = create<UIState>()((set) => ({
     // OS notification for high+ priority when tab is hidden
     if (priority <= TOAST_PRIORITY.high && document.hidden) {
       _osNotify(toast.type, toast.message);
+    }
+
+    // Durable copy for the header bell (server dedupes identical bursts).
+    if (toast.persist !== false) {
+      persistToastNotification({
+        source: toast.source,
+        title: toast.title,
+        message: toast.message,
+        status: toast.type,
+      });
     }
 
     set((state) => {

@@ -77,19 +77,20 @@ _DEFAULT_CTX = 32768
 def _config_local_models() -> dict[str, dict]:
     """Local models declared in config's ``chat_models`` (is_local entries).
 
-    Reads the normalized ``chat_model_meta`` map, so it sees the merged
-    DEFAULTS → user → project → env result rather than raw file contents.
-    Never raises: a broken config must not take the local runtime down.
+    Reads the normalized merge of the SYSTEM and USER layers WITHOUT the
+    ``chat_models_disabled`` hide-list: disabling a model only hides it from the
+    composer picker — its weights must stay downloadable/deletable here, or a
+    disabled model's gigabytes would become unmanageable (and, for user-added
+    models, invisible). Never raises: a broken config must not take the local
+    runtime down.
     """
     try:
-        from server.infrastructure.config import load_config
+        from server.infrastructure.config import unfiltered_chat_models
 
-        cfg = load_config()
-        meta = cfg.get("chat_model_meta") or {}
-        # Model ids live in the PARALLEL ``chat_models`` map, not in meta — reading
+        # Model ids live in the PARALLEL ``ids`` map, not in meta — reading
         # them from meta yields None and silently invents "local:<key>", which
         # then overwrites a built-in's real sentinel and breaks key_for_id().
-        ids = cfg.get("chat_models") or {}
+        ids, meta = unfiltered_chat_models()
     except Exception as e:  # pragma: no cover - defensive
         log.debug("Could not read chat model config for local registry: %s", e)
         return {}

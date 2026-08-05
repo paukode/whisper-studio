@@ -17,7 +17,13 @@ describe('useSaveToast', () => {
     const { result } = renderHook(() => useSaveToast());
     const ok = await result.current(() => Promise.resolve(), { success: 'Skill saved' });
     expect(ok).toBe(true);
-    expect(addToastMock).toHaveBeenCalledWith({ type: 'success', message: 'Skill saved' });
+    // Save confirmations are transient: shown as a toast but kept out of the
+    // persistent notification log (persist: false).
+    expect(addToastMock).toHaveBeenCalledWith({
+      type: 'success',
+      message: 'Skill saved',
+      persist: false,
+    });
   });
 
   it('fires an error toast with the reason and resolves false', async () => {
@@ -36,6 +42,10 @@ describe('useSaveToast', () => {
   it('falls back to default messages', async () => {
     const { result } = renderHook(() => useSaveToast());
     await result.current(() => Promise.resolve());
-    expect(addToastMock).toHaveBeenCalledWith({ type: 'success', message: 'Saved' });
+    expect(addToastMock).toHaveBeenCalledWith({
+      type: 'success',
+      message: 'Saved',
+      persist: false,
+    });
   });
 });

@@ -66,6 +66,11 @@ def _install_fakes(monkeypatch, record):
     monkeypatch.setattr(
         mcp.client.stdio, "stdio_client", lambda params: _FakeStdioCtx(record), raising=False
     )
+    # The transport is faked, so no real binary is spawned — skip the real
+    # command-on-PATH resolution and accept the placeholder command as-is.
+    monkeypatch.setattr(
+        MCPManager, "_resolve_command", staticmethod(lambda command, path=None: command)
+    )
 
 
 def test_mcp_lifecycle_exits_contexts_in_entering_task(monkeypatch):
