@@ -119,8 +119,8 @@ interface MCPEntry {
   name: string;
   status: string;
   /** Persisted enable flag — see server/mcp.py. Defaults to true when a
-   *  server is added; the Settings switch and the composer tick stop/start
-   *  the server live (no restart) and hide/show its tools on the next turn. */
+   *  server is added; the Settings → MCP switch stops/starts the server live
+   *  (no restart) and hides/shows its tools on the next turn. */
   enabled: boolean;
   tools?: Array<{ name: string; description?: string }>;
 }
@@ -151,8 +151,10 @@ export interface SettingsState {
   skills: SkillEntry[];
 
   /* MCP — the persisted `enabled` flag on each server is the single source of
-   *  truth. Both the Settings panel and the chat-toolbar checklist toggle it
-   *  (via useMcpToggle); the backend resolves the active set from these flags. */
+   *  truth, toggled in Settings → MCP (via useMcpToggle); the backend resolves
+   *  the active set from these flags. This live copy also feeds the composer's
+   *  @-mention autocomplete (mcp: mentions), so it is kept even though the
+   *  composer no longer has an enable/disable tick. */
   mcpServers: MCPEntry[];
 
   /* Effort & brief */
@@ -375,8 +377,15 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
         status: info.status ?? 'stopped',
         enabled: !!info.enabled,
       }));
+      // Authoritative REPLACE: the backend response is the whole truth, so a
+      // server deleted there (e.g. the retired AgentCore) is dropped from this
+      // copy — it can never linger as a "ghost" that the @-mention list still
+      // shows while Settings reads empty. An empty response ⇒ empty list.
       set({ mcpServers: list });
     } catch (err) {
+      // Keep the previous list on a transient fetch/parse error: a network
+      // blip must not wipe a valid list (and the @-mention autocomplete that
+      // reads it). Only a SUCCESSFUL fetch reconciles the list above.
       console.warn('Failed to load MCP servers:', err);
       useUIStore.getState().addToast({
         type: 'error',

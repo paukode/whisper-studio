@@ -115,6 +115,54 @@ describe('loadModels catalog refresh (live picker updates)', () => {
   });
 });
 
+// loadMCP is the single reconciliation point for settingsStore.mcpServers (the
+// live copy the composer's @-mention autocomplete reads). It must be
+// authoritative: a successful fetch REPLACES the whole list so a server deleted
+// on the backend (e.g. the retired AgentCore) can never linger as a ghost, but
+// a transient fetch error must not wipe a valid list.
+describe('loadMCP authoritative replace', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    useSettingsStore.setState({ mcpServers: [] });
+  });
+
+  it('replaces the whole list on success — a server gone from the backend does not linger', async () => {
+    // A stale server loaded earlier, then deleted on the backend.
+    useSettingsStore.setState({
+      mcpServers: [{ name: 'AgentCore', status: 'connected', enabled: true }] as never,
+    });
+    getMock.mockResolvedValue({
+      servers: { echo: { command: 'python3', args: [], enabled: true, status: 'connected' } },
+    });
+
+    await useSettingsStore.getState().loadMCP();
+
+    const names = useSettingsStore.getState().mcpServers.map((s) => s.name);
+    expect(names).toEqual(['echo']);
+    expect(names).not.toContain('AgentCore');
+  });
+
+  it('empties the list when the backend reports no servers', async () => {
+    useSettingsStore.setState({
+      mcpServers: [{ name: 'AgentCore', status: 'connected', enabled: true }] as never,
+    });
+    getMock.mockResolvedValue({ servers: {} });
+
+    await useSettingsStore.getState().loadMCP();
+    expect(useSettingsStore.getState().mcpServers).toEqual([]);
+  });
+
+  it('keeps the previous list on a fetch error (no wipe on a transient blip)', async () => {
+    useSettingsStore.setState({
+      mcpServers: [{ name: 'echo', status: 'connected', enabled: true }] as never,
+    });
+    getMock.mockRejectedValue(new Error('network'));
+
+    await useSettingsStore.getState().loadMCP();
+    expect(useSettingsStore.getState().mcpServers.map((s) => s.name)).toEqual(['echo']);
+  });
+});
+
 describe('setAutoMemory persistence', () => {
   beforeEach(() => {
     putMock.mockReset();

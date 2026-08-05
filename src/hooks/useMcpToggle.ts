@@ -39,12 +39,13 @@ export async function fetchMcpServers(): Promise<MCPServerInfo[]> {
  * applies LIVE (enable connects the server, disable disconnects it, effective
  * for the next message with no restart) — optimistically updating BOTH live
  * copies of the server list: the Settings-panel react-query cache
- * (`['mcp-servers']`) and the chat-toolbar's `settingsStore.mcpServers`. The
- * response's live status (connected / stopped / error) is written back to the
- * query cache and the store copy is refetched, so the status dot is honest in
- * both places. Rolls back both and raises a persistent error toast on failure.
- * This is the single source of truth for enabling/disabling an MCP server:
- * the Settings switch and the composer tick both call it.
+ * (`['mcp-servers']`) and `settingsStore.mcpServers` (which feeds the composer's
+ * @-mention autocomplete). The response's live status (connected / stopped /
+ * error) is written back to the query cache and the store copy is refetched, so
+ * the status dot is honest in both places. Rolls back both and raises a
+ * persistent error toast on failure. This is the single source of truth for
+ * enabling/disabling an MCP server; the Settings → MCP switch calls it (the
+ * composer no longer has an MCP tick).
  */
 export function useMcpToggle(): (name: string, enabled: boolean) => Promise<void> {
   const queryClient = useQueryClient();

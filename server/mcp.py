@@ -17,6 +17,34 @@ DATA_DIR = data_root()
 MCP_CONFIG_PATH = os.path.join(DATA_DIR, "mcp_servers.json")
 
 
+def _unwrap_exc(e: BaseException) -> str:
+    """Human-meaningful message for a connect failure, unwrapping ExceptionGroups.
+
+    The MCP client contexts (stdio_client / ClientSession) run their transport
+    inside an anyio task group. When a connect fails — the command exits
+    immediately, a socket is refused, a file is missing — the failure bubbles up
+    as a ``BaseExceptionGroup`` whose ``str()`` is the useless
+    "unhandled errors in a TaskGroup (1 sub-exception)", hiding the real cause.
+
+    Recurse into the group's first child (groups can nest) until we reach a
+    non-group leaf, and return ITS message so the UI shows something actionable
+    (e.g. the underlying FileNotFoundError / connection-reset text). A plain
+    (non-group) exception is returned verbatim, preserving prior behavior.
+    Detection is via the ``exceptions`` attribute so it works on both the 3.11+
+    builtin ``ExceptionGroup`` and anyio's backport without a version import.
+    """
+    seen: set[int] = set()
+    cur: BaseException = e
+    while id(cur) not in seen:
+        seen.add(id(cur))
+        children = getattr(cur, "exceptions", None)
+        if not children:
+            break
+        cur = children[0]
+    msg = str(cur).strip()
+    return msg or cur.__class__.__name__
+
+
 class MCPManager:
     """Manages connections to MCP servers and exposes their tools."""
 
@@ -38,8 +66,8 @@ class MCPManager:
         """Read mcp_servers.json. Backfills `enabled: true` for any server
         missing the flag: a configured server is ON unless the user turned
         it off. Disabling is a first-class, immediate action (the switch in
-        Settings → MCP or the tick in the chat toolbar stops the server at
-        runtime), so opt-out replaces the old opt-in default."""
+        Settings → MCP stops the server at runtime), so opt-out replaces the
+        old opt-in default."""
         try:
             with open(MCP_CONFIG_PATH) as f:
                 servers = json.load(f).get("servers", {})
@@ -153,10 +181,14 @@ class MCPManager:
             try:
                 await ready
             except Exception as e:
-                log.error("MCP server '%s' failed to start: %s", name, e)
+                # Unwrap the anyio ExceptionGroup so the stored error is the real
+                # cause, not "unhandled errors in a TaskGroup". This message is
+                # what get_status() surfaces to the UI.
+                msg = _unwrap_exc(e)
+                log.error("MCP server '%s' failed to start: %s", name, msg)
                 self._sessions[name] = {
                     "status": "error",
-                    "error": str(e),
+                    "error": msg,
                     "config": config,
                     "tools": {},
                 }
@@ -235,9 +267,11 @@ class MCPManager:
                 await stop_event.wait()
         except Exception as e:
             if not ready.done():
+                # start_server awaits `ready` and unwraps this via _unwrap_exc
+                # before storing/surfacing it.
                 ready.set_exception(e)
             else:
-                log.warning("MCP server '%s' connection ended: %s", name, e)
+                log.warning("MCP server '%s' connection ended: %s", name, _unwrap_exc(e))
         finally:
             # If we still own the published session (a clean stop_server pop
             # already removed it; an unexpected death did not), drop our
@@ -315,8 +349,8 @@ class MCPManager:
         # sessions ("MCP is always on").
         if not self.is_server_enabled(server_name):
             return (
-                f"[MCP] Server '{server_name}' is disabled. Enable it in the "
-                "chat toolbar's MCP menu or Settings → MCP to use this tool."
+                f"[MCP] Server '{server_name}' is disabled. Enable it in "
+                "Settings → MCP to use this tool."
             )
         original_name = tool_info["original_name"]
         session_info = self._sessions.get(server_name)
@@ -520,9 +554,8 @@ async def mcp_patch_server(name: str, request: Request):
     """Toggle the per-server `enabled` flag AND apply it live: enabling
     connects the server, disabling disconnects it, so the change is real
     for the next message with no app restart. Distinct from PUT (which
-    rewrites the whole server entry); used by both the Settings → MCP
-    switch and the chat toolbar's MCP tick (same semantics, kept in sync
-    through the shared frontend state)."""
+    rewrites the whole server entry); the enable/disable switch lives in
+    Settings → MCP (the composer no longer has an MCP tick)."""
     body = await request.json()
     config = mcp_manager.load_config()
     if name not in config:

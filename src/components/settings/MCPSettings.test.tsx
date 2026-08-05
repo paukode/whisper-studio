@@ -113,12 +113,15 @@ describe('MCPSettings — enabled switch', () => {
   });
 });
 
-describe('Settings switch and composer tick stay in sync', () => {
-  let fetchSpy: ReturnType<typeof vi.fn>;
-
+// Enabling/disabling MCP servers now lives ONLY in Settings → MCP. The composer
+// MoreMenu used to carry a per-server tick that shared this write path; that UI
+// was removed, so the menu must no longer render any MCP section or toggle even
+// when a server is configured. (The model still gets enabled servers' tools via
+// the backend; @-mention insertion is unaffected — it lives in ChatInput.)
+describe('composer MoreMenu has no MCP toggle (moved to Settings → MCP)', () => {
   const moreMenuProps = {
     open: true,
-    section: 'mcp' as const,
+    section: null,
     setSection: vi.fn(),
     onToggle: vi.fn(),
     onClose: vi.fn(),
@@ -132,8 +135,6 @@ describe('Settings switch and composer tick stay in sync', () => {
   beforeEach(() => {
     getMock.mockReset();
     getMock.mockResolvedValue(SERVERS_RESPONSE);
-    fetchSpy = vi.fn();
-    vi.stubGlobal('fetch', fetchSpy);
     useUIStore.setState({ addToast: vi.fn().mockReturnValue('t') as never });
     useSettingsStore.setState({
       mcpServers: [{ name: 'echo', status: 'connected', enabled: true }] as never,
@@ -142,56 +143,13 @@ describe('Settings switch and composer tick stay in sync', () => {
     });
   });
 
-  afterEach(() => vi.unstubAllGlobals());
-
-  it('unticking in the composer turns the Settings switch off (one shared state, one endpoint)', async () => {
-    fetchSpy.mockResolvedValue({
-      ok: true,
-      json: async () => ({ name: 'echo', enabled: false, status: 'stopped', tools: [], error: null }),
-    });
-    const { container } = renderWithClient(
-      <>
-        <MCPSettings />
-        <MoreMenu {...moreMenuProps} />
-      </>,
-    );
-    await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /disable mcp server echo/i })).toBeChecked(),
-    );
-
-    // The composer row's tick (checkbox inside the MoreMenu's MCP section).
-    const composerTick = container.querySelector<HTMLInputElement>('#more-sec-mcp input[type="checkbox"]');
-    expect(composerTick).not.toBeNull();
-    fireEvent.click(composerTick!);
-
-    await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /enable mcp server echo/i })).not.toBeChecked(),
-    );
-    expect(fetchSpy).toHaveBeenCalledWith(
-      '/api/mcp/servers/echo',
-      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ enabled: false }) }),
-    );
-  });
-
-  it('flipping the Settings switch unticks the composer row', async () => {
-    fetchSpy.mockResolvedValue({
-      ok: true,
-      json: async () => ({ name: 'echo', enabled: false, status: 'stopped', tools: [], error: null }),
-    });
-    const { container } = renderWithClient(
-      <>
-        <MCPSettings />
-        <MoreMenu {...moreMenuProps} />
-      </>,
-    );
-    await waitFor(() =>
-      expect(screen.getByRole('switch', { name: /disable mcp server echo/i })).toBeChecked(),
-    );
-    const composerTick = container.querySelector<HTMLInputElement>('#more-sec-mcp input[type="checkbox"]');
-    expect(composerTick).toBeChecked();
-
-    fireEvent.click(screen.getByRole('switch', { name: /disable mcp server echo/i }));
-
-    await waitFor(() => expect(composerTick).not.toBeChecked());
+  it('renders no MCP section, tick, or "MCP servers" row even with a server configured', () => {
+    const { container } = renderWithClient(<MoreMenu {...moreMenuProps} />);
+    // The old MCP section and its per-server checkbox tick are gone.
+    expect(container.querySelector('#more-sec-mcp')).toBeNull();
+    expect(container.querySelector('#more-sec-mcp input[type="checkbox"]')).toBeNull();
+    expect(screen.queryByText('MCP servers')).toBeNull();
+    // The menu itself is intact (the Skills control still renders).
+    expect(screen.getByText('Skills')).toBeInTheDocument();
   });
 });

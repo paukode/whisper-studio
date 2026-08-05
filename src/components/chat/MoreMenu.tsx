@@ -1,12 +1,11 @@
-import React, { useCallback, useMemo } from 'react';
+import React, { useCallback } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useSessionStore } from '@/stores/sessionStore';
-import { useMcpToggle } from '@/hooks/useMcpToggle';
 import { post } from '@/api/client';
 import type { IndexInfo } from '@/api/workspace';
 
-export type MoreSection = 'skills' | 'index' | 'mcp' | null;
+export type MoreSection = 'skills' | 'index' | null;
 
 interface MoreMenuProps {
   open: boolean;
@@ -34,8 +33,9 @@ function prettySkillName(name: string): string {
 
 /**
  * "+ More" overflow popover holding the less-frequent toolbar controls (brief,
- * auto memory, skills, index search, MCP servers, project memory) so the chat
- * toolbar keeps to its four primary controls. The dot lights up when a hidden
+ * auto memory, skills, index search, project memory) so the chat toolbar keeps
+ * to its four primary controls. MCP servers are enabled/disabled in Settings →
+ * MCP, not here. The dot lights up when a hidden
  * toggle is active — including a narrowed index selection — so nothing important
  * is silently buried. Extracted from ChatInput to keep that file under budget;
  * it self-subscribes to the same stores rather than threading ~10 props.
@@ -47,20 +47,11 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
   const autoMemory = useSettingsStore((s) => s.autoMemory);
   const setAutoMemory = useSettingsStore((s) => s.setAutoMemory);
   const skills = useSettingsStore((s) => s.skills);
-  const mcpServers = useSettingsStore((s) => s.mcpServers);
   const openSettings = useUIStore((s) => s.openSettings);
   const openMemoryEditor = useUIStore((s) => s.openMemoryEditor);
   const openMemoryViewer = useUIStore((s) => s.openMemoryViewer);
   const addToast = useUIStore((s) => s.addToast);
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
-  const toggleMcpServer = useMcpToggle();
-
-  // Active = servers whose persisted `enabled` flag is on (shared with Settings).
-  const mcpActiveSet = useMemo<Set<string>>(
-    () => new Set(mcpServers.filter((s) => s.enabled).map((s) => s.name)),
-    [mcpServers],
-  );
-  const mcpActiveCount = mcpActiveSet.size;
 
   const resetStuckSession = useCallback(async () => {
     onClose();
@@ -89,7 +80,7 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
           <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
         </svg>
         More
-        {(autoMemory || mcpActiveCount > 0
+        {(autoMemory
           || (indexes.length > 0 && selectedIndexes.length < indexes.length)) && (
           <span className="more-dot" aria-hidden="true" />
         )}
@@ -233,76 +224,9 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
           </>
         )}
 
-        {/* MCP section */}
-        <button
-          type="button"
-          className={`more-row${mcpActiveCount > 0 ? ' on' : ''}${section === 'mcp' ? ' expanded' : ''}`}
-          onClick={() => setSection((s) => (s === 'mcp' ? null : 'mcp'))}
-          aria-expanded={section === 'mcp'}
-          aria-controls="more-sec-mcp"
-          title={`MCP servers enabled (${mcpActiveCount}/${mcpServers.length})`}
-        >
-          <span className="more-row-label">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <circle cx="12" cy="12" r="3" /><path d="M12 1v4M12 19v4M4.2 4.2l2.8 2.8M17 17l2.8 2.8M1 12h4M19 12h4M4.2 19.8l2.8-2.8M17 7l2.8-2.8" />
-            </svg>
-            MCP servers
-          </span>
-          <span className="more-row-state">{mcpActiveCount}/{mcpServers.length}</span>
-          <svg className="more-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-        </button>
-        {section === 'mcp' && (
-          <div className="more-section" id="more-sec-mcp" role="group" aria-label="MCP servers">
-            <div
-              className="toolbar-dropdown-item toolbar-dropdown-manage"
-              onClick={() => { onClose(); openSettings('mcp'); }}
-            >
-              <span className="toolbar-dropdown-item-name">Manage MCP Servers...</span>
-            </div>
-            {mcpServers.length === 0 ? (
-              <div className="toolbar-dropdown-empty">No MCP servers configured</div>
-            ) : (
-              [...mcpServers]
-                .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
-                .map((s) => {
-                  const active = mcpActiveSet.has(s.name);
-                  return (
-                    <div
-                      key={s.name}
-                      className="toolbar-dropdown-item"
-                      onClick={(e) => {
-                        // Stop the row's click from also closing the menu;
-                        // we want the user to flip multiple servers in one open.
-                        e.stopPropagation();
-                        void toggleMcpServer(s.name, !active);
-                      }}
-                      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
-                        <input
-                          type="checkbox"
-                          checked={active}
-                          onChange={() => void toggleMcpServer(s.name, !active)}
-                          onClick={(e) => e.stopPropagation()}
-                          style={{ flexShrink: 0 }}
-                        />
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0 }}>
-                          <span className="toolbar-dropdown-item-name">{s.name}</span>
-                          <span className="toolbar-dropdown-item-desc">{s.status}</span>
-                        </div>
-                      </div>
-                      <span style={{
-                        width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0, marginLeft: '8px',
-                        background: s.status === 'running' || s.status === 'connected' ? 'var(--success)' : s.status === 'error' ? 'var(--danger)' : 'var(--text-muted)',
-                      }} />
-                    </div>
-                  );
-                })
-            )}
-          </div>
-        )}
+        {/* MCP servers are enabled/disabled in Settings → MCP (with per-server
+         *  status + start/stop). The composer no longer carries a toggle; the
+         *  model still gets every enabled server's tools via the backend. */}
 
         {/* Project memory (WHISPER.md) — workspace-scoped editor. Distinct from
          *  the auto-memory toggle above (which covers the global + project
