@@ -16,7 +16,7 @@ import json
 import logging
 import os
 
-from fastapi import Request
+from fastapi import File, Form, Request, UploadFile
 from fastapi.responses import Response
 
 import server.skills as _sk
@@ -258,6 +258,71 @@ async def import_skills_endpoint(request: Request):
         return _json_error(str(e), 400)
     except Exception as e:
         log.warning("skill import failed: %s", e)
+        return _json_error(f"import failed: {e}", 500)
+    _sk.SKILLS = _sk.load_skills()
+    _sk.rebuild_tools()
+    return result
+
+
+async def _read_upload_tree(files: list[UploadFile]) -> list[tuple[str, bytes]]:
+    """Read uploaded files into ``(relpath, bytes)`` pairs. The frontend sends
+    each file's ``webkitRelativePath`` as the multipart filename, so the tree
+    structure survives the upload. Enforce the file-count cap here too so a
+    huge selection is rejected before we buffer it all."""
+    from server import skills_import
+
+    pairs: list[tuple[str, bytes]] = []
+    for f in files or []:
+        if len(pairs) > skills_import._MAX_UPLOAD_FILES:
+            raise skills_import.SkillImportError(
+                f"too many files (> {skills_import._MAX_UPLOAD_FILES})"
+            )
+        data = await f.read()
+        pairs.append((f.filename or "", data))
+    return pairs
+
+
+@router.post("/import/local/preview")
+async def import_local_preview(files: list[UploadFile] = File(...)):
+    """List the skills an uploaded local folder offers (no git). Mirrors
+    /import/preview so the dialog reuses the same select→import UX."""
+    from server import skills_import
+
+    try:
+        tree = await _read_upload_tree(files)
+        return skills_import.preview_local(tree)
+    except skills_import.SkillImportError as e:
+        return _json_error(str(e), 400)
+    except Exception as e:
+        log.warning("local skill import preview failed: %s", e)
+        return _json_error(f"preview failed: {e}", 500)
+
+
+@router.post("/import/local")
+async def import_local_endpoint(
+    files: list[UploadFile] = File(...),
+    subpaths: str = Form("[]"),
+    overwrite: str = Form("false"),
+):
+    """Copy selected skill folders from an uploaded local tree into /skills/ and
+    hot-reload — no app restart. ``subpaths`` is a JSON array of the folders the
+    user selected in the preview; ``overwrite`` is "true"/"false"."""
+    from server import skills_import
+
+    try:
+        selected = json.loads(subpaths) if subpaths else []
+        if not isinstance(selected, list):
+            raise ValueError("subpaths must be a JSON array")
+    except (ValueError, TypeError):
+        return _json_error("invalid subpaths (expected a JSON array)", 400)
+    overwrite_flag = str(overwrite).strip().lower() in ("1", "true", "yes", "on")
+    try:
+        tree = await _read_upload_tree(files)
+        result = skills_import.import_local(tree, selected, overwrite_flag)
+    except skills_import.SkillImportError as e:
+        return _json_error(str(e), 400)
+    except Exception as e:
+        log.warning("local skill import failed: %s", e)
         return _json_error(f"import failed: {e}", 500)
     _sk.SKILLS = _sk.load_skills()
     _sk.rebuild_tools()

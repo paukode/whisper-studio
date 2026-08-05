@@ -213,6 +213,15 @@ def assemble_full_catalog(
     builtin_tools += NOTEBOOK_TOOLS
     builtin_tools += AGENT_TOOLS
 
+    # User plugins: tools contributed by ENABLED plugins whose executors are
+    # live in the EXECUTORS registry. Gated on the persisted enabled set inside
+    # plugin_tools(), so toggling a plugin off hides its tools on the next turn
+    # without a restart. Appended after the built-ins so core schemas win the
+    # Tier-3 dedup on any name clash.
+    from server.plugins import plugin_tools
+
+    builtin_tools += plugin_tools()
+
     # Workflow runtime + CI tools surface ONLY in ultracode mode (the real
     # ultracode): CI autofix hands its fix off to the workflow runtime.
     if ultracode:

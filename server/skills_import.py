@@ -33,6 +33,12 @@ _GIT_OP_TIMEOUT_S = 120
 _MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MB per file
 _MAX_SKILL_BYTES = 25 * 1024 * 1024  # 25 MB per skill folder
 
+# Local-folder upload limits (the "From local folder" import path). A folder
+# picker can hand us a large tree, so cap both the file count and the aggregate
+# size before we materialize anything on disk.
+_MAX_UPLOAD_FILES = 3000
+_MAX_UPLOAD_TOTAL_BYTES = 50 * 1024 * 1024  # 50 MB per upload
+
 _ALLOWED_SUBDIRS = {"scripts", "references", "assets"}
 
 # Names a folder skill must not claim — they collide with built-in tools.
@@ -168,6 +174,34 @@ def _fetch_descriptions(tmp: str, skill_dirs: list[str]) -> dict[str, str]:
     return out
 
 
+def _build_skill_list(
+    dirs: dict[str, list[str]], descriptions: dict[str, str], default_name: str
+) -> list[dict]:
+    """Turn a {skill_dir: member_paths} map plus a descriptions map into the
+    preview payload shared by the git and local-folder import flows. ``default_name``
+    names the ``""`` (repo/selection root) skill when one exists."""
+    skills = []
+    for d in sorted(dirs):
+        members = dirs[d]
+        scripts_prefix = (d + "/scripts/") if d else "scripts/"
+        script_files = sorted(
+            m.rsplit("/", 1)[-1]
+            for m in members
+            if m.startswith(scripts_prefix) and m.endswith(".py")
+        )
+        skills.append(
+            {
+                "subpath": d,
+                "name": (d.rsplit("/", 1)[-1] if d else default_name),
+                "description": descriptions.get(d, ""),
+                "hasScripts": bool(script_files),
+                "scriptFiles": script_files,
+                "fileCount": len(members),
+            }
+        )
+    return skills
+
+
 def preview(url: str) -> dict:
     """List candidate skills in a repo, with descriptions, without downloading
     scripts or assets."""
@@ -181,26 +215,7 @@ def preview(url: str) -> dict:
         repo_base = url.rstrip("/").split("/")[-1]
         if repo_base.endswith(".git"):
             repo_base = repo_base[:-4]
-        skills = []
-        for d in sorted(dirs):
-            members = dirs[d]
-            scripts_prefix = (d + "/scripts/") if d else "scripts/"
-            script_files = sorted(
-                m.rsplit("/", 1)[-1]
-                for m in members
-                if m.startswith(scripts_prefix) and m.endswith(".py")
-            )
-            skills.append(
-                {
-                    "subpath": d,
-                    "name": (d.rsplit("/", 1)[-1] if d else repo_base),
-                    "description": descriptions.get(d, ""),
-                    "hasScripts": bool(script_files),
-                    "scriptFiles": script_files,
-                    "fileCount": len(members),
-                }
-            )
-        return {"url": url, "skills": skills}
+        return {"url": url, "skills": _build_skill_list(dirs, descriptions, repo_base)}
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -358,6 +373,145 @@ def import_skills(url: str, subpaths: list[str], overwrite: bool = False) -> dic
     try:
         _sparse_fetch(url, tmp, subpaths)
         for sp in subpaths:
+            results.append(_import_one(tmp, sp, overwrite))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return {
+        "imported": [r for r in results if r["status"] == "imported"],
+        "conflicts": [r for r in results if r["status"] == "conflict"],
+        "errors": [r for r in results if r["status"] == "error"],
+    }
+
+
+# --- Local-folder import (uploaded tree; no git) ---------------------------
+#
+# The "From local folder" UI hands us the picked directory as a flat list of
+# ``(relative_path, bytes)`` pairs (each ``webkitRelativePath`` + its content).
+# We rebuild that tree in a tempdir with the same traversal-safe write
+# discipline the git path uses, then reuse the identical detection/validation/
+# copy helpers (``_skill_dirs_from_tree`` / ``_import_one`` / ``_copy_skill_folder``
+# / ``_safe_dest_name`` / ``_is_reserved``). Nothing here trusts the client's
+# paths: ``_safe_rel`` rejects absolute paths and ``..`` escapes before a byte
+# is written, and every write goes through an O_EXCL|O_NOFOLLOW open under the
+# tempdir root.
+
+
+def _safe_rel(relpath: str) -> str | None:
+    """Normalize a client-supplied relative path to a POSIX path that stays
+    under the tempdir root, or None if it is absolute, empty, or contains a
+    ``..`` / drive-letter component."""
+    rel = (relpath or "").strip().replace("\\", "/")
+    if not rel or rel.startswith("/"):
+        return None
+    parts: list[str] = []
+    for i, seg in enumerate(rel.split("/")):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            return None
+        # Reject a Windows drive-letter first segment (``C:``).
+        if i == 0 and len(seg) == 2 and seg[1] == ":":
+            return None
+        parts.append(seg)
+    if not parts:
+        return None
+    return "/".join(parts)
+
+
+def _reconstruct_tree(files: list[tuple[str, bytes]], tmp: str) -> list[str]:
+    """Materialize ``files`` under ``tmp`` with traversal-safe writes. Returns
+    the list of written POSIX relpaths. Raises SkillImportError on any unsafe
+    path, an oversized file, or an oversized/too-large aggregate upload."""
+    files = files or []
+    if len(files) > _MAX_UPLOAD_FILES:
+        raise SkillImportError(f"too many files (> {_MAX_UPLOAD_FILES})")
+    root = os.path.realpath(tmp)
+    total = 0
+    written: list[str] = []
+    for relpath, data in files:
+        safe = _safe_rel(relpath)
+        if not safe:
+            raise SkillImportError(f"unsafe path in upload: {relpath!r}")
+        if len(data) > _MAX_FILE_BYTES:
+            raise SkillImportError(f"file exceeds {_MAX_FILE_BYTES} bytes: {safe}")
+        total += len(data)
+        if total > _MAX_UPLOAD_TOTAL_BYTES:
+            raise SkillImportError(f"upload exceeds {_MAX_UPLOAD_TOTAL_BYTES} bytes")
+        dest = os.path.join(root, *safe.split("/"))
+        parent = os.path.dirname(dest)
+        os.makedirs(parent, mode=0o700, exist_ok=True)
+        real_parent = os.path.realpath(parent)
+        if not (real_parent == root or real_parent.startswith(root + os.sep)):
+            raise SkillImportError(f"path escaped tempdir: {safe}")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(dest, flags, 0o600)
+        except FileExistsError:
+            # Duplicate relpath in the upload — keep the first, ignore repeats.
+            continue
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
+        written.append(safe)
+    return written
+
+
+def _local_descriptions(tmp: str, skill_dirs: list[str]) -> dict[str, str]:
+    """Parse the ``description`` frontmatter from each reconstructed SKILL.md.
+    Best-effort: a skill with an unreadable/unparseable SKILL.md just gets an
+    empty description (same contract as the git preview)."""
+    out: dict[str, str] = {}
+    for d in skill_dirs:
+        for base in folder_skills.SKILL_MD_NAMES:
+            p = os.path.join(tmp, d, base) if d else os.path.join(tmp, base)
+            if os.path.isfile(p):
+                try:
+                    with open(p, errors="replace") as f:
+                        fm, _ = folder_skills.parse_frontmatter(f.read())
+                    out[d] = str(fm.get("description", "") or "").strip()[:_MAX_DESC_CHARS]
+                except Exception:  # noqa: BLE001
+                    pass
+                break
+    return out
+
+
+def preview_local(files: list[tuple[str, bytes]]) -> dict:
+    """List candidate skills in an uploaded local folder tree, mirroring
+    ``preview()``'s payload shape so the UI can reuse the same select→import UX."""
+    tmp = tempfile.mkdtemp(prefix="whisper_skillprevlocal_")
+    try:
+        paths = _reconstruct_tree(files, tmp)
+        dirs = _skill_dirs_from_tree(paths)
+        descriptions = _local_descriptions(tmp, sorted(dirs))
+        return {"skills": _build_skill_list(dirs, descriptions, "skill")}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def import_local(
+    files: list[tuple[str, bytes]], subpaths: list[str], overwrite: bool = False
+) -> dict:
+    """Rebuild the uploaded tree and copy the selected skill folders into
+    SKILLS_DIR. Returns {imported, conflicts, errors}. The caller reloads the
+    skill registry afterwards (identical to the git path)."""
+    subpaths = [s.strip().strip("/") for s in (subpaths or []) if s is not None]
+    if not subpaths:
+        raise SkillImportError("no skills selected")
+    os.makedirs(SKILLS_DIR, exist_ok=True)
+    tmp = tempfile.mkdtemp(prefix="whisper_skillimportlocal_")
+    results: list[dict] = []
+    try:
+        available = set(_reconstruct_tree(files, tmp))
+        dirs = set(_skill_dirs_from_tree(sorted(available)))
+        for sp in subpaths:
+            # Only import subpaths the upload actually offered — never let a
+            # client name a folder that was not part of the tree it uploaded.
+            if sp not in dirs:
+                results.append(
+                    {"subpath": sp, "status": "error", "reason": "not in uploaded folder"}
+                )
+                continue
             results.append(_import_one(tmp, sp, overwrite))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
