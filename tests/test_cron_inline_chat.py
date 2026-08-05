@@ -248,9 +248,7 @@ def test_emit_cron_event_writes_nested_payload(temp_sessions_db, monkeypatch):
     cron_rows: list = []
     while time.time() < deadline:
         with S._get_conn() as conn:
-            row = conn.execute(
-                "SELECT chat_history FROM sessions WHERE id = ?", (sid,)
-            ).fetchone()
+            row = conn.execute("SELECT chat_history FROM sessions WHERE id = ?", (sid,)).fetchone()
         history = json.loads(row["chat_history"]) if row else []
         cron_rows = [m for m in history if m.get("role") == "cron_event"]
         if cron_rows:
