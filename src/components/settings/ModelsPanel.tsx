@@ -13,6 +13,7 @@ import { humanSize } from '@/utils/humanSize';
 import { ChatModelVisibility } from './ChatModelVisibility';
 import { ConfigJsonLink } from './ConfigEditorDialog';
 import { ConfirmDialog } from './ConfirmDialog';
+import { ModelBrowser } from './ModelBrowser';
 
 const GROUPS: { id: ManagedModelGroup; label: string; hint: string }[] = [
   {
@@ -263,7 +264,7 @@ export const ModelsPanel: React.FC = () => {
               {group.id === 'local-chat' && (
                 <>
                   {' '}
-                  Add models by editing <ConfigJsonLink />.
+                  Add models with Discover below, or by editing <ConfigJsonLink />.
                 </>
               )}
             </p>
@@ -361,6 +362,8 @@ export const ModelsPanel: React.FC = () => {
           </div>
         );
       })}
+
+      <ModelBrowser />
 
       <ChatModelVisibility />
 
