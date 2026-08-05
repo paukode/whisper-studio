@@ -29,6 +29,10 @@ export interface ChatMessageProps {
    *  row should be suppressed (state unchanged since the previous task turn).
    *  Computed once at the conversation level by `computeTaskCheckpoints`. */
   taskCheckpoint?: SessionTask[] | null;
+  /** True when this message's Tasks row is the current/live one (the most-recent
+   *  checkpoint, bound to the task store). All other checkpoints are historical
+   *  snapshots that must not show a live "in progress" spinner. */
+  taskCheckpointLive?: boolean;
   /** When true, suppress the msgIn entrance animation on this message's bubble.
    *  ChatPanel sets it for the message that was just streaming so the committed
    *  bubble doesn't replay the entrance the StreamingMessage already showed. */
@@ -43,7 +47,7 @@ export interface ChatMessageProps {
  *     div.chat-msg.user | div.chat-msg.assistant
  *       (content)
  */
-export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCheckpoint, noEnter }) => {
+export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCheckpoint, taskCheckpointLive, noEnter }) => {
   const isCronEvent = message.role === 'cron_event';
   const isUser = message.role === 'user';
   const [isEditing, setIsEditing] = useState(false);
@@ -266,7 +270,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
               // doesn't repeat on every turn. The full list is in the drawer.
               if (isTasksEntry(entry)) {
                 return taskCheckpoint && taskCheckpoint.length > 0
-                  ? <TaskCard key={`tasks-${idx}`} tasks={taskCheckpoint} />
+                  ? <TaskCard key={`tasks-${idx}`} tasks={taskCheckpoint} historical={!taskCheckpointLive} />
                   : null;
               }
               // Activity bundle — 2+ consecutive non-special tools.
