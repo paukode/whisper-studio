@@ -345,6 +345,18 @@ def _execute_cron_prompt(job_id: str):
             except Exception as exc:
                 log.debug("cron: cost record failed: %s", exc)
 
+            if stop_reason == "pause_turn":
+                # Anthropic paused a long-running scheduled turn. The assistant
+                # content is already appended above; resubmit (loop again) so
+                # the run continues instead of reporting partial work as done.
+                # Bounded by max_rounds like any other round.
+                log.info(
+                    "cron run %s: stop_reason=pause_turn (round %d) — resubmitting to continue",
+                    run_id,
+                    round_num,
+                )
+                continue
+
             if stop_reason != "tool_use":
                 text_parts = [b["text"] for b in content if b.get("type") == "text"]
                 final_text = "\n".join(text_parts).strip()

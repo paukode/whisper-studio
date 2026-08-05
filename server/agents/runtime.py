@@ -574,6 +574,21 @@ async def _run_agent_loop(
                 _emit("text", turn=turn + 1, text=_preview(turn_result.text, 2000))
         collected_text = "\n\n".join(all_text_parts)
 
+        if stop_reason == "pause_turn" and result_content:
+            # Anthropic paused a long-running turn (adaptive thinking / long
+            # tool streams run past the stream window). The agent turn is NOT
+            # done: resubmit the accumulated assistant content so the model
+            # continues from where it paused, instead of finishing the agent
+            # early with partial work. Bounded by max_turns and the wall-clock
+            # deadline, same as any other turn.
+            log.info(
+                "agent %s: stop_reason=pause_turn (turn %d) — resubmitting to continue",
+                agent_id,
+                turn + 1,
+            )
+            messages.append({"role": "assistant", "content": result_content})
+            continue
+
         if stop_reason != "tool_use" or not tool_uses:
             structured = None
             if structured_schema is not None:
