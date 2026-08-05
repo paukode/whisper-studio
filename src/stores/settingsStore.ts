@@ -118,9 +118,9 @@ interface SkillEntry {
 interface MCPEntry {
   name: string;
   status: string;
-  /** Persisted opt-in flag — see server/mcp.py::get_bedrock_tools.
-   *  False (default) means the server's tools are not advertised to
-   *  Bedrock unless overridden per-request. */
+  /** Persisted enable flag — see server/mcp.py. Defaults to true when a
+   *  server is added; the Settings switch and the composer tick stop/start
+   *  the server live (no restart) and hide/show its tools on the next turn. */
   enabled: boolean;
   tools?: Array<{ name: string; description?: string }>;
 }
@@ -303,7 +303,19 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
       const models = data.models ?? [];
       const def = data.default ?? 'opus4.8';
       set((state) => {
-        const chosen = pickActiveModel(models, def, readSelectedModel());
+        // Called again after any catalog change (config-editor save, the
+        // Settings visibility toggles) so the composer picker updates live. On
+        // such a REFRESH (a list is already loaded) a still-offered selection
+        // stays put — even one the user never explicitly picked, which
+        // localStorage doesn't know about; only a selection that vanished
+        // (removed/disabled/mode-hidden) falls back, exactly like initial
+        // selection does. The first load keeps the historical pick order:
+        // persisted choice, then an on-device model, then the backend default.
+        const isRefresh = state.models.length > 0;
+        const chosen =
+          isRefresh && models.some((m) => m.key === state.selectedModel)
+            ? state.selectedModel
+            : pickActiveModel(models, def, readSelectedModel());
         const allowed = models.find((m) => m.key === chosen)?.effort_levels ?? [];
         return {
           models,

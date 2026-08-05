@@ -10,6 +10,7 @@ import {
 import type { ManagedModel, ManagedModelGroup } from '@/api/models';
 import { useUIStore } from '@/stores/uiStore';
 import { humanSize } from '@/utils/humanSize';
+import { ChatModelVisibility } from './ChatModelVisibility';
 import { ConfigJsonLink } from './ConfigEditorDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -165,6 +166,7 @@ export const ModelsPanel: React.FC = () => {
   const refresh = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: ['models-manager-catalog'] });
     await queryClient.invalidateQueries({ queryKey: ['models-manager-status'] });
+    await queryClient.invalidateQueries({ queryKey: ['models-disabled'] });
   }, [queryClient]);
 
   const run = useCallback(
@@ -359,6 +361,8 @@ export const ModelsPanel: React.FC = () => {
           </div>
         );
       })}
+
+      <ChatModelVisibility />
 
       {confirmDelete && (
         <ConfirmDialog

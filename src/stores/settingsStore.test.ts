@@ -33,6 +33,88 @@ describe('pickActiveModel', () => {
   });
 });
 
+describe('loadModels catalog refresh (live picker updates)', () => {
+  const respond = (models: ModelEntry[], def = 'opus4.8') =>
+    getMock.mockResolvedValue({ models, default: def });
+
+  beforeEach(() => {
+    getMock.mockReset();
+    localStorage.clear();
+    useSettingsStore.setState({ models: [], selectedModel: 'opus4.8' });
+  });
+
+  it('keeps a still-valid selection when the catalog is re-fetched', async () => {
+    respond(MODELS);
+    await useSettingsStore.getState().loadModels();
+    useSettingsStore.getState().setSelectedModel('sonnet'); // persists the choice
+
+    // Config change adds a model; the selection must not move.
+    respond([...MODELS, local('local_llama')]);
+    await useSettingsStore.getState().loadModels();
+
+    const s = useSettingsStore.getState();
+    expect(s.selectedModel).toBe('sonnet');
+    expect(s.models.map((m) => m.key)).toContain('local_llama');
+  });
+
+  it('falls back like initial selection when the selected model disappears', async () => {
+    respond(MODELS);
+    await useSettingsStore.getState().loadModels();
+    useSettingsStore.getState().setSelectedModel('sonnet');
+
+    // sonnet was disabled/removed from the catalog: fall back local-first.
+    respond([cloud('opus4.8'), local('local_gemma')]);
+    await useSettingsStore.getState().loadModels();
+    expect(useSettingsStore.getState().selectedModel).toBe('local_gemma');
+  });
+
+  it('falls back to the backend default on a cloud-only catalog', async () => {
+    respond(MODELS);
+    await useSettingsStore.getState().loadModels();
+    useSettingsStore.getState().setSelectedModel('local_gemma');
+
+    respond([cloud('opus4.8'), cloud('haiku')]);
+    await useSettingsStore.getState().loadModels();
+    expect(useSettingsStore.getState().selectedModel).toBe('opus4.8');
+  });
+
+  it('keeps an unpersisted default selection stable across a refresh', async () => {
+    // The user never clicked a model: nothing in localStorage, selection is
+    // whatever the initial load picked. A catalog refresh (config save adding
+    // a local model) must NOT yank the selection to the local-first default.
+    respond([cloud('opus4.8'), cloud('sonnet')]);
+    await useSettingsStore.getState().loadModels();
+    expect(useSettingsStore.getState().selectedModel).toBe('opus4.8');
+
+    respond([cloud('opus4.8'), cloud('sonnet'), local('local_gemma')]);
+    await useSettingsStore.getState().loadModels();
+    expect(useSettingsStore.getState().selectedModel).toBe('opus4.8');
+  });
+
+  it('after a fallback, a refresh keeps the fallback; a fresh initial load restores the persisted choice', async () => {
+    respond(MODELS);
+    await useSettingsStore.getState().loadModels();
+    useSettingsStore.getState().setSelectedModel('sonnet');
+
+    // Disabled: selection falls back …
+    respond([cloud('opus4.8'), local('local_gemma')]);
+    await useSettingsStore.getState().loadModels();
+    expect(useSettingsStore.getState().selectedModel).toBe('local_gemma');
+
+    // … re-enabled: the LIVE selection stays stable (no surprise jump) …
+    respond(MODELS);
+    await useSettingsStore.getState().loadModels();
+    expect(useSettingsStore.getState().selectedModel).toBe('local_gemma');
+
+    // … while a page reload (initial load: empty list) restores the user's
+    // persisted choice, which the fallback never overwrote.
+    useSettingsStore.setState({ models: [], selectedModel: 'opus4.8' });
+    respond(MODELS);
+    await useSettingsStore.getState().loadModels();
+    expect(useSettingsStore.getState().selectedModel).toBe('sonnet');
+  });
+});
+
 describe('setAutoMemory persistence', () => {
   beforeEach(() => {
     putMock.mockReset();

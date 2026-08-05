@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
 vi.mock('@/api/client', () => api);
 
 import { ConfigEditorDialog, ConfigJsonLink } from './ConfigEditorDialog';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 
 const RAW = {
@@ -193,7 +194,45 @@ describe('ConfigEditorDialog', () => {
       (c) => (c[0] as { queryKey: string[] }).queryKey[0],
     );
     expect(invalidated).toEqual(
-      expect.arrayContaining(['models-manager-catalog', 'models-manager-status', 'index-engines']),
+      expect.arrayContaining([
+        'models-manager-catalog',
+        'models-manager-status',
+        'index-engines',
+        'models-disabled',
+      ]),
+    );
+  });
+
+  it('refreshes the composer picker store on save, so a new model appears live', async () => {
+    // The save added a local model; /api/models now returns it.
+    api.get.mockImplementation((url: string) =>
+      Promise.resolve(
+        url === '/api/models'
+          ? {
+              models: [
+                { key: 'opus4.8', name: 'Opus 4.8' },
+                { key: 'tiny_local', name: 'Tiny Test (Local)', is_local: true },
+              ],
+              default: 'opus4.8',
+            }
+          : RAW,
+      ),
+    );
+    localStorage.clear();
+    useSettingsStore.setState({ models: [{ key: 'opus4.8', name: 'Opus 4.8' }] });
+    renderDialog();
+    const box = await screen.findByRole('textbox', { name: 'Your config contents' });
+
+    fireEvent.change(box, {
+      target: { value: '{\n  "chat_models": {\n    "tiny_local": { "id": "local:tiny" }\n  }\n}\n' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    // The store re-fetched /api/models and now offers the new model — the
+    // composer picker updates with no app restart.
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/models', expect.anything()));
+    await waitFor(() =>
+      expect(useSettingsStore.getState().models.map((m) => m.key)).toContain('tiny_local'),
     );
   });
 });

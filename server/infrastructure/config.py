@@ -663,6 +663,23 @@ def migrate_user_config() -> bool:
     return True
 
 
+def unfiltered_chat_models() -> tuple[dict, dict]:
+    """The normalized ``(ids, meta)`` of the DEFAULTS→SYSTEM→USER chat catalog
+    WITHOUT the ``chat_models_disabled`` hide-list applied.
+
+    Weight-management surfaces read this instead of load_config(): the local
+    registry (and through it the Settings > Models download manager) must keep
+    serving a disabled model so its weights stay manageable — disabling only
+    hides a model from the composer picker, it never strands gigabytes on disk.
+    The picker path (/api/models via load_config) keeps the filtered view."""
+    system_cm = _system_config().get("chat_models")
+    if not isinstance(system_cm, dict) or not system_cm:
+        system_cm = DEFAULTS.get("chat_models") or {}
+    user_cm = _load_user_config().get("chat_models")
+    merged = _deep_merge(system_cm, user_cm) if isinstance(user_cm, dict) else dict(system_cm)
+    return _normalize_chat_models(merged)
+
+
 def _merged_rich_chat_models(workspace_path: str | None = None) -> dict:
     """The effective chat_models catalog in its RICH on-disk shape (not the
     flattened {key: id} form load_config returns). Mirrors load_config's catalog

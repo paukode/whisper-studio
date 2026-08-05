@@ -207,6 +207,72 @@ async def get_raw_config():
     return {"user_text": user_text, "path": path, "effective_text": _effective_text()}
 
 
+def _models_disabled_payload() -> dict:
+    """The per-model visibility list for Settings: EVERY chat model in the
+    merged SYSTEM+USER catalog — including currently disabled ones, or the UI
+    could never re-enable them — each flagged with its hide state. Config order
+    is preserved (the same order the composer picker shows)."""
+    disabled_raw = config_mod._load_user_config().get("chat_models_disabled")
+    disabled = (
+        [k for k in disabled_raw if isinstance(k, str)] if isinstance(disabled_raw, list) else []
+    )
+    hidden = set(disabled)
+    _, meta = config_mod.unfiltered_chat_models()
+    models = [
+        {
+            "key": key,
+            "label": m.get("label") or key.capitalize(),
+            "is_local": bool(m.get("is_local", False)),
+            "disabled": key in hidden,
+        }
+        for key, m in meta.items()
+    ]
+    return {"disabled": disabled, "models": models}
+
+
+@router.get("/models-disabled")
+async def get_models_disabled():
+    """The user's hide-list plus the full merged catalog to render toggles for."""
+    return _models_disabled_payload()
+
+
+@router.put("/models-disabled")
+async def put_models_disabled(request: Request):
+    """Replace the USER layer's ``chat_models_disabled`` hide-list.
+
+    The dedicated persistence path behind the Settings toggles — no raw-text
+    round-trip. Validates the body is a list of strings (unknown model keys
+    WARN, they don't fail — same policy as the raw editor), writes through the
+    config module's structured save (atomic write + cache invalidation), and
+    responds with the post-save model list so the UI re-renders from truth.
+    The raw editor writes the same key, so both paths stay consistent.
+    """
+    body = await request.json()
+    disabled = body.get("disabled") if isinstance(body, dict) else None
+    if not isinstance(disabled, list) or not all(isinstance(k, str) for k in disabled):
+        raise HTTPException(
+            status_code=400, detail='Body must be {"disabled": ["model-key", ...]}.'
+        )
+    # Dedupe, preserving order — the file stays clean under repeated toggling.
+    cleaned = list(dict.fromkeys(disabled))
+
+    raw = config_mod._load_user_config()
+    unknown = [k for k in cleaned if k not in _known_model_keys(raw)]
+    if unknown:
+        # Not fatal (same as the raw editor): a typo, or pre-disabling a model
+        # a future app version ships.
+        log.warning("chat_models_disabled names no known model: %s", ", ".join(sorted(unknown)))
+
+    if cleaned:
+        raw["chat_models_disabled"] = cleaned
+    else:
+        # Everything visible again — drop the key so the user layer stays minimal.
+        raw.pop("chat_models_disabled", None)
+    config_mod.save_config(raw)
+    log.info("chat_models_disabled updated via Settings toggles: %s", cleaned or "[]")
+    return {"ok": True, **_models_disabled_payload()}
+
+
 @router.put("/raw")
 async def put_raw_config(request: Request):
     body = await request.json()

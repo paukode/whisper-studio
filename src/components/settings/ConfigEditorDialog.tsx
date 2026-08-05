@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, put } from '@/api/client';
 import { ApiError } from '@/types/api';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 
 /**
@@ -79,6 +80,14 @@ export const ConfigEditorDialog: React.FC<{ onClose: () => void }> = ({ onClose 
       void queryClient.invalidateQueries({ queryKey: ['models-manager-catalog'] });
       void queryClient.invalidateQueries({ queryKey: ['models-manager-status'] });
       void queryClient.invalidateQueries({ queryKey: ['index-engines'] });
+      // The visibility toggles render the same chat_models_disabled key this
+      // editor can change — keep both paths consistent.
+      void queryClient.invalidateQueries({ queryKey: ['models-disabled'] });
+      // The composer's model picker reads /api/models from the settings store,
+      // loaded once at startup — refresh it so an added (or hidden) model
+      // appears/disappears live, with no app restart. loadModels keeps a
+      // still-valid selection and falls back like initial selection otherwise.
+      void useSettingsStore.getState().loadModels();
       addToast({ type: 'success', message: 'Config saved' });
       onClose();
     } catch (e) {

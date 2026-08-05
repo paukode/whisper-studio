@@ -89,11 +89,16 @@ import { useUIStore } from '@/stores/uiStore';
 
 beforeEach(() => {
   vi.clearAllMocks();
-  api.get.mockImplementation((url: string) =>
-    url === '/api/models/catalog'
-      ? Promise.resolve(CATALOG)
-      : Promise.resolve({ models: {} }),
-  );
+  api.get.mockImplementation((url: string) => {
+    if (url === '/api/models/catalog') return Promise.resolve(CATALOG);
+    // The chat-model visibility section fetches its own list shape.
+    if (url === '/api/config/models-disabled')
+      return Promise.resolve({
+        disabled: [],
+        models: [{ key: 'opus4.8', label: 'Opus 4.8', is_local: false, disabled: false }],
+      });
+    return Promise.resolve({ models: {} });
+  });
   api.post.mockResolvedValue({});
   api.del.mockResolvedValue({ deleted: true });
   useUIStore.setState({ toasts: [] });
