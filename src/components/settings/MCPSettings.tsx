@@ -294,17 +294,19 @@ export const MCPSettings: React.FC = () => {
             </div>
             <div className="settings-item-actions">
               <label
-                style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8em', cursor: 'pointer' }}
+                className="toggle-switch"
                 title={server.enabled
-                  ? 'Disable: stop advertising this server’s tools to the model. Connection stays warm.'
-                  : 'Enable: advertise this server’s tools to the model. Adds ~1.5-5k tokens per request.'}
+                  ? 'Disable: stop this server and remove its tools from the model for the next message.'
+                  : 'Enable: start this server; its tools are available to the model on the next message.'}
               >
                 <input
                   type="checkbox"
+                  role="switch"
+                  aria-label={`${server.enabled ? 'Disable' : 'Enable'} MCP server ${server.name}`}
                   checked={server.enabled}
                   onChange={(e) => void handleToggleEnabled(server.name, e.target.checked)}
                 />
-                <span>{server.enabled ? 'On' : 'Off'}</span>
+                <span className="toggle-slider"></span>
               </label>
               <button className="btn btn-sm" onClick={() => handleEdit(server)} type="button">Edit</button>
               <button className="btn btn-sm" onClick={() => handleRenameStart(server.name)} type="button">Rename</button>
