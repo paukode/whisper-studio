@@ -496,6 +496,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         return nil
     }
 
+    /// HTML file/folder inputs (<input type="file">, and webkitdirectory) do
+    /// nothing in a WKWebView unless the app presents the picker itself. Bridge
+    /// them to a native NSOpenPanel so "Choose folder…", the plugin .py upload,
+    /// and any other file input actually open. `allowsDirectories` is set by
+    /// WebKit when the input carries `webkitdirectory`.
+    func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping ([URL]?) -> Void
+    ) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseDirectories = parameters.allowsDirectories
+        // When directories are allowed, only offer directories (folder skills);
+        // otherwise only files (e.g. a plugin .py). Never both, to match intent.
+        panel.canChooseFiles = !parameters.allowsDirectories
+        panel.resolvesAliases = true
+        panel.begin { response in
+            completionHandler(response == .OK ? panel.urls : nil)
+        }
+    }
+
     func webView(
         _ webView: WKWebView,
         runJavaScriptAlertPanelWithMessage message: String,

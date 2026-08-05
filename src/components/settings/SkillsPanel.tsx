@@ -200,7 +200,7 @@ export const SkillsPanel: React.FC = () => {
     <div className="settings-panel skills-panel">
       <div className="settings-toolbar">
         <button className="btn btn-sm" id="newSkillBtn" onClick={handleNewSkill}>+ New Skill</button>
-        <button className="btn btn-sm" id="importSkillsBtn" onClick={() => setImportOpen(true)}>Import from Git</button>
+        <button className="btn btn-sm" id="importSkillsBtn" onClick={() => setImportOpen(true)}>Import skill</button>
       </div>
 
       {importOpen && (
