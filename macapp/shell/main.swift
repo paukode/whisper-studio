@@ -191,6 +191,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         procEnv["WHISPER_FFMPEG_PATH"] = binDir.appendingPathComponent("ffmpeg").path
         procEnv["WHISPER_FFPROBE_PATH"] = binDir.appendingPathComponent("ffprobe").path
         procEnv["WHISPER_NODE_PATH"] = binDir.appendingPathComponent("node").path
+        // Live Preview: Playwright resolves its Chromium builds from this
+        // directory (bundled at Resources/pw-browsers by build_app.sh), so the
+        // feature needs no runtime download. Subprocesses inherit it.
+        if let resources = Bundle.main.resourceURL {
+            procEnv["PLAYWRIGHT_BROWSERS_PATH"] =
+                resources.appendingPathComponent("pw-browsers").path
+        }
         // Lets the backend notice when the shell dies without any signal at
         // all (SIGKILL, crash) and shut itself down instead of lingering.
         procEnv["WHISPER_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)

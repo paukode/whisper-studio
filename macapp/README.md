@@ -16,6 +16,17 @@ Downloads (Python runtime, llama-server, ffmpeg/ffprobe, node) are cached in
 `build-app/downloads/` and stages are skipped when already done; re-runs are
 fast. Versions and checksums are pinned at the top of `build_app.sh`.
 
+The bundle also ships the Playwright browsers for Live Preview (stage b2):
+`playwright install chromium` runs once with the standalone runtime into
+`build-app/pw-browsers/` (versions follow the `playwright` pin in
+`requirements.txt` — a bump re-installs the matching builds automatically and
+prunes stale ones), and the cache is copied to `Resources/pw-browsers/`. This
+covers full Chrome for Testing, the Chrome Headless Shell build (the binary
+a `headless=True` launch actually executes), and Playwright's small ffmpeg,
+so Live Preview works offline with zero runtime downloads. Size impact:
+~540 MB uncompressed in the .app, roughly 250 MB after DMG compression.
+The browsers add ~18 Mach-O files to the signing stage.
+
 The compiled shell lives at `build-app/shell/WhisperStudio`; rebuild it alone
 with `bash macapp/shell/build_shell.sh`.
 
@@ -34,6 +45,7 @@ cwd = `Contents/Resources/backend` and this environment:
 | `WHISPER_FFMPEG_PATH` | `Resources/bin/ffmpeg` |
 | `WHISPER_FFPROBE_PATH` | `Resources/bin/ffprobe` |
 | `WHISPER_NODE_PATH` | `Resources/bin/node` |
+| `PLAYWRIGHT_BROWSERS_PATH` | `Resources/pw-browsers` (bundled Chromium for Live Preview; inherited by preview workers, so no runtime browser download ever happens) |
 | `PATH` | `Resources/bin` prepended to the inherited PATH |
 
 Backend stdout/stderr are appended to `$WHISPER_HOME/logs/backend.log` with a

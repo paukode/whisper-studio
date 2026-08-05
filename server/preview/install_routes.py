@@ -9,6 +9,14 @@ This is a deliberate, explicit Settings-panel action, not routed through the
 chat approval system: the user navigates to Settings and clicks a labeled
 button — there's no LLM in the loop deciding to install anything, the same
 contract every other feature flag in this app already has.
+
+Packaged installs (the macOS .app) never run this install: the bundle ships
+playwright and its Chromium builds in Resources/ (PLAYWRIGHT_BROWSERS_PATH is
+set by the shell), the code tree is signed and read-only, and a pip install or
+browser download into it would fail — or break the bundle seal if it didn't.
+There, "Enable" just flips the feature flag when the bundled browser is
+present, and a missing browser is reported as a broken install to fix by
+reinstalling the app, not by downloading.
 """
 
 from __future__ import annotations
@@ -20,11 +28,19 @@ import threading
 
 from fastapi import APIRouter
 
-from server.preview.capability import is_chromium_installed, is_playwright_importable
+from server.preview.capability import (
+    is_chromium_installed,
+    is_packaged_install,
+    is_playwright_importable,
+)
 
 log = logging.getLogger("whisper-studio")
 
 router = APIRouter(prefix="/api/preview", tags=["preview"])
+
+# Shown when a packaged .app lacks its bundled browser (corrupted/tampered
+# install) — downloading into the signed bundle is not an option.
+_BUNDLE_MISSING_MSG = "Preview browser missing from the app bundle — reinstall the app."
 
 # Single global install job — there's only ever one Playwright/Chromium
 # install for the whole app.
@@ -96,13 +112,22 @@ async def preview_status():
 
     with _lock:
         install = dict(_INSTALL)
+    importable = is_playwright_importable()
+    chromium = is_chromium_installed()
+    packaged = is_packaged_install()
+    error = install["error"]
+    if error is None and packaged and not (importable and chromium):
+        # A bundle that lost its browser can never self-heal by downloading;
+        # surface that in the settings panel without waiting for a click.
+        error = _BUNDLE_MISSING_MSG
     return {
-        "playwright_importable": is_playwright_importable(),
-        "chromium_installed": is_chromium_installed(),
+        "playwright_importable": importable,
+        "chromium_installed": chromium,
         "flag_enabled": is_enabled("preview_tools"),
+        "packaged": packaged,
         "installing": install["installing"],
         "stage": install["stage"],
-        "error": install["error"],
+        "error": error,
         "log_tail": install["log_tail"],
     }
 
@@ -117,6 +142,13 @@ async def preview_install():
 
             set_feature_flag("preview_tools", True)
             return {"started": False, "reason": "already installed", "enabled": True}
+        if is_packaged_install():
+            # Signed read-only bundle: pip installs into its site-packages and
+            # browser downloads into Resources/pw-browsers would fail (and
+            # would break the code-signing seal if they didn't). The browser
+            # ships with the app; if it is missing the install is broken.
+            _INSTALL.update(installing=False, stage=None, error=_BUNDLE_MISSING_MSG)
+            return {"started": False, "reason": "packaged install", "error": _BUNDLE_MISSING_MSG}
         _INSTALL.update(installing=True, stage="queued", error=None, log_tail=[])
     threading.Thread(target=_run_install, daemon=True, name="preview-install").start()
     return {"started": True}

@@ -2,9 +2,9 @@
 # Whisper Studio — macOS app bundle assembler.
 #
 # Builds dist-app/Whisper Studio.app: frontend, standalone Python runtime,
-# llama-server, ffmpeg/ffprobe, node, the compiled Swift shell, and signs
-# everything. Idempotent: downloads are cached in build-app/downloads/ and
-# completed stages are skipped on re-runs.
+# Playwright Chromium (Live Preview), llama-server, ffmpeg/ffprobe, node, the
+# compiled Swift shell, and signs everything. Idempotent: downloads are cached
+# in build-app/downloads/ and completed stages are skipped on re-runs.
 #
 # Usage:
 #   bash macapp/build_app.sh
@@ -157,6 +157,57 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Stage b2: Playwright browsers (Live Preview)
+# ---------------------------------------------------------------------------
+# server/preview drives chromium.launch(headless=True); on the pinned
+# playwright this executes the chromium-headless-shell build, and `playwright
+# install chromium` ships the full Chrome for Testing build (plus playwright's
+# small ffmpeg) alongside it. Installing the plain `chromium` target therefore
+# covers everything the preview needs, with zero downloads at app runtime.
+# The versioned install dirs come from playwright's own dry-run, so a
+# requirements.txt playwright bump automatically re-installs the matching
+# browser build on the next run.
+
+log "[b2] Playwright browsers (chromium + headless shell, for Live Preview)"
+PW_BROWSERS_DIR="$BUILD_DIR/pw-browsers"
+mkdir -p "$PW_BROWSERS_DIR"
+PW_EXPECTED_DIRS="$(PLAYWRIGHT_BROWSERS_PATH="$PW_BROWSERS_DIR" \
+    "$PY_BIN" -m playwright install --dry-run chromium \
+    | sed -n 's/^[[:space:]]*Install location:[[:space:]]*//p')"
+[[ -n "$PW_EXPECTED_DIRS" ]] \
+    || die "playwright install --dry-run chromium reported no install locations"
+
+pw_dirs_complete() {
+    local d
+    while IFS= read -r d; do
+        [[ -n "$d" && -f "$d/INSTALLATION_COMPLETE" ]] || return 1
+    done <<< "$PW_EXPECTED_DIRS"
+    return 0
+}
+
+if pw_dirs_complete; then
+    substep "already installed: $(echo "$PW_EXPECTED_DIRS" | xargs -n1 basename | tr '\n' ' ')"
+else
+    substep "playwright install chromium (into $PW_BROWSERS_DIR)"
+    PLAYWRIGHT_BROWSERS_PATH="$PW_BROWSERS_DIR" "$PY_BIN" -m playwright install chromium
+    pw_dirs_complete || die "playwright browser install incomplete under $PW_BROWSERS_DIR"
+fi
+
+# Prune builds a previous playwright version left behind, so the bundle only
+# ships the revisions the pinned playwright actually launches.
+for existing in "$PW_BROWSERS_DIR"/*/; do
+    [[ -d "$existing" ]] || continue
+    keep=0
+    while IFS= read -r d; do
+        [[ "${existing%/}" == "$d" ]] && keep=1
+    done <<< "$PW_EXPECTED_DIRS"
+    if [[ "$keep" == 0 ]]; then
+        substep "pruning stale browser build: $(basename "$existing")"
+        rm -rf "$existing"
+    fi
+done
+
+# ---------------------------------------------------------------------------
 # Stage c: llama-server
 # ---------------------------------------------------------------------------
 
@@ -288,6 +339,12 @@ substep "copying python runtime"
 rsync -a --delete --exclude '__pycache__/' --exclude '*.pyc' \
     "$PY_DIR/" "$RES_DIR/python/"
 rm -f "$RES_DIR/python/.requirements.sha256"
+
+# f.4b: Playwright browsers for Live Preview. The shell points the backend at
+# this directory via PLAYWRIGHT_BROWSERS_PATH, so the preview feature works
+# with zero runtime downloads.
+substep "copying playwright browsers (pw-browsers)"
+rsync -a --delete "$PW_BROWSERS_DIR/" "$RES_DIR/pw-browsers/"
 
 # f.5: backend tree.
 substep "copying backend (server/, static/, skills/, plugins/, configs)"
