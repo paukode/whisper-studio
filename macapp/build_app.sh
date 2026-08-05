@@ -25,7 +25,10 @@ PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/downlo
 PYTHON_SHA256="aa2a054f5e04bde63ae199e3bb6bbb634e457423efd294842deeb1299e7e5932"
 
 # llama.cpp official release binaries (>= b10090 required by the backend).
-LLAMA_TAG="b10243"
+# Bumped to b10289 for the model browser: newer builds add model-architecture
+# support, so more downloadable models load. Verified b10289 accepts every flag
+# the backend passes and loads+generates on Apple Silicon.
+LLAMA_TAG="b10289"
 LLAMA_ASSET="llama-${LLAMA_TAG}-bin-macos-arm64.tar.gz"
 LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/${LLAMA_ASSET}"
 
