@@ -200,25 +200,33 @@ def test_emit_cron_event_writes_nested_payload(temp_sessions_db, monkeypatch):
 
     # Bridge the captured loop so the threadsafe dispatch lands on a
     # real loop we can drain synchronously.
-    loop = asyncio.new_event_loop()
+    import threading
+    import time
 
-    async def _drain():
-        # Yield once so any pending callbacks scheduled via
-        # call_soon_threadsafe / run_coroutine_threadsafe finish.
-        await asyncio.sleep(0.1)
+    loop = asyncio.new_event_loop()
+    stop = threading.Event()
 
     def _runner():
-        loop.run_until_complete(_drain())
+        # Keep the loop alive so the coroutine dispatched via
+        # run_coroutine_threadsafe (the persist) actually runs to completion.
+        # A prior fixed 0.1s drain raced the cross-thread dispatch + SQLite
+        # write and flaked on slow/loaded CI runners (0 rows); we now poll for
+        # the persisted row from the main thread and stop the loop only once
+        # it has landed.
+        asyncio.set_event_loop(loop)
+
+        async def _serve():
+            while not stop.is_set():
+                await asyncio.sleep(0.01)
+
+        loop.run_until_complete(_serve())
+        loop.close()
 
     # The persist+publish path now lives in the generalized session-event
     # service; the loop is captured there, not in cron_scheduler.
     import server.tasks.events as task_events
 
     monkeypatch.setattr(task_events, "_server_loop", loop)
-
-    # Run the loop in a thread so _emit_cron_event (sync) can dispatch
-    # coroutines onto it without blocking us.
-    import threading
 
     t = threading.Thread(target=_runner, daemon=True)
     t.start()
@@ -234,13 +242,23 @@ def test_emit_cron_event_writes_nested_payload(temp_sessions_db, monkeypatch):
         run_id="run-1",
     )
 
+    # Poll for the persisted row instead of relying on a fixed drain window,
+    # so this is deterministic regardless of runner speed.
+    deadline = time.time() + 5.0
+    cron_rows: list = []
+    while time.time() < deadline:
+        with S._get_conn() as conn:
+            row = conn.execute(
+                "SELECT chat_history FROM sessions WHERE id = ?", (sid,)
+            ).fetchone()
+        history = json.loads(row["chat_history"]) if row else []
+        cron_rows = [m for m in history if m.get("role") == "cron_event"]
+        if cron_rows:
+            break
+        time.sleep(0.02)
+    stop.set()
     t.join(timeout=2.0)
-    loop.close()
 
-    with S._get_conn() as conn:
-        row = conn.execute("SELECT chat_history FROM sessions WHERE id = ?", (sid,)).fetchone()
-    history = json.loads(row["chat_history"])
-    cron_rows = [m for m in history if m.get("role") == "cron_event"]
     assert len(cron_rows) == 1, f"expected one row, got {len(cron_rows)}"
 
     row = cron_rows[0]
