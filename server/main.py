@@ -78,6 +78,12 @@ bootstrap_home()
 _BIN_DIR = os.environ.get("WHISPER_BIN_DIR", "").strip()
 if _BIN_DIR and _BIN_DIR not in os.environ.get("PATH", "").split(os.pathsep):
     os.environ["PATH"] = _BIN_DIR + os.pathsep + os.environ.get("PATH", "")
+# Widen PATH with the user's real tool locations (Homebrew, pipx, nvm, …) so
+# user-configured MCP server commands and other spawns resolve under the
+# minimal PATH a GUI-launched .app inherits. Packaged mode only.
+from server.infrastructure.binaries import enrich_gui_launch_path  # noqa: E402
+
+enrich_gui_launch_path()
 
 
 class _QuietPollAccessLog(logging.Filter):

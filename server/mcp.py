@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
@@ -84,6 +85,17 @@ class MCPManager:
             if isinstance(conf, dict) and bool(conf.get("enabled", True))
         }
 
+    @staticmethod
+    def _resolve_command(command: str, path: str | None) -> str | None:
+        """Absolute path to an MCP server's launch command, or None if missing.
+        An absolute command must exist and be executable; a bare name is looked
+        up on ``path`` (the enriched PATH)."""
+        if not command:
+            return None
+        if os.path.isabs(command):
+            return command if (os.path.isfile(command) and os.access(command, os.X_OK)) else None
+        return shutil.which(command, path=path)
+
     async def start_server(self, name: str, config: dict):
         from mcp import StdioServerParameters
 
@@ -96,7 +108,27 @@ class MCPManager:
             return
 
         env = {**os.environ, **env_vars}
-        params = StdioServerParameters(command=command, args=args, env=env)
+        # Resolve the command up front so a missing executable yields an
+        # actionable message instead of a raw "[Errno 2] No such file or
+        # directory" from the spawn. A GUI-launched .app has a minimal PATH;
+        # main.py widens it (enrich_gui_launch_path), and we resolve against
+        # that same PATH here.
+        resolved = self._resolve_command(command, env.get("PATH"))
+        if resolved is None:
+            msg = (
+                f'Command "{command}" was not found. Install it and make sure it is on '
+                f"your PATH, or set the full path to the executable in Settings > MCP."
+            )
+            log.error("MCP server '%s': %s", name, msg)
+            async with self._get_lock():
+                self._sessions[name] = {
+                    "status": "error",
+                    "error": msg,
+                    "config": config,
+                    "tools": {},
+                }
+            return
+        params = StdioServerParameters(command=resolved, args=args, env=env)
 
         # The MCP client contexts (stdio_client, ClientSession) open anyio task
         # groups / cancel scopes bound to the task that ENTERS them, so they
