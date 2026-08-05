@@ -26,6 +26,10 @@ rm -rf "$STAGING"
 mkdir -p "$STAGING"
 cp -R "$APP_DIR" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
+# First-launch instructions for recipients of an ad-hoc / un-notarized build
+# (how to clear the Gatekeeper warning). Shipped inside the disk image.
+README_SRC="$MACAPP_DIR/dmg-readme.txt"
+[[ -f "$README_SRC" ]] && cp "$README_SRC" "$STAGING/Open me first.txt"
 
 echo "==> Creating $DMG_PATH"
 hdiutil create \
