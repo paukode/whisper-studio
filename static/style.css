@@ -2368,6 +2368,45 @@ input.segment-speaker {
 }
 .settings-item-actions .btn-sm { padding: 3px 8px; font-size: var(--fs-caption); }
 
+/* Plugins panel: intro copy + template viewer.
+   The intro used the undefined .settings-empty class, so the multi-line
+   paragraph rendered as a dense block. These rules give it a comfortable
+   reading measure and break the facts into a scannable list. */
+.plugins-intro {
+    font-size: var(--fs-small); line-height: 1.55;
+    color: var(--text-secondary); margin: 0 0 6px;
+}
+.plugins-notes {
+    margin: 0 0 10px; padding-left: 18px;
+    display: flex; flex-direction: column; gap: 4px;
+    font-size: var(--fs-small); line-height: 1.5;
+    color: var(--text-secondary);
+}
+.plugins-template {
+    margin: 0 0 10px; border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden; background: var(--bg-inset);
+}
+.plugins-template-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; padding: 5px 10px;
+    background: var(--bg-elevated); border-bottom: 1px solid var(--border);
+    font-size: var(--fs-caption); font-weight: 600; color: var(--text-muted);
+    font-family: 'IBM Plex Mono', monospace;
+}
+.plugins-template-code {
+    margin: 0; padding: 12px; overflow-x: auto;
+    font-family: 'IBM Plex Mono', monospace; font-size: var(--fs-caption);
+    line-height: 1.5; color: var(--text-primary); white-space: pre;
+}
+.plugins-template-hint {
+    margin: 0; padding: 8px 12px; border-top: 1px solid var(--border);
+    font-size: var(--fs-caption); line-height: 1.5; color: var(--text-muted);
+}
+.plugins-template-hint code {
+    font-family: 'IBM Plex Mono', monospace;
+    background: var(--bg-elevated); padding: 1px 4px; border-radius: 4px;
+}
+
 /* Toggle switch */
 .toggle-switch {
     position: relative; width: 36px; height: 20px; flex-shrink: 0;

@@ -78,6 +78,60 @@ describe('PluginsPanel', () => {
     expect((body.get('file') as File).name).toBe('e2e_plug.py');
   });
 
+  it('reveals a valid, em-dash-free plugin template on demand', async () => {
+    api.get.mockResolvedValue(DISABLED_LIST);
+    const { container } = (() => {
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      return render(
+        <QueryClientProvider client={qc}>
+          <PluginsPanel />
+        </QueryClientProvider>,
+      );
+    })();
+
+    await screen.findByText('e2e_plug');
+
+    // The template is hidden until the user asks for it.
+    expect(screen.queryByText(/def register\(/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'View template' }));
+
+    // Revealed template shows the real loader contract: a top-level register()
+    // (what the backend validates with `ast`) and the executor signature.
+    const code = await screen.findByText(/def register\(app, executor_registry\)/);
+    expect(code.textContent).toContain('def my_tool(tool_input, transcript, attachments)');
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument();
+
+    // The whole panel's rendered copy must be free of em dashes (repo style).
+    expect(container.textContent).not.toContain('—');
+
+    // Toggling again hides it.
+    fireEvent.click(screen.getByRole('button', { name: 'Hide template' }));
+    expect(screen.queryByText(/def register\(/)).not.toBeInTheDocument();
+  });
+
+  it('copies the template to the clipboard', async () => {
+    api.get.mockResolvedValue(DISABLED_LIST);
+    const writeText = vi.fn(async (_text: string) => undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    });
+
+    renderPanel();
+    await screen.findByText('e2e_plug');
+
+    fireEvent.click(screen.getByRole('button', { name: 'View template' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const copied = writeText.mock.calls[0][0] as string;
+    expect(copied).toContain('def register(app, executor_registry):');
+    expect(copied).toContain("executor_registry[\"my_tool\"] = my_tool");
+    expect(copied).not.toContain('—');
+  });
+
   it('enables a plugin live and shows its tools after refetch', async () => {
     // First list load = disabled; after the toggle refetch = enabled w/ tools.
     api.get.mockResolvedValueOnce(DISABLED_LIST).mockResolvedValue(ENABLED_LIST);

@@ -29,6 +29,33 @@ async function fetchPlugins(): Promise<PluginsPayload> {
   return { plugins: data.plugins ?? [], pluginsDir: data.plugins_dir ?? '' };
 }
 
+// A minimal, correct plugin the loader accepts. Mirrors the shape the backend
+// documents in the plugins/README.md and the (tool_input, transcript,
+// attachments) -> str executor contract (server/executors/__init__.py,
+// server/skills.py). Uploads are validated with `ast` for a top-level
+// `register`, so this is the smallest file that both passes validation and
+// actually loads and runs.
+const PLUGIN_TEMPLATE = `"""Example Whisper Studio plugin.
+
+Save this as e.g. my_plugin.py and add it with "Add plugin", then enable it
+below. New plugins always start disabled until you turn them on.
+"""
+
+__version__ = "1.0.0"
+__description__ = "My custom plugin"
+
+
+def register(app, executor_registry):
+    # Called once when the plugin is enabled. Register one executor per tool.
+    # The registry key is the tool name (keep it snake_case and unique).
+    def my_tool(tool_input, transcript, attachments):
+        # tool_input is the model's JSON args for this tool.
+        # Return a string; it becomes the tool result the model reads.
+        return "hello from my plugin"
+
+    executor_registry["my_tool"] = my_tool
+`;
+
 export const PluginsPanel: React.FC = () => {
   const { data, error, refetch } = useQuery({
     queryKey: ['plugins'],
@@ -46,8 +73,22 @@ export const PluginsPanel: React.FC = () => {
   // Per-row toggle error string. Cleared when the user toggles again.
   const [toggleError, setToggleError] = useState<Record<string, string>>({});
   const [uploading, setUploading] = useState(false);
+  // Reveals the read-only plugin template so the user can see the expected
+  // shape of a valid plugin .py before uploading one.
+  const [showTemplate, setShowTemplate] = useState(false);
+  const [templateCopied, setTemplateCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const addToast = useUIStore((s) => s.addToast);
+
+  const handleCopyTemplate = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(PLUGIN_TEMPLATE);
+      setTemplateCopied(true);
+      window.setTimeout(() => setTemplateCopied(false), 1500);
+    } catch {
+      addToast({ type: 'error', message: 'Could not copy the template to the clipboard.' });
+    }
+  }, [addToast]);
 
   const handleToggle = useCallback(
     async (name: string, next: boolean) => {
@@ -69,7 +110,7 @@ export const PluginsPanel: React.FC = () => {
             const body = (await resp.json()) as { detail?: string };
             if (body.detail) detail = body.detail;
           } catch {
-            /* not JSON — keep the HTTP code */
+            /* not JSON, keep the HTTP code */
           }
           throw new Error(detail);
         }
@@ -77,7 +118,7 @@ export const PluginsPanel: React.FC = () => {
         await refetch();
         // Enabling loads the plugin live (its tools are available next message);
         // a plugin that also registers HTTP routes/hooks needs a restart, which
-        // the server flags — surface that honestly.
+        // the server flags. Surface that honestly.
         if (body.restartRequired && body.note) {
           addToast({ type: 'warning', message: body.note });
         } else {
@@ -158,6 +199,14 @@ export const PluginsPanel: React.FC = () => {
           >
             {uploading ? 'Adding…' : 'Add plugin…'}
           </button>
+          <button
+            className="btn btn-sm"
+            type="button"
+            aria-expanded={showTemplate}
+            onClick={() => setShowTemplate((v) => !v)}
+          >
+            {showTemplate ? 'Hide template' : 'View template'}
+          </button>
           <button className="btn btn-sm" onClick={() => void refetch()} type="button">
             Refresh
           </button>
@@ -176,12 +225,40 @@ export const PluginsPanel: React.FC = () => {
         />
       </div>
 
-      <p className="settings-empty" style={{ marginBottom: 8 }}>
-        Plugins are opt-in. A newly added plugin stays <strong>off</strong> until you enable
-        it. Enabling loads it live — its tools are available on your next message. Required
-        safety plugins are locked on. A plugin that registers HTTP routes needs a restart for
-        those routes (its tools are still live).
+      <p className="plugins-intro">
+        Plugins are opt-in. A newly added plugin stays <strong>off</strong> until you enable it.
       </p>
+      <ul className="plugins-notes">
+        <li>Enabling loads it live; its tools are available on your next message.</li>
+        <li>Required safety plugins are locked on.</li>
+        <li>
+          A plugin that registers HTTP routes needs a restart for those routes (its tools are
+          still live).
+        </li>
+      </ul>
+
+      {showTemplate && (
+        <div className="plugins-template">
+          <div className="plugins-template-header">
+            <span>Plugin template (my_plugin.py)</span>
+            <button
+              className="btn btn-sm"
+              type="button"
+              onClick={() => void handleCopyTemplate()}
+            >
+              {templateCopied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <pre className="plugins-template-code">
+            <code>{PLUGIN_TEMPLATE}</code>
+          </pre>
+          <p className="plugins-template-hint">
+            Save this as a <code>.py</code> file, add it above, then enable it. The tool name is
+            the registry key; new plugins start disabled.
+          </p>
+        </div>
+      )}
+
       {pluginsDir && (
         <p className="settings-empty" style={{ marginTop: 0, marginBottom: 8, fontSize: '0.8em', opacity: 0.7 }}>
           Folder: <code>{pluginsDir}</code>
