@@ -166,16 +166,15 @@ describe('parseMcpArgs — args field parsing', () => {
     expect(parseMcpArgs('["--flag", "value"]')).toEqual({ args: ['--flag', 'value'] });
   });
 
-  it('parses a plain comma-separated list', () => {
-    expect(parseMcpArgs('--flag, value')).toEqual({ args: ['--flag', 'value'] });
-  });
-
   it('returns [] for empty input', () => {
     expect(parseMcpArgs('   ')).toEqual({ args: [] });
   });
 
+  it('errors on non-JSON input (no comma-split fallback)', () => {
+    expect('error' in parseMcpArgs('--flag, value')).toBe(true);
+  });
+
   it('errors on a bracketed-but-invalid value instead of wrapping it as one arg', () => {
-    const res = parseMcpArgs('[not, valid, json]');
-    expect('error' in res).toBe(true);
+    expect('error' in parseMcpArgs('[not, valid, json]')).toBe(true);
   });
 });

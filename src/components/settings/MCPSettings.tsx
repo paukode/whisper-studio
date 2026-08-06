@@ -25,27 +25,24 @@ const EMPTY_FORM: MCPServerFormData = {
 export const dequoteSmart = (s: string): string =>
   s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
 
-/** Parse the args text field into a string[]. Accepts a JSON array (smart
- *  quotes tolerated) or a plain comma-separated list. A value that looks like a
- *  JSON array but doesn't parse is a hard error — never wrapped as one arg,
- *  which is what previously launched commands with a literal `["pkg"]` argument
- *  and silently broke them. Returns the args or a user-facing error. */
+/** Parse the args text field into a string[]. args is just JSON: it must be a
+ *  JSON array of strings (empty field = no args). There is no comma-split or
+ *  wrap-as-one-arg fallback — invalid input is a hard error, never reinterpreted
+ *  (silently wrapping a bracketed string as one arg is exactly what broke
+ *  launched commands). The only leniency is normalizing curly quotes to straight
+ *  ones, the copy-paste artifact that turns a valid array into invalid JSON. */
 export function parseMcpArgs(raw: string): { args: string[] } | { error: string } {
   const trimmed = raw.trim();
   if (!trimmed) return { args: [] };
-  const normalized = dequoteSmart(trimmed);
-  if (normalized.startsWith('[')) {
-    try {
-      const parsed = z.array(z.string()).safeParse(JSON.parse(normalized));
-      if (!parsed.success) {
-        return { error: 'Args must be a JSON array of strings, e.g. ["--flag", "value"]' };
-      }
-      return { args: parsed.data };
-    } catch {
-      return { error: 'Args looks like a JSON array but is not valid JSON. Check the quotes and brackets.' };
+  try {
+    const parsed = z.array(z.string()).safeParse(JSON.parse(dequoteSmart(trimmed)));
+    if (!parsed.success) {
+      return { error: 'Args must be a JSON array of strings, e.g. ["--flag", "value"]' };
     }
+    return { args: parsed.data };
+  } catch {
+    return { error: 'Args must be valid JSON: an array of strings, e.g. ["--flag", "value"]' };
   }
-  return { args: normalized.split(',').map((a) => a.trim()).filter(Boolean) };
 }
 
 export const MCPSettings: React.FC = () => {
