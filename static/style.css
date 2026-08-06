@@ -571,9 +571,12 @@ body {
 #chatPanelWrap:not(.chat-panel-active) .chat-input {
     font-size: var(--fs-title); padding: 20px 24px; max-height: 240px;
     border-radius: 14px;
-}
-#chatPanelWrap:not(.chat-panel-active) #chatInput {
-    rows: 4;
+    /* Welcome screen: a taller resting floor (four rows) so the composer opens
+       at full height with the placeholder fully visible on first load — no
+       focus needed. Replaces a stray `rows: 4` declaration that never applied
+       (`rows` is an HTML attribute, not a CSS property). Four rows = 4 * 1.5em
+       + 40px vertical padding + 2px borders. */
+    min-height: calc(6em + 42px);
 }
 #chatPanelWrap:not(.chat-panel-active) .chat-input-row {
     gap: 10px;
@@ -2169,6 +2172,12 @@ input.segment-speaker {
     border-radius: 10px; color: var(--text-primary);
     font-family: 'Outfit', sans-serif;
     font-size: var(--fs-content); padding: 12px 16px; line-height: 1.5;
+    /* Resting floor = two full rows (2 * 1.5em line-height + 24px vertical
+       padding + 2px borders, border-box). Without it the JS auto-resize
+       collapses the empty textarea to a single line's scrollHeight on first
+       mount, clipping the placeholder until focus/typing. The floor also keeps
+       auto-grow honest: growth only starts once content exceeds two rows. */
+    min-height: calc(3em + 26px);
     /* JS auto-grows the height with content (ChatInput.tsx); this cap is
        ~2.5x the resting two-row height, beyond which the textarea scrolls. */
     resize: none; outline: none; max-height: 185px; overflow-y: auto;
@@ -2337,9 +2346,63 @@ input.segment-speaker {
     color: var(--accent); border-bottom-color: var(--accent);
 }
 
+/* ---- Grouped left rail (replaces the wrapping top tab strip) ----
+   Below the header the dialog splits into a fixed, non-scrolling rail of
+   grouped sections and a content pane that scrolls. Each rail item may render
+   several existing panels under a secondary sub-tab strip. */
+.settings-layout {
+    display: flex; flex: 1; min-height: 0;
+}
+.settings-rail {
+    flex: 0 0 214px; width: 214px;
+    border-right: 1px solid var(--border);
+    padding: 14px 10px; overflow: hidden;
+    display: flex; flex-direction: column; gap: 16px;
+}
+.settings-group { display: flex; flex-direction: column; gap: 2px; }
+.settings-group-title {
+    font-size: var(--fs-caption); font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--text-muted); padding: 0 10px 3px;
+}
+.settings-rail-item {
+    display: flex; align-items: center; gap: 9px;
+    width: 100%; text-align: left;
+    padding: 7px 10px; border-radius: 8px;
+    background: none; border: none; cursor: pointer;
+    color: var(--text-secondary); font-size: var(--fs-small); font-weight: 600;
+    transition: background 0.15s, color 0.15s;
+}
+.settings-rail-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.settings-rail-item.active { background: var(--accent-dim); color: var(--accent); }
+.settings-rail-item.active .settings-rail-icon { color: var(--accent); }
+.settings-rail-icon { display: inline-flex; color: var(--text-muted); flex-shrink: 0; }
+.settings-rail-label {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.settings-main {
+    display: flex; flex-direction: column; flex: 1; min-width: 0;
+}
+.settings-subtabs {
+    display: flex; gap: 2px; flex-wrap: wrap;
+    padding: 8px 16px 0; border-bottom: 1px solid var(--border);
+}
+.settings-subtab {
+    padding: 7px 12px; font-size: var(--fs-small); font-weight: 600;
+    color: var(--text-muted); background: none; border: none;
+    border-bottom: 2px solid transparent; cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+.settings-subtab:hover { color: var(--text-secondary); }
+.settings-subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
 .settings-body {
     flex: 1; overflow-y: auto; padding: 16px 20px;
 }
+/* Discover quant picker: a compact dropdown sized to its content, not the
+   full-width the shared .settings-input default gives form fields. */
+.model-quant-select { width: auto; min-width: 152px; max-width: 244px; }
 .settings-toolbar {
     display: flex; justify-content: flex-end; margin-bottom: 12px;
 }

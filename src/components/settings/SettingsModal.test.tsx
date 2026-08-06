@@ -78,3 +78,79 @@ describe('SettingsModal — dismissal', () => {
     expect(isOpen()).toBe(false);
   });
 });
+
+describe('SettingsModal — deep-link routing', () => {
+  const openAt = (tab: string) => {
+    useUIStore.setState({ settingsOpen: true, settingsTab: tab });
+    return render(<SettingsModal />);
+  };
+
+  it('old id "skills" opens Tools and automation → Skills', () => {
+    openAt('skills');
+    // The merged panel renders under its sub-tab strip.
+    expect(screen.getByText('SkillsPanel')).toBeInTheDocument();
+    // The rail item that owns it is the active section.
+    expect(
+      screen.getByRole('button', { name: /Skills and plugins/i }),
+    ).toHaveAttribute('aria-current', 'page');
+    // The Skills sub-tab is the selected tab.
+    expect(screen.getByRole('tab', { name: 'Skills' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('old id "costs" opens Usage and advanced → Costs', () => {
+    openAt('costs');
+    expect(screen.getByText('CostsPanel')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Usage and advanced/i }),
+    ).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('tab', { name: 'Costs' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('old id "hooks" opens Workflows and tasks → Hooks', () => {
+    openAt('hooks');
+    expect(screen.getByText('HooksPanel')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Workflows and tasks/i }),
+    ).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('tab', { name: 'Hooks' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('old id "apikeys" opens Keys and permissions → API keys', () => {
+    openAt('apikeys');
+    expect(screen.getByText('APISettings')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Keys and permissions/i }),
+    ).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('tab', { name: 'API keys' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('old id "mcp" opens the single MCP servers panel with no sub-tab strip', () => {
+    openAt('mcp');
+    expect(screen.getByText('MCPSettings')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /MCP servers/i })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    // Single-panel rail items render no sub-tabs.
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+  });
+
+  it('an unknown tab id falls back to Keys and permissions → API keys', () => {
+    openAt('general'); // the store's initial default value
+    expect(screen.getByText('APISettings')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Keys and permissions/i }),
+    ).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('clicking a rail item then a sub-tab swaps the visible panel', () => {
+    openAt('apikeys');
+    // Jump to the Skills and plugins section via the rail.
+    fireEvent.click(screen.getByRole('button', { name: /Skills and plugins/i }));
+    expect(screen.getByText('SkillsPanel')).toBeInTheDocument();
+    // Switch to the Plugins sub-tab.
+    fireEvent.click(screen.getByRole('tab', { name: 'Plugins' }));
+    expect(screen.getByText('PluginsPanel')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Plugins' })).toHaveAttribute('aria-selected', 'true');
+  });
+});

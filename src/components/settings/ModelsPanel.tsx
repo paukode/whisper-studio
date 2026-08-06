@@ -96,6 +96,11 @@ const StatusChip: React.FC<{ model: ManagedModel }> = ({ model }) => {
   );
 };
 
+/** Which slice of the Models rail item to render. The Settings dialog mounts
+ *  one ModelsPanel per sub-tab and gates it to a single section; passing no
+ *  section renders the combined view (all groups + Discover + visibility). */
+export type ModelSection = 'chat' | 'discover' | 'transcription' | 'indexing';
+
 /**
  * Settings > Models: browse every downloadable model, download with progress,
  * cancel (the backend runs downloads in a killable worker process, so cancel
@@ -104,8 +109,15 @@ const StatusChip: React.FC<{ model: ManagedModel }> = ({ model }) => {
  * runs, a status query polls /api/models/status every second; react-query
  * stops interval refetches when the tab is hidden and the query unmounts with
  * the panel, so idle/hidden means no polling.
+ *
+ * The Settings rail splits this into focused sub-tabs via `section`: Chat
+ * (local chat weights + chat-model visibility), Discover (the ModelBrowser),
+ * Transcription, and Indexing. Each section reuses the exact same catalog
+ * rendering and shared download/queue/delete logic; only which groups show is
+ * gated. With no `section` prop it renders everything in one scroll (the
+ * pre-restructure layout), which is what the panel's own tests exercise.
  */
-export const ModelsPanel: React.FC = () => {
+export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) => {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [confirmDelete, setConfirmDelete] = useState<ManagedModel | null>(null);
@@ -194,6 +206,23 @@ export const ModelsPanel: React.FC = () => {
 
   const downloadingCount = models.filter((m) => m.state === 'downloading').length;
 
+  // Which slice to show. No section = the combined view (all groups + Discover
+  // + visibility). Otherwise each sub-tab is one focused section.
+  const showGroups: ManagedModelGroup[] =
+    section === undefined
+      ? ['transcription', 'indexing', 'local-chat']
+      : section === 'chat'
+        ? ['local-chat']
+        : section === 'transcription'
+          ? ['transcription']
+          : section === 'indexing'
+            ? ['indexing']
+            : []; // discover shows the browser only
+  const showCatalog = showGroups.length > 0;
+  const showBrowser = section === undefined || section === 'discover';
+  const showVisibility = section === undefined || section === 'chat';
+  const visibleGroups = GROUPS.filter((g) => showGroups.includes(g.id));
+
   const onDownload = (m: ManagedModel) =>
     void run(
       m.key,
@@ -233,27 +262,32 @@ export const ModelsPanel: React.FC = () => {
 
   return (
     <div className="settings-panel models-panel">
-      <div className="settings-panel-header">
-        <h3>Models</h3>
-        <button className="btn btn-sm" onClick={() => void refresh()} type="button">
-          Refresh
-        </button>
-      </div>
+      {showCatalog && (
+        <>
+          <div className="settings-panel-header">
+            <h3>Models</h3>
+            <button className="btn btn-sm" onClick={() => void refresh()} type="button">
+              Refresh
+            </button>
+          </div>
 
-      <p className="settings-empty" style={{ marginBottom: 8 }}>
-        Model weights are stored locally and downloaded from Hugging Face on demand. Up to two
-        downloads run at a time; further requests queue up and start automatically. A cancelled
-        download keeps its partial files and resumes on the next attempt.
-      </p>
+          <p className="settings-empty" style={{ marginBottom: 8 }}>
+            Model weights are stored locally and downloaded from Hugging Face on demand. Up to two
+            downloads run at a time; further requests queue up and start automatically. A cancelled
+            download keeps its partial files and resumes on the next attempt.
+          </p>
 
-      {catalogQuery.error && (
-        <p className="settings-empty" role="alert">
-          Could not load the model catalog.
-        </p>
+          {catalogQuery.error && (
+            <p className="settings-empty" role="alert">
+              Could not load the model catalog.
+            </p>
+          )}
+          {catalogQuery.isLoading && <p className="settings-empty">Loading model catalog…</p>}
+        </>
       )}
-      {catalogQuery.isLoading && <p className="settings-empty">Loading model catalog…</p>}
 
-      {GROUPS.map((group) => {
+      {showCatalog &&
+        visibleGroups.map((group) => {
         const rows = models.filter((m) => m.group === group.id);
         if (rows.length === 0) return null;
         return (
@@ -363,9 +397,9 @@ export const ModelsPanel: React.FC = () => {
         );
       })}
 
-      <ModelBrowser />
+      {showBrowser && <ModelBrowser />}
 
-      <ChatModelVisibility />
+      {showVisibility && <ChatModelVisibility />}
 
       {confirmDelete && (
         <ConfirmDialog

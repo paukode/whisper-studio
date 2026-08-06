@@ -103,22 +103,29 @@ describe('ModelBrowser (Discover)', () => {
     expect(screen.getByText(/309K downloads/)).toBeInTheDocument();
   });
 
-  it('expands a result, pre-selects the recommended quant, and installs it', async () => {
+  it('fetches quants on first interaction with the dropdown and pre-selects the recommended one', async () => {
     renderBrowser();
     await screen.findByText('Qwen3-0.6B-GGUF');
 
-    // Expand the quant picker.
-    fireEvent.click(screen.getByRole('button', { name: 'Choose quant' }));
+    const select = screen.getByRole('combobox', {
+      name: /choose a quant for Qwen3-0\.6B-GGUF/i,
+    }) as HTMLSelectElement;
+    // Before interaction the detail is not fetched — just a placeholder option.
+    expect(api.get).not.toHaveBeenCalledWith(
+      expect.stringContaining('/api/models/browse/repo/'),
+    );
+    // Download is disabled until the quants load.
+    expect(screen.getByRole('button', { name: 'Download' })).toBeDisabled();
 
-    // Both quants render; the recommended one is tagged and pre-selected.
-    expect(await screen.findByText('Q4_K_M')).toBeInTheDocument();
-    expect(screen.getByText('Q2_K')).toBeInTheDocument();
-    expect(screen.getByText('Recommended')).toBeInTheDocument();
+    // Focusing the select triggers the lazy fetch (the old "Choose quant" step).
+    fireEvent.focus(select);
 
-    const q4 = screen.getByDisplayValue('Qwen3-0.6B-Q4_K_M.gguf') as HTMLInputElement;
-    expect(q4.checked).toBe(true);
+    // Both quants become options; the recommended one is labelled and preselected.
+    await waitFor(() => expect(select.value).toBe('Qwen3-0.6B-Q4_K_M.gguf'));
+    expect(screen.getByRole('option', { name: /Q4_K_M.*\(recommended\)/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /Q2_K/ })).toBeInTheDocument();
 
-    // Download installs the pre-selected recommended file.
+    // Download now installs the pre-selected recommended file.
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith('/api/models/browse/install', {
@@ -133,14 +140,18 @@ describe('ModelBrowser (Discover)', () => {
     });
   });
 
-  it('lets the user pick a different quant before installing', async () => {
+  it('lets the user pick a different quant from the dropdown before installing', async () => {
     renderBrowser();
     await screen.findByText('Qwen3-0.6B-GGUF');
-    fireEvent.click(screen.getByRole('button', { name: 'Choose quant' }));
-    await screen.findByText('Q2_K');
 
-    // Select the smaller Q2_K, then install — the payload must follow the pick.
-    fireEvent.click(screen.getByDisplayValue('Qwen3-0.6B-Q2_K.gguf'));
+    const select = screen.getByRole('combobox', {
+      name: /choose a quant for Qwen3-0\.6B-GGUF/i,
+    }) as HTMLSelectElement;
+    fireEvent.focus(select);
+    await waitFor(() => expect(select.value).toBe('Qwen3-0.6B-Q4_K_M.gguf'));
+
+    // Choose the smaller Q2_K, then install — the payload must follow the pick.
+    fireEvent.change(select, { target: { value: 'Qwen3-0.6B-Q2_K.gguf' } });
     fireEvent.click(screen.getByRole('button', { name: 'Download' }));
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith('/api/models/browse/install', {
