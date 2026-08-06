@@ -70,12 +70,13 @@ def test_get_lists_full_catalog_all_enabled_by_default(client):
     body = client.get("/api/config/models-disabled").json()
     assert body["disabled"] == []
     keys = {m["key"] for m in body["models"]}
-    # Cloud and local chat models from the SYSTEM catalog are all present …
-    assert {"opus4.8", "haiku", "local_gemma"} <= keys
+    # Cloud chat models from the SYSTEM catalog are all present. No local model
+    # ships by default, so the visibility/hide-list is Bedrock-only now.
+    assert {"opus4.8", "haiku"} <= keys
+    assert "local_gemma" not in keys
     # … every one visible (all on by default), with usable labels + local flag.
     assert all(m["disabled"] is False for m in body["models"])
     by_key = {m["key"]: m for m in body["models"]}
-    assert by_key["local_gemma"]["is_local"] is True
     assert by_key["opus4.8"]["is_local"] is False
     assert by_key["opus4.8"]["label"]
 
@@ -200,16 +201,14 @@ def test_disabled_local_model_stays_in_registry(client, cfg_path):
     cfg_path.write_text(json.dumps({"chat_models": {"tiny_local": TINY_LOCAL}}))
     config_mod._invalidate_cache()
 
-    r = put_disabled(client, {"disabled": ["tiny_local", "local_gemma"]})
+    r = put_disabled(client, {"disabled": ["tiny_local"]})
     assert r.status_code == 200
 
     from server.local.registry import local_models
 
     reg = local_models()
-    # Both the user-added model and the shipped one stay registered …
+    # The user-added local model stays registered despite being hidden …
     assert reg["tiny_local"]["repo_id"] == "acme/tiny-test-gguf"
-    assert "local_gemma" in reg
-    # … while the picker catalog no longer offers them.
+    # … while the picker catalog no longer offers it.
     effective = config_mod.load_config()["chat_models"]
     assert "tiny_local" not in effective
-    assert "local_gemma" not in effective

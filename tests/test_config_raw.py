@@ -156,9 +156,12 @@ def test_put_local_model_id_must_have_local_prefix(client):
     assert 'must start with "local:"' in r.json()["detail"]
 
 
-def test_put_builtin_local_key_may_omit_weight_fields(client):
-    """A config entry for a BUILT-IN local model (registry fills repo_id/
-    filename/dir) may carry just an override like ctx."""
+def test_put_recommended_local_key_may_omit_weight_fields(client, monkeypatch):
+    """A config entry for a RECOMMENDED local model (the recommendation fills
+    repo_id/filename/dir) may carry just an override like ctx. It validates on its
+    own and becomes loadable once the weights are on disk."""
+    # Pin the recommendation as downloaded so it enters the effective registry.
+    monkeypatch.setattr("server.local.registry._recommended_downloaded_on_disk", lambda entry: True)
     text = json.dumps(
         {
             "chat_models": {
@@ -218,9 +221,10 @@ def test_put_valid_config_persists_and_registry_sees_the_model(client, cfg_path)
     assert r.status_code == 200
     body = r.json()
     assert body["ok"] is True
-    # The response reflects the POST-save registry: built-ins plus the new key.
+    # The response reflects the POST-save registry: the user's newly added key is
+    # present. (No local model ships by default; recommendations appear only once
+    # downloaded, which is machine-dependent, so we don't assert on those here.)
     assert "tiny_local" in body["local_models"]
-    assert "local_gemma" in body["local_models"]
     # Written verbatim (plus the normalized trailing newline).
     assert cfg_path.read_text() == text + "\n"
     # The live registry (what the models catalog reads) picked it up too.

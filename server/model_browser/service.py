@@ -164,6 +164,26 @@ def install_model(
         n_ctx=n_ctx,
         header_ctx=meta.context_length,
     )
+    return _finalize_install(key, entry)
+
+
+def install_recommended(key: str) -> dict:
+    """Install a curated Discover recommendation by its canonical key. Writes the
+    shipped definition into the user config and enqueues the download — same tail
+    as a searched install, but the metadata comes from the recommendation, not a
+    live HF header read."""
+    from server.local.registry import RECOMMENDED_LOCAL_MODELS
+
+    if key not in RECOMMENDED_LOCAL_MODELS:
+        raise InstallError(f"{key!r} is not a recommended model.")
+    reg_key, entry = install.build_recommended_entry(key)
+    return _finalize_install(reg_key, entry)
+
+
+def _finalize_install(key: str, entry: dict) -> dict:
+    """Write the config entry, enqueue the download, and (on the user's first
+    local install) adopt the on-device model for the index LLM. Shared by the
+    searched-install and recommended-install paths."""
     install.write_entry(key, entry)
 
     # The registry now merges the entry in, so the catalog derives a download
@@ -185,6 +205,10 @@ def install_model(
         start = "already_installed"
         log.info("Install %s: %s", key, e)
 
+    # Fresh installs default the index LLM to cloud (no local model shipped);
+    # installing the first local chat model flips it to follow the on-device model.
+    adopted_index_llm = install.adopt_local_index_llm()
+
     return {
         "key": key,
         "id": entry["id"],
@@ -193,7 +217,37 @@ def install_model(
         "supports_thinking": entry["supports_thinking"],
         "supports_tools": entry["supports_tools"],
         "download": start,
+        "adopted_index_llm": adopted_index_llm,
     }
+
+
+def recommended() -> list[dict]:
+    """The curated on-device catalog for the Discover tab's Recommended section,
+    each row carrying its canonical install key, one-click filename/quant, and a
+    ``downloaded`` flag so the UI can badge already-present models."""
+    from server.local import registry
+
+    rows: list[dict] = []
+    for key, meta in registry.recommended_models().items():
+        repo = meta["repo_id"]
+        author, _, name = repo.partition("/")
+        rows.append(
+            {
+                "key": key,
+                "repo_id": repo,
+                "author": author,
+                "name": name or repo,
+                "label": meta.get("label") or key,
+                "filename": meta["filename"],
+                "quant": compat.parse_quant(meta["filename"]) or "GGUF",
+                "param_size": compat.param_size_label(repo),
+                "ctx": meta.get("ctx"),
+                "supports_thinking": bool(meta.get("supports_thinking")),
+                "supports_tools": bool(meta.get("supports_tools")),
+                "downloaded": bool(meta.get("downloaded")),
+            }
+        )
+    return rows
 
 
 def _delete_weights(key: str) -> tuple[bool, bool]:
@@ -234,26 +288,31 @@ def uninstall_model(key: str) -> dict:
 
 
 def remove_from_list(key: str) -> dict:
-    """Remove a local chat model from the Models list and the composer picker.
+    """Remove a chat model from the Models list and the composer picker.
 
-    The shape depends on where the entry lives (the Models-tab overflow menu):
-      * a USER-added model (its key is in config.user.json's ``chat_models``) is
-        deleted outright — its weights AND its config entry go, so it stops
-        listing everywhere;
-      * a SHIPPED default (in the merged catalog but not the user layer) cannot
-        have its entry deleted, so it is TOMBSTONED into ``chat_models_disabled``
-        (hidden from the list + picker, recoverable via Chat model visibility)
-        and its weights are deleted if present.
+    A LOCAL model (installed or a downloaded recommendation) is DELETED outright
+    — its weights and its config entry both go — because it is always
+    re-downloadable from the Discover tab, so there is nothing to preserve.
+    A BEDROCK model has no weights and lives in the app-owned catalog, so it is
+    hidden via the recoverable ``chat_models_disabled`` list instead.
     Any running/queued download is cancelled first so the delete isn't refused.
     """
-    is_user = install.is_browser_entry(key)
     stopped, weights_deleted = _delete_weights(key)
-    removed_entry = install.remove_entry(key) if is_user else False
-    tombstoned = install.tombstone_entry(key) if not is_user else False
+
+    if install.is_local_model(key):
+        removed_entry = install.remove_entry(key)
+        return {
+            "key": key,
+            "scope": "local",
+            "removed_entry": removed_entry,
+            "weights_deleted": weights_deleted,
+            "stopped_llama_server": stopped,
+        }
+
+    tombstoned = install.tombstone_entry(key)
     return {
         "key": key,
-        "scope": "user" if is_user else "shipped",
-        "removed_entry": removed_entry,
+        "scope": "bedrock",
         "tombstoned": tombstoned,
         "weights_deleted": weights_deleted,
         "stopped_llama_server": stopped,

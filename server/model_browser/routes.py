@@ -44,6 +44,32 @@ async def browse_search(
     return {"results": results, "count": len(results)}
 
 
+@router.get("/recommended")
+async def browse_recommended():
+    """The curated on-device catalog for the Discover tab's Recommended section
+    (the app ships no local models by default, so this is the entry point)."""
+    import asyncio
+
+    rows = await asyncio.to_thread(service.recommended)
+    return {"recommended": rows, "count": len(rows)}
+
+
+@router.post("/install-recommended")
+async def browse_install_recommended(request: Request):
+    """One-click install a curated recommendation by its canonical key."""
+    import asyncio
+
+    body = await request.json()
+    key = body.get("key") if isinstance(body, dict) else None
+    if not isinstance(key, str) or not key:
+        raise HTTPException(status_code=400, detail="key is required.")
+    try:
+        result = await asyncio.to_thread(service.install_recommended, key)
+    except service.InstallError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return result
+
+
 @router.get("/repo/{repo_id:path}")
 async def browse_repo(repo_id: str):
     """The quant picker for one repo (shards folded, mmproj hidden)."""
@@ -83,9 +109,10 @@ async def browse_install(request: Request):
 async def browse_remove_entry(key: str):
     """Remove a model from the list + picker entirely.
 
-    Deletes a user-added entry outright (weights + config), or tombstones a
-    shipped default into ``chat_models_disabled`` (weights deleted if present).
-    The distinct ``/entry`` suffix keeps it clear of the ``/{key}`` uninstall."""
+    A local model is deleted outright (weights + config) and can be re-downloaded
+    from Discover; a Bedrock model is hidden via the recoverable
+    ``chat_models_disabled`` list. The distinct ``/entry`` suffix keeps it clear
+    of the ``/{key}`` uninstall."""
     import asyncio
 
     result = await asyncio.to_thread(service.remove_from_list, key)

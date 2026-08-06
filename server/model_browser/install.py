@@ -127,9 +127,69 @@ def write_entry(key: str, entry: dict) -> None:
 
 def is_browser_entry(key: str) -> bool:
     """Whether ``key`` is a local model the user layer defines (i.e. removable by
-    the browser). Built-ins and shipped models are not user-layer entries."""
+    the browser). Recommended models not yet installed are not user-layer entries."""
     cm = config_mod._load_user_config().get("chat_models")
     return isinstance(cm, dict) and key in cm
+
+
+def is_local_model(key: str) -> bool:
+    """Whether ``key`` is an on-device model in the effective catalog (installed
+    or a downloaded recommendation). Local models are always fully deletable and
+    re-downloadable from Discover, so "Remove from list" deletes them outright;
+    Bedrock models use the recoverable ``chat_models_disabled`` hide-list."""
+    try:
+        from server.local.registry import local_models
+
+        if key in local_models():
+            return True
+    except Exception:  # pragma: no cover - defensive
+        pass
+    meta = config_mod.load_config().get("chat_model_meta") or {}
+    return isinstance(meta.get(key), dict) and bool(meta[key].get("is_local"))
+
+
+def build_recommended_entry(key: str) -> tuple[str, dict]:
+    """(key, chat_models entry) for a curated Discover recommendation. Keyed by
+    its canonical registry key (``local_gemma`` etc.) so the index/summarization
+    defaults that reference that key keep working once it is installed. Raises
+    KeyError for an unknown recommendation key."""
+    from server.local.registry import RECOMMENDED_LOCAL_MODELS
+
+    rec = RECOMMENDED_LOCAL_MODELS[key]
+    entry = {
+        "id": rec["id"],
+        "label": rec.get("label") or key,
+        "is_local": True,
+        "supports_thinking": bool(rec.get("supports_thinking", False)),
+        "supports_tools": bool(rec.get("supports_tools", True)),
+        "repo_id": rec["repo_id"],
+        "filename": rec["filename"],
+        "dir": rec["dir"],
+        "ctx": int(rec.get("ctx") or 32768),
+    }
+    return key, entry
+
+
+def adopt_local_index_llm() -> bool:
+    """After the user installs their first local chat model, point the index LLM
+    at the active on-device model — but only if they are still on the fresh-install
+    cloud default (``model_mode`` hybrid with ``backends.index_llm`` == "haiku").
+
+    Uses the ``"local"`` alias (follow the available on-device model) rather than a
+    fixed key, so it stays valid as models are added or removed. Never overrides an
+    explicit user choice (a specific key, "none", or a non-hybrid mode). Returns
+    whether it changed anything."""
+    raw = config_mod._load_user_config()
+    if (raw.get("model_mode") or "") != "hybrid":
+        return False
+    backends = raw.get("backends")
+    if not isinstance(backends, dict) or backends.get("index_llm") != "haiku":
+        return False
+    backends["index_llm"] = "local"
+    raw["backends"] = backends
+    config_mod.save_config(raw)
+    log.info("First local install: index_llm adopted -> 'local' (follow on-device model).")
+    return True
 
 
 def remove_entry(key: str) -> bool:
@@ -151,8 +211,10 @@ def remove_entry(key: str) -> bool:
 
 def tombstone_entry(key: str) -> bool:
     """Add ``key`` to the USER layer's ``chat_models_disabled`` hide-list so a
-    SHIPPED model (one we cannot delete from the config) vanishes from the list
-    and the composer picker while staying recoverable via Chat model visibility.
+    BEDROCK model (no weights, lives in the app-owned catalog) vanishes from the
+    list and the composer picker while staying recoverable via Chat model
+    visibility. Local models are deleted outright instead (they re-download from
+    Discover), so this is Bedrock-only.
 
     Order-preserving and idempotent — returns whether ``key`` was newly added.
     Writes the same key the visibility toggles use, so both paths stay coherent.

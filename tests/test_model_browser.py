@@ -319,8 +319,60 @@ def test_uninstall_refuses_non_browser_key(isolated_home, monkeypatch):
         service.uninstall_model("local_gemma")  # a built-in, not a user entry
 
 
-# ── remove_from_list: user entry deleted vs shipped model tombstoned ──────────
-def test_remove_from_list_deletes_user_entry(isolated_home, monkeypatch):
+# ── recommended: the curated Discover catalog + one-click install ─────────────
+def test_recommended_lists_curated_catalog():
+    rows = service.recommended()
+    keys = {r["key"] for r in rows}
+    assert {"local_gemma", "local_gemma_coder", "local_qwen35_9b", "local_ministral3_14b"} <= keys
+    gemma = next(r for r in rows if r["key"] == "local_gemma")
+    assert gemma["repo_id"] == "google/gemma-4-12B-it-qat-q4_0-gguf"
+    assert gemma["filename"].endswith(".gguf")
+    assert "downloaded" in gemma
+
+
+def test_install_recommended_writes_canonical_entry_and_adopts_index_llm(
+    isolated_home, monkeypatch
+):
+    _stub_hf_and_queue(monkeypatch)
+    # Fresh-install seed: hybrid + index_llm=haiku (the cloud default).
+    (isolated_home / "config.user.json").write_text(
+        json.dumps({"model_mode": "hybrid", "backends": {"index_llm": "haiku"}})
+    )
+    cfg._invalidate_cache()
+
+    out = service.install_recommended("local_gemma")
+    assert out["key"] == "local_gemma"  # canonical key, not repo-derived
+    assert out["adopted_index_llm"] is True
+
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    entry = data["chat_models"]["local_gemma"]
+    assert entry["is_local"] is True
+    assert entry["repo_id"] == "google/gemma-4-12B-it-qat-q4_0-gguf"
+    # First local install flips the index LLM to follow the on-device model.
+    assert data["backends"]["index_llm"] == "local"
+
+
+def test_install_recommended_does_not_override_explicit_index_llm(isolated_home, monkeypatch):
+    _stub_hf_and_queue(monkeypatch)
+    # A user who already chose a local index LLM must not be overridden.
+    (isolated_home / "config.user.json").write_text(
+        json.dumps({"model_mode": "hybrid", "backends": {"index_llm": "local_gemma_coder"}})
+    )
+    cfg._invalidate_cache()
+
+    out = service.install_recommended("local_gemma")
+    assert out["adopted_index_llm"] is False
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert data["backends"]["index_llm"] == "local_gemma_coder"
+
+
+def test_install_recommended_rejects_unknown_key(isolated_home, monkeypatch):
+    with pytest.raises(service.InstallError):
+        service.install_recommended("local_nonesuch")
+
+
+# ── remove_from_list: local deleted outright vs Bedrock tombstoned ────────────
+def test_remove_from_list_deletes_local_user_entry(isolated_home, monkeypatch):
     _stub_hf_and_queue(monkeypatch)
     result = service.install_model("unsloth/Qwen3-0.6B-GGUF", "Qwen3-0.6B-Q4_K_M.gguf")
     key = result["key"]
@@ -328,38 +380,55 @@ def test_remove_from_list_deletes_user_entry(isolated_home, monkeypatch):
     # No files on disk in the test → _delete_weights short-circuits.
     monkeypatch.setattr("server.models_manager.catalog.get_entry", lambda k: None)
     out = service.remove_from_list(key)
-    assert out["scope"] == "user"
+    assert out["scope"] == "local"
     assert out["removed_entry"] is True
-    assert out["tombstoned"] is False
 
     data = json.loads((isolated_home / "config.user.json").read_text())
-    # The user entry is gone, and NOTHING was added to the hide-list.
+    # The user entry is gone, and NOTHING was added to the Bedrock hide-list.
     assert key not in data.get("chat_models", {})
     assert key not in data.get("chat_models_disabled", [])
 
 
-def test_remove_from_list_tombstones_shipped_model(isolated_home, monkeypatch):
-    # A built-in / shipped key has no user-layer chat_models entry, so it can't
-    # be deleted — remove_from_list must tombstone it into chat_models_disabled.
+def test_remove_from_list_deletes_a_downloaded_recommendation(isolated_home, monkeypatch):
+    # A recommended model present on disk (e.g. from a prior release) with no user
+    # config entry is still LOCAL — remove deletes it, never tombstones.
+    monkeypatch.setattr(
+        "server.local.registry._recommended_downloaded_on_disk",
+        lambda entry: entry.get("id") == "local:gemma-4-12b-it-qat-q4_0",
+    )
     monkeypatch.setattr("server.models_manager.catalog.get_entry", lambda k: None)
     out = service.remove_from_list("local_gemma")
-    assert out["scope"] == "shipped"
-    assert out["removed_entry"] is False
+    assert out["scope"] == "local"
+
+    data = (
+        json.loads((isolated_home / "config.user.json").read_text())
+        if (isolated_home / "config.user.json").exists()
+        else {}
+    )
+    assert "local_gemma" not in data.get("chat_models_disabled", [])
+
+
+def test_remove_from_list_tombstones_bedrock_model(isolated_home, monkeypatch):
+    # A Bedrock model (in the SYSTEM catalog, not local) has no weights and can't
+    # be deleted, so it is hidden via the recoverable chat_models_disabled list.
+    monkeypatch.setattr("server.models_manager.catalog.get_entry", lambda k: None)
+    out = service.remove_from_list("opus5.0")
+    assert out["scope"] == "bedrock"
     assert out["tombstoned"] is True
 
     data = json.loads((isolated_home / "config.user.json").read_text())
-    assert "local_gemma" in data.get("chat_models_disabled", [])
+    assert "opus5.0" in data.get("chat_models_disabled", [])
     # The shipped entry itself is untouched (it lives in the system layer).
-    assert "local_gemma" not in data.get("chat_models", {})
+    assert "opus5.0" not in data.get("chat_models", {})
 
 
 def test_tombstone_entry_is_idempotent_and_order_preserving(isolated_home, monkeypatch):
-    assert install.tombstone_entry("local_gemma") is True
+    assert install.tombstone_entry("opus5.0") is True
     # A second call is a no-op — no duplicate, returns False.
-    assert install.tombstone_entry("local_gemma") is False
-    install.tombstone_entry("local_qwen")
+    assert install.tombstone_entry("opus5.0") is False
+    install.tombstone_entry("sonnet5")
     data = json.loads((isolated_home / "config.user.json").read_text())
-    assert data["chat_models_disabled"] == ["local_gemma", "local_qwen"]
+    assert data["chat_models_disabled"] == ["opus5.0", "sonnet5"]
 
 
 def test_registry_key_is_stable_and_prefixed():

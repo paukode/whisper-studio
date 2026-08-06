@@ -1155,10 +1155,14 @@ def test_relations_skips_when_no_engine_chosen():
 
 def test_relations_routes_to_local_gemma_engine(monkeypatch):
     """engine='local' routes extraction through the on-device model
-    (runtime.complete on local_gemma); its JSON is parsed/validated as usual."""
+    (runtime.complete on local_gemma); its JSON is parsed/validated as usual.
+    The 'local' alias follows the available model, so local_gemma must be in the
+    registry (installed) for it to resolve there."""
+    import server.local.registry as reg
     import server.local.runtime as rt
     from server.index import relations
 
+    monkeypatch.setattr(reg, "local_models", lambda: {"local_gemma": {"label": "Gemma"}})
     monkeypatch.setattr(rt, "is_downloaded", lambda key: True)
     seen = {}
 
@@ -1175,9 +1179,11 @@ def test_relations_routes_to_local_gemma_engine(monkeypatch):
 def test_relations_local_engine_skips_when_model_missing(monkeypatch):
     """If the local model isn't downloaded, the local engine returns [] (never
     silently falls back to the cloud, and never blocks indexing)."""
+    import server.local.registry as reg
     import server.local.runtime as rt
     from server.index import relations
 
+    monkeypatch.setattr(reg, "local_models", lambda: {"local_gemma": {"label": "Gemma"}})
     monkeypatch.setattr(rt, "is_downloaded", lambda key: False)
 
     def boom(*a, **k):

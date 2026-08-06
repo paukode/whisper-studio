@@ -22,36 +22,42 @@ loader fields (``repo_id``, ``filename``, ``dir``) describe one model, and
 splitting them across two config sections is how you get a model that shows in
 the UI but cannot load (or vice versa).
 
-The built-ins below stay in code so a fresh checkout with no ``config.json``
-still has working on-device models. Config wins on conflict, per key, so a user
-can retune just the ``ctx`` of a built-in without restating its repo.
+Recommended vs shipped: the app ships NO local chat models by default — a fresh
+install has an empty on-device catalog until the user downloads one from Settings
+> Models > Discover. ``RECOMMENDED_LOCAL_MODELS`` below is a curated set the
+Discover tab surfaces for one-click install; a recommended model only enters the
+effective catalog once its weights are on disk (so it shows up after download,
+and a model downloaded by a prior release is not orphaned). Anything the user
+adds/installs lands in ``chat_models`` and is always present, even mid-download.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 
 log = logging.getLogger("whisper-studio")
 
 # Fields a config entry must carry to be loadable on its own. An is_local entry
-# missing any of them is only usable if a built-in of the same key fills the gap.
+# missing any of them is only usable if a recommended entry of the same key
+# fills the gap.
 _REQUIRED = ("repo_id", "filename", "dir")
 
-# Shipped defaults. `id` is a sentinel that never reaches Bedrock (the router
-# branches on the "local:" prefix before any AWS call).
-BUILTIN_LOCAL_MODELS: dict[str, dict] = {
+# Curated on-device models the Discover tab offers for one-click install. These
+# are NOT shipped into the catalog — a recommended model only appears (and only
+# becomes loadable) once its weights are on disk. `id` is a sentinel that never
+# reaches Bedrock (the router branches on the "local:" prefix before any AWS
+# call). 32K ctx default: the FULL tool pool ("Tools: All") renders a ~17.2K-token
+# prompt, so a 16K window rejects the first tool turn; 32K loads on an M3/18GB
+# with one slot and llama.cpp's windowed SWA cache. The chat-input slider still
+# changes it live per model.
+RECOMMENDED_LOCAL_MODELS: dict[str, dict] = {
     "local_gemma": {
         "id": "local:gemma-4-12b-it-qat-q4_0",
         "label": "Gemma 4 12B (Local)",
         "repo_id": "google/gemma-4-12B-it-qat-q4_0-gguf",
         "filename": "gemma-4-12b-it-qat-q4_0.gguf",
         "dir": "gemma-4-12b-it-qat-q4_0",
-        # Gemma 4 supports up to 262144 (256K) natively. 32K is the default
-        # because the FULL tool pool ("Tools: All") renders a ~17.2K-token prompt
-        # — a 16K window rejects the very first turn with exceed_context_size.
-        # Measured on an M3/18GB: 32K loads fine with one slot and llama.cpp's
-        # windowed SWA cache. Lower it per-model via config `ctx` on a smaller
-        # machine; the chat-input slider still changes it live.
         "ctx": 32768,
         "supports_thinking": True,
         "supports_tools": True,
@@ -62,15 +68,34 @@ BUILTIN_LOCAL_MODELS: dict[str, dict] = {
         "repo_id": "yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF",
         "filename": "gemma4-coding-Q4_K_M.gguf",
         "dir": "gemma-4-12b-coder",
-        # Same family as Gemma 4 12B above; identical context + capability flags.
+        "ctx": 32768,
+        "supports_thinking": True,
+        "supports_tools": True,
+    },
+    "local_qwen35_9b": {
+        "id": "local:qwen3.5-9b",
+        "label": "Qwen3.5 9B (Local)",
+        "repo_id": "unsloth/Qwen3.5-9B-GGUF",
+        "filename": "Qwen3.5-9B-Q4_K_M.gguf",
+        "dir": "qwen3.5-9b",
+        "ctx": 32768,
+        "supports_thinking": True,
+        "supports_tools": True,
+    },
+    "local_ministral3_14b": {
+        "id": "local:ministral3-14",
+        "label": "Ministral 3 14B (Local)",
+        "repo_id": "unsloth/Ministral-3-14B-Reasoning-2512-GGUF",
+        "filename": "Ministral-3-14B-Reasoning-2512-UD-Q4_K_XL.gguf",
+        "dir": "ministral3-14",
         "ctx": 32768,
         "supports_thinking": True,
         "supports_tools": True,
     },
 }
 
-# Applied to a config model that omits `ctx`. Matches the built-ins for the same
-# reason: the full tool pool needs more than 16K.
+# Applied to a config model that omits `ctx`. Matches the recommended defaults for
+# the same reason: the full tool pool needs more than 16K.
 _DEFAULT_CTX = 32768
 
 
@@ -114,14 +139,47 @@ def _config_local_models() -> dict[str, dict]:
     return out
 
 
+def _recommended_downloaded_on_disk(entry: dict) -> bool:
+    """Whether a recommended model's weights are already present. Checks the GGUF
+    path directly (models_root/dir/filename) rather than via runtime.is_downloaded,
+    which would recurse through local_models() (this function)."""
+    from server.infrastructure.paths import models_root
+
+    d, fn = entry.get("dir"), entry.get("filename")
+    if not d or not fn:
+        return False
+    return os.path.exists(os.path.join(models_root(), d, fn))
+
+
+def recommended_models() -> dict[str, dict]:
+    """The curated Discover catalog with a ``downloaded`` flag per entry. Not
+    filtered by anything — the Discover tab shows every recommendation."""
+    return {
+        key: {**entry, "downloaded": _recommended_downloaded_on_disk(entry)}
+        for key, entry in RECOMMENDED_LOCAL_MODELS.items()
+    }
+
+
 def local_models() -> dict[str, dict]:
-    """The effective registry: built-ins merged with config, config winning.
+    """The effective on-device catalog: recommended models that are DOWNLOADED,
+    merged with the user's config ``is_local`` entries (config winning per key).
+
+    A fresh install ships nothing local, so this is empty until the user
+    downloads a model from Discover — which writes a config entry (always
+    present, so an in-progress download shows immediately) and, once complete,
+    also satisfies the on-disk check. A recommended model left on disk by a prior
+    release still appears here even without a config entry, so its weights stay
+    manageable instead of being orphaned.
 
     Entries that still lack a required weight field after the merge are dropped
     with a warning — a half-declared model would otherwise fail later at load
     time with a much less obvious error.
     """
-    merged: dict[str, dict] = {k: dict(v) for k, v in BUILTIN_LOCAL_MODELS.items()}
+    merged: dict[str, dict] = {
+        key: dict(entry)
+        for key, entry in RECOMMENDED_LOCAL_MODELS.items()
+        if _recommended_downloaded_on_disk(entry)
+    }
     for key, entry in _config_local_models().items():
         if key in merged:
             merged[key].update(entry)
