@@ -62,15 +62,51 @@ def _reset_bedrock_client_cache() -> None:
         _BEDROCK_CLIENTS.clear()
 
 
+def _downloaded_local_only() -> dict:
+    """On-device models present in the registry (downloaded) but NOT in config
+    chat_models. The app ships no local chat models, so a recommended model the
+    user downloaded — or one left on disk by a prior release — has no config
+    entry; it must still be selectable and routable. The registry is
+    disk-authoritative for local models (only surfaces downloaded recommendations
+    plus config is_local entries), so this yields exactly the downloaded ones the
+    config doesn't already carry. Never raises: a registry hiccup must not break
+    the chat catalog."""
+    try:
+        from server.local.registry import local_models
+
+        cfg_keys = set(load_config().get("chat_models", {}))
+        return {k: m for k, m in local_models().items() if k not in cfg_keys}
+    except Exception:  # pragma: no cover - defensive
+        return {}
+
+
 def _get_chat_models() -> dict:
-    return load_config().get("chat_models", {})
+    models = dict(load_config().get("chat_models", {}))
+    for key, m in _downloaded_local_only().items():
+        models.setdefault(key, m.get("id") or f"local:{key}")
+    return models
 
 
 def _get_chat_model_meta() -> dict:
     """Per-model metadata (label, thinking mode). Sibling of chat_models —
     populated by infrastructure.config._normalize_chat_models from the same
-    rich shape on disk. Empty dict if config.json hasn't been loaded yet."""
-    return load_config().get("chat_model_meta", {})
+    rich shape on disk. Empty dict if config.json hasn't been loaded yet.
+    Downloaded local models without a config entry are folded in with derived
+    meta so the picker can badge them and route selection through the local
+    runtime."""
+    meta = dict(load_config().get("chat_model_meta", {}))
+    for key, m in _downloaded_local_only().items():
+        meta.setdefault(
+            key,
+            {
+                "id": m.get("id") or f"local:{key}",
+                "label": m.get("label") or key,
+                "is_local": True,
+                "supports_thinking": bool(m.get("supports_thinking")),
+                "supports_tools": bool(m.get("supports_tools")),
+            },
+        )
+    return meta
 
 
 def _get_default_model() -> str:
