@@ -49,6 +49,13 @@ _ONESHOT_TIMEOUT = float(os.environ.get("WHISPER_LLAMA_ONESHOT_TIMEOUT", "600"))
 _HOST = "127.0.0.1"
 
 _lock = threading.Lock()
+# Serializes the whole (re)start sequence in ensure_serving. _lock only guards
+# the quick state reads/writes; without a second lock around stop()+spawn+wait,
+# N concurrent loads of the same model each stop the previous call's freshly
+# spawned server and start their own, so every server is SIGKILLed ~1s in and
+# none becomes ready ("failed to become ready"). This lock makes duplicates
+# coalesce: the first loads, the rest re-check and reuse it.
+_load_lock = threading.Lock()
 _proc: subprocess.Popen | None = None
 _state: dict = {"key": None, "port": None, "n_ctx": None}
 _log_path: str | None = None
@@ -239,82 +246,100 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
         ):
             return f"http://{_HOST}:{_state['port']}"
 
-    exe = ensure_available()
-    # Fetch weights before spawning: a missing GGUF would otherwise surface as an
-    # opaque subprocess exit, and the download can take a long time.
-    model_path = ensure_downloaded(key)
+    # Serialize the whole (re)start. Without this, N concurrent loads of the same
+    # model (the UI fired four /api/local-model/load for local_gemma at once) each
+    # run stop()+spawn, so every call kills the previous call's freshly spawned
+    # server ~1s in and none survives to become healthy ("failed to become
+    # ready"). Holding _load_lock across stop→spawn→wait makes duplicates
+    # coalesce: the first loads it, the rest re-check below and reuse it.
+    with _load_lock:
+        # Re-check under the load lock: a concurrent call we queued behind may have
+        # just brought up exactly what we want, so don't stop-and-restart it.
+        with _lock:
+            if (
+                _proc is not None
+                and _proc.poll() is None
+                and _state["key"] == key
+                and _state["n_ctx"] == target_ctx
+            ):
+                return f"http://{_HOST}:{_state['port']}"
 
-    stop()  # one resident model at a time
+        exe = ensure_available()
+        # Fetch weights before spawning: a missing GGUF would otherwise surface as
+        # an opaque subprocess exit, and the download can take a long time.
+        model_path = ensure_downloaded(key)
 
-    port = _free_port()
-    os.makedirs(os.path.join(MODELS_DIR, ".logs"), exist_ok=True)
-    log_path = os.path.join(MODELS_DIR, ".logs", f"llama-server-{key}.log")
-    cmd = [
-        exe,
-        "--model",
-        model_path,
-        # --jinja is what activates the model's own chat template AND upstream's
-        # per-family tool-call parser. Without it, tools are not parsed at all.
-        "--jinja",
-        "--host",
-        _HOST,
-        "--port",
-        str(port),
-        "--ctx-size",
-        str(target_ctx),
-        # ONE slot. The default is 4, and each slot gets its own KV cache, so the
-        # default quadruples KV memory for a single-user desktop app — enough to
-        # OOM Metal on an 18GB machine at a large context. One request at a time
-        # is also what the UI does.
-        "--parallel",
-        "1",
-        # Reuse cached prompt prefixes across turns via KV shifting — the
-        # subprocess equivalent of the in-process prefix cache, so a follow-up
-        # turn doesn't re-prefill the whole system+tools prompt.
-        "--cache-reuse",
-        "256",
-        # Extract reasoning into a separate channel instead of leaking the raw
-        # thought markers into the answer.
-        "--reasoning-format",
-        "auto",
-    ]
-    extra = os.environ.get("WHISPER_LLAMA_SERVER_ARGS", "").split()
-    cmd.extend(extra)
+        stop()  # one resident model at a time
 
-    log.info(
-        "Starting llama-server for %s (n_ctx=%d) on port %d; log -> %s",
-        key,
-        target_ctx,
-        port,
-        log_path,
-    )
-    logfile = open(log_path, "w")
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=logfile,
-            stderr=subprocess.STDOUT,
-            # Own process group so a signal aimed at our shell/parent doesn't
-            # take the model server down mid-turn.
-            start_new_session=True,
+        port = _free_port()
+        os.makedirs(os.path.join(MODELS_DIR, ".logs"), exist_ok=True)
+        log_path = os.path.join(MODELS_DIR, ".logs", f"llama-server-{key}.log")
+        cmd = [
+            exe,
+            "--model",
+            model_path,
+            # --jinja is what activates the model's own chat template AND upstream's
+            # per-family tool-call parser. Without it, tools are not parsed at all.
+            "--jinja",
+            "--host",
+            _HOST,
+            "--port",
+            str(port),
+            "--ctx-size",
+            str(target_ctx),
+            # ONE slot. The default is 4, and each slot gets its own KV cache, so
+            # the default quadruples KV memory for a single-user desktop app —
+            # enough to OOM Metal on an 18GB machine at a large context. One
+            # request at a time is also what the UI does.
+            "--parallel",
+            "1",
+            # Reuse cached prompt prefixes across turns via KV shifting — the
+            # subprocess equivalent of the in-process prefix cache, so a follow-up
+            # turn doesn't re-prefill the whole system+tools prompt.
+            "--cache-reuse",
+            "256",
+            # Extract reasoning into a separate channel instead of leaking the raw
+            # thought markers into the answer.
+            "--reasoning-format",
+            "auto",
+        ]
+        extra = os.environ.get("WHISPER_LLAMA_SERVER_ARGS", "").split()
+        cmd.extend(extra)
+
+        log.info(
+            "Starting llama-server for %s (n_ctx=%d) on port %d; log -> %s",
+            key,
+            target_ctx,
+            port,
+            log_path,
         )
-    except Exception as e:
-        logfile.close()
-        raise RuntimeError(f"Could not start llama-server: {e}") from e
+        logfile = open(log_path, "w")
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=logfile,
+                stderr=subprocess.STDOUT,
+                # Own process group so a signal aimed at our shell/parent doesn't
+                # take the model server down mid-turn.
+                start_new_session=True,
+            )
+        except Exception as e:
+            logfile.close()
+            raise RuntimeError(f"Could not start llama-server: {e}") from e
 
-    with _lock:
-        _proc = proc
-        _log_path = log_path
-        _state.update(key=key, port=port, n_ctx=target_ctx)
+        with _lock:
+            _proc = proc
+            _log_path = log_path
+            _state.update(key=key, port=port, n_ctx=target_ctx)
 
-    if not _wait_healthy(port, proc, time.monotonic() + _STARTUP_TIMEOUT):
-        tail = log_tail()
-        stop()
-        raise RuntimeError(
-            f"llama-server failed to become ready for {key}. Last log lines:\n{tail}"
-        )
-    log.info("llama-server ready for %s on port %d.", key, port)
-    return f"http://{_HOST}:{port}"
+        if not _wait_healthy(port, proc, time.monotonic() + _STARTUP_TIMEOUT):
+            tail = log_tail()
+            stop()
+            raise RuntimeError(
+                f"llama-server failed to become ready for {key}. Last log lines:\n{tail}"
+            )
+        log.info("llama-server ready for %s on port %d.", key, port)
+        return f"http://{_HOST}:{port}"
 
 
 def _strip_reasoning_markers(text: str) -> str:

@@ -473,6 +473,67 @@ def test_ensure_serving_honors_sticky_requested_ctx(monkeypatch):
     LS._proc = None
 
 
+def test_ensure_serving_coalesces_concurrent_duplicate_loads(monkeypatch):
+    """Regression: the UI fired four /api/local-model/load for local_gemma at
+    once. Each call ran stop()+spawn, so every llama-server was SIGKILLed ~1s in
+    by the next duplicate and none became ready ("failed to become ready").
+    Concurrent duplicate loads must coalesce onto a single spawn."""
+    import threading
+    import time as _time
+
+    import server.local.runtime as L
+
+    monkeypatch.setattr(LS, "ensure_available", lambda: "/usr/bin/llama-server")
+    monkeypatch.setattr(L, "ensure_downloaded", lambda key: "/models/x.gguf")
+    monkeypatch.setattr(L, "requested_n_ctx", lambda: 32768)
+    monkeypatch.setattr(LS, "_wait_healthy", lambda port, proc, deadline: True)
+
+    stops: list[int] = []
+    monkeypatch.setattr(LS, "stop", lambda: stops.append(1))
+
+    spawns: list[list] = []
+
+    class FakeProc:
+        pid = 4242
+
+        def poll(self):
+            return None
+
+    def fake_popen(cmd, **kw):
+        spawns.append(cmd)
+        _time.sleep(0.05)  # cold start: hold the load lock so the others queue
+        return FakeProc()
+
+    monkeypatch.setattr(LS.subprocess, "Popen", fake_popen)
+
+    LS._proc = None
+    LS._state.update(key=None, port=None, n_ctx=None)
+
+    barrier = threading.Barrier(4)
+    errors: list[Exception] = []
+
+    def worker():
+        try:
+            barrier.wait()  # release all four into ensure_serving together
+            LS.ensure_serving("local_gemma", n_ctx=32768)
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    try:
+        assert errors == []
+        assert len(spawns) == 1  # three duplicates reused the first spawn
+        assert len(stops) == 1  # not one stop-and-restart per request
+    finally:
+        LS._state.update(key=None, port=None, n_ctx=None)
+        LS._proc = None
+
+
 def test_resident_n_ctx_is_none_once_the_process_is_gone():
     class DeadProc:
         def poll(self):

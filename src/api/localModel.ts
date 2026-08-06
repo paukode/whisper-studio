@@ -9,7 +9,26 @@ import { useSettingsStore } from '@/stores/settingsStore';
  * The bar is a server-driven time ramp (llama.cpp load is opaque) that snaps to
  * 100% on completion — same UX as the transcription engine load.
  */
-export async function loadLocalModel(model: string, label: string, nCtx?: number): Promise<boolean> {
+// Coalesce concurrent identical loads. Several paths can ask for the same model
+// at once (selecting a local model in the composer, the context-window slider
+// committing, the data-retention consent flow), and each fetch drives its own
+// load. Firing them together made the server stop-and-restart llama-server once
+// per request, so every spawn was killed ~1s in and none became ready. One
+// in-flight promise per model+ctx means duplicates share the first load.
+const inFlightLoads = new Map<string, Promise<boolean>>();
+
+export function loadLocalModel(model: string, label: string, nCtx?: number): Promise<boolean> {
+  const key = `${model}|${nCtx ?? ''}`;
+  const existing = inFlightLoads.get(key);
+  if (existing) return existing;
+  const run = doLoadLocalModel(model, label, nCtx).finally(() => {
+    inFlightLoads.delete(key);
+  });
+  inFlightLoads.set(key, run);
+  return run;
+}
+
+async function doLoadLocalModel(model: string, label: string, nCtx?: number): Promise<boolean> {
   const ui = useUIStore.getState;
   ui().setModelLoading({ label, progress: 0, stage: 'start' });
   let ok = true;
