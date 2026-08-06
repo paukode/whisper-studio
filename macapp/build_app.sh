@@ -184,7 +184,21 @@ if [[ -f "$REQ_STAMP" && "$(cat "$REQ_STAMP")" == "$REQ_SHA" ]]; then
     substep "requirements already installed (stamp matches)"
 else
     substep "pip install -r requirements.txt"
-    "$PY_BIN" -m pip install -r "$REPO_ROOT/requirements.txt" --no-warn-script-location
+    # A cold build pulls several GB of wheels; flaky networks drop connections or
+    # deliver partial downloads (DNS blips, CDN throttling). pip caches every
+    # wheel that DID land, so re-running resumes rather than restarts. Retry the
+    # whole install a few times with pip's own per-download retries bumped high.
+    pip_ok=0
+    for attempt in 1 2 3 4 5 6; do
+        if "$PY_BIN" -m pip install -r "$REPO_ROOT/requirements.txt" \
+            --no-warn-script-location --retries 10 --timeout 60; then
+            pip_ok=1
+            break
+        fi
+        substep "pip install attempt $attempt failed (network?); cached wheels kept, retrying in 8s"
+        sleep 8
+    done
+    [[ "$pip_ok" == "1" ]] || die "pip install failed after 6 attempts (network); rerun the build"
     echo "$REQ_SHA" > "$REQ_STAMP"
 fi
 
