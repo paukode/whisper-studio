@@ -114,12 +114,13 @@ def test_migration_is_idempotent(split_env, monkeypatch):
     assert (tmp / "config.user.json").read_text() == first
 
 
-def test_fresh_install_creates_empty_user_config(split_env):
+def test_fresh_install_seeds_first_run_user_config(split_env):
     tmp = split_env
     # Neither config.json nor config.user.json exists.
     assert not (tmp / "config.json").exists()
     assert cfg.migrate_user_config() is False
-    assert json.loads((tmp / "config.user.json").read_text()) == {}
+    # Fresh install seeds the first-run defaults (hybrid + on-device index).
+    assert json.loads((tmp / "config.user.json").read_text()) == cfg.FIRST_RUN_USER_CONFIG
     # No backup and no legacy rename on a clean home.
     assert glob.glob(str(tmp / "config.json.bak.*")) == []
     assert not (tmp / "config.json.pre-split").exists()

@@ -566,6 +566,23 @@ def _write_config_text(text: str) -> None:
     _invalidate_cache()
 
 
+# Written into a brand-new config.user.json on first launch (packaged app, or
+# any fresh home). After the file exists it is never overwritten, so the user's
+# saved settings win from the second launch on. Defaults: hybrid mode with the
+# index/RAG capabilities on-device — on-device embeddings + reranker, GLiNER
+# entity extraction, and the local model (Gemma) for the one-shot writer /
+# relationship mapping. Chat model choice is left to the system default.
+FIRST_RUN_USER_CONFIG = {
+    "model_mode": "hybrid",
+    "backends": {
+        "embed": "qwen3",
+        "rerank": "qwen3",
+        "ner": "gliner",
+        "index_llm": "local_gemma",
+    },
+}
+
+
 def migrate_user_config() -> bool:
     """One-time, idempotent split of a monolithic config.json into a
     config.user.json that holds only the user's deltas.
@@ -593,9 +610,11 @@ def migrate_user_config() -> bool:
         return False
 
     if not os.path.exists(legacy_path):
-        # Fresh install: an empty user layer; SYSTEM supplies the catalog.
+        # Fresh install: seed the first-run defaults (hybrid + on-device index),
+        # then never touch the file again so the user's settings win afterward.
+        # SYSTEM still supplies the chat-model catalog.
         try:
-            _atomic_write(user_path, "{}\n")
+            _atomic_write(user_path, json.dumps(FIRST_RUN_USER_CONFIG, indent=2) + "\n")
             _invalidate_cache()
         except OSError as e:
             log.warning("Could not create %s: %s", user_path, e)
