@@ -12,7 +12,7 @@ import { removeModelFromList } from '@/api/modelBrowser';
 import { useUIStore } from '@/stores/uiStore';
 import { humanSize } from '@/utils/humanSize';
 import { ContextMenu, type MenuItem } from '@/components/common/ContextMenu';
-import { ChatModelVisibility, fetchModelsDisabled } from './ChatModelVisibility';
+import { ChatModelVisibility } from './ChatModelVisibility';
 import { ConfigJsonLink } from './ConfigEditorDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ModelBrowser } from './ModelBrowser';
@@ -134,21 +134,6 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
     queryKey: ['models-manager-catalog'],
     queryFn: fetchModelsCatalog,
   });
-  // The chat-model hide-list (shared cache with Chat model visibility). A
-  // shipped local-chat model that's been "removed from the list" is tombstoned
-  // here; with its weights gone it should vanish from the Local chat list too,
-  // so the local-chat rows filter it out (see visibleRows below).
-  const disabledQuery = useQuery({
-    queryKey: ['models-disabled'],
-    queryFn: fetchModelsDisabled,
-  });
-  const disabledSet = useMemo(
-    () =>
-      new Set(
-        Array.isArray(disabledQuery.data?.disabled) ? disabledQuery.data.disabled : [],
-      ),
-    [disabledQuery.data],
-  );
   // Poll while anything is downloading OR queued: the server pumps its queue
   // on status polls, so polling is what makes a queued model start at all.
   const catalogActive = (catalogQuery.data?.models ?? []).some((m) => isActive(m.state));
@@ -289,9 +274,9 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
         addToast({
           type: 'success',
           message:
-            res.scope === 'shipped'
+            res.scope === 'bedrock'
               ? `${m.label} removed from the list. Re-enable it under Chat model visibility.`
-              : `${m.label} removed.`,
+              : `${m.label} removed. Download it again any time from Discover.`,
         });
       },
       `Could not remove ${m.label}`,
@@ -324,19 +309,10 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
 
       {showCatalog &&
         visibleGroups.map((group) => {
-        // A shipped local-chat model that was "removed from the list" is
-        // tombstoned in chat_models_disabled and its weights deleted; with
-        // nothing on disk it should disappear here (it stays recoverable in
-        // Chat model visibility). A model merely HIDDEN via the visibility
-        // toggle but still on disk stays listed so its gigabytes remain
-        // manageable — hence the `bytes_on_disk === 0` guard.
-        const rows = models
-          .filter((m) => m.group === group.id)
-          .filter(
-            (m) =>
-              group.id !== 'local-chat' ||
-              !(disabledSet.has(m.key) && !m.installed && m.bytes_on_disk === 0),
-          );
+        // Local models are deleted outright when removed (not hidden via the
+        // Bedrock-only chat_models_disabled list), so the catalog is already the
+        // truth — no extra hide-list filtering here.
+        const rows = models.filter((m) => m.group === group.id);
         if (rows.length === 0) return null;
         return (
           <div key={group.id} className="models-section">
@@ -513,12 +489,11 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
           title={`Remove ${confirmRemove.label} from the list?`}
           message={
             <>
-              This takes the model out of the list and the chat model picker
+              This deletes the model everywhere &mdash; the list, the chat model picker
               {confirmRemove.installed || confirmRemove.bytes_on_disk > 0
-                ? `, and deletes its ${humanSize(confirmRemove.bytes_on_disk)} of weights from disk`
+                ? `, and its ${humanSize(confirmRemove.bytes_on_disk)} of weights on disk`
                 : ''}
-              . Discover-added models are removed for good; shipped models can be re-enabled under
-              Chat model visibility.
+              . You can download it again any time from the Discover tab.
             </>
           }
           confirmLabel="Remove"

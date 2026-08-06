@@ -302,7 +302,7 @@ describe('ModelsPanel', () => {
     expect(screen.queryByText('Delete downloaded files')).not.toBeInTheDocument();
   });
 
-  it('remove from list hits the entry endpoint and toasts the shipped-model hint', async () => {
+  it('remove from list hits the entry endpoint and toasts the local re-download hint', async () => {
     api.get.mockImplementation((url: string) =>
       url === '/api/models/catalog'
         ? Promise.resolve({
@@ -326,12 +326,11 @@ describe('ModelsPanel', () => {
           ? Promise.resolve({ disabled: [], models: [] })
           : Promise.resolve({ models: {} }),
     );
-    // A shipped model → the backend reports scope "shipped" (tombstoned).
+    // A local model → the backend reports scope "local" (deleted outright).
     api.del.mockResolvedValue({
       key: 'local_gemma',
-      scope: 'shipped',
-      removed_entry: false,
-      tombstoned: true,
+      scope: 'local',
+      removed_entry: true,
       weights_deleted: false,
       stopped_llama_server: false,
     });
@@ -348,11 +347,13 @@ describe('ModelsPanel', () => {
     );
     await waitFor(() => {
       const toasts = useUIStore.getState().toasts;
-      expect(toasts.some((t) => /Chat model visibility/.test(t.message))).toBe(true);
+      expect(toasts.some((t) => /Discover/.test(t.message))).toBe(true);
     });
   });
 
-  it('hides a tombstoned shipped local-chat model with no weights on disk', async () => {
+  it('shows a local-chat model even if it appears in the Bedrock hide-list', async () => {
+    // Local models are deleted, never tombstoned, so the chat_models_disabled
+    // list must NOT hide a local-chat row (that list is Bedrock-only now).
     api.get.mockImplementation((url: string) =>
       url === '/api/models/catalog'
         ? Promise.resolve({
@@ -373,16 +374,11 @@ describe('ModelsPanel', () => {
             ],
           })
         : url === '/api/config/models-disabled'
-          ? // The model is tombstoned in the hide-list.
-            Promise.resolve({ disabled: ['local_gemma'], models: [] })
+          ? Promise.resolve({ disabled: ['local_gemma'], models: [] })
           : Promise.resolve({ models: {} }),
     );
     renderPanel();
-    // The Local chat section renders no rows for the tombstoned+empty model, so
-    // the group (and its heading) drop out entirely.
-    await waitFor(() =>
-      expect(screen.queryByText('Gemma 4 12B (Local)')).not.toBeInTheDocument(),
-    );
-    expect(screen.queryByText('Local chat')).not.toBeInTheDocument();
+    // The Local chat row still renders despite being in the hide-list.
+    expect(await screen.findByText('Gemma 4 12B (Local)')).toBeInTheDocument();
   });
 });

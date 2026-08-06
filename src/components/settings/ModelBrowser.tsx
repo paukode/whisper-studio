@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  fetchRecommendedModels,
   fetchRepoDetail,
   installModel,
+  installRecommendedModel,
   searchModels,
   type BrowseResult,
   type BrowseSort,
+  type InstallResult,
+  type RecommendedModel,
 } from '@/api/modelBrowser';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
@@ -18,6 +22,34 @@ const humanCount = (n: number | null | undefined): string => {
   if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
   return String(n);
 };
+
+type QueryClient = ReturnType<typeof useQueryClient>;
+
+/** After any install, surface the new download row in the manager list above and
+ *  refresh the composer picker so the model appears once installed. */
+async function refreshAfterInstall(queryClient: QueryClient): Promise<void> {
+  await queryClient.invalidateQueries({ queryKey: ['models-manager-catalog'] });
+  await queryClient.invalidateQueries({ queryKey: ['models-manager-status'] });
+  await queryClient.invalidateQueries({ queryKey: ['models-disabled'] });
+  await useSettingsStore.getState().loadModels();
+}
+
+/** The success toast for an install, shared by search and recommended installs.
+ *  Mentions index-LLM adoption when the first local install flipped it. */
+function installToast(res: InstallResult) {
+  const base =
+    res.download === 'queued'
+      ? `${res.label} queued. See the download list below.`
+      : res.download === 'already_installed'
+        ? `${res.label} is already downloaded and now in your models.`
+        : `${res.label} added; downloading. See the download list below.`;
+  const suffix = res.adopted_index_llm ? ' Indexing will now use your on-device model.' : '';
+  return {
+    type: (res.download === 'queued' ? 'info' : 'success') as 'info' | 'success',
+    message: base + suffix,
+    duration: 6000,
+  };
+}
 
 /** Compact quant picker for one repo: a single dropdown of quants (recommended
  *  preselected, size in each label) next to one Download button, on one row.
@@ -54,22 +86,8 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
     setInstalling(true);
     try {
       const res = await installModel({ repo_id: result.repo_id, filename: effectiveSelected });
-      addToast({
-        type: res.download === 'queued' ? 'info' : 'success',
-        message:
-          res.download === 'queued'
-            ? `${res.label} queued. See the download list below.`
-            : res.download === 'already_installed'
-              ? `${res.label} is already downloaded and now in your models.`
-              : `${res.label} added; downloading. See the download list below.`,
-        duration: 6000,
-      });
-      // Surface the new download row in the manager list above, and refresh the
-      // composer picker so it appears there once installed.
-      await queryClient.invalidateQueries({ queryKey: ['models-manager-catalog'] });
-      await queryClient.invalidateQueries({ queryKey: ['models-manager-status'] });
-      await queryClient.invalidateQueries({ queryKey: ['models-disabled'] });
-      await useSettingsStore.getState().loadModels();
+      addToast(installToast(res));
+      await refreshAfterInstall(queryClient);
     } catch (e) {
       addToast({
         type: 'error',
@@ -149,6 +167,96 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   );
 };
 
+/** One curated recommendation: label + size + quant, one-click install. Shows
+ *  "Installed" once its weights are on disk. */
+const RecommendedRow: React.FC<{ model: RecommendedModel }> = ({ model }) => {
+  const [installing, setInstalling] = useState(false);
+  const queryClient = useQueryClient();
+  const addToast = useUIStore((s) => s.addToast);
+
+  const onInstall = async () => {
+    setInstalling(true);
+    try {
+      const res = await installRecommendedModel(model.key);
+      addToast(installToast(res));
+      await refreshAfterInstall(queryClient);
+    } catch (e) {
+      addToast({
+        type: 'error',
+        message: `Could not install ${model.label}: ${e instanceof Error ? e.message : 'request failed'}`,
+        duration: 8000,
+      });
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  return (
+    <div className="settings-item">
+      <div className="settings-item-info">
+        <div
+          className="settings-item-name"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
+        >
+          {model.label}
+          <span className="model-local-badge">{model.author}</span>
+          {model.param_size && (
+            <span style={{ fontSize: 11, color: 'var(--text-secondary, #888)' }}>
+              {model.param_size}
+            </span>
+          )}
+        </div>
+        <div className="settings-item-desc">
+          {model.quant}
+          {model.ctx ? ` · ${Math.round(model.ctx / 1024)}K context` : ''}
+        </div>
+      </div>
+      <div className="settings-item-actions" style={{ gap: 8 }}>
+        {model.downloaded ? (
+          <span className="model-installed-badge" style={{ fontSize: 12, color: 'var(--accent-live, #34c77b)' }}>
+            Installed
+          </span>
+        ) : (
+          <button
+            className="btn btn-primary btn-sm"
+            type="button"
+            disabled={installing}
+            onClick={() => void onInstall()}
+          >
+            {installing ? 'Adding…' : 'Download'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+/** The curated Recommended catalog — the primary way to get an on-device model,
+ *  since the app ships none by default. */
+const RecommendedSection: React.FC = () => {
+  const query = useQuery({
+    queryKey: ['model-browse-recommended'],
+    queryFn: fetchRecommendedModels,
+  });
+  const models = query.data?.recommended ?? [];
+  if (query.isLoading || models.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <h5 className="models-section-title" style={{ fontSize: 13 }}>
+        Recommended
+      </h5>
+      <p className="models-section-desc">
+        Curated on-device models, ready to download. No local model ships by default.
+      </p>
+      <div className="settings-list">
+        {models.map((m) => (
+          <RecommendedRow key={m.key} model={m} />
+        ))}
+      </div>
+    </div>
+  );
+};
+
 /**
  * Settings > Models > Discover: search Hugging Face for GGUF chat models and
  * install one with a click. Only models the bundled engine can run are shown
@@ -182,9 +290,15 @@ export const ModelBrowser: React.FC = () => {
     <div className="models-section">
       <h4 className="models-section-title">Discover models</h4>
       <p className="models-section-desc">
-        Search Hugging Face for GGUF chat models the local engine can run.
+        Download an on-device model. Start with a Recommended pick, or search Hugging
+        Face for any GGUF chat model the local engine can run.
       </p>
 
+      <RecommendedSection />
+
+      <h5 className="models-section-title" style={{ fontSize: 13 }}>
+        Search Hugging Face
+      </h5>
       <form onSubmit={onSubmit} style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <input
           type="text"

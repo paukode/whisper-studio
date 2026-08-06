@@ -52,6 +52,27 @@ export interface InstallResult {
   supports_tools: boolean;
   /** models-manager start result: "started" | "queued" | "already_installed" | … */
   download: string;
+  /** True when this (first) local install flipped the index LLM to follow the
+   *  on-device model (fresh installs default index_llm to cloud Haiku). */
+  adopted_index_llm?: boolean;
+}
+
+/** A curated on-device model the Discover tab recommends for one-click install.
+ *  The app ships no local models by default, so this is the primary way in. */
+export interface RecommendedModel {
+  key: string;
+  repo_id: string;
+  author: string;
+  name: string;
+  label: string;
+  filename: string;
+  quant: string;
+  param_size: string | null;
+  ctx: number | null;
+  supports_thinking: boolean;
+  supports_tools: boolean;
+  /** Already present on disk (from a prior install or release). */
+  downloaded: boolean;
 }
 
 export type BrowseSort = 'trending' | 'downloads';
@@ -82,6 +103,14 @@ export const installModel = (body: {
   n_ctx?: number;
 }) => post<InstallResult>('/api/models/browse/install', body);
 
+/** The curated Recommended catalog (Settings > Models > Discover). */
+export const fetchRecommendedModels = () =>
+  get<{ recommended: RecommendedModel[]; count: number }>('/api/models/browse/recommended');
+
+/** One-click install a recommendation by its canonical key. */
+export const installRecommendedModel = (key: string) =>
+  post<InstallResult>('/api/models/browse/install-recommended', { key });
+
 export const uninstallBrowsedModel = (key: string) =>
   del<{ key: string; removed: boolean; stopped_llama_server: boolean; message?: string }>(
     `/api/models/browse/${encodeURIComponent(key)}`,
@@ -89,19 +118,21 @@ export const uninstallBrowsedModel = (key: string) =>
 
 export interface RemoveFromListResult {
   key: string;
-  /** "user" = the entry lived in config.user.json and was deleted outright;
-   *  "shipped" = a default we can't delete, so it was tombstoned instead. */
-  scope: 'user' | 'shipped';
-  removed_entry: boolean;
-  tombstoned: boolean;
+  /** "local" = a local model, deleted outright (weights + config), re-downloadable
+   *  from Discover; "bedrock" = a cloud model, tombstoned into chat_models_disabled
+   *  (recoverable via Chat model visibility). */
+  scope: 'local' | 'bedrock';
+  /** Present for a local removal — whether a config entry was deleted. */
+  removed_entry?: boolean;
+  /** Present for a Bedrock removal — whether it was newly hidden. */
+  tombstoned?: boolean;
   weights_deleted: boolean;
   stopped_llama_server: boolean;
   message?: string;
 }
 
-/** Remove a local chat model from the list + picker entirely: delete a
- *  user-added entry (weights + config), or tombstone a shipped default into
- *  chat_models_disabled (weights deleted if present, recoverable via Chat
- *  model visibility). */
+/** Remove a chat model from the list + picker entirely: a local model is deleted
+ *  outright (weights + config, re-downloadable from Discover); a Bedrock model is
+ *  hidden via chat_models_disabled (recoverable via Chat model visibility). */
 export const removeModelFromList = (key: string) =>
   del<RemoveFromListResult>(`/api/models/browse/${encodeURIComponent(key)}/entry`);
