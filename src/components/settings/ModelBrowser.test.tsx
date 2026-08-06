@@ -160,4 +160,29 @@ describe('ModelBrowser (Discover)', () => {
       }),
     );
   });
+
+  it('browses an empty-term default list for BOTH sorts and refetches on sort change', async () => {
+    renderBrowser();
+    // Mount runs the default trending browse with NO search term.
+    await screen.findByText('Qwen3-0.6B-GGUF');
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/models\/browse\/search\?.*sort=trending/),
+      ),
+    );
+    // The empty-term browse must NOT include a q param.
+    expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining('q='));
+
+    // Switching to Most downloaded refetches with the new sort, still empty term.
+    fireEvent.change(screen.getByRole('combobox', { name: /sort order/i }), {
+      target: { value: 'downloads' },
+    });
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(
+        expect.stringMatching(/\/api\/models\/browse\/search\?.*sort=downloads/),
+      ),
+    );
+    // Results still render (the query is no longer gated behind a search term).
+    expect(await screen.findByText('Qwen3-0.6B-GGUF')).toBeInTheDocument();
+  });
 });

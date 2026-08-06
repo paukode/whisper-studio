@@ -223,12 +223,166 @@ describe('ModelsPanel', () => {
       expect(api.post).toHaveBeenCalledWith('/api/models/local_qwen/download'),
     );
 
-    // Delete is offered too (error + partials): it opens the confirm dialog,
-    // then clears the stranded download's partials server-side.
-    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    // The "…" overflow menu offers "Delete downloaded files" (error + partials):
+    // it opens the confirm dialog, then clears the stranded partials server-side.
+    fireEvent.click(screen.getByRole('button', { name: /More actions for/i }));
+    fireEvent.click(await screen.findByText('Delete downloaded files'));
     expect(await screen.findByText('Delete Qwen3.6 27B (Local)?')).toBeInTheDocument();
-    const deleteButtons = screen.getAllByRole('button', { name: 'Delete' });
-    fireEvent.click(deleteButtons[deleteButtons.length - 1]); // the dialog's confirm
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' })); // the dialog's confirm
     await waitFor(() => expect(api.del).toHaveBeenCalledWith('/api/models/local_qwen'));
+  });
+
+  it('local-chat overflow menu: installed row offers delete files + remove from list', async () => {
+    api.get.mockImplementation((url: string) =>
+      url === '/api/models/catalog'
+        ? Promise.resolve({
+            models: [
+              {
+                key: 'local_qwen',
+                label: 'Qwen3 8B (Local)',
+                group: 'local-chat',
+                repo_id: 'unsloth/Qwen3-8B-GGUF',
+                installed: true,
+                size_bytes_estimate: 5_000_000_000,
+                bytes_on_disk: 5_000_000_000,
+                progress: 1,
+                state: 'installed',
+                queue_position: null,
+                error: null,
+              },
+            ],
+          })
+        : url === '/api/config/models-disabled'
+          ? Promise.resolve({ disabled: [], models: [] })
+          : Promise.resolve({ models: {} }),
+    );
+    renderPanel();
+    await screen.findByText('Qwen3 8B (Local)');
+
+    // No bare Delete button on the row anymore — it lives in the "…" menu.
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /More actions for/i }));
+    // Installed → both actions are offered.
+    expect(await screen.findByText('Delete downloaded files')).toBeInTheDocument();
+    expect(screen.getByText('Remove from list')).toBeInTheDocument();
+  });
+
+  it('local-chat overflow menu: a not-downloaded row offers only remove from list', async () => {
+    api.get.mockImplementation((url: string) =>
+      url === '/api/models/catalog'
+        ? Promise.resolve({
+            models: [
+              {
+                key: 'local_ministral',
+                label: 'Ministral 8B (Local)',
+                group: 'local-chat',
+                repo_id: 'mistralai/Ministral-8B-GGUF',
+                installed: false,
+                size_bytes_estimate: 5_000_000_000,
+                bytes_on_disk: 0,
+                progress: 0,
+                state: 'absent',
+                queue_position: null,
+                error: null,
+              },
+            ],
+          })
+        : url === '/api/config/models-disabled'
+          ? Promise.resolve({ disabled: [], models: [] })
+          : Promise.resolve({ models: {} }),
+    );
+    renderPanel();
+    await screen.findByText('Ministral 8B (Local)');
+
+    // Download is still offered for a not-downloaded model.
+    expect(screen.getByRole('button', { name: 'Download' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /More actions for/i }));
+    // Nothing on disk → no "Delete downloaded files", only "Remove from list".
+    expect(await screen.findByText('Remove from list')).toBeInTheDocument();
+    expect(screen.queryByText('Delete downloaded files')).not.toBeInTheDocument();
+  });
+
+  it('remove from list hits the entry endpoint and toasts the shipped-model hint', async () => {
+    api.get.mockImplementation((url: string) =>
+      url === '/api/models/catalog'
+        ? Promise.resolve({
+            models: [
+              {
+                key: 'local_gemma',
+                label: 'Gemma 4 12B (Local)',
+                group: 'local-chat',
+                repo_id: 'google/gemma-4-12B-it-qat-q4_0-gguf',
+                installed: false,
+                size_bytes_estimate: 6_000_000_000,
+                bytes_on_disk: 0,
+                progress: 0,
+                state: 'absent',
+                queue_position: null,
+                error: null,
+              },
+            ],
+          })
+        : url === '/api/config/models-disabled'
+          ? Promise.resolve({ disabled: [], models: [] })
+          : Promise.resolve({ models: {} }),
+    );
+    // A shipped model → the backend reports scope "shipped" (tombstoned).
+    api.del.mockResolvedValue({
+      key: 'local_gemma',
+      scope: 'shipped',
+      removed_entry: false,
+      tombstoned: true,
+      weights_deleted: false,
+      stopped_llama_server: false,
+    });
+    renderPanel();
+    await screen.findByText('Gemma 4 12B (Local)');
+
+    fireEvent.click(screen.getByRole('button', { name: /More actions for/i }));
+    fireEvent.click(await screen.findByText('Remove from list'));
+    // Confirm dialog, then the dedicated remove-entry endpoint is called.
+    expect(await screen.findByText(/Remove Gemma 4 12B \(Local\) from the list\?/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() =>
+      expect(api.del).toHaveBeenCalledWith('/api/models/browse/local_gemma/entry'),
+    );
+    await waitFor(() => {
+      const toasts = useUIStore.getState().toasts;
+      expect(toasts.some((t) => /Chat model visibility/.test(t.message))).toBe(true);
+    });
+  });
+
+  it('hides a tombstoned shipped local-chat model with no weights on disk', async () => {
+    api.get.mockImplementation((url: string) =>
+      url === '/api/models/catalog'
+        ? Promise.resolve({
+            models: [
+              {
+                key: 'local_gemma',
+                label: 'Gemma 4 12B (Local)',
+                group: 'local-chat',
+                repo_id: 'google/gemma-4-12B-it-qat-q4_0-gguf',
+                installed: false,
+                size_bytes_estimate: 6_000_000_000,
+                bytes_on_disk: 0,
+                progress: 0,
+                state: 'absent',
+                queue_position: null,
+                error: null,
+              },
+            ],
+          })
+        : url === '/api/config/models-disabled'
+          ? // The model is tombstoned in the hide-list.
+            Promise.resolve({ disabled: ['local_gemma'], models: [] })
+          : Promise.resolve({ models: {} }),
+    );
+    renderPanel();
+    // The Local chat section renders no rows for the tombstoned+empty model, so
+    // the group (and its heading) drop out entirely.
+    await waitFor(() =>
+      expect(screen.queryByText('Gemma 4 12B (Local)')).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText('Local chat')).not.toBeInTheDocument();
   });
 });

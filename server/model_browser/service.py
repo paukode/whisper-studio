@@ -196,6 +196,31 @@ def install_model(
     }
 
 
+def _delete_weights(key: str) -> tuple[bool, bool]:
+    """Cancel any running/queued download and delete this model's weights.
+
+    Returns ``(stopped_llama_server, weights_deleted)``. Missing files are not
+    an error — a model with a config entry but nothing on disk just deletes
+    nothing. Shared by uninstall (user entry) and remove-from-list (either)."""
+    from server.models_manager import manager
+    from server.models_manager.catalog import get_entry
+
+    entry = get_entry(key)
+    if entry is None:
+        return False, False
+    # Cancel a running/queued download first so delete isn't refused.
+    try:
+        manager.cancel(entry)
+    except manager.Conflict:
+        pass
+    try:
+        result = manager.delete(entry)
+        return bool(result.get("stopped_llama_server")), bool(result.get("deleted"))
+    except manager.Conflict:
+        # Nothing on disk to delete — fine.
+        return False, False
+
+
 def uninstall_model(key: str) -> dict:
     """Stop/cancel any activity, delete files, and remove the user-config entry.
 
@@ -203,24 +228,33 @@ def uninstall_model(key: str) -> dict:
     shipped model is not touched."""
     if not install.is_browser_entry(key):
         raise InstallError(f"{key} is not a browser-installed model.")
-
-    from server.models_manager import manager
-    from server.models_manager.catalog import get_entry
-
-    stopped = False
-    entry = get_entry(key)
-    if entry is not None:
-        # Cancel a running/queued download first so delete isn't refused.
-        try:
-            manager.cancel(entry)
-        except manager.Conflict:
-            pass
-        try:
-            result = manager.delete(entry)
-            stopped = bool(result.get("stopped_llama_server"))
-        except manager.Conflict:
-            # Nothing on disk to delete — fine, we still drop the config entry.
-            pass
-
+    stopped, _ = _delete_weights(key)
     removed = install.remove_entry(key)
     return {"key": key, "removed": removed, "stopped_llama_server": stopped}
+
+
+def remove_from_list(key: str) -> dict:
+    """Remove a local chat model from the Models list and the composer picker.
+
+    The shape depends on where the entry lives (the Models-tab overflow menu):
+      * a USER-added model (its key is in config.user.json's ``chat_models``) is
+        deleted outright — its weights AND its config entry go, so it stops
+        listing everywhere;
+      * a SHIPPED default (in the merged catalog but not the user layer) cannot
+        have its entry deleted, so it is TOMBSTONED into ``chat_models_disabled``
+        (hidden from the list + picker, recoverable via Chat model visibility)
+        and its weights are deleted if present.
+    Any running/queued download is cancelled first so the delete isn't refused.
+    """
+    is_user = install.is_browser_entry(key)
+    stopped, weights_deleted = _delete_weights(key)
+    removed_entry = install.remove_entry(key) if is_user else False
+    tombstoned = install.tombstone_entry(key) if not is_user else False
+    return {
+        "key": key,
+        "scope": "user" if is_user else "shipped",
+        "removed_entry": removed_entry,
+        "tombstoned": tombstoned,
+        "weights_deleted": weights_deleted,
+        "stopped_llama_server": stopped,
+    }

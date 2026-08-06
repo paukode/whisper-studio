@@ -147,3 +147,25 @@ def remove_entry(key: str) -> bool:
     config_mod.save_config(raw)
     log.info("Model browser removed %s from the user config.", key)
     return True
+
+
+def tombstone_entry(key: str) -> bool:
+    """Add ``key`` to the USER layer's ``chat_models_disabled`` hide-list so a
+    SHIPPED model (one we cannot delete from the config) vanishes from the list
+    and the composer picker while staying recoverable via Chat model visibility.
+
+    Order-preserving and idempotent — returns whether ``key`` was newly added.
+    Writes the same key the visibility toggles use, so both paths stay coherent.
+    """
+    raw = config_mod._load_user_config()
+    disabled_raw = raw.get("chat_models_disabled")
+    disabled = (
+        [k for k in disabled_raw if isinstance(k, str)] if isinstance(disabled_raw, list) else []
+    )
+    if key in disabled:
+        return False
+    disabled.append(key)
+    raw["chat_models_disabled"] = disabled
+    config_mod.save_config(raw)
+    log.info("Model browser tombstoned %s into chat_models_disabled.", key)
+    return True

@@ -86,3 +86,22 @@ export const uninstallBrowsedModel = (key: string) =>
   del<{ key: string; removed: boolean; stopped_llama_server: boolean; message?: string }>(
     `/api/models/browse/${encodeURIComponent(key)}`,
   );
+
+export interface RemoveFromListResult {
+  key: string;
+  /** "user" = the entry lived in config.user.json and was deleted outright;
+   *  "shipped" = a default we can't delete, so it was tombstoned instead. */
+  scope: 'user' | 'shipped';
+  removed_entry: boolean;
+  tombstoned: boolean;
+  weights_deleted: boolean;
+  stopped_llama_server: boolean;
+  message?: string;
+}
+
+/** Remove a local chat model from the list + picker entirely: delete a
+ *  user-added entry (weights + config), or tombstone a shipped default into
+ *  chat_models_disabled (weights deleted if present, recoverable via Chat
+ *  model visibility). */
+export const removeModelFromList = (key: string) =>
+  del<RemoveFromListResult>(`/api/models/browse/${encodeURIComponent(key)}/entry`);

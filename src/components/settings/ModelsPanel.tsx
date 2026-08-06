@@ -8,9 +8,11 @@ import {
   startModelDownload,
 } from '@/api/models';
 import type { ManagedModel, ManagedModelGroup } from '@/api/models';
+import { removeModelFromList } from '@/api/modelBrowser';
 import { useUIStore } from '@/stores/uiStore';
 import { humanSize } from '@/utils/humanSize';
-import { ChatModelVisibility } from './ChatModelVisibility';
+import { ContextMenu, type MenuItem } from '@/components/common/ContextMenu';
+import { ChatModelVisibility, fetchModelsDisabled } from './ChatModelVisibility';
 import { ConfigJsonLink } from './ConfigEditorDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ModelBrowser } from './ModelBrowser';
@@ -19,17 +21,17 @@ const GROUPS: { id: ManagedModelGroup; label: string; hint: string }[] = [
   {
     id: 'transcription',
     label: 'Transcription',
-    hint: 'Speech-to-text engines and the speaker-identification encoder.',
+    hint: 'Speech-to-text and speaker ID.',
   },
   {
     id: 'indexing',
     label: 'Indexing',
-    hint: 'On-device embedding, reranking, and entity extraction for the workspace index.',
+    hint: 'Embedding, reranking, and entity extraction for the workspace index.',
   },
   {
     id: 'local-chat',
     label: 'Local chat',
-    hint: 'On-device chat model weights (GGUF), served by the local model server.',
+    hint: 'On-device chat weights (GGUF).',
   },
 ];
 
@@ -121,12 +123,32 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [confirmDelete, setConfirmDelete] = useState<ManagedModel | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<ManagedModel | null>(null);
+  // The row whose "…" overflow menu is open, with its anchor coordinates.
+  const [menuFor, setMenuFor] = useState<{ model: ManagedModel; x: number; y: number } | null>(
+    null,
+  );
   const addToast = useUIStore((s) => s.addToast);
 
   const catalogQuery = useQuery({
     queryKey: ['models-manager-catalog'],
     queryFn: fetchModelsCatalog,
   });
+  // The chat-model hide-list (shared cache with Chat model visibility). A
+  // shipped local-chat model that's been "removed from the list" is tombstoned
+  // here; with its weights gone it should vanish from the Local chat list too,
+  // so the local-chat rows filter it out (see visibleRows below).
+  const disabledQuery = useQuery({
+    queryKey: ['models-disabled'],
+    queryFn: fetchModelsDisabled,
+  });
+  const disabledSet = useMemo(
+    () =>
+      new Set(
+        Array.isArray(disabledQuery.data?.disabled) ? disabledQuery.data.disabled : [],
+      ),
+    [disabledQuery.data],
+  );
   // Poll while anything is downloading OR queued: the server pumps its queue
   // on status polls, so polling is what makes a queued model start at all.
   const catalogActive = (catalogQuery.data?.models ?? []).some((m) => isActive(m.state));
@@ -259,22 +281,36 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
       },
       `Could not delete ${m.label}`,
     );
+  const onRemoveFromList = (m: ManagedModel) =>
+    void run(
+      m.key,
+      async () => {
+        const res = await removeModelFromList(m.key);
+        addToast({
+          type: 'success',
+          message:
+            res.scope === 'shipped'
+              ? `${m.label} removed from the list. Re-enable it under Chat model visibility.`
+              : `${m.label} removed.`,
+        });
+      },
+      `Could not remove ${m.label}`,
+    );
 
   return (
     <div className="settings-panel models-panel">
       {showCatalog && (
         <>
-          <div className="settings-panel-header">
+          <div className="models-panel-header">
             <h3>Models</h3>
             <button className="btn btn-sm" onClick={() => void refresh()} type="button">
               Refresh
             </button>
           </div>
 
-          <p className="settings-empty" style={{ marginBottom: 8 }}>
-            Model weights are stored locally and downloaded from Hugging Face on demand. Up to two
-            downloads run at a time; further requests queue up and start automatically. A cancelled
-            download keeps its partial files and resumes on the next attempt.
+          <p className="models-panel-intro">
+            Stored on-device, downloaded from Hugging Face on demand. Two download at once; the
+            rest queue.
           </p>
 
           {catalogQuery.error && (
@@ -288,17 +324,29 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
 
       {showCatalog &&
         visibleGroups.map((group) => {
-        const rows = models.filter((m) => m.group === group.id);
+        // A shipped local-chat model that was "removed from the list" is
+        // tombstoned in chat_models_disabled and its weights deleted; with
+        // nothing on disk it should disappear here (it stays recoverable in
+        // Chat model visibility). A model merely HIDDEN via the visibility
+        // toggle but still on disk stays listed so its gigabytes remain
+        // manageable — hence the `bytes_on_disk === 0` guard.
+        const rows = models
+          .filter((m) => m.group === group.id)
+          .filter(
+            (m) =>
+              group.id !== 'local-chat' ||
+              !(disabledSet.has(m.key) && !m.installed && m.bytes_on_disk === 0),
+          );
         if (rows.length === 0) return null;
         return (
-          <div key={group.id} style={{ marginBottom: 16 }}>
-            <h4 style={{ margin: '12px 0 2px' }}>{group.label}</h4>
-            <p className="settings-empty" style={{ margin: '0 0 6px' }}>
+          <div key={group.id} className="models-section">
+            <h4 className="models-section-title">{group.label}</h4>
+            <p className="models-section-desc">
               {group.hint}
               {group.id === 'local-chat' && (
                 <>
                   {' '}
-                  Add models with Discover below, or by editing <ConfigJsonLink />.
+                  Add more in Discover, or edit <ConfigJsonLink />.
                 </>
               )}
             </p>
@@ -349,6 +397,38 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
                         >
                           Cancel
                         </button>
+                      ) : group.id === 'local-chat' ? (
+                        // Local chat rows carry a "…" overflow menu (Delete
+                        // downloaded files / Remove from list) plus a
+                        // Download/Retry when there's nothing installed yet.
+                        // Delete removes only the weights; Remove from list
+                        // takes the model out of the picker entirely.
+                        <>
+                          {!m.installed && (
+                            <button
+                              className="btn btn-primary btn-sm"
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => onDownload(m)}
+                            >
+                              {m.state === 'error' ? 'Retry' : 'Download'}
+                            </button>
+                          )}
+                          <button
+                            className="btn btn-sm model-row-more"
+                            type="button"
+                            disabled={isBusy}
+                            aria-label={`More actions for ${m.label}`}
+                            aria-haspopup="menu"
+                            title="More actions"
+                            onClick={(e) => {
+                              const r = e.currentTarget.getBoundingClientRect();
+                              setMenuFor({ model: m, x: r.right, y: r.bottom + 4 });
+                            }}
+                          >
+                            …
+                          </button>
+                        </>
                       ) : m.installed ? (
                         <button
                           className="btn btn-sm"
@@ -400,6 +480,57 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
       {showBrowser && <ModelBrowser />}
 
       {showVisibility && <ChatModelVisibility />}
+
+      {menuFor &&
+        (() => {
+          const m = menuFor.model;
+          const hasFiles = m.installed || m.bytes_on_disk > 0;
+          const items: MenuItem[] = [];
+          if (hasFiles) {
+            items.push({
+              label: 'Delete downloaded files',
+              danger: true,
+              onClick: () => setConfirmDelete(m),
+            });
+          }
+          items.push({
+            label: 'Remove from list',
+            danger: true,
+            onClick: () => setConfirmRemove(m),
+          });
+          return (
+            <ContextMenu
+              items={items}
+              position={{ x: menuFor.x, y: menuFor.y }}
+              onClose={() => setMenuFor(null)}
+              className="ws-context-menu--compact"
+            />
+          );
+        })()}
+
+      {confirmRemove && (
+        <ConfirmDialog
+          title={`Remove ${confirmRemove.label} from the list?`}
+          message={
+            <>
+              This takes the model out of the list and the chat model picker
+              {confirmRemove.installed || confirmRemove.bytes_on_disk > 0
+                ? `, and deletes its ${humanSize(confirmRemove.bytes_on_disk)} of weights from disk`
+                : ''}
+              . Discover-added models are removed for good; shipped models can be re-enabled under
+              Chat model visibility.
+            </>
+          }
+          confirmLabel="Remove"
+          danger
+          onConfirm={() => {
+            const m = confirmRemove;
+            setConfirmRemove(null);
+            onRemoveFromList(m);
+          }}
+          onCancel={() => setConfirmRemove(null)}
+        />
+      )}
 
       {confirmDelete && (
         <ConfirmDialog

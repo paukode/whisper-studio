@@ -166,9 +166,9 @@ export const ModelBrowser: React.FC = () => {
   const searchQuery = useQuery({
     queryKey: ['model-browse-search', submitted, sort, allOfHf],
     queryFn: () => searchModels({ q: submitted, sort, all: allOfHf }),
-    // Only run once the user has searched — an empty trusted-author browse is
-    // still useful (top trending), so we allow an empty term after submit.
-    enabled: submitted !== '' || sort === 'trending',
+    // Always run — an empty-term browse is a useful default top list for BOTH
+    // sorts (trending and most-downloaded). The sort/scope live in the query
+    // key, so switching either refetches without touching the search term.
   });
 
   const results = searchQuery.data?.results ?? [];
@@ -179,12 +179,10 @@ export const ModelBrowser: React.FC = () => {
   };
 
   return (
-    <div style={{ marginBottom: 16 }}>
-      <h4 style={{ margin: '12px 0 2px' }}>Discover models</h4>
-      <p className="settings-empty" style={{ margin: '0 0 8px' }}>
-        Search Hugging Face for on-device GGUF chat models. Only models the local engine can run are
-        shown. Pick a quant and download it, and it then appears in the list above and the chat
-        model picker.
+    <div className="models-section">
+      <h4 className="models-section-title">Discover models</h4>
+      <p className="models-section-desc">
+        Search Hugging Face for GGUF chat models the local engine can run.
       </p>
 
       <form onSubmit={onSubmit} style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
@@ -211,16 +209,18 @@ export const ModelBrowser: React.FC = () => {
         </button>
       </form>
 
-      <label
-        style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginBottom: 8 }}
-      >
-        <input
-          type="checkbox"
-          checked={allOfHf}
-          onChange={(e) => setAllOfHf(e.target.checked)}
-        />
-        Search all of Hugging Face (default: trusted publishers only)
-      </label>
+      <div className="model-browse-scope">
+        <label className="toggle-switch" title="Off: trusted publishers only. On: all of Hugging Face.">
+          <input
+            type="checkbox"
+            checked={allOfHf}
+            onChange={(e) => setAllOfHf(e.target.checked)}
+            aria-label="Search all of Hugging Face"
+          />
+          <span className="toggle-slider"></span>
+        </label>
+        <span>All of Hugging Face</span>
+      </div>
 
       {searchQuery.isLoading && <p className="settings-empty">Searching…</p>}
       {searchQuery.isError && (

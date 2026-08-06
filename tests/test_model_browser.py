@@ -319,6 +319,49 @@ def test_uninstall_refuses_non_browser_key(isolated_home, monkeypatch):
         service.uninstall_model("local_gemma")  # a built-in, not a user entry
 
 
+# ── remove_from_list: user entry deleted vs shipped model tombstoned ──────────
+def test_remove_from_list_deletes_user_entry(isolated_home, monkeypatch):
+    _stub_hf_and_queue(monkeypatch)
+    result = service.install_model("unsloth/Qwen3-0.6B-GGUF", "Qwen3-0.6B-Q4_K_M.gguf")
+    key = result["key"]
+
+    # No files on disk in the test → _delete_weights short-circuits.
+    monkeypatch.setattr("server.models_manager.catalog.get_entry", lambda k: None)
+    out = service.remove_from_list(key)
+    assert out["scope"] == "user"
+    assert out["removed_entry"] is True
+    assert out["tombstoned"] is False
+
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    # The user entry is gone, and NOTHING was added to the hide-list.
+    assert key not in data.get("chat_models", {})
+    assert key not in data.get("chat_models_disabled", [])
+
+
+def test_remove_from_list_tombstones_shipped_model(isolated_home, monkeypatch):
+    # A built-in / shipped key has no user-layer chat_models entry, so it can't
+    # be deleted — remove_from_list must tombstone it into chat_models_disabled.
+    monkeypatch.setattr("server.models_manager.catalog.get_entry", lambda k: None)
+    out = service.remove_from_list("local_gemma")
+    assert out["scope"] == "shipped"
+    assert out["removed_entry"] is False
+    assert out["tombstoned"] is True
+
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert "local_gemma" in data.get("chat_models_disabled", [])
+    # The shipped entry itself is untouched (it lives in the system layer).
+    assert "local_gemma" not in data.get("chat_models", {})
+
+
+def test_tombstone_entry_is_idempotent_and_order_preserving(isolated_home, monkeypatch):
+    assert install.tombstone_entry("local_gemma") is True
+    # A second call is a no-op — no duplicate, returns False.
+    assert install.tombstone_entry("local_gemma") is False
+    install.tombstone_entry("local_qwen")
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert data["chat_models_disabled"] == ["local_gemma", "local_qwen"]
+
+
 def test_registry_key_is_stable_and_prefixed():
     key = install.registry_key("unsloth/Qwen3-0.6B-GGUF", "Q4_K_M")
     assert key == install.registry_key("unsloth/Qwen3-0.6B-GGUF", "Q4_K_M")

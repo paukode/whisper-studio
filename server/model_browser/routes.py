@@ -79,6 +79,19 @@ async def browse_install(request: Request):
     return result
 
 
+@router.delete("/{key}/entry")
+async def browse_remove_entry(key: str):
+    """Remove a model from the list + picker entirely.
+
+    Deletes a user-added entry outright (weights + config), or tombstones a
+    shipped default into ``chat_models_disabled`` (weights deleted if present).
+    The distinct ``/entry`` suffix keeps it clear of the ``/{key}`` uninstall."""
+    import asyncio
+
+    result = await asyncio.to_thread(service.remove_from_list, key)
+    return {**result, "message": "Model removed from the list."}
+
+
 @router.delete("/{key}")
 async def browse_uninstall(key: str):
     """Uninstall a browser-installed model: stop it, delete files, drop config."""
