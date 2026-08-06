@@ -88,6 +88,44 @@ describe('requiredRecordingModelKeys', () => {
 });
 
 describe('ensureRecordingModels', () => {
+  it('gates on whisper + ecapa when the whisper engine is selected', async () => {
+    vi.useFakeTimers();
+    setBackend('whisper');
+    mockApi([
+      {
+        whisper: entry('absent', 0, 1_600_000_000),
+        parakeet: entry('installed', 1, 1),
+        ecapa_speaker: entry('absent', 0, 89_000_000),
+      },
+      {
+        whisper: entry('downloading', 800_000_000, 1_600_000_000, null, 0.5),
+        parakeet: entry('installed', 1, 1),
+        ecapa_speaker: entry('downloading', 44_000_000, 89_000_000),
+      },
+      {
+        whisper: entry('installed', 1_600_000_000, 1_600_000_000),
+        parakeet: entry('installed', 1, 1),
+        ecapa_speaker: entry('installed', 89_000_000, 89_000_000),
+      },
+    ]);
+
+    const gate = ensureRecordingModels();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Whisper is gated, not Parakeet — the selected engine drives the keys.
+    expect(postedUrls()).toEqual([
+      '/api/models/whisper/download',
+      '/api/models/ecapa_speaker/download',
+    ]);
+    const banner = useUIStore.getState().modelLoading;
+    expect(banner?.stage).toBe('downloading');
+    expect(banner?.label).toBe('Whisper Large v3 Turbo');
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(gate).resolves.toBe('ready');
+  });
+
   it('resolves ready from a single status check when everything is installed', async () => {
     mockApi([
       { parakeet: entry('installed', 1, 1), ecapa_speaker: entry('installed', 1, 1) },

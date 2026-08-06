@@ -18,6 +18,7 @@ import type { NativeSourceSelection } from '@/stores/recordingStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { ensureRecordingModels } from '@/services/recordingModels';
+import { put } from '@/api/client';
 import {
   isNativeAudioAvailable,
   listNativeAudioSources,
@@ -64,6 +65,22 @@ let owningSessionId: string | null = null;
  *  record click during the wait must not start a second gate — the
  *  banner's Cancel is the way out. */
 let modelGateActive = false;
+/** The ASR engine the recording websocket is actually running server-side.
+ *  Distinct from config.transcriptionBackend, which the header select flips
+ *  the instant the user picks a new engine — BEFORE its weights are on disk.
+ *  Tracked so a live switch can gate the new engine's download first and, on
+ *  cancel, put the header select back to the engine still in use. */
+let activeBackend = 'streaming';
+/** True while a live engine switch is gating the new engine's download, so a
+ *  second switch can't race a set_backend relay past a half-finished one. */
+let liveSwitchActive = false;
+/** The user dismissed the server-driven "loading into memory" banner. A native
+ *  MLX load can't be aborted mid-flight, so we simply stop re-showing its ramp
+ *  until the next load starts or finishes. */
+let loadModelBannerDismissed = false;
+
+const engineOf = (backend: string): 'whisper' | 'parakeet' =>
+  backend === 'whisper' ? 'whisper' : 'parakeet';
 /** Buffers native (shell-captured) samples between mic worklet frames in
  *  mixed mode. Null in mic-only and native-only modes. */
 let nativeMixer: NativeAudioMixer | null = null;
@@ -270,15 +287,33 @@ function connectWS(): void {
         // Parakeet's growing word-by-word draft of the utterance in progress.
         ownerStore().setInterimText(String(msg.text ?? ''));
       } else if (msg.type === 'model_loading') {
-        // Local mode: the selected engine is loading into memory. Drive the
-        // banner; 'ready' auto-hides after a brief beat.
+        // Local mode (or after a live switch's download): the selected engine
+        // is loading into memory. Drive the banner; 'ready' auto-hides.
         const stage = String(msg.stage ?? 'loading') as 'start' | 'loading' | 'ready';
+        // A fresh load re-arms the banner even if the last one was dismissed.
+        if (stage === 'start') loadModelBannerDismissed = false;
+        // Once dismissed, let the (uncancelable) native load finish silently
+        // rather than letting the ramp re-open the banner on every tick.
+        if (loadModelBannerDismissed && stage !== 'ready') return;
         useUIStore.getState().setModelLoading({
           label: String(msg.label ?? 'Model'),
           progress: typeof msg.progress === 'number' ? msg.progress : 0,
           stage,
+          // A native model load (MLX from_pretrained / first decode) can't be
+          // interrupted mid-flight, so Cancel here only hides the banner: the
+          // load finishes in the background and transcripts start once it's
+          // done. The long, genuinely-cancelable part — the multi-GB download —
+          // is gated BEFORE this on the record-start / live-switch path.
+          onCancel:
+            stage === 'ready'
+              ? undefined
+              : () => {
+                  loadModelBannerDismissed = true;
+                  useUIStore.getState().setModelLoading(null);
+                },
         });
         if (stage === 'ready') {
+          loadModelBannerDismissed = false;
           setTimeout(() => {
             const cur = useUIStore.getState().modelLoading;
             if (cur && cur.stage === 'ready') useUIStore.getState().setModelLoading(null);
@@ -286,6 +321,7 @@ function connectWS(): void {
         }
       } else if (msg.type === 'model_unloaded') {
         // The outgoing engine was freed on switch — clear any stale banner.
+        loadModelBannerDismissed = false;
         useUIStore.getState().setModelLoading(null);
       }
     } catch { /* ignore */ }
@@ -350,8 +386,11 @@ async function start(sessionId: string): Promise<void> {
   pcmBuffer = [];
   pcmBufferLen = 0;
   // Size chunks for whichever backend is active at start; a live engine
-  // switch updates this via the whisper-set-backend event.
-  chunkSamples = chunkSamplesForBackend(useSettingsStore.getState().config.transcriptionBackend);
+  // switch updates this via the whisper-set-backend event. The gate above
+  // already ensured this engine's weights are on disk, so it's the engine
+  // the server will actually run — record it for live-switch bookkeeping.
+  activeBackend = useSettingsStore.getState().config.transcriptionBackend;
+  chunkSamples = chunkSamplesForBackend(activeBackend);
 
   useUIStore.getState().showTranscript();
   rec.setRecording(true);
@@ -650,6 +689,53 @@ function stop(): void {
   }
 }
 
+/** Live engine switch while recording: gate the new engine's weights (the
+ *  shared download banner + Cancel), then hand the open socket over to it.
+ *  On cancel or download failure the recording stays on the current engine
+ *  and the header select is put back to match, so the UI never claims an
+ *  engine the server isn't actually running. */
+async function switchBackendLive(backend: string): Promise<void> {
+  if (liveSwitchActive) return; // one switch at a time
+  const previous = activeBackend;
+  if (engineOf(backend) === engineOf(previous)) return; // no real change
+  liveSwitchActive = true;
+  try {
+    // config.transcriptionBackend is already `backend` (the header select set
+    // it before dispatching the event), so the gate targets the new engine's
+    // weights plus the speaker encoder.
+    const result = await ensureRecordingModels();
+    if (result !== 'ready') {
+      // Cancelled or failed — keep the engine we're on and reflect that in the
+      // header select / config so they match the server.
+      revertBackend(previous);
+      return;
+    }
+    // Recording may have stopped during a long download; only relay onto a
+    // still-open socket.
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    chunkSamples = chunkSamplesForBackend(backend);
+    activeBackend = backend;
+    ws.send(JSON.stringify({ type: 'set_backend', backend }));
+  } finally {
+    liveSwitchActive = false;
+  }
+}
+
+/** Put config / the header select back to `backend` (the engine actually
+ *  running) after a live switch was cancelled or its download failed. The
+ *  in-memory update flips the select back immediately; the PUT persists it. */
+function revertBackend(backend: string): void {
+  if (engineOf(useSettingsStore.getState().config.transcriptionBackend) === engineOf(backend)) {
+    return; // already matches — nothing to revert
+  }
+  activeBackend = backend;
+  chunkSamples = chunkSamplesForBackend(backend);
+  useSettingsStore.getState().updateConfig({ transcriptionBackend: backend });
+  void put('/api/config', { transcription_backend: backend }).catch(() => {
+    /* best-effort persist; the in-memory revert already corrected the UI */
+  });
+}
+
 export const recordingController = { start, stop };
 
 let eventsInitialized = false;
@@ -669,14 +755,23 @@ export function initRecordingControllerEvents(): void {
     void start(sid);
   });
 
-  // Live ASR-engine switch from the transcript panel: re-size the client
-  // chunk cadence and tell the recording socket (wherever its session is).
+  // Live ASR-engine switch from the transcript panel.
   window.addEventListener('whisper-set-backend', (e: Event) => {
     const backend = (e as CustomEvent<{ backend?: string }>).detail?.backend ?? 'whisper';
-    chunkSamples = chunkSamplesForBackend(backend);
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'set_backend', backend }));
+    // Idle (no live socket): the engine just changed in config; the next
+    // start() gates its weights with the download banner. Keep the chunk
+    // cadence and the tracked engine in sync for that start.
+    if (!(ws && ws.readyState === WebSocket.OPEN)) {
+      activeBackend = backend;
+      chunkSamples = chunkSamplesForBackend(backend);
+      return;
     }
+    // Recording: the new engine's weights must be on disk BEFORE the server
+    // switches to it — otherwise the server downloads gigabytes silently (no
+    // banner, socket appears to stall) or shows a memory-load ramp stuck at
+    // 90%. Gate the download with the same banner + Cancel as record-start,
+    // then relay set_backend.
+    void switchBackendLive(backend);
   });
 
   // Participant-count hint: kept for sockets opened later, relayed live
