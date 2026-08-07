@@ -21,14 +21,8 @@ interface TextFileInfo {
 }
 
 export async function listDir(path: string): Promise<FileTreeEntry[]> {
-  const data = await get<ListDirResponse | FileTreeEntry[]>(`/api/workspace/list-dir?path=${encodeURIComponent(path)}`);
-  // Backend returns { entries: [...] } — unwrap it
-  if (data && !Array.isArray(data) && Array.isArray((data as ListDirResponse).entries)) {
-    return (data as ListDirResponse).entries;
-  }
-  // Fallback: if it's already an array, use it directly
-  if (Array.isArray(data)) return data;
-  return [];
+  const data = await get<ListDirResponse>(`/api/workspace/list-dir?path=${encodeURIComponent(path)}`);
+  return Array.isArray(data?.entries) ? data.entries : [];
 }
 
 /** Read a text file's content as a raw string. Bypasses the shared client on

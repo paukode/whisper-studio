@@ -1,6 +1,6 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useApi } from '@/hooks/useApi';
+import { get } from '@/api/client';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
 
@@ -44,7 +44,6 @@ function formatLspValue(value: unknown): string {
 }
 
 export const StatsPanel: React.FC = () => {
-  const api = useApi();
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
   const toolPoolStats = useUIStore((s) => s.toolPoolStats);
 
@@ -56,7 +55,7 @@ export const StatsPanel: React.FC = () => {
   const statsQuery = useQuery({
     queryKey: ['costs-summary', currentSessionId],
     queryFn: () =>
-      api.get<CostSummary>(
+      get<CostSummary>(
         currentSessionId
           ? `/api/costs/summary?session_id=${encodeURIComponent(currentSessionId)}`
           : '/api/costs/summary',
@@ -65,7 +64,7 @@ export const StatsPanel: React.FC = () => {
   });
   const lspQuery = useQuery({
     queryKey: ['lsp-status'],
-    queryFn: () => api.get<LspStatus>('/api/lsp/status'),
+    queryFn: () => get<LspStatus>('/api/lsp/status'),
     staleTime: 30_000,
   });
 

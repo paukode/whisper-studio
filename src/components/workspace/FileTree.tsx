@@ -8,9 +8,9 @@ import { FileTreeNode } from './FileTreeNode';
 import { InlineInput } from './InlineInput';
 import { toError } from '@/utils/toError';
 
+const ROOT_PATH = '.';
+
 export interface FileTreeProps {
-  /** Root path to load the tree from. Defaults to '.'. */
-  rootPath?: string;
   /** Called when a file is selected in the tree. */
   onFileSelect: (path: string) => void;
   /** Called on right-click for context menu. */
@@ -22,7 +22,6 @@ export interface FileTreeProps {
  * workspace API. Supports inline rename and new-file/new-folder inputs.
  */
 export const FileTree: React.FC<FileTreeProps> = ({
-  rootPath = '.',
   onFileSelect,
   onContextMenu,
 }) => {
@@ -49,11 +48,11 @@ export const FileTree: React.FC<FileTreeProps> = ({
     setSelectedPath(path);
   }, []);
 
-  // Load the root directory via react-query. A new queryKey on rootPath/wsPath
+  // Load the root directory via react-query. A new queryKey on ROOT_PATH/wsPath
   // change (workspace switch) triggers a refetch.
   const { data: rootEntries, isLoading, isError: rootError } = useQuery({
-    queryKey: ['file-tree-root', rootPath, wsPath],
-    queryFn: () => listDir(rootPath),
+    queryKey: ['file-tree-root', ROOT_PATH, wsPath],
+    queryFn: () => listDir(ROOT_PATH),
   });
 
   // Mirror the fetched root listing into the workspace store. setFileTree is a
@@ -88,7 +87,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
 
     const fetchNow = () => {
       const mySeq = ++seq;
-      listDir(rootPath)
+      listDir(ROOT_PATH)
         .then((entries) => {
           if (mySeq < latestApplied) return; // a newer fetch already won
           latestApplied = mySeq;
@@ -109,7 +108,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
       window.removeEventListener('whisper-workspace-refresh', handler);
       if (timer) clearTimeout(timer);
     };
-  }, [rootPath, mergeFileTree]);
+  }, [mergeFileTree]);
 
   // Listen for rename events from context menu — show inline rename input in the tree
   useEffect(() => {

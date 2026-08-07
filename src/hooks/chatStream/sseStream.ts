@@ -349,8 +349,8 @@ export async function readSSEStream(
           // one streaming round (parallel tool_use). Collapse them into a
           // single assistant message carrying a `userQuestions` list so the
           // renderer can show a tabbed multi-question card with one batched
-          // submit at the end. Single-question rounds still populate the
-          // legacy `userQuestion` field for back-compat.
+          // submit at the end. (The singular `userQuestion` field is read-only
+          // tolerance for old persisted rows; nothing writes it anymore.)
           if (parsed.user_question) {
             hasUserQuestion = true;
             const uq = parsed.user_question as { question?: string; options?: string[]; tool_use_id?: string };
@@ -772,11 +772,12 @@ export async function sendApprovalContinuation(
       content = `[User approved but the operation FAILED] ${approval.action}: ${target}. Error: ${detail}`;
     }
   } else {
-    // Back-compat: caller did not execute the action client-side. We still
-    // mark it as approved (legacy behaviour) but the model is going to
-    // believe the write happened even if no one wrote anything. Newer call
-    // sites should always pass an outcome.
-    content = `[User approved] ${approval.action}: ${target}.`;
+    // Every accept call site executes the action first and passes its
+    // outcome (executeApproval's result, or a synthesized {ok:false} on
+    // throw). Reaching here is a caller bug — fail safe rather than tell
+    // the model a write happened that nobody performed.
+    console.error('sendApprovalContinuation: accepted without an execution outcome');
+    content = `[User approved but the operation was NOT executed] ${approval.action}: ${target}. Treat this action as not performed.`;
   }
 
   // ws_edit_file sets this flag when the old_string matched only after quote

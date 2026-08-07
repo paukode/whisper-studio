@@ -19,9 +19,6 @@ renderer.code = renderCodeBlock;
 export interface StreamingMarkdownProps {
   content: string;
   isStreaming: boolean;
-  className?: string;
-  /** Reformat run-together step narration into an activity log (opt-in). */
-  stepFormat?: boolean;
 }
 
 /**
@@ -36,8 +33,6 @@ export interface StreamingMarkdownProps {
 export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
   content,
   isStreaming,
-  className,
-  stepFormat,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const lastContentRef = useRef<string>('');
@@ -65,11 +60,11 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     if (isStreaming) return '';
     if (!content) return '';
     beginCodeBlockParse(instanceId);
-    return renderMarkdownSafe(stepFormat ? toStepNarration(content) : content, {
+    return renderMarkdownSafe(toStepNarration(content), {
       parser: streamingParser,
       markedOptions: { renderer },
     });
-  }, [content, isStreaming, instanceId, stepFormat]);
+  }, [content, isStreaming, instanceId]);
 
   // Capture per-block scroll state before innerHTML replaces the DOM.
   // Used as a snapshot so the post-replace restore step can decide
@@ -143,7 +138,7 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
 
     // Step-format first (a no-op while the text still has an open fence, which
     // it bails on), then close any unclosed fence for safe mid-stream parsing.
-    const base = stepFormat ? toStepNarration(content) : content;
+    const base = toStepNarration(content);
     const safeContent = closeOpenFences(base);
     beginCodeBlockParse(instanceId);
     const html = safeContent
@@ -157,7 +152,7 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     markActiveStreamingBlock(container);
     cleanupRef.current?.();
     cleanupRef.current = attachCodeBlockHandlers(container);
-  }, [content, isStreaming, instanceId, stepFormat]);
+  }, [content, isStreaming, instanceId]);
 
   // Track user scroll inside any <pre> via event delegation on the
   // container. capture:true is required because `scroll` events do not
@@ -215,7 +210,7 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     return () => { cleanupRef.current?.(); };
   }, []);
 
-  const containerClassName = `markdown-content${stepFormat ? ' step-narration' : ''}${className ? ` ${className}` : ''}`;
+  const containerClassName = 'markdown-content step-narration';
 
   if (isStreaming) {
     return <div ref={containerRef} className={containerClassName} />;

@@ -11,7 +11,6 @@ renderer.code = renderCodeBlock;
 
 export interface MarkdownRendererProps {
   content: string;
-  className?: string;
   /** Reformat run-together step narration ("Let me…", "Now…") into an
    *  activity log. Opt-in — set only on assistant/agent narration, never on
    *  tool results or documents. No-op unless the text is multi-step prose. */
@@ -30,7 +29,7 @@ export interface MarkdownRendererProps {
  * prompt-injected `<img onerror>` cannot fire inside the SPA's
  * same-origin context.
  */
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className, stepFormat }) => {
+export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, stepFormat }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   // Unique per-instance prefix so code blocks in different message
   // bubbles never collide on the same ID inside the shared codeStore.
@@ -60,7 +59,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
   return (
     <div
       ref={containerRef}
-      className={`markdown-content${stepFormat ? ' step-narration' : ''}${className ? ` ${className}` : ''}`}
+      className={`markdown-content${stepFormat ? ' step-narration' : ''}`}
       dangerouslySetInnerHTML={{ __html: html }}
     />
   );

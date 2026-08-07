@@ -1,8 +1,6 @@
 import React from 'react';
 
 export interface ErrorBoundaryProps {
-  /** Optional fallback UI to render when an error is caught. */
-  fallback?: React.ReactNode;
   /** Optional label for identifying which boundary caught the error. */
   label?: string;
   children: React.ReactNode;
@@ -42,10 +40,6 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 
   render(): React.ReactNode {
     if (this.state.hasError) {
-      if (this.props.fallback) {
-        return this.props.fallback;
-      }
-
       const label = this.props.label ?? 'component';
 
       return (

@@ -5,15 +5,14 @@ export interface StatusBarProps {
   filePath: string | null;
   line: number;
   col: number;
-  isBinary?: boolean;
 }
 
 /**
  * Status bar matching the original #wsStatusBar:
  *   Ln/Col | UTF-8 | Language
  */
-export const StatusBar: React.FC<StatusBarProps> = ({ filePath, line, col, isBinary }) => {
-  if (!filePath || isBinary) return null;
+export const StatusBar: React.FC<StatusBarProps> = ({ filePath, line, col }) => {
+  if (!filePath) return null;
 
   const lang = getLangForPath(filePath);
   const langLabel = lang === 'plaintext'
