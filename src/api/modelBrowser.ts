@@ -22,6 +22,13 @@ export interface BrowseResult {
   supported: boolean;
 }
 
+/** Whether a quant can run alongside this machine's other resident models:
+ *  'ok' fits comfortably, 'tight' fits but leaves little headroom, 'too_big'
+ *  exceeds what the machine can spare. Omitted when the server could not
+ *  measure memory. Always computed for the machine THIS server is running
+ *  on — never a fixed number baked into the client. */
+export type MemFit = 'ok' | 'tight' | 'too_big';
+
 export interface BrowseQuant {
   quant: string;
   /** First shard for a sharded model, else the single file — the load target. */
@@ -30,6 +37,7 @@ export interface BrowseQuant {
   is_sharded: boolean;
   shard_count: number;
   recommended: boolean;
+  fit?: MemFit | null;
 }
 
 export interface BrowseRepoDetail {
@@ -40,6 +48,13 @@ export interface BrowseRepoDetail {
   has_chat_template: boolean;
   gated: boolean;
   recommended_filename: string | null;
+  /** This machine's total physical RAM, measured server-side at request time. */
+  mem_total_bytes?: number | null;
+  /** Slice of total RAM a chat model can claim, after the budget fraction and
+   *  whatever other resident models (ASR, diarization, indexing) already use. */
+  mem_budget_bytes?: number | null;
+  /** Bytes already reserved by those other resident models. */
+  mem_reserved_bytes?: number | null;
   quants: BrowseQuant[];
 }
 
@@ -73,6 +88,8 @@ export interface RecommendedModel {
   supports_tools: boolean;
   /** Already present on disk (from a prior install or release). */
   downloaded: boolean;
+  size_bytes?: number | null;
+  fit?: MemFit | null;
 }
 
 export type BrowseSort = 'trending' | 'downloads';

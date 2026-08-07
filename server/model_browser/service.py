@@ -8,7 +8,10 @@ routes.py is the thin HTTP shell.
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 
 from server.model_browser import compat, hf_client, install
 
@@ -21,6 +24,101 @@ _PER_AUTHOR_LIMIT = 12
 
 class InstallError(Exception):
     """A well-formed install request that cannot be completed."""
+
+
+@lru_cache(maxsize=1)
+def _total_memory_bytes() -> int | None:
+    """Physical RAM of the machine THIS process is running on, measured at
+    call time — never a constant for any particular machine. Works on macOS
+    and Linux via ``os.sysconf``; falls back to ``sysctl`` for a Python build
+    that doesn't expose those keys. ``None`` if neither path succeeds, so
+    callers omit the fit verdict rather than guess."""
+    try:
+        return int(os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
+    except (ValueError, OSError, AttributeError):
+        pass
+    try:
+        out = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5
+        )
+        return int(out.stdout.strip())
+    except Exception as e:  # pragma: no cover - environment dependent
+        log.debug("Could not determine total memory: %s", e)
+        return None
+
+
+def _dir_size_bytes(path: str) -> int:
+    """Recursive on-disk byte count of ``path``, or 0 if it doesn't exist."""
+    if not path or not os.path.isdir(path):
+        return 0
+    total = 0
+    for dirpath, _dirnames, filenames in os.walk(path):
+        for name in filenames:
+            try:
+                total += os.path.getsize(os.path.join(dirpath, name))
+            except OSError:
+                continue
+    return total
+
+
+@lru_cache(maxsize=1)
+def _reserved_companion_bytes() -> int:
+    """On-disk size of the non-chat models installed on THIS machine — ASR,
+    diarization, and workspace-index weights that share unified memory with
+    whichever chat model is resident. Never hardcoded: only directories that
+    actually exist on disk contribute, so a machine with nothing installed
+    yet reserves 0 and a fully-loaded one reserves what it actually has.
+    Imports the owning modules' path constants lazily so this stays cheap to
+    call from the read-only /browse endpoints."""
+    dirs: list[str] = []
+    try:
+        from server.asr.parakeet_backend import PARAKEET_MODEL_DIR
+
+        dirs.append(PARAKEET_MODEL_DIR)
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug("Could not resolve Parakeet model dir: %s", e)
+    try:
+        from server.asr.whisper_backend import WHISPER_MODEL_DIR
+
+        dirs.append(WHISPER_MODEL_DIR)
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug("Could not resolve Whisper model dir: %s", e)
+    try:
+        from server.diarization.speakers import SPEAKER_MODEL_DIR
+
+        dirs.append(SPEAKER_MODEL_DIR)
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug("Could not resolve speaker model dir: %s", e)
+    try:
+        from server.index.config import (
+            EMBED_MODEL_DIR,
+            GLINER2_MODEL_DIR,
+            GLINER_MODEL_DIR,
+            RERANK_MODEL_DIR,
+        )
+
+        dirs.extend([EMBED_MODEL_DIR, GLINER_MODEL_DIR, GLINER2_MODEL_DIR, RERANK_MODEL_DIR])
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug("Could not resolve index model dirs: %s", e)
+
+    return sum(_dir_size_bytes(d) for d in dirs)
+
+
+def _memory_fields() -> dict:
+    """The three memory numbers the Discover UI needs to word a fit warning in
+    the user's own terms, all measured on the running machine: total RAM, the
+    slice of it a chat model can claim, and how much of that slice is already
+    spoken for by other resident models."""
+    total = _total_memory_bytes()
+    reserved = _reserved_companion_bytes()
+    budget = None
+    if total is not None:
+        budget = max(0, compat.MEM_BUDGET_FRACTION * total - reserved)
+    return {
+        "mem_total_bytes": total,
+        "mem_reserved_bytes": reserved,
+        "mem_budget_bytes": int(budget) if budget is not None else None,
+    }
 
 
 def _sort_key(sort: str) -> str:
@@ -104,11 +202,15 @@ def _search_trusted(query: str | None, sort_key: str) -> list[hf_client.SearchHi
 
 def repo_detail(repo_id: str) -> dict:
     """The quant picker for one repo: supported flag, arch, context length, and
-    one row per quant (shards folded, mmproj hidden, recommended pre-selected)."""
+    one row per quant (shards folded, mmproj hidden, recommended pre-selected,
+    each carrying a fit verdict for the machine this server runs on)."""
     meta = hf_client.repo_gguf_meta(repo_id)
     files = hf_client.repo_files(repo_id)
     options = compat.group_gguf_files(files)
     recommended = compat.recommended_quant(options)
+    mem = _memory_fields()
+    total_mem = mem["mem_total_bytes"]
+    reserved = mem["mem_reserved_bytes"]
     return {
         "repo_id": repo_id,
         "arch": meta.arch,
@@ -117,6 +219,7 @@ def repo_detail(repo_id: str) -> dict:
         "has_chat_template": meta.has_chat_template,
         "gated": hf_client.repo_is_gated(repo_id),
         "recommended_filename": recommended,
+        **mem,
         "quants": [
             {
                 "quant": o.quant,
@@ -125,6 +228,7 @@ def repo_detail(repo_id: str) -> dict:
                 "is_sharded": o.is_sharded,
                 "shard_count": o.shard_count,
                 "recommended": o.filename == recommended,
+                "fit": compat.fit_verdict(o.size_bytes, total_mem, reserved),
             }
             for o in options
         ],
@@ -223,14 +327,20 @@ def _finalize_install(key: str, entry: dict) -> dict:
 
 def recommended() -> list[dict]:
     """The curated on-device catalog for the Discover tab's Recommended section,
-    each row carrying its canonical install key, one-click filename/quant, and a
-    ``downloaded`` flag so the UI can badge already-present models."""
+    each row carrying its canonical install key, one-click filename/quant, a
+    ``downloaded`` flag so the UI can badge already-present models, and a fit
+    verdict for the machine this server runs on."""
     from server.local import registry
+
+    mem = _memory_fields()
+    total_mem = mem["mem_total_bytes"]
+    reserved = mem["mem_reserved_bytes"]
 
     rows: list[dict] = []
     for key, meta in registry.recommended_models().items():
         repo = meta["repo_id"]
         author, _, name = repo.partition("/")
+        size_bytes = meta.get("size_bytes")
         rows.append(
             {
                 "key": key,
@@ -245,6 +355,8 @@ def recommended() -> list[dict]:
                 "supports_thinking": bool(meta.get("supports_thinking")),
                 "supports_tools": bool(meta.get("supports_tools")),
                 "downloaded": bool(meta.get("downloaded")),
+                "size_bytes": size_bytes,
+                "fit": compat.fit_verdict(size_bytes, total_mem, reserved),
             }
         )
     return rows

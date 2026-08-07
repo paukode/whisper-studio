@@ -41,6 +41,9 @@ const REPO_DETAIL = {
   has_chat_template: true,
   gated: false,
   recommended_filename: 'Qwen3-0.6B-Q4_K_M.gguf',
+  mem_total_bytes: 18_000_000_000,
+  mem_budget_bytes: 9_500_000_000,
+  mem_reserved_bytes: 4_000_000_000,
   quants: [
     {
       quant: 'Q2_K',
@@ -49,6 +52,7 @@ const REPO_DETAIL = {
       is_sharded: false,
       shard_count: 1,
       recommended: false,
+      fit: 'ok',
     },
     {
       quant: 'Q4_K_M',
@@ -57,6 +61,34 @@ const REPO_DETAIL = {
       is_sharded: false,
       shard_count: 1,
       recommended: true,
+      fit: 'ok',
+    },
+  ],
+};
+
+// A repo whose only realistic quant is too large for the running machine, so
+// the API returns a 'too_big' verdict alongside the memory numbers used to
+// word the warning.
+const OVERSIZED_REPO_DETAIL = {
+  repo_id: 'unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF',
+  arch: 'qwen3moe',
+  supported: true,
+  context_length: 262144,
+  has_chat_template: true,
+  gated: false,
+  recommended_filename: 'Qwen3-Coder-30B-Q4_K_M.gguf',
+  mem_total_bytes: 18_000_000_000, // renders as "18.0 GB" via humanSize
+  mem_budget_bytes: 9_500_000_000, // renders as "9.5 GB" via humanSize
+  mem_reserved_bytes: 4_000_000_000,
+  quants: [
+    {
+      quant: 'Q4_K_M',
+      filename: 'Qwen3-Coder-30B-Q4_K_M.gguf',
+      size_bytes: 19_972_876_288, // ~18.6 GiB — the failure this feature exists for
+      is_sharded: false,
+      shard_count: 1,
+      recommended: true,
+      fit: 'too_big',
     },
   ],
 };
@@ -184,5 +216,96 @@ describe('ModelBrowser (Discover)', () => {
     );
     // Results still render (the query is no longer gated behind a search term).
     expect(await screen.findByText('Qwen3-0.6B-GGUF')).toBeInTheDocument();
+  });
+
+  it("warns and offers 'Download anyway' when the selected quant is too big for this machine", async () => {
+    const OVERSIZED_SEARCH = {
+      count: 1,
+      results: [
+        {
+          repo_id: 'unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF',
+          author: 'unsloth',
+          name: 'Qwen3-Coder-30B-A3B-Instruct-GGUF',
+          label: 'Qwen3-Coder-30B-A3B-Instruct-GGUF',
+          downloads: 12345,
+          likes: 1,
+          trending_score: 1,
+          arch: 'qwen3moe',
+          param_size: '30B',
+          context_length: 262144,
+          gated: false,
+          supported: true,
+        },
+      ],
+    };
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(OVERSIZED_SEARCH);
+      if (url.startsWith('/api/models/browse/repo/'))
+        return Promise.resolve(OVERSIZED_REPO_DETAIL);
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+
+    renderBrowser();
+    await screen.findByText('Qwen3-Coder-30B-A3B-Instruct-GGUF');
+
+    const select = screen.getByRole('combobox', {
+      name: /choose a quant for Qwen3-Coder-30B-A3B-Instruct-GGUF/i,
+    }) as HTMLSelectElement;
+    fireEvent.focus(select);
+    await waitFor(() => expect(select.value).toBe('Qwen3-Coder-30B-Q4_K_M.gguf'));
+
+    // The option itself is flagged, and a plain-language warning line appears
+    // using the memory numbers the API returned for this machine.
+    expect(screen.getByRole('option', { name: /won't fit/i })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/Needs more memory/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/9\.5 GB/); // mem_budget_bytes
+    expect(screen.getByRole('alert')).toHaveTextContent(/18\.0 GB/); // mem_total_bytes
+
+    // The button still allows the download, worded as an informed choice.
+    const button = screen.getByRole('button', { name: 'Download anyway' });
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/api/models/browse/install', {
+        repo_id: 'unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF',
+        filename: 'Qwen3-Coder-30B-Q4_K_M.gguf',
+      }),
+    );
+  });
+
+  it("badges a recommended model that won't fit this machine's memory budget", async () => {
+    const RECOMMENDED = {
+      count: 1,
+      recommended: [
+        {
+          key: 'local_test_oversized',
+          repo_id: 'test-org/Test-Model-GGUF',
+          author: 'test-org',
+          name: 'Test-Model-GGUF',
+          label: 'Test Model (Local)',
+          filename: 'Test-Model-Q4_K_M.gguf',
+          quant: 'Q4_K_M',
+          param_size: '30B',
+          ctx: 32768,
+          supports_thinking: true,
+          supports_tools: true,
+          downloaded: false,
+          size_bytes: 19_972_876_288,
+          fit: 'too_big',
+        },
+      ],
+    };
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(SEARCH);
+      if (url.startsWith('/api/models/browse/repo/')) return Promise.resolve(REPO_DETAIL);
+      if (url.startsWith('/api/models/browse/recommended')) return Promise.resolve(RECOMMENDED);
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+
+    renderBrowser();
+    expect(await screen.findByText('Test Model (Local)')).toBeInTheDocument();
+    expect(screen.getByText(/won't fit on this machine/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download anyway' })).toBeInTheDocument();
   });
 });

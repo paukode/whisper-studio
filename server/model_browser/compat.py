@@ -69,6 +69,54 @@ TRUSTED_AUTHORS: tuple[str, ...] = (
 _THINKING_ARCH_PREFIXES = ("qwen3",)
 _THINKING_NAME_HINTS = ("thinking", "reasoning", "qwq", "-r1", "deepseek-r")
 
+# ── Memory-fit gate ──────────────────────────────────────────────────────────
+# Nothing here is sized for any particular machine — the caller (service.py)
+# measures the RUNNING machine's physical memory and companion-model footprint
+# at call time and passes those in. These two constants are machine-independent
+# rules of thumb applied to whatever RAM the machine actually reports:
+#   * Apple's Metal (and most GPU/unified-memory backends) will not let one
+#     process claim all of physical RAM before the OS starts reclaiming pages
+#     out from under it — recommendedMaxWorkingSetSize on Apple Silicon sits
+#     around 3/4 of total unified memory. 0.75 approximates that ceiling on any
+#     machine, not just the one this was observed on.
+#   * A resident context needs more than the raw weights: KV cache at a large
+#     context size plus llama.cpp's compute buffers. 2 GiB is a rough constant
+#     rather than a per-model computation (ctx size, layer count, etc. all
+#     matter), but it is enough to catch the failure mode this exists for —
+#     weights alone leaving no room for anything else.
+MEM_BUDGET_FRACTION = 0.75
+RUNTIME_OVERHEAD_BYTES = 2 << 30  # 2 GiB
+
+# Second threshold within the budget: a quant that fits but leaves little
+# headroom is flagged "tight" rather than a clean "ok", since large-context
+# KV growth or another app's memory pressure can tip it into the same failure.
+_TIGHT_FRACTION = 0.85
+
+
+def fit_verdict(
+    size_bytes: int | None,
+    total_mem_bytes: int | None,
+    reserved_bytes: int = 0,
+) -> str | None:
+    """Whether a quant of ``size_bytes`` can run alongside ``reserved_bytes``
+    of other resident models on a machine with ``total_mem_bytes`` of RAM.
+
+    Returns ``'ok'``, ``'tight'``, or ``'too_big'``; ``None`` when either size
+    is unknown or non-positive, so the caller can omit the field rather than
+    render a guess. ``total_mem_bytes`` and ``reserved_bytes`` describe the
+    CALLER's machine — this function hardcodes no machine's numbers, only the
+    fractions above.
+    """
+    if not size_bytes or size_bytes <= 0 or not total_mem_bytes or total_mem_bytes <= 0:
+        return None
+    budget = MEM_BUDGET_FRACTION * total_mem_bytes - max(0, reserved_bytes)
+    needed = size_bytes + RUNTIME_OVERHEAD_BYTES
+    if needed > budget:
+        return "too_big"
+    if needed > _TIGHT_FRACTION * budget:
+        return "tight"
+    return "ok"
+
 
 def arch_supported(arch: str | None) -> bool:
     """True when ``arch`` (from the GGUF header) is one the engine can run."""

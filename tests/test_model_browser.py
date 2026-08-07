@@ -108,6 +108,87 @@ def test_recommended_quant_falls_back_to_median():
     assert compat.recommended_quant(opts) == "M-Q3_K_S.gguf"
 
 
+# ── compat: memory-fit verdict ───────────────────────────────────────────────
+# Every case below states the machine's RAM explicitly and varies it — the
+# same quant must verdict differently on a small machine than a large one.
+# Nothing in fit_verdict is sized for any particular machine; only the inputs
+# here are.
+GIB = 1 << 30
+
+
+def test_fit_verdict_same_quant_too_big_on_small_machine_ok_on_large_one():
+    size_bytes = 18 * GIB  # roughly the Q4_K_M that triggered this feature
+    assert compat.fit_verdict(size_bytes, 18 * GIB) == "too_big"
+    assert compat.fit_verdict(size_bytes, 36 * GIB) == "ok"
+
+
+def test_fit_verdict_tight_band_between_ok_and_too_big():
+    # budget = 0.75 * 32 GiB = 24 GiB; tight starts at 0.85 * 24 GiB = 20.4 GiB
+    # (needed = size + 2 GiB overhead).
+    total = 32 * GIB
+    assert compat.fit_verdict(10 * GIB, total) == "ok"  # needed 12 GiB, well under
+    assert compat.fit_verdict(19 * GIB, total) == "tight"  # needed 21 GiB
+    assert compat.fit_verdict(23 * GIB, total) == "too_big"  # needed 25 GiB > 24 GiB
+
+
+def test_fit_verdict_reserved_bytes_can_tip_ok_into_too_big():
+    total = 32 * GIB
+    size_bytes = 10 * GIB  # needed 12 GiB, 'ok' against the full budget
+    assert compat.fit_verdict(size_bytes, total, reserved_bytes=0) == "ok"
+    # 20 GiB reserved by companion models leaves only a 4 GiB budget.
+    assert compat.fit_verdict(size_bytes, total, reserved_bytes=20 * GIB) == "too_big"
+
+
+@pytest.mark.parametrize(
+    "size_bytes,total_mem_bytes",
+    [(None, 32 * GIB), (0, 32 * GIB), (10 * GIB, None), (10 * GIB, 0)],
+)
+def test_fit_verdict_none_when_a_size_is_unknown(size_bytes, total_mem_bytes):
+    assert compat.fit_verdict(size_bytes, total_mem_bytes) is None
+
+
+# ── service: runtime memory measurement + companion reservation ─────────────
+def test_reserved_companion_bytes_zero_when_no_companion_dirs_exist(tmp_path, monkeypatch):
+    missing = str(tmp_path / "does-not-exist")
+    for target in (
+        "server.asr.parakeet_backend.PARAKEET_MODEL_DIR",
+        "server.asr.whisper_backend.WHISPER_MODEL_DIR",
+        "server.diarization.speakers.SPEAKER_MODEL_DIR",
+        "server.index.config.EMBED_MODEL_DIR",
+        "server.index.config.GLINER_MODEL_DIR",
+        "server.index.config.GLINER2_MODEL_DIR",
+        "server.index.config.RERANK_MODEL_DIR",
+    ):
+        monkeypatch.setattr(target, missing)
+    service._reserved_companion_bytes.cache_clear()
+    try:
+        assert service._reserved_companion_bytes() == 0
+    finally:
+        service._reserved_companion_bytes.cache_clear()
+
+
+def test_reserved_companion_bytes_sums_existing_dirs(tmp_path, monkeypatch):
+    fake_model = tmp_path / "fake-companion-model"
+    fake_model.mkdir()
+    (fake_model / "weights.bin").write_bytes(b"x" * 5000)
+    missing = str(tmp_path / "does-not-exist")
+    monkeypatch.setattr("server.asr.parakeet_backend.PARAKEET_MODEL_DIR", str(fake_model))
+    for target in (
+        "server.asr.whisper_backend.WHISPER_MODEL_DIR",
+        "server.diarization.speakers.SPEAKER_MODEL_DIR",
+        "server.index.config.EMBED_MODEL_DIR",
+        "server.index.config.GLINER_MODEL_DIR",
+        "server.index.config.GLINER2_MODEL_DIR",
+        "server.index.config.RERANK_MODEL_DIR",
+    ):
+        monkeypatch.setattr(target, missing)
+    service._reserved_companion_bytes.cache_clear()
+    try:
+        assert service._reserved_companion_bytes() == 5000
+    finally:
+        service._reserved_companion_bytes.cache_clear()
+
+
 # ── service.search: arch filtering, dedup, ranking ───────────────────────────
 def test_search_filters_unsupported_archs_and_dedups(monkeypatch):
     hits = [
@@ -170,6 +251,55 @@ def test_repo_detail_shapes_quants(monkeypatch):
     assert quants == ["Q4_K_M", "Q8_0"]  # mmproj hidden, size-sorted
     assert detail["recommended_filename"] == "Qwen3-0.6B-Q4_K_M.gguf"
     assert next(q for q in detail["quants"] if q["quant"] == "Q4_K_M")["recommended"] is True
+
+
+def test_repo_detail_quants_carry_fit_for_the_running_machine(monkeypatch):
+    # Fixed at a small machine so a large quant clearly won't fit and a small
+    # one clearly will — deterministic regardless of the machine running the
+    # test suite.
+    monkeypatch.setattr(service, "_total_memory_bytes", lambda: 18 * GIB)
+    monkeypatch.setattr(service, "_reserved_companion_bytes", lambda: 0)
+    monkeypatch.setattr(
+        service.hf_client,
+        "repo_gguf_meta",
+        lambda repo_id: RepoGguf(arch="qwen3", context_length=40960, has_chat_template=True),
+    )
+    monkeypatch.setattr(
+        service.hf_client,
+        "repo_files",
+        lambda repo_id: [
+            ("Model-Q4_K_M.gguf", 5 * GIB),  # comfortably fits
+            ("Model-Q8_0.gguf", 18 * GIB),  # exceeds an 18 GiB machine
+        ],
+    )
+    monkeypatch.setattr(service.hf_client, "repo_is_gated", lambda repo_id: False)
+
+    detail = service.repo_detail("someone/Model-GGUF")
+    assert detail["mem_total_bytes"] == 18 * GIB
+    assert detail["mem_reserved_bytes"] == 0
+    assert detail["mem_budget_bytes"] == int(compat.MEM_BUDGET_FRACTION * 18 * GIB)
+    by_quant = {q["quant"]: q for q in detail["quants"]}
+    assert by_quant["Q4_K_M"]["fit"] == "ok"
+    assert by_quant["Q8_0"]["fit"] == "too_big"
+
+
+def test_repo_detail_omits_fit_when_memory_is_unknown(monkeypatch):
+    monkeypatch.setattr(service, "_total_memory_bytes", lambda: None)
+    monkeypatch.setattr(service, "_reserved_companion_bytes", lambda: 0)
+    monkeypatch.setattr(
+        service.hf_client,
+        "repo_gguf_meta",
+        lambda repo_id: RepoGguf(arch="qwen3", context_length=40960, has_chat_template=True),
+    )
+    monkeypatch.setattr(
+        service.hf_client, "repo_files", lambda repo_id: [("Model-Q4_K_M.gguf", 5 * GIB)]
+    )
+    monkeypatch.setattr(service.hf_client, "repo_is_gated", lambda repo_id: False)
+
+    detail = service.repo_detail("someone/Model-GGUF")
+    assert detail["mem_total_bytes"] is None
+    assert detail["mem_budget_bytes"] is None
+    assert detail["quants"][0]["fit"] is None
 
 
 # ── install: the config-path P0 (isolated real config + registry) ────────────
@@ -328,6 +458,24 @@ def test_recommended_lists_curated_catalog():
     assert gemma["repo_id"] == "google/gemma-4-12B-it-qat-q4_0-gguf"
     assert gemma["filename"].endswith(".gguf")
     assert "downloaded" in gemma
+    # Every curated entry carries a real GGUF size, so Discover can warn before
+    # a multi-gigabyte download rather than after it fails to run.
+    assert gemma["size_bytes"] and gemma["size_bytes"] > 0
+
+
+def test_recommended_rows_carry_fit_for_the_running_machine(monkeypatch):
+    # A tiny machine: every curated model (all several GiB) should read too_big.
+    monkeypatch.setattr(service, "_total_memory_bytes", lambda: 4 * GIB)
+    monkeypatch.setattr(service, "_reserved_companion_bytes", lambda: 0)
+    rows = service.recommended()
+    gemma = next(r for r in rows if r["key"] == "local_gemma")
+    assert gemma["fit"] == "too_big"
+
+    # A generous machine: the same catalog should read ok.
+    monkeypatch.setattr(service, "_total_memory_bytes", lambda: 64 * GIB)
+    rows = service.recommended()
+    gemma = next(r for r in rows if r["key"] == "local_gemma")
+    assert gemma["fit"] == "ok"
 
 
 def test_install_recommended_writes_canonical_entry_and_adopts_index_llm(
