@@ -37,16 +37,16 @@ const fitSuffix = (fit: MemFit | null | undefined): string => {
  *  response for THIS request — nothing here is sized for any one machine. */
 const FitWarning: React.FC<{
   fit: MemFit | null | undefined;
-  memTotalBytes: number | null | undefined;
+  neededBytes: number | null | undefined;
   memBudgetBytes: number | null | undefined;
-}> = ({ fit, memTotalBytes, memBudgetBytes }) => {
+}> = ({ fit, neededBytes, memBudgetBytes }) => {
   if (fit !== 'too_big' && fit !== 'tight') return null;
+  const needed = humanSize(neededBytes);
   const budget = humanSize(memBudgetBytes);
-  const total = humanSize(memTotalBytes);
   const message =
     fit === 'too_big'
-      ? `Needs more memory than this machine can spare (~${budget} available for chat models of ${total} total, after speech-recognition and indexing models). It will download but likely fail to run; pick a smaller quant.`
-      : `Close to this machine's memory limit (~${budget} available of ${total} total). May be slow or fail at a large context size.`;
+      ? `Needs about ${needed} free to run, but this machine has only ~${budget} available for chat models right now. It will download but likely fail to run; pick a smaller quant.`
+      : `Needs about ${needed} free to run — this machine has ~${budget} available, so it's close to the limit. May be slow or fail at a large context size.`;
   return (
     <p
       role="alert"
@@ -118,7 +118,8 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   const quants = detail?.quants ?? [];
   const effectiveSelected =
     selected ?? detail?.recommended_filename ?? quants[0]?.filename ?? null;
-  const selectedFit = quants.find((q) => q.filename === effectiveSelected)?.fit;
+  const selectedQuant = quants.find((q) => q.filename === effectiveSelected);
+  const selectedFit = selectedQuant?.fit;
   const activate = () => setActivated(true);
 
   const onInstall = async () => {
@@ -208,7 +209,7 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
       </div>
       <FitWarning
         fit={selectedFit}
-        memTotalBytes={detail?.mem_total_bytes}
+        neededBytes={selectedQuant?.needed_bytes}
         memBudgetBytes={detail?.mem_budget_bytes}
       />
     </div>
@@ -259,10 +260,16 @@ const RecommendedRow: React.FC<{ model: RecommendedModel }> = ({ model }) => {
           {model.size_bytes ? ` · ${humanSize(model.size_bytes)}` : ''}
           {model.ctx ? ` · ${Math.round(model.ctx / 1024)}K context` : ''}
           {model.fit === 'too_big' && (
-            <span style={{ color: 'var(--accent-record, #e5484d)' }}> · won't fit on this machine</span>
+            <span style={{ color: 'var(--accent-record, #e5484d)' }}>
+              {' '}
+              · needs {humanSize(model.needed_bytes)} free · won't fit on this machine
+            </span>
           )}
           {model.fit === 'tight' && (
-            <span style={{ color: 'var(--accent-warn, #b8860b)' }}> · tight fit on this machine</span>
+            <span style={{ color: 'var(--accent-warn, #b8860b)' }}>
+              {' '}
+              · needs {humanSize(model.needed_bytes)} free · tight fit on this machine
+            </span>
           )}
         </div>
       </div>

@@ -93,6 +93,17 @@ RUNTIME_OVERHEAD_BYTES = 2 << 30  # 2 GiB
 _TIGHT_FRACTION = 0.85
 
 
+def needed_bytes(size_bytes: int | None) -> int | None:
+    """How much free memory this quant needs to run at all: its own weights
+    plus the fixed runtime overhead (KV cache + llama.cpp compute buffers).
+    None when size is unknown, so the caller omits the field rather than
+    render a guess. Lets the UI state the requirement in the model's own
+    terms ("needs about N GB free") instead of only a relative verdict."""
+    if not size_bytes or size_bytes <= 0:
+        return None
+    return size_bytes + RUNTIME_OVERHEAD_BYTES
+
+
 def fit_verdict(
     size_bytes: int | None,
     total_mem_bytes: int | None,
@@ -107,10 +118,10 @@ def fit_verdict(
     CALLER's machine — this function hardcodes no machine's numbers, only the
     fractions above.
     """
-    if not size_bytes or size_bytes <= 0 or not total_mem_bytes or total_mem_bytes <= 0:
+    needed = needed_bytes(size_bytes)
+    if needed is None or not total_mem_bytes or total_mem_bytes <= 0:
         return None
     budget = MEM_BUDGET_FRACTION * total_mem_bytes - max(0, reserved_bytes)
-    needed = size_bytes + RUNTIME_OVERHEAD_BYTES
     if needed > budget:
         return "too_big"
     if needed > _TIGHT_FRACTION * budget:
