@@ -82,6 +82,15 @@ class AnthropicAdapter:
         self._loop = loop
         self._executor = executor
         self._client = _get_bedrock_client()
+        # Per-model output cap: chat_model_meta.max_output when configured,
+        # else the Claude-on-Bedrock default.
+        from server.infrastructure.config import load_config
+
+        meta = (load_config().get("chat_model_meta") or {}).get(model_key) or {}
+        try:
+            self.max_tokens = int(meta.get("max_output") or 128000)
+        except (TypeError, ValueError):
+            self.max_tokens = 128000
 
     # ── Request building (port of call_bedrock_stream) ───────────────────────
 
@@ -90,7 +99,7 @@ class AnthropicAdapter:
 
         body = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 128000,
+            "max_tokens": self.max_tokens,
             "system": self.system_prompt,
             "messages": messages,
         }

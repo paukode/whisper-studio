@@ -178,13 +178,6 @@ def bind_to_session(aids: list[str], session_id: str) -> None:
             )
 
 
-def delete_session_attachments(session_id: str) -> None:
-    if not session_id:
-        return
-    with _get_conn() as conn:
-        conn.execute("DELETE FROM attachments WHERE session_id = ?", (session_id,))
-
-
 def gc(now: float | None = None) -> int:
     """Sweep expired rows: unbound uploads past the short TTL, bound
     attachments idle past the retention window. Returns rows deleted."""

@@ -13,6 +13,13 @@ from server import attachment_store
 from server.infrastructure.sessions import _delete_session_sync, _ensure_db
 
 
+def _purge_session_attachments(session_id: str) -> None:
+    """Test cleanup: drop the rows this test bound to its session (production
+    session deletion does this inline in sessions._delete_session_sync)."""
+    with attachment_store._get_conn() as conn:
+        conn.execute("DELETE FROM attachments WHERE session_id = ?", (session_id,))
+
+
 def _doc_record(filename="notes.md", text="# Title\nbody"):
     return {
         "kind": "document",
@@ -110,7 +117,7 @@ def test_bind_slides_retention_window():
     attachment_store.bind_to_session([aid], sid)
     attachment_store.gc(time.time() + 120)
     assert attachment_store.get_attachment(aid) is not None
-    attachment_store.delete_session_attachments(sid)
+    _purge_session_attachments(sid)
 
 
 def test_gc_sweeps_unbound_after_ttl_and_bound_after_retention():
@@ -138,7 +145,7 @@ def test_gc_sweeps_unbound_after_ttl_and_bound_after_retention():
     assert attachment_store.get_attachment(stale_bound) is None
     assert attachment_store.get_attachment(fresh_unbound) is not None
     assert attachment_store.get_attachment(fresh_bound) is not None
-    attachment_store.delete_session_attachments(sid)
+    _purge_session_attachments(sid)
 
 
 def test_session_delete_cascades_to_attachments():
