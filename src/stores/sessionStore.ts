@@ -46,7 +46,6 @@ export interface SessionState {
    *  Replaces the old single `currentSession` — per-session saves need
    *  per-session metadata (createdAt, customTitle, …). */
   liveSessions: Record<string, Session>;
-  isLoading: boolean;
 
   /* Actions */
   loadSessions: () => Promise<void>;
@@ -107,10 +106,8 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
   sessions: [],
   currentSessionId: null,
   liveSessions: {},
-  isLoading: false,
 
   loadSessions: async () => {
-    set({ isLoading: true });
     try {
       const raw = await sessionsApi.getSessions();
       const parsed = SessionListResponseSchema.safeParse(raw);
@@ -150,8 +147,6 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
         message: 'Failed to load sessions',
         duration: 4000,
       });
-    } finally {
-      set({ isLoading: false });
     }
   },
 
@@ -229,7 +224,6 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
 
     if (!entry.hydrated && !entry.hydrating) {
       entry.hydrating = (async () => {
-        set({ isLoading: true });
         try {
           const session = await sessionsApi.getSession(id);
           const normalized = normalizeSession(session);
@@ -251,7 +245,6 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
             duration: 4000,
           });
         } finally {
-          set({ isLoading: false });
           entry.hydrating = null;
         }
       })();

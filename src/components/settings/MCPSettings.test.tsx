@@ -7,10 +7,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 // through get(). Mutations (post/put/del) are not exercised here.
 const { getMock } = vi.hoisted(() => ({ getMock: vi.fn() }));
 vi.mock('@/api/client', () => ({ get: getMock, put: vi.fn(), post: vi.fn(), del: vi.fn() }));
-const { fetchMCPToolsMock } = vi.hoisted(() => ({ fetchMCPToolsMock: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('@/stores/toolStore', () => ({
-  useToolStore: { getState: () => ({ fetchMCPTools: fetchMCPToolsMock }) },
-}));
 
 import { MCPSettings, parseMcpArgs } from './MCPSettings';
 import { MoreMenu } from '@/components/chat/MoreMenu';

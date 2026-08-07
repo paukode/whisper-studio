@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { create } from 'zustand';
 import { persistToastNotification } from '@/api/notify';
+import { STORAGE_KEYS } from '@/utils/storageKeys';
 
 export const TOAST_PRIORITY = { immediate: 0, high: 1, medium: 2, low: 3 } as const;
 export type ToastPriority = (typeof TOAST_PRIORITY)[keyof typeof TOAST_PRIORITY];
@@ -147,7 +148,6 @@ export interface UIState {
   addToast: (toast: Omit<Toast, 'id' | 'count' | 'shownAt' | 'leaving' | 'priority'> & { key?: string; priority?: ToastPriority }) => string;
   removeToast: (id: string) => void;
   dismissToast: (id: string) => void;
-  clearToasts: () => void;
   _processQueue: () => void;
 
   showTranscript: () => void;
@@ -175,7 +175,7 @@ export interface UIState {
   resolveDialog: (id: string, result: unknown) => void;
 }
 
-const SIDEBAR_COLLAPSED_KEY = 'whisper_sidebar_collapsed';
+const SIDEBAR_COLLAPSED_KEY = STORAGE_KEYS.SIDEBAR_COLLAPSED;
 
 function loadSidebarCollapsed(): boolean {
   try {
@@ -354,10 +354,6 @@ export const useUIStore = create<UIState>()((set) => ({
     setTimeout(() => {
       useUIStore.getState().removeToast(id);
     }, 250);
-  },
-
-  clearToasts: () => {
-    set({ toasts: [], toastQueue: [] });
   },
 
   _processQueue: () => {

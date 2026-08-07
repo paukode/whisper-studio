@@ -12,13 +12,13 @@ import { downloadFile } from '@/utils/downloadFile';
 /** Custom event src/services/recordingController.ts listens for to
  *  live-switch the ASR engine on the active recording's WebSocket (no
  *  reconnect). Carries { backend }. */
-export const SET_BACKEND_EVENT = 'whisper-set-backend';
+const SET_BACKEND_EVENT = 'whisper-set-backend';
 /** Custom event src/services/recordingController.ts relays to the recording
  *  WebSocket as a participant-count hint for diarization. Carries { count }
  *  where 0 means automatic estimation. The user usually knows how many people
  *  are in the call; with the hint, speaker clustering cuts at exactly that
  *  count. */
-export const SET_SPEAKERS_EVENT = 'whisper-set-speakers';
+const SET_SPEAKERS_EVENT = 'whisper-set-speakers';
 // NOTE: this panel only renders/edits transcript segments. Recording is owned
 // entirely by the top-right Record button in Header.tsx, which captures mic +
 // system audio directly. There is deliberately no second "Record" affordance

@@ -84,8 +84,7 @@ export function useMcpToggle(): (name: string, enabled: boolean) => Promise<void
       // The skills/autocomplete tool list is filtered server-side by the
       // enabled flags — refetch it so the @-mention list and skills
       // dropdown reflect the toggle immediately, everywhere.
-      const { useToolStore } = await import('@/stores/toolStore');
-      void useToolStore.getState().fetchMCPTools();
+      void useSettingsStore.getState().loadSkills();
     } catch (err) {
       console.warn('Failed to toggle MCP server:', err);
       apply(!enabled); // rollback

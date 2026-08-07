@@ -52,7 +52,6 @@ beforeEach(() => {
     currentSessionId: null,
     liveSessions: { 'src-id': makeSession('src-id') },
     sessions: [],
-    isLoading: false,
   });
 });
 

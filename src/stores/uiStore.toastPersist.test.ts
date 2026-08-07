@@ -10,7 +10,7 @@ import { useUIStore } from './uiStore';
 describe('addToast → persistent notification log', () => {
   beforeEach(() => {
     persistMock.mockClear();
-    useUIStore.getState().clearToasts();
+    useUIStore.setState({ toasts: [], toastQueue: [] });
   });
 
   it('records a durable notification for a plain toast', () => {

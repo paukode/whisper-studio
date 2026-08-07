@@ -45,11 +45,6 @@ export const SSEEventDataSchema = z.object({
     tool_name: z.string().optional(),
     reason: z.string().optional(),
   }).optional(),
-  // A Stop hook refused to end the turn; the loop continues.
-  stop_hook_feedback: z.object({
-    reason: z.string().optional(),
-    attempt: z.number().optional(),
-  }).optional(),
   // Completion-gate frames (WS-E goal loop).
   goal_eval: z.object({
     verdict: z.string().optional(),
@@ -81,7 +76,6 @@ export const SSEEventDataSchema = z.object({
     name: z.string().optional(),
     resumed_from: z.string().optional(),
   }).optional(),
-  workflow_event: z.record(z.string(), z.unknown()).optional(),
   user_question: z.record(z.string(), z.unknown()).optional(),
   program_artifact: z.object({
     title: z.string(),

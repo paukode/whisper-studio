@@ -2,15 +2,7 @@ import { z } from 'zod';
 
 /** GET /api/config */
 export const AppConfigResponseSchema = z.object({
-  // Coerce a blank/whitespace region to the default. An empty string is a
-  // valid z.string() and would slip past .default() (which only fills in for
-  // undefined), then crash Bedrock client construction with an invalid endpoint.
-  bedrock_region: z
-    .string()
-    .optional()
-    .transform((v) => (v && v.trim() ? v.trim() : 'us-east-1')),
   chat_models: z.record(z.string(), z.string()).optional().default({}),
-  default_chat_model: z.string().optional().default(''),
   effort_level: z.string().optional().default('high'),
   brief_mode: z.boolean().optional().default(false),
   permission_mode: z.string().optional().default('default'),

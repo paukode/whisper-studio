@@ -53,7 +53,6 @@ export interface ChatMessage {
    *  position (attachments are session state), and reused by
    *  regenerate/edit-resend to re-attach the same files. */
   attachmentIds?: string[];
-  thinking?: ThinkingBlock[];
   toolUse?: ToolUseEvent[];
   approvals?: Approval[];
   skills?: string[];
@@ -112,11 +111,6 @@ export interface ChatMessage {
     title: string;
     summary: string;
   };
-}
-
-export interface ThinkingBlock {
-  text: string;
-  elapsed: number;
 }
 
 export interface ToolUseEvent {
@@ -289,13 +283,11 @@ export interface SSEEventData {
   plan_blocked?: Record<string, unknown>;
   security_blocked?: Record<string, unknown>;
   hook_blocked?: { tool_name?: string; reason?: string };
-  stop_hook_feedback?: { reason?: string; attempt?: number };
   goal_eval?: { verdict?: string; feedback?: string; confidence?: number; attempt?: number; cap?: number };
   stop_hook_block?: { reason?: string; attempt?: number };
   goal_cap_reached?: { attempt?: number; cap?: number; source?: string };
   workflow_preview?: { script: string; name?: string; description?: string; phases?: unknown[]; budget_usd?: number | null; args?: unknown };
   workflow_started?: { run_id: string; name?: string; resumed_from?: string };
-  workflow_event?: Record<string, unknown>;
   ci_started?: { task_id: string; branch?: string };
   ci_diagnosis?: { branch?: string; run_id?: number | null; url?: string | null; findings?: Array<Record<string, unknown>> };
   user_question?: Record<string, unknown>;

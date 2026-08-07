@@ -111,11 +111,6 @@ export const fetchRecommendedModels = () =>
 export const installRecommendedModel = (key: string) =>
   post<InstallResult>('/api/models/browse/install-recommended', { key });
 
-export const uninstallBrowsedModel = (key: string) =>
-  del<{ key: string; removed: boolean; stopped_llama_server: boolean; message?: string }>(
-    `/api/models/browse/${encodeURIComponent(key)}`,
-  );
-
 export interface RemoveFromListResult {
   key: string;
   /** "local" = a local model, deleted outright (weights + config), re-downloadable
