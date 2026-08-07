@@ -6,8 +6,8 @@ docs/tests, this fails loudly.
 """
 
 from server.infrastructure.feature_flags import (
-    get_all_flags,
     get_flag,
+    get_flag_states,
     is_enabled,
 )
 
@@ -28,7 +28,7 @@ def test_companion_flag_default_is_off():
 
 
 def test_companion_appears_in_full_registry():
-    flags = get_all_flags()
+    flags = get_flag_states()
     assert "companion" in flags
 
 

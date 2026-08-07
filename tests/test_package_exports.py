@@ -56,7 +56,6 @@ CHAT_EXPORTS = [
     "compact_messages_with_claude",
     "_compact_messages_simple",
     "TOOL_RESULT_BUDGET_BYTES",
-    "_budget_tool_result",
     "make_budget_tool_result",
     "assemble_tool_pool",
     "_is_tool_concurrent_safe",

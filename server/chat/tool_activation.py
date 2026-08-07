@@ -20,8 +20,6 @@ log = logging.getLogger("whisper-studio")
 _lock = threading.Lock()
 # session_id -> append-only ordered activations
 _activated: dict[str, list[str]] = {}
-# session_id -> version counter (bumped on change; the OpenAI loop polls it)
-_versions: dict[str, int] = {}
 _MAX_SESSIONS = 512
 
 
@@ -33,7 +31,6 @@ def activate(session_id: str, names: list[str]) -> list[str]:
         if len(_activated) >= _MAX_SESSIONS and session_id not in _activated:
             victim = next(iter(_activated))
             _activated.pop(victim, None)
-            _versions.pop(victim, None)
         current = _activated.pop(session_id, [])
         added = []
         for name in names:
@@ -41,25 +38,12 @@ def activate(session_id: str, names: list[str]) -> list[str]:
                 current.append(name)
                 added.append(name)
         _activated[session_id] = current  # reinsert: LRU-by-update order
-        if added:
-            _versions[session_id] = _versions.get(session_id, 0) + 1
         return added
 
 
 def get_ordered(session_id: str) -> list[str]:
     with _lock:
         return list(_activated.get(session_id, ()))
-
-
-def version(session_id: str) -> int:
-    with _lock:
-        return _versions.get(session_id, 0)
-
-
-def clear(session_id: str) -> None:
-    with _lock:
-        _activated.pop(session_id, None)
-        _versions.pop(session_id, None)
 
 
 def activate_from_history(session_id: str, messages: list[dict]) -> list[str]:

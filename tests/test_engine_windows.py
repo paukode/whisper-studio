@@ -1,15 +1,14 @@
 """Context-window resolution and prompt-cap parsing (server/chat/engine).
 
 The turn engine budgets against the model's real input cap: config-supplied
-context_window first, family defaults second, and a cap parsed from the
-provider's own rejection beats both on a retry.
+context_window first, family defaults second. parse_prompt_cap classifies a
+provider's prompt-too-long rejection by its own reported cap.
 """
 
 from server.chat.engine.windows import (
     FAMILY_DEFAULTS,
     context_window,
     parse_prompt_cap,
-    usable_tokens,
 )
 from server.infrastructure.config import _normalize_chat_models
 
@@ -30,11 +29,6 @@ def test_family_default_anthropic_and_fallback():
 
 def test_local_defers_to_runtime():
     assert context_window("local_gemma", {"is_local": True}) is None
-
-
-def test_usable_tokens_applies_safety_fraction():
-    assert usable_tokens(200_000) == 170_000
-    assert usable_tokens(None) is None
 
 
 def test_parse_prompt_cap_from_mantle_error():

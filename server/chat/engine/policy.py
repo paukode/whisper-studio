@@ -29,4 +29,3 @@ class TurnPolicy:
 
 CHAT_POLICY = TurnPolicy()
 LOCAL_POLICY = TurnPolicy(completion_gate=False)
-CRON_POLICY = TurnPolicy(max_rounds=30, salvage_round=False)

@@ -65,10 +65,6 @@ class AgentRegistry:
         with self._lock:
             return self._agents.get(agent_id)
 
-    def get_children(self, parent_id: str) -> list[AgentInfo]:
-        with self._lock:
-            return [a for a in self._agents.values() if a.parent_id == parent_id]
-
     def list_all(self, session_id: str = "") -> list[AgentInfo]:
         with self._lock:
             agents = list(self._agents.values())

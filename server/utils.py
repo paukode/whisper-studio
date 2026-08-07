@@ -25,10 +25,6 @@ class BoundedUUIDSet:
     def has(self, uid: str) -> bool:
         return uid in self._set
 
-    def clear(self):
-        self._buf.clear()
-        self._set.clear()
-
 
 # ── NDJSON-safe JSON serialisation ─────────────────────────────────────────────
 # JSON.stringify allows U+2028 / U+2029 raw in strings, but NDJSON receivers

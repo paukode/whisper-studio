@@ -9,9 +9,9 @@ from fastapi.testclient import TestClient
 
 
 def test_flags_registry_holds_only_live_flags():
-    from server.infrastructure.feature_flags import get_all_flags, router
+    from server.infrastructure.feature_flags import get_flag_states, router
 
-    names = set(get_all_flags().keys())
+    names = set(get_flag_states().keys())
     removed = {
         "brief_mode",
         "auto_mode",

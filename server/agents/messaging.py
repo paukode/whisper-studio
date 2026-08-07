@@ -68,21 +68,12 @@ class MessageBus:
                 count += 1
         return count
 
-    def receive(self, agent_id: str, clear: bool = True) -> list[AgentMessage]:
-        """Receive all pending messages for an agent.
-
-        If clear=True, messages are removed from the mailbox after reading.
-        """
+    def receive(self, agent_id: str) -> list[AgentMessage]:
+        """Receive and consume all pending messages for an agent."""
         with self._lock:
             messages = self._mailboxes.get(agent_id, [])
-            if clear:
-                self._mailboxes[agent_id] = []
+            self._mailboxes[agent_id] = []
             return list(messages)
-
-    def peek(self, agent_id: str) -> int:
-        """Return count of pending messages without consuming them."""
-        with self._lock:
-            return len(self._mailboxes.get(agent_id, []))
 
     def create_mailbox(self, agent_id: str, session_id: str = "") -> None:
         with self._lock:

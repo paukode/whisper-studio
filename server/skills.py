@@ -153,12 +153,6 @@ def save_skills_config(config: dict):
         json.dump(config, f, indent=2)
 
 
-def is_trusted(skill_name: str) -> bool:
-    """Whether the user has marked a skill trusted (gates allowed-tools
-    auto-approval for folder skills)."""
-    return skill_name in set(load_skills_config().get("trusted", []))
-
-
 def command_runs_trusted_skill(command: str) -> bool:
     """True if ``command`` runs a file inside a *trusted* folder skill's own
     directory (e.g. ``python3 /…/skills/agenthub/scripts/x.py`` when the

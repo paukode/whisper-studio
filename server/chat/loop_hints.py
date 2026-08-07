@@ -107,11 +107,6 @@ def should_nudge_compaction(session_id: str) -> bool:
         return False
 
 
-def reset_session(session_id: str) -> None:
-    with _lock:
-        _context.pop(session_id, None)
-
-
 def near_cap_reminder(rounds_left: int) -> str | None:
     """Wind-down text at exactly two thresholds; None otherwise."""
     if rounds_left == WIND_DOWN_AT:

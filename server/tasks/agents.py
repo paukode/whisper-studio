@@ -5,10 +5,6 @@ loop: the caller gets a task_id immediately, progress events stream to a
 private channel (mirrored into the owning session as ``team_progress`` and
 appended to the task's output file so ``task_output`` works uniformly across
 kinds), and completion lands in the session as a ``task_event`` card.
-
-``register_external_task``/``finish_external_task`` are the substrate hooks a
-future workflow runtime consumes to inherit persistence, events, stop, and UI
-for free.
 """
 
 import asyncio
@@ -235,38 +231,3 @@ def cancel_task(task_id: str) -> bool:
         return False
     aio_task.cancel()
     return True
-
-
-def register_external_task(
-    kind: str,
-    title: str,
-    *,
-    session_id: str = "",
-    meta: dict | None = None,
-    aio_task: asyncio.Task | None = None,
-) -> str:
-    """Registry + events + cancel wiring for externally-managed work (the
-    workflow runtime lands on this hook)."""
-    task_id = registry.create_task(kind, session_id=session_id, title=title, meta=meta)
-    if aio_task is not None:
-        _running[task_id] = aio_task
-        aio_task.add_done_callback(lambda _t: _running.pop(task_id, None))
-    started = registry.get_task(task_id)
-    if started:
-        emit_task_event(session_id, "task_started", started)
-    return task_id
-
-
-def finish_external_task(task_id: str, *, status: str, result_text: str = "") -> None:
-    task = registry.get_task(task_id)
-    if not task:
-        return
-    finished = registry.finish_task(task_id, status=status, result_text=result_text)
-    if finished:
-        event_name = {
-            "completed": "task_completed",
-            "stopped": "task_stopped",
-            "failed": "task_failed",
-            "interrupted": "task_failed",
-        }.get(status, "task_completed")
-        emit_task_event(task.get("session_id", ""), event_name, finished)

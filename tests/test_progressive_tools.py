@@ -13,7 +13,6 @@ from server.chat.tool_partition import CORE_TOOLS, core_names, partition_pool
 def clean_activation():
     with tool_activation._lock:
         tool_activation._activated.clear()
-        tool_activation._versions.clear()
     yield
 
 
@@ -82,14 +81,12 @@ def test_core_names_config_overrides(monkeypatch):
 # ── activation registry ──────────────────────────────────────────────────────
 
 
-def test_activation_order_version_and_dedup():
+def test_activation_order_and_dedup():
     assert tool_activation.activate("s1", ["a", "b"]) == ["a", "b"]
-    assert tool_activation.version("s1") == 1
     assert tool_activation.activate("s1", ["b", "c"]) == ["c"]
     assert tool_activation.get_ordered("s1") == ["a", "b", "c"]
-    assert tool_activation.version("s1") == 2
     assert tool_activation.activate("s1", ["a"]) == []
-    assert tool_activation.version("s1") == 2  # no change, no bump
+    assert tool_activation.get_ordered("s1") == ["a", "b", "c"]  # no change
 
 
 def test_activate_from_history_first_seen_order():

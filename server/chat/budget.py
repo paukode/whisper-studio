@@ -8,8 +8,7 @@ data silently disappearing.
 
 The closure pattern (``make_budget_tool_result``) lets callers collect
 truncation events into a per-request list — the chat endpoint flushes
-those as SSE frames; tests use the simpler ``_budget_tool_result``
-non-emitting variant.
+those as SSE frames; pass ``None`` for a non-emitting budgeter.
 """
 
 import logging
@@ -29,17 +28,6 @@ TOOL_RESULT_BUDGET_BYTES = 50_000
 # pass through the budgeter.
 HEAD_KEEP_CHARS = 40_000
 TAIL_KEEP_CHARS = 8_000
-
-
-def _budget_tool_result(tool_name: str, tool_output: str) -> str:
-    """
-    Feature 3: If tool output exceeds budget, persist to disk and return a reference.
-
-    Backwards-compatible non-emitting variant. For UI surfacing, prefer
-    ``make_budget_tool_result(events)`` which records truncation events into a
-    per-request list so the chat handler can flush them as SSE events.
-    """
-    return make_budget_tool_result(None)(tool_name, tool_output)
 
 
 def _sliced(tool_output: str) -> str:

@@ -10,7 +10,6 @@ import server.executors.content  # noqa: F401 — registers the prompt executors
 import server.skills as skills_mod
 from server.chat import (
     TOOL_RESULT_BUDGET_BYTES,
-    _budget_tool_result,
     make_budget_tool_result,
 )
 from server.skills import produces_model_prompt
@@ -57,12 +56,6 @@ def test_oversize_output_keeps_head_and_tail():
     assert "HEAD_SENTINEL" in out
     assert "TAIL_SENTINEL" in out
     assert "characters omitted" in out
-
-
-def test_legacy_budget_still_works_without_events():
-    big = "y" * (TOOL_RESULT_BUDGET_BYTES + 100)
-    # The legacy variant must still return a truncated string and not crash.
-    assert "truncated" in _budget_tool_result("legacy_tool", big).lower()
 
 
 # --- Prompt-payload exemption -------------------------------------------------
