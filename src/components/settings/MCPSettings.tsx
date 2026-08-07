@@ -20,6 +20,31 @@ const EMPTY_FORM: MCPServerFormData = {
   env: '',
 };
 
+/** Copying a JSON snippet from docs/chat often converts straight quotes to
+ *  curly ones (" " ' '), which are invalid JSON. Normalize them back. */
+export const dequoteSmart = (s: string): string =>
+  s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+
+/** Parse the args text field into a string[]. args is just JSON: it must be a
+ *  JSON array of strings (empty field = no args). There is no comma-split or
+ *  wrap-as-one-arg fallback — invalid input is a hard error, never reinterpreted
+ *  (silently wrapping a bracketed string as one arg is exactly what broke
+ *  launched commands). The only leniency is normalizing curly quotes to straight
+ *  ones, the copy-paste artifact that turns a valid array into invalid JSON. */
+export function parseMcpArgs(raw: string): { args: string[] } | { error: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { args: [] };
+  try {
+    const parsed = z.array(z.string()).safeParse(JSON.parse(dequoteSmart(trimmed)));
+    if (!parsed.success) {
+      return { error: 'Args must be a JSON array of strings, e.g. ["--flag", "value"]' };
+    }
+    return { args: parsed.data };
+  } catch {
+    return { error: 'Args must be valid JSON: an array of strings, e.g. ["--flag", "value"]' };
+  }
+}
+
 export const MCPSettings: React.FC = () => {
   const queryClient = useQueryClient();
   const [editingServer, setEditingServer] = useState<string | null>(null);
@@ -81,25 +106,17 @@ export const MCPSettings: React.FC = () => {
     const command = formData.command.trim();
     if (!name || !command) return;
 
-    let args: string[] = [];
-    if (formData.args.trim()) {
-      try {
-        const parsed = z.array(z.string()).safeParse(JSON.parse(formData.args));
-        if (parsed.success) {
-          args = parsed.data;
-        } else {
-          setError('Args must be a JSON array of strings, e.g. ["--flag", "value"]');
-          return;
-        }
-      } catch {
-        args = formData.args.split(',').map((a) => a.trim()).filter(Boolean);
-      }
+    const parsedArgs = parseMcpArgs(formData.args);
+    if ('error' in parsedArgs) {
+      setError(parsedArgs.error);
+      return;
     }
+    const args = parsedArgs.args;
 
     let env: Record<string, string> | undefined;
     if (formData.env.trim()) {
       try {
-        const parsed = z.record(z.string(), z.string()).safeParse(JSON.parse(formData.env));
+        const parsed = z.record(z.string(), z.string()).safeParse(JSON.parse(dequoteSmart(formData.env)));
         if (parsed.success) {
           env = parsed.data;
         } else {

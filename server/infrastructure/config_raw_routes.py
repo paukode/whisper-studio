@@ -82,10 +82,10 @@ def _validate_chat_model_entry(key: str, val, errors: list[str]) -> None:
     elif _nonempty_str(val["id"]) and not val["id"].startswith("local:"):
         errors.append(f'{where}: a local model "id" must start with "local:" (got {val["id"]!r}).')
 
-    try:  # built-ins may fill missing weight fields for the same key
-        from server.local.registry import BUILTIN_LOCAL_MODELS
+    try:  # a recommended entry may fill missing weight fields for the same key
+        from server.local.registry import RECOMMENDED_LOCAL_MODELS
 
-        builtin = BUILTIN_LOCAL_MODELS.get(key, {})
+        builtin = RECOMMENDED_LOCAL_MODELS.get(key, {})
     except Exception:  # pragma: no cover - defensive
         builtin = {}
     for field in _LOCAL_REQUIRED:
@@ -117,9 +117,9 @@ def _known_model_keys(data: dict) -> set[str]:
     if isinstance(cm, dict):
         keys.update(cm)
     try:
-        from server.local.registry import BUILTIN_LOCAL_MODELS
+        from server.local.registry import RECOMMENDED_LOCAL_MODELS
 
-        keys.update(BUILTIN_LOCAL_MODELS)
+        keys.update(RECOMMENDED_LOCAL_MODELS)
     except Exception:  # pragma: no cover - defensive
         pass
     return keys

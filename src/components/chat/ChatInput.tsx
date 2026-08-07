@@ -582,8 +582,12 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     ta.style.height = 'auto'; // reset so deletions shrink it back
     // +2 for the top/bottom borders: scrollHeight excludes them but the
     // element is border-box, so without it the content gets a scrollbar one
-    // line early.
-    ta.style.height = `${ta.scrollHeight + 2}px`;
+    // line early. Clamp to the CSS resting floor (min-height) so an empty
+    // composer never collapses below two rows — otherwise scrollHeight of the
+    // empty textarea sets a one-line height on first mount and clips the
+    // placeholder until the user focuses or types.
+    const resting = parseFloat(getComputedStyle(ta).minHeight) || 0;
+    ta.style.height = `${Math.max(ta.scrollHeight + 2, resting)}px`;
   }, [text]);
 
   // Abort handler for stop button

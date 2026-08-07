@@ -93,58 +93,6 @@
       "id": "openai.gpt-5.4",
       "label": "GPT-5.4",
       "context_window": 278528
-    },
-    "local_gemma": {
-      "id": "local:gemma-4-12b-it-qat-q4_0",
-      "label": "Gemma 4 12B (Local)",
-      "thinking": "none",
-      "effort_tier": "none",
-      "is_local": true,
-      "supports_thinking": true,
-      "supports_tools": true,
-      "repo_id": "google/gemma-4-12B-it-qat-q4_0-gguf",
-      "filename": "gemma-4-12b-it-qat-q4_0.gguf",
-      "dir": "gemma-4-12b-it-qat-q4_0",
-      "ctx": 32768
-    },
-    "local_gemma_coder": {
-      "id": "local:gemma-4-12b-coder",
-      "label": "Gemma 4 Coder (Local)",
-      "thinking": "none",
-      "effort_tier": "none",
-      "is_local": true,
-      "supports_thinking": true,
-      "supports_tools": true,
-      "repo_id": "yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF",
-      "filename": "gemma4-coding-Q4_K_M.gguf",
-      "dir": "gemma-4-12b-coder",
-      "ctx": 32768
-    },
-    "local_qwen35_9b": {
-      "id": "local:qwen3.5-9b",
-      "label": "Qwen3.5 9B (Local)",
-      "thinking": "none",
-      "effort_tier": "none",
-      "is_local": true,
-      "supports_thinking": true,
-      "supports_tools": true,
-      "repo_id": "unsloth/Qwen3.5-9B-GGUF",
-      "filename": "Qwen3.5-9B-Q4_K_M.gguf",
-      "dir": "qwen3.5-9b",
-      "ctx": 32768
-    },
-    "local_ministral3_14b": {
-      "id": "local:ministral3-14",
-      "label": "Ministral 3 14B (Local)",
-      "thinking": "none",
-      "effort_tier": "none",
-      "is_local": true,
-      "supports_thinking": true,
-      "supports_tools": true,
-      "repo_id": "unsloth/Ministral-3-14B-Reasoning-2512-GGUF",
-      "filename": "Ministral-3-14B-Reasoning-2512-UD-Q4_K_XL.gguf",
-      "dir": "ministral3-14",
-      "ctx": 32768
     }
   },
   "default_chat_model": "opus5.0",

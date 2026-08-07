@@ -83,12 +83,10 @@ export const ChatModelVisibility: React.FC = () => {
   };
 
   return (
-    <div style={{ marginBottom: 16 }}>
-      <h4 style={{ margin: '12px 0 2px' }}>Chat model visibility</h4>
-      <p className="settings-empty" style={{ margin: '0 0 6px' }}>
-        Every chat model in your catalog, cloud and on-device. Toggle one off to hide it from the
-        chat model picker; it stays listed here so you can re-enable it, and any downloaded weights
-        stay manageable above. All models are visible by default.
+    <div className="models-section">
+      <h4 className="models-section-title">Chat model visibility</h4>
+      <p className="models-section-desc">
+        Toggle any chat model off to hide it from the picker. Weights stay manageable above.
       </p>
       {query.isError && (
         <p className="settings-empty" role="alert">

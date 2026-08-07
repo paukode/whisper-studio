@@ -25,7 +25,10 @@ PYTHON_URL="https://github.com/astral-sh/python-build-standalone/releases/downlo
 PYTHON_SHA256="aa2a054f5e04bde63ae199e3bb6bbb634e457423efd294842deeb1299e7e5932"
 
 # llama.cpp official release binaries (>= b10090 required by the backend).
-LLAMA_TAG="b10243"
+# Bumped to b10289 for the model browser: newer builds add model-architecture
+# support, so more downloadable models load. Verified b10289 accepts every flag
+# the backend passes and loads+generates on Apple Silicon.
+LLAMA_TAG="b10289"
 LLAMA_ASSET="llama-${LLAMA_TAG}-bin-macos-arm64.tar.gz"
 LLAMA_URL="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_TAG}/${LLAMA_ASSET}"
 
@@ -126,7 +129,36 @@ log "Building Whisper Studio.app (version $VERSION, identity: $SIGN_IDENTITY)"
 log "[a] Frontend build (npm run build)"
 [[ -d "$REPO_ROOT/node_modules" ]] \
     || die "node_modules missing at $REPO_ROOT — run 'npm ci' (or npm install) first"
-(cd "$REPO_ROOT" && npm run build)
+# vite build occasionally finishes writing static/dist but then the process
+# hangs at 0% CPU instead of exiting (a known rollup/esbuild worker-teardown
+# flake), which would stall the whole packaging build forever. So run it in the
+# background, wait for vite's "built in" completion line, then reap the process
+# if it lingers. A genuine build failure (no completion line, early exit) still
+# surfaces via the missing-index.html check below.
+FE_LOG="$BUILD_DIR/frontend-build.log"
+mkdir -p "$BUILD_DIR"
+(cd "$REPO_ROOT" && npm run build) > "$FE_LOG" 2>&1 &
+FE_PID=$!
+FE_DONE=0
+for _ in $(seq 1 600); do          # up to 10 min for a cold tsc+vite
+    if grep -q "built in" "$FE_LOG" 2>/dev/null; then FE_DONE=1; break; fi
+    kill -0 "$FE_PID" 2>/dev/null || break   # process exited (clean or error)
+    sleep 1
+done
+if [[ "$FE_DONE" == "1" ]]; then
+    sleep 2                        # let vite flush the last asset writes
+    if kill -0 "$FE_PID" 2>/dev/null; then
+        substep "vite finished but did not exit; reaping the hung process"
+        pkill -P "$FE_PID" 2>/dev/null || true
+        kill "$FE_PID" 2>/dev/null || true
+        sleep 1
+        pkill -9 -P "$FE_PID" 2>/dev/null || true
+        kill -9 "$FE_PID" 2>/dev/null || true
+    fi
+else
+    wait "$FE_PID" || true         # let it report; the check below is the gate
+fi
+tail -3 "$FE_LOG" 2>/dev/null || true
 [[ -f "$REPO_ROOT/static/dist/index.html" ]] \
     || die "frontend build produced no static/dist/index.html"
 
@@ -152,7 +184,21 @@ if [[ -f "$REQ_STAMP" && "$(cat "$REQ_STAMP")" == "$REQ_SHA" ]]; then
     substep "requirements already installed (stamp matches)"
 else
     substep "pip install -r requirements.txt"
-    "$PY_BIN" -m pip install -r "$REPO_ROOT/requirements.txt" --no-warn-script-location
+    # A cold build pulls several GB of wheels; flaky networks drop connections or
+    # deliver partial downloads (DNS blips, CDN throttling). pip caches every
+    # wheel that DID land, so re-running resumes rather than restarts. Retry the
+    # whole install a few times with pip's own per-download retries bumped high.
+    pip_ok=0
+    for attempt in 1 2 3 4 5 6; do
+        if "$PY_BIN" -m pip install -r "$REPO_ROOT/requirements.txt" \
+            --no-warn-script-location --retries 10 --timeout 60; then
+            pip_ok=1
+            break
+        fi
+        substep "pip install attempt $attempt failed (network?); cached wheels kept, retrying in 8s"
+        sleep 8
+    done
+    [[ "$pip_ok" == "1" ]] || die "pip install failed after 6 attempts (network); rerun the build"
     echo "$REQ_SHA" > "$REQ_STAMP"
 fi
 

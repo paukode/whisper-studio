@@ -29,10 +29,25 @@ def _drain(make_agen) -> list[str]:
 # ── registry ─────────────────────────────────────────────────────────────────
 
 
-def test_registry_returns_builtins_when_config_adds_nothing(monkeypatch):
+def test_registry_is_empty_when_nothing_installed_or_downloaded(monkeypatch):
+    """The app ships no local models: a fresh catalog with no config entries and
+    nothing on disk is empty until the user downloads a recommendation."""
     monkeypatch.setattr(R, "_config_local_models", lambda: {})
+    monkeypatch.setattr(R, "_recommended_downloaded_on_disk", lambda entry: False)
+    assert R.local_models() == {}
+
+
+def test_registry_surfaces_a_downloaded_recommendation(monkeypatch):
+    """A recommended model appears once its weights are on disk, even with no
+    config entry (e.g. downloaded by a prior release) — so it is never orphaned."""
+    monkeypatch.setattr(R, "_config_local_models", lambda: {})
+    monkeypatch.setattr(
+        R,
+        "_recommended_downloaded_on_disk",
+        lambda entry: entry.get("id") == "local:gemma-4-12b-it-qat-q4_0",
+    )
     models = R.local_models()
-    assert set(models) == set(R.BUILTIN_LOCAL_MODELS)
+    assert set(models) == {"local_gemma"}
     assert models["local_gemma"]["id"] == "local:gemma-4-12b-it-qat-q4_0"
 
 
@@ -61,12 +76,12 @@ def test_registry_adds_a_config_only_model(monkeypatch):
     assert entry["supports_tools"] is True
 
 
-def test_every_builtin_context_fits_the_full_tool_pool():
-    """The full tool pool ("Tools: All") renders ~17.2K tokens, so any built-in
-    left at 16K rejects the very first turn with exceed_context_size. Caught
-    exactly that drift on local_gemma_coder, hence this guard."""
+def test_every_recommended_context_fits_the_full_tool_pool():
+    """The full tool pool ("Tools: All") renders ~17.2K tokens, so any model left
+    at 16K rejects the very first turn with exceed_context_size. Caught exactly
+    that drift on local_gemma_coder, hence this guard over the curated set."""
     _MIN_CTX_FOR_FULL_TOOLS = 32768
-    for key, entry in R.BUILTIN_LOCAL_MODELS.items():
+    for key, entry in R.RECOMMENDED_LOCAL_MODELS.items():
         assert entry["ctx"] >= _MIN_CTX_FOR_FULL_TOOLS, (
             f"{key} ctx={entry['ctx']} is too small for the full tool pool"
         )
@@ -83,11 +98,18 @@ def test_registry_drops_half_declared_model(monkeypatch):
     assert "local_broken" not in R.local_models()
 
 
-def test_config_overrides_builtin_field_without_restating_repo(monkeypatch):
+def test_config_overrides_downloaded_recommendation_field(monkeypatch):
+    """A config entry can retune one field of a downloaded recommendation without
+    restating its repo — the recommended definition fills the untouched fields."""
+    monkeypatch.setattr(
+        R,
+        "_recommended_downloaded_on_disk",
+        lambda entry: entry.get("id") == "local:gemma-4-12b-it-qat-q4_0",
+    )
     monkeypatch.setattr(R, "_config_local_models", lambda: {"local_gemma": {"ctx": 65536}})
     entry = R.local_models()["local_gemma"]
     assert entry["ctx"] == 65536
-    # Untouched fields still come from the built-in.
+    # Untouched fields still come from the recommended definition.
     assert entry["filename"] == "gemma-4-12b-it-qat-q4_0.gguf"
 
 
@@ -471,6 +493,67 @@ def test_ensure_serving_honors_sticky_requested_ctx(monkeypatch):
     assert LS.resident_n_ctx() == 65536
     LS._state.update(key=None, port=None, n_ctx=None)
     LS._proc = None
+
+
+def test_ensure_serving_coalesces_concurrent_duplicate_loads(monkeypatch):
+    """Regression: the UI fired four /api/local-model/load for local_gemma at
+    once. Each call ran stop()+spawn, so every llama-server was SIGKILLed ~1s in
+    by the next duplicate and none became ready ("failed to become ready").
+    Concurrent duplicate loads must coalesce onto a single spawn."""
+    import threading
+    import time as _time
+
+    import server.local.runtime as L
+
+    monkeypatch.setattr(LS, "ensure_available", lambda: "/usr/bin/llama-server")
+    monkeypatch.setattr(L, "ensure_downloaded", lambda key: "/models/x.gguf")
+    monkeypatch.setattr(L, "requested_n_ctx", lambda: 32768)
+    monkeypatch.setattr(LS, "_wait_healthy", lambda port, proc, deadline: True)
+
+    stops: list[int] = []
+    monkeypatch.setattr(LS, "stop", lambda: stops.append(1))
+
+    spawns: list[list] = []
+
+    class FakeProc:
+        pid = 4242
+
+        def poll(self):
+            return None
+
+    def fake_popen(cmd, **kw):
+        spawns.append(cmd)
+        _time.sleep(0.05)  # cold start: hold the load lock so the others queue
+        return FakeProc()
+
+    monkeypatch.setattr(LS.subprocess, "Popen", fake_popen)
+
+    LS._proc = None
+    LS._state.update(key=None, port=None, n_ctx=None)
+
+    barrier = threading.Barrier(4)
+    errors: list[Exception] = []
+
+    def worker():
+        try:
+            barrier.wait()  # release all four into ensure_serving together
+            LS.ensure_serving("local_gemma", n_ctx=32768)
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    try:
+        assert errors == []
+        assert len(spawns) == 1  # three duplicates reused the first spawn
+        assert len(stops) == 1  # not one stop-and-restart per request
+    finally:
+        LS._state.update(key=None, port=None, n_ctx=None)
+        LS._proc = None
 
 
 def test_resident_n_ctx_is_none_once_the_process_is_gone():

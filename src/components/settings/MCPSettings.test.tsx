@@ -12,7 +12,7 @@ vi.mock('@/stores/toolStore', () => ({
   useToolStore: { getState: () => ({ fetchMCPTools: fetchMCPToolsMock }) },
 }));
 
-import { MCPSettings } from './MCPSettings';
+import { MCPSettings, parseMcpArgs } from './MCPSettings';
 import { MoreMenu } from '@/components/chat/MoreMenu';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
@@ -151,5 +151,30 @@ describe('composer MoreMenu has no MCP toggle (moved to Settings → MCP)', () =
     expect(screen.queryByText('MCP servers')).toBeNull();
     // The menu itself is intact (the Skills control still renders).
     expect(screen.getByText('Skills')).toBeInTheDocument();
+  });
+});
+
+describe('parseMcpArgs — args field parsing', () => {
+  it('parses a JSON array pasted with curly/smart quotes (the AgentCore paste)', () => {
+    const raw = '[“awslabs.amazon-bedrock-agentcore-mcp-server@latest”]';
+    expect(parseMcpArgs(raw)).toEqual({
+      args: ['awslabs.amazon-bedrock-agentcore-mcp-server@latest'],
+    });
+  });
+
+  it('parses a normal straight-quote JSON array', () => {
+    expect(parseMcpArgs('["--flag", "value"]')).toEqual({ args: ['--flag', 'value'] });
+  });
+
+  it('returns [] for empty input', () => {
+    expect(parseMcpArgs('   ')).toEqual({ args: [] });
+  });
+
+  it('errors on non-JSON input (no comma-split fallback)', () => {
+    expect('error' in parseMcpArgs('--flag, value')).toBe(true);
+  });
+
+  it('errors on a bracketed-but-invalid value instead of wrapping it as one arg', () => {
+    expect('error' in parseMcpArgs('[not, valid, json]')).toBe(true);
   });
 });

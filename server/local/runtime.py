@@ -127,8 +127,26 @@ def is_downloaded(key: str) -> bool:
     return is_local_model(key) and os.path.exists(gguf_path(key))
 
 
+def _shard_filenames(filename: str) -> list[str]:
+    """Every filename in a sharded GGUF group, or just ``[filename]``.
+
+    llama-server is handed the FIRST shard (``...-00001-of-000NN.gguf``) and
+    finds the rest by naming convention, so all NN shards must be on disk. A
+    non-sharded filename returns unchanged.
+    """
+    import re
+
+    m = re.match(r"^(?P<base>.+?)-(?P<idx>\d{5})-of-(?P<total>\d{5})\.gguf$", filename, re.I)
+    if not m:
+        return [filename]
+    base, total = m.group("base"), int(m.group("total"))
+    return [f"{base}-{i:05d}-of-{total:05d}.gguf" for i in range(1, total + 1)]
+
+
 def ensure_downloaded(key: str) -> str:
-    """Fetch the GGUF into models/ if absent. Returns the local path."""
+    """Fetch the GGUF into models/ if absent. Returns the local path (first shard
+    for a sharded model). Downloads every shard of a sharded model, since
+    llama-server needs them all present."""
     path = gguf_path(key)
     if os.path.exists(path):
         # Positive confirmation so "did it download or just load?" is obvious.
@@ -137,12 +155,17 @@ def ensure_downloaded(key: str) -> str:
     from huggingface_hub import hf_hub_download
 
     m = LOCAL_MODELS[key]
-    log.info("Downloading local model %s (%s) into %s ...", key, m["filename"], MODELS_DIR)
-    hf_hub_download(
-        repo_id=m["repo_id"],
-        filename=m["filename"],
-        local_dir=os.path.join(MODELS_DIR, m["dir"]),
+    local_dir = os.path.join(MODELS_DIR, m["dir"])
+    filenames = _shard_filenames(m["filename"])
+    log.info(
+        "Downloading local model %s (%d file(s), first=%s) into %s ...",
+        key,
+        len(filenames),
+        m["filename"],
+        MODELS_DIR,
     )
+    for fn in filenames:
+        hf_hub_download(repo_id=m["repo_id"], filename=fn, local_dir=local_dir)
     log.info("Local model %s download complete.", key)
     return path
 

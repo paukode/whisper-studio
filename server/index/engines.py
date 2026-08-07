@@ -7,8 +7,11 @@ headers. Valid LLM engine values:
 - ``"haiku"`` — cloud, Bedrock Claude Haiku
 - any on-device model key from the local registry (``local_gemma``,
   ``local_qwen35_9b``, ...), sourced from ``chat_models`` in the config
-- ``"local"`` — legacy alias for ``local_gemma``, accepted so folder settings
-  written before the model picker existed keep working
+- ``"local"`` — "follow the available on-device model": the preferred default
+  (``local_gemma``) when it is installed, else the first installed local model.
+  Accepted so folder settings written before the model picker existed keep
+  working, and so ``local`` mode resolves even though the app ships no local
+  model by default (the user installs one from Discover).
 
 ``"none"`` and ``"gliner2"`` are pass-specific sentinels owned by the callers
 (wssettings validates them); they are not LLM engines.
@@ -17,15 +20,19 @@ headers. Valid LLM engine values:
 from server.local import registry as local_registry
 
 LEGACY_LOCAL_ALIAS = "local"
-_DEFAULT_LOCAL_KEY = "local_gemma"
+_PREFERRED_LOCAL_KEY = "local_gemma"
 
 
 def resolve_local_model(engine: str) -> str | None:
     """The on-device model key an engine value runs on, or ``None`` when the
-    value is not a local engine ("haiku", "none", "gliner2", unknown)."""
+    value is not a local engine ("haiku", "none", "gliner2", unknown) OR when it
+    is the ``"local"`` alias but no on-device model is installed yet."""
+    models = local_registry.local_models()
     if engine == LEGACY_LOCAL_ALIAS:
-        return _DEFAULT_LOCAL_KEY
-    if engine in local_registry.local_models():
+        if _PREFERRED_LOCAL_KEY in models:
+            return _PREFERRED_LOCAL_KEY
+        return next(iter(models), None)  # first installed local model, or None
+    if engine in models:
         return engine
     return None
 

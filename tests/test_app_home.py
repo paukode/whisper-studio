@@ -83,13 +83,17 @@ def test_bootstrap_home_seeds_tree_and_files(monkeypatch, tmp_path):
         assert (home / sub).is_dir(), f"missing {sub}/"
 
     root = paths.repo_root()
-    # After the config split, a fresh install gets an EMPTY user layer
-    # (config.user.json = {}); the shipped catalog comes from the SYSTEM layer
-    # (config.example.json), not a copied-down config.json. So config.json is NOT
-    # seeded any more.
+    # After the config split, a fresh install seeds the first-run defaults into
+    # the user layer (hybrid + on-device index); the shipped catalog still comes
+    # from the SYSTEM layer (config.example.json), not a copied-down config.json.
+    # So config.json is NOT seeded any more.
+    from server.infrastructure.config import FIRST_RUN_USER_CONFIG
+
     with open(home / "config.user.json") as f:
         seeded_user = json.load(f)
-    assert seeded_user == {}
+    assert seeded_user == FIRST_RUN_USER_CONFIG
+    assert seeded_user["model_mode"] == "hybrid"
+    assert seeded_user["backends"]["ner"] == "gliner"
     assert not (home / "config.json").exists()
 
     with open(os.path.join(root, "pricing.example.json")) as f:

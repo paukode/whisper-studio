@@ -44,6 +44,7 @@ from server.mcp import router as mcp_router
 from server.memory import init_memory
 from server.memory.router import memory_router
 from server.migrations.runner import run_migrations
+from server.model_browser import router as model_browser_router
 from server.models_manager import router as models_manager_router
 from server.notifications import router as notifications_router
 from server.plans.routes import router as plans_router
@@ -366,6 +367,10 @@ app.include_router(background_tasks_router)
 app.include_router(notifications_router)
 app.include_router(cron_router)
 app.include_router(models_manager_router)
+# The in-app model browser (search HF → pick a quant → install). Its routes live
+# under /api/models/browse/*, a distinct sub-path from the manager's /{key}
+# routes above, so the two never collide.
+app.include_router(model_browser_router)
 app.include_router(index_router)
 app.include_router(plugins_router)
 app.include_router(lsp_router)

@@ -566,6 +566,27 @@ def _write_config_text(text: str) -> None:
     _invalidate_cache()
 
 
+# Written into a brand-new config.user.json on first launch (packaged app, or
+# any fresh home). After the file exists it is never overwritten, so the user's
+# saved settings win from the second launch on. Defaults: hybrid mode with the
+# index/RAG capabilities on-device where the weights download on demand —
+# on-device embeddings + reranker (qwen3) and GLiNER entity extraction. The
+# one-shot writer / relationship mapping (``index_llm``) defaults to cloud Haiku
+# because the app ships NO local chat model: a fresh install has none on disk, so
+# defaulting index_llm to a local key would point at a missing model. Once the
+# user installs a local chat model from Discover, the install flips index_llm to
+# it (server/model_browser/service.py). Chat model choice is the system default.
+FIRST_RUN_USER_CONFIG = {
+    "model_mode": "hybrid",
+    "backends": {
+        "embed": "qwen3",
+        "rerank": "qwen3",
+        "ner": "gliner",
+        "index_llm": "haiku",
+    },
+}
+
+
 def migrate_user_config() -> bool:
     """One-time, idempotent split of a monolithic config.json into a
     config.user.json that holds only the user's deltas.
@@ -593,9 +614,11 @@ def migrate_user_config() -> bool:
         return False
 
     if not os.path.exists(legacy_path):
-        # Fresh install: an empty user layer; SYSTEM supplies the catalog.
+        # Fresh install: seed the first-run defaults (hybrid + on-device index),
+        # then never touch the file again so the user's settings win afterward.
+        # SYSTEM still supplies the chat-model catalog.
         try:
-            _atomic_write(user_path, "{}\n")
+            _atomic_write(user_path, json.dumps(FIRST_RUN_USER_CONFIG, indent=2) + "\n")
             _invalidate_cache()
         except OSError as e:
             log.warning("Could not create %s: %s", user_path, e)

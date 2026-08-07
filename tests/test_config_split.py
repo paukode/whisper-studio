@@ -114,12 +114,13 @@ def test_migration_is_idempotent(split_env, monkeypatch):
     assert (tmp / "config.user.json").read_text() == first
 
 
-def test_fresh_install_creates_empty_user_config(split_env):
+def test_fresh_install_seeds_first_run_user_config(split_env):
     tmp = split_env
     # Neither config.json nor config.user.json exists.
     assert not (tmp / "config.json").exists()
     assert cfg.migrate_user_config() is False
-    assert json.loads((tmp / "config.user.json").read_text()) == {}
+    # Fresh install seeds the first-run defaults (hybrid + on-device index).
+    assert json.loads((tmp / "config.user.json").read_text()) == cfg.FIRST_RUN_USER_CONFIG
     # No backup and no legacy rename on a clean home.
     assert glob.glob(str(tmp / "config.json.bak.*")) == []
     assert not (tmp / "config.json.pre-split").exists()
@@ -212,6 +213,11 @@ def test_registry_sees_user_added_model(monkeypatch):
         },
     )
     cfg._invalidate_cache()
+    # No local model ships by default, so pin the on-disk check off — the user's
+    # addition must stand on its own without a downloaded recommendation.
+    monkeypatch.setattr(
+        "server.local.registry._recommended_downloaded_on_disk", lambda entry: False
+    )
     try:
         from server.local.registry import local_models
 
@@ -219,7 +225,7 @@ def test_registry_sees_user_added_model(monkeypatch):
         assert "user_qwen" in reg
         assert reg["user_qwen"]["repo_id"] == "acme/user-qwen-gguf"
         assert reg["user_qwen"]["ctx"] == 16384
-        # Built-ins still present alongside the user's addition.
-        assert "local_gemma" in reg
+        # Recommendations are NOT shipped: local_gemma appears only once downloaded.
+        assert "local_gemma" not in reg
     finally:
         cfg._invalidate_cache()

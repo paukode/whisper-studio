@@ -8,27 +8,30 @@ import {
   startModelDownload,
 } from '@/api/models';
 import type { ManagedModel, ManagedModelGroup } from '@/api/models';
+import { removeModelFromList } from '@/api/modelBrowser';
 import { useUIStore } from '@/stores/uiStore';
 import { humanSize } from '@/utils/humanSize';
+import { ContextMenu, type MenuItem } from '@/components/common/ContextMenu';
 import { ChatModelVisibility } from './ChatModelVisibility';
 import { ConfigJsonLink } from './ConfigEditorDialog';
 import { ConfirmDialog } from './ConfirmDialog';
+import { ModelBrowser } from './ModelBrowser';
 
 const GROUPS: { id: ManagedModelGroup; label: string; hint: string }[] = [
   {
     id: 'transcription',
     label: 'Transcription',
-    hint: 'Speech-to-text engines and the speaker-identification encoder.',
+    hint: 'Speech-to-text and speaker ID.',
   },
   {
     id: 'indexing',
     label: 'Indexing',
-    hint: 'On-device embedding, reranking, and entity extraction for the workspace index.',
+    hint: 'Embedding, reranking, and entity extraction for the workspace index.',
   },
   {
     id: 'local-chat',
     label: 'Local chat',
-    hint: 'On-device chat model weights (GGUF), served by the local model server.',
+    hint: 'On-device chat weights (GGUF).',
   },
 ];
 
@@ -95,6 +98,11 @@ const StatusChip: React.FC<{ model: ManagedModel }> = ({ model }) => {
   );
 };
 
+/** Which slice of the Models rail item to render. The Settings dialog mounts
+ *  one ModelsPanel per sub-tab and gates it to a single section; passing no
+ *  section renders the combined view (all groups + Discover + visibility). */
+export type ModelSection = 'chat' | 'discover' | 'transcription' | 'indexing';
+
 /**
  * Settings > Models: browse every downloadable model, download with progress,
  * cancel (the backend runs downloads in a killable worker process, so cancel
@@ -103,11 +111,23 @@ const StatusChip: React.FC<{ model: ManagedModel }> = ({ model }) => {
  * runs, a status query polls /api/models/status every second; react-query
  * stops interval refetches when the tab is hidden and the query unmounts with
  * the panel, so idle/hidden means no polling.
+ *
+ * The Settings rail splits this into focused sub-tabs via `section`: Chat
+ * (local chat weights + chat-model visibility), Discover (the ModelBrowser),
+ * Transcription, and Indexing. Each section reuses the exact same catalog
+ * rendering and shared download/queue/delete logic; only which groups show is
+ * gated. With no `section` prop it renders everything in one scroll (the
+ * pre-restructure layout), which is what the panel's own tests exercise.
  */
-export const ModelsPanel: React.FC = () => {
+export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) => {
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [confirmDelete, setConfirmDelete] = useState<ManagedModel | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<ManagedModel | null>(null);
+  // The row whose "…" overflow menu is open, with its anchor coordinates.
+  const [menuFor, setMenuFor] = useState<{ model: ManagedModel; x: number; y: number } | null>(
+    null,
+  );
   const addToast = useUIStore((s) => s.addToast);
 
   const catalogQuery = useQuery({
@@ -193,6 +213,23 @@ export const ModelsPanel: React.FC = () => {
 
   const downloadingCount = models.filter((m) => m.state === 'downloading').length;
 
+  // Which slice to show. No section = the combined view (all groups + Discover
+  // + visibility). Otherwise each sub-tab is one focused section.
+  const showGroups: ManagedModelGroup[] =
+    section === undefined
+      ? ['transcription', 'indexing', 'local-chat']
+      : section === 'chat'
+        ? ['local-chat']
+        : section === 'transcription'
+          ? ['transcription']
+          : section === 'indexing'
+            ? ['indexing']
+            : []; // discover shows the browser only
+  const showCatalog = showGroups.length > 0;
+  const showBrowser = section === undefined || section === 'discover';
+  const showVisibility = section === undefined || section === 'chat';
+  const visibleGroups = GROUPS.filter((g) => showGroups.includes(g.id));
+
   const onDownload = (m: ManagedModel) =>
     void run(
       m.key,
@@ -229,41 +266,63 @@ export const ModelsPanel: React.FC = () => {
       },
       `Could not delete ${m.label}`,
     );
+  const onRemoveFromList = (m: ManagedModel) =>
+    void run(
+      m.key,
+      async () => {
+        const res = await removeModelFromList(m.key);
+        addToast({
+          type: 'success',
+          message:
+            res.scope === 'bedrock'
+              ? `${m.label} removed from the list. Re-enable it under Chat model visibility.`
+              : `${m.label} removed. Download it again any time from Discover.`,
+        });
+      },
+      `Could not remove ${m.label}`,
+    );
 
   return (
     <div className="settings-panel models-panel">
-      <div className="settings-panel-header">
-        <h3>Models</h3>
-        <button className="btn btn-sm" onClick={() => void refresh()} type="button">
-          Refresh
-        </button>
-      </div>
+      {showCatalog && (
+        <>
+          <div className="models-panel-header">
+            <h3>Models</h3>
+            <button className="btn btn-sm" onClick={() => void refresh()} type="button">
+              Refresh
+            </button>
+          </div>
 
-      <p className="settings-empty" style={{ marginBottom: 8 }}>
-        Model weights are stored locally and downloaded from Hugging Face on demand. Up to two
-        downloads run at a time; further requests queue up and start automatically. A cancelled
-        download keeps its partial files and resumes on the next attempt.
-      </p>
+          <p className="models-panel-intro">
+            Stored on-device, downloaded from Hugging Face on demand. Two download at once; the
+            rest queue.
+          </p>
 
-      {catalogQuery.error && (
-        <p className="settings-empty" role="alert">
-          Could not load the model catalog.
-        </p>
+          {catalogQuery.error && (
+            <p className="settings-empty" role="alert">
+              Could not load the model catalog.
+            </p>
+          )}
+          {catalogQuery.isLoading && <p className="settings-empty">Loading model catalog…</p>}
+        </>
       )}
-      {catalogQuery.isLoading && <p className="settings-empty">Loading model catalog…</p>}
 
-      {GROUPS.map((group) => {
+      {showCatalog &&
+        visibleGroups.map((group) => {
+        // Local models are deleted outright when removed (not hidden via the
+        // Bedrock-only chat_models_disabled list), so the catalog is already the
+        // truth — no extra hide-list filtering here.
         const rows = models.filter((m) => m.group === group.id);
         if (rows.length === 0) return null;
         return (
-          <div key={group.id} style={{ marginBottom: 16 }}>
-            <h4 style={{ margin: '12px 0 2px' }}>{group.label}</h4>
-            <p className="settings-empty" style={{ margin: '0 0 6px' }}>
+          <div key={group.id} className="models-section">
+            <h4 className="models-section-title">{group.label}</h4>
+            <p className="models-section-desc">
               {group.hint}
               {group.id === 'local-chat' && (
                 <>
                   {' '}
-                  Add models by editing <ConfigJsonLink />.
+                  Add more in Discover, or edit <ConfigJsonLink />.
                 </>
               )}
             </p>
@@ -314,6 +373,38 @@ export const ModelsPanel: React.FC = () => {
                         >
                           Cancel
                         </button>
+                      ) : group.id === 'local-chat' ? (
+                        // Local chat rows carry a "…" overflow menu (Delete
+                        // downloaded files / Remove from list) plus a
+                        // Download/Retry when there's nothing installed yet.
+                        // Delete removes only the weights; Remove from list
+                        // takes the model out of the picker entirely.
+                        <>
+                          {!m.installed && (
+                            <button
+                              className="btn btn-primary btn-sm"
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => onDownload(m)}
+                            >
+                              {m.state === 'error' ? 'Retry' : 'Download'}
+                            </button>
+                          )}
+                          <button
+                            className="btn btn-sm model-row-more"
+                            type="button"
+                            disabled={isBusy}
+                            aria-label={`More actions for ${m.label}`}
+                            aria-haspopup="menu"
+                            title="More actions"
+                            onClick={(e) => {
+                              const r = e.currentTarget.getBoundingClientRect();
+                              setMenuFor({ model: m, x: r.right, y: r.bottom + 4 });
+                            }}
+                          >
+                            …
+                          </button>
+                        </>
                       ) : m.installed ? (
                         <button
                           className="btn btn-sm"
@@ -362,7 +453,59 @@ export const ModelsPanel: React.FC = () => {
         );
       })}
 
-      <ChatModelVisibility />
+      {showBrowser && <ModelBrowser />}
+
+      {showVisibility && <ChatModelVisibility />}
+
+      {menuFor &&
+        (() => {
+          const m = menuFor.model;
+          const hasFiles = m.installed || m.bytes_on_disk > 0;
+          const items: MenuItem[] = [];
+          if (hasFiles) {
+            items.push({
+              label: 'Delete downloaded files',
+              danger: true,
+              onClick: () => setConfirmDelete(m),
+            });
+          }
+          items.push({
+            label: 'Remove from list',
+            danger: true,
+            onClick: () => setConfirmRemove(m),
+          });
+          return (
+            <ContextMenu
+              items={items}
+              position={{ x: menuFor.x, y: menuFor.y }}
+              onClose={() => setMenuFor(null)}
+              className="ws-context-menu--compact"
+            />
+          );
+        })()}
+
+      {confirmRemove && (
+        <ConfirmDialog
+          title={`Remove ${confirmRemove.label} from the list?`}
+          message={
+            <>
+              This deletes the model everywhere &mdash; the list, the chat model picker
+              {confirmRemove.installed || confirmRemove.bytes_on_disk > 0
+                ? `, and its ${humanSize(confirmRemove.bytes_on_disk)} of weights on disk`
+                : ''}
+              . You can download it again any time from the Discover tab.
+            </>
+          }
+          confirmLabel="Remove"
+          danger
+          onConfirm={() => {
+            const m = confirmRemove;
+            setConfirmRemove(null);
+            onRemoveFromList(m);
+          }}
+          onCancel={() => setConfirmRemove(null)}
+        />
+      )}
 
       {confirmDelete && (
         <ConfirmDialog
