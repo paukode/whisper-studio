@@ -64,7 +64,6 @@ from .paths import (  # noqa: E402,F401
 from .state import (  # noqa: E402,F401
     _check_writable,
     connect_workspace,
-    get_workspace_mode,
     get_workspace_path,
     is_plan_mode,
     load_recent_workspaces,

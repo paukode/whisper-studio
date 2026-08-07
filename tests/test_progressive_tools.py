@@ -166,13 +166,13 @@ def test_legacy_pool_byte_identical_and_partitioned_smaller():
 
 
 def test_progressive_pool_includes_activated():
-    from server.chat.tool_pool import assemble_full_catalog, assemble_tool_pool
+    from server.chat.tool_pool import assemble_full_catalog, assemble_partitioned_pool
 
     full_names = {t["name"] for t in assemble_full_catalog(ws_connected=False)}
     target = next(iter(full_names - core_names()))
     tool_activation.activate("s-act", [target])
-    pool = assemble_tool_pool(ws_connected=False, session_id="s-act", progressive=True)
-    assert target in {t["name"] for t in pool}
+    advertised, _deferred, _core = assemble_partitioned_pool(ws_connected=False, session_id="s-act")
+    assert target in {t["name"] for t in advertised}
 
 
 # ── tool_search ──────────────────────────────────────────────────────────────

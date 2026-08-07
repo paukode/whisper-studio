@@ -19,7 +19,7 @@ def load_workspace_config() -> dict:
         with open(WORKSPACE_CONFIG_PATH) as f:
             return json.load(f)
     except Exception:
-        return {"path": None, "mode": "chat"}
+        return {"path": None}
 
 
 def save_workspace_config(config: dict):
@@ -50,10 +50,6 @@ def get_workspace_path() -> str | None:
     if override:
         return override
     return load_workspace_config().get("path")
-
-
-def get_workspace_mode() -> str:
-    return load_workspace_config().get("mode", "chat")
 
 
 def load_recent_workspaces() -> list[str]:
@@ -112,7 +108,7 @@ def connect_workspace(path: str) -> str:
     previous = config.get("path")
     switched = bool(previous) and os.path.realpath(previous) != real
     config["path"] = real
-    config["mode"] = "chat"
+    config.pop("mode", None)  # retired field; scrub it from old configs
     save_workspace_config(config)
     save_recent_workspace(real)
     WORKSPACE_BACKUPS.clear()

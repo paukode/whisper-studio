@@ -139,7 +139,6 @@ class AgentConfig:
 
     Attributes:
         agent_type: Type identifier (general, explore, plan, verify, coordinator).
-        model: Model key override (haiku, sonnet, opus, opus4.7). None = inherit parent.
         max_turns: Maximum tool-use rounds before forced stop (a runaway backstop,
             not the normal exit — pair it with deadline_seconds).
         deadline_seconds: Wall-clock budget for the whole run. None = no time limit.
@@ -147,28 +146,26 @@ class AgentConfig:
             regardless of how few or many turns it has taken.
         max_tokens: Max tokens per Bedrock response.
         read_only: If True, write tools are excluded from the tool pool.
-        isolation: Isolation mode — "none" or "worktree".
         allowed_tools: If set, ONLY these tools are available (whitelist).
-        denied_tools: If set, these tools are excluded (blacklist).
         system_prompt: Override system prompt. None = default subagent prompt.
+
+    The model is always the session-selected one (run_agent's
+    model_id_override or the config default); isolation is a run_agent
+    parameter, not per-type state.
     """
 
     agent_type: str = "general"
-    model: str | None = None
     max_turns: int = 30
     deadline_seconds: float | None = None
     max_tokens: int = 16384
     read_only: bool = False
-    isolation: str = "none"
     allowed_tools: frozenset[str] | None = None
-    denied_tools: frozenset[str] | None = None
     system_prompt: str | None = None
 
 
 AGENT_TYPES: dict[str, AgentConfig] = {
     "general": AgentConfig(
         agent_type="general",
-        model=None,  # inherit the session-selected model (no hardcoded per-type model)
         # High turn backstop + a wall-clock deadline as the real brake: workflow
         # (ultracode) agents run as `general`, and a 30-turn cap was cutting them
         # off mid-task (surfacing as null structured output). Tune per-deployment
@@ -179,7 +176,6 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     ),
     "explore": AgentConfig(
         agent_type="explore",
-        model=None,  # inherit the session-selected model (no hardcoded per-type model)
         max_turns=30,
         deadline_seconds=600,
         max_tokens=8192,
@@ -194,7 +190,6 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     ),
     "plan": AgentConfig(
         agent_type="plan",
-        model=None,  # inherit the session-selected model (no hardcoded per-type model)
         max_turns=40,
         deadline_seconds=600,
         max_tokens=16384,
@@ -210,7 +205,6 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     ),
     "verify": AgentConfig(
         agent_type="verify",
-        model=None,  # inherit the session-selected model (no hardcoded per-type model)
         max_turns=30,
         deadline_seconds=600,
         max_tokens=8192,
@@ -227,7 +221,6 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     ),
     "memory_extractor": AgentConfig(
         agent_type="memory_extractor",
-        model=None,  # inherit the session-selected model (no hardcoded per-type model)
         max_turns=5,
         max_tokens=4096,
         allowed_tools=MEMORY_RW_TOOLS,
@@ -241,7 +234,6 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     # passed as the task by server/memory/dream.py.
     "memory_consolidator": AgentConfig(
         agent_type="memory_consolidator",
-        model=None,  # inherit the session-selected model (no hardcoded per-type model)
         max_turns=8,
         max_tokens=4096,
         allowed_tools=MEMORY_RW_TOOLS,
@@ -253,7 +245,6 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     # the summary prompt, not the extraction prompt.
     "session_summarizer": AgentConfig(
         agent_type="session_summarizer",
-        model=None,  # inherit the session-selected model (no hardcoded per-type model)
         max_turns=5,
         max_tokens=4096,
         allowed_tools=MEMORY_RO_TOOLS,
@@ -261,7 +252,6 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     ),
     "coordinator": AgentConfig(
         agent_type="coordinator",
-        model=None,  # inherit the session-selected model (no hardcoded per-type model)
         max_turns=100,
         deadline_seconds=1800,
         max_tokens=16384,
@@ -356,8 +346,7 @@ def filter_tools_for_agent(all_tools: list[dict], config: AgentConfig) -> list[d
 
     Applies in order:
     1. allowed_tools whitelist (if set, only these tools pass)
-    2. denied_tools blacklist
-    3. read_only filter (removes any write/execute-capable tool — see
+    2. read_only filter (removes any write/execute-capable tool — see
        _is_write_tool for the denylist + registry-backstop logic)
     """
     tools = list(all_tools)
@@ -365,9 +354,6 @@ def filter_tools_for_agent(all_tools: list[dict], config: AgentConfig) -> list[d
     if config.allowed_tools is not None:
         tools = [t for t in tools if t["name"] in config.allowed_tools]
         return tools
-
-    if config.denied_tools:
-        tools = [t for t in tools if t["name"] not in config.denied_tools]
 
     if config.read_only:
         tools = [t for t in tools if not _is_write_tool(t["name"])]

@@ -46,7 +46,7 @@ def test_classify_tool_call_offloads_blocking_invoke(monkeypatch):
 
     async def _run():
         record["loop_thread"] = threading.get_ident()
-        return await auto_mode.classify_tool_call("Read", {"path": "foo.txt"}, config, "test-model")
+        return await auto_mode.classify_tool_call("Read", {"path": "foo.txt"}, config)
 
     result = asyncio.run(_run())
 

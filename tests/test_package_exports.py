@@ -17,7 +17,6 @@ WORKSPACE_EXPORTS = [
     # public API
     "router",
     "get_workspace_path",
-    "get_workspace_mode",
     "get_workspace_tools",
     "get_global_workspace_tools",
     "get_worktree_tools",

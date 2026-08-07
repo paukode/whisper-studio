@@ -215,7 +215,6 @@ def _emit_cron_event(
     cron_name: str,
     schedule_label_str: str | None = None,
     next_run: str | None = None,
-    interval_minutes: float | None = None,
     text: str | None = None,
     status: str | None = None,
     run_id: str | None = None,
@@ -243,8 +242,6 @@ def _emit_cron_event(
         payload["schedule_label"] = schedule_label_str
     if next_run is not None:
         payload["next_run"] = next_run
-    if interval_minutes is not None:
-        payload["interval_minutes"] = interval_minutes
     if text is not None:
         payload["text"] = text
     if status is not None:

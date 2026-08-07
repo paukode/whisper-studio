@@ -36,15 +36,13 @@ class WhisperAPIError(WhisperError):
 class PromptTooLongError(WhisperAPIError):
     """Bedrock rejected the request because the prompt exceeds the context window."""
 
-    def __init__(self, message: str, *, token_count: int = 0, token_limit: int = 0):
+    def __init__(self, message: str):
         super().__init__(
             message,
             error_code="PROMPT_TOO_LONG",
             user_message="The conversation is too long. Compacting context...",
             is_retryable=True,
         )
-        self.token_count = token_count
-        self.token_limit = token_limit
 
 
 class ThrottlingError(WhisperAPIError):

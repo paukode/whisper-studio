@@ -10,7 +10,6 @@ fail early instead of erroring at the provider call.
 """
 
 import asyncio
-import dataclasses
 
 from server.agents.config import AGENT_TYPES
 from server.agents.runtime import _resolve_agent_model, run_agent
@@ -45,16 +44,6 @@ def test_local_default_without_sonnet_picks_first_non_local(monkeypatch):
         default_chat_model="local_gemma",
     )
     assert _resolve_agent_model(None, GENERAL) == CLOUD_HAIKU
-
-
-def test_local_config_model_is_skipped(monkeypatch):
-    _patch_config(
-        monkeypatch,
-        {"local_gemma": LOCAL_GEMMA, "sonnet": CLOUD_SONNET},
-        default_chat_model="sonnet",
-    )
-    cfg = dataclasses.replace(GENERAL, model="local_gemma")
-    assert _resolve_agent_model(None, cfg) == CLOUD_SONNET
 
 
 def test_explicit_override_is_returned_verbatim(monkeypatch):

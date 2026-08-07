@@ -16,7 +16,7 @@ import logging
 import threading
 
 from server.chat.infra import _get_bedrock_client
-from server.infrastructure.bedrock_retry import invoke_stream_with_retry
+from server.infrastructure.bedrock_retry import invoke_with_retry
 from server.infrastructure.errors import (
     WhisperAPIError,
     classify_bedrock_error,
@@ -149,12 +149,10 @@ class AnthropicAdapter:
                 ),
             )
 
-        response = await invoke_stream_with_retry(
-            self._client,
+        response = await invoke_with_retry(
             call_fn=_call,
             loop=self._loop,
             executor=self._executor,
-            on_retry=lambda attempt, err, delay: None,
         )
 
         q: asyncio.Queue = asyncio.Queue()
