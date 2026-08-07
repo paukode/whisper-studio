@@ -470,10 +470,11 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
                     rels = extractor.extract_relations_gliner2(text, names, labels=entity_labels)
                 else:
                     rels = relations.extract_relations(text, names, typed_engine)
-                store.set_file_relations(ws_path, rel, rels)
-                # Node-id-keyed mirror (survives entity merges, assistant-queryable
+                # Node-id-keyed store (survives entity merges, assistant-queryable
                 # via workspace_graph_query). Attach a verbatim evidence line so
                 # each fact cites the exact lines via the #wsfile &L anchor.
+                # (The legacy name-keyed `relations` table is no longer written;
+                # graph_views still reads it for pre-relations2 DBs.)
                 facts = []
                 for s, t, ty, sc in rels:
                     sl, el, ev = relstore.evidence_line(text, s, t)

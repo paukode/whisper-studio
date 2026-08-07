@@ -137,12 +137,29 @@ def test_entity_graph_reads_relations2_when_present(monkeypatch):
     assert {"Bob", "Acme"} <= ent_names
 
 
+def _insert_legacy_relation(ws, path, source, target, rel_type, score):
+    """Simulate a pre-relations2 index.db: write the legacy name-keyed table
+    directly (the pipeline no longer writes it)."""
+    from server.index.store.base import _connect, _invalidate
+
+    conn = _connect(ws)
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO relations(source, target, type, path, score) VALUES (?,?,?,?,?)",
+            (source, target, rel_type, path, score),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    _invalidate(ws)
+
+
 def test_entity_graph_falls_back_to_legacy_relations(monkeypatch):
     """Pre-migration DB: only the legacy name-keyed table has rows; it is used."""
     _pin_backend(monkeypatch, "qwen3")
     ws = "/fake/ws-legacy-graph"
     _seed_two_entities(ws)
-    store.set_file_relations(ws, "a.md", [("Bob", "Acme", "works_at", 3.0)])
+    _insert_legacy_relation(ws, "a.md", "Bob", "Acme", "works_at", 3.0)
     g = store.entity_graph(ws, "bob")
     rels = [e for e in g["edges"] if e.get("relation") == "works_at"]
     assert rels, "legacy relation should surface when relations2 is empty"
@@ -156,7 +173,7 @@ def test_entity_graph_relations2_masks_stale_legacy(monkeypatch):
     ws = "/fake/ws-mask-graph"
     _seed_two_entities(ws)
     # Legacy table carries a stale predicate that dedup never cleaned...
-    store.set_file_relations(ws, "a.md", [("Bob", "Acme", "STALE_LEGACY", 5.0)])
+    _insert_legacy_relation(ws, "a.md", "Bob", "Acme", "STALE_LEGACY", 5.0)
     # ...while relations2 (the deduped truth) says works_at.
     relstore.set_file_relations_v2(
         ws,
