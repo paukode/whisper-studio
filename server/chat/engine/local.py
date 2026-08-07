@@ -28,7 +28,6 @@ import logging
 from server.infrastructure.errors import PromptTooLongError
 
 from .events import (
-    ErrorKind,
     RoundError,
     RoundResult,
     TextDelta,
@@ -201,7 +200,7 @@ class LocalAdapter:
             if any(marker in msg.lower() for marker in _CTX_OVERFLOW_MARKERS):
                 raise PromptTooLongError(msg) from e
             log.warning("llama-server round %d failed: %s", round_num, e)
-            yield RoundError(kind=ErrorKind.TRANSIENT, message=msg)
+            yield RoundError(message=msg)
             return
         if thinking_open:  # reasoned but produced no answer text this round
             yield ThinkingStop()

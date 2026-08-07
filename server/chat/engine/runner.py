@@ -172,8 +172,7 @@ async def run_turn(ctx: TurnContext):
     # Replay protection — skip duplicate tool_use IDs across the stream.
     _seen_tool_ids = BoundedUUIDSet(capacity=256)
 
-    # Reactive prompt-too-long rescue accounting.
-    trim_attempts = 0
+    # Reactive prompt-too-long rescue state.
     salvage_mode = False
 
     if ctx.attachment_texts:
@@ -259,7 +258,6 @@ async def run_turn(ctx: TurnContext):
                 log.warning("Prompt too long — applying reactive compaction")
                 yield f"data: {ndjson_dumps({'status': 'Compacting context (prompt too long)...'})}\n\n"
                 if len(messages) > 4:
-                    trim_attempts += 1
                     messages = ensure_valid_start(messages[2:])
                     messages = await compact_messages_with_claude(
                         messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key

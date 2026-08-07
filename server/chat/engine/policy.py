@@ -12,12 +12,11 @@ from dataclasses import dataclass
 class TurnPolicy:
     # Hard cap on model rounds within one turn.
     max_rounds: int = 50
-    # Wall-clock brake (subagents/cron); None = no deadline (interactive chat,
-    # where the user's Stop button is the brake).
+    # Wall-clock brake; None = no deadline (interactive chat, where the
+    # user's Stop button is the brake). No in-tree preset sets this yet —
+    # it is reserved for the planned cron/agents port onto this engine
+    # (both currently run their own loops with their own deadlines).
     deadline_seconds: float | None = None
-    # How many times a prompt-too-long rejection may trim-and-retry before the
-    # salvage round.
-    reactive_trim_attempts: int = 2
     # Whether an unrescuable turn gets one final no-tools round on a hard-
     # trimmed context (synthesize from what remains) instead of a bare error.
     salvage_round: bool = True

@@ -94,9 +94,19 @@ def matches(matcher: str, tool_name: str | None) -> bool:
     return tool_name == m
 
 
-def _load_v1_list(items: list, by_event: dict[str, list[HookDef]], source: str) -> None:
-    """v1 flat list: [{event, tool, command}], accepted either bare or wrapped as
-    {"hooks": [...]}; both shapes route here."""
+def parse_v1(raw: dict | list | None, *, source: str) -> dict[str, list[HookDef]] | None:
+    """One-shot migration parser for the retired v1 flat-list format:
+    [{event, tool, command}], bare or {"hooks": [...]}-wrapped.
+
+    Returns the parsed {event: [HookDef]} when ``raw`` is v1-shaped, else
+    None. Only ``load_user_hooks`` calls this, and it immediately persists
+    the result as v2 so the old format never loads twice."""
+    items = raw if isinstance(raw, list) else None
+    if items is None and isinstance(raw, dict) and isinstance(raw.get("hooks"), list):
+        items = raw["hooks"]
+    if items is None:
+        return None
+    by_event: dict[str, list[HookDef]] = {e: [] for e in HOOK_EVENTS}
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -109,27 +119,19 @@ def _load_v1_list(items: list, by_event: dict[str, list[HookDef]], source: str) 
         by_event[ev].append(
             HookDef(event=ev, command=cmd, matcher=item.get("tool", "*"), source=source).clamp()
         )
+    return by_event
 
 
 def normalize_config(raw: dict | list | None, *, source: str) -> dict[str, list[HookDef]]:
-    """Return {event: [HookDef]} from either the v2 nested dict or the v1 flat
-    list (bare or {"hooks": [...]}-wrapped). Unknown events are dropped; aliases
-    are folded."""
+    """Return {event: [HookDef]} from the v2 nested dict
+    ({"hooks": {event: [{matcher, command, ...}]}}). Unknown events are
+    dropped; aliases are folded. The retired v1 flat list is not accepted
+    here — user files are upgraded once via ``parse_v1`` on load."""
     by_event: dict[str, list[HookDef]] = {e: [] for e in HOOK_EVENTS}
     if not raw:
         return by_event
 
-    # v1 flat list, top-level.
-    if isinstance(raw, list):
-        _load_v1_list(raw, by_event, source)
-        return by_event
-
     hooks = raw.get("hooks", raw) if isinstance(raw, dict) else {}
-    # v1 flat list wrapped as {"hooks": [...]} (the legacy on-disk format).
-    if isinstance(hooks, list):
-        _load_v1_list(hooks, by_event, source)
-        return by_event
-    # v2 nested: {"hooks": {event: [ {matcher, command, ...} ]}}
     if not isinstance(hooks, dict):
         return by_event
     for ev_raw, defs in hooks.items():

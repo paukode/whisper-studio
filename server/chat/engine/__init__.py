@@ -8,6 +8,6 @@ everything that must behave identically: round budgets, context management
 (compaction, prompt-too-long rescue, the salvage round), tool execution
 through the shared safety gate, approval pause/resume, and cost accounting.
 
-P1 (this package's first slice) ships the shared vocabulary only:
-``events`` and ``windows``. The loop itself lands in P2.
+Interactive chat (all three providers) runs on this loop today; the cron and
+agents ports are still pending, running their own loops in the meantime.
 """

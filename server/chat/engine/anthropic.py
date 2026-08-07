@@ -23,7 +23,6 @@ from server.infrastructure.errors import (
 )
 
 from .events import (
-    ErrorKind,
     RoundError,
     RoundResult,
     TextDelta,
@@ -198,7 +197,7 @@ class AnthropicAdapter:
                         data if isinstance(data, WhisperAPIError) else classify_bedrock_error(data)
                     )
                     log.warning("Bedrock stream error: %s", api_err)
-                    yield RoundError(kind=ErrorKind.TRANSIENT, message=api_err.user_message)
+                    yield RoundError(message=api_err.user_message)
                     return
                 event_type = data.get("type")
 

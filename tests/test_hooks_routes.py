@@ -125,12 +125,18 @@ def test_project_approve_flow(client, monkeypatch):
     assert c.get("/api/hooks").json()["project"]["status"] == "pending_approval"
 
 
-def test_v1_legacy_file_is_read(client):
+def test_v1_legacy_file_is_migrated_to_v2_on_first_load(client):
     c, tmp_path = client
-    # A pre-existing v1 flat hooks.json must still load.
+    # A pre-existing v1 flat hooks.json loads once and is rewritten as v2.
     (tmp_path / "data").mkdir(exist_ok=True)
-    (tmp_path / "data" / "hooks.json").write_text(
+    hooks_file = tmp_path / "data" / "hooks.json"
+    hooks_file.write_text(
         json.dumps({"hooks": [{"event": "PostToolUse", "tool": "*", "command": "echo hi"}]})
     )
     rows = c.get("/api/hooks").json()["hooks"]["PostToolUse"]
     assert len(rows) == 1 and rows[0]["command"] == "echo hi"
+    # The on-disk file is now v2; the v1 shape never loads again.
+    on_disk = json.loads(hooks_file.read_text())
+    assert on_disk["version"] == 2
+    assert isinstance(on_disk["hooks"], dict)
+    assert on_disk["hooks"]["PostToolUse"][0]["command"] == "echo hi"

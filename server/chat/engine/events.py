@@ -2,26 +2,15 @@
 
 A provider adapter consumes its wire protocol (Bedrock invoke stream, OpenAI
 Responses events, llama-server SSE) and yields these events; the turn engine
-consumes them without knowing which provider produced them. Adapters do NOT
-interpret — classification of errors (is this retryable? is the prompt too
-long, and what is the cap?) happens at the adapter boundary so the engine's
-handling is uniform.
+consumes them without knowing which provider produced them. Retryable
+conditions are handled inside the adapters (retry helpers, PromptTooLongError
+raised for the engine's reactive-compaction path); a RoundError that reaches
+the engine is terminal for the turn.
 
 Pure data: no behavior lives here, and nothing here may import provider code.
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
-
-
-class ErrorKind(Enum):
-    """How the engine should react to a round failure."""
-
-    PROMPT_TOO_LONG = "prompt_too_long"  # trim context and retry the round
-    AUTH = "auth"  # fatal: surface guidance, end the turn
-    THROTTLED = "throttled"  # adapter exhausted its own retries; fatal
-    TRANSIENT = "transient"  # network/stream hiccup; fatal after adapter retries
-    FATAL = "fatal"  # everything else
 
 
 @dataclass(frozen=True)
@@ -77,12 +66,10 @@ class Usage:
 
 @dataclass(frozen=True)
 class RoundError:
-    kind: ErrorKind
+    """Terminal round failure — the engine surfaces the message and ends
+    the turn (adapters have already exhausted their own retries)."""
+
     message: str
-    # PROMPT_TOO_LONG only: the model's input cap parsed from the provider
-    # error, so the engine can budget the retry against the real limit even
-    # when config carries no context_window for the model.
-    prompt_cap_tokens: int | None = None
 
 
 @dataclass(frozen=True)
