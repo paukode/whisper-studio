@@ -1,6 +1,5 @@
 """HTTP API for the blocking-hooks system (v2).
 
-Replaces the old index-addressed flat API in server/infrastructure/hooks.py.
 Hooks are keyed by a stable id; each carries a matcher, timeout, on_error
 policy, and enabled flag. Adds a dry-run Test endpoint and the project-hook
 trust surface (arbitrary code from a cloned repo stays inert until approved).
