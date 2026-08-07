@@ -192,13 +192,6 @@ def _normalize_lf(content: str) -> str:
     return content.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def _strip_trailing_ws(content: str, path: str) -> str:
-    """Strip trailing whitespace per line, except for Markdown files."""
-    if os.path.splitext(path)[1].lower() in (".md", ".mdx"):
-        return content
-    return "\n".join(line.rstrip() for line in content.split("\n"))
-
-
 _BLOCKED_PATH_PREFIXES = ("/dev/", "/proc/", "/sys/")
 
 

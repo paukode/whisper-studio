@@ -56,7 +56,6 @@ from .paths import (  # noqa: E402,F401
     WORKSPACE_CONFIG_PATH,
     _atomic_write_text,
     _normalize_lf,
-    _strip_trailing_ws,
     _ws_validate_path,
 )
 

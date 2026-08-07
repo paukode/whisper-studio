@@ -162,16 +162,6 @@ def scrub_secrets(text: str) -> str:
     return out
 
 
-def pr_for_branch(branch: str, cwd: str) -> dict | None:
-    # `--` ends flag parsing so a branch value can't be read as a gh flag.
-    proc = _run_gh(
-        ["pr", "view", "--json", "number,title,url,state,headRefName", "--", _safe_branch(branch)],
-        cwd,
-    )
-    data = _json(proc)
-    return data if isinstance(data, dict) else None
-
-
 def _safe_branch(branch: str) -> str:
     """Reject a branch value that would be parsed as a gh flag. Git refs can't
     begin with '-' anyway, so a leading dash is always bogus/hostile input."""

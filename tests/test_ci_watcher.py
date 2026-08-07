@@ -59,7 +59,6 @@ def test_provider_degrades_on_gh_error(monkeypatch):
     monkeypatch.setattr(provider, "_run_gh", lambda *a, **k: _cp("", returncode=1, stderr="boom"))
     assert provider.list_runs("b", "/repo") == []
     assert provider.get_run(1, "/repo") is None
-    assert provider.pr_for_branch("b", "/repo") is None
 
 
 def test_failing_log_tail_sliced(monkeypatch):

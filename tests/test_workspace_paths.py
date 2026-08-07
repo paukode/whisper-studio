@@ -10,7 +10,6 @@ import os
 
 from server.workspace.paths import (
     _normalize_lf,
-    _strip_trailing_ws,
     _ws_validate_path,
 )
 
@@ -61,12 +60,3 @@ def test_normalize_lf_noop_on_plain_lf():
     assert _normalize_lf("a\nb\n") == "a\nb\n"
 
 
-def test_strip_trailing_ws_strips_for_code():
-    assert _strip_trailing_ws("a  \nb\t\n", "x.py") == "a\nb\n"
-
-
-def test_strip_trailing_ws_preserves_markdown():
-    # Trailing spaces are significant in Markdown (hard line breaks).
-    md = "line one  \nline two  \n"
-    assert _strip_trailing_ws(md, "notes.md") == md
-    assert _strip_trailing_ws(md, "notes.mdx") == md

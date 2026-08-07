@@ -102,7 +102,9 @@ def test_route_launch_list_get():
     assert got.status_code == 200
     assert got.json()["run_id"] == run_id
 
-    runs = c.get("/api/workflows/runs?session_id=s1").json()["runs"]
+    from server.workflows import manager
+
+    runs = manager.list_runs("s1")
     assert any(x["run_id"] == run_id and x["name"] == "noop" for x in runs)
 
     assert c.get("/api/workflows/runs/nonexistent").status_code == 404
@@ -123,10 +125,10 @@ def test_route_saved_crud_and_trust():
     assert any(s["name"] == "wf" and s["trusted"] is False for s in saved)
 
     assert c.post("/api/workflows/saved/wf/approve").json()["approved"] is True
-    assert c.get("/api/workflows/saved/wf").json()["trusted"] is True
+    assert store.load_script("wf")["trusted"] is True
 
     assert c.delete("/api/workflows/saved/wf").json()["deleted"] is True
-    assert c.get("/api/workflows/saved/wf").status_code == 404
+    assert store.load_script("wf") is None
 
 
 # ── pool + directive wiring ──────────────────────────────────────────────────
