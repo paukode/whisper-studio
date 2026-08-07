@@ -9,6 +9,7 @@ import {
   type BrowseResult,
   type BrowseSort,
   type InstallResult,
+  type MemFit,
   type RecommendedModel,
 } from '@/api/modelBrowser';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -21,6 +22,44 @@ const humanCount = (n: number | null | undefined): string => {
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
   if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
   return String(n);
+};
+
+/** Suffix appended to a quant's option label — plain text, since <option>
+ *  cannot render markup. */
+const fitSuffix = (fit: MemFit | null | undefined): string => {
+  if (fit === 'too_big') return " · won't fit";
+  if (fit === 'tight') return ' · tight fit';
+  return '';
+};
+
+/** The warning line shown under a row when the currently-selected quant does
+ *  not comfortably fit this machine. Every number comes from the API
+ *  response for THIS request — nothing here is sized for any one machine. */
+const FitWarning: React.FC<{
+  fit: MemFit | null | undefined;
+  memTotalBytes: number | null | undefined;
+  memBudgetBytes: number | null | undefined;
+}> = ({ fit, memTotalBytes, memBudgetBytes }) => {
+  if (fit !== 'too_big' && fit !== 'tight') return null;
+  const budget = humanSize(memBudgetBytes);
+  const total = humanSize(memTotalBytes);
+  const message =
+    fit === 'too_big'
+      ? `Needs more memory than this machine can spare (~${budget} available for chat models of ${total} total, after speech-recognition and indexing models). It will download but likely fail to run; pick a smaller quant.`
+      : `Close to this machine's memory limit (~${budget} available of ${total} total). May be slow or fail at a large context size.`;
+  return (
+    <p
+      role="alert"
+      style={{
+        fontSize: 11,
+        color:
+          fit === 'too_big' ? 'var(--accent-record, #e5484d)' : 'var(--accent-warn, #b8860b)',
+        margin: '4px 0 0',
+      }}
+    >
+      {message}
+    </p>
+  );
 };
 
 type QueryClient = ReturnType<typeof useQueryClient>;
@@ -79,6 +118,7 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   const quants = detail?.quants ?? [];
   const effectiveSelected =
     selected ?? detail?.recommended_filename ?? quants[0]?.filename ?? null;
+  const selectedFit = quants.find((q) => q.filename === effectiveSelected)?.fit;
   const activate = () => setActivated(true);
 
   const onInstall = async () => {
@@ -112,57 +152,65 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   const hasQuants = quants.length > 0;
 
   return (
-    <div className="settings-item">
-      <div className="settings-item-info">
-        <div
-          className="settings-item-name"
-          style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
-        >
-          {result.name}
-          <span className="model-local-badge">{result.author}</span>
-          {result.param_size && (
-            <span style={{ fontSize: 11, color: 'var(--text-secondary, #888)' }}>
-              {result.param_size}
-            </span>
-          )}
+    <div>
+      <div className="settings-item">
+        <div className="settings-item-info">
+          <div
+            className="settings-item-name"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
+          >
+            {result.name}
+            <span className="model-local-badge">{result.author}</span>
+            {result.param_size && (
+              <span style={{ fontSize: 11, color: 'var(--text-secondary, #888)' }}>
+                {result.param_size}
+              </span>
+            )}
+          </div>
+          <div className="settings-item-desc">
+            {result.arch ? `${result.arch} · ` : ''}
+            {humanCount(result.downloads)} downloads
+            {result.gated ? ' · gated (needs license acceptance)' : ''}
+          </div>
         </div>
-        <div className="settings-item-desc">
-          {result.arch ? `${result.arch} · ` : ''}
-          {humanCount(result.downloads)} downloads
-          {result.gated ? ' · gated (needs license acceptance)' : ''}
+        <div className="settings-item-actions" style={{ gap: 8 }}>
+          <label htmlFor={selectId} className="sr-only">
+            Choose a quant for {result.name}
+          </label>
+          <select
+            id={selectId}
+            className="settings-input model-quant-select"
+            value={effectiveSelected ?? ''}
+            disabled={installing}
+            onFocus={activate}
+            onMouseDown={activate}
+            onChange={(e) => setSelected(e.target.value)}
+          >
+            {!hasQuants && <option value="">{placeholder}</option>}
+            {quants.map((qopt) => (
+              <option key={qopt.filename} value={qopt.filename}>
+                {qopt.quant} · {humanSize(qopt.size_bytes)}
+                {qopt.is_sharded ? ` · ${qopt.shard_count} shards` : ''}
+                {qopt.recommended ? ' (recommended)' : ''}
+                {fitSuffix(qopt.fit)}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn btn-primary btn-sm"
+            type="button"
+            disabled={installing || !hasQuants || !effectiveSelected}
+            onClick={() => void onInstall()}
+          >
+            {installing ? 'Adding…' : selectedFit === 'too_big' ? 'Download anyway' : 'Download'}
+          </button>
         </div>
       </div>
-      <div className="settings-item-actions" style={{ gap: 8 }}>
-        <label htmlFor={selectId} className="sr-only">
-          Choose a quant for {result.name}
-        </label>
-        <select
-          id={selectId}
-          className="settings-input model-quant-select"
-          value={effectiveSelected ?? ''}
-          disabled={installing}
-          onFocus={activate}
-          onMouseDown={activate}
-          onChange={(e) => setSelected(e.target.value)}
-        >
-          {!hasQuants && <option value="">{placeholder}</option>}
-          {quants.map((qopt) => (
-            <option key={qopt.filename} value={qopt.filename}>
-              {qopt.quant} · {humanSize(qopt.size_bytes)}
-              {qopt.is_sharded ? ` · ${qopt.shard_count} shards` : ''}
-              {qopt.recommended ? ' (recommended)' : ''}
-            </option>
-          ))}
-        </select>
-        <button
-          className="btn btn-primary btn-sm"
-          type="button"
-          disabled={installing || !hasQuants || !effectiveSelected}
-          onClick={() => void onInstall()}
-        >
-          {installing ? 'Adding…' : 'Download'}
-        </button>
-      </div>
+      <FitWarning
+        fit={selectedFit}
+        memTotalBytes={detail?.mem_total_bytes}
+        memBudgetBytes={detail?.mem_budget_bytes}
+      />
     </div>
   );
 };
@@ -208,7 +256,14 @@ const RecommendedRow: React.FC<{ model: RecommendedModel }> = ({ model }) => {
         </div>
         <div className="settings-item-desc">
           {model.quant}
+          {model.size_bytes ? ` · ${humanSize(model.size_bytes)}` : ''}
           {model.ctx ? ` · ${Math.round(model.ctx / 1024)}K context` : ''}
+          {model.fit === 'too_big' && (
+            <span style={{ color: 'var(--accent-record, #e5484d)' }}> · won't fit on this machine</span>
+          )}
+          {model.fit === 'tight' && (
+            <span style={{ color: 'var(--accent-warn, #b8860b)' }}> · tight fit on this machine</span>
+          )}
         </div>
       </div>
       <div className="settings-item-actions" style={{ gap: 8 }}>
@@ -223,7 +278,7 @@ const RecommendedRow: React.FC<{ model: RecommendedModel }> = ({ model }) => {
             disabled={installing}
             onClick={() => void onInstall()}
           >
-            {installing ? 'Adding…' : 'Download'}
+            {installing ? 'Adding…' : model.fit === 'too_big' ? 'Download anyway' : 'Download'}
           </button>
         )}
       </div>
