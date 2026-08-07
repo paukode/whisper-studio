@@ -334,7 +334,6 @@ export interface SSEEventData {
   };
 
   // Session
-  resolved_content?: string;
   error?: string;
   /** Emitted once at the head of a turn: how many indexed folders were searched
    *  and how many passages were injected as grounding for this question. */

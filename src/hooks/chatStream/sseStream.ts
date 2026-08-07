@@ -127,15 +127,6 @@ export async function readSSEStream(
           if (_sseEventLog.length > 200) _sseEventLog.shift();
           store().incrementSseCount();
 
-          // ── resolved_content ──
-          // The backend still emits this frame; it is intentionally ignored
-          // here (no consumer reads a resolved-content value). The Zod schema
-          // keeps the field optional so an incoming frame validates without
-          // warning; this branch is a documented no-op passthrough.
-          if (parsed.resolved_content) {
-            /* intentionally ignored; see note above */
-          }
-
           // ── grounding (index-search summary for this turn) ──
           if (parsed.grounding) {
             grounding = parsed.grounding;

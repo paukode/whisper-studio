@@ -84,8 +84,6 @@ class TurnContext:
     session_denials: dict = field(default_factory=dict)
     session_approvals: dict = field(default_factory=dict)
     session_config: dict = field(default_factory=dict)
-    attachment_texts: list = field(default_factory=list)
-    user_text: str = ""
     advertised_count: int = 0
     deferred_count: int = 0
     deferred_tokens_est: int = 0
@@ -174,9 +172,6 @@ async def run_turn(ctx: TurnContext):
 
     # Reactive prompt-too-long rescue state.
     salvage_mode = False
-
-    if ctx.attachment_texts:
-        yield f"data: {ndjson_dumps({'resolved_content': ctx.user_text})}\n\n"
 
     if ctx.deferred_count:
         yield f"data: {ndjson_dumps({'tool_pool': {'advertised': ctx.advertised_count, 'deferred': ctx.deferred_count, 'total': ctx.advertised_count + ctx.deferred_count, 'deferred_tokens_est': ctx.deferred_tokens_est}})}\n\n"

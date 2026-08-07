@@ -165,7 +165,6 @@ export const SSEEventDataSchema = z.object({
   }).optional(),
 
   // Session
-  resolved_content: z.string().optional(),
   error: z.string().optional(),
   grounding: z.object({
     searched: z.number(),
