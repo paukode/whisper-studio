@@ -61,6 +61,9 @@ RECOMMENDED_LOCAL_MODELS: dict[str, dict] = {
         "ctx": 32768,
         "supports_thinking": True,
         "supports_tools": True,
+        # Exact GGUF size from the HF repo listing — lets Discover warn before
+        # download on a machine too small for this quant, same as a searched one.
+        "size_bytes": 6975879296,
     },
     "local_gemma_coder": {
         "id": "local:gemma-4-12b-coder",
@@ -71,6 +74,7 @@ RECOMMENDED_LOCAL_MODELS: dict[str, dict] = {
         "ctx": 32768,
         "supports_thinking": True,
         "supports_tools": True,
+        "size_bytes": 7381381664,
     },
     "local_qwen35_9b": {
         "id": "local:qwen3.5-9b",
@@ -81,6 +85,7 @@ RECOMMENDED_LOCAL_MODELS: dict[str, dict] = {
         "ctx": 32768,
         "supports_thinking": True,
         "supports_tools": True,
+        "size_bytes": 5680522464,
     },
     "local_ministral3_14b": {
         "id": "local:ministral3-14",
@@ -91,6 +96,7 @@ RECOMMENDED_LOCAL_MODELS: dict[str, dict] = {
         "ctx": 32768,
         "supports_thinking": True,
         "supports_tools": True,
+        "size_bytes": 8366206144,
     },
 }
 
