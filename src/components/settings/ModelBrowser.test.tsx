@@ -89,6 +89,7 @@ const OVERSIZED_REPO_DETAIL = {
       shard_count: 1,
       recommended: true,
       fit: 'too_big',
+      needed_bytes: 22_120_359_936, // size + 2 GiB runtime overhead, renders "22.1 GB"
     },
   ],
 };
@@ -256,11 +257,12 @@ describe('ModelBrowser (Discover)', () => {
     await waitFor(() => expect(select.value).toBe('Qwen3-Coder-30B-Q4_K_M.gguf'));
 
     // The option itself is flagged, and a plain-language warning line appears
-    // using the memory numbers the API returned for this machine.
+    // stating the model's own requirement plus the memory numbers the API
+    // returned for this machine.
     expect(screen.getByRole('option', { name: /won't fit/i })).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent(/Needs more memory/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/Needs about/i);
+    expect(screen.getByRole('alert')).toHaveTextContent(/22\.1 GB/); // needed_bytes
     expect(screen.getByRole('alert')).toHaveTextContent(/9\.5 GB/); // mem_budget_bytes
-    expect(screen.getByRole('alert')).toHaveTextContent(/18\.0 GB/); // mem_total_bytes
 
     // The button still allows the download, worded as an informed choice.
     const button = screen.getByRole('button', { name: 'Download anyway' });
@@ -292,6 +294,7 @@ describe('ModelBrowser (Discover)', () => {
           downloaded: false,
           size_bytes: 19_972_876_288,
           fit: 'too_big',
+          needed_bytes: 22_120_359_936,
         },
       ],
     };

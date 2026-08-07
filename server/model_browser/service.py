@@ -63,43 +63,45 @@ def _dir_size_bytes(path: str) -> int:
 
 @lru_cache(maxsize=1)
 def _reserved_companion_bytes() -> int:
-    """On-disk size of the non-chat models installed on THIS machine — ASR,
-    diarization, and workspace-index weights that share unified memory with
-    whichever chat model is resident. Never hardcoded: only directories that
-    actually exist on disk contribute, so a machine with nothing installed
-    yet reserves 0 and a fully-loaded one reserves what it actually has.
-    Imports the owning modules' path constants lazily so this stays cheap to
-    call from the read-only /browse endpoints."""
+    """On-disk size of the companion models that plausibly stay resident in
+    memory ALONGSIDE a chat session on THIS machine: whichever single ASR
+    backend is actually configured (dictation can run while chatting), plus
+    the small speaker-diarization model used during the same transcription.
+
+    The workspace-index models (embed/GLiNER/GLiNER2/rerank) are deliberately
+    NOT counted: they lazy-load only for the duration of one indexing pass and
+    are explicitly unloaded the moment it finishes (see pipeline.build's
+    ``finally`` block), so they are not steady-state competitors for a chat
+    model's memory. Reserving their full on-disk size (which can exceed 10 GB
+    across all four) as if permanently resident was the original bug — it
+    could shrink the usable budget so far that even a 2-3 GB quant, or an
+    already-installed and working local model, was graded "won't fit".
+
+    Only ONE ASR backend is ever loaded (``transcription_backend`` picks one),
+    so only that one's directory is measured — never both. Imports lazily so
+    this stays cheap to call from the read-only /browse endpoints."""
     dirs: list[str] = []
     try:
-        from server.asr.parakeet_backend import PARAKEET_MODEL_DIR
+        from server.asr import resolve_name
+        from server.infrastructure.config import load_config
 
-        dirs.append(PARAKEET_MODEL_DIR)
-    except Exception as e:  # pragma: no cover - defensive
-        log.debug("Could not resolve Parakeet model dir: %s", e)
-    try:
-        from server.asr.whisper_backend import WHISPER_MODEL_DIR
+        backend = resolve_name(load_config().get("transcription_backend"))
+        if backend == "parakeet":
+            from server.asr.parakeet_backend import PARAKEET_MODEL_DIR
 
-        dirs.append(WHISPER_MODEL_DIR)
+            dirs.append(PARAKEET_MODEL_DIR)
+        else:
+            from server.asr.whisper_backend import WHISPER_MODEL_DIR
+
+            dirs.append(WHISPER_MODEL_DIR)
     except Exception as e:  # pragma: no cover - defensive
-        log.debug("Could not resolve Whisper model dir: %s", e)
+        log.debug("Could not resolve the active ASR model dir: %s", e)
     try:
         from server.diarization.speakers import SPEAKER_MODEL_DIR
 
         dirs.append(SPEAKER_MODEL_DIR)
     except Exception as e:  # pragma: no cover - defensive
         log.debug("Could not resolve speaker model dir: %s", e)
-    try:
-        from server.index.config import (
-            EMBED_MODEL_DIR,
-            GLINER2_MODEL_DIR,
-            GLINER_MODEL_DIR,
-            RERANK_MODEL_DIR,
-        )
-
-        dirs.extend([EMBED_MODEL_DIR, GLINER_MODEL_DIR, GLINER2_MODEL_DIR, RERANK_MODEL_DIR])
-    except Exception as e:  # pragma: no cover - defensive
-        log.debug("Could not resolve index model dirs: %s", e)
 
     return sum(_dir_size_bytes(d) for d in dirs)
 
@@ -229,6 +231,7 @@ def repo_detail(repo_id: str) -> dict:
                 "shard_count": o.shard_count,
                 "recommended": o.filename == recommended,
                 "fit": compat.fit_verdict(o.size_bytes, total_mem, reserved),
+                "needed_bytes": compat.needed_bytes(o.size_bytes),
             }
             for o in options
         ],
@@ -357,6 +360,7 @@ def recommended() -> list[dict]:
                 "downloaded": bool(meta.get("downloaded")),
                 "size_bytes": size_bytes,
                 "fit": compat.fit_verdict(size_bytes, total_mem, reserved),
+                "needed_bytes": compat.needed_bytes(size_bytes),
             }
         )
     return rows

@@ -38,6 +38,9 @@ export interface BrowseQuant {
   shard_count: number;
   recommended: boolean;
   fit?: MemFit | null;
+  /** Free memory this quant needs to run: its own size plus llama.cpp's
+   *  runtime overhead (KV cache + compute buffers). */
+  needed_bytes?: number | null;
 }
 
 export interface BrowseRepoDetail {
@@ -51,7 +54,9 @@ export interface BrowseRepoDetail {
   /** This machine's total physical RAM, measured server-side at request time. */
   mem_total_bytes?: number | null;
   /** Slice of total RAM a chat model can claim, after the budget fraction and
-   *  whatever other resident models (ASR, diarization, indexing) already use. */
+   *  whatever else stays resident alongside it (the configured ASR backend +
+   *  diarization — the workspace-index models unload right after each
+   *  indexing pass, so they are not counted here). */
   mem_budget_bytes?: number | null;
   /** Bytes already reserved by those other resident models. */
   mem_reserved_bytes?: number | null;
@@ -90,6 +95,9 @@ export interface RecommendedModel {
   downloaded: boolean;
   size_bytes?: number | null;
   fit?: MemFit | null;
+  /** Free memory this model needs to run: its own size plus llama.cpp's
+   *  runtime overhead (KV cache + compute buffers). */
+  needed_bytes?: number | null;
 }
 
 export type BrowseSort = 'trending' | 'downloads';

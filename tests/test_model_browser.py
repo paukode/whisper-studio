@@ -148,16 +148,20 @@ def test_fit_verdict_none_when_a_size_is_unknown(size_bytes, total_mem_bytes):
 
 
 # ── service: runtime memory measurement + companion reservation ─────────────
+#
+# Only the ACTIVE transcription backend (never both) plus the small speaker
+# model are reserved. The workspace-index models (embed/GLiNER/GLiNER2/rerank)
+# unload right after each indexing pass and are NOT counted — reserving their
+# full on-disk size as if permanently resident was the reported bug: it could
+# shrink the budget so far that a 6 GB model the machine easily runs, or even
+# an already-installed working model, was graded "won't fit".
 def test_reserved_companion_bytes_zero_when_no_companion_dirs_exist(tmp_path, monkeypatch):
     missing = str(tmp_path / "does-not-exist")
+    monkeypatch.setattr(cfg, "load_config", lambda: {"transcription_backend": "whisper"})
     for target in (
         "server.asr.parakeet_backend.PARAKEET_MODEL_DIR",
         "server.asr.whisper_backend.WHISPER_MODEL_DIR",
         "server.diarization.speakers.SPEAKER_MODEL_DIR",
-        "server.index.config.EMBED_MODEL_DIR",
-        "server.index.config.GLINER_MODEL_DIR",
-        "server.index.config.GLINER2_MODEL_DIR",
-        "server.index.config.RERANK_MODEL_DIR",
     ):
         monkeypatch.setattr(target, missing)
     service._reserved_companion_bytes.cache_clear()
@@ -167,24 +171,56 @@ def test_reserved_companion_bytes_zero_when_no_companion_dirs_exist(tmp_path, mo
         service._reserved_companion_bytes.cache_clear()
 
 
-def test_reserved_companion_bytes_sums_existing_dirs(tmp_path, monkeypatch):
-    fake_model = tmp_path / "fake-companion-model"
-    fake_model.mkdir()
-    (fake_model / "weights.bin").write_bytes(b"x" * 5000)
+def test_reserved_companion_bytes_counts_only_the_active_asr_backend(tmp_path, monkeypatch):
+    """Both Parakeet and Whisper dirs may exist on disk (a user can switch
+    backends), but only one is ever resident — reserving both was the other
+    half of the over-counting bug."""
     missing = str(tmp_path / "does-not-exist")
-    monkeypatch.setattr("server.asr.parakeet_backend.PARAKEET_MODEL_DIR", str(fake_model))
+    parakeet_dir = tmp_path / "parakeet"
+    parakeet_dir.mkdir()
+    (parakeet_dir / "weights.bin").write_bytes(b"x" * 5000)
+    whisper_dir = tmp_path / "whisper"
+    whisper_dir.mkdir()
+    (whisper_dir / "weights.bin").write_bytes(b"y" * 9000)
+    monkeypatch.setattr("server.asr.parakeet_backend.PARAKEET_MODEL_DIR", str(parakeet_dir))
+    monkeypatch.setattr("server.asr.whisper_backend.WHISPER_MODEL_DIR", str(whisper_dir))
+    monkeypatch.setattr("server.diarization.speakers.SPEAKER_MODEL_DIR", missing)
+
+    monkeypatch.setattr(cfg, "load_config", lambda: {"transcription_backend": "streaming"})
+    service._reserved_companion_bytes.cache_clear()
+    try:
+        assert service._reserved_companion_bytes() == 5000  # parakeet only ("streaming" alias)
+    finally:
+        service._reserved_companion_bytes.cache_clear()
+
+    monkeypatch.setattr(cfg, "load_config", lambda: {"transcription_backend": "whisper"})
+    service._reserved_companion_bytes.cache_clear()
+    try:
+        assert service._reserved_companion_bytes() == 9000  # whisper only
+    finally:
+        service._reserved_companion_bytes.cache_clear()
+
+
+def test_reserved_companion_bytes_never_counts_index_models(tmp_path, monkeypatch):
+    """embed/GLiNER/GLiNER2/rerank unload after each indexing pass and must
+    never be added to the reservation, no matter how large they are on disk."""
+    missing = str(tmp_path / "does-not-exist")
+    monkeypatch.setattr(cfg, "load_config", lambda: {"transcription_backend": "whisper"})
+    monkeypatch.setattr("server.asr.whisper_backend.WHISPER_MODEL_DIR", missing)
+    monkeypatch.setattr("server.diarization.speakers.SPEAKER_MODEL_DIR", missing)
+    big_index_model = tmp_path / "huge-index-model"
+    big_index_model.mkdir()
+    (big_index_model / "weights.bin").write_bytes(b"z" * 20_000)
     for target in (
-        "server.asr.whisper_backend.WHISPER_MODEL_DIR",
-        "server.diarization.speakers.SPEAKER_MODEL_DIR",
         "server.index.config.EMBED_MODEL_DIR",
         "server.index.config.GLINER_MODEL_DIR",
         "server.index.config.GLINER2_MODEL_DIR",
         "server.index.config.RERANK_MODEL_DIR",
     ):
-        monkeypatch.setattr(target, missing)
+        monkeypatch.setattr(target, str(big_index_model))
     service._reserved_companion_bytes.cache_clear()
     try:
-        assert service._reserved_companion_bytes() == 5000
+        assert service._reserved_companion_bytes() == 0
     finally:
         service._reserved_companion_bytes.cache_clear()
 
