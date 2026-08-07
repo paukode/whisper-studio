@@ -236,7 +236,6 @@ def test_emit_cron_event_writes_nested_payload(temp_sessions_db, monkeypatch):
         event_type="cron_fired",
         cron_id="abc123",
         cron_name="sagemaker-monitor",
-        interval_minutes=30,
         text="## Status\n\nAll endpoints healthy.",
         status="ok",
         run_id="run-1",
@@ -270,7 +269,6 @@ def test_emit_cron_event_writes_nested_payload(temp_sessions_db, monkeypatch):
     assert payload["event_type"] == "cron_fired"
     assert payload["cron_id"] == "abc123"
     assert payload["cron_name"] == "sagemaker-monitor"
-    assert payload["interval_minutes"] == 30
     assert payload["text"].startswith("## Status")
     assert payload["status"] == "ok"
     assert payload["run_id"] == "run-1"

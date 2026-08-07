@@ -25,6 +25,26 @@ def _clear_condense_cache():
     mr._cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _seed_local_registry(monkeypatch):
+    """A fresh checkout ships no local chat models (config-driven registry,
+    empty by default). Seed the two recommended entries these tests reference
+    by name, so they don't silently depend on the developer's real,
+    gitignored config.json. A test that needs a different registry shape
+    (empty, config-only, etc.) overrides _config_local_models itself, which
+    wins since it runs after this fixture."""
+    from server.local import registry as _reg
+
+    monkeypatch.setattr(
+        _reg,
+        "_config_local_models",
+        lambda: {
+            key: dict(_reg.RECOMMENDED_LOCAL_MODELS[key])
+            for key in ("local_gemma", "local_gemma_coder")
+        },
+    )
+
+
 def _cfg(**over):
     base = {
         "enabled": True,

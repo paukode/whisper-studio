@@ -58,5 +58,3 @@ def test_normalize_lf_collapses_crlf_and_cr():
 
 def test_normalize_lf_noop_on_plain_lf():
     assert _normalize_lf("a\nb\n") == "a\nb\n"
-
-
