@@ -142,5 +142,9 @@
     "rag_hybrid_search": true,
     "rag_query_rewrite": false,
     "rag_reranker": true
-  }
+  },
+  "cron_timezone": "",
+  "cron_max_runs_per_job": 200,
+  "cron_misfire_grace_sec": 3600,
+  "goal_max_consecutive_blocks": 8
 }

@@ -70,7 +70,11 @@ CORE_TOOLS: frozenset[str] = frozenset(
 
 
 def core_names() -> frozenset[str]:
-    """The effective core set: curated constant plus config extras."""
+    """The effective core set: curated constant plus config extras.
+
+    ``progressive_tools_core_extra`` / ``progressive_tools_defer_extra`` are
+    hand-edit-only operator knobs (no UI, not in the example config): lists of
+    tool names to force into or out of the always-advertised core set."""
     extra: set[str] = set()
     defer: set[str] = set()
     try:

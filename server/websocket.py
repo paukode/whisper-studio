@@ -100,8 +100,10 @@ async def websocket_endpoint(
     so speaker labels survive reconnects within the server's lifetime. We
     use a plain Python default rather than ``fastapi.Query(None)`` because
     ``Query`` on a WebSocket endpoint can — depending on FastAPI/Starlette
-    version — reject connections that omit the param entirely, which
-    silently breaks legacy clients that don't pass session_id.
+    version — reject connections that omit the param entirely. Omitting it is
+    a LIVE path, not legacy tolerance: dictation before any session exists
+    connects with the bare ``/ws`` URL (see useChatInputMic's no-session
+    fallback).
     """
     # Reject cross-site WebSocket handshakes (the HTTP Origin middleware does
     # not see WS upgrades). Prevents a malicious page from opening this audio

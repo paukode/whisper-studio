@@ -33,7 +33,6 @@ pricing.json.bak.*
 .DS_Store
 
 # Trained models / large binaries
-eng.traineddata
 *.bin
 *.pt
 *.onnx
@@ -66,7 +65,6 @@ Thumbs.db
 
 # Local tooling artifacts
 .claude/
-.whisper-setup*.log
 # Agent/session worktrees live inside the repo; never track or status-list them.
 .whisper/
 # Lockfile from `uv`; the project installs via pip + requirements.txt.
