@@ -217,8 +217,9 @@ def test_post_endpoint_defaults_and_validation(client):
     assert row["status"] == "normal"  # unknown status coerced
 
 
-def test_legacy_check_constraint_falls_back_to_chat():
-    """A pre-012 DB (source CHECK) still gets the row, tagged chat."""
+def test_legacy_check_constraint_fails_gracefully():
+    """A pre-012 DB (source CHECK) can only exist if migration 012 failed;
+    the write is dropped with a warning instead of being retagged."""
     with notif._get_conn() as conn:
         conn.execute(
             """
@@ -237,8 +238,8 @@ def test_legacy_check_constraint_falls_back_to_chat():
             """
         )
     r = notif.record_notification(message="hello", source="model-download")
-    assert r is not None and r["deduped"] is False
-    assert notif.list_notifications()[0]["source"] == "chat"
+    assert r is None
+    assert notif.list_notifications() == []
 
 
 def test_hide_and_clear_http_surface(client):

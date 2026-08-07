@@ -23,8 +23,8 @@ def test_browse_lists_files_and_dirs(tmp_path):
 
     data = _client().get("/api/workspace/browse", params={"path": str(tmp_path)}).json()
 
-    # Directories: unchanged behaviour (dirs + rich entries).
-    assert data["dirs"] == ["sub"]
+    # Directories: rich entries with mtimes (the flat dirs list is retired).
+    assert "dirs" not in data
     assert [e["name"] for e in data["entries"]] == ["sub"]
     # Files: new — names with mtimes, dotfiles excluded.
     file_names = sorted(f["name"] for f in data["files"])
