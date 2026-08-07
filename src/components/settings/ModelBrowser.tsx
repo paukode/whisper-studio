@@ -39,10 +39,10 @@ async function refreshAfterInstall(queryClient: QueryClient): Promise<void> {
 function installToast(res: InstallResult) {
   const base =
     res.download === 'queued'
-      ? `${res.label} queued. See the download list below.`
+      ? `${res.label} queued for download. Track it under Models > Chat.`
       : res.download === 'already_installed'
         ? `${res.label} is already downloaded and now in your models.`
-        : `${res.label} added; downloading. See the download list below.`;
+        : `${res.label} added and downloading. Track it under Models > Chat.`;
   const suffix = res.adopted_index_llm ? ' Indexing will now use your on-device model.' : '';
   return {
     type: (res.download === 'queued' ? 'info' : 'success') as 'info' | 'success',
@@ -261,8 +261,8 @@ const RecommendedSection: React.FC = () => {
  * Settings > Models > Discover: search Hugging Face for GGUF chat models and
  * install one with a click. Only models the bundled engine can run are shown
  * (the backend gates on architecture). Downloads reuse the manager queue, so
- * progress/cancel appear in the download list above and the model shows in the
- * composer picker once installed. Server state lives in react-query (no
+ * progress/cancel appear under Models > Chat and the model shows in the composer
+ * picker once installed. Server state lives in react-query (no
  * zustand-fresh-object selectors).
  */
 export const ModelBrowser: React.FC = () => {

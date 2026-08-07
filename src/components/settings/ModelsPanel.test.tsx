@@ -86,6 +86,7 @@ const CATALOG = {
 
 import { ModelsPanel } from './ModelsPanel';
 import { useUIStore } from '@/stores/uiStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -102,6 +103,9 @@ beforeEach(() => {
   api.post.mockResolvedValue({});
   api.del.mockResolvedValue({ deleted: true });
   useUIStore.setState({ toasts: [] });
+  // refresh() now also refreshes the composer via settingsStore.loadModels;
+  // stub it so a mutation test doesn't depend on the /api/models mock shape.
+  useSettingsStore.setState({ loadModels: vi.fn().mockResolvedValue(undefined) as never });
 });
 
 function renderPanel() {
@@ -349,6 +353,11 @@ describe('ModelsPanel', () => {
       const toasts = useUIStore.getState().toasts;
       expect(toasts.some((t) => /Discover/.test(t.message))).toBe(true);
     });
+    // The composer reads the zustand store, not react-query, so a removal must
+    // refresh it or the deleted model lingers in the picker until reload.
+    await waitFor(() =>
+      expect(useSettingsStore.getState().loadModels).toHaveBeenCalled(),
+    );
   });
 
   it('shows a local-chat model even if it appears in the Bedrock hide-list', async () => {

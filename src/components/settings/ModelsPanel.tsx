@@ -10,6 +10,7 @@ import {
 import type { ManagedModel, ManagedModelGroup } from '@/api/models';
 import { removeModelFromList } from '@/api/modelBrowser';
 import { useUIStore } from '@/stores/uiStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { humanSize } from '@/utils/humanSize';
 import { ContextMenu, type MenuItem } from '@/components/common/ContextMenu';
 import { ChatModelVisibility } from './ChatModelVisibility';
@@ -187,6 +188,11 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
     await queryClient.invalidateQueries({ queryKey: ['models-manager-catalog'] });
     await queryClient.invalidateQueries({ queryKey: ['models-manager-status'] });
     await queryClient.invalidateQueries({ queryKey: ['models-disabled'] });
+    // Refresh the composer's model list too. Delete and remove-from-list change
+    // which local models exist, and the composer reads the zustand settingsStore
+    // (not react-query), so without this a removed/deleted model lingers in the
+    // picker until an app reload. Matches ChatModelVisibility's toggle path.
+    await useSettingsStore.getState().loadModels();
   }, [queryClient]);
 
   const run = useCallback(
