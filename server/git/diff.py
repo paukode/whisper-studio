@@ -1,14 +1,14 @@
 """
 Git diff system — fetching and parsing with size safeguards.
 
-Provides diff stats, per-file stats, and structured hunks with intelligent
-size limits. Detects transient git states (merge/rebase/cherry-pick/revert)
-and skips diff during those operations.
+Provides diff totals and per-file stats with intelligent size limits.
+Detects transient git states (merge/rebase/cherry-pick/revert) and skips
+diff during those operations.
 """
 
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from server.git.core import (
     _run_git,
@@ -23,7 +23,6 @@ from server.git.filesystem import resolve_git_dir
 GIT_TIMEOUT_S = 5
 MAX_FILES = 50  # Per-file detail limit
 MAX_DIFF_SIZE_BYTES = 1_000_000  # 1MB — skip files larger than this
-MAX_LINES_PER_FILE = 400  # GitHub's auto-load limit
 MAX_FILES_FOR_DETAILS = 500  # Skip per-file details if more files than this
 SINGLE_FILE_DIFF_TIMEOUT_S = 3
 
@@ -40,22 +39,11 @@ class DiffFileStats:
 
 
 @dataclass
-class DiffHunk:
-    old_start: int
-    old_count: int
-    new_start: int
-    new_count: int
-    header: str
-    lines: list[str] = field(default_factory=list)
-
-
-@dataclass
 class GitDiffResult:
     files_count: int
     lines_added: int
     lines_removed: int
     per_file_stats: dict[str, DiffFileStats]
-    hunks: dict[str, list[DiffHunk]]
 
 
 @dataclass
@@ -101,11 +89,10 @@ def is_transient_git_state(git_dir: str) -> bool:
 
 
 def fetch_git_diff(path: str) -> GitDiffResult | None:
-    """Compare working tree to HEAD. Returns stats + per-file stats + hunks.
+    """Compare working tree to HEAD. Returns totals + per-file stats.
 
     Returns None if not in a git repo, during transient git states,
-    or if git commands fail. Hunks are NOT included — use fetch_git_diff_hunks()
-    for on-demand hunk loading to avoid expensive calls during polling.
+    or if git commands fail.
     """
     git_root = find_git_root(path)
     if not git_root:
@@ -133,7 +120,6 @@ def fetch_git_diff(path: str) -> GitDiffResult | None:
             lines_added=lines_added,
             lines_removed=lines_removed,
             per_file_stats={},
-            hunks={},
         )
 
     # Get per-file stats via numstat
@@ -144,7 +130,6 @@ def fetch_git_diff(path: str) -> GitDiffResult | None:
             lines_added=lines_added,
             lines_removed=lines_removed,
             per_file_stats={},
-            hunks={},
         )
 
     per_file_stats = numstat_result
@@ -161,37 +146,7 @@ def fetch_git_diff(path: str) -> GitDiffResult | None:
         lines_added=lines_added,
         lines_removed=lines_removed,
         per_file_stats=per_file_stats,
-        hunks={},  # hunks loaded on-demand
     )
-
-
-def fetch_git_diff_hunks(path: str) -> dict[str, list[DiffHunk]]:
-    """Fetch git diff hunks on-demand.
-
-    Separated from fetch_git_diff() to avoid expensive calls during polling.
-    """
-    git_root = find_git_root(path)
-    if not git_root:
-        return {}
-
-    git_dir = resolve_git_dir(path)
-    if not git_dir:
-        return {}
-
-    if is_transient_git_state(git_dir):
-        return {}
-
-    try:
-        result = _run_git(
-            ["--no-optional-locks", "diff", "HEAD"],
-            cwd=git_root,
-            timeout=GIT_TIMEOUT_S,
-        )
-        if result.returncode != 0:
-            return {}
-        return parse_git_diff(result.stdout)
-    except Exception:
-        return {}
 
 
 def fetch_single_file_git_diff(path: str, file_path: str) -> ToolUseDiff | None:
@@ -291,76 +246,6 @@ def parse_git_numstat(path: str) -> dict[str, DiffFileStats] | None:
     return per_file
 
 
-def parse_git_diff(output: str) -> dict[str, list[DiffHunk]]:
-    """Parse unified diff output into per-file hunks.
-
-    Applies limits:
-    - MAX_FILES: stop after this many files
-    - MAX_DIFF_SIZE_BYTES: skip files entirely if larger
-    - MAX_LINES_PER_FILE: limit lines per file
-    """
-    hunks: dict[str, list[DiffHunk]] = {}
-
-    # Split by "diff --git" pattern
-    sections = re.split(r"^diff --git ", output, flags=re.MULTILINE)
-
-    file_count = 0
-    for section in sections:
-        if not section.strip():
-            continue
-
-        file_count += 1
-        if file_count > MAX_FILES:
-            break
-
-        # Skip oversized sections
-        if len(section.encode("utf-8", errors="replace")) > MAX_DIFF_SIZE_BYTES:
-            continue
-
-        # Extract filename from "a/path b/path" header
-        header_line = section.split("\n", 1)[0]
-        filename = _extract_filename_from_diff_header(header_line)
-        if not filename:
-            continue
-
-        file_hunks = []
-        current_hunk = None
-        line_count = 0
-
-        for line in section.split("\n"):
-            # Hunk header
-            hunk_match = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)", line)
-            if hunk_match:
-                if current_hunk:
-                    file_hunks.append(current_hunk)
-                current_hunk = DiffHunk(
-                    old_start=int(hunk_match.group(1)),
-                    old_count=int(hunk_match.group(2) or "1"),
-                    new_start=int(hunk_match.group(3)),
-                    new_count=int(hunk_match.group(4) or "1"),
-                    header=line,
-                )
-                continue
-
-            if current_hunk is None:
-                # Skip metadata lines (index, ---, +++, new file, etc.)
-                continue
-
-            # Only include diff content lines (+, -, space)
-            if line and line[0] in ("+", "-", " "):
-                line_count += 1
-                if line_count <= MAX_LINES_PER_FILE:
-                    current_hunk.lines.append(line)
-
-        if current_hunk:
-            file_hunks.append(current_hunk)
-
-        if file_hunks:
-            hunks[filename] = file_hunks
-
-    return hunks
-
-
 def parse_shortstat(path: str) -> tuple[int, int, int] | None:
     """Parse 'git diff --shortstat' for quick totals.
 
@@ -432,17 +317,8 @@ def _fetch_untracked_files(git_root: str, max_files: int) -> dict[str, DiffFileS
 
 
 def _get_diff_ref(git_root: str) -> str:
-    """Get the best reference for diffing.
-
-    Priority:
-    1. CLAUDE_CODE_BASE_REF environment variable
-    2. Merge base with default branch
-    3. HEAD (fallback)
-    """
-    base_ref = os.environ.get("CLAUDE_CODE_BASE_REF")
-    if base_ref:
-        return base_ref.strip()
-
+    """Get the best reference for diffing: merge base with the default
+    branch, falling back to HEAD."""
     default_branch = get_default_branch(git_root)
     try:
         result = _run_git(
@@ -537,20 +413,4 @@ def _get_github_repo(git_root: str) -> str | None:
     # Only return for github.com repos
     if normalized.startswith("github.com/"):
         return normalized[len("github.com/") :]
-    return None
-
-
-def _extract_filename_from_diff_header(header: str) -> str | None:
-    """Extract filename from diff --git header line 'a/path b/path'."""
-    # Format: "a/path b/path"
-    parts = header.split(" b/", 1)
-    if len(parts) == 2:
-        return parts[1].strip()
-    # Fallback: try to extract from a/ prefix
-    parts = header.split(" a/", 1)
-    if len(parts) == 2:
-        remainder = parts[1]
-        space_idx = remainder.find(" b/")
-        if space_idx != -1:
-            return remainder[space_idx + 3 :].strip()
     return None

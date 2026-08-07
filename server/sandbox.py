@@ -294,7 +294,6 @@ def popen_sandboxed(
     *,
     cwd: str,
     stdout_file,
-    allow_paths: list[str] | None = None,
 ) -> tuple[subprocess.Popen, str | None]:
     """Start a sandbox-wrapped process streaming combined stdout/stderr to a file.
 
@@ -311,7 +310,7 @@ def popen_sandboxed(
 
     profile_path: str | None = None
     if _is_sandbox_exec_available():
-        profile = _generate_macos_profile(cwd, allow_paths)
+        profile = _generate_macos_profile(cwd)
         fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_bg_sandbox_")
         with os.fdopen(fd, "w") as f:
             f.write(profile)
@@ -334,7 +333,7 @@ def popen_sandboxed(
             "--proc",
             "/proc",
         ]
-        for path in _effective_denied_paths(allow_paths):
+        for path in _effective_denied_paths(None):
             if os.path.exists(path):
                 argv.extend(_bwrap_deny_args(path))
         argv.extend(["--chdir", cwd, "/bin/sh", "-c", command])

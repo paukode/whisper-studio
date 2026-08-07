@@ -421,12 +421,9 @@ if [ ! -f config.json ] && [ -f config.example.json ]; then
     echo "  to enable the web-search skill. Everything else works without it."
 fi
 
-# Sync NEW template models into an existing config (add-only; user entries are
-# never modified or removed). This is what lets a model added to
-# config.example.json reach an install whose config.json predates it, without
-# --new — the registry-driven download loop below then pulls its weights in
-# this same run. Stdlib-only, so the system python3 is fine pre-venv.
-python3 scripts/sync_model_catalog.py . || true
+# NOTE: new template models need no sync step. load_config merges
+# DEFAULTS -> config.example.json -> the user layer additively, so a model
+# added to config.example.json reaches every install on the next start.
 
 # Seed pricing.json from the template on first run too. The app runs fine off
 # pricing.example.json alone, but seeding gives a ready-to-edit local copy for
@@ -516,34 +513,40 @@ if [ "$PROD" -eq 1 ]; then
     run_quiet "Building frontend" npm run build
 fi
 
-# ── Resolve the effective model mode (flag > existing config.json > cloud) ───
+# ── Resolve the effective model mode (flag > existing user config > cloud) ───
 # It decides which model WEIGHTS to pull: cloud needs none on-device (Bedrock
 # provides embed/rerank/NER/chat), hybrid/local pull the ~16 GB on-device stack.
 # Transcription models are pulled in EVERY mode (always on-device).
 if [ -n "$MODE_FLAG" ]; then
     MODE="$MODE_FLAG"
-    # Persist the chosen mode so the app starts in it. config.json is gitignored;
-    # this reflows its formatting but preserves every value.
+    # Persist the chosen mode so the app starts in it. Write the ACTIVE user
+    # layer: config.user.json once the split-config migration has produced
+    # one, else the legacy config.json (both gitignored). Mirrors
+    # server/infrastructure/config._active_user_config_path.
     python - "$MODE" <<'PYEOF' || true
 import json, os, sys
 mode = sys.argv[1]
+target = "config.user.json" if os.path.exists("config.user.json") else "config.json"
 cfg = {}
-if os.path.exists("config.json"):
+if os.path.exists(target):
     try:
-        with open("config.json") as f: cfg = json.load(f)
+        with open(target) as f: cfg = json.load(f)
     except Exception: cfg = {}
 cfg["model_mode"] = mode
 cfg["local_mode"] = (mode != "cloud")
-with open("config.json", "w") as f: json.dump(cfg, f, indent=2)
-print(f"Set model_mode={mode} in config.json")
+with open(target, "w") as f: json.dump(cfg, f, indent=2)
+print(f"Set model_mode={mode} in {target}")
 PYEOF
 else
     MODE="$(python - <<'PYEOF' 2>/dev/null || echo cloud
 import json, os
 mode = "cloud"
-if os.path.exists("config.json"):
+# Read the ACTIVE user layer: config.user.json when present, else the
+# legacy config.json (matches _active_user_config_path).
+target = "config.user.json" if os.path.exists("config.user.json") else "config.json"
+if os.path.exists(target):
     try:
-        with open("config.json") as f: c = json.load(f)
+        with open(target) as f: c = json.load(f)
         mode = c.get("model_mode") or ("local" if c.get("local_mode") else "cloud")
     except Exception: pass
 print(mode)

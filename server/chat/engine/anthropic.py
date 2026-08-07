@@ -16,14 +16,13 @@ import logging
 import threading
 
 from server.chat.infra import _get_bedrock_client
-from server.infrastructure.bedrock_retry import invoke_stream_with_retry
+from server.infrastructure.bedrock_retry import invoke_with_retry
 from server.infrastructure.errors import (
     WhisperAPIError,
     classify_bedrock_error,
 )
 
 from .events import (
-    ErrorKind,
     RoundError,
     RoundResult,
     TextDelta,
@@ -83,6 +82,15 @@ class AnthropicAdapter:
         self._loop = loop
         self._executor = executor
         self._client = _get_bedrock_client()
+        # Per-model output cap: chat_model_meta.max_output when configured,
+        # else the Claude-on-Bedrock default.
+        from server.infrastructure.config import load_config
+
+        meta = (load_config().get("chat_model_meta") or {}).get(model_key) or {}
+        try:
+            self.max_tokens = int(meta.get("max_output") or 128000)
+        except (TypeError, ValueError):
+            self.max_tokens = 128000
 
     # ── Request building (port of call_bedrock_stream) ───────────────────────
 
@@ -91,7 +99,7 @@ class AnthropicAdapter:
 
         body = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 128000,
+            "max_tokens": self.max_tokens,
             "system": self.system_prompt,
             "messages": messages,
         }
@@ -149,12 +157,10 @@ class AnthropicAdapter:
                 ),
             )
 
-        response = await invoke_stream_with_retry(
-            self._client,
+        response = await invoke_with_retry(
             call_fn=_call,
             loop=self._loop,
             executor=self._executor,
-            on_retry=lambda attempt, err, delay: None,
         )
 
         q: asyncio.Queue = asyncio.Queue()
@@ -200,7 +206,7 @@ class AnthropicAdapter:
                         data if isinstance(data, WhisperAPIError) else classify_bedrock_error(data)
                     )
                     log.warning("Bedrock stream error: %s", api_err)
-                    yield RoundError(kind=ErrorKind.TRANSIENT, message=api_err.user_message)
+                    yield RoundError(message=api_err.user_message)
                     return
                 event_type = data.get("type")
 

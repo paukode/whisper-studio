@@ -17,7 +17,6 @@ WORKSPACE_EXPORTS = [
     # public API
     "router",
     "get_workspace_path",
-    "get_workspace_mode",
     "get_workspace_tools",
     "get_global_workspace_tools",
     "get_worktree_tools",
@@ -56,7 +55,6 @@ CHAT_EXPORTS = [
     "compact_messages_with_claude",
     "_compact_messages_simple",
     "TOOL_RESULT_BUDGET_BYTES",
-    "_budget_tool_result",
     "make_budget_tool_result",
     "assemble_tool_pool",
     "_is_tool_concurrent_safe",

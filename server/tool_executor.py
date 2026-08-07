@@ -493,7 +493,7 @@ async def process_tool_results(
                 # which must stay Bedrock-free and falls back to asking.
                 cfg = config or {}
                 if model_id:
-                    verdict = await classify_tool_call(state.tool_name, ws_parsed, cfg, model_id)
+                    verdict = await classify_tool_call(state.tool_name, ws_parsed, cfg)
                     decision = "allow" if verdict.get("decision") == "allow" else "ask"
                 else:
                     decision = "ask"

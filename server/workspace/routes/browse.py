@@ -24,7 +24,6 @@ async def ws_browse(path: str = ""):
         if not os.path.isdir(target):
             target = os.path.expanduser("~")
     target = os.path.realpath(target)
-    dirs = []
     entries = []
     # Files in the folder, so the picker can show what's inside the directory
     # you're about to connect (read-only — you connect to the folder, not a
@@ -43,9 +42,6 @@ async def ws_browse(path: str = ""):
             except OSError:
                 mtime = 0.0
             if os.path.isdir(full):
-                dirs.append(name)
-                # `dirs` (flat names) is kept as the fallback shape the client
-                # reads when `entries` is absent (see workspaceConnectHelpers.ts).
                 entries.append({"name": name, "mtime": mtime})
             elif os.path.isfile(full):
                 files.append({"name": name, "mtime": mtime})
@@ -62,7 +58,6 @@ async def ws_browse(path: str = ""):
     return {
         "current": target,
         "parent": os.path.dirname(target),
-        "dirs": dirs,
         "entries": entries,
         "files": files,
         "file_total": file_total,

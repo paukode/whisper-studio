@@ -23,7 +23,6 @@ from .mcp_tools import (  # noqa: F401
     execute_read_mcp_resource,
 )
 from .schemas import (  # noqa: F401
-    AGENT_TOOL_NAMES,
     AGENT_TOOLS,
     CONFIG_GET_TOOL,
     CONFIG_SET_TOOL,

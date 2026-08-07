@@ -71,9 +71,6 @@ def _resolve_agent_model(model_id_override: str | None, config: AgentConfig) -> 
     chat_models = cfg.get("chat_models", {})
     default_key = cfg.get("default_chat_model")
     candidates = [
-        # config.model is deprecated (always None now) but still honoured
-        # first if some caller sets it.
-        chat_models.get(config.model) if config.model else None,
         chat_models.get(default_key) if default_key else None,
         chat_models.get("sonnet"),
         *chat_models.values(),
@@ -131,7 +128,7 @@ async def run_agent(
         config: Optional custom AgentConfig (overrides agent_type lookup).
         parent_agent_id: ID of spawning agent (for hierarchy tracking).
         session_id: Session scope for tool execution.
-        model_id_override: Explicit Bedrock model ID. If None, resolved from config.model.
+        model_id_override: Explicit Bedrock model ID. If None, resolved from the config default.
         context: Additional context prepended to the task.
         depth: Nesting depth (prevents infinite recursion).
 
@@ -208,9 +205,8 @@ async def run_agent(
         config.agent_type,
         task,
         parent_id=parent_agent_id,
-        # Record the RESOLVED model, not config.model (an unresolved override
-        # that is almost always None = "inherit"). Otherwise every registry
-        # entry and progress event reports model=None.
+        # Record the RESOLVED model so every registry entry and progress
+        # event carries a real model id.
         model=model_id,
         session_id=session_id,
     )
@@ -532,8 +528,7 @@ async def _run_agent_loop(
 
     # Full task text (generous cap): the card shows the whole brief for rows
     # that were not pre-announced by team_started — spawned children mainly.
-    # Report the RESOLVED model_id (threaded into this loop), not config.model
-    # which is the unresolved override (almost always None = "inherit").
+    # Report the RESOLVED model_id (threaded into this loop).
     _emit("started", task=_preview(task, 2000), model=model_id, max_turns=config.max_turns)
 
     # Wall-clock deadline is the real "don't loop forever" brake; the turn count

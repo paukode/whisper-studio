@@ -68,7 +68,7 @@ def execute_ws_open_folder(tool_input: dict) -> str:
     # Connect workspace
     config = load_workspace_config()
     config["path"] = path
-    config["mode"] = "chat"
+    config.pop("mode", None)  # retired field; scrub it from old configs
     save_workspace_config(config)
     save_recent_workspace(path)
     WORKSPACE_BACKUPS.clear()

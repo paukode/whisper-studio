@@ -28,7 +28,6 @@ import logging
 from server.infrastructure.errors import PromptTooLongError
 
 from .events import (
-    ErrorKind,
     RoundError,
     RoundResult,
     TextDelta,
@@ -62,6 +61,15 @@ class LocalAdapter:
         self.system_prompt = system_prompt
         self.thinking = thinking
         self.tools_enabled = tools_enabled
+        # Per-model output cap: chat_model_meta.max_output when configured,
+        # else a conservative local default.
+        from server.infrastructure.config import load_config
+
+        meta = (load_config().get("chat_model_meta") or {}).get(model_key) or {}
+        try:
+            self.max_tokens = int(meta.get("max_output") or 4096)
+        except (TypeError, ValueError):
+            self.max_tokens = 4096
         # Cumulative visible-text chars across the TURN (all rounds), for the
         # empty-turn quirk message.
         self._turn_out_chars = 0
@@ -159,7 +167,7 @@ class LocalAdapter:
         payload: dict = {
             "model": self.model_key,
             "messages": self.to_openai_messages(messages),
-            "max_tokens": 4096,
+            "max_tokens": self.max_tokens,
         }
         if schemas:
             # Final-round parity with the cloud paths: forbid calls on the
@@ -201,7 +209,7 @@ class LocalAdapter:
             if any(marker in msg.lower() for marker in _CTX_OVERFLOW_MARKERS):
                 raise PromptTooLongError(msg) from e
             log.warning("llama-server round %d failed: %s", round_num, e)
-            yield RoundError(kind=ErrorKind.TRANSIENT, message=msg)
+            yield RoundError(message=msg)
             return
         if thinking_open:  # reasoned but produced no answer text this round
             yield ThinkingStop()

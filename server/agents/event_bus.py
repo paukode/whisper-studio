@@ -91,9 +91,5 @@ class AgentEventBus:
                     # Loop closed between snapshot and publish — drop silently.
                     pass
 
-    def has_subscribers(self, session_id: str) -> bool:
-        with self._lock:
-            return bool(self._subscribers.get(session_id))
-
 
 event_bus = AgentEventBus()

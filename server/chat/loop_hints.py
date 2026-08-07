@@ -39,19 +39,9 @@ _MAX_SESSIONS = 512
 def context_window_for(model_key: str) -> int:
     """Context window for a model key.
 
-    Resolution: the legacy top-level ``context_windows`` config map (explicit
-    override), then the per-model ``context_window`` metadata / family default
+    Resolution: the per-model ``context_window`` metadata / family default
     via the engine's window accounting (so GPT-on-mantle budgets against its
     real 278,528-token cap instead of the Claude default)."""
-    try:
-        from server.infrastructure.config import load_config
-
-        windows = load_config().get("context_windows") or {}
-        v = windows.get(model_key)
-        if isinstance(v, int) and v > 0:
-            return v
-    except Exception:
-        pass
     try:
         from server.chat.engine.windows import context_window
 
@@ -105,11 +95,6 @@ def should_nudge_compaction(session_id: str) -> bool:
             entry["nudged"] = True
             return True
         return False
-
-
-def reset_session(session_id: str) -> None:
-    with _lock:
-        _context.pop(session_id, None)
 
 
 def near_cap_reminder(rounds_left: int) -> str | None:

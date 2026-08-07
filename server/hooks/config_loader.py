@@ -1,6 +1,7 @@
 """Hook config: user layer, project layer, and the project-trust store.
 
-User layer: data_root()/hooks.json (v2, or legacy v1 normalized on load).
+User layer: data_root()/hooks.json (v2; a leftover v1 file is upgraded to
+v2 once, on first load).
 Project layer: the "hooks" key in <workspace>/.whisper/settings.json — arbitrary
 code from a cloned repo, so INERT until the workspace's project-hook set is
 explicitly trusted (SHA-256 of the canonical hooks, mirroring trusted skills).
@@ -13,7 +14,7 @@ import json
 import logging
 import os
 
-from server.hooks.schema import HookDef, normalize_config, serialize_v2
+from server.hooks.schema import HookDef, normalize_config, parse_v1, serialize_v2
 from server.infrastructure.paths import data_root
 
 log = logging.getLogger("whisper-studio")
@@ -38,7 +39,19 @@ def _load_json(path: str):
 
 
 def load_user_hooks() -> dict[str, list[HookDef]]:
-    return normalize_config(_load_json(hooks_path()), source="user")
+    raw = _load_json(hooks_path())
+    v1 = parse_v1(raw, source="user")
+    if v1 is not None:
+        # One-shot upgrade: rewrite the retired v1 flat-list file as v2 on
+        # first load so the old format never loads again. Best-effort — a
+        # read-only disk still gets a working in-memory config.
+        try:
+            save_user_hooks(v1)
+            log.info("hooks.json upgraded from v1 to v2")
+        except OSError:
+            pass
+        return v1
+    return normalize_config(raw, source="user")
 
 
 def save_user_hooks(by_event: dict[str, list[HookDef]]) -> None:

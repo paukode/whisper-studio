@@ -55,9 +55,10 @@ def _get_bedrock_client():
 
 
 def _reset_bedrock_client_cache() -> None:
-    """Test hook + config-change escape hatch — drops cached clients
-    so the next ``_get_bedrock_client()`` picks up fresh settings
-    (e.g. after the user changes region in Settings)."""
+    """Test hook — drops cached clients so the next ``_get_bedrock_client()``
+    builds fresh ones (tests/conftest.py resets between tests). Nothing in the
+    config-update path calls this: clients are keyed per region, so a region
+    change simply builds a new entry."""
     with _BEDROCK_CLIENT_LOCK:
         _BEDROCK_CLIENTS.clear()
 

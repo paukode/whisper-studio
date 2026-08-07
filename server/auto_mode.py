@@ -87,12 +87,12 @@ async def classify_tool_call(
     tool_name: str,
     tool_input: dict,
     config: dict,
-    model_id: str,
 ) -> dict:
     """
     Classify a tool call as 'allow' or 'confirm'.
     Returns {"decision": "allow"|"confirm", "reason": str}.
-    Falls back to 'confirm' on any error.
+    Falls back to 'confirm' on any error. Always classifies with the cheap
+    Haiku-tier model from the catalog, never the session model.
     """
     import boto3
 

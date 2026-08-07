@@ -167,13 +167,7 @@ def record_notification(
     }
     try:
         with _get_conn() as conn:
-            try:
-                return _insert_or_bump(conn, source=source, **fields)
-            except sqlite3.IntegrityError:
-                # Pre-012 table (CHECK source IN ('chat','agent','cron')) that
-                # _ensure_table's CREATE IF NOT EXISTS could not relax: keep
-                # the row rather than the tag.
-                return _insert_or_bump(conn, source="chat", **fields)
+            return _insert_or_bump(conn, source=source, **fields)
     except sqlite3.DatabaseError as e:
         log.warning("notifications: record failed: %s", e)
         return None

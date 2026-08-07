@@ -9,10 +9,9 @@ export interface BrowseEntry {
 export interface BrowseResponse {
   current: string;
   parent: string | null;
-  dirs: string[];
-  /** Rich shape with mtimes (newer backends); `dirs` kept as fallback. */
-  entries?: BrowseEntry[];
-  /** Files in the folder (newer backends), capped at the server's FILE_CAP. */
+  /** Folder entries with mtimes. */
+  entries: BrowseEntry[];
+  /** Files in the folder, capped at the server's FILE_CAP. */
   files?: BrowseEntry[];
   /** Total file count before the cap, so the UI can show "showing N of M". */
   file_total?: number;

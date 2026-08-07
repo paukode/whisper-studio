@@ -3,7 +3,6 @@ import type { SaveStatusHandle } from '@/hooks/useSaveStatus';
 
 interface SaveStatusProps {
   status: SaveStatusHandle;
-  className?: string;
   style?: React.CSSProperties;
 }
 
@@ -17,12 +16,12 @@ const ICONS: Record<string, string> = {
  * Inline success/failure indicator for a save action, driven by useSaveStatus.
  * Renders nothing while idle so it never reserves space until a save runs.
  */
-export const SaveStatus: React.FC<SaveStatusProps> = ({ status, className, style }) => {
+export const SaveStatus: React.FC<SaveStatusProps> = ({ status, style }) => {
   if (status.state === 'idle' || !status.message) return null;
   const icon = ICONS[status.state];
   return (
     <span
-      className={`save-status save-status--${status.state}${className ? ` ${className}` : ''}`}
+      className={`save-status save-status--${status.state}`}
       role="status"
       aria-live="polite"
       style={style}

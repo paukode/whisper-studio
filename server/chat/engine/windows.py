@@ -11,8 +11,8 @@ real input cap instead of a hardcoded char guess. Resolution order:
   3. Local models: the live requested n_ctx (the composer's CTX chip is the
      source of truth), never a static number.
 
-``prompt_cap_tokens`` parsed from a provider rejection (see events.RoundError)
-always beats all of these for the retry — it is the deployment's own answer.
+``parse_prompt_cap`` pulls the deployment's own cap out of a prompt-too-long
+rejection; the OpenAI adapter uses it to classify those errors as trimmable.
 """
 
 import re
@@ -25,10 +25,6 @@ FAMILY_DEFAULTS = {
     "openai_bedrock": 278_528,
 }
 _FALLBACK = 200_000
-
-# Leave room under the raw cap for the reply and counting drift: budgets
-# derived from a window use this fraction of it.
-SAFETY_FRACTION = 0.85
 
 _CAP_RE = re.compile(
     r"exceed[s]?\D*model maximum\D*(\d[\d,]*)|maximum\D*(\d[\d,]*)\s*tokens?", re.I
@@ -57,11 +53,6 @@ def context_window(model_key: str, meta: dict | None = None) -> int | None:
             pass
         return int(m["ctx"]) if m.get("ctx") else None
     return FAMILY_DEFAULTS.get(m.get("provider") or "anthropic", _FALLBACK)
-
-
-def usable_tokens(window: int | None) -> int | None:
-    """The share of a window the engine lets the prompt grow into."""
-    return int(window * SAFETY_FRACTION) if window else None
 
 
 def parse_prompt_cap(error_message: str) -> int | None:

@@ -1,8 +1,7 @@
 """
 Git prompts — inject git context into system prompts.
 
-Generates git status blocks for system prompts and specialized
-context for commit and PR workflows.
+Generates the git status block and the git tool instructions block.
 """
 
 from server.git.core import (
@@ -12,7 +11,6 @@ from server.git.core import (
     get_default_branch,
     get_file_status,
     get_is_clean,
-    get_remote_url,
 )
 
 
@@ -133,96 +131,3 @@ not authenticated for GitHub — which is how it has produced confident but fals
 "I closed the PR" claims. That includes `git worktree add`, checkout, merge,
 rebase, and `reset --hard`.
 """
-
-
-def build_commit_prompt(workspace_path: str) -> str:
-    """Generate full context for commit operations.
-
-    Includes git status, diff HEAD, branch name, recent 10 commits,
-    and safety protocol rules.
-    """
-    git_root = find_git_root(workspace_path)
-    if not git_root:
-        return ""
-
-    parts = []
-
-    # Status
-    try:
-        result = _run_git(["status"], cwd=git_root, timeout=5)
-        if result.returncode == 0:
-            parts.append(f"# Git Status\n{result.stdout.strip()}")
-    except Exception:
-        pass
-
-    # Diff HEAD (truncated)
-    try:
-        result = _run_git(["--no-optional-locks", "diff", "HEAD"], cwd=git_root, timeout=5)
-        if result.returncode == 0 and result.stdout.strip():
-            diff = result.stdout
-            if len(diff) > 20000:
-                diff = diff[:20000] + "\n\n... (diff truncated)"
-            parts.append(f"# Git Diff HEAD\n{diff.strip()}")
-    except Exception:
-        pass
-
-    # Branch
-    branch = get_branch(workspace_path)
-    parts.append(f"Current branch: {branch}")
-
-    # Recent commits
-    try:
-        result = _run_git(["log", "-10", "--oneline"], cwd=git_root, timeout=5)
-        if result.returncode == 0 and result.stdout.strip():
-            parts.append(f"# Recent Commits\n{result.stdout.strip()}")
-    except Exception:
-        pass
-
-    # Safety protocol
-    parts.append("""# Git Safety Protocol
-- NEVER update git config
-- NEVER skip hooks (--no-verify, --no-gpg-sign)
-- ALWAYS create NEW commits (never --amend unless explicitly requested)
-- Warn on secret files (.env, credentials.json, credentials, .aws, .ssh, etc.)
-- Never use -i (interactive) flag
-- Use HEREDOC syntax for multi-line commit messages
-
-# Commit Message Writing Style
-- Do not use em dashes or en dashes; prefer commas, parentheses, a colon, or a short spaced hyphen.
-- Never use dashes to create lines or separators in the commit message.""")
-
-    return "\n\n".join(parts) + "\n"
-
-
-def build_pr_prompt(workspace_path: str) -> str:
-    """Generate full context for PR creation.
-
-    Extends commit prompt with default branch, remote URL, and PR template.
-    """
-    base = build_commit_prompt(workspace_path)
-    if not base:
-        return ""
-
-    default = get_default_branch(workspace_path)
-    remote = get_remote_url(workspace_path)
-
-    extra = [
-        f"Default branch: {default}",
-        f"Remote URL: {remote or 'unknown'}",
-        """# PR Template
-Title: short, under 70 chars
-Body:
-## Summary
-<1-3 bullet points>
-
-## Files changed
-<bullet points on file created/deleted/modified>
-
-## Test plan
-<bulleted checklist>
-
-# PR Writing Style
-- Do not use em dashes or en dashes; prefer commas, parentheses, a colon, or a short spaced hyphen.""",
-    ]
-
-    return base + "\n" + "\n\n".join(extra) + "\n"

@@ -95,33 +95,16 @@ def assemble_tool_pool(
     plan_mode: bool = False,
     ws_connected: bool = False,
     suppress_workspace_search: bool = False,
-    session_id: str = "",
-    progressive: bool = False,
 ) -> list[dict]:
-    """Advertised tool pool for one model request.
-
-    Default (``progressive=False``) is the full pool — cron and the agent
-    runtime use it. The interactive chat loop passes ``progressive=True``:
-    when the ``progressive_tools`` flag is on, the pool is partitioned to
-    core + this session's activated tools, with everything else discoverable
-    via tool_search.
-    """
-    catalog = assemble_full_catalog(
+    """Full advertised tool pool for one model request — cron and the agent
+    runtime use it. The interactive chat loop uses
+    ``assemble_partitioned_pool`` instead (progressive core + activated
+    tools, everything else discoverable via tool_search)."""
+    return assemble_full_catalog(
         plan_mode=plan_mode,
         ws_connected=ws_connected,
         suppress_workspace_search=suppress_workspace_search,
     )
-    if not progressive or not session_id:
-        return catalog
-    from server.infrastructure.feature_flags import is_enabled as _ff_enabled
-
-    if not _ff_enabled("progressive_tools"):
-        return catalog
-    from server.chat.tool_activation import get_ordered
-    from server.chat.tool_partition import partition_pool
-
-    advertised, _deferred, _core_count = partition_pool(catalog, get_ordered(session_id))
-    return advertised
 
 
 def assemble_partitioned_pool(

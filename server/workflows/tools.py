@@ -85,8 +85,6 @@ WORKFLOW_TOOLS: list[dict] = [
     },
 ]
 
-WORKFLOW_TOOL_NAMES = {t["name"] for t in WORKFLOW_TOOLS}
-
 
 def _model_key_for(model_id: str) -> str:
     try:

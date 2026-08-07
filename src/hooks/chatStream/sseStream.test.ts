@@ -38,7 +38,7 @@ function sseResponse(frames: unknown[]): Response {
 
 describe('readSSEStream', () => {
   beforeEach(() => {
-    useUIStore.getState().clearToasts();
+    useUIStore.setState({ toasts: [], toastQueue: [] });
   });
 
   afterEach(() => {

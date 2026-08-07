@@ -4,7 +4,7 @@ Provides a lightweight feature flag system backed by config.json.
 Flags can be checked at runtime to gate features on/off without code changes.
 
 Usage:
-    from server.infrastructure.feature_flags import is_enabled, get_flag, FlagRegistry
+    from server.infrastructure.feature_flags import is_enabled, get_flag
 
     if is_enabled("auto_memory"):
         # memory feature code
@@ -54,18 +54,6 @@ def register_flag(
     with _lock:
         _FLAG_DEFINITIONS[name] = flag
     return flag
-
-
-def get_all_flags() -> dict[str, FeatureFlag]:
-    """Return a copy of the flag registry."""
-    with _lock:
-        return dict(_FLAG_DEFINITIONS)
-
-
-def get_flag_defaults() -> dict[str, bool]:
-    """Return {flag_name: default_value} for all registered flags."""
-    with _lock:
-        return {name: f.default for name, f in _FLAG_DEFINITIONS.items()}
 
 
 def is_enabled(name: str) -> bool:

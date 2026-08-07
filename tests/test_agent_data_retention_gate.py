@@ -12,46 +12,29 @@ from server.infrastructure import data_retention as dr
 
 
 def _cfg(models):
-    return {"chat_models": models}
-
-
-def _cfg_normalized():
-    """The PRODUCTION shape: load_config() flattens chat_models to {key: id}
-    and parks the rich dicts under chat_model_meta. The gate originally read
-    only chat_models looking for dicts — dead code against this shape — so this
-    fixture is the regression test that would have caught it."""
-    return {
-        "chat_models": {"fable": "fab-id", "opus": "opus-id"},
-        "chat_model_meta": {
-            "fable": {"requires_data_retention": True, "label": "Fable 5"},
-            "opus": {"label": "Opus"},
-        },
-    }
+    """Build the PRODUCTION shape load_config() actually returns: chat_models
+    flattened to {key: id}, with per-model metadata parked under
+    chat_model_meta. ``models`` is the pre-normalization convenience shape
+    ({key: {"id": ..., **meta}}) test bodies write."""
+    chat_models = {key: m["id"] for key, m in models.items()}
+    chat_model_meta = {key: {k: v for k, v in m.items() if k != "id"} for key, m in models.items()}
+    return {"chat_models": chat_models, "chat_model_meta": chat_model_meta}
 
 
 def test_model_requires_data_retention_normalized_shape(monkeypatch):
     monkeypatch.setattr(
-        "server.infrastructure.data_retention.load_config", lambda: _cfg_normalized()
-    )
-    assert dr.model_requires_data_retention("fab-id") is True
-    assert dr.model_requires_data_retention("opus-id") is False
-    assert dr.model_requires_data_retention("unknown") is False
-    assert dr.model_requires_data_retention("") is False
-
-
-def test_model_requires_data_retention_rich_shape(monkeypatch):
-    # Defensive: an un-normalized rich map still matches.
-    monkeypatch.setattr(
         "server.infrastructure.data_retention.load_config",
         lambda: _cfg(
             {
-                "fable": {"id": "fab-id", "requires_data_retention": True},
-                "opus": {"id": "opus-id"},
+                "fable": {"id": "fab-id", "requires_data_retention": True, "label": "Fable 5"},
+                "opus": {"id": "opus-id", "label": "Opus"},
             }
         ),
     )
     assert dr.model_requires_data_retention("fab-id") is True
     assert dr.model_requires_data_retention("opus-id") is False
+    assert dr.model_requires_data_retention("unknown") is False
+    assert dr.model_requires_data_retention("") is False
 
 
 def test_block_reason_when_mode_none(monkeypatch):

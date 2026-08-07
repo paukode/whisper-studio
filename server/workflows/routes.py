@@ -47,11 +47,6 @@ def _default_model():
         return "sonnet", ""
 
 
-@router.get("/runs")
-async def list_runs(session_id: str = ""):
-    return {"runs": manager.list_runs(session_id or None)}
-
-
 @router.get("/runs/{run_id}")
 async def get_run(run_id: str):
     run = manager.get_run(run_id)
@@ -154,19 +149,6 @@ async def run_events(run_id: str, request: Request):
 @router.get("/saved")
 async def list_saved():
     return {"saved": store.list_scripts()}
-
-
-@router.get("/saved/{name}")
-async def get_saved(name: str):
-    loaded = store.load_script(name)
-    if not loaded:
-        return JSONResponse({"error": "not found"}, status_code=404)
-    return {
-        "name": name,
-        "script": loaded["script"],
-        "meta": loaded["meta"],
-        "trusted": loaded["trusted"],
-    }
 
 
 @router.post("/saved/{name}/approve")

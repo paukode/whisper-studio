@@ -13,11 +13,9 @@ Chat-model routing is independent of this (a model's own ``provider`` marker +
 the mode-aware visibility filter below decide that), so this module covers only
 the four index/RAG capabilities.
 
-Phase note: the per-capability resolution is the single source of truth the
-embedder/reranker/NER factories will read. Until the Bedrock backends are wired
-in, callers may still run the on-device implementation regardless of mode; the
-per-index backend stamp records what ACTUALLY ran, so a later mode flip queues a
-rebuild only where the stamp differs.
+The per-capability resolution here is the single source of truth the
+embedder/reranker/NER factories read. The per-index backend stamp records what
+ACTUALLY ran, so a mode flip queues a rebuild only where the stamp differs.
 """
 
 from __future__ import annotations

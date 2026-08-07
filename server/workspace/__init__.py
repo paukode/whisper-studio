@@ -45,39 +45,24 @@ from .commands import (  # noqa: E402,F401
 # the executor-bridge `execute_ws_open_folder` into the package namespace
 # because chat.py and tool_router.py call it directly.
 from .executors import (  # noqa: E402,F401
-    _WORKTREES,
     _is_read_only_command,
     _normalize_quotes,
     execute_ws_open_folder,
 )
-
-# --- Layer 3: filesystem helpers ---------------------------------------
-from .filesystem import (  # noqa: E402,F401
-    _ws_list_dir,
-    _ws_search_files,
-)
 from .paths import (  # noqa: E402,F401
-    _BLOCKED_PATH_PREFIXES,
-    _WS_BINARY_EXTS,
-    _WS_IGNORED_DIRS,
-    _WS_IMAGE_EXTS,
     DATA_DIR,
     RECENT_WORKSPACES_PATH,
     WORKSPACE_BACKUPS,
     WORKSPACE_CONFIG_PATH,
     _atomic_write_text,
     _normalize_lf,
-    _resolve_path,
-    _strip_trailing_ws,
     _ws_validate_path,
 )
 
 # --- Layer 2: workspace state (depends on paths) -----------------------
 from .state import (  # noqa: E402,F401
     _check_writable,
-    _workspace_prompt_payload,
     connect_workspace,
-    get_workspace_mode,
     get_workspace_path,
     is_plan_mode,
     load_recent_workspaces,

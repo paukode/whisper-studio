@@ -90,31 +90,3 @@ def delete_file(ws_path: str, path: str) -> None:
     finally:
         conn.close()
     _invalidate(ws_path)
-
-
-def set_file_relations(ws_path: str, path: str, rels: list) -> None:
-    """Replace the typed relations extracted from one file. ``rels`` is a list of
-    ``(source, target, type)`` or ``(source, target, type, score)`` entity-name
-    tuples — ``score`` is the LLM's 1–5 confidence/strength (default 3.0).
-    Idempotent per file."""
-    conn = _connect(ws_path)
-    try:
-        cur = conn.cursor()
-        cur.execute("BEGIN")
-        cur.execute("DELETE FROM relations WHERE path=?", (path,))
-        for r in rels:
-            s, t, ty = r[0], r[1], r[2]
-            try:
-                score = float(r[3]) if len(r) > 3 and r[3] is not None else 3.0
-            except (TypeError, ValueError):
-                score = 3.0
-            if not (s and t and ty) or s == t:
-                continue
-            cur.execute(
-                "INSERT OR IGNORE INTO relations(source, target, type, path, score) "
-                "VALUES (?,?,?,?,?)",
-                (s, t, ty, path, score),
-            )
-        conn.commit()
-    finally:
-        conn.close()

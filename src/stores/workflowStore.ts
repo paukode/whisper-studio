@@ -33,9 +33,7 @@ export interface LiveActivity {
 interface WorkflowState {
   runs: Record<string, WorkflowRun>;
   activity: Record<string, LiveActivity>;
-  order: string[]; // run_ids, newest first
   upsertRun: (run: WorkflowRun) => void;
-  setRuns: (runs: WorkflowRun[]) => void;
   applyEvent: (runId: string, ev: Record<string, unknown>) => void;
 }
 
@@ -129,16 +127,9 @@ function foldAgentEvent(
 export const useWorkflowStore = create<WorkflowState>((set) => ({
   runs: {},
   activity: {},
-  order: [],
   upsertRun: (run) =>
     set((s) => ({
       runs: { ...s.runs, [run.run_id]: run },
-      order: s.order.includes(run.run_id) ? s.order : [run.run_id, ...s.order],
-    })),
-  setRuns: (runs) =>
-    set(() => ({
-      runs: Object.fromEntries(runs.map((r) => [r.run_id, r])),
-      order: runs.map((r) => r.run_id),
     })),
   applyEvent: (runId, ev) =>
     set((s) => {
@@ -147,13 +138,9 @@ export const useWorkflowStore = create<WorkflowState>((set) => ({
       if (type === 'snapshot') {
         const run = ev.run as WorkflowRun | undefined;
         if (run) {
-          return {
-            runs: { ...s.runs, [run.run_id]: run },
-            order: s.order.includes(run.run_id) ? s.order : [run.run_id, ...s.order],
-            activity: s.activity,
-          };
+          return { runs: { ...s.runs, [run.run_id]: run }, activity: s.activity };
         }
-        return { runs: s.runs, order: s.order, activity: s.activity };
+        return { runs: s.runs, activity: s.activity };
       }
 
       const prev = s.activity[runId] ?? EMPTY_ACT;
@@ -179,7 +166,6 @@ export const useWorkflowStore = create<WorkflowState>((set) => ({
           : existing;
         return {
           runs: mergedRun ? { ...s.runs, [runId]: mergedRun } : s.runs,
-          order: s.order,
           activity: { ...s.activity, [runId]: next },
         };
       }
@@ -199,6 +185,6 @@ export const useWorkflowStore = create<WorkflowState>((set) => ({
         next.agentOrder = folded.agentOrder;
       }
 
-      return { runs: s.runs, order: s.order, activity: { ...s.activity, [runId]: next } };
+      return { runs: s.runs, activity: { ...s.activity, [runId]: next } };
     }),
 }));

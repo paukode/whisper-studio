@@ -41,7 +41,6 @@ from . import routes  # noqa: E402,F401
 # --- Layer 3: budgeting (no internal deps) -----------------------------
 from .budget import (  # noqa: E402,F401
     TOOL_RESULT_BUDGET_BYTES,
-    _budget_tool_result,
     make_budget_tool_result,
 )
 

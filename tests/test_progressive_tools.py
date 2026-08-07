@@ -13,7 +13,6 @@ from server.chat.tool_partition import CORE_TOOLS, core_names, partition_pool
 def clean_activation():
     with tool_activation._lock:
         tool_activation._activated.clear()
-        tool_activation._versions.clear()
     yield
 
 
@@ -82,14 +81,12 @@ def test_core_names_config_overrides(monkeypatch):
 # ── activation registry ──────────────────────────────────────────────────────
 
 
-def test_activation_order_version_and_dedup():
+def test_activation_order_and_dedup():
     assert tool_activation.activate("s1", ["a", "b"]) == ["a", "b"]
-    assert tool_activation.version("s1") == 1
     assert tool_activation.activate("s1", ["b", "c"]) == ["c"]
     assert tool_activation.get_ordered("s1") == ["a", "b", "c"]
-    assert tool_activation.version("s1") == 2
     assert tool_activation.activate("s1", ["a"]) == []
-    assert tool_activation.version("s1") == 2  # no change, no bump
+    assert tool_activation.get_ordered("s1") == ["a", "b", "c"]  # no change
 
 
 def test_activate_from_history_first_seen_order():
@@ -169,13 +166,13 @@ def test_legacy_pool_byte_identical_and_partitioned_smaller():
 
 
 def test_progressive_pool_includes_activated():
-    from server.chat.tool_pool import assemble_full_catalog, assemble_tool_pool
+    from server.chat.tool_pool import assemble_full_catalog, assemble_partitioned_pool
 
     full_names = {t["name"] for t in assemble_full_catalog(ws_connected=False)}
     target = next(iter(full_names - core_names()))
     tool_activation.activate("s-act", [target])
-    pool = assemble_tool_pool(ws_connected=False, session_id="s-act", progressive=True)
-    assert target in {t["name"] for t in pool}
+    advertised, _deferred, _core = assemble_partitioned_pool(ws_connected=False, session_id="s-act")
+    assert target in {t["name"] for t in advertised}
 
 
 # ── tool_search ──────────────────────────────────────────────────────────────

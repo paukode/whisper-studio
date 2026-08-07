@@ -975,6 +975,25 @@ def test_entity_descriptions_persist_and_surface(monkeypatch):
     assert centre["type"] == "entity" and centre["description"] == "A mathematician."
 
 
+def _insert_legacy_relation(ws, path, source, target, rel_type, score=3.0):
+    """Simulate a pre-relations2 index.db: write the legacy name-keyed table
+    directly (the pipeline no longer writes it)."""
+    import sqlite3 as _sql
+
+    from server.index.store.base import _invalidate
+
+    c = _sql.connect(store.db_path(ws))
+    try:
+        c.execute(
+            "INSERT OR IGNORE INTO relations(source, target, type, path, score) VALUES (?,?,?,?,?)",
+            (source, target, rel_type, path, score),
+        )
+        c.commit()
+    finally:
+        c.close()
+    _invalidate(ws)
+
+
 def test_scored_relation_surfaces_on_edge():
     """A relation's score persists and surfaces on the entity-pivot typed edge."""
     ws = "/fake/ws-relscore"
@@ -993,7 +1012,7 @@ def test_scored_relation_surfaces_on_edge():
                 }
             ],
         )
-    store.set_file_relations(ws, "a.md", [("Acme", "Bob", "employs", 4.0)])
+    _insert_legacy_relation(ws, "a.md", "Acme", "Bob", "employs", 4.0)
     edges = [e for e in store.entity_graph(ws, "acme")["edges"] if e.get("relation") == "employs"]
     assert edges and edges[0]["score"] == 4.0
 
@@ -1017,7 +1036,7 @@ def test_entity_graph_includes_typed_relations():
             }
         ],
     )
-    store.set_file_relations(ws, "a.md", [("Bob", "Acme", "works_at")])
+    _insert_legacy_relation(ws, "a.md", "Bob", "Acme", "works_at")
     g = store.entity_graph(ws, "bob")
     ent_nodes = {n["name"] for n in g["nodes"] if n.get("type") == "entity"}
     assert {"Bob", "Acme"} <= ent_nodes
@@ -1037,7 +1056,7 @@ def test_file_relations_replaced_and_deleted():
         {"hash": "h", "size": 1, "mtime": 1.0},
         [{"start_line": 1, "end_line": 1, "text": "t", "vec": _unit(1), "entities": ents}],
     )
-    store.set_file_relations(ws, "f.md", [("A", "B", "rel1")])
+    _insert_legacy_relation(ws, "f.md", "A", "B", "rel1")
 
     def relcount():
         c = _sql.connect(store.db_path(ws))
@@ -1054,7 +1073,8 @@ def test_file_relations_replaced_and_deleted():
         [{"start_line": 1, "end_line": 1, "text": "t2", "vec": _unit(2), "entities": ents}],
     )
     assert relcount() == 0
-    store.set_file_relations(ws, "f.md", [("A", "B", "rel1"), ("B", "A", "rel2")])
+    _insert_legacy_relation(ws, "f.md", "A", "B", "rel1")
+    _insert_legacy_relation(ws, "f.md", "B", "A", "rel2")
     assert relcount() == 2
     store.delete_file(ws, "f.md")  # deleting the file drops them
     assert relcount() == 0
@@ -1812,11 +1832,6 @@ def test_tool_ref_link_format():
     assert (
         _ref("04_Career/My CV.pdf", 1, 5, "/ws")
         == "[04_Career/My CV.pdf:1-5](#wsfile=/ws/04_Career/My%20CV.pdf&L=1-5)"
-    )
-    # Legacy call without a workspace root keeps a relative href (still parseable).
-    assert (
-        _ref("04_Career/My CV.pdf", 1, 5)
-        == "[04_Career/My CV.pdf:1-5](#wsfile=04_Career/My%20CV.pdf&L=1-5)"
     )
 
 

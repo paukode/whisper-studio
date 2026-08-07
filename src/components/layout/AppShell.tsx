@@ -3,7 +3,6 @@ import { useUIStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
-import { useToolStore } from '@/stores/toolStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useDockStore } from '@/stores/dockStore';
 import { useDockLiveWatcher } from '@/hooks/useDockLiveWatcher';
@@ -132,10 +131,6 @@ const AppShell: React.FC = () => {
         }
       }
     })();
-    // Populate the global tool store so the chat autocomplete has
-    // skills + MCP tools available for filtering.
-    void useToolStore.getState().fetchSkills();
-    void useToolStore.getState().fetchMCPTools();
   }, [loadConfig, loadModels, loadDataRetention, loadSkills, loadMCP, loadSessions]);
 
   // Check if workspace was already connected (page refresh recovery)

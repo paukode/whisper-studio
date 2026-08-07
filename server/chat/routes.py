@@ -1474,8 +1474,6 @@ async def chat_endpoint(request: Request):
         session_denials=session_denials,
         session_approvals=session_approvals,
         session_config=session_config,
-        attachment_texts=attachment_texts,
-        user_text=user_text,
         advertised_count=len(_advertised0),
         deferred_count=len(_deferred0),
         deferred_tokens_est=_deferred_tokens_est,

@@ -4,7 +4,7 @@ Split out of the former single ``server/index/store.py`` (1156 lines) into
 focused submodules that share one connection factory and one in-process cache:
 
     base      — _connect, caches, schema, write-gen, vector primitives
-    files     — get_manifest / replace_file / touch_file / delete_file / relations
+    files     — get_manifest / replace_file / touch_file / delete_file
     entities  — description context + node dedup (lexical + semantic)
     meta      — set/get meta, has_index, stats, remove_index, list_indexed_workspaces
     search    — vector search (cached), GraphRAG hop, chunk fetch, FTS keyword
@@ -28,22 +28,14 @@ from .base import (  # noqa: F401
     _MAX_NODE_FANOUT,
     _active_dim,
     _bump_write_gen,
-    _cached_derived,
-    _clean_orphan_nodes,
     _connect,
-    _delete_file_rows,
     _fetch_chunks,
     _invalidate,
-    _matrix,
-    _vec_loadable,
-    _vec_search,
 )
 from .entities import (  # noqa: F401
     _embed_names,
     _merge_group,
     _norm_entity,
-    _semantic_merge,
-    _uf_find,
     dedupe_entities,
     entities_for_description,
     set_node_descriptions,
@@ -52,7 +44,6 @@ from .files import (  # noqa: F401
     delete_file,
     get_manifest,
     replace_file,
-    set_file_relations,
     touch_file,
 )
 

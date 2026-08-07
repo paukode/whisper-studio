@@ -325,12 +325,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
       );
       setBrowserCurrent(data.current);
       setBrowserParent(data.parent ?? null);
-      // Prefer the rich entries shape; fall back to flat names from older
-      // backends (mtime 0 renders without a date).
-      const entries = Array.isArray(data.entries)
-        ? data.entries
-        : (Array.isArray(data.dirs) ? data.dirs : []).map((name) => ({ name, mtime: 0 }));
-      setBrowserEntries(entries);
+      setBrowserEntries(Array.isArray(data.entries) ? data.entries : []);
       setBrowserFiles(Array.isArray(data.files) ? data.files : []);
       setBrowserFileTotal(
         typeof data.file_total === 'number' ? data.file_total : (data.files?.length ?? 0),

@@ -4,9 +4,7 @@ export type ModelMode = 'cloud' | 'hybrid' | 'local';
 export type IndexCapability = 'embed' | 'rerank' | 'ner' | 'index_llm';
 
 export interface AppConfig {
-  bedrockRegion: string;
   chatModels: Record<string, string>;
-  defaultChatModel: string;
   effortLevel: string;
   briefMode: boolean;
   permissionMode: string;

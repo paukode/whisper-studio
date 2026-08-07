@@ -69,24 +69,6 @@ export function renderEventCards(
     });
   }
 
-  // ── stop_hook_feedback (a Stop hook kept the turn going) ──
-  if (parsed.stop_hook_feedback) {
-    const sf = parsed.stop_hook_feedback;
-    store().addMessage({
-      role: 'assistant',
-      content: '',
-      timestamp: new Date().toISOString(),
-      toolUse: [
-        {
-          toolId: 'stop_hook_feedback',
-          toolName: 'stop_hook_feedback',
-          input: { reason: sf.reason, attempt: sf.attempt } as Record<string, unknown>,
-          status: 'error',
-        },
-      ],
-    });
-  }
-
   // ── goal_eval (completion gate's verdict) ──
   if (parsed.goal_eval) {
     const ge = parsed.goal_eval;

@@ -9,7 +9,7 @@ function apply(ev: Record<string, unknown>) {
 
 describe('workflowStore.applyEvent', () => {
   beforeEach(() => {
-    useWorkflowStore.setState({ runs: {}, activity: {}, order: [] });
+    useWorkflowStore.setState({ runs: {}, activity: {} });
   });
 
   it('folds per-agent detail events into a per-agent report keyed by agent_id', () => {

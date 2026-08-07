@@ -22,6 +22,13 @@ from server.chat.attachment_context import (
 )
 
 
+def _purge_session_attachments(session_id: str) -> None:
+    """Test cleanup: drop the rows this test bound to its session (production
+    session deletion does this inline in sessions._delete_session_sync)."""
+    with attachment_store._get_conn() as conn:
+        conn.execute("DELETE FROM attachments WHERE session_id = ?", (session_id,))
+
+
 def _stash_doc(text="alpha beta gamma", filename="doc.md", outline=""):
     aid = str(uuid.uuid4())
     hot_cache[aid] = {
@@ -161,7 +168,7 @@ def test_ensure_reinjects_evicted_session_attachment():
     assert "[Files attached earlier in this session]" in out[0]["content"]
     assert "[File: evicted.md]\nlost content" in out[0]["content"]
     assert out[1] == messages[0]
-    attachment_store.delete_session_attachments(sid)
+    _purge_session_attachments(sid)
 
 
 def test_ensure_never_duplicates_present_attachment():
@@ -172,7 +179,7 @@ def test_ensure_never_duplicates_present_attachment():
 
     messages = [rebuild_history_message({"role": "user", "content": "q", "attachmentIds": [aid]})]
     assert ensure_attachments_present(messages, sid) == messages
-    attachment_store.delete_session_attachments(sid)
+    _purge_session_attachments(sid)
 
 
 def test_ensure_detects_images_in_content_blocks():
@@ -188,7 +195,7 @@ def test_ensure_detects_images_in_content_blocks():
     out = ensure_attachments_present(evicted, sid)
     assert len(out) == 2
     assert out[0]["content"][0]["type"] == "image"
-    attachment_store.delete_session_attachments(sid)
+    _purge_session_attachments(sid)
 
 
 def test_ensure_noop_without_session_or_bindings():

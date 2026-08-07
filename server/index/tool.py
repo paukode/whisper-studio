@@ -28,13 +28,13 @@ def _snippet(text: str) -> str:
     return s[:_SNIPPET_CHARS] + ("…" if len(s) > _SNIPPET_CHARS else "")
 
 
-def _ref(rel_path: str, start: int, end: int, ws: str = "") -> str:
+def _ref(rel_path: str, start: int, end: int, ws: str) -> str:
     """A markdown source link the chat UI turns into an open-in-side-panel action.
 
     Display text stays workspace-relative; the ``#wsfile=`` href is absolute (so
     it resolves regardless of the connected workspace) and carries the cited line
     range, which the client scrolls to. Cmd/Ctrl-click reveals in Finder."""
-    href = os.path.normpath(os.path.join(ws, rel_path)) if ws else rel_path
+    href = os.path.normpath(os.path.join(ws, rel_path))
     return citation_link(rel_path, start, end, href)
 
 

@@ -7,9 +7,10 @@ target-version = "py310"
 # Match the frontend's Prettier printWidth (.prettierrc) for cross-language parity.
 line-length = 100
 
-# skills/ holds vendored third-party skill scripts, not first-party app code.
-# venv, data, storage, models, node_modules and static/dist are gitignored and
-# excluded automatically (ruff respects .gitignore).
+# skills/ holds prompt skills (markdown) plus any user-imported skill scripts
+# (server/skills_import.py drops third-party folders here) — not first-party
+# app code. venv, data, storage, models, node_modules and static/dist are
+# gitignored and excluded automatically (ruff respects .gitignore).
 extend-exclude = ["skills"]
 
 [tool.ruff.lint]

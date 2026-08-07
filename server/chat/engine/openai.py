@@ -31,7 +31,6 @@ from server.infrastructure.errors import PromptTooLongError
 
 from . import windows
 from .events import (
-    ErrorKind,
     Heartbeat,
     Incomplete,
     RoundError,
@@ -181,7 +180,7 @@ class OpenAIResponsesAdapter:
             if _is_prompt_too_long(msg):
                 raise PromptTooLongError(msg) from e
             log.warning("OpenAI responses.create failed (%s): %s", self.model_key, e)
-            yield RoundError(kind=ErrorKind.FATAL, message=_friendly_error(e))
+            yield RoundError(message=_friendly_error(e))
             return
 
         loop = asyncio.get_event_loop()
@@ -233,7 +232,7 @@ class OpenAIResponsesAdapter:
                     msg = str(payload)
                     if _is_prompt_too_long(msg):
                         raise PromptTooLongError(msg) from payload
-                    yield RoundError(kind=ErrorKind.TRANSIENT, message=_friendly_error(payload))
+                    yield RoundError(message=_friendly_error(payload))
                     return
 
                 ev = payload
@@ -317,7 +316,7 @@ class OpenAIResponsesAdapter:
                     msg = str(getattr(err, "message", err))
                     if _is_prompt_too_long(msg):
                         raise PromptTooLongError(msg)
-                    yield RoundError(kind=ErrorKind.FATAL, message=msg)
+                    yield RoundError(message=msg)
                     return
                 elif et == "response.incomplete":
                     yield Incomplete()

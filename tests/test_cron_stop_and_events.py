@@ -129,10 +129,6 @@ def test_chat_drainer_skips_cron_progress():
     assert '"cron_progress",' in src
 
 
-def _payload(client, job_id):
-    return json.loads(client.get(f"/api/cron/{job_id}").content)
-
-
 def test_stop_endpoint_reaches_deleted_but_running_job(cron_client):
     """A job deleted while its run is in flight must still be stoppable:
     the live registry is consulted before the jobs file."""

@@ -18,7 +18,7 @@ import { suppressEmbeddedPointerEvents } from '@/utils/dragGuards';
  * rect and calls onChange. No DOM mutation happens here.
  *
  * Min sizes are enforced by CSS min-width / min-height on the inner panels;
- * the ratio is additionally clamped to [min, max] to keep state sane.
+ * the ratio is additionally clamped to [MIN_RATIO, MAX_RATIO] to keep state sane.
  */
 export interface SplitterProps {
   /** 'horizontal' = panes laid out side-by-side (drag X). 'vertical' = stacked (drag Y). */
@@ -27,16 +27,8 @@ export interface SplitterProps {
   ratio: number;
   /** Called continuously while dragging with the clamped new ratio. */
   onChange: (r: number) => void;
-  /** Min allowed ratio (default 0.1). */
-  min?: number;
-  /** Max allowed ratio (default 0.9). */
-  max?: number;
-  /** Optional className for the outer container. */
-  className?: string;
   /** Optional inline style merged onto the outer container. */
   style?: React.CSSProperties;
-  /** Optional id passed to the outer container. */
-  id?: string;
   /** Optional additional class on the drag handle for theming. */
   handleClassName?: string;
   /** Minimum size in px for slot 1 (width for horizontal, height for vertical). Default 200. */
@@ -49,15 +41,15 @@ export interface SplitterProps {
 
 const HANDLE_THICKNESS_PX = 6;
 
+// Ratio clamp bounds; px min-sizes tighten these further per drag.
+const MIN_RATIO = 0.1;
+const MAX_RATIO = 0.9;
+
 export const Splitter: React.FC<SplitterProps> = ({
   direction,
   ratio,
   onChange,
-  min = 0.1,
-  max = 0.9,
-  className,
   style,
-  id,
   handleClassName,
   firstMinPx = 200,
   secondMinPx = 280,
@@ -102,8 +94,8 @@ export const Splitter: React.FC<SplitterProps> = ({
       const adjusted = Math.max(0, Math.min(usable, pos - HANDLE_THICKNESS_PX / 2));
       // Translate px min-sizes into ratio bounds so the cursor can't drag past
       // a point where either pane would render smaller than its allowed min.
-      const dynMin = Math.max(min, firstMinPx / usable);
-      const dynMax = Math.min(max, 1 - secondMinPx / usable);
+      const dynMin = Math.max(MIN_RATIO, firstMinPx / usable);
+      const dynMax = Math.min(MAX_RATIO, 1 - secondMinPx / usable);
       const lo = Math.min(dynMin, dynMax);
       const hi = Math.max(dynMin, dynMax);
       const next = Math.max(lo, Math.min(hi, adjusted / usable));
@@ -126,11 +118,11 @@ export const Splitter: React.FC<SplitterProps> = ({
       // store update) would otherwise leave the embed guard on forever.
       onUp();
     };
-  }, [direction, min, max, firstMinPx, secondMinPx]);
+  }, [direction, firstMinPx, secondMinPx]);
 
   // Integerize grow values for stable diffing and to avoid float noise in
   // the inline style string across renders.
-  const safeRatio = Math.max(min, Math.min(max, ratio));
+  const safeRatio = Math.max(MIN_RATIO, Math.min(MAX_RATIO, ratio));
   const grow1 = Math.max(1, Math.round(safeRatio * 1000));
   const grow2 = Math.max(1, 1000 - grow1);
 
@@ -153,8 +145,6 @@ export const Splitter: React.FC<SplitterProps> = ({
   return (
     <div
       ref={containerRef}
-      id={id}
-      className={className}
       style={{
         display: 'flex',
         flexDirection: isHorizontal ? 'row' : 'column',

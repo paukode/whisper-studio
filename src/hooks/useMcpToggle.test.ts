@@ -6,11 +6,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 // fetchMcpServers calls get() from the api client — mock it.
 const { getMock } = vi.hoisted(() => ({ getMock: vi.fn() }));
 vi.mock('@/api/client', () => ({ get: getMock, put: vi.fn(), post: vi.fn(), del: vi.fn() }));
-// The hook dynamically imports the tool store after a successful PATCH.
-const { fetchMCPToolsMock } = vi.hoisted(() => ({ fetchMCPToolsMock: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('@/stores/toolStore', () => ({
-  useToolStore: { getState: () => ({ fetchMCPTools: fetchMCPToolsMock }) },
-}));
 
 import { fetchMcpServers, useMcpToggle, type MCPServerInfo } from './useMcpToggle';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -64,6 +59,7 @@ describe('useMcpToggle', () => {
   let fetchSpy: ReturnType<typeof vi.fn>;
   let addToastSpy: ReturnType<typeof vi.fn>;
   let loadMCPSpy: ReturnType<typeof vi.fn>;
+  let loadSkillsSpy: ReturnType<typeof vi.fn>;
 
   const wrapper = ({ children }: { children: React.ReactNode }) =>
     React.createElement(QueryClientProvider, { client: queryClient }, children);
@@ -75,6 +71,7 @@ describe('useMcpToggle', () => {
     useSettingsStore.setState({
       mcpServers: [{ name: 'echo', status: 'connected', enabled: true }] as never,
       loadMCP: loadMCPSpy as never,
+      loadSkills: loadSkillsSpy as never,
     });
   };
 
@@ -85,7 +82,7 @@ describe('useMcpToggle', () => {
     addToastSpy = vi.fn().mockReturnValue('toast-id');
     useUIStore.setState({ addToast: addToastSpy as never });
     loadMCPSpy = vi.fn().mockResolvedValue(undefined);
-    fetchMCPToolsMock.mockClear();
+    loadSkillsSpy = vi.fn().mockResolvedValue(undefined);
     seed();
   });
 
@@ -113,7 +110,7 @@ describe('useMcpToggle', () => {
     expect(useSettingsStore.getState().mcpServers[0].enabled).toBe(false);
     expect(loadMCPSpy).toHaveBeenCalled();
     // Tool list refetched so @-mentions drop the server's tools immediately.
-    expect(fetchMCPToolsMock).toHaveBeenCalled();
+    expect(loadSkillsSpy).toHaveBeenCalled();
     expect(addToastSpy).not.toHaveBeenCalled();
   });
 

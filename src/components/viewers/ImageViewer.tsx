@@ -3,7 +3,6 @@ import { rawFileUrl } from '@/api/workspace';
 
 export interface ImageViewerProps {
   filePath: string;
-  alt?: string;
   /** Override the raw-bytes URL (e.g. sourceFileRawUrl for indexed-folder
    *  citations). Defaults to the workspace-relative rawFileUrl. */
   rawUrl?: string;
@@ -14,7 +13,7 @@ export interface ImageViewerProps {
  *   + / - / 1:1 buttons and wheel-scroll zoom.
  *   Uses width percentage sizing (not CSS transform) to avoid scroll area issues.
  */
-export const ImageViewer: React.FC<ImageViewerProps> = ({ filePath, alt, rawUrl }) => {
+export const ImageViewer: React.FC<ImageViewerProps> = ({ filePath, rawUrl }) => {
   const [hasError, setHasError] = useState(false);
   const [zoom, setZoom] = useState(1);
   const fileName = filePath.split('/').pop() ?? filePath;
@@ -68,7 +67,7 @@ export const ImageViewer: React.FC<ImageViewerProps> = ({ filePath, alt, rawUrl 
       <div ref={scrollRef} style={{ flex: 1, overflow: 'auto', display: 'flex', padding: 16 }}>
         <img
           src={imageUrl}
-          alt={alt ?? fileName}
+          alt={fileName}
           className="ws-image-preview"
           style={{
             margin: 'auto',

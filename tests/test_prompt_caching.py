@@ -11,7 +11,7 @@ import pytest
 
 from server.chat.caching import cache_ttl_for, cached_tools_and_system
 from server.costs.tracker import estimate_cost
-from server.infrastructure.feature_flags import get_flag_defaults
+from server.infrastructure.feature_flags import get_flag
 from server.prompts import PromptLayer, build_system_prompt, build_system_prompt_split, get_registry
 
 # ── The correctness gate: split is byte-identical to the legacy string ────────
@@ -137,4 +137,5 @@ def test_prompt_caching_flag_registered_on_by_default():
     # Enabled by default (commit "caching: enable Bedrock prompt caching by
     # default"). Bedrock caches tool defs + static system to cut multi-turn
     # input-token cost; users can still toggle it off in the feature-flags tab.
-    assert get_flag_defaults().get("prompt_caching") is True
+    flag = get_flag("prompt_caching")
+    assert flag is not None and flag.default is True

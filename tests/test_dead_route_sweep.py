@@ -9,9 +9,9 @@ from fastapi.testclient import TestClient
 
 
 def test_flags_registry_holds_only_live_flags():
-    from server.infrastructure.feature_flags import get_all_flags, router
+    from server.infrastructure.feature_flags import get_flag_states, router
 
-    names = set(get_all_flags().keys())
+    names = set(get_flag_states().keys())
     removed = {
         "brief_mode",
         "auto_mode",
@@ -52,7 +52,7 @@ def test_deleted_routes_stay_deleted_and_kept_routes_remain():
     from server import workspace
     from server.cron_scheduler import router as cron_router
     from server.git.router import router as git_router
-    from server.infrastructure.hooks import router as hooks_router
+    from server.hooks.routes import router as hooks_router
     from server.infrastructure.sessions import router as sessions_router
     from server.security.permissions import router as perm_router
     from server.workspace import routes as _  # noqa: F401 — populates the shared router

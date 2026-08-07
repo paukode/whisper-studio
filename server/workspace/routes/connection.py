@@ -51,7 +51,7 @@ async def ws_connect(request: Request):
 async def ws_disconnect():
     config = load_workspace_config()
     config["path"] = None
-    config["mode"] = "chat"
+    config.pop("mode", None)  # retired field; scrub it from old configs
     save_workspace_config(config)
     WORKSPACE_BACKUPS.clear()
     from server.git.watcher import git_watcher
@@ -66,4 +66,4 @@ async def ws_status():
     ws = config.get("path")
     if not ws or not os.path.isdir(ws):
         return {"connected": False}
-    return {"connected": True, "path": ws, "mode": config.get("mode", "chat")}
+    return {"connected": True, "path": ws}

@@ -192,8 +192,7 @@ ENTITY_LABELS = _CODE_LABELS + [lbl for lbl in _BUSINESS_LABELS if lbl not in _C
 # Polish text, where span confidences run lower); junk is removed downstream by
 # salience rather than by a blunt global threshold. Per-label acceptance floors
 # then trim the lowest-confidence spans of the labels most prone to false
-# positives. GLINER_THRESHOLD is kept for back-compat / operator override.
-GLINER_THRESHOLD = float(os.environ.get("WHISPER_INDEX_GLINER_THRESHOLD", 0.5))
+# positives.
 GLINER_CALL_THRESHOLD = float(os.environ.get("WHISPER_INDEX_GLINER_CALL_THRESHOLD", 0.35))
 LABEL_THRESHOLDS = {
     "person": 0.55,

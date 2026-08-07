@@ -57,9 +57,7 @@ describe('SessionListResponseSchema', () => {
 describe('AppConfigResponseSchema', () => {
   it('parses a full config response', () => {
     const input = {
-      bedrock_region: 'us-west-2',
       chat_models: { opus: 'Claude Opus' },
-      default_chat_model: 'opus',
       effort_level: 'high',
       brief_mode: true,
       permission_mode: 'plan',
@@ -67,7 +65,6 @@ describe('AppConfigResponseSchema', () => {
     const result = AppConfigResponseSchema.safeParse(input);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.bedrock_region).toBe('us-west-2');
       expect(result.data.brief_mode).toBe(true);
     }
   });
@@ -76,7 +73,6 @@ describe('AppConfigResponseSchema', () => {
     const result = AppConfigResponseSchema.safeParse({});
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.bedrock_region).toBe('us-east-1');
       expect(result.data.effort_level).toBe('high');
       expect(result.data.brief_mode).toBe(false);
     }

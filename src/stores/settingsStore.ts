@@ -127,7 +127,6 @@ interface MCPEntry {
 
 export interface SettingsState {
   config: AppConfig;
-  isLoading: boolean;
 
   /* Models */
   models: ModelEntry[];
@@ -192,9 +191,7 @@ export interface SettingsState {
 }
 
 const defaultConfig: AppConfig = {
-  bedrockRegion: 'us-east-1',
   chatModels: {},
-  defaultChatModel: '',
   effortLevel: DEFAULT_EFFORT,
   briefMode: false,
   permissionMode: 'default',
@@ -220,7 +217,6 @@ export function pickActiveModel(
 
 export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   config: { ...defaultConfig },
-  isLoading: false,
   models: [],
   // Hydrate from the persisted choice so there's no flash of the wrong model
   // before loadModels resolves; loadModels then validates it against the list.
@@ -238,15 +234,12 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   localContextWindow: readLocalContextWindow(),
 
   loadConfig: async () => {
-    set({ isLoading: true });
     try {
       const data = await get<Record<string, unknown>>('/api/config', { schema: AppConfigResponseSchema });
       const parsed = AppConfigResponseSchema.safeParse(data);
       const d = parsed.success ? parsed.data : data as Record<string, unknown>;
       const config: AppConfig = {
-        bedrockRegion: String(d.bedrock_region || 'us-east-1'),
         chatModels: (d.chat_models as Record<string, string>) ?? {},
-        defaultChatModel: String(d.default_chat_model ?? ''),
         effortLevel: normalizeEffort(d.effort_level as string | undefined),
         briefMode: Boolean(d.brief_mode ?? false),
         permissionMode: String(d.permission_mode ?? 'default'),
@@ -294,8 +287,6 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
         message: 'Failed to load config',
         duration: 4000,
       });
-    } finally {
-      set({ isLoading: false });
     }
   },
 

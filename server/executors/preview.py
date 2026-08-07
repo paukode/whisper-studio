@@ -5,7 +5,7 @@ server/tool_router.py's async preview branch (server/preview/router.py),
 which intercepts before the generic EXECUTORS fallback, because Playwright's
 async API must stay bound to the single running event loop rather than a
 thread-pool worker. @register_executor is used here purely so
-is_read_only()/is_concurrent_safe() (server/executors/__init__.py) have
+EXECUTOR_META / is_concurrent_safe() (server/executors/__init__.py) carry
 the right per-tool classification for permission-mode and batch-concurrency
 decisions. If one of these stubs is ever actually called, it means the
 tool_router.py branch was bypassed — a routing regression, not normal use.

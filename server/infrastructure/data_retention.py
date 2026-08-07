@@ -117,8 +117,7 @@ def model_requires_data_retention(model_id: str) -> bool:
     be read by joining the two. (The original implementation iterated
     chat_models looking for dicts and therefore never matched anything in
     production: the gate was dead code and Fable agents still hit the raw
-    ValidationException.) The dict branch is kept for callers/tests that pass
-    an un-normalized rich map.
+    ValidationException.)
     """
     if not model_id:
         return False
@@ -129,13 +128,11 @@ def model_requires_data_retention(model_id: str) -> bool:
     except Exception:
         return False
     for key, m in models.items():
-        # Normalized shape: value is the Bedrock id string; flag lives in meta.
+        # load_config always normalizes chat_models to id strings; the
+        # requires_data_retention flag lives in chat_model_meta.
         if isinstance(m, str) and m == model_id:
             mm = meta.get(key)
             return bool(isinstance(mm, dict) and mm.get("requires_data_retention"))
-        # Un-normalized rich shape (defensive).
-        if isinstance(m, dict) and m.get("id") == model_id:
-            return bool(m.get("requires_data_retention"))
     return False
 
 

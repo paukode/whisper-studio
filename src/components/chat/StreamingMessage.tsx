@@ -214,7 +214,7 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
 
         {/* Response text */}
         {content && (
-          <StreamingMarkdown content={content} isStreaming={isStreaming} stepFormat />
+          <StreamingMarkdown content={content} isStreaming={isStreaming} />
         )}
 
         {/* Live activity footer — keeps motion visible during the quiet

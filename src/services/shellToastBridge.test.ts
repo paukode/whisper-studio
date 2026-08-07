@@ -17,7 +17,7 @@ import { registerShellToastBridge } from './shellToastBridge';
 describe('shell toast bridge', () => {
   beforeEach(() => {
     persistMock.mockClear();
-    useUIStore.getState().clearToasts();
+    useUIStore.setState({ toasts: [], toastQueue: [] });
     delete window.__whisperShellToast;
   });
 

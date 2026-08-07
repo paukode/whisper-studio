@@ -73,9 +73,24 @@ class FakeProc:
 
 @pytest.fixture()
 def home(tmp_path, monkeypatch):
-    """Throwaway app home: models/ under tmp, clean job state, no network."""
+    """Throwaway app home: models/ under tmp, clean job state, no network.
+
+    The local-chat catalog is config-driven and a fresh checkout ships no
+    local models, so seed the registry's config layer with the two entries
+    these tests exercise — the tests must not depend on the developer's
+    gitignored config.json."""
     monkeypatch.setenv("WHISPER_HOME", str(tmp_path))
     (tmp_path / "models").mkdir()
+    from server.local import registry
+
+    monkeypatch.setattr(
+        registry,
+        "_config_local_models",
+        lambda: {
+            key: dict(registry.RECOMMENDED_LOCAL_MODELS[key])
+            for key in ("local_gemma", "local_gemma_coder")
+        },
+    )
     monkeypatch.setattr(sizes, "fetch_size", lambda repo_id, filename=None: None)
     monkeypatch.setattr(sizes, "prefetch", lambda entries: None)
     manager._jobs.clear()

@@ -96,20 +96,6 @@ async def create_cron_job(request: Request):
     return result
 
 
-@router.get("/{job_id}")
-async def get_cron_job(job_id: str):
-    job = next((j for j in load_cron_jobs() if j.get("id") == job_id), None)
-    if not job:
-        return Response(
-            content=json.dumps({"error": "not found"}),
-            status_code=404,
-            media_type="application/json",
-        )
-    from server import cron_history
-
-    return {"job": _job_public(job), "runs": cron_history.list_runs(job_id, 50)}
-
-
 @router.get("/{job_id}/history")
 async def get_cron_history(job_id: str, limit: int = 50):
     from server import cron_history

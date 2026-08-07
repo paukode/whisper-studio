@@ -90,7 +90,9 @@ async def route_tool(
 
     # --- Background-task tools (unified registry; distinct from the todo
     # tracker's task_* family above) ---
-    if tool_name in ("task_status", "task_output", "task_cancel"):
+    from server.tasks.tools import BACKGROUND_TASK_TOOL_NAMES
+
+    if tool_name in BACKGROUND_TASK_TOOL_NAMES:
         from server.tasks.tools import execute_background_task_tool
 
         output = await _submit(
