@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sqlite3
 
 import numpy as np
 
@@ -208,35 +207,18 @@ def entity_graph_impl(ws_path: str, name: str, label: str = "", max_files: int =
         lab = label or (nr[1] if nr else "")
         desc = (nr[2] if nr else None) or ""
         # Typed relations touching this entity (empty unless that feature ran).
-        # Prefer relations2 — the node-id-keyed table that entity dedup repoints,
-        # joined to ``nodes`` for the display names — so the pivot view matches the
-        # deduped graph. The legacy name-keyed ``relations`` table can desync from
-        # dedup (its rows are not repointed), so it is used ONLY as a fallback for
-        # pre-migration DBs where relations2 is absent or entirely empty. The check
-        # is "is relations2 populated at all", not "for this entity": an entity with
-        # no relations2 rows genuinely has none, and must NOT resurface stale legacy
-        # rows. MAX(strength) collapses the same relation seen across files.
-        try:
-            has_rel2 = conn.execute("SELECT 1 FROM relations2 LIMIT 1").fetchone() is not None
-        except sqlite3.OperationalError:
-            has_rel2 = False  # pre-migration DB without the relations2 table
-        if has_rel2:
-            rel_rows = conn.execute(
-                "SELECT sn.name, tn.name, r.predicate, MAX(r.strength) "
-                "FROM relations2 r "
-                "JOIN nodes sn ON sn.id = r.src_node_id "
-                "JOIN nodes tn ON tn.id = r.tgt_node_id "
-                "WHERE LOWER(sn.name)=? OR LOWER(tn.name)=? "
-                "GROUP BY sn.name, tn.name, r.predicate",
-                (name.lower(), name.lower()),
-            ).fetchall()
-        else:
-            rel_rows = conn.execute(
-                "SELECT source, target, type, MAX(score) FROM relations "
-                "WHERE LOWER(source)=? OR LOWER(target)=? "
-                "GROUP BY source, target, type",
-                (name.lower(), name.lower()),
-            ).fetchall()
+        # relations2 is node-id-keyed, so entity dedup repoints its rows and the
+        # pivot view always matches the deduped graph. MAX(strength) collapses
+        # the same relation seen across files.
+        rel_rows = conn.execute(
+            "SELECT sn.name, tn.name, r.predicate, MAX(r.strength) "
+            "FROM relations2 r "
+            "JOIN nodes sn ON sn.id = r.src_node_id "
+            "JOIN nodes tn ON tn.id = r.tgt_node_id "
+            "WHERE LOWER(sn.name)=? OR LOWER(tn.name)=? "
+            "GROUP BY sn.name, tn.name, r.predicate",
+            (name.lower(), name.lower()),
+        ).fetchall()
     finally:
         conn.close()
     ent_id = f"entity::{disp}"

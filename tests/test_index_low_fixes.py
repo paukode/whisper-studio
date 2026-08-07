@@ -2,9 +2,8 @@
 
 (2) pipeline stamps the ACTUAL embed model per backend in meta (a Cohere-built
     index must not be labelled with the Qwen3 model id).
-(1) entity_graph reads the deduped, node-id-keyed ``relations2`` table (joined to
-    ``nodes`` for display names), falling back to the legacy name-keyed
-    ``relations`` table only for pre-migration DBs where relations2 is empty.
+(1) entity_graph reads the deduped, node-id-keyed ``relations2`` table (joined
+    to ``nodes`` for display names).
 
 The embedder and GLiNER are stubbed so no model loads (fast, offline).
 """
@@ -87,7 +86,7 @@ def test_qwen3_index_stamps_qwen3_embed_model(tmp_path, monkeypatch):
     assert meta["embed_model"] == config.EMBED_MODEL
 
 
-# ── Fix (1): entity_graph prefers relations2, legacy only as fallback ────────
+# ── Fix (1): entity_graph reads relations2 ───────────────────────────────────
 
 
 def _seed_two_entities(ws: str) -> None:
@@ -135,62 +134,3 @@ def test_entity_graph_reads_relations2_when_present(monkeypatch):
     assert rels[0]["score"] == 4.0
     ent_names = {n["name"] for n in g["nodes"] if n.get("type") == "entity"}
     assert {"Bob", "Acme"} <= ent_names
-
-
-def _insert_legacy_relation(ws, path, source, target, rel_type, score):
-    """Simulate a pre-relations2 index.db: write the legacy name-keyed table
-    directly (the pipeline no longer writes it)."""
-    from server.index.store.base import _connect, _invalidate
-
-    conn = _connect(ws)
-    try:
-        conn.execute(
-            "INSERT OR IGNORE INTO relations(source, target, type, path, score) VALUES (?,?,?,?,?)",
-            (source, target, rel_type, path, score),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    _invalidate(ws)
-
-
-def test_entity_graph_falls_back_to_legacy_relations(monkeypatch):
-    """Pre-migration DB: only the legacy name-keyed table has rows; it is used."""
-    _pin_backend(monkeypatch, "qwen3")
-    ws = "/fake/ws-legacy-graph"
-    _seed_two_entities(ws)
-    _insert_legacy_relation(ws, "a.md", "Bob", "Acme", "works_at", 3.0)
-    g = store.entity_graph(ws, "bob")
-    rels = [e for e in g["edges"] if e.get("relation") == "works_at"]
-    assert rels, "legacy relation should surface when relations2 is empty"
-    assert rels[0]["score"] == 3.0
-
-
-def test_entity_graph_relations2_masks_stale_legacy(monkeypatch):
-    """The desync bug: when relations2 is populated, a stale legacy row for the
-    SAME entity must NOT resurface. Only relations2 is read."""
-    _pin_backend(monkeypatch, "qwen3")
-    ws = "/fake/ws-mask-graph"
-    _seed_two_entities(ws)
-    # Legacy table carries a stale predicate that dedup never cleaned...
-    _insert_legacy_relation(ws, "a.md", "Bob", "Acme", "STALE_LEGACY", 5.0)
-    # ...while relations2 (the deduped truth) says works_at.
-    relstore.set_file_relations_v2(
-        ws,
-        "a.md",
-        [
-            {
-                "source": "Bob",
-                "target": "Acme",
-                "predicate": "works_at",
-                "strength": 4.0,
-                "evidence": "e",
-                "start_line": 1,
-                "end_line": 1,
-            }
-        ],
-    )
-    g = store.entity_graph(ws, "bob")
-    rel_types = {e.get("relation") for e in g["edges"] if "relation" in e}
-    assert "works_at" in rel_types
-    assert "STALE_LEGACY" not in rel_types
