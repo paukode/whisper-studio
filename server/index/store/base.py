@@ -129,17 +129,7 @@ CREATE TABLE IF NOT EXISTS node_chunks (
 );
 CREATE INDEX IF NOT EXISTS idx_nc_chunk ON node_chunks(chunk_id);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
--- Typed entity↔entity relations (optional; only populated when the typed-
--- relations feature is enabled). Keyed by entity NAME (not node id) so dedupe
--- can't dangle them; scoped by source file ``path`` so re-indexing one file
--- replaces just its relations.
-CREATE TABLE IF NOT EXISTS relations (
-    source TEXT, target TEXT, type TEXT, path TEXT,
-    PRIMARY KEY(source, target, type, path)
-);
-CREATE INDEX IF NOT EXISTS idx_rel_source ON relations(source);
-CREATE INDEX IF NOT EXISTS idx_rel_target ON relations(target);
--- Typed relations v2: keyed by NODE ID (survives entity merges via repointing),
+-- Typed entity↔entity relations: keyed by NODE ID (survives entity merges via repointing),
 -- carrying verbatim evidence + line provenance so a fact is citable, with
 -- evidence_hash collapsing the same fact re-stated across duplicate files.
 CREATE TABLE IF NOT EXISTS relations2 (
@@ -169,7 +159,6 @@ def _connect(ws_path: str) -> sqlite3.Connection:
     # older index DBs upgrade in place without a rebuild.
     for _stmt in (
         "ALTER TABLE nodes ADD COLUMN description TEXT",
-        "ALTER TABLE relations ADD COLUMN score REAL",
         # Entity salience layer (statistical noise defense). salience NULL means
         # "not yet computed" — readers COALESCE it to a neutral 0.5 so old index
         # DBs behave as before until the next build backfills. canonical_id NULL
@@ -222,7 +211,6 @@ def _delete_file_rows(cur: sqlite3.Cursor, path: str) -> None:
         cur.execute(f"DELETE FROM node_chunks WHERE chunk_id IN ({qmarks})", ids)
         cur.execute("DELETE FROM chunks WHERE path=?", (path,))
     # Typed relations are scoped to their source file, so drop them too.
-    cur.execute("DELETE FROM relations WHERE path=?", (path,))
     cur.execute("DELETE FROM relations2 WHERE path=?", (path,))
 
 

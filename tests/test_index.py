@@ -975,23 +975,15 @@ def test_entity_descriptions_persist_and_surface(monkeypatch):
     assert centre["type"] == "entity" and centre["description"] == "A mathematician."
 
 
-def _insert_legacy_relation(ws, path, source, target, rel_type, score=3.0):
-    """Simulate a pre-relations2 index.db: write the legacy name-keyed table
-    directly (the pipeline no longer writes it)."""
-    import sqlite3 as _sql
+def _set_relation(ws, path, source, target, rel_type, score=3.0):
+    """Write one typed relation via the real relations2 write path."""
+    from server.index import relstore
 
-    from server.index.store.base import _invalidate
-
-    c = _sql.connect(store.db_path(ws))
-    try:
-        c.execute(
-            "INSERT OR IGNORE INTO relations(source, target, type, path, score) VALUES (?,?,?,?,?)",
-            (source, target, rel_type, path, score),
-        )
-        c.commit()
-    finally:
-        c.close()
-    _invalidate(ws)
+    relstore.set_file_relations_v2(
+        ws,
+        path,
+        [{"source": source, "target": target, "predicate": rel_type, "strength": score}],
+    )
 
 
 def test_scored_relation_surfaces_on_edge():
@@ -1012,7 +1004,7 @@ def test_scored_relation_surfaces_on_edge():
                 }
             ],
         )
-    _insert_legacy_relation(ws, "a.md", "Acme", "Bob", "employs", 4.0)
+    _set_relation(ws, "a.md", "Acme", "Bob", "employs", 4.0)
     edges = [e for e in store.entity_graph(ws, "acme")["edges"] if e.get("relation") == "employs"]
     assert edges and edges[0]["score"] == 4.0
 
@@ -1036,7 +1028,7 @@ def test_entity_graph_includes_typed_relations():
             }
         ],
     )
-    _insert_legacy_relation(ws, "a.md", "Bob", "Acme", "works_at")
+    _set_relation(ws, "a.md", "Bob", "Acme", "works_at")
     g = store.entity_graph(ws, "bob")
     ent_nodes = {n["name"] for n in g["nodes"] if n.get("type") == "entity"}
     assert {"Bob", "Acme"} <= ent_nodes
@@ -1048,6 +1040,8 @@ def test_file_relations_replaced_and_deleted():
     and deleting the file drops them entirely."""
     import sqlite3 as _sql
 
+    from server.index import relstore
+
     ws = "/fake/ws-rel2"
     ents = [{"name": "A", "label": "x"}, {"name": "B", "label": "x"}]
     store.replace_file(
@@ -1056,12 +1050,14 @@ def test_file_relations_replaced_and_deleted():
         {"hash": "h", "size": 1, "mtime": 1.0},
         [{"start_line": 1, "end_line": 1, "text": "t", "vec": _unit(1), "entities": ents}],
     )
-    _insert_legacy_relation(ws, "f.md", "A", "B", "rel1")
+    relstore.set_file_relations_v2(
+        ws, "f.md", [{"source": "A", "target": "B", "predicate": "rel1"}]
+    )
 
     def relcount():
         c = _sql.connect(store.db_path(ws))
         try:
-            return c.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
+            return c.execute("SELECT COUNT(*) FROM relations2").fetchone()[0]
         finally:
             c.close()
 
@@ -1073,8 +1069,14 @@ def test_file_relations_replaced_and_deleted():
         [{"start_line": 1, "end_line": 1, "text": "t2", "vec": _unit(2), "entities": ents}],
     )
     assert relcount() == 0
-    _insert_legacy_relation(ws, "f.md", "A", "B", "rel1")
-    _insert_legacy_relation(ws, "f.md", "B", "A", "rel2")
+    relstore.set_file_relations_v2(
+        ws,
+        "f.md",
+        [
+            {"source": "A", "target": "B", "predicate": "rel1"},
+            {"source": "B", "target": "A", "predicate": "rel2"},
+        ],
+    )
     assert relcount() == 2
     store.delete_file(ws, "f.md")  # deleting the file drops them
     assert relcount() == 0
