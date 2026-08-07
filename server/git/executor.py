@@ -18,7 +18,6 @@ from server.git.core import (
 from server.git.diff import fetch_single_file_git_diff
 from server.git.filesystem import is_safe_ref_name
 from server.git.security import contains_secret_files
-from server.git.tracking import track_git_operations
 from server.workspace import get_workspace_path
 
 # --- Helpers ---
@@ -367,7 +366,6 @@ def do_git_add_commit(payload: dict) -> tuple[bool, str]:
     cwd, err = _get_git_cwd()
     if err:
         return False, err
-    session_id = payload.get("session_id", "")
     files = payload.get("files", []) or []
     message = payload.get("message", "")
     stage_all = payload.get("all", False)
@@ -400,7 +398,6 @@ def do_git_add_commit(payload: dict) -> tuple[bool, str]:
     stdout, stderr, rc = _git(["commit", "-m", message], cwd)
     if rc != 0:
         return False, f"commit failed: {stderr.strip()}"
-    track_git_operations(f'git commit -m "{message}"', stdout + stderr, session_id)
     branch = get_branch(cwd)
     return True, f"Committed on branch {branch}: {message}\n\n{stdout.strip()}"
 
@@ -434,7 +431,6 @@ def do_git_push(payload: dict) -> tuple[bool, str]:
     cwd, err = _get_git_cwd()
     if err:
         return False, err
-    session_id = payload.get("session_id", "")
     branch = payload.get("branch") or get_branch(cwd)
     set_upstream = payload.get("set_upstream", True)
     args = ["push"]
@@ -445,7 +441,6 @@ def do_git_push(payload: dict) -> tuple[bool, str]:
     stdout, stderr, rc = _git(args, cwd, timeout=30)
     if rc != 0:
         return False, f"push failed: {stderr.strip()}"
-    track_git_operations(f"git push -u origin {branch}", stdout + stderr, session_id)
     return True, f"Pushed to origin/{branch}\n\n{(stdout + stderr).strip()}"
 
 
@@ -508,7 +503,6 @@ def do_git_push_pr(payload: dict) -> tuple[bool, str]:
     cwd, err = _get_git_cwd()
     if err:
         return False, err
-    session_id = payload.get("session_id", "")
     title = payload.get("title", "")
     body = payload.get("body", "")
     base = payload.get("base")
@@ -526,7 +520,6 @@ def do_git_push_pr(payload: dict) -> tuple[bool, str]:
     push_output = (stdout + stderr).strip()
     if rc != 0:
         return False, f"push failed: {stderr.strip()}"
-    track_git_operations(f"git push -u origin {branch}", stdout + stderr, session_id)
 
     gh_args = ["gh", "pr", "create", "--title", title]
     if body:
@@ -559,9 +552,6 @@ def do_git_push_pr(payload: dict) -> tuple[bool, str]:
             f"But PR creation failed: {result.stderr.strip()}\n"
             f"You can create the PR manually or ensure 'gh' CLI is installed and authenticated."
         )
-    track_git_operations(
-        f'gh pr create --title "{title}"', result.stdout + result.stderr, session_id
-    )
     return True, f"Pushed to origin/{branch} and created PR:\n\n{pr_output}"
 
 
