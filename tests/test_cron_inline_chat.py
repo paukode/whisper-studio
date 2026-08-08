@@ -65,7 +65,7 @@ def test_enforce_cron_event_cap_drops_oldest():
         + [{"role": "cron_event", "i": i} for i in range(S.MAX_CRON_EVENTS_PER_SESSION + 10)]
         + [{"role": "assistant", "content": "a"}]
     )
-    capped = S._enforce_cron_event_cap(history)
+    capped = S._enforce_backend_row_caps(history)
     cron_rows = [m for m in capped if m.get("role") == "cron_event"]
     assert len(cron_rows) == S.MAX_CRON_EVENTS_PER_SESSION
     # Oldest dropped; newest kept.
@@ -78,7 +78,7 @@ def test_enforce_cron_event_cap_drops_oldest():
 
 def test_enforce_cron_event_cap_noop_under_limit():
     history = [{"role": "user", "content": "q"}, {"role": "cron_event", "i": 0}]
-    assert S._enforce_cron_event_cap(history) == history
+    assert S._enforce_backend_row_caps(history) == history
 
 
 def test_append_message_concurrent_no_clobber(temp_sessions_db):

@@ -37,8 +37,23 @@ export interface TaskEventPayload {
   timestamp: string;
 }
 
+/** Inline cross-session message payload. Persisted as a ChatMessage row with
+ *  role='session_message' (UI-only in storage, same contract as cron_event
+ *  and task_event) so it shows up both live (via SSE) and on session resume.
+ *  Unlike those two, this one IS meant to reach the model: the backend's
+ *  visible_chat_history() relabels it as a user turn instead of dropping it,
+ *  naming the sender inline, rather than passing 'session_message' through
+ *  as a literal (invalid) API role. Emitted by
+ *  server/agent_tools/cross_session.py via send_session_message. */
+export interface SessionMessagePayload {
+  from_session_id: string;
+  from_title: string;
+  content: string;
+  timestamp: string;
+}
+
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'cron_event' | 'task_event';
+  role: 'user' | 'assistant' | 'cron_event' | 'task_event' | 'session_message';
   content: string;
   timestamp: string;
   /** Populated when role === 'cron_event'. Renders as a CronEventCard
@@ -46,6 +61,9 @@ export interface ChatMessage {
   cronEvent?: CronEventPayload;
   /** Populated when role === 'task_event'. Renders as a BackgroundTaskCard. */
   taskEvent?: TaskEventPayload;
+  /** Populated when role === 'session_message'. Renders as a
+   *  SessionMessageCard. */
+  sessionMessage?: SessionMessagePayload;
   attachments?: Attachment[];
   attachmentNames?: string[];
   /** Backend attachment ids for this message. Shipped with every turn's
@@ -312,6 +330,10 @@ export interface SSEEventData {
    *  ChatMessage with role='cron_event' so it appears live and is
    *  already in chat_history for replay on session resume. */
   cron_event?: CronEventPayload;
+  /** Cross-session message emitted by server/agent_tools/cross_session.py's
+   *  send_session_message, delivered via the same emit_session_event path as
+   *  cron_event. Dispatched as a fresh ChatMessage with role='session_message'. */
+  session_message?: SessionMessagePayload;
 
   // Tool result truncation (oversize tool outputs persisted to .whisper_cache/)
   tool_result_truncated?: {

@@ -11,6 +11,7 @@ import { ActivityRow } from '@/components/chat/ActivityRow';
 import { TeamReportCard } from '@/components/chat/TeamReportCard';
 import { BackgroundTaskCard } from '@/components/chat/BackgroundTaskCard';
 import { CronEventCard } from '@/components/chat/CronEventCard';
+import { SessionMessageCard } from '@/components/chat/SessionMessageCard';
 import { WorkflowPreviewCard } from '@/components/chat/WorkflowPreviewCard';
 import { WorkflowRunCard } from '@/components/chat/WorkflowRunCard';
 import { CIStatusCard } from '@/components/chat/CIStatusCard';
@@ -164,6 +165,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
   if (message.role === 'task_event') {
     if (message.taskEvent) {
       return <BackgroundTaskCard event={message.taskEvent} />;
+    }
+    return null;
+  }
+
+  // Cross-session message rows — a text message another session sent this
+  // one via send_session_message. Same UI-only-in-storage contract as
+  // cron/task events (the backend relabels it as a user turn before the
+  // model sees it, see visible_chat_history).
+  if (message.role === 'session_message') {
+    if (message.sessionMessage) {
+      return <SessionMessageCard message={message.sessionMessage} />;
     }
     return null;
   }

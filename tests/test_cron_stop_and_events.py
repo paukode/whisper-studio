@@ -129,6 +129,75 @@ def test_chat_drainer_skips_cron_progress():
     assert '"cron_progress",' in src
 
 
+def test_chat_drainer_skips_session_message():
+    """A cross-session message has its own delivery path (the long-lived
+    session stream below) — the in-turn drainer must skip it too, or a
+    message sent to a session with an active turn in flight gets mis-wrapped
+    as a bogus team_progress frame instead of rendering as a chat card."""
+    import inspect
+
+    import server.chat.engine.runner as runner
+
+    src = inspect.getsource(runner)
+    assert '"session_message",' in src
+
+
+def test_session_events_yields_session_message():
+    """The long-lived session SSE actually forwards a queued session_message
+    event as `{session_message: <payload>}` — this is the ONLY delivery path
+    for a message sent to a session with no turn in flight, so this exercises
+    the real generator rather than just checking the source mentions it."""
+    import asyncio
+
+    from server.agents.event_bus import event_bus
+    from server.infrastructure import sessions_routes as SR
+
+    class _FakeRequest:
+        async def is_disconnected(self):
+            return False
+
+    async def _run_with_patched_bus():
+        queue: asyncio.Queue = asyncio.Queue()
+        queue.put_nowait(
+            {
+                "type": "session_message",
+                "sessionMessage": {
+                    "from_session_id": "a",
+                    "from_title": "Session A",
+                    "content": "the news is done",
+                    "timestamp": "2026-08-08T00:00:00Z",
+                },
+            }
+        )
+        orig_subscribe = event_bus.subscribe
+        orig_unsubscribe = event_bus.unsubscribe
+        event_bus.subscribe = lambda sid: queue
+        event_bus.unsubscribe = lambda sid, q: None
+        try:
+            response = await SR.session_events("s1", _FakeRequest())
+            chunk = await response.body_iterator.__anext__()
+        finally:
+            event_bus.subscribe = orig_subscribe
+            event_bus.unsubscribe = orig_unsubscribe
+        return chunk
+
+    chunk = asyncio.run(_run_with_patched_bus())
+    assert "session_message" in chunk
+    assert "the news is done" in chunk
+
+
+def test_session_events_forwards_session_message():
+    """Source-level parity check, matching the style of the cron_progress
+    test above: the branch and payload key exist in the route source."""
+    import inspect
+
+    from server.infrastructure import sessions_routes as SR
+
+    src = inspect.getsource(SR.session_events)
+    assert '"session_message"' in src
+    assert "sessionMessage" in src
+
+
 def test_stop_endpoint_reaches_deleted_but_running_job(cron_client):
     """A job deleted while its run is in flight must still be stoppable:
     the live registry is consulted before the jobs file."""

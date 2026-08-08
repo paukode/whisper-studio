@@ -2101,6 +2101,74 @@ input.segment-speaker {
     margin: 10px 0;
 }
 
+/* ─── Session message card ────────────────────────────────────────────────
+ * Inline rendering for a ChatMessage with role='session_message': a text
+ * message another chat session sent this one via send_session_message.
+ * Reuses the same accent-bordered "background-delivered card" language as
+ * cron-event-fired, so cross-session messages read as part of the same
+ * family of background-originated cards. */
+
+.session-message {
+    margin: 6px 0;
+    display: block;
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--bg-elevated);
+    font-size: var(--fs-small);
+    flex-shrink: 0;
+}
+.session-message-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    min-height: 40px;
+    box-sizing: border-box;
+    font-weight: 600;
+    color: var(--text-primary);
+    background: var(--bg-elevated);
+    user-select: none;
+    flex-wrap: wrap;
+}
+.session-message-icon { font-size: var(--fs-content); flex-shrink: 0; }
+.session-message-title strong {
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--accent);
+}
+.session-message-jump {
+    font-size: var(--fs-caption);
+    font-weight: 600;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.session-message-jump:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.session-message-meta {
+    margin-left: auto;
+    font-weight: 400;
+    color: var(--text-muted);
+    font-size: var(--fs-caption);
+}
+.session-message-body {
+    padding: 12px 14px 14px;
+    background: var(--bg-primary);
+    border-top: 1px solid var(--border);
+    font-size: var(--fs-body);
+    line-height: 1.55;
+    color: var(--text-primary);
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+.session-message-body :first-child { margin-top: 0; }
+.session-message-body :last-child { margin-bottom: 0; }
+
 /* Fetch URL badge */
 
 /* Skill autocomplete popup */

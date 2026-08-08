@@ -24,6 +24,7 @@ import { useCronUnreadStore } from './cronUnreadStore';
 import type {
   ChatMessage,
   CronEventPayload,
+  SessionMessagePayload,
   TaskEventPayload,
   TeamProgressEvent,
 } from '@/types/chat';
@@ -245,6 +246,7 @@ function openEventStream(sid: string, entry: RuntimeEntry): void {
       cron_event?: CronEventPayload;
       memory_event?: MemoryEventPayload;
       task_event?: TaskEventPayload;
+      session_message?: SessionMessagePayload;
       team_progress?: TeamProgressEvent;
       ci_progress?: Record<string, unknown>;
       ci_result?: Record<string, unknown>;
@@ -254,6 +256,7 @@ function openEventStream(sid: string, entry: RuntimeEntry): void {
         cron_event?: CronEventPayload;
         memory_event?: MemoryEventPayload;
         task_event?: TaskEventPayload;
+        session_message?: SessionMessagePayload;
         team_progress?: TeamProgressEvent;
         ci_progress?: Record<string, unknown>;
         ci_result?: Record<string, unknown>;
@@ -334,6 +337,17 @@ function openEventStream(sid: string, entry: RuntimeEntry): void {
           });
         }
       }
+      return;
+    }
+    if (parsed?.session_message) {
+      const payload = parsed.session_message;
+      const msg: ChatMessage = {
+        role: 'session_message',
+        content: '',
+        timestamp: payload.timestamp ?? new Date().toISOString(),
+        sessionMessage: payload,
+      };
+      entry.chat.getState().addMessage(msg);
     }
   };
   // Browser auto-reconnects EventSource on transient errors; missed events are
