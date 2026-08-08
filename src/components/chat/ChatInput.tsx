@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useActiveChatStore, getActiveChatStore } from '@/stores/sessionRuntimes';
+import { useSessionStore } from '@/stores/sessionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useChatStream } from '@/hooks/useChatStream';
@@ -234,6 +235,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
 
   const wsConnected = useUIStore((s) => s.wsConnected);
 
+  // Other sessions mentionable via @<slug> for the autocomplete popup. The
+  // actual context injection is resolved server-side (cross_session.py);
+  // this is purely the typeahead list, so a light client-side filter is fine.
+  const allSessions = useSessionStore((s) => s.sessions);
+  const mentionableSessions = useMemo(
+    () => allSessions.filter((s) => s.id !== sessionId && !s.archived),
+    [allSessions, sessionId],
+  );
+
   // Index search picker (point D): which indexed workspaces this session
   // searches. Default = all indexed when no workspace is connected; empty (off)
   // when one is. Sent as selected_search_indexes per turn.
@@ -360,6 +370,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     slashCommands: SLASH_COMMANDS,
     skills,
     mcpServers,
+    sessions: mentionableSessions,
     onAttachWorkspaceFile: attachWorkspaceFileAsChip,
   });
 
@@ -479,7 +490,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // submenu autocomplete already inserts ``@skills:<name>``;
       // the bare ``@<name>`` form is supported as a convenience for
       // users who type it without the helper.
-      const { forceSkill, messageToSend, displayText } = parseSkillMention(trimmed);
+      const { forceSkill, messageToSend, displayText } = parseSkillMention(
+        trimmed,
+        skills.map((s) => s.name),
+      );
 
       // Delegate to the unified SSE stream handler
       await chatStream.send(messageToSend, {
@@ -490,7 +504,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- inputTextRef/stopMic are stable (refs/callback from useDictationInput)
-    [handleSlashCommand, closeAc, attachments, chatStream, waitForUploads, attachmentsRef, setAttachments, approvePlan],
+    [handleSlashCommand, closeAc, attachments, chatStream, waitForUploads, attachmentsRef, setAttachments, approvePlan, skills],
   );
 
   const handleSubmit = useCallback(

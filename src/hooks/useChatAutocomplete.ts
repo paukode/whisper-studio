@@ -5,9 +5,11 @@ import {
   matchColonSubmenu,
   optLabel,
   optValue,
+  slugifySessionTitle,
   SUPPORTED_ATTACHMENT_SUMMARY,
   type ACItem,
   type McpServerLike,
+  type SessionLike,
   type SkillLike,
   type SlashCommand,
 } from '@/components/chat/chatInputConstants';
@@ -21,6 +23,9 @@ export interface UseChatAutocompleteOptions {
   slashCommands: SlashCommand[];
   skills: SkillLike[];
   mcpServers: McpServerLike[];
+  /** Other chat sessions, mentionable as a bare `@<slug>` to pull that
+   *  session's recent conversation in as context (resolved server-side). */
+  sessions: SessionLike[];
   /** Called when a file is chosen from the `/file:` submenu — attaches it to
    *  the composer as a chip (background upload) instead of inserting text. */
   onAttachWorkspaceFile?: (path: string) => void;
@@ -56,6 +61,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
     slashCommands: SLASH_COMMANDS,
     skills,
     mcpServers,
+    sessions,
     onAttachWorkspaceFile,
   } = opts;
 
@@ -547,7 +553,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
         }
       }
 
-      // Root @ mention: show categories + matching skills
+      // Root @ mention: show categories + matching skills + matching sessions
       setAcSubCmd(null);
       const rootItems = AT_ROOT_ENTRIES.filter((e) => !query || e.name.toLowerCase().includes(query));
       const skillItems: ACItem[] = skills
@@ -558,7 +564,21 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
           desc: s.description ?? 'Skill',
           insert: '@' + s.name,
         }));
-      const allItems = [...rootItems, ...skillItems];
+      // Matched by slug OR title so typing either the readable title or the
+      // token that'll actually get inserted both filter correctly.
+      const sessionItems: ACItem[] = sessions
+        .filter((s) => {
+          if (!query) return true;
+          const q = query.toLowerCase();
+          return s.title.toLowerCase().includes(q) || slugifySessionTitle(s.title).includes(q);
+        })
+        .map((s) => ({
+          icon: '💬',
+          name: '@' + s.title,
+          desc: "Pull this session's recent conversation in as context",
+          insert: '@' + slugifySessionTitle(s.title),
+        }));
+      const allItems = [...rootItems, ...skillItems, ...sessionItems];
       if (allItems.length > 0) {
         setAcItems(allItems);
         setAcIndex(0);
@@ -568,7 +588,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
     }
 
     closeAc();
-  }, [updateAcRect, closeAc, skills, mcpServers, searchFiles, SLASH_COMMANDS]);
+  }, [updateAcRect, closeAc, skills, mcpServers, sessions, searchFiles, SLASH_COMMANDS]);
 
   return {
     acItems,

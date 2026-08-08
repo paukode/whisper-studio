@@ -160,14 +160,25 @@ const SKILL_MENTION_RE = /^@(?:skills:)?([a-zA-Z_][\w-]*)\b\s*/;
  *  send to the model (placeholder-substituted when the mention was bare), and
  *  the text the chat bubble should display (exactly what the user typed after
  *  the mention — possibly empty). Without a mention, the message passes
- *  through untouched. */
-export function parseSkillMention(trimmed: string): {
+ *  through untouched.
+ *
+ *  `knownSkillNames` gates the bare `@<name>` form: only a name that's
+ *  actually a loaded skill gets stripped and forced. Without this check, a
+ *  leading `@my_session_b` (a session mention, resolved separately
+ *  server-side) would be misread as an attempt to force a nonexistent skill
+ *  and silently swallowed before the server ever saw it. */
+export function parseSkillMention(
+  trimmed: string,
+  knownSkillNames: string[],
+): {
   forceSkill?: string;
   messageToSend: string;
   displayText?: string;
 } {
   const m = trimmed.match(SKILL_MENTION_RE);
   if (!m || !m[1]) return { messageToSend: trimmed };
+  const known = new Set(knownSkillNames.map((n) => n.toLowerCase()));
+  if (!known.has(m[1].toLowerCase())) return { messageToSend: trimmed };
   const stripped = trimmed.slice(m[0].length).trim();
   return {
     forceSkill: m[1],
@@ -218,6 +229,21 @@ export interface SkillLike {
 export interface McpServerLike {
   name: string;
   status: string;
+}
+
+export interface SessionLike {
+  id: string;
+  title: string;
+}
+
+/** Turn a session title into the bare `@<slug>` token typed/inserted for a
+ *  mention — lowercase, non-alphanumeric runs collapsed to one underscore,
+ *  no leading/trailing underscore. Must match server/agent_tools/
+ *  cross_session.py's `_session_context_slug` exactly: the frontend only
+ *  needs this to build the insert text, the backend independently slugifies
+ *  every session title the same way to resolve it back. */
+export function slugifySessionTitle(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'session';
 }
 
 export interface ModelOption {

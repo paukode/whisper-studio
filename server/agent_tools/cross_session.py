@@ -11,6 +11,7 @@ it's one local server process, so the address is just the session id.
 
 import hashlib
 import json
+import re
 import threading
 import time
 
@@ -101,3 +102,92 @@ def execute_send_session_message(tool_input: dict, session_id: str) -> str:
         },
     )
     return json.dumps({"sent": True, "to": to_session_id, "to_title": target.get("title")})
+
+
+# ── @<session> mention resolution ────────────────────────────────────────
+#
+# A user typing "use @poland_news for context" is asking to PULL another
+# session's recent conversation into THIS turn, the opposite direction from
+# send_session_message's push. Resolved server-side, before the model ever
+# sees the raw text, the same one-shot inline pattern
+# server/chat/routes.py:_resolve_at_file_mentions already uses for @file: —
+# just keyed on a slugified session title instead of a workspace path.
+#
+# Only a bare @<slug> that matches a REAL, resolvable session is touched: an
+# @word matching no session (an email address, a stray "@" in prose) is left
+# completely alone, so this never corrupts ordinary text.
+
+# A mention must start the string or follow whitespace — "foo@bar" mid-word
+# is never a mention, matching how an email local part reads.
+_AT_SESSION_MARKER = re.compile(r"(?:^|(?<=\s))@([a-zA-Z_][\w-]*)")
+_AT_SESSION_CONTEXT_MAX_MESSAGES = 20
+_AT_SESSION_CONTEXT_MAX_CHARS = 20_000
+
+
+def _session_context_slug(title: str) -> str:
+    """Match src/components/chat/chatInputConstants.ts:slugifySessionTitle
+    exactly — the frontend inserts this token, this resolves it back."""
+    slug = re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
+    return slug or "session"
+
+
+def _render_session_excerpt(session_id: str, title: str) -> str:
+    from server.infrastructure.sessions import _get_conn, visible_chat_history
+    from server.infrastructure.sessions_routes import _message_text
+
+    with _get_conn() as conn:
+        row = conn.execute(
+            "SELECT chat_history FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
+    if not row:
+        return f'[Session "{title}": no longer exists]'
+    try:
+        history = json.loads(row["chat_history"]) or []
+    except (TypeError, ValueError):
+        history = []
+    turns = visible_chat_history(history)[-_AT_SESSION_CONTEXT_MAX_MESSAGES:]
+    if not turns:
+        return f'[Session "{title}": no messages yet]'
+    lines = [f"{t.get('role')}: {_message_text(t.get('content'))}" for t in turns]
+    body = "\n".join(lines)
+    if len(body) > _AT_SESSION_CONTEXT_MAX_CHARS:
+        body = body[:_AT_SESSION_CONTEXT_MAX_CHARS] + "\n... (truncated)"
+    return f'[Context from session "{title}"]\n{body}'
+
+
+def resolve_at_session_mentions(question: str, current_session_id: str) -> str:
+    """Inline every resolvable bare @<slug> mention's recent conversation.
+
+    Called unconditionally (no workspace needed, unlike @file:) from
+    server/chat/routes.py right alongside _resolve_at_file_mentions.
+    """
+    if "@" not in question:
+        return question
+
+    from server.infrastructure.sessions import CRON_INBOX_ID, _get_conn, _row_to_summary
+
+    with _get_conn() as conn:
+        rows = conn.execute("SELECT * FROM sessions ORDER BY updated_at DESC").fetchall()
+    by_slug: dict[str, dict] = {}
+    for r in rows:
+        s = _row_to_summary(r)
+        if s["id"] in (current_session_id, CRON_INBOX_ID) or s["archived"]:
+            continue
+        # Most-recently-updated session wins a slug collision (query order).
+        by_slug.setdefault(_session_context_slug(s["title"]), s)
+    if not by_slug:
+        return question
+
+    out: list[str] = []
+    pos = 0
+    for m in _AT_SESSION_MARKER.finditer(question):
+        if m.start() < pos:
+            continue
+        match = by_slug.get(m.group(1).lower())
+        out.append(question[pos : m.start()])
+        out.append(question[m.start() : m.end()])  # keep the literal @mention visible
+        if match is not None:
+            out.append("\n" + _render_session_excerpt(match["id"], match["title"]))
+        pos = m.end()
+    out.append(question[pos:])
+    return "".join(out)

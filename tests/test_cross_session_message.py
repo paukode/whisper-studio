@@ -17,8 +17,10 @@ import server.infrastructure.sessions as S
 from server.agent_tools.cross_session import (
     _is_duplicate,
     _recent_sends,
+    _session_context_slug,
     execute_list_sessions,
     execute_send_session_message,
+    resolve_at_session_mentions,
 )
 
 
@@ -227,3 +229,66 @@ def test_row_cap_applies_per_role():
     # Oldest are dropped, newest survive.
     assert session_rows[0]["n"] == 60 - S.MAX_SESSION_MESSAGES_PER_SESSION
     assert session_rows[-1]["n"] == 59
+
+
+# ── @<session> mention resolution ────────────────────────────────────────
+
+
+def test_session_context_slug_matches_frontend():
+    """Must match src/components/chat/chatInputConstants.ts:slugifySessionTitle."""
+    assert _session_context_slug("Poland News Summary") == "poland_news_summary"
+    assert _session_context_slug("  Weird!! Title... 123  ") == "weird_title_123"
+    assert _session_context_slug("") == "session"
+    assert _session_context_slug("!!!") == "session"
+
+
+def test_resolve_at_session_mentions_inlines_recent_conversation(temp_sessions_db):
+    me = str(uuid.uuid4())
+    other = str(uuid.uuid4())
+    _seed_session(me, title="Mine")
+    _seed_session(other, title="Poland News Summary")
+    with S._get_conn() as conn:
+        conn.execute(
+            "UPDATE sessions SET chat_history = ? WHERE id = ?",
+            (
+                json.dumps(
+                    [
+                        {"role": "user", "content": "what's happening in Krakow?"},
+                        {"role": "assistant", "content": "Here is the latest report."},
+                    ]
+                ),
+                other,
+            ),
+        )
+
+    result = resolve_at_session_mentions("use @poland_news_summary for additional context", me)
+    assert "@poland_news_summary" in result  # literal mention stays visible
+    assert 'Context from session "Poland News Summary"' in result
+    assert "what's happening in Krakow?" in result
+    assert "Here is the latest report." in result
+
+
+def test_resolve_at_session_mentions_leaves_unresolved_at_words_alone(temp_sessions_db):
+    me = str(uuid.uuid4())
+    _seed_session(me)
+    text = "email me at foo@example.com about @nonexistent_session please"
+    assert resolve_at_session_mentions(text, me) == text
+
+
+def test_resolve_at_session_mentions_skips_self_cron_inbox_and_archived(temp_sessions_db):
+    me = str(uuid.uuid4())
+    archived = str(uuid.uuid4())
+    _seed_session(me, title="Mine")
+    _seed_session(archived, title="Old Session", archived=1)
+    S.ensure_cron_inbox()
+
+    # @mine (self) and @scheduled_reports (cron inbox) and @old_session
+    # (archived) must all resolve to nothing — left as plain text.
+    text = "@mine @scheduled_reports @old_session"
+    result = resolve_at_session_mentions(text, me)
+    assert "Context from session" not in result
+    assert result == text
+
+
+def test_resolve_at_session_mentions_noop_without_at_sign(temp_sessions_db):
+    assert resolve_at_session_mentions("no mentions here", "sid") == "no mentions here"
