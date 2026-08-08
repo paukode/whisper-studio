@@ -575,19 +575,33 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         which the textarea scrolls as before. Keyed on `text` so programmatic
         inserts (quote-to-chat, skill mentions) resize too. Looked up by id
         rather than through textareaRef: that ref is owned by
-        useChatAutocomplete, and hook arguments must stay unmutated. ── */
+        useChatAutocomplete, and hook arguments must stay unmutated.
+
+        Deferred one frame via requestAnimationFrame: index.html loads
+        static/style.css as a render-blocking <link>, but that's a real
+        network fetch (proxied through Vite in dev) that can still be
+        in flight when this effect's mount run fires. Measuring synchronously
+        then can read the textarea before min-height/max-height/padding are
+        applied, computing a wrong (often huge) scrollHeight that gets baked
+        into the inline height — and since this effect only re-runs on `text`
+        changes, that bad value never self-corrects until the user types.
+        rAF runs just before the next paint, by which point a render-blocking
+        stylesheet is guaranteed to have resolved. ── */
   useEffect(() => {
-    const ta = document.getElementById('chatInput');
-    if (!(ta instanceof HTMLTextAreaElement)) return;
-    ta.style.height = 'auto'; // reset so deletions shrink it back
-    // +2 for the top/bottom borders: scrollHeight excludes them but the
-    // element is border-box, so without it the content gets a scrollbar one
-    // line early. Clamp to the CSS resting floor (min-height) so an empty
-    // composer never collapses below two rows — otherwise scrollHeight of the
-    // empty textarea sets a one-line height on first mount and clips the
-    // placeholder until the user focuses or types.
-    const resting = parseFloat(getComputedStyle(ta).minHeight) || 0;
-    ta.style.height = `${Math.max(ta.scrollHeight + 2, resting)}px`;
+    const raf = requestAnimationFrame(() => {
+      const ta = document.getElementById('chatInput');
+      if (!(ta instanceof HTMLTextAreaElement)) return;
+      ta.style.height = 'auto'; // reset so deletions shrink it back
+      // +2 for the top/bottom borders: scrollHeight excludes them but the
+      // element is border-box, so without it the content gets a scrollbar one
+      // line early. Clamp to the CSS resting floor (min-height) so an empty
+      // composer never collapses below two rows — otherwise scrollHeight of
+      // the empty textarea sets a one-line height on first mount and clips
+      // the placeholder until the user focuses or types.
+      const resting = parseFloat(getComputedStyle(ta).minHeight) || 0;
+      ta.style.height = `${Math.max(ta.scrollHeight + 2, resting)}px`;
+    });
+    return () => cancelAnimationFrame(raf);
   }, [text]);
 
   // Abort handler for stop button
