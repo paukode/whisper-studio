@@ -284,6 +284,45 @@ LIST_AGENTS_TOOL = {
     },
 }
 
+LIST_SESSIONS_TOOL = {
+    "name": "list_sessions",
+    "description": (
+        "List this user's other chat sessions (separate conversations/tabs, not "
+        "agents within this one) with their IDs and titles. Use this to find a "
+        "target for send_session_message."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    },
+}
+
+SEND_SESSION_MESSAGE_TOOL = {
+    "name": "send_session_message",
+    "description": (
+        "Send a short text message to another chat session (found via "
+        "list_sessions) — a finding, a status, or an answer another session is "
+        "blocked on. Never conversation history or files, just this text. The "
+        "receiving session sees it labeled with this session's name and can "
+        "reply the same way."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "to_session_id": {
+                "type": "string",
+                "description": "Target session ID, from list_sessions",
+            },
+            "content": {
+                "type": "string",
+                "description": "Message text",
+            },
+        },
+        "required": ["to_session_id", "content"],
+    },
+}
+
 TEAM_CREATE_TOOL = {
     "name": "team_create",
     "description": (
@@ -365,6 +404,8 @@ AGENT_TOOLS = [
     SPAWN_AGENT_TOOL,
     SEND_MESSAGE_TOOL,
     LIST_AGENTS_TOOL,
+    LIST_SESSIONS_TOOL,
+    SEND_SESSION_MESSAGE_TOOL,
     TEAM_CREATE_TOOL,
     TEAM_DELETE_TOOL,
 ]

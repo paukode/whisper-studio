@@ -416,6 +416,14 @@ async def session_events(session_id: str, request: Request):
                     # persists a chat row, so the outcome survives with no client.
                     payload = ev.get("ciResult") or {}
                     yield f"data: {ndjson_dumps({'ci_result': payload})}\n\n"
+                elif ev.get("type") == "session_message":
+                    # Cross-session message (server/agent_tools/cross_session.py).
+                    # This is the ONLY delivery path when the target session has
+                    # no turn in flight — the chat SSE drainer only exists while
+                    # a turn is actively running, so a message sent to an idle
+                    # (but open) session must land here or it never appears live.
+                    payload = ev.get("sessionMessage") or {}
+                    yield f"data: {ndjson_dumps({'session_message': payload})}\n\n"
                 # else: agent progress — handled by the chat SSE drainer,
                 # skip here so we don't double-render team_progress rows.
         finally:

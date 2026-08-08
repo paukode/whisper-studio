@@ -387,6 +387,18 @@ async def route_tool(
         output = execute_list_agents(session_id)
         return output, side_effects
 
+    if tool_name == "list_sessions":
+        from server.agent_tools import execute_list_sessions
+
+        output = execute_list_sessions(session_id)
+        return output, side_effects
+
+    if tool_name == "send_session_message":
+        from server.agent_tools import execute_send_session_message
+
+        output = execute_send_session_message(tool_input, session_id)
+        return output, side_effects
+
     if tool_name == "team_create":
         from server.agent_tools import execute_team_create
 

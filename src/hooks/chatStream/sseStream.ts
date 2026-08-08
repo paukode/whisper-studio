@@ -594,6 +594,22 @@ export async function readSSEStream(
             });
           }
 
+          // ── session_message (live cross-session message) ──
+          // Emitted by server/agent_tools/cross_session.py's
+          // send_session_message when another session messages this one
+          // while this session's turn is actively streaming. Same nested
+          // shape the backend persists into chat_history, so live-push and
+          // resume render identically (see SessionMessageCard).
+          if (parsed.session_message) {
+            const payload = parsed.session_message;
+            store().addMessage({
+              role: 'session_message',
+              content: '',
+              timestamp: payload.timestamp ?? new Date().toISOString(),
+              sessionMessage: payload,
+            });
+          }
+
           // ── tool_result_truncated ──
           // Backend persists oversize tool outputs to data/result_cache/ and
           // emits this event so the UI can tell the user the model saw a

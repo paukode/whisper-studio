@@ -488,6 +488,7 @@ async def run_turn(ctx: TurnContext):
                     "cron_progress",
                     "ci_progress",
                     "ci_result",
+                    "session_message",
                 ):
                     return None
                 return {"team_progress": ev}

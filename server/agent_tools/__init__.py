@@ -9,6 +9,8 @@ focused submodules, one per tool family:
     mcp_tools     — list_mcp_resources / read_mcp_resource
     search_tools  — tool_search (progressive tool activation)
     spawn         — spawn_agent / send_message / list_agents (+ cost rollup)
+    cross_session — list_sessions / send_session_message (between sessions,
+                    not within one — see spawn's send_message/list_agents)
     teams         — team_create / team_delete (+ the shared ``_teams`` store)
 
 Every name external code reads off ``server.agent_tools`` is re-exported here
@@ -18,6 +20,10 @@ in server/tool_router.py.
 """
 
 from .config_tools import _mask_secrets, execute_config_get, execute_config_set  # noqa: F401
+from .cross_session import (  # noqa: F401
+    execute_list_sessions,
+    execute_send_session_message,
+)
 from .mcp_tools import (  # noqa: F401
     execute_list_mcp_resources,
     execute_read_mcp_resource,
@@ -28,9 +34,11 @@ from .schemas import (  # noqa: F401
     CONFIG_SET_TOOL,
     LIST_AGENTS_TOOL,
     LIST_MCP_RESOURCES_TOOL,
+    LIST_SESSIONS_TOOL,
     NOTIFY_USER_TOOL,
     READ_MCP_RESOURCE_TOOL,
     SEND_MESSAGE_TOOL,
+    SEND_SESSION_MESSAGE_TOOL,
     SKILL_INVOKE_TOOL,
     SKILL_LIST_TOOL,
     SPAWN_AGENT_TOOL,

@@ -28,6 +28,13 @@ PROMPT_ROLES = frozenset({"user", "assistant"})
 # Settings panel's history drawer never loses data when the cap trims.
 MAX_CRON_EVENTS_PER_SESSION = 50
 
+# Hard cap on inline session_message rows (cross-session messages) kept per
+# session. Tighter than the cron cap: these are meant to be read promptly,
+# and unlike cron there's no separate durable table backing them, so this
+# doubles as the loop-protection backstop if two sessions keep messaging
+# each other.
+MAX_SESSION_MESSAGES_PER_SESSION = 50
+
 # Well-known pinned session that catches cron runs whose owning session was
 # deleted or archived, so a firing is never emitted into the void. Rendered
 # in the sidebar like any pinned session; guarded from deletion.
@@ -155,28 +162,64 @@ def _row_to_summary(row):
     }
 
 
+def _session_message_prompt_view(msg: dict) -> dict:
+    """Reshape a persisted session_message row into a valid API turn.
+
+    The stored role is "session_message" (UI-only per PROMPT_ROLES, so it
+    renders as a SessionMessageCard on resume and survives the frontend's
+    save-merge like cron_event does). But unlike cron_event, this content IS
+    meant to reach the model, and Claude only accepts "user"/"assistant" as a
+    message role, so it's relabeled "user" here with the sender named inline,
+    never mutating the stored row.
+    """
+    payload = msg.get("sessionMessage") or {}
+    sender = payload.get("from_title") or payload.get("from_session_id") or "another session"
+    content = payload.get("content", "")
+    return {
+        "role": "user",
+        "content": f'[Message from session "{sender}"]\n{content}',
+        "timestamp": msg.get("timestamp"),
+    }
+
+
 def visible_chat_history(history: list[dict]) -> list[dict]:
     """Drop non-prompt roles before building a Bedrock request.
 
     cron_event (and any future UI-only role) lives in chat_history so the
     chat renders it on resume, but it must not enter Claude's context.
+    session_message is the one exception: it's UI-only in storage (see
+    PROMPT_ROLES) but IS meant to reach the model, so it's translated into a
+    user turn rather than dropped.
     """
     if not history:
         return history
-    return [m for m in history if m.get("role") in PROMPT_ROLES]
+    out = []
+    for m in history:
+        role = m.get("role")
+        if role in PROMPT_ROLES:
+            out.append(m)
+        elif role == "session_message":
+            out.append(_session_message_prompt_view(m))
+    return out
 
 
-def _enforce_cron_event_cap(history: list[dict]) -> list[dict]:
-    """Keep at most MAX_CRON_EVENTS_PER_SESSION cron_event rows.
+def _enforce_row_cap(history: list[dict], role: str, cap: int) -> list[dict]:
+    """Keep at most ``cap`` rows of ``role``, dropping the oldest first.
 
-    Drops the oldest cron_events (by position) when the cap is exceeded.
-    Non-cron-event entries are untouched.
+    Rows of every other role are untouched.
     """
-    cron_positions = [i for i, m in enumerate(history) if m.get("role") == "cron_event"]
-    if len(cron_positions) <= MAX_CRON_EVENTS_PER_SESSION:
+    positions = [i for i, m in enumerate(history) if m.get("role") == role]
+    if len(positions) <= cap:
         return history
-    drop = set(cron_positions[: len(cron_positions) - MAX_CRON_EVENTS_PER_SESSION])
+    drop = set(positions[: len(positions) - cap])
     return [m for i, m in enumerate(history) if i not in drop]
+
+
+def _enforce_backend_row_caps(history: list[dict]) -> list[dict]:
+    """Apply every backend-owned row's cap (cron_event, session_message)."""
+    history = _enforce_row_cap(history, "cron_event", MAX_CRON_EVENTS_PER_SESSION)
+    history = _enforce_row_cap(history, "session_message", MAX_SESSION_MESSAGES_PER_SESSION)
+    return history
 
 
 def _ui_only_rows(history: list[dict]) -> list[dict]:
@@ -241,7 +284,7 @@ def _append_message_sync(session_id: str, message: dict) -> bool:
             except (TypeError, ValueError):
                 history = []
         history.append(message)
-        history = _enforce_cron_event_cap(history)
+        history = _enforce_backend_row_caps(history)
         conn.execute(
             "UPDATE sessions SET chat_history = ?, updated_at = ? WHERE id = ?",
             (json.dumps(history), now, session_id),
@@ -331,7 +374,7 @@ def _upsert_session(
                 merged_history = list(chat_history_frontend) + [
                     m for m in backend_owned if m.get("timestamp") not in seen_ts
                 ]
-        merged_history = _enforce_cron_event_cap(merged_history)
+        merged_history = _enforce_backend_row_caps(merged_history)
         conn.execute(
             """
             INSERT INTO sessions (id, title, custom_title, generated_title, created_at, updated_at,

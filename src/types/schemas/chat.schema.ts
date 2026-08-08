@@ -143,6 +143,15 @@ export const SSEEventDataSchema = z.object({
     duration_ms: z.number().optional(),
     timestamp: z.string(),
   }).passthrough().optional(),
+  /** Cross-session message emitted by
+   *  server/agent_tools/cross_session.py:send_session_message.
+   *  Dispatched as a fresh ChatMessage with role='session_message'. */
+  session_message: z.object({
+    from_session_id: z.string(),
+    from_title: z.string(),
+    content: z.string(),
+    timestamp: z.string(),
+  }).passthrough().optional(),
 
   // Tool result truncation
   tool_result_truncated: z.object({
