@@ -35,6 +35,7 @@ function makeHook() {
       slashCommands: [],
       skills: [],
       mcpServers: [],
+      sessions: [],
     }),
   );
 }

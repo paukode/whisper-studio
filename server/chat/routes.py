@@ -1056,6 +1056,13 @@ async def chat_endpoint(request: Request):
     if ws_path:
         question = _resolve_at_file_mentions(question, ws_path)
 
+    # Resolve bare @<session> mentions — inline that session's recent
+    # conversation so the model has it directly, the same one-shot pattern as
+    # @file: above. No workspace needed, so this always runs.
+    from server.agent_tools.cross_session import resolve_at_session_mentions
+
+    question = resolve_at_session_mentions(question, session_id)
+
     # Resolve this turn's attachments (rendering + per-file caps live in
     # attachment_context, shared with the history rebuild above). A missing id
     # yields an explicit unavailability marker, never a silent skip. Binding

@@ -155,8 +155,10 @@ describe('matchColonSubmenu', () => {
 });
 
 describe('parseSkillMention', () => {
+  const KNOWN = ['summarize', 'meeting_notes'];
+
   it('substitutes the placeholder payload for a bare mention, with empty displayText', () => {
-    expect(parseSkillMention('@summarize')).toEqual({
+    expect(parseSkillMention('@summarize', KNOWN)).toEqual({
       forceSkill: 'summarize',
       messageToSend: SKILL_MENTION_PLACEHOLDER,
       displayText: '',
@@ -164,7 +166,7 @@ describe('parseSkillMention', () => {
   });
 
   it('supports the autocomplete @skills: form', () => {
-    expect(parseSkillMention('@skills:meeting_notes')).toEqual({
+    expect(parseSkillMention('@skills:meeting_notes', KNOWN)).toEqual({
       forceSkill: 'meeting_notes',
       messageToSend: SKILL_MENTION_PLACEHOLDER,
       displayText: '',
@@ -172,7 +174,7 @@ describe('parseSkillMention', () => {
   });
 
   it('keeps the user text as both payload and displayText when present', () => {
-    expect(parseSkillMention('@meeting_notes with action items')).toEqual({
+    expect(parseSkillMention('@meeting_notes with action items', KNOWN)).toEqual({
       forceSkill: 'meeting_notes',
       messageToSend: 'with action items',
       displayText: 'with action items',
@@ -180,8 +182,17 @@ describe('parseSkillMention', () => {
   });
 
   it('passes a mention-less message through untouched', () => {
-    expect(parseSkillMention('just a normal question')).toEqual({
+    expect(parseSkillMention('just a normal question', KNOWN)).toEqual({
       messageToSend: 'just a normal question',
+    });
+  });
+
+  it('leaves a bare @<name> mention untouched when the name is not a known skill', () => {
+    // A session mention like "@my_session_b also doing feature Y" must not
+    // get misread as an attempt to force a nonexistent skill — it's resolved
+    // separately, server-side, from the raw text.
+    expect(parseSkillMention('@my_session_b also doing feature Y', KNOWN)).toEqual({
+      messageToSend: '@my_session_b also doing feature Y',
     });
   });
 });
