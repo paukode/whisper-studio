@@ -11,8 +11,26 @@
  * (`allow-scripts`, deliberately NO `allow-same-origin` -> opaque origin), so
  * scripts in the artifact run isolated and cannot reach the app, its cookies,
  * or the backend. Mirrors the inline preview iframe used elsewhere.
+ *
+ * Inside the packaged macOS shell (macapp/shell/main.swift) this trick can't
+ * escape to a real browser tab: `window.open('about:blank')` produces no
+ * navigable URL, so the shell's http(s)-only external-link handling has
+ * nothing to hand off to NSWorkspace and the popup just stays in the native
+ * window. When the shell's `openExternalHtml` bridge is present, use that
+ * instead — it writes the HTML to a throwaway file and opens it with the
+ * user's actual default browser.
  */
 export function openHtmlSandboxed(html: string): void {
+  const nativeBridge = (
+    window as unknown as {
+      webkit?: { messageHandlers?: { openExternalHtml?: { postMessage: (html: string) => void } } };
+    }
+  ).webkit?.messageHandlers?.openExternalHtml;
+  if (nativeBridge) {
+    nativeBridge.postMessage(html);
+    return;
+  }
+
   const win = window.open('about:blank', '_blank');
   if (!win) return; // popup blocked
   const doc = win.document;

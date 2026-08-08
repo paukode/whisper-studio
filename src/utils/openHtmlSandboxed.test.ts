@@ -29,4 +29,19 @@ describe('openHtmlSandboxed', () => {
     vi.spyOn(window, 'open').mockReturnValue(null);
     expect(() => openHtmlSandboxed('<p>hi</p>')).not.toThrow();
   });
+
+  it('hands off to the native shell bridge instead of window.open when present', () => {
+    const postMessage = vi.fn();
+    (window as unknown as { webkit: unknown }).webkit = {
+      messageHandlers: { openExternalHtml: { postMessage } },
+    };
+    const openSpy = vi.spyOn(window, 'open');
+
+    openHtmlSandboxed('<p>hi</p>');
+
+    expect(postMessage).toHaveBeenCalledWith('<p>hi</p>');
+    expect(openSpy).not.toHaveBeenCalled();
+
+    delete (window as unknown as { webkit?: unknown }).webkit;
+  });
 });

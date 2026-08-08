@@ -80,6 +80,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // ~/Downloads and reports the result to the page (DownloadHandler.swift).
     private let downloadHandler = DownloadHandler()
 
+    // Opens artifact HTML in the user's default browser on request
+    // (ExternalHTMLBridge.swift) — window.open() cannot reach outside the
+    // native shell on its own.
+    private let externalHTMLBridge = ExternalHTMLBridge()
+
     // MARK: Lifecycle
 
     /// A raw SIGTERM/SIGINT (logout, `kill`) skips AppKit's terminate flow, so
@@ -344,6 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // Native audio bridge: availability marker (documentStart user script)
         // plus the "nativeAudio" message handler.
         nativeAudioBridge.install(into: config)
+        externalHTMLBridge.install(into: config)
 
         let view = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 1440, height: 900), configuration: config)
