@@ -16,6 +16,10 @@ adapted test_cron_tools.py / test_goal_cron_verify.py:
     practice much faster than) the old 1-second poll
   - cron_history's start_run/finish_run lease lifecycle still works
     correctly now that a run is an asyncio task instead of a thread
+  - the boot-time downtime catch-up fire actually runs a job instead of
+    silently building an unawaited coroutine (a real bug this migration
+    would otherwise have introduced: _run became a coroutine function, and
+    its old call site only built the coroutine object)
 """
 
 from __future__ import annotations
@@ -336,3 +340,53 @@ def test_cron_history_lease_transitions_running_to_terminal(monkeypatch, tmp_pat
 
     # A boot-time reconcile after a clean finish must not touch it.
     assert H.reconcile_stale(all_running=True) == 0
+
+
+# ── Boot-time downtime catch-up actually fires (not a dropped coroutine) ────
+
+
+def test_boot_catchup_fire_actually_runs_the_job(monkeypatch):
+    """_make_runner's _run became a coroutine function as part of this
+    migration (so APScheduler schedules it directly on the loop instead of
+    its thread-pool fallback). _add_job_to_scheduler's downtime catch-up
+    branch used to call it as `_make_runner(job["id"])()` — for an async
+    function that only builds the coroutine object, it does not run it. Left
+    unfixed, every downtime-missed catch-up fire would have silently stopped
+    firing (just a "coroutine was never awaited" warning in the logs, no
+    error anyone would notice). This proves the fix: the catch-up branch
+    actually starts the run.
+    """
+    called: dict = {}
+
+    async def fake_execute(job_id):
+        called["job_id"] = job_id
+
+    job = _job(id="job-catchup", name="catchup-job", last_run="2000-01-01T00:00:00Z")
+
+    monkeypatch.setattr(C, "_execute_cron_prompt", fake_execute)
+    monkeypatch.setattr(C, "_scheduler", object())  # truthy is all this path needs
+    monkeypatch.setattr(C, "cron_catch_up_due", lambda *a, **k: True)
+    # _run (built by _make_runner, which the catch-up branch calls) does its
+    # own job lookup/marking via _mutate_jobs -> load_cron_jobs/save_cron_jobs
+    # before it ever reaches _spawn_cron_run.
+    monkeypatch.setattr(C, "load_cron_jobs", lambda: [dict(job)])
+    monkeypatch.setattr(C, "save_cron_jobs", lambda jobs: None)
+
+    async def _drive():
+        # Normally captured once at init_scheduler() startup.
+        monkeypatch.setattr(C, "_server_loop", asyncio.get_running_loop())
+        C._add_job_to_scheduler(job, catch_up=True)
+        # The catch-up fire is scheduled as a tracked background task
+        # (server.infrastructure.async_tasks.spawn) whose own body awaits a
+        # real thread (asyncio.to_thread) before reaching _execute_cron_prompt
+        # — wait for it properly instead of guessing a tick count.
+        from server.infrastructure.async_tasks import _TASKS
+
+        for _ in range(200):
+            pending = [t for t in _TASKS if not t.done()]
+            if not pending:
+                break
+            await asyncio.sleep(0.01)
+
+    asyncio.run(_drive())
+    assert called.get("job_id") == "job-catchup"
