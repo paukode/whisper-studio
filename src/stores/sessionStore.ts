@@ -55,6 +55,10 @@ export interface SessionState {
   bulkDeleteSessions: (ids: string[]) => Promise<void>;
   setSessionFlags: (id: string, flags: { pinned?: boolean; archived?: boolean }) => void;
   branchSession: (id: string) => Promise<void>;
+  /** Create a brand-new session from an exported JSONL file (see
+   *  exportSessionUrl/branchSession — same idea, but the source is a
+   *  user-picked file instead of an existing session id). */
+  importSession: (file: File) => Promise<void>;
   updateSessionTitle: (id: string, title: string, custom: boolean) => void;
   /** Persist one session's full state (chat + transcript from its own
    *  runtime stores). Returns the underlying update promise so callers
@@ -369,6 +373,26 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
       useUIStore.getState().addToast({
         type: 'error',
         message: 'Failed to branch session',
+        duration: 4000,
+      });
+    }
+  },
+
+  importSession: async (file: File) => {
+    try {
+      const res = await sessionsApi.importSession(file);
+      await get().loadSessions();
+      await get().switchSession(res.new_session_id);
+      useUIStore.getState().addToast({
+        type: 'success',
+        message: `Imported "${res.title}"`,
+        duration: 2500,
+      });
+    } catch (err) {
+      console.warn('Failed to import session:', err);
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to import session',
         duration: 4000,
       });
     }

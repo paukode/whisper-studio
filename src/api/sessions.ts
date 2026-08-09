@@ -52,6 +52,37 @@ export function branchSession(id: string): Promise<{ new_session_id: string; nam
   );
 }
 
+/** URL for GET /api/sessions/{id}/export — a portable JSONL backup of the
+ *  session's chat history, transcript, and speaker names. Used with
+ *  downloadUrl() rather than fetched inline; the server sets its own
+ *  Content-Disposition filename. */
+export function exportSessionUrl(id: string): string {
+  return `/api/sessions/${encodeURIComponent(id)}/export`;
+}
+
+/** Reads a JSON error body ({error} or {detail}) from a failed response,
+ *  falling back to the status text. Mirrors ImportSkillsDialog's readError. */
+async function readImportError(resp: Response): Promise<string> {
+  try {
+    const body = (await resp.json()) as { error?: string; detail?: string };
+    return body.error || body.detail || `HTTP ${resp.status}`;
+  } catch {
+    return `HTTP ${resp.status}`;
+  }
+}
+
+/** Create a new session from a file exported by GET .../export. Multipart
+ *  upload via raw fetch, not the shared post() helper — that always
+ *  JSON-encodes its body, which can't carry a File. */
+export function importSession(file: File): Promise<{ new_session_id: string; title: string }> {
+  const fd = new FormData();
+  fd.append('file', file);
+  return fetch('/api/sessions/import', { method: 'POST', body: fd }).then(async (resp) => {
+    if (!resp.ok) throw new Error(await readImportError(resp));
+    return resp.json() as Promise<{ new_session_id: string; title: string }>;
+  });
+}
+
 export type WorkspaceApp = 'vscode' | 'kiro' | 'finder';
 
 export function openSessionWorkspace(id: string, app: WorkspaceApp): Promise<{ ok: boolean }> {
