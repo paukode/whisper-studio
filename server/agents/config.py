@@ -5,6 +5,7 @@ Each agent type has a preset configuration controlling model selection,
 tool access, turn limits, and isolation behavior.
 """
 
+import logging
 from dataclasses import dataclass, replace
 
 from server.executors import EXECUTOR_META
@@ -13,6 +14,8 @@ from server.memory.prompts import (
     EXTRACTION_SYSTEM_PROMPT,
     SESSION_SUMMARY_PROMPT,
 )
+
+log = logging.getLogger("whisper-studio")
 
 # Tools that modify state — blocked for read-only agents.
 #
@@ -56,6 +59,10 @@ WRITE_TOOLS = frozenset(
         "cron_create",
         "cron_delete",
         "notebook_edit",
+        # Writes a persistent .whisper/agents/<name>.md custom agent-type file
+        # (server/agent_tools/promote.py) — dispatched directly in
+        # server/tool_router.py like config_set, so the registry never sees it.
+        "promote_agent_type",
         "git_add_commit",
         "git_push",
         "git_create_branch",
@@ -148,10 +155,16 @@ class AgentConfig:
         read_only: If True, write tools are excluded from the tool pool.
         allowed_tools: If set, ONLY these tools are available (whitelist).
         system_prompt: Override system prompt. None = default subagent prompt.
+        model: Informational only (custom/ephemeral types — see
+            server/agents/custom_config.py). Every built-in AGENT_TYPES entry
+            leaves this None. NOT consulted by model resolution: the model is
+            always the session-selected one (run_agent's model_id_override or
+            the config default) so a whole agent tree stays on one model (see
+            _handle_spawn_agent); wiring a per-type override is a possible
+            follow-up, deliberately left inert here to avoid guessing whether
+            it should be a chat_models catalog key or a raw provider id.
 
-    The model is always the session-selected one (run_agent's
-    model_id_override or the config default); isolation is a run_agent
-    parameter, not per-type state.
+    isolation is a run_agent parameter, not per-type state.
     """
 
     agent_type: str = "general"
@@ -161,6 +174,7 @@ class AgentConfig:
     read_only: bool = False
     allowed_tools: frozenset[str] | None = None
     system_prompt: str | None = None
+    model: str | None = None
 
 
 AGENT_TYPES: dict[str, AgentConfig] = {
@@ -292,14 +306,44 @@ def _agent_limit_overrides() -> dict:
         return {}
 
 
+def _resolve_base_config(agent_type: str) -> AgentConfig:
+    """Resolve the base (pre agent_limits-override) config for a type name.
+
+    Checks, in order: an ephemeral type registered this process (Part 2 —
+    server/agents/custom_config.py:register_ephemeral_type), a persistent
+    custom type file under .whisper/agents/ (Part 1), then the built-in
+    AGENT_TYPES table. Falls back to "general" only when NONE of those know
+    the name — the historical behavior for an unrecognized agent_type string.
+
+    Lazily imports custom_config (rather than importing it at module level)
+    to avoid a circular import: custom_config.py imports AgentConfig and
+    _is_write_tool from this module at its own top level.
+    """
+    try:
+        from server.agents.custom_config import get_ephemeral_type, load_custom_agent_types
+
+        ephemeral = get_ephemeral_type(agent_type)
+        if ephemeral is not None:
+            return ephemeral
+        custom = load_custom_agent_types()
+        if agent_type in custom:
+            return custom[agent_type]
+    except Exception as e:  # never let a malformed custom file break agent spawning
+        log.warning("custom agent type lookup failed for %r: %s", agent_type, e)
+    return AGENT_TYPES.get(agent_type, AGENT_TYPES["general"])
+
+
 def get_agent_config(agent_type: str) -> AgentConfig:
     """Resolve an agent config, applying config.json ``agent_limits`` overrides.
 
-    Starts from the built-in ``AGENT_TYPES`` preset, then overlays ``default``
-    followed by the type-specific block so a type entry wins. Only ``max_turns``
-    and ``deadline_seconds`` are overridable; any unset key keeps the preset.
+    Custom types (.whisper/agents/*.md) and ephemeral inline spawn_agent
+    definitions are checked BEFORE the built-in AGENT_TYPES table (see
+    _resolve_base_config) — a custom file or an inline definition can use any
+    type name, including one that shadows a built-in preset name. Only
+    ``max_turns`` and ``deadline_seconds`` are overridable via agent_limits;
+    any unset key keeps the resolved preset.
     """
-    base = AGENT_TYPES.get(agent_type, AGENT_TYPES["general"])
+    base = _resolve_base_config(agent_type)
     ov = _agent_limit_overrides()
     merged = {**(ov.get("default") or {}), **(ov.get(agent_type) or {})}
     if not merged:
@@ -348,11 +392,23 @@ def filter_tools_for_agent(all_tools: list[dict], config: AgentConfig) -> list[d
     1. allowed_tools whitelist (if set, only these tools pass)
     2. read_only filter (removes any write/execute-capable tool — see
        _is_write_tool for the denylist + registry-backstop logic)
+
+    The read_only filter is applied EVEN WHEN allowed_tools is set (not just
+    in the "no whitelist" branch below): otherwise a read_only=True config
+    whose own allowed_tools whitelist names a write tool could use the
+    whitelist path to bypass its own read_only flag. No built-in AGENT_TYPES
+    entry currently combines read_only=True with a non-empty allowed_tools,
+    so this changes no existing behavior — but a custom or ephemeral type
+    (server/agents/custom_config.py) is file- or LLM-authored input, not a
+    trusted hardcoded preset, and must not get a laxer check than a
+    dynamically-typo'd built-in would.
     """
     tools = list(all_tools)
 
     if config.allowed_tools is not None:
         tools = [t for t in tools if t["name"] in config.allowed_tools]
+        if config.read_only:
+            tools = [t for t in tools if not _is_write_tool(t["name"])]
         return tools
 
     if config.read_only:
