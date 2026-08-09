@@ -172,6 +172,14 @@ export function useChatStream(): UseChatStreamReturn {
       store().addMessage(userMsg);
     }
 
+    // A genuinely new turn (not a continuation) starts with a clean auto-mode
+    // breaker notice — it's turn-scoped on the backend too (reset_auto_mode_breaker
+    // fires on the same is_new_turn signal), so a banner left over from a prior
+    // turn must not linger into this one.
+    if (!isContinuation) {
+      store().clearAutoModeBreaker();
+    }
+
     store().setStreaming(true);
 
     const controller = new AbortController();

@@ -11,6 +11,7 @@ import { StreamingMessage } from './StreamingMessage';
 import { ChatInput } from './ChatInput';
 import { GoalBanner } from './GoalBanner';
 import { ApprovalBanner } from './ApprovalBanner';
+import { AutoModeBreakerBanner } from './AutoModeBreakerBanner';
 import { formatMessageTimestamp, formatSegmentTimestamp } from '@/utils/formatTimestamp';
 import { downloadFile } from '@/utils/downloadFile';
 import { useTaskStore } from '@/stores/taskStore';
@@ -388,6 +389,11 @@ export const ChatPanel: React.FC = () => {
         {/* Approval card — shown when a tool needs permission */}
         <ErrorBoundary label="ApprovalBanner">
           <ApprovalBanner />
+        </ErrorBoundary>
+
+        {/* Auto-mode circuit breaker — shown after repeated confirmations */}
+        <ErrorBoundary label="AutoModeBreakerBanner">
+          <AutoModeBreakerBanner />
         </ErrorBoundary>
 
         <div ref={messagesEndRef} />

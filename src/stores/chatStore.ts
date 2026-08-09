@@ -24,6 +24,20 @@ export interface PendingApproval {
 export type SessionApprovalMode = 'allow' | 'deny' | 'ask';
 export type SessionApprovals = Record<string, SessionApprovalMode>;
 
+/**
+ * Auto-mode circuit breaker notification (server.security.permissions).
+ * Set once when the backend's rolling denial counter trips for this turn
+ * and auto mode falls back to asking for every remaining approval-gated
+ * call; cleared when the user resumes auto mode or a genuinely new turn
+ * starts. `sessionId` is the owning session — same reasoning as
+ * PendingApproval.sessionId, so the resume action always targets the
+ * right store even if the user has switched sessions since it fired.
+ */
+export interface AutoModeBreaker {
+  reason: string;
+  sessionId: string;
+}
+
 export interface ChatState {
   messages: ChatMessage[];
   isStreaming: boolean;
@@ -45,6 +59,10 @@ export interface ChatState {
   /** Session approval memory — per-category allow/deny/ask */
   sessionApprovals: SessionApprovals;
   sessionDenials: Record<string, boolean>;
+
+  /** Auto-mode circuit breaker notification, or null while it hasn't
+   *  tripped (the common case). See AutoModeBreaker above. */
+  autoModeBreaker: AutoModeBreaker | null;
 
   /** Thinking timer state */
   thinkingStartTime: number | null;
@@ -101,6 +119,10 @@ export interface ChatState {
   /** Look up the session-memory mode for a category. */
   getSessionApproval: (category: string) => SessionApprovalMode;
 
+  // Auto-mode circuit breaker
+  setAutoModeBreaker: (breaker: AutoModeBreaker) => void;
+  clearAutoModeBreaker: () => void;
+
   // Thinking/usage
   setThinkingStart: () => void;
   setThinkingStop: () => void;
@@ -144,6 +166,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   currentApproval: null,
   sessionApprovals: { ...DEFAULT_SESSION_APPROVALS },
   sessionDenials: {},
+  autoModeBreaker: null,
   thinkingStartTime: null,
   thinkingElapsedMs: 0,
   inputTokens: 0,
@@ -349,6 +372,16 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
 
   getSessionApproval: (category: string) => {
     return get().sessionApprovals[category] ?? 'ask';
+  },
+
+  // ── Auto-mode circuit breaker ──
+
+  setAutoModeBreaker: (breaker: AutoModeBreaker) => {
+    set({ autoModeBreaker: breaker });
+  },
+
+  clearAutoModeBreaker: () => {
+    set({ autoModeBreaker: null });
   },
 
   // ── Thinking/usage ──

@@ -547,6 +547,22 @@ export async function readSSEStream(
             });
           }
 
+          // ── auto_mode_breaker (auto-mode's classifier circuit breaker) ──
+          // Emitted once by server/tool_executor.py when the rolling denial
+          // counter (server/security/permissions.py) trips: auto mode stops
+          // consulting the classifier and falls back to asking for the rest
+          // of this turn. Surfaced as a persistent banner (not a toast — the
+          // user needs a one-click way to resume, see AutoModeBreakerBanner)
+          // rather than dropped once the stream ends.
+          if (parsed.auto_mode_breaker) {
+            store().setAutoModeBreaker({
+              reason:
+                parsed.auto_mode_breaker.reason
+                || 'Auto mode paused after repeated confirmations this turn.',
+              sessionId,
+            });
+          }
+
           // ── todo_update (full session task list on every task change) ──
           // The backend (server/tool_router.py) emits the whole session list on
           // every task_* call; the Tasks pane + the in-chat task row read this

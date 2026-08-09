@@ -301,6 +301,9 @@ export interface SSEEventData {
   plan_blocked?: Record<string, unknown>;
   security_blocked?: Record<string, unknown>;
   hook_blocked?: { tool_name?: string; reason?: string };
+  /** Auto-mode's classifier circuit breaker tripped for the rest of this
+   *  turn (server.security.permissions.record_classifier_verdict). */
+  auto_mode_breaker?: { reason?: string };
   goal_eval?: { verdict?: string; feedback?: string; confidence?: number; attempt?: number; cap?: number };
   stop_hook_block?: { reason?: string; attempt?: number };
   goal_cap_reached?: { attempt?: number; cap?: number; source?: string };
