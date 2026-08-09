@@ -9,6 +9,7 @@ import { useUIStore } from '@/stores/uiStore';
 // hoisted above imports, so each must be self-contained (no shared helper).
 vi.mock('./APISettings', () => ({ APISettings: () => <div>APISettings</div> }));
 vi.mock('./MCPSettings', () => ({ MCPSettings: () => <div>MCPSettings</div> }));
+vi.mock('./ImportPanel', () => ({ ImportPanel: () => <div>ImportPanel</div> }));
 vi.mock('./SkillsPanel', () => ({ SkillsPanel: () => <div>SkillsPanel</div> }));
 vi.mock('./PermissionsPanel', () => ({ PermissionsPanel: () => <div>PermissionsPanel</div> }));
 vi.mock('./CostsPanel', () => ({ CostsPanel: () => <div>CostsPanel</div> }));
@@ -132,6 +133,16 @@ describe('SettingsModal — deep-link routing', () => {
       'page',
     );
     // Single-panel rail items render no sub-tabs.
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+  });
+
+  it('new id "import" opens the single Import project panel with no sub-tab strip', () => {
+    openAt('import');
+    expect(screen.getByText('ImportPanel')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Import project/i })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 

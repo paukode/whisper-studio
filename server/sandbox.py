@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tempfile
 
+from server.security import egress_policy
 from server.security.sensitive_paths import expanded_sandbox_paths
 
 log = logging.getLogger("whisper-studio")
@@ -46,7 +47,15 @@ def _effective_denied_paths(allow_paths: list[str] | None) -> list[str]:
 
 
 def _generate_macos_profile(workspace: str, allow_paths: list[str] | None = None) -> str:
-    """Generate a macOS sandbox-exec profile that denies sensitive paths."""
+    """Generate a macOS sandbox-exec profile that denies sensitive paths.
+
+    When the active network_policy tier is non-permissive, this ALSO appends
+    rules forcing outbound HTTP(S) through the egress proxy (see
+    `_macos_network_restriction_rules`). Byte-for-byte identical to the
+    pre-egress-policy output when the tier is permissive (today's default),
+    verified by tests/test_egress_policy.py — no rules are appended in that
+    case, not even an empty line.
+    """
     deny_rules = []
     for path in _effective_denied_paths(allow_paths):
         if os.path.exists(path) or os.path.isdir(os.path.dirname(path)):
@@ -56,11 +65,58 @@ def _generate_macos_profile(workspace: str, allow_paths: list[str] | None = None
 
     deny_block = "\n".join(deny_rules)
 
-    return f"""\
+    profile = f"""\
 (version 1)
 (allow default)
 {deny_block}
 """
+
+    network_rules = _macos_network_restriction_rules()
+    if network_rules:
+        profile += "\n".join(network_rules) + "\n"
+
+    return profile
+
+
+def _macos_network_restriction_rules() -> list[str]:
+    """Network-egress rules appended to the macOS profile ONLY when the
+    active network_policy tier is non-permissive. Returns [] (no rules,
+    hence no change to the profile at all) when permissive.
+
+    Why this exists: HTTPS_PROXY/HTTP_PROXY (injected via `_merged_env`
+    below) is an env var CONVENTION — a command that ignores it (a raw
+    `socket.connect`, or any tool that doesn't consult those variables)
+    would bypass server/security/egress_policy.py's domain allowlist
+    entirely and reach the internet directly. These rules close that hole
+    at the kernel level: deny all direct outbound connections on the two
+    ports virtually everything HTTP-shaped uses (80, 443), so the ONLY way
+    out is through the (allowlist-enforcing) local proxy.
+
+    The proxy always binds to an OS-assigned ephemeral port (never 80/443 —
+    see egress_policy.EgressProxy.__init__), so it is never itself caught by
+    these deny rules; no explicit loopback allow-rule is needed alongside
+    them (verified manually with `sandbox-exec` against this exact
+    (allow default) + (deny ... 443) combination: the deny only matches
+    connections whose remote port is 443, so an ephemeral-port loopback
+    connection is unaffected and stays allowed by the general default).
+
+    Residual gaps, spelled out rather than glossed over:
+      - DNS (port 53) is untouched — see egress_policy.py's module
+        docstring, point 3.
+      - A command using a non-standard HTTPS port (rare) would bypass this
+        specific port-443 deny; only 80/443 are covered, matching what the
+        proxy itself listens for via HTTPS_PROXY/HTTP_PROXY.
+      - Linux/bwrap enforcement is separate and weaker — see
+        `_bwrap_network_restriction_args` for what's actually implemented
+        there and its untested-on-this-machine caveat.
+    """
+    policy = egress_policy.get_active_policy()
+    if policy.get("tier", egress_policy.TIER_PERMISSIVE) == egress_policy.TIER_PERMISSIVE:
+        return []
+    return [
+        '(deny network-outbound (remote ip "*:443"))',
+        '(deny network-outbound (remote ip "*:80"))',
+    ]
 
 
 def _bwrap_deny_args(path: str) -> list[str]:
@@ -80,6 +136,52 @@ def _is_bwrap_available() -> bool:
     return shutil.which("bwrap") is not None
 
 
+def _bwrap_network_restriction_args() -> list[str]:
+    """bwrap args enforcing the active network_policy tier on Linux.
+
+    IMPLEMENTED BUT UNTESTED ON THIS PLATFORM. This change was written and
+    verified on macOS (this repo's dev machine has no Linux box available);
+    the bwrap path below has never actually been run. Treat it as a
+    defensively-written first pass, not a verified guarantee — test it for
+    real on Linux before relying on it.
+
+    What IS implemented: `--unshare-net` when the tier is non-permissive.
+    bwrap creates a network namespace containing only a loopback interface
+    with no external connectivity — this is bwrap's own documented,
+    unprivileged behavior (it needs no capabilities beyond the user
+    namespace bwrap already uses to run without root), so this part should
+    be reliable even unverified.
+
+    What is deliberately NOT implemented: a veth pair bridging that isolated
+    namespace back to the local egress proxy so curated-tier traffic could
+    still reach allowlisted domains (mirroring the macOS story: kernel-level
+    "*:443/*:80" deny + a working proxy path). Building that correctly needs
+    one of:
+      - CAP_NET_ADMIN on the HOST network namespace to create the host side
+        of a veth pair — this process runs unprivileged by design, and
+        granting it that capability is a materially bigger change than this
+        task's scope, or
+      - an external unprivileged bridging helper (slirp4netns / pasta, as
+        used by rootless containers for exactly this problem) — plausible,
+        but wiring one in means guessing at its exact CLI surface and PID/
+        netns attach sequencing with zero ability to verify any of it here.
+        Shipping that guess would risk a subtly-broken bridge that LOOKS
+        like allowlist filtering but silently isn't — worse than being
+        upfront that it isn't there yet.
+
+    Net effect: on Linux, any non-permissive tier currently behaves like
+    "restrictive" (zero egress) rather than a domain-filtered allowlist.
+    That is a real gap versus the tier's stated intent, but it fails CLOSED
+    (no network at all) rather than open (unfiltered network) — the safe
+    direction to be wrong in. Follow-up: implement + test a real
+    slirp4netns/pasta bridge on an actual Linux host.
+    """
+    policy = egress_policy.get_active_policy()
+    if policy.get("tier", egress_policy.TIER_PERMISSIVE) == egress_policy.TIER_PERMISSIVE:
+        return []
+    return ["--unshare-net"]
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -95,13 +197,37 @@ def _is_bwrap_available() -> bool:
 _SANDBOX_ENV_DENYLIST = frozenset({"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"})
 
 
+def _network_proxy_env_vars() -> dict[str, str]:
+    """HTTPS_PROXY/HTTP_PROXY vars pointing at the local egress-filtering
+    proxy (server/security/egress_policy.py), or {} when the active
+    network_policy tier is "permissive" (today's default — no proxy is even
+    started in that case, let alone injected). Both-case variable names are
+    set since different tools check different casings."""
+    policy = egress_policy.get_active_policy()
+    if policy.get("tier", egress_policy.TIER_PERMISSIVE) == egress_policy.TIER_PERMISSIVE:
+        return {}
+    host, port = egress_policy.ensure_proxy_running()
+    proxy_url = f"http://{host}:{port}"
+    return {
+        "HTTPS_PROXY": proxy_url,
+        "https_proxy": proxy_url,
+        "HTTP_PROXY": proxy_url,
+        "http_proxy": proxy_url,
+    }
+
+
 def _merged_env(env_extra: dict | None) -> dict:
     """The subprocess environment: os.environ (minus credentials that must never
-    reach a sandboxed child, see _SANDBOX_ENV_DENYLIST) plus any caller extras.
+    reach a sandboxed child, see _SANDBOX_ENV_DENYLIST), plus proxy env vars
+    when a non-permissive network_policy is active (see
+    _network_proxy_env_vars — a no-op dict when permissive), plus any caller
+    extras (applied last, so a caller can still override either of the above
+    if it ever needs to).
 
     Always returns an explicit dict rather than None-to-inherit, so the denylist
     is enforced even when the caller passes no extras."""
     base = {k: v for k, v in os.environ.items() if k not in _SANDBOX_ENV_DENYLIST}
+    base.update(_network_proxy_env_vars())
     if env_extra:
         base.update({str(k): str(v) for k, v in env_extra.items()})
     return base
@@ -236,7 +362,13 @@ def _run_bwrap_sandboxed(
     input_data: str | None = None,
     env_extra: dict | None = None,
 ) -> subprocess.CompletedProcess:
-    """Run command under bubblewrap (Linux)."""
+    """Run command under bubblewrap (Linux).
+
+    Network restriction (--unshare-net when a non-permissive network_policy
+    is active) is best-effort and UNTESTED on this platform — see
+    _bwrap_network_restriction_args's docstring for exactly what that does
+    and does not cover.
+    """
     bwrap_args = [
         "bwrap",
         "--ro-bind",
@@ -252,6 +384,7 @@ def _run_bwrap_sandboxed(
         "/dev",  # device nodes
         "--proc",
         "/proc",  # proc filesystem
+        *_bwrap_network_restriction_args(),
     ]
 
     # Deny sensitive paths by making them inaccessible
@@ -305,6 +438,18 @@ def popen_sandboxed(
     Returns ``(proc, profile_path)``. ``profile_path`` (macOS only) must be
     unlinked by the caller once the process exits — the profile file has to
     outlive the process, exactly the ``build_pty_sandbox_wrap`` contract.
+
+    Egress policy note: this path picks up the SAME network-restriction
+    rules as ``run_sandboxed`` (the macOS profile via ``_generate_macos_profile``,
+    and ``--unshare-net`` on bwrap when non-permissive — see
+    ``_macos_network_restriction_rules`` / ``_bwrap_network_restriction_args``).
+    It does NOT set ``env=`` at all, though (pre-existing — this function
+    inherits the full parent environment unconditionally, unlike
+    ``run_sandboxed``'s ``_merged_env``), so it never gets the
+    HTTPS_PROXY/HTTP_PROXY injection either. Under a non-permissive tier
+    that means background/streaming commands started this way get NO
+    network at all rather than a filtered allowlist — fails closed, not
+    open, but worth knowing if this ever surprises someone.
     """
     from server.process_utils import new_process_group
 
@@ -332,6 +477,7 @@ def popen_sandboxed(
             "/dev",
             "--proc",
             "/proc",
+            *_bwrap_network_restriction_args(),
         ]
         for path in _effective_denied_paths(None):
             if os.path.exists(path):

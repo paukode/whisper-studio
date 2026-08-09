@@ -62,7 +62,12 @@ class _FakeStdioCtx:
 
 def _install_fakes(monkeypatch, record):
     monkeypatch.setattr(mcp, "StdioServerParameters", lambda **kw: object(), raising=False)
-    monkeypatch.setattr(mcp, "ClientSession", lambda r, w: _FakeSession(record), raising=False)
+    monkeypatch.setattr(
+        mcp,
+        "ClientSession",
+        lambda r, w, elicitation_callback=None: _FakeSession(record),
+        raising=False,
+    )
     monkeypatch.setattr(
         mcp.client.stdio, "stdio_client", lambda params: _FakeStdioCtx(record), raising=False
     )

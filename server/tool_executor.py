@@ -146,8 +146,16 @@ async def execute_tool_batch(
     plan_mode: bool,
     mode: str = "default",
     effort_label: str | None = None,
+    unattended: bool = False,
 ) -> list[ToolState]:
     """Execute a batch of tool_use blocks with full lifecycle management.
+
+    ``unattended`` marks every dispatched call as originating from a turn with
+    no human present (subagents today). It stamps ``__agent__`` onto the call
+    input exactly like ``server.agents.runtime._with_session_id`` already does
+    for the pre-migration agent loop, so high-blast-radius executors (GitHub
+    mutations via ``refuse_if_agent``, MCP's elicitation callback) keep
+    refusing to act or answer on a human's behalf.
 
     Returns ToolState objects in the same order as the input tool_uses.
     """
@@ -171,6 +179,8 @@ async def execute_tool_batch(
         hook_input = copy.deepcopy(state.tool_use["input"])
         call_input = copy.deepcopy(state.tool_use["input"])
         call_input["__session_id__"] = session_id
+        if unattended:
+            call_input["__agent__"] = True
 
         # --- Pre-execution checks ---
 
@@ -238,6 +248,8 @@ async def execute_tool_batch(
         if pre.updated_input is not None:
             call_input = copy.deepcopy(pre.updated_input)
             call_input["__session_id__"] = session_id
+            if unattended:
+                call_input["__agent__"] = True
 
         # --- Dispatch ---
         try:
@@ -360,6 +372,8 @@ async def process_tool_results(
     model_id: str = "",
     recent_messages: list[dict] | None = None,
     mode: str = "default",
+    session_id: str = "",
+    unattended: bool = False,
 ) -> tuple[list[dict], list[str], bool, bool]:
     """Post-process completed tool states into Bedrock messages and SSE events.
 
@@ -367,6 +381,17 @@ async def process_tool_results(
         states: Completed ToolState objects in request order.
         budget_fn: Function (tool_name, output) -> budgeted_output for large results.
         session_approvals: Category-level pre-approvals from frontend (e.g. {"write": "allow"}).
+        session_id: Keys the auto-mode circuit breaker (server.security.permissions).
+            Empty is treated as "no breaker tracking" (matches existing test callers
+            that don't pass one).
+        unattended: True for a turn with no human present (subagents). Every
+            pause-inducing outcome resolves to a refusal instead of a pause:
+            [WS_APPROVAL] executes immediately (agent=True, unconditional —
+            no category gate, no classifier), [WS_WORKSPACE_PROMPT] and any
+            ask_user_question-style pause (SIDE_EFFECT_PAUSE) become a plain
+            error tool_result. has_pending_approval/has_user_question stay
+            False in this mode by construction — there is nothing to resume,
+            since no continuation turn from a human is coming.
 
     Returns:
         (tool_results, sse_events, has_pending_approval, has_user_question)
@@ -388,18 +413,46 @@ async def process_tool_results(
 
     for state in states:
         # Flush side effects as SSE events
+        _pause_signaled = False
         for effect in state.side_effects:
             if SIDE_EFFECT_PAUSE in effect:
-                has_user_question = True
+                _pause_signaled = True
+                if not unattended:
+                    has_user_question = True
                 continue
             sse_events.append(ndjson_dumps(effect))
 
         tool_output = state.output
 
+        # Unattended (agent) turns: a tool that signaled SIDE_EFFECT_PAUSE
+        # (ask_user_question, or any future pause-inducing tool) has no human
+        # to actually answer it. Replace its "[PAUSE] ..." placeholder output
+        # with a refusal so the model can adapt and keep working instead of
+        # stalling forever waiting for a reply that will never arrive.
+        if unattended and _pause_signaled:
+            tool_output = (
+                "Error: cannot ask the user a question unattended. Make your "
+                "best judgment, state your assumption, and continue."
+            )
+
         # Workspace-prompt detection: a write-type tool fired without a
         # workspace (or against a path outside the current one). Show a
         # folder picker to the user; stream resumes on continuation turn.
         if isinstance(tool_output, str) and tool_output.startswith("[WS_WORKSPACE_PROMPT]"):
+            if unattended:
+                # No human to show a folder picker to — refuse and keep going.
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": state.tool_id,
+                        "content": (
+                            "Error: no workspace connected and cannot prompt "
+                            "the user unattended. Open a workspace first, or "
+                            "ask the parent to."
+                        ),
+                    }
+                )
+                continue
             prompt_data = tool_output[len("[WS_WORKSPACE_PROMPT]") :]
             try:
                 prompt_parsed = json.loads(prompt_data)
@@ -454,118 +507,158 @@ async def process_tool_results(
                     }
                 )
                 continue
-            category = spec.category
-
-            log.info(
-                "approval: action=%s category=%s session_approvals=%s",
-                action,
-                category,
-                session_approvals,
-            )
-
-            # Trusted folder skill: auto-approve running its OWN bundled scripts
-            # (command path resolves inside a trusted skill's directory). Scoped
-            # to the skill's own files; validate_command still applied upstream.
-            auto_allow_trusted = False
-            if action == "terminal_run":
-                from server.skills import command_runs_trusted_skill
-
-                if command_runs_trusted_skill(ws_parsed.get("command", "")):
-                    auto_allow_trusted = True
-
-            # Precedence: bypassPermissions → trusted skill → session approvals →
-            # custom rules → dontAsk → acceptEdits → auto (classifier) → ask.
-            # See server.security.permissions.resolve_static_decision.
-            decision = resolve_static_decision(
-                state.tool_name,
-                ws_parsed,
-                category,
-                session_approvals,
-                mode,
-                auto_allow_trusted,
-            )
-            if decision is None:
-                # mode == "auto" and nothing else resolved it — selecting the
-                # Auto permission mode IS the opt-in, so the classifier runs
-                # here with no separate enable flag. Only actions that actually
-                # need approval reach this point (read-only tools resolve
-                # earlier). model_id is empty for the offline local-model path,
-                # which must stay Bedrock-free and falls back to asking.
-                cfg = config or {}
-                if model_id:
-                    verdict = await classify_tool_call(state.tool_name, ws_parsed, cfg)
-                    decision = "allow" if verdict.get("decision") == "allow" else "ask"
-                else:
-                    decision = "ask"
-
-            if decision == "allow":
-                # Pre-approved: execute inline and return result to LLM
-                log.info("approval: executing inline (pre-approved)")
-                from server.workspace import get_workspace_path
-
-                ws_before = get_workspace_path()
-                result = await _execute_ws_approval_inline(ws_parsed)
-                # Auto-applied event keeps the file tree / editor in sync.
+            if unattended:
+                # Unattended (agent) turns auto-approve unconditionally — no
+                # human, no classifier, no category gate. Mirrors the
+                # pre-migration server/agents/runtime.py inline handling
+                # exactly (agent=True stamps the payload so high-blast-radius
+                # executors can still refuse to run unattended).
+                result = await _execute_ws_approval_inline(ws_parsed, agent=True)
                 sse_events.append(ndjson_dumps({"ws_auto_applied": ws_parsed}))
-                # If the action switched the workspace (e.g. git_clone with
-                # open=true), tell the frontend to open the panel. Detected by
-                # diffing the connected path — the same generic signal the
-                # manual approval route uses, so no per-action branch here.
-                ws_after = get_workspace_path()
-                if ws_after and ws_after != ws_before:
-                    sse_events.append(ndjson_dumps({"ws_folder_opened": ws_after}))
                 tool_output = result
                 # Fall through to normal result processing below
-            elif decision == "deny":
-                path = ws_parsed.get("path", ws_parsed.get("command", ""))
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": state.tool_id,
-                        "content": f"[Denied by session rule] {action}: {path} — blocked by user.",
-                    }
-                )
-                continue
             else:
-                # Fetch risk explanation (3s timeout inside explain_permission)
-                explanation = None
-                if config and model_id:
-                    explanation = await explain_permission(
-                        tool_name=state.tool_name,
-                        tool_input=ws_parsed,
-                        recent_messages=recent_messages or [],
-                        config=config,
-                        model_id=model_id,
+                category = spec.category
+
+                log.info(
+                    "approval: action=%s category=%s session_approvals=%s",
+                    action,
+                    category,
+                    session_approvals,
+                )
+
+                # Trusted folder skill: auto-approve running its OWN bundled scripts
+                # (command path resolves inside a trusted skill's directory). Scoped
+                # to the skill's own files; validate_command still applied upstream.
+                auto_allow_trusted = False
+                if action == "terminal_run":
+                    from server.skills import command_runs_trusted_skill
+
+                    if command_runs_trusted_skill(ws_parsed.get("command", "")):
+                        auto_allow_trusted = True
+
+                # Precedence: bypassPermissions → trusted skill → session approvals →
+                # custom rules → dontAsk → acceptEdits → auto (classifier) → ask.
+                # See server.security.permissions.resolve_static_decision.
+                decision = resolve_static_decision(
+                    state.tool_name,
+                    ws_parsed,
+                    category,
+                    session_approvals,
+                    mode,
+                    auto_allow_trusted,
+                )
+                if decision is None:
+                    # mode == "auto" and nothing else resolved it — selecting the
+                    # Auto permission mode IS the opt-in, so the classifier runs
+                    # here with no separate enable flag. Only actions that actually
+                    # need approval reach this point (read-only tools resolve
+                    # earlier). model_id is empty for the offline local-model path,
+                    # which must stay Bedrock-free and falls back to asking.
+                    cfg = config or {}
+                    if model_id:
+                        from server.security.permissions import (
+                            is_auto_mode_tripped,
+                            record_classifier_verdict,
+                        )
+
+                        if session_id and is_auto_mode_tripped(session_id):
+                            # Circuit breaker already tripped this turn (see
+                            # record_classifier_verdict below) — stop consulting
+                            # the classifier and ask for every remaining
+                            # approval-gated call until the user resumes auto
+                            # mode (POST /api/permissions/auto-mode/resume) or a
+                            # new turn starts.
+                            decision = "ask"
+                        else:
+                            verdict = await classify_tool_call(
+                                state.tool_name,
+                                ws_parsed,
+                                cfg,
+                                recent_messages=recent_messages or [],
+                            )
+                            decision = "allow" if verdict.get("decision") == "allow" else "ask"
+                            if session_id:
+                                breaker = record_classifier_verdict(
+                                    session_id, allowed=(decision == "allow")
+                                )
+                                if breaker["tripped"]:
+                                    sse_events.append(
+                                        ndjson_dumps(
+                                            {"auto_mode_breaker": {"reason": breaker["reason"]}}
+                                        )
+                                    )
+                    else:
+                        decision = "ask"
+
+                if decision == "allow":
+                    # Pre-approved: execute inline and return result to LLM
+                    log.info("approval: executing inline (pre-approved)")
+                    from server.workspace import get_workspace_path
+
+                    ws_before = get_workspace_path()
+                    result = await _execute_ws_approval_inline(ws_parsed)
+                    # Auto-applied event keeps the file tree / editor in sync.
+                    sse_events.append(ndjson_dumps({"ws_auto_applied": ws_parsed}))
+                    # If the action switched the workspace (e.g. git_clone with
+                    # open=true), tell the frontend to open the panel. Detected by
+                    # diffing the connected path — the same generic signal the
+                    # manual approval route uses, so no per-action branch here.
+                    ws_after = get_workspace_path()
+                    if ws_after and ws_after != ws_before:
+                        sse_events.append(ndjson_dumps({"ws_folder_opened": ws_after}))
+                    tool_output = result
+                    # Fall through to normal result processing below
+                elif decision == "deny":
+                    path = ws_parsed.get("path", ws_parsed.get("command", ""))
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": state.tool_id,
+                            "content": f"[Denied by session rule] {action}: {path} — blocked by user.",
+                        }
                     )
+                    continue
+                else:
+                    # Fetch risk explanation (3s timeout inside explain_permission)
+                    explanation = None
+                    if config and model_id:
+                        explanation = await explain_permission(
+                            tool_name=state.tool_name,
+                            tool_input=ws_parsed,
+                            recent_messages=recent_messages or [],
+                            config=config,
+                            model_id=model_id,
+                        )
 
-                # Build the generic approval_request event from the spec.
-                # No more per-action shape — the frontend reads `preview`
-                # and picks one of four renderers (diff/command/list/text).
-                payload = spec.build_payload(ws_parsed)
-                summary = spec.render_summary(ws_parsed)
-                preview = spec.preview
-                risk_hint = spec.risk_hint
+                    # Build the generic approval_request event from the spec.
+                    # No more per-action shape — the frontend reads `preview`
+                    # and picks one of four renderers (diff/command/list/text).
+                    payload = spec.build_payload(ws_parsed)
+                    summary = spec.render_summary(ws_parsed)
+                    preview = spec.preview
+                    risk_hint = spec.risk_hint
 
-                event = {
-                    "approval_request": {
-                        "tool_use_id": state.tool_id,
-                        "action": action,
-                        "category": category,
-                        "preview": preview,
-                        "summary": summary,
-                        "payload": payload,
-                        "risk_hint": risk_hint,
-                        "explanation": explanation,
+                    event = {
+                        "approval_request": {
+                            "tool_use_id": state.tool_id,
+                            "action": action,
+                            "category": category,
+                            "preview": preview,
+                            "summary": summary,
+                            "payload": payload,
+                            "risk_hint": risk_hint,
+                            "explanation": explanation,
+                        }
                     }
-                }
-                sse_events.append(ndjson_dumps(event))
+                    sse_events.append(ndjson_dumps(event))
 
-                # Pause the stream. All approval actions (command, write,
-                # create, delete) wait for the user. After approval, the
-                # frontend sends a new /api/chat turn carrying the real
-                # tool_result so the LLM resumes with truthful state.
-                has_pending_approval = True
-                break  # Do not execute sibling tools in this batch.
+                    # Pause the stream. All approval actions (command, write,
+                    # create, delete) wait for the user. After approval, the
+                    # frontend sends a new /api/chat turn carrying the real
+                    # tool_result so the LLM resumes with truthful state.
+                    has_pending_approval = True
+                    break  # Do not execute sibling tools in this batch.
 
         # Preview screenshot detection: preview_screenshot's executor returns
         # a sentinel carrying base64 JPEG bytes + a caption. Unlike every

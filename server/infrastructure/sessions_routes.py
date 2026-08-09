@@ -349,6 +349,161 @@ async def branch_session(session_id: str):
     return {"new_session_id": new_id, "name": new_title}
 
 
+def _export_slug(text: str) -> str:
+    """Lowercase, dash-separated, filename-safe slug (mirrors the same helper
+    in server/model_browser/install.py)."""
+    return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-") or "session"
+
+
+@router.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str):
+    """Stream a session as a portable JSONL artifact: one export_meta line,
+    then one line per transcript segment, then one line per chat_history
+    message — the same content /branch copies into a forked session, just
+    serialized for a bug report or external backup instead of a DB row.
+
+    Round-trips through POST /api/sessions/import-transcript.
+    """
+    with _get_conn() as conn:
+        row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    try:
+        segments = json.loads(row["segments"]) or []
+    except (TypeError, ValueError):
+        segments = []
+    try:
+        chat_history = json.loads(row["chat_history"]) or []
+    except (TypeError, ValueError):
+        chat_history = []
+    try:
+        speaker_names = json.loads(row["speaker_names"]) or {}
+    except (TypeError, ValueError):
+        speaker_names = {}
+    title = row["title"]
+
+    def stream():
+        from server.utils import ndjson_dumps
+
+        meta = {
+            "type": "export_meta",
+            "session_id": session_id,
+            "title": title,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "speaker_names": speaker_names,
+        }
+        yield ndjson_dumps(meta) + "\n"
+        for seg in segments:
+            if isinstance(seg, dict):
+                yield ndjson_dumps({"type": "segment", **seg}) + "\n"
+        for msg in chat_history:
+            if isinstance(msg, dict):
+                yield ndjson_dumps({"type": "message", **msg}) + "\n"
+
+    filename = f"session-export-{_export_slug(title)}.jsonl"
+    return StreamingResponse(
+        stream(),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _parse_session_export(raw: str) -> tuple[str, list, list, dict]:
+    """Parse an exported JSONL body back into (title, segments, chat_history,
+    speaker_names). Raises ValueError with a user-facing message if ``raw``
+    doesn't look like a session export.
+
+    Unknown line types are ignored rather than rejected, so a future export
+    field can be added without breaking older exports on import.
+    """
+    title = "Imported Session"
+    segments: list = []
+    chat_history: list = []
+    speaker_names: dict = {}
+    saw_meta = False
+    for lineno, line in enumerate(raw.splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"line {lineno}: invalid JSON ({e})") from e
+        if not isinstance(obj, dict):
+            raise ValueError(f"line {lineno}: expected a JSON object")
+        kind = obj.get("type")
+        if kind == "export_meta":
+            saw_meta = True
+            title = obj.get("title") or title
+            if isinstance(obj.get("speaker_names"), dict):
+                speaker_names = obj["speaker_names"]
+        elif kind == "segment":
+            segments.append({k: v for k, v in obj.items() if k != "type"})
+        elif kind == "message":
+            chat_history.append({k: v for k, v in obj.items() if k != "type"})
+    if not saw_meta:
+        raise ValueError("missing export_meta line — not a session export")
+    return title, segments, chat_history, speaker_names
+
+
+@router.post("/api/sessions/import-transcript")
+async def import_session(request: Request):
+    """Create a brand-new session from a portable export (see GET
+    .../export). Same idea as /branch, but the source is an uploaded JSONL
+    rather than an existing session id.
+
+    Accepts either a raw JSONL body or a multipart upload (field name
+    "file", following the frontend's FormData convention used by the skills
+    local-folder importer in skills_routes.py). Branches on content-type
+    instead of declaring a typed ``UploadFile`` parameter so the same route
+    can take either shape.
+    """
+    import uuid
+
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/form-data"):
+        form = await request.form()
+        upload = form.get("file")
+        # Starlette's form parser hands back its own UploadFile, not
+        # fastapi.UploadFile (they aren't the same class), so duck-type
+        # instead of isinstance-checking against the imported alias.
+        if upload is None or not hasattr(upload, "read"):
+            return JSONResponse({"error": "file field required"}, status_code=400)
+        raw = (await upload.read()).decode("utf-8", errors="replace")
+    else:
+        raw = (await request.body()).decode("utf-8", errors="replace")
+
+    if not raw.strip():
+        return JSONResponse({"error": "empty file"}, status_code=400)
+    try:
+        title, segments, chat_history, speaker_names = _parse_session_export(raw)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+    new_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    with _get_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO sessions (id, title, custom_title, generated_title, created_at, updated_at, segments, chat_history, speaker_names)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                new_id,
+                title,
+                0,
+                0,
+                now,
+                now,
+                json.dumps(segments),
+                json.dumps(chat_history),
+                json.dumps(speaker_names),
+            ),
+        )
+    return {"new_session_id": new_id, "title": title}
+
+
 @router.get("/api/sessions/{session_id}/events")
 async def session_events(session_id: str, request: Request):
     """Long-lived SSE channel for out-of-band notifications scoped to a

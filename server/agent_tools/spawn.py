@@ -118,6 +118,11 @@ async def execute_spawn_agent(
     session_id: str,
     model_id: str | None = None,
     effort_label: str | None = None,
+    *,
+    parent_agent_id: str | None = None,
+    depth: int = 0,
+    team_id: str | None = None,
+    event_channel: str | None = None,
 ) -> str:
     """Spawn a single agent with full tool loop. The agent inherits the
     session-selected model (model_id) AND the session's clamped effort.
@@ -125,18 +130,94 @@ async def execute_spawn_agent(
     ``detach: true`` runs it in the background instead: the tool returns a
     task_id immediately, progress and completion ride the unified task
     registry (task_status/task_output + a task card + next-turn injection).
+
+    ``agent_definition`` (instead of a registered ``agent_type`` name) builds
+    an EPHEMERAL AgentConfig at call time (server/agents/custom_config.py),
+    never written to disk. It is registered under a synthesized resolution
+    key and that key is used as ``agent_type`` for the rest of this function —
+    the same team scaffolding, run_agent call, and (for detach: true) the same
+    unmodified detached-agent path (server/tasks/agents.py) that a named type
+    goes through, so the ephemeral config gets the identical WRITE_TOOLS /
+    read-only-unless-worktree-isolated guardrails with no separate, laxer
+    code path. ``result.agent_type`` and any team/event display always show
+    the ephemeral definition's clean name, never the synthesized key.
+
+    ``parent_agent_id``/``depth``/``team_id``/``event_channel`` are set by
+    server.tool_router.route_tool when this call originates from INSIDE
+    another agent's own turn (server.agents.runtime.agent_nesting_ctx) — a
+    nested spawn must inherit the parent's recursion depth (the MAX_DEPTH
+    guard in run_agent() otherwise never trips, since every call through this
+    function defaults to depth=0) and its team_id/event_channel (so the
+    child's live progress nests under the SAME team card as its parent,
+    instead of a fresh, disconnected one). A top-level call from interactive
+    chat leaves all four at their defaults, exactly as before this parameter
+    set existed.
     """
     from server.agents.runtime import run_agent
 
     task = tool_input.get("task", "")
-    agent_type = tool_input.get("agent_type", "general")
     context = tool_input.get("context", "")
-
     isolation = tool_input.get("isolation") or "none"
+
+    if parent_agent_id is not None:
+        # Nested: this spawn_agent call was made FROM INSIDE another agent's
+        # own turn (server.tool_router.route_tool read the ambient
+        # server.agents.runtime.agent_nesting_ctx). No fresh team wrapper —
+        # the child's live progress nests directly under the PARENT's own
+        # team card (team_id/event_channel inherited from it), and depth is
+        # the parent's own depth + 1 so run_agent's MAX_DEPTH recursion guard
+        # actually holds (every OTHER call through this function defaults to
+        # depth=0, which would let an agent-spawns-agent chain recurse
+        # forever). Mirrors the pre-migration inline _handle_spawn_agent
+        # exactly: no detach, no ephemeral agent_definition, no isolation — a
+        # nested spawn never supported those, and this preserves that scope
+        # rather than quietly widening it.
+        result = await run_agent(
+            task,
+            agent_type=tool_input.get("agent_type", "general"),
+            effort_label=effort_label,
+            parent_agent_id=parent_agent_id,
+            session_id=session_id,
+            context=context,
+            depth=depth + 1,
+            # Child inherits the parent's (session) model rather than its
+            # agent-type default, so the whole tree uses one model.
+            model_id_override=model_id,
+            team_id=team_id,
+            event_channel=event_channel,
+        )
+        return (
+            f"[Agent {result.agent_id} ({result.agent_type})] "
+            f"Status: {result.status}, Turns: {result.turns_used}\n"
+            f"Output:\n{result.output}"
+        )
+
+    # `agent_type` is the string threaded into run_agent/get_agent_config for
+    # LOOKUP; `display_agent_type` is what shows up in events/labels. They
+    # diverge only for an ephemeral definition (lookup = synthesized key,
+    # display = the clean name the model gave it).
+    agent_type = tool_input.get("agent_type", "general")
+    display_agent_type = agent_type
+    ephemeral_meta: dict | None = None
+
+    agent_definition = tool_input.get("agent_definition")
+    if isinstance(agent_definition, dict) and str(agent_definition.get("name") or "").strip():
+        from server.agents.custom_config import register_ephemeral_type
+
+        agent_type, _ephemeral_config, ephemeral_meta = register_ephemeral_type(
+            session_id, agent_definition
+        )
+        display_agent_type = ephemeral_meta["name"]
+
     if tool_input.get("detach"):
-        return _start_detached_from_tool(
+        out = _start_detached_from_tool(
             task, agent_type, context, session_id, model_id, effort_label, isolation
         )
+        if ephemeral_meta:
+            payload = json.loads(out)
+            payload["ephemeral_type"] = ephemeral_meta
+            out = json.dumps(payload)
+        return out
 
     # Wrap the single agent in a one-member "team" so its live tool_call/
     # tool_result/text events render in the rich TeamReportCard (the same view
@@ -168,7 +249,12 @@ async def execute_spawn_agent(
                 "team_name": agent_label,
                 "description": "",
                 "agents": [
-                    {"name": agent_label, "task": task, "agent_type": agent_type, "role": "team"}
+                    {
+                        "name": agent_label,
+                        "task": task,
+                        "agent_type": display_agent_type,
+                        "role": "team",
+                    }
                 ],
             },
         )
@@ -216,15 +302,16 @@ async def execute_spawn_agent(
             )
 
     if stopped_by_user:
-        return json.dumps(
-            {
-                "agent_id": "",
-                "agent_type": agent_type,
-                "team_id": team_id,
-                "status": "stopped",
-                "output": "[Stopped by user]",
-            }
-        )
+        stopped_payload = {
+            "agent_id": "",
+            "agent_type": display_agent_type,
+            "team_id": team_id,
+            "status": "stopped",
+            "output": "[Stopped by user]",
+        }
+        if ephemeral_meta:
+            stopped_payload["ephemeral_type"] = ephemeral_meta
+        return json.dumps(stopped_payload)
 
     _record_agent_cost(session_id, model_id, result)
 
@@ -239,27 +326,35 @@ async def execute_spawn_agent(
                 "phase": "failed",
                 "team_id": team_id,
                 "agent_name": agent_label,
-                "agent_type": agent_type,
+                "agent_type": display_agent_type,
                 "error": (result.output or "")[:500],
             },
         )
 
-    return json.dumps(
-        {
-            "agent_id": result.agent_id,
-            "agent_type": result.agent_type,
-            "team_id": team_id,
-            "status": result.status,
-            "turns_used": result.turns_used,
-            "tools_called": result.tools_called,
-            "usage": result.usage,
-            "output": result.output,
-        }
-    )
+    result_payload = {
+        "agent_id": result.agent_id,
+        "agent_type": result.agent_type,
+        "team_id": team_id,
+        "status": result.status,
+        "turns_used": result.turns_used,
+        "tools_called": result.tools_called,
+        "usage": result.usage,
+        "output": result.output,
+    }
+    if ephemeral_meta:
+        result_payload["ephemeral_type"] = ephemeral_meta
+    return json.dumps(result_payload)
 
 
-def execute_send_message(tool_input: dict) -> str:
-    """Send inter-agent message."""
+def execute_send_message(tool_input: dict, from_id: str = "main") -> str:
+    """Send inter-agent message.
+
+    ``from_id`` defaults to "main" (interactive chat, i.e. no particular
+    agent is the sender). server.tool_router.route_tool passes the REAL
+    calling agent's id here when this call originates from inside an
+    agent's own turn (server.agents.runtime.agent_nesting_ctx), so a
+    receiving agent's mailbox shows the true sender instead of "main".
+    """
     from server.agents.messaging import message_bus
 
     to_id = tool_input.get("to_agent_id", "")
@@ -267,10 +362,10 @@ def execute_send_message(tool_input: dict) -> str:
     is_broadcast = tool_input.get("broadcast", False)
 
     if is_broadcast:
-        count = message_bus.broadcast("main", content)
+        count = message_bus.broadcast(from_id, content)
         return json.dumps({"sent": True, "broadcast": True, "recipients": count})
     elif to_id:
-        message_bus.send("main", to_id, content)
+        message_bus.send(from_id, to_id, content)
         return json.dumps({"sent": True, "to": to_id})
     else:
         return json.dumps({"error": "specify to_agent_id or set broadcast=true"})

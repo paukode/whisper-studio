@@ -164,55 +164,84 @@ class LocalAdapter:
         schemas = [_to_openai_fn(t) for t in tools] if (tools and self.tools_enabled) else []
         props_by_tool = _schema_props(schemas)
 
-        payload: dict = {
-            "model": self.model_key,
-            "messages": self.to_openai_messages(messages),
-            "max_tokens": self.max_tokens,
-        }
-        if schemas:
-            # Final-round parity with the cloud paths: forbid calls on the
-            # last round so the model synthesizes from what it has.
-            payload["tools"] = schemas
-            payload["tool_choice"] = "none" if is_last_round else "auto"
-        if self.thinking:
-            # Some builds gate reasoning behind an explicit request; harmless
-            # when the model has no thinking mode.
-            payload["chat_template_kwargs"] = {"enable_thinking": True}
+        # Some fine-tunes decode a handful of tokens and stop without ever
+        # entering plain-text or emitting a tool call — seen most often right
+        # after a tool result. One retry with an explicit "continue" nudge
+        # recovers most of these for free: llama-server's prefix cache means
+        # the retry re-processes only the tiny nudge message, not the whole
+        # prompt (confirmed: a stalled round's retry re-prompts in the tens,
+        # not thousands, of tokens).
+        retry_messages = messages
+        for attempt in range(2):
+            payload: dict = {
+                "model": self.model_key,
+                "messages": self.to_openai_messages(retry_messages),
+                "max_tokens": self.max_tokens,
+            }
+            if schemas:
+                # Final-round parity with the cloud paths: forbid calls on the
+                # last round so the model synthesizes from what it has.
+                payload["tools"] = schemas
+                payload["tool_choice"] = "none" if is_last_round else "auto"
+            if self.thinking:
+                # Some builds gate reasoning behind an explicit request; harmless
+                # when the model has no thinking mode.
+                payload["chat_template_kwargs"] = {"enable_thinking": True}
 
-        thinking_open = False
-        calls: list[dict] = []
-        round_usage: dict | None = None
-        round_chars = 0
-        round_text = ""
-        try:
-            async for kind, piece in _stream_round(self.base_url, payload):
-                if kind == "thinking":
-                    if not thinking_open:
-                        thinking_open = True
-                        yield ThinkingStart()
-                    yield ThinkingDelta(text=piece)
-                elif kind == "text":
-                    if thinking_open:
-                        thinking_open = False
-                        yield ThinkingStop()
-                    round_chars += len(piece)
-                    round_text += piece
-                    self._turn_out_chars += len(piece)
-                    yield TextDelta(text=piece)
-                else:  # ("done", {...})
-                    calls = piece.get("calls") or []
-                    round_usage = piece.get("usage")
-        except Exception as e:
-            if thinking_open:
+            thinking_open = False
+            calls: list[dict] = []
+            round_usage: dict | None = None
+            round_chars = 0
+            round_text = ""
+            try:
+                async for kind, piece in _stream_round(self.base_url, payload):
+                    if kind == "thinking":
+                        if not thinking_open:
+                            thinking_open = True
+                            yield ThinkingStart()
+                        yield ThinkingDelta(text=piece)
+                    elif kind == "text":
+                        if thinking_open:
+                            thinking_open = False
+                            yield ThinkingStop()
+                        round_chars += len(piece)
+                        round_text += piece
+                        self._turn_out_chars += len(piece)
+                        yield TextDelta(text=piece)
+                    else:  # ("done", {...})
+                        calls = piece.get("calls") or []
+                        round_usage = piece.get("usage")
+            except Exception as e:
+                if thinking_open:
+                    yield ThinkingStop()
+                msg = str(e)
+                if any(marker in msg.lower() for marker in _CTX_OVERFLOW_MARKERS):
+                    raise PromptTooLongError(msg) from e
+                log.warning("llama-server round %d failed: %s", round_num, e)
+                yield RoundError(message=msg)
+                return
+            if thinking_open:  # reasoned but produced no answer text this round
                 yield ThinkingStop()
-            msg = str(e)
-            if any(marker in msg.lower() for marker in _CTX_OVERFLOW_MARKERS):
-                raise PromptTooLongError(msg) from e
-            log.warning("llama-server round %d failed: %s", round_num, e)
-            yield RoundError(message=msg)
-            return
-        if thinking_open:  # reasoned but produced no answer text this round
-            yield ThinkingStop()
+
+            if calls or round_text or attempt == 1:
+                break
+            log.info(
+                "Local turn (%s) got an empty completion at round %d; "
+                "retrying once with a continuation nudge.",
+                self.model_key,
+                round_num,
+            )
+            retry_messages = [
+                *messages,
+                {
+                    "role": "user",
+                    "content": (
+                        "(Continue: give your final answer now, in plain text, "
+                        "based on the tool result above. Do not call another "
+                        "tool unless it is truly necessary.)"
+                    ),
+                },
+            ]
 
         # Normalize loose argument types against the declared schema before
         # the call reaches an executor (and before it enters history).

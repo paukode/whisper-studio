@@ -196,16 +196,33 @@ def test_openai_tier_offers_ultracode():
 
 def test_run_agent_structured_schema_end_to_end(monkeypatch):
     """The loop finishes naturally, then one forced call distills a validated
-    structured object into AgentResult.structured_output."""
-    from server.agents.runtime import run_agent
+    structured object into AgentResult.structured_output.
 
-    fake = _FakeBedrock(
+    The main loop now runs through server/chat/engine/runner.py (the shared
+    turn engine interactive chat uses), so its OWN model call is scripted
+    with the streaming FakeBedrockClient harness (tests/golden_harness.py),
+    patched at the chat/engine adapter's own binding. _distill_structured
+    (unchanged, out of scope for the migration) still goes through the OLD,
+    non-streaming adapter tested elsewhere in this file — a SEPARATE client,
+    patched at server.chat's own binding."""
+    from server.agents.runtime import run_agent
+    from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block
+
+    fake_stream = FakeBedrockClient(
         [
-            {
-                "stop_reason": "end_turn",
-                "content": [{"type": "text", "text": "the answer is 4"}],
-                "usage": {"input_tokens": 10, "output_tokens": 5},
-            },
+            [
+                msg_start(input_tokens=10),
+                *text_block("the answer is 4"),
+                *msg_end(stop_reason="end_turn", output_tokens=5),
+            ]
+        ]
+    )
+    monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
+    monkeypatch.setattr("server.chat.assemble_tool_pool", lambda *a, **k: [])
+    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
+
+    fake_old = _FakeBedrock(
+        [
             {
                 "stop_reason": "tool_use",
                 "content": [
@@ -220,9 +237,7 @@ def test_run_agent_structured_schema_end_to_end(monkeypatch):
             },
         ]
     )
-    monkeypatch.setattr("server.chat._get_bedrock_client", lambda: fake)
-    monkeypatch.setattr("server.chat.assemble_tool_pool", lambda *a, **k: [])
-    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
+    monkeypatch.setattr("server.chat._get_bedrock_client", lambda: fake_old)
 
     schema = {
         "type": "object",
@@ -240,10 +255,10 @@ def test_run_agent_structured_schema_end_to_end(monkeypatch):
     )
     assert result.status == "completed"
     assert result.structured_output == {"answer": 4}
-    # usage aggregated across BOTH calls (loop turn + distillation)
+    # usage aggregated across BOTH calls (main loop turn + distillation)
     assert result.usage["input_tokens"] == 18
     assert result.usage["output_tokens"] == 8
     # the distillation request forced emit_result without thinking
-    body = fake.requests[-1]
+    body = fake_old.requests[-1]
     assert body["tool_choice"] == {"type": "tool", "name": "emit_result"}
     assert "thinking" not in body

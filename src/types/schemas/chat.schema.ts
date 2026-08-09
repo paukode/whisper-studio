@@ -45,6 +45,10 @@ export const SSEEventDataSchema = z.object({
     tool_name: z.string().optional(),
     reason: z.string().optional(),
   }).optional(),
+  // Auto-mode's classifier circuit breaker tripped for the rest of this turn.
+  auto_mode_breaker: z.object({
+    reason: z.string().optional(),
+  }).optional(),
   // Completion-gate frames (WS-E goal loop).
   goal_eval: z.object({
     verdict: z.string().optional(),

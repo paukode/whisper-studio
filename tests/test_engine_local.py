@@ -243,13 +243,36 @@ def test_adapter_coerces_loose_argument_types(monkeypatch):
 
 
 def test_empty_turn_gets_an_explanatory_line(monkeypatch):
-    blob, _ = _run_local_turn(monkeypatch, [([], [])])
+    blob, fake = _run_local_turn(monkeypatch, [([], [])])
     assert "No answer: the model ended its turn without producing any text" in blob
+    # One retry is attempted before giving up.
+    assert len(fake.payloads) == 2
 
 
 def test_no_fallback_line_when_the_turn_produced_text(monkeypatch):
     blob, _ = _run_local_turn(monkeypatch, [([("text", "real answer")], [])])
     assert "No answer" not in blob
+
+
+def test_empty_completion_retries_once_and_recovers(monkeypatch):
+    """The exact stall reported live: a fine-tune decodes nothing after a tool
+    result, then answers normally once nudged to continue."""
+    blob, fake = _run_local_turn(monkeypatch, [([], []), ([("text", "recovered")], [])])
+    assert "recovered" in blob
+    assert "No answer" not in blob
+    assert len(fake.payloads) == 2
+    first_messages = fake.payloads[0]["messages"]
+    retry_messages = fake.payloads[1]["messages"]
+    assert len(retry_messages) == len(first_messages) + 1
+    assert "Continue" in retry_messages[-1]["content"]
+
+
+def test_empty_completion_retry_still_empty_falls_back_once(monkeypatch):
+    """Both attempts empty: exactly one retry, then the explanatory line — no
+    infinite retry loop."""
+    blob, fake = _run_local_turn(monkeypatch, [([], [])])
+    assert "No answer" in blob
+    assert len(fake.payloads) == 2
 
 
 def test_context_overflow_raises_prompt_too_long_and_salvages(monkeypatch):

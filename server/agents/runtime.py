@@ -7,6 +7,7 @@ a final text response or hits its turn limit.
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import time
@@ -22,7 +23,6 @@ from server.agents.config import (
 from server.agents.event_bus import event_bus
 from server.agents.messaging import message_bus
 from server.agents.registry import agent_registry
-from server.hooks import run_hooks
 
 log = logging.getLogger("whisper-studio")
 
@@ -32,20 +32,45 @@ _agent_executor = ThreadPoolExecutor(max_workers=4)
 # agents doing git ops can't head-of-line-block model calls on _agent_executor.
 _git_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="agent-git")
 
+# Ambient nesting context for a spawn_agent/send_message/receive_messages/
+# complete_coordination tool call dispatched from INSIDE this unattended
+# loop, as opposed to interactive chat. server.tool_router.route_tool reads
+# this so a nested call threads the CALLING agent's real id/depth/team/event-
+# channel through (server/agent_tools/spawn.py) instead of behaving like a
+# fresh, disconnected top-level spawn every time — that would both lose the
+# MAX_DEPTH recursion guard (every route_tool call defaults to depth=0) and
+# stop nested progress from nesting under the parent's own team card.
+# None outside an agent's own loop. Set via .set()/.reset() bracketing the
+# run_turn() drain in _run_agent_loop: contextvars copy the AMBIENT context
+# at asyncio.create_task() time, so this propagates into the task run_turn
+# creates for execute_tool_batch (and from there into a further nested
+# run_agent's own task), but a sibling task never sees it.
+agent_nesting_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "agent_nesting_ctx", default=None
+)
+
 
 def _with_session_id(tool_input: dict, session_id: str) -> dict:
-    """Return a COPY of the model's tool input with the internal session id
-    injected for the executor.
+    """Return a COPY of the model's tool input with internal markers injected
+    for the executor: the session id, and an unattended-agent stamp.
 
     The original ``tool_input`` is ``tu["input"]`` — the exact dict that lives
     inside the assistant message replayed to Bedrock on every subsequent turn.
-    Mutating it in place would leak the internal ``__session_id__`` key into the
-    transcript (where the model can see and imitate it), and some executors only
-    ``.get()`` it rather than ``.pop()`` it, so it would persist. Copying keeps
-    ``tu["input"]`` pristine, mirroring the main chat path (tool_executor.py).
+    Mutating it in place would leak the internal ``__session_id__``/``__agent__``
+    keys into the transcript (where the model can see and imitate them), and
+    some executors only ``.get()`` rather than ``.pop()`` them, so they'd
+    persist. Copying keeps ``tu["input"]`` pristine, mirroring the main chat
+    path (tool_executor.py).
+
+    ``__agent__`` marks every tool call dispatched from this unattended loop —
+    no human is present to answer on-the-spot questions. High-blast-radius
+    executors (github mutations via refuse_if_agent, and MCP's elicitation
+    callback) check for this stamp and refuse/auto-decline rather than acting
+    or answering on a human's behalf.
     """
     call_input = dict(tool_input)
     call_input["__session_id__"] = session_id
+    call_input["__agent__"] = True
     return call_input
 
 
@@ -400,12 +425,38 @@ async def _run_agent_loop(
     effort_label: str | None = None,
     structured_schema: dict | None = None,
 ) -> AgentResult:
-    """Internal agent loop — invoke model with tools until end_turn or limit."""
+    """Internal agent loop — the shared chat/engine turn loop
+    (server.chat.engine.runner.run_turn) instead of a hand-rolled round loop.
+
+    Ports agents onto the exact engine interactive chat uses: round budgets,
+    the salvage round, the shared tool-execution safety gate (execute_tool_batch
+    + process_tool_results — every tool call flows through server.tool_router,
+    same as chat), and unattended resolution of approval/pause-inducing tools
+    (TurnContext.unattended). completion_gate is forced OFF — an agent must
+    never trigger the PARENT chat turn's goal-gate evaluator — and
+    turn_scope_id keys this run's goal-store/auto-mode-breaker/paused-turn
+    state so it can never collide with a concurrently running parent turn
+    that shares the same session_id (e.g. the chat turn whose spawn_agent
+    call is still awaiting this very run).
+
+    Not migrated, by design: _distill_structured (a one-shot forced-tool
+    call over the finished transcript; chat/engine's adapters have no
+    equivalent yet) still goes through server.agents.providers' own adapter
+    system, unchanged. _resolve_agent_model's local:* guard is untouched.
+    """
+    from server.attachment_store import load_session_attachments
     from server.chat import assemble_tool_pool
-    from server.tool_router import route_tool
     from server.workspace import get_workspace_path
 
     loop = asyncio.get_event_loop()
+
+    # Subagents inherit the parent session's durable attachments (documents,
+    # images) so analyze_document etc. work the same as they do in interactive
+    # chat — same lookup routes.py uses, just keyed off the same session_id
+    # spawn_agent already threads through for messaging/progress routing.
+    current_attachments = (
+        await asyncio.to_thread(load_session_attachments, session_id) if session_id else {}
+    )
 
     # Build system prompt — include workspace warning if not connected
     ws_path = get_workspace_path()
@@ -444,12 +495,13 @@ async def _run_agent_loop(
 
     messages = [{"role": "user", "content": user_content}]
 
-    # Build filtered tool pool
+    # Build the filtered tool pool ONCE for the whole run — identical logic
+    # to the pre-migration loop (assemble_tool_pool + agent-runtime tools +
+    # filter_tools_for_agent + final dedup) — and hand it to the engine as a
+    # precomputed TurnContext.tool_catalog instead of letting it reassemble a
+    # chat-shaped catalog every round.
     all_tools = assemble_tool_pool(plan_mode=False, ws_connected=bool(ws_path))
 
-    # Add agent-specific tools (receive_messages, complete_coordination, and
-    # possibly spawn_agent at depth < 4). Deduplicate by name since AGENT_TOOLS
-    # already contributes spawn_agent/send_message/list_agents to the main pool.
     from server.agents.tools import get_agent_runtime_tools
 
     existing_names = {t["name"] for t in all_tools}
@@ -470,14 +522,48 @@ async def _run_agent_loop(
             deduped_tools.append(t)
     tools = deduped_tools
 
-    # Get bedrock client
-    from server.agents.providers import TurnUsage, get_adapter, model_key_for_id
+    def _tool_catalog() -> tuple[list[dict], int | None]:
+        return tools, None
 
-    adapter = get_adapter(model_key_for_id(model_id), model_id)
-    total_usage = TurnUsage()
+    # Provider adapter selection — the same chat_model_meta.provider check
+    # server/chat/routes.py uses to choose between the two chat/engine
+    # adapters for interactive chat.
+    from server.agents.providers import model_key_for_id
+    from server.chat.infra import _get_chat_model_meta
 
-    tools_called = []
-    collected_text = ""
+    model_key = model_key_for_id(model_id)
+    _provider = _get_chat_model_meta().get(model_key, {}).get("provider", "anthropic")
+    if _provider == "openai_bedrock":
+        from server.chat.engine.openai import OpenAIResponsesAdapter
+
+        adapter = OpenAIResponsesAdapter(
+            model_key=model_key,
+            model_id=model_id,
+            system_prompt=system,
+            effort_label=effort_label,
+            session_id=session_id,
+        )
+    else:
+        from server.chat.engine.anthropic import AnthropicAdapter
+
+        adapter = AnthropicAdapter(
+            model_key=model_key,
+            model_id=model_id,
+            system_prompt=system,
+            # Agents don't use prompt-cache checkpoints (the pre-migration
+            # loop never did either) — system_static/system_dynamic only
+            # matter when caching_on is True.
+            system_static="",
+            system_dynamic="",
+            caching_on=False,
+            cache_ttl="5m",
+            effort_label=effort_label,
+            force_skill=None,
+            loop=loop,
+            executor=_agent_executor,
+        )
+
+    tools_called: list[str] = []
     all_text_parts: list[str] = []
     # notify_user delivers its message as a route_tool side-effect, not as tool
     # output or model text. A subagent's result is its returned text, so capture
@@ -485,6 +571,11 @@ async def _run_agent_loop(
     # subagent that "delivers" via notify_user has that content (and its links)
     # silently dropped before the parent ever sees it.
     notifications: list[str] = []
+    # complete_coordination is now a normal tool call (server/tool_router.py)
+    # rather than a hard mid-round stop — capture its summary so it becomes
+    # the coordinator's definitive output, same as the pre-migration inline
+    # handler's immediate return did.
+    coordination_summary: str | None = None
 
     def _finalize(text: str) -> str:
         """Merge captured notify_user messages with the agent's own text,
@@ -524,310 +615,244 @@ async def _run_agent_loop(
         s = (text or "").strip()
         if len(s) <= limit:
             return s
-        return s[:limit] + "…"
+        return s[:limit] + "\u2026"
 
     # Full task text (generous cap): the card shows the whole brief for rows
     # that were not pre-announced by team_started — spawned children mainly.
     # Report the RESOLVED model_id (threaded into this loop).
     _emit("started", task=_preview(task, 2000), model=model_id, max_turns=config.max_turns)
 
-    # Wall-clock deadline is the real "don't loop forever" brake; the turn count
-    # is a high backstop. Whichever trips first ends the loop, and either way we
-    # finalize gracefully (below) rather than returning a bare stop note.
-    deadline = (time.monotonic() + config.deadline_seconds) if config.deadline_seconds else None
-    limit_reason = "turn_limit"
+    from server.chat.engine.policy import TurnPolicy
+    from server.chat.engine.runner import TurnContext, run_turn
 
-    for turn in range(config.max_turns):
-        if deadline is not None and time.monotonic() >= deadline:
-            limit_reason = "deadline"
-            break
-        _emit("turn_start", turn=turn + 1)
-        # Check for messages between turns
-        if turn > 0:
-            new_msgs = message_bus.receive(agent_id)
-            if new_msgs:
-                msg_parts = [f"[Message from {m.from_id}]: {m.content}" for m in new_msgs]
-                messages.append({"role": "user", "content": "\n".join(msg_parts)})
+    ctx = TurnContext(
+        session_id=session_id,
+        model_key=model_key,
+        model_id=model_id,
+        messages=messages,
+        adapter=adapter,
+        policy=TurnPolicy(
+            max_rounds=config.max_turns,
+            deadline_seconds=config.deadline_seconds,
+            # Agents must never trigger the parent chat turn's goal-gate
+            # evaluator.
+            completion_gate=False,
+            salvage_round=True,
+        ),
+        loop=loop,
+        executor=_agent_executor,
+        current_attachments=current_attachments,
+        tool_exec_model_id=model_id,
+        effort_label=effort_label,
+        # Agents don't run interactive chat's post-turn memory hooks (auto
+        # memory / session memory / dream consolidation) — the pre-migration
+        # loop never fired them either.
+        memory_hooks=lambda msgs: None,
+        unattended=True,
+        turn_scope_id=f"agent:{agent_id}",
+        tool_catalog=_tool_catalog,
+    )
 
-        # One model turn through the provider adapter (Anthropic or OpenAI
-        # on Bedrock) — the rest of this loop is provider-neutral.
-        turn_result = await adapter.invoke(
-            system=system,
-            messages=messages,
-            tools=tools or None,
-            max_tokens=config.max_tokens,
-            effort_label=effort_label,
-        )
-        total_usage.add(turn_result.usage)
-        stop_reason = turn_result.stop_reason
-        tool_uses = turn_result.tool_calls
-        result_content = turn_result.assistant_blocks
+    # Drain run_turn: an async generator yielding SSE-format ndjson strings
+    # ("data: {...}\n\n" / "data: [DONE]\n\n" / ": hb\n\n" heartbeat
+    # comments). THIS PARSING IS COUPLED TO runner.py's PINNED SSE FRAME
+    # VOCABULARY (see its own module docstring on golden-fixture pinning) —
+    # a future frame rename/reshape needs a matching update here. Kept
+    # deliberately minimal: text (buffered per round, flushed on the round's
+    # usage frame — mirroring the pre-migration loop's one "text" event per
+    # turn, not one per streamed delta), the running usage total, tool call/
+    # result previews for progress events, and notify_user/complete_coordination
+    # payloads folded into the returned output.
+    turn_start = time.monotonic()
+    rounds_used = 0
+    turn_no = 0
+    final_usage = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+    }
+    round_text_parts: list[str] = []
+    error_text: str | None = None
 
-        if turn_result.text:
-            all_text_parts.append(turn_result.text)
-            if turn_result.text.strip():
-                _emit("text", turn=turn + 1, text=_preview(turn_result.text, 2000))
-        collected_text = "\n\n".join(all_text_parts)
+    def _flush_round_text() -> None:
+        if not round_text_parts:
+            return
+        round_text = "".join(round_text_parts)
+        round_text_parts.clear()
+        if round_text.strip():
+            all_text_parts.append(round_text)
+            _emit("text", turn=turn_no, text=_preview(round_text, 2000))
 
-        if stop_reason == "pause_turn" and result_content:
-            # Anthropic paused a long-running turn (adaptive thinking / long
-            # tool streams run past the stream window). The agent turn is NOT
-            # done: resubmit the accumulated assistant content so the model
-            # continues from where it paused, instead of finishing the agent
-            # early with partial work. Bounded by max_turns and the wall-clock
-            # deadline, same as any other turn.
-            log.info(
-                "agent %s: stop_reason=pause_turn (turn %d) — resubmitting to continue",
-                agent_id,
-                turn + 1,
-            )
-            messages.append({"role": "assistant", "content": result_content})
-            continue
+    _nesting_token = agent_nesting_ctx.set(
+        {
+            "agent_id": agent_id,
+            "depth": depth,
+            "team_id": team_id,
+            "event_channel": event_channel,
+        }
+    )
+    try:
+        async for chunk in run_turn(ctx):
+            for raw_line in chunk.splitlines():
+                if not raw_line.startswith("data: "):
+                    continue  # heartbeat comments (": hb") and blank lines
+                payload = raw_line[len("data: ") :]
+                if payload == "[DONE]":
+                    continue
+                try:
+                    frame = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
 
-        if stop_reason != "tool_use" or not tool_uses:
-            structured = None
-            if structured_schema is not None:
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": result_content
-                        or [{"type": "text", "text": collected_text or "(done)"}],
+                if "usage" in frame:
+                    # One usage frame per round, with CUMULATIVE totals — take
+                    # the latest as the running total, and flush this round's
+                    # buffered text (all of it already streamed by this point;
+                    # runner.py emits usage right after the round's content).
+                    u = frame["usage"]
+                    final_usage = {
+                        "input_tokens": u.get("total_input", 0),
+                        "output_tokens": u.get("total_output", 0),
+                        "cache_read_tokens": u.get("total_cache_read", 0),
+                        "cache_creation_tokens": u.get("total_cache_creation", 0),
                     }
-                )
-                structured = await _distill_structured(
-                    adapter, system, messages, structured_schema, config, total_usage
-                )
-            _emit("completed", turn=turn + 1, turns_used=turn + 1, status="completed")
-            return AgentResult(
-                agent_id=agent_id,
-                agent_type=config.agent_type,
-                output=_finalize(collected_text),
-                status="completed",
-                turns_used=turn + 1,
-                tools_called=tools_called,
-                usage=total_usage.as_dict(),
-                structured_output=structured,
-            )
-
-        # Execute tool calls
-        messages.append({"role": "assistant", "content": result_content})
-        tool_results = []
-
-        for tu in tool_uses:
-            tool_name = tu["name"]
-            tool_input = tu.get("input", {})
-            # Build the executor input as a COPY before injecting the internal
-            # session id, so tu["input"] (replayed in the assistant message
-            # every turn) never carries __session_id__ into the transcript.
-            call_input = _with_session_id(tool_input, session_id)
-            tools_called.append(tool_name)
-
-            _visible_input = json.dumps(
-                {k: v for k, v in call_input.items() if not str(k).startswith("__")}
-            )
-            _emit(
-                "tool_call",
-                turn=turn + 1,
-                tool_name=tool_name,
-                # Short preview fills the collapsed log line; the full input
-                # (capped) feeds the click-to-expand view.
-                tool_input_preview=_preview(_visible_input, 240),
-                tool_input_full=_preview(_visible_input, 4000),
-            )
-
-            # PreToolUse gate — blocking hooks apply to subagents too, so a
-            # policy that denies (e.g.) ws_run_command holds inside spawned
-            # agents, not just the main chat loop.
-            _pre = await run_hooks(
-                "PreToolUse",
-                {
-                    "event": "PreToolUse",
-                    "tool_name": tool_name,
-                    "tool_input": tool_input,
-                    "session_id": session_id,
-                    "model_id": model_id,
-                },
-                tool_name=tool_name,
-            )
-            if _pre.blocked:
-                _denied = f"[Hook denied] {_pre.reason}"
-                _emit(
-                    "tool_result",
-                    turn=turn + 1,
-                    tool_name=tool_name,
-                    output_preview=_preview(_denied, 240),
-                    output_full=_preview(_denied, 4000),
-                    status="error",
-                )
-                tool_results.append(
-                    {"type": "tool_result", "tool_use_id": tu["id"], "content": _denied}
-                )
-                continue
-            if _pre.updated_input is not None:
-                call_input = _with_session_id(_pre.updated_input, session_id)
-
-            try:
-                # Handle agent-specific tools inline
-                if tool_name == "spawn_agent":
-                    output = await _handle_spawn_agent(
-                        call_input,
-                        agent_id,
-                        session_id,
-                        model_id,
-                        depth,
-                        team_id=team_id,
-                        event_channel=event_channel,
-                        effort_label=effort_label,
-                    )
-                elif tool_name == "send_message":
-                    output = _handle_send_message(call_input, agent_id)
-                elif tool_name == "list_agents":
-                    output = _handle_list_agents(session_id)
-                elif tool_name == "receive_messages":
-                    output = _handle_receive_messages(agent_id)
-                elif tool_name == "complete_coordination":
-                    output = call_input.get("summary", "Coordination complete.")
-                    # Return immediately — coordinator is done
-                    _emit("completed", turn=turn + 1, turns_used=turn + 1, status="completed")
-                    return AgentResult(
-                        agent_id=agent_id,
-                        agent_type=config.agent_type,
-                        output=_finalize(output),
-                        status="completed",
-                        turns_used=turn + 1,
-                        tools_called=tools_called,
-                        usage=total_usage.as_dict(),
-                    )
-                else:
-                    # Route through standard tool router
-                    output, side_effects = await route_tool(
-                        tool_name,
-                        call_input,
-                        loop=loop,
-                        executor=_agent_executor,
-                        transcript="",
-                        attachments=None,
-                        session_id=session_id,
-                        model_id=model_id,
-                        tool_use_id=tu["id"],
-                        origin="agent",
-                    )
-                    # Capture notify_user content so it reaches the parent via
-                    # this agent's returned output (see _finalize).
-                    for se in side_effects:
-                        if "notify_user" in se:
-                            msg = (se["notify_user"] or {}).get("message", "")
-                            if msg:
-                                notifications.append(msg)
-                    # Handle WS_APPROVAL responses — auto-approve in agent context.
-                    # agent=True stamps the payload so high-blast-radius executors
-                    # (e.g. GitHub mutations) can refuse to run with no human present.
-                    if isinstance(output, str) and output.startswith("[WS_APPROVAL]"):
-                        from server.tool_executor import _execute_ws_approval_inline
-
-                        ws_data = output[len("[WS_APPROVAL]") :]
-                        ws_parsed = json.loads(ws_data)
-                        output = await _execute_ws_approval_inline(ws_parsed, agent=True)
-                    # Workspace-prompt cannot be resolved inside a subagent
-                    # (no user present) — tell the agent so it can adapt.
-                    elif isinstance(output, str) and output.startswith("[WS_WORKSPACE_PROMPT]"):
-                        output = (
-                            "Error: no workspace connected and cannot prompt "
-                            "the user from a subagent. Ask the parent to "
-                            "open a workspace first."
+                    rounds_used += 1
+                    turn_no = rounds_used
+                    _flush_round_text()
+                    _emit("turn_start", turn=turn_no + 1)
+                elif "text" in frame and isinstance(frame.get("text"), str):
+                    round_text_parts.append(frame["text"])
+                elif "error" in frame:
+                    error_text = frame["error"]
+                elif "skill_input" in frame:
+                    tool_name = frame["skill_input"]
+                    tool_input_visible = frame.get("input") or {}
+                    tools_called.append(tool_name)
+                    if tool_name == "complete_coordination":
+                        coordination_summary = (
+                            tool_input_visible.get("summary") or "Coordination complete."
                         )
+                    _visible_input = json.dumps(tool_input_visible)
+                    _emit(
+                        "tool_call",
+                        turn=turn_no,
+                        tool_name=tool_name,
+                        tool_input_preview=_preview(_visible_input, 240),
+                        tool_input_full=_preview(_visible_input, 4000),
+                    )
+                elif "skill_result" in frame:
+                    tool_name = frame["skill_result"]
+                    output_preview = frame.get("output") or ""
+                    _emit(
+                        "tool_result",
+                        turn=turn_no,
+                        tool_name=tool_name,
+                        output_preview=_preview(output_preview, 240),
+                        output_full=_preview(output_preview, 4000),
+                        status="error" if output_preview.startswith("[Tool Error]") else "ok",
+                    )
+                elif "notify_user" in frame:
+                    msg = (frame["notify_user"] or {}).get("message", "")
+                    if msg:
+                        notifications.append(msg)
+    finally:
+        agent_nesting_ctx.reset(_nesting_token)
+        _flush_round_text()  # catch trailing text with no following usage frame
 
-            except Exception as e:
-                log.error("Agent %s tool error (%s): %s", agent_id, tool_name, e)
-                output = f"[Tool Error] {e}"
+    elapsed = time.monotonic() - turn_start
+    # run_turn's own last-round handling (the max_rounds cap, or a deadline
+    # hit — both force tools off for that round, see server/chat/engine/
+    # runner.py) already produces a genuine best-effort final answer; there is
+    # no separate "out of budget, finalize now" call to make here, unlike the
+    # pre-migration loop. stopped_early can't be read directly off the drained
+    # frames (no frame says "this was the capped round"), so it is inferred
+    # exactly the way the pre-migration loop's own limit detection worked:
+    # the round budget was exhausted, or the wall-clock deadline passed.
+    stopped_early = rounds_used >= config.max_turns or (
+        config.deadline_seconds is not None and elapsed >= config.deadline_seconds
+    )
 
-            output_str = str(output)
-            _emit(
-                "tool_result",
-                turn=turn + 1,
-                tool_name=tool_name,
-                output_preview=_preview(output_str, 240),
-                output_full=_preview(output_str, 4000),
-                status="error" if output_str.startswith("[Tool Error]") else "ok",
-            )
-            tool_results.append(
-                {
-                    "type": "tool_result",
-                    "tool_use_id": tu["id"],
-                    "content": output_str[:50000],
-                }
-            )
-
-        messages.append({"role": "user", "content": tool_results})
-
-    # Loop ended without a natural finish — either the turn backstop was
-    # exhausted or the wall-clock deadline tripped. Finalize gracefully so the
-    # run still yields a usable result: distill structured output for schema
-    # callers (otherwise the turn-limit path left structured_output=None, which
-    # surfaces to workflow scripts as a null agent() result) and, when the agent
-    # spent every turn on tools without emitting a final answer, do one no-tools
-    # pass to extract its best effort.
-    turns_used = (turn + 1) if limit_reason == "turn_limit" else turn
-    reason_text = (
-        "reached time limit"
-        if limit_reason == "deadline"
-        else f"reached turn limit ({config.max_turns})"
+    collected_text = "\n\n".join(all_text_parts)
+    body_text = _finalize(
+        coordination_summary if coordination_summary is not None else collected_text
     )
 
     structured = None
     if structured_schema is not None:
+        # Kept on the OLD provider-adapter system (server.agents.providers) —
+        # _distill_structured is a one-shot, non-agentic forced-tool call the
+        # chat/engine adapters have no equivalent for yet. Out of scope for
+        # this migration (see the module docstring above).
+        from server.agents.providers import TurnUsage as _OldTurnUsage
+        from server.agents.providers import get_adapter as _get_old_adapter
+
+        _old_adapter = _get_old_adapter(model_key, model_id)
+        _old_usage = _OldTurnUsage(
+            input_tokens=final_usage["input_tokens"],
+            output_tokens=final_usage["output_tokens"],
+            cache_read_tokens=final_usage["cache_read_tokens"],
+            cache_creation_tokens=final_usage["cache_creation_tokens"],
+        )
+        if stopped_early:
+            # Matches the pre-migration tail path: no synthetic assistant
+            # turn appended, ctx.messages already ends with the last tool
+            # result.
+            _distill_messages = ctx.messages
+        else:
+            # Matches the pre-migration natural-finish path: append the
+            # final round's own answer as one more assistant turn first.
+            _distill_messages = [
+                *ctx.messages,
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": collected_text or "(done)"}],
+                },
+            ]
         structured = await _distill_structured(
-            adapter, system, messages, structured_schema, config, total_usage
+            _old_adapter, system, _distill_messages, structured_schema, config, _old_usage
+        )
+        final_usage = _old_usage.as_dict()
+
+    if stopped_early:
+        reason_text = (
+            "reached time limit"
+            if config.deadline_seconds is not None and elapsed >= config.deadline_seconds
+            else f"reached turn limit ({config.max_turns})"
+        )
+        stop_note = f"[Agent stopped - {reason_text}]"
+        final_output = f"{stop_note}\n\n{body_text}" if body_text.strip() else stop_note
+        # Keep status="completed" for backward compatibility (memory/subagent
+        # callers branch on it); the emitted turn_limit phase drives the UI
+        # badge, and stopped_early is what gates the worktree harvest.
+        _emit("turn_limit", turns_used=rounds_used, status="turn_limit")
+        return AgentResult(
+            agent_id=agent_id,
+            agent_type=config.agent_type,
+            output=final_output,
+            status="completed",
+            turns_used=rounds_used,
+            tools_called=tools_called,
+            usage=final_usage,
+            structured_output=structured,
+            stopped_early=True,
         )
 
-    body_text = _finalize(collected_text)
-    if structured is None and not body_text.strip():
-        try:
-            fin = await adapter.invoke(
-                system=system,
-                messages=[
-                    *messages,
-                    {
-                        "role": "user",
-                        "content": (
-                            "You are out of budget and cannot call any more tools. "
-                            "Give your best complete final answer now, based on what "
-                            "you have gathered so far."
-                        ),
-                    },
-                ],
-                # The transcript contains tool_use/tool_result blocks, and the
-                # Anthropic API rejects such requests unless the tools param is
-                # present — tools=None here made this finalize pass silently
-                # fail (ValidationException, caught below) on every Anthropic
-                # model. Keep the tool definitions; the prompt forbids calls.
-                tools=tools or None,
-                max_tokens=config.max_tokens,
-                effort_label=None,
-            )
-            total_usage.add(fin.usage)
-            if fin.text and fin.text.strip():
-                body_text = _finalize(fin.text)
-        except Exception as e:  # noqa: BLE001 — best-effort finalize, never fatal
-            log.debug("Agent %s finalize pass failed: %s", agent_id, e)
+    if error_text and not body_text.strip():
+        # A terminal round error with nothing else produced — surface it
+        # plainly instead of an empty result.
+        body_text = f"[Agent Error] {error_text}"
 
-    stop_note = f"[Agent stopped - {reason_text}]"
-    final_output = f"{stop_note}\n\n{body_text}" if body_text.strip() else stop_note
-    # Keep status="completed" for backward compatibility (memory/subagent callers
-    # branch on it); the emitted `turn_limit` phase is what drives the UI badge.
-    _emit("turn_limit", turns_used=turns_used, status="turn_limit")
+    _emit("completed", turn=rounds_used, turns_used=rounds_used, status="completed")
     return AgentResult(
         agent_id=agent_id,
         agent_type=config.agent_type,
-        output=final_output,
+        output=body_text,
         status="completed",
-        turns_used=turns_used,
+        turns_used=rounds_used,
         tools_called=tools_called,
-        usage=total_usage.as_dict(),
+        usage=final_usage,
         structured_output=structured,
-        # Signal a limit exit (not a clean finish) so the worktree harvest keeps
-        # the partial work for inspection instead of applying it.
-        stopped_early=True,
     )
 
 
@@ -938,84 +963,3 @@ async def _distill_structured(adapter, system, messages, schema, config, total_u
         if attempt == 0:
             continue
     return None
-
-
-# --- Inline handlers for agent-specific tools ---
-
-
-async def _handle_spawn_agent(
-    tool_input: dict,
-    parent_id: str,
-    session_id: str,
-    model_id: str,
-    depth: int,
-    *,
-    team_id: str | None = None,
-    event_channel: str | None = None,
-    effort_label: str | None = None,
-) -> str:
-    """Handle spawn_agent tool call from within an agent."""
-    child_task = tool_input.get("task", "")
-    child_type = tool_input.get("agent_type", "general")
-    child_context = tool_input.get("context", "")
-
-    result = await run_agent(
-        child_task,
-        agent_type=child_type,
-        effort_label=effort_label,
-        parent_agent_id=parent_id,
-        session_id=session_id,
-        context=child_context,
-        depth=depth + 1,
-        # Child inherits the parent's (session) model rather than its
-        # agent-type default, so the whole tree uses one model.
-        model_id_override=model_id,
-        # Thread the parent's team and event channel through so the child's
-        # progress events land in the SAME team card as its own row (keyed by
-        # agent_id, badged as a child) instead of being dropped for lacking
-        # a team_id. This is what makes "agents spawning agents" visible.
-        team_id=team_id,
-        event_channel=event_channel,
-    )
-
-    return (
-        f"[Agent {result.agent_id} ({result.agent_type})] "
-        f"Status: {result.status}, Turns: {result.turns_used}\n"
-        f"Output:\n{result.output}"
-    )
-
-
-def _handle_send_message(tool_input: dict, from_id: str) -> str:
-    """Handle send_message tool call."""
-    to_id = tool_input.get("to_agent_id", "")
-    content = tool_input.get("content", "")
-    is_broadcast = tool_input.get("broadcast", False)
-
-    if is_broadcast:
-        count = message_bus.broadcast(from_id, content)
-        return f"Broadcast sent to {count} agents."
-    elif to_id:
-        message_bus.send(from_id, to_id, content)
-        return f"Message sent to agent {to_id}."
-    else:
-        return "Error: specify to_agent_id or set broadcast=true."
-
-
-def _handle_list_agents(session_id: str) -> str:
-    """Handle list_agents tool call."""
-    agents = agent_registry.list_all(session_id)
-    if not agents:
-        return "No active agents."
-    lines = []
-    for a in agents:
-        lines.append(f"- {a.agent_id} ({a.agent_type}): {a.status} - {a.task[:100]}")
-    return "\n".join(lines)
-
-
-def _handle_receive_messages(agent_id: str) -> str:
-    """Handle receive_messages tool call."""
-    msgs = message_bus.receive(agent_id)
-    if not msgs:
-        return "No pending messages."
-    lines = [f"[From {m.from_id}]: {m.content}" for m in msgs]
-    return "\n".join(lines)

@@ -24,8 +24,9 @@ class AgentEventBus:
 
     ``publish`` is safe to call from any thread: each subscriber records
     the event loop it lives on, and cross-thread delivery routes through
-    ``loop.call_soon_threadsafe``. Cron jobs publish from a daemon
-    thread, so this isn't optional.
+    ``loop.call_soon_threadsafe``. Kept general on purpose — cron runs as a
+    native asyncio task today (same loop as its subscribers), but this must
+    stay correct for any future caller that publishes from a worker thread.
     """
 
     def __init__(self) -> None:

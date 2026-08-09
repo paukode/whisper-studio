@@ -32,11 +32,12 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
-# The Bedrock run loop lives in cron_run.py (kept out of this file for the size
-# budget). Re-exported here so the existing names — and the two thread launch
-# sites below — read unchanged. cron_run reaches back for load_cron_jobs /
-# _push_result / _server_loop / the in-progress state LAZILY, so this
-# module-level import is not a cycle.
+# The run loop lives in cron_run.py (kept out of this file for the size
+# budget) — an asyncio coroutine over the shared chat/engine turn loop,
+# scheduled as a tracked task via _spawn_cron_run below. Re-exported here so
+# the existing names read unchanged. cron_run reaches back for
+# load_cron_jobs / _push_result / _server_loop / the in-progress state
+# LAZILY, so this module-level import is not a cycle.
 from server.cron_run import (
     _assemble_cron_tools,  # noqa: F401  (re-exported for callers/tests)
     _execute_cron_prompt,
@@ -347,8 +348,45 @@ async def init_scheduler():
         log.info("APScheduler not installed — cron disabled")
 
 
+def _spawn_cron_run(job_id: str) -> None:
+    """Start `_execute_cron_prompt` as a tracked asyncio task on the server's
+    event loop, from whichever thread the caller is on.
+
+    `_make_runner`'s `_run` (below) is itself an async job function, so
+    APScheduler's AsyncIOExecutor schedules it directly onto the loop via
+    ``loop.create_task`` (confirmed against apscheduler.executors.asyncio —
+    a NON-coroutine job function is what falls back to the executor's
+    thread pool) — meaning `_run` already runs on `_server_loop` and could
+    call `asyncio.create_task` directly. But `run_job_now` (the "run now"
+    button, and the `cron_run` tool dispatched through
+    server.tool_router -> execute_cron_tool, which runs on a worker thread
+    via `_submit`/`loop.run_in_executor`) can reach this from OFF the loop.
+    Hopping through `call_soon_threadsafe` when needed makes this safe from
+    either kind of caller. Uses `server.infrastructure.async_tasks.spawn`
+    (not a bare `create_task`) so the task survives GC and a failure is
+    logged instead of silently vanishing.
+    """
+    if _server_loop is None:
+        log.warning("cron: cannot start run for %s — server loop unavailable", job_id)
+        return
+
+    def _spawn_tracked() -> None:
+        from server.infrastructure.async_tasks import spawn
+
+        spawn(_execute_cron_prompt(job_id), name=f"cron-run-{job_id}")
+
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is _server_loop:
+        _spawn_tracked()
+    else:
+        _server_loop.call_soon_threadsafe(_spawn_tracked)
+
+
 def _make_runner(job_id: str):
-    def _run(_job_id=job_id):
+    async def _run(_job_id=job_id):
         def _mark(jobs):
             for j in jobs:
                 if j.get("id") == _job_id:
@@ -363,10 +401,14 @@ def _make_runner(job_id: str):
                     return dict(j)
             return None
 
-        job = _mutate_jobs(_mark)
+        # Off the loop: this coroutine runs directly on the server's event
+        # loop (see _spawn_cron_run's docstring), so a synchronous
+        # _mutate_jobs call here (file lock + write) would block every other
+        # coroutine on the process for its duration.
+        job = await asyncio.to_thread(_mutate_jobs, _mark)
         if job is None:
             return
-        threading.Thread(target=_execute_cron_prompt, args=(_job_id,), daemon=True).start()
+        _spawn_cron_run(_job_id)
 
     return _run
 
@@ -404,7 +446,14 @@ def _add_job_to_scheduler(job: dict, *, catch_up: bool = False):
         # double-fire); gated on catch_up so create/update never runs retroactively.
         if catch_up and cron_catch_up_due(sch, job.get("last_run"), grace):
             log.info("cron: catch-up fire for '%s' (missed during downtime)", job.get("name"))
-            _make_runner(job["id"])()
+            # _run is now a coroutine function (see _make_runner) — calling it
+            # only builds the coroutine object, it does not run it. This call
+            # site (init_scheduler, at boot) is already on the server's event
+            # loop, so schedule it as a tracked task instead of silently
+            # dropping the catch-up fire.
+            from server.infrastructure.async_tasks import spawn
+
+            spawn(_make_runner(job["id"])(), name=f"cron-catchup-{job['id']}")
         _scheduler.add_job(
             _make_runner(job["id"]),
             trigger=trigger,
@@ -436,7 +485,7 @@ def run_job_now(job_id: str) -> dict:
     with _IN_PROGRESS_LOCK:
         if job_id in _in_progress:
             return {"error": "job is already running"}
-    threading.Thread(target=_execute_cron_prompt, args=(job_id,), daemon=True).start()
+    _spawn_cron_run(job_id)
     return {"started": True, "job_id": job_id}
 
 
