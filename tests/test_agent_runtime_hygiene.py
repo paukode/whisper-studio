@@ -48,6 +48,19 @@ def test_with_session_id_survives_executor_pop():
     assert "__session_id__" not in original
 
 
+def test_with_session_id_also_stamps_agent_marker():
+    # refuse_if_agent() (github mutations) and MCP's elicitation callback
+    # both gate on __agent__ — every tool call this unattended loop dispatches
+    # must carry it, or an unattended subagent could answer a human-gated
+    # question on nobody's behalf.
+    original = {"path": "notes.txt"}
+
+    call_input = _with_session_id(original, "sess-abc")
+
+    assert call_input["__agent__"] is True
+    assert "__agent__" not in original
+
+
 # --- (B) cleanup_completed prunes stale entries, keeps recent + active ---
 
 

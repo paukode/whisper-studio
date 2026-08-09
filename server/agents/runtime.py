@@ -34,18 +34,26 @@ _git_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="agent-git"
 
 
 def _with_session_id(tool_input: dict, session_id: str) -> dict:
-    """Return a COPY of the model's tool input with the internal session id
-    injected for the executor.
+    """Return a COPY of the model's tool input with internal markers injected
+    for the executor: the session id, and an unattended-agent stamp.
 
     The original ``tool_input`` is ``tu["input"]`` — the exact dict that lives
     inside the assistant message replayed to Bedrock on every subsequent turn.
-    Mutating it in place would leak the internal ``__session_id__`` key into the
-    transcript (where the model can see and imitate it), and some executors only
-    ``.get()`` it rather than ``.pop()`` it, so it would persist. Copying keeps
-    ``tu["input"]`` pristine, mirroring the main chat path (tool_executor.py).
+    Mutating it in place would leak the internal ``__session_id__``/``__agent__``
+    keys into the transcript (where the model can see and imitate them), and
+    some executors only ``.get()`` rather than ``.pop()`` them, so they'd
+    persist. Copying keeps ``tu["input"]`` pristine, mirroring the main chat
+    path (tool_executor.py).
+
+    ``__agent__`` marks every tool call dispatched from this unattended loop —
+    no human is present to answer on-the-spot questions. High-blast-radius
+    executors (github mutations via refuse_if_agent, and MCP's elicitation
+    callback) check for this stamp and refuse/auto-decline rather than acting
+    or answering on a human's behalf.
     """
     call_input = dict(tool_input)
     call_input["__session_id__"] = session_id
+    call_input["__agent__"] = True
     return call_input
 
 
