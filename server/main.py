@@ -47,6 +47,7 @@ from server.migrations.runner import run_migrations
 from server.model_browser import router as model_browser_router
 from server.models_manager import router as models_manager_router
 from server.notifications import router as notifications_router
+from server.onboarding.routes import router as onboarding_router
 from server.plans.routes import router as plans_router
 from server.plugins import init_plugins
 from server.plugins import router as plugins_router
@@ -351,6 +352,7 @@ app.include_router(result_cache_router)
 app.include_router(mcp_router)
 app.include_router(skills_router)
 app.include_router(whisper_md_router)
+app.include_router(onboarding_router)
 app.include_router(memory_router)
 app.include_router(workspace_router)
 app.include_router(attachments_router)

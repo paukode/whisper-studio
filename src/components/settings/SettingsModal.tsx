@@ -3,6 +3,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { useDismiss, useFocusTrap } from '@/hooks/useDismiss';
 import { APISettings } from './APISettings';
 import { MCPSettings } from './MCPSettings';
+import { ImportPanel } from './ImportPanel';
 import { SkillsPanel } from './SkillsPanel';
 import { PermissionsPanel } from './PermissionsPanel';
 import { CostsPanel } from './CostsPanel';
@@ -28,6 +29,7 @@ export type SettingsTabId =
   | 'skills'
   | 'workflows'
   | 'mcp'
+  | 'import'
   | 'permissions'
   | 'hooks'
   | 'cron'
@@ -52,6 +54,7 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { id: 'skills', label: 'Skills' },
   { id: 'workflows', label: 'Workflows' },
   { id: 'mcp', label: 'MCP servers' },
+  { id: 'import', label: 'Import project' },
   { id: 'permissions', label: 'Permissions' },
   { id: 'hooks', label: 'Hooks' },
   { id: 'cron', label: 'Scheduled tasks' },
@@ -72,6 +75,7 @@ type RailItemId =
   | 'model-mode'
   | 'models'
   | 'mcp'
+  | 'import'
   | 'skills-plugins'
   | 'workflows-tasks'
   | 'keys-permissions'
@@ -144,6 +148,12 @@ const RAIL_GROUPS: RailGroup[] = [
         label: 'MCP servers',
         icon: icon(<><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></>),
         subTabs: [{ id: 'mcp', label: 'MCP servers', render: () => <MCPSettings /> }],
+      },
+      {
+        id: 'import',
+        label: 'Import project',
+        icon: icon(<><path d="M12 3v12" /><path d="M7 10l5 5 5-5" /><path d="M4 21h16" /></>),
+        subTabs: [{ id: 'import', label: 'Import project', render: () => <ImportPanel /> }],
       },
       {
         id: 'skills-plugins',
