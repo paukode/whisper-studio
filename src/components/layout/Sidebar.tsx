@@ -9,7 +9,7 @@ import * as sessionsApi from '@/api/sessions';
 import { fetchRecentRuns } from '@/api/cron';
 import { formatMessageTimestamp, formatSegmentTimestamp } from '@/utils/formatTimestamp';
 import { stripMarkdownTitle } from '@/utils/stripMarkdownTitle';
-import { downloadFile } from '@/utils/downloadFile';
+import { downloadFile, downloadUrl } from '@/utils/downloadFile';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 
 type ExportFormat = 'conversation-txt' | 'transcript-txt' | 'combined-md';
@@ -156,11 +156,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
   const bulkDeleteSessions = useSessionStore((s) => s.bulkDeleteSessions);
   const setSessionFlags = useSessionStore((s) => s.setSessionFlags);
   const branchSession = useSessionStore((s) => s.branchSession);
+  const importSession = useSessionStore((s) => s.importSession);
   const addToast = useUIStore((s) => s.addToast);
   const groupsCollapsed = useUIStore((s) => s.sessionGroupsCollapsed);
   const setSessionGroupCollapsed = useUIStore((s) => s.setSessionGroupCollapsed);
   const [resizing, setResizing] = useState(false);
   const sidebarRef = useRef<HTMLElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   // Remember the user's chosen width across collapse/expand cycles.
   // Without this, expanding after a collapse would reset to the CSS
   // default (272px) instead of returning to whatever the user dragged
@@ -327,6 +329,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
     [addToast],
   );
 
+  // Portable backup: streams straight from the server (full chatHistory +
+  // segments + speakerNames as JSONL) rather than reshaping client-side like
+  // the three formats above — this is the one round-trippable via Import,
+  // meant for bug reports/archival rather than human reading.
+  const handleExportPortable = useCallback((id: string, title: string) => {
+    const slug =
+      (title || 'session').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') ||
+      'session';
+    downloadUrl(sessionsApi.exportSessionUrl(id), `session-export-${slug}.jsonl`);
+  }, []);
+
   const handleDelete = useCallback(
     (id: string, title: string) => {
       void (async () => {
@@ -400,6 +413,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
       });
     })();
   }, [selected, bulkDeleteSessions, exitSelectMode, addToast]);
+
+  // Import: file picker -> hand the picked file straight to the store, which
+  // posts it to /api/sessions/import and switches to the new session. Not
+  // tied to any particular row (unlike Export/Branch), so it lives in the
+  // header rather than the per-session context menu.
+  const handleImportFileChosen = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = ''; // allow re-picking the same file later
+      if (file) void importSession(file);
+    },
+    [importSession],
+  );
 
   // Sidebar resize handle. Writes the chosen width as an inline style
   // for immediate effect and also stashes it in a ref so we can
@@ -483,6 +509,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
               void handleExport(menuSession.id, menuSession.title, 'transcript-txt');
             },
           },
+          {
+            label: 'Portable backup (.jsonl)',
+            onClick: () => handleExportPortable(menuSession.id, menuSession.title),
+          },
         ],
       }
     : { label: '' };
@@ -543,6 +573,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
           </svg>
           <h2>Conversations</h2>
         </div>
+        <input
+          ref={importInputRef}
+          type="file"
+          accept=".jsonl,application/x-ndjson,text/plain"
+          style={{ display: 'none' }}
+          aria-label="Import session file"
+          onChange={handleImportFileChosen}
+        />
+        <button
+          type="button"
+          className="session-select-toggle"
+          title="Import a session from a portable backup (.jsonl)"
+          onClick={() => importInputRef.current?.click()}
+        >
+          Import
+        </button>
       </div>
 
       {sessions.length > 0 && (
