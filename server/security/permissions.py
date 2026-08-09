@@ -244,6 +244,23 @@ def resolve_static_decision(
     if category == "github-destructive":
         return "ask"
 
+    # MCP tool calls: a dedicated tier on top of (not instead of) everything
+    # below. A server/tool marked `approval_mode: "approve"` in
+    # mcp_servers.json (server.mcp.MCPManager.get_tool_approval_tier_for_
+    # tool_name) is a hard floor — like github-destructive, no bypass mode,
+    # trusted-skill, or blanket session approval may skip it, because the
+    # user explicitly marked that server as one they don't fully trust.
+    # Every other tier ("auto", "prompt", "writes") falls straight through to
+    # the standard resolution below unchanged — the per-server config only
+    # ever ADDS a gate (server.mcp.MCPManager.call_tool decides whether to
+    # ask at all); it never removes the user's ability to configure the
+    # ordinary mode/session/rule pipeline for MCP tools like any other tool.
+    if category == "mcp":
+        from server.mcp import mcp_manager
+
+        if mcp_manager.get_tool_approval_tier_for_tool_name(tool_name) == "approve":
+            return "ask"
+
     # Per-category default overrides the global mode for everything that
     # follows (including the bypassPermissions check right below) — that's
     # the point: e.g. "always confirm deletes" can hold even when the global

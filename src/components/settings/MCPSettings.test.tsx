@@ -4,9 +4,10 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 // settingsStore / the panel import the api client; the list query goes
-// through get(). Mutations (post/put/del) are not exercised here.
-const { getMock } = vi.hoisted(() => ({ getMock: vi.fn() }));
-vi.mock('@/api/client', () => ({ get: getMock, put: vi.fn(), post: vi.fn(), del: vi.fn() }));
+// through get(). Mutations (post/put/del) are exercised in the
+// remote/approval-granularity and elicitation describe blocks below.
+const { getMock, postMock } = vi.hoisted(() => ({ getMock: vi.fn(), postMock: vi.fn() }));
+vi.mock('@/api/client', () => ({ get: getMock, put: vi.fn(), post: postMock, del: vi.fn() }));
 
 import { MCPSettings, parseMcpArgs } from './MCPSettings';
 import { MoreMenu } from '@/components/chat/MoreMenu';
@@ -172,5 +173,184 @@ describe('parseMcpArgs — args field parsing', () => {
 
   it('errors on a bracketed-but-invalid value instead of wrapping it as one arg', () => {
     expect('error' in parseMcpArgs('[not, valid, json]')).toBe(true);
+  });
+});
+
+describe('MCPSettings — remote/approval-granularity fields', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+    getMock.mockResolvedValue({ servers: {} });
+    postMock.mockResolvedValue({});
+    useUIStore.setState({ addToast: vi.fn().mockReturnValue('t') as never });
+    useSettingsStore.setState({
+      mcpServers: [] as never,
+      loadMCP: vi.fn().mockResolvedValue(undefined) as never,
+      loadSkills: vi.fn().mockResolvedValue(undefined) as never,
+    });
+  });
+
+  it('saving a new server with a URL (no command) posts url/bearer_token_env_var/approval_mode', async () => {
+    renderWithClient(<MCPSettings />);
+    await waitFor(() => expect(screen.getByText('+ Add Server')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('+ Add Server'));
+    fireEvent.change(screen.getByPlaceholderText('Server name'), { target: { value: 'remote-srv' } });
+    fireEvent.change(screen.getByPlaceholderText('e.g. https://example.com/mcp'), {
+      target: { value: 'https://example.com/mcp' },
+    });
+    fireEvent.change(
+      screen.getByPlaceholderText('e.g. MY_SERVER_TOKEN — the env var NAME, never the token itself'),
+      { target: { value: 'MY_SERVER_TOKEN' } },
+    );
+    fireEvent.change(screen.getByDisplayValue('auto — never ask'), { target: { value: 'prompt' } });
+
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => expect(postMock).toHaveBeenCalled());
+    expect(postMock).toHaveBeenCalledWith(
+      '/api/mcp/servers',
+      expect.objectContaining({
+        name: 'remote-srv',
+        command: '',
+        url: 'https://example.com/mcp',
+        bearer_token_env_var: 'MY_SERVER_TOKEN',
+        approval_mode: 'prompt',
+      }),
+    );
+  });
+
+  it('does not save when neither command nor url is provided', async () => {
+    renderWithClient(<MCPSettings />);
+    await waitFor(() => expect(screen.getByText('+ Add Server')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('+ Add Server'));
+    fireEvent.change(screen.getByPlaceholderText('Server name'), { target: { value: 'no-transport' } });
+    fireEvent.click(screen.getByText('Save'));
+
+    // Neither command nor url filled in -> handleSave bails before posting.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it('saving with tool_overrides/enabled_tools/disabled_tools parses them correctly', async () => {
+    renderWithClient(<MCPSettings />);
+    await waitFor(() => expect(screen.getByText('+ Add Server')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('+ Add Server'));
+    fireEvent.change(screen.getByPlaceholderText('Server name'), { target: { value: 'srv' } });
+    fireEvent.change(screen.getByPlaceholderText('e.g. npx'), { target: { value: 'npx' } });
+    fireEvent.change(screen.getByPlaceholderText('e.g. {"delete_all": "approve"}'), {
+      target: { value: '{"delete_all": "approve"}' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('e.g. get_data, search_items'), {
+      target: { value: 'get_data, search_items' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('e.g. delete_all'), { target: { value: 'delete_all' } });
+
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() => expect(postMock).toHaveBeenCalled());
+    expect(postMock).toHaveBeenCalledWith(
+      '/api/mcp/servers',
+      expect.objectContaining({
+        tool_overrides: { delete_all: 'approve' },
+        enabled_tools: ['get_data', 'search_items'],
+        disabled_tools: ['delete_all'],
+      }),
+    );
+  });
+
+  it('rejects an invalid tool_overrides mode instead of silently posting it', async () => {
+    renderWithClient(<MCPSettings />);
+    await waitFor(() => expect(screen.getByText('+ Add Server')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('+ Add Server'));
+    fireEvent.change(screen.getByPlaceholderText('Server name'), { target: { value: 'srv' } });
+    fireEvent.change(screen.getByPlaceholderText('e.g. npx'), { target: { value: 'npx' } });
+    fireEvent.change(screen.getByPlaceholderText('e.g. {"delete_all": "approve"}'), {
+      target: { value: '{"delete_all": "not-a-real-mode"}' },
+    });
+
+    fireEvent.click(screen.getByText('Save'));
+
+    await waitFor(() =>
+      expect(screen.getByText(/tool overrides must be a json object/i)).toBeInTheDocument(),
+    );
+    expect(postMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('MCPSettings — pending elicitations', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+    postMock.mockResolvedValue({ ok: true });
+    useUIStore.setState({ addToast: vi.fn().mockReturnValue('t') as never });
+    useSettingsStore.setState({
+      mcpServers: [] as never,
+      loadMCP: vi.fn().mockResolvedValue(undefined) as never,
+      loadSkills: vi.fn().mockResolvedValue(undefined) as never,
+    });
+  });
+
+  const RESPONSE_WITH_ELICITATION = {
+    servers: {},
+    pending_elicitations: [
+      {
+        elicitation_id: 'elicit-1',
+        server: 'weather',
+        session_id: 'chat-1',
+        mode: 'form',
+        message: 'Please provide your API key',
+        requested_schema: { type: 'object', properties: { key: { type: 'string' } } },
+        url: null,
+      },
+    ],
+  };
+
+  it('renders a pending elicitation with the server name and message', async () => {
+    getMock.mockResolvedValue(RESPONSE_WITH_ELICITATION);
+    renderWithClient(<MCPSettings />);
+
+    await waitFor(() => expect(screen.getByText(/weather needs input/i)).toBeInTheDocument());
+    expect(screen.getByText('Please provide your API key')).toBeInTheDocument();
+  });
+
+  it('Accept posts mcp_elicit_respond with the parsed JSON content', async () => {
+    getMock.mockResolvedValue(RESPONSE_WITH_ELICITATION);
+    renderWithClient(<MCPSettings />);
+    await waitFor(() => expect(screen.getByText(/weather needs input/i)).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText('{}'), { target: { value: '{"key": "abc123"}' } });
+    fireEvent.click(screen.getByText('Accept'));
+
+    await waitFor(() => expect(postMock).toHaveBeenCalled());
+    expect(postMock).toHaveBeenCalledWith('/api/approval/execute', {
+      action: 'mcp_elicit_respond',
+      payload: { elicitation_id: 'elicit-1', response_action: 'accept', content: { key: 'abc123' } },
+    });
+  });
+
+  it('Decline posts mcp_elicit_respond with no content', async () => {
+    getMock.mockResolvedValue(RESPONSE_WITH_ELICITATION);
+    renderWithClient(<MCPSettings />);
+    await waitFor(() => expect(screen.getByText(/weather needs input/i)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Decline'));
+
+    await waitFor(() => expect(postMock).toHaveBeenCalled());
+    expect(postMock).toHaveBeenCalledWith('/api/approval/execute', {
+      action: 'mcp_elicit_respond',
+      payload: { elicitation_id: 'elicit-1', response_action: 'decline', content: undefined },
+    });
+  });
+
+  it('renders nothing extra when there are no pending elicitations', async () => {
+    getMock.mockResolvedValue({ servers: {}, pending_elicitations: [] });
+    renderWithClient(<MCPSettings />);
+
+    await waitFor(() => expect(screen.getByText('No MCP servers configured.')).toBeInTheDocument());
+    expect(screen.queryByText(/needs input/i)).toBeNull();
   });
 });
