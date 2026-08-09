@@ -77,7 +77,7 @@ async function readImportError(resp: Response): Promise<string> {
 export function importSession(file: File): Promise<{ new_session_id: string; title: string }> {
   const fd = new FormData();
   fd.append('file', file);
-  return fetch('/api/sessions/import', { method: 'POST', body: fd }).then(async (resp) => {
+  return fetch('/api/sessions/import-transcript', { method: 'POST', body: fd }).then(async (resp) => {
     if (!resp.ok) throw new Error(await readImportError(resp));
     return resp.json() as Promise<{ new_session_id: string; title: string }>;
   });

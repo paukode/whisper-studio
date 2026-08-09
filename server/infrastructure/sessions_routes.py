@@ -362,7 +362,7 @@ async def export_session(session_id: str):
     message — the same content /branch copies into a forked session, just
     serialized for a bug report or external backup instead of a DB row.
 
-    Round-trips through POST /api/sessions/import.
+    Round-trips through POST /api/sessions/import-transcript.
     """
     with _get_conn() as conn:
         row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
@@ -447,7 +447,7 @@ def _parse_session_export(raw: str) -> tuple[str, list, list, dict]:
     return title, segments, chat_history, speaker_names
 
 
-@router.post("/api/sessions/import")
+@router.post("/api/sessions/import-transcript")
 async def import_session(request: Request):
     """Create a brand-new session from a portable export (see GET
     .../export). Same idea as /branch, but the source is an uploaded JSONL

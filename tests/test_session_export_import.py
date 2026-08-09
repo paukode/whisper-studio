@@ -1,4 +1,4 @@
-"""GET /api/sessions/{id}/export + POST /api/sessions/import round-trip.
+"""GET /api/sessions/{id}/export + POST /api/sessions/import-transcript round-trip.
 
 Export streams a portable JSONL (one export_meta line, then one line per
 transcript segment, then one line per chat_history message); import parses
@@ -105,7 +105,7 @@ def test_import_round_trip_reproduces_chat_history():
         jsonl = export_resp.text
 
         import_resp = client.post(
-            "/api/sessions/import",
+            "/api/sessions/import-transcript",
             content=jsonl.encode("utf-8"),
             headers={"content-type": "application/x-ndjson"},
         )
@@ -141,7 +141,7 @@ def test_import_via_multipart_file_upload():
     try:
         jsonl = client.get(f"/api/sessions/{sid}/export").text
         r = client.post(
-            "/api/sessions/import",
+            "/api/sessions/import-transcript",
             files={"file": ("session-export.jsonl", jsonl, "application/x-ndjson")},
         )
         assert r.status_code == 200, r.text
@@ -159,7 +159,7 @@ def test_import_via_multipart_file_upload():
 def test_import_rejects_non_export_payload():
     client = _client()
     r = client.post(
-        "/api/sessions/import",
+        "/api/sessions/import-transcript",
         content=json.dumps({"hello": "world"}).encode("utf-8"),
         headers={"content-type": "text/plain"},
     )
@@ -170,7 +170,7 @@ def test_import_rejects_non_export_payload():
 def test_import_rejects_empty_body():
     client = _client()
     r = client.post(
-        "/api/sessions/import",
+        "/api/sessions/import-transcript",
         content=b"",
         headers={"content-type": "text/plain"},
     )
