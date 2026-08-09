@@ -401,11 +401,20 @@ async def _run_agent_loop(
     structured_schema: dict | None = None,
 ) -> AgentResult:
     """Internal agent loop — invoke model with tools until end_turn or limit."""
+    from server.attachment_store import load_session_attachments
     from server.chat import assemble_tool_pool
     from server.tool_router import route_tool
     from server.workspace import get_workspace_path
 
     loop = asyncio.get_event_loop()
+
+    # Subagents inherit the parent session's durable attachments (documents,
+    # images) so analyze_document etc. work the same as they do in interactive
+    # chat — same lookup routes.py uses, just keyed off the same session_id
+    # spawn_agent already threads through for messaging/progress routing.
+    current_attachments = (
+        await asyncio.to_thread(load_session_attachments, session_id) if session_id else {}
+    )
 
     # Build system prompt — include workspace warning if not connected
     ws_path = get_workspace_path()
@@ -706,7 +715,7 @@ async def _run_agent_loop(
                         loop=loop,
                         executor=_agent_executor,
                         transcript="",
-                        attachments=None,
+                        attachments=current_attachments,
                         session_id=session_id,
                         model_id=model_id,
                         tool_use_id=tu["id"],
