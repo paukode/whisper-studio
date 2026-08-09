@@ -367,19 +367,68 @@ async def route_tool(
         return output, side_effects
 
     # --- Agent tools ---
+    # spawn_agent / send_message / receive_messages / complete_coordination
+    # are dispatched from an agent's OWN turn too (server.agents.runtime's
+    # unattended inner loop, ported onto this shared executor). Read the
+    # ambient nesting context (None outside an agent's own loop, e.g.
+    # interactive chat) so a nested call threads the calling agent's real
+    # id/depth/team/event-channel through instead of behaving as a fresh,
+    # unrelated top-level spawn every time.
+    if tool_name in ("spawn_agent", "send_message", "receive_messages", "complete_coordination"):
+        from server.agents.runtime import agent_nesting_ctx
+
+        _nesting = agent_nesting_ctx.get()
+    else:
+        _nesting = None
+
     if tool_name == "spawn_agent":
         from server.agent_tools import execute_spawn_agent
 
         output = await execute_spawn_agent(
-            tool_input, session_id, model_id, effort_label=effort_label
+            tool_input,
+            session_id,
+            model_id,
+            effort_label=effort_label,
+            parent_agent_id=_nesting["agent_id"] if _nesting else None,
+            depth=_nesting["depth"] if _nesting else 0,
+            team_id=_nesting["team_id"] if _nesting else None,
+            event_channel=_nesting["event_channel"] if _nesting else None,
         )
         return output, side_effects
 
     if tool_name == "send_message":
         from server.agent_tools import execute_send_message
 
-        output = execute_send_message(tool_input)
+        output = execute_send_message(
+            tool_input, from_id=_nesting["agent_id"] if _nesting else "main"
+        )
         return output, side_effects
+
+    if tool_name == "receive_messages":
+        # Agent-runtime-only tool (server.agents.tools.get_agent_runtime_tools)
+        # — never advertised outside an agent's own loop, so _nesting is
+        # always set here in practice; degrade gracefully if it somehow isn't.
+        if _nesting is None:
+            return (
+                "Error: receive_messages is only available inside an agent's own turn.",
+                side_effects,
+            )
+        from server.agents.messaging import message_bus
+
+        msgs = message_bus.receive(_nesting["agent_id"])
+        if not msgs:
+            return "No pending messages.", side_effects
+        return "\n".join(f"[From {m.from_id}]: {m.content}" for m in msgs), side_effects
+
+    if tool_name == "complete_coordination":
+        # Agent-runtime-only tool. The pre-migration inline loop returned
+        # immediately on seeing this call (a hard turn-stop); routed through
+        # the shared executor there is no such mid-round short-circuit, so
+        # it resolves as a normal tool_result carrying the summary — the
+        # coordinator's next round then naturally ends the turn once it has
+        # nothing further to do (one extra round versus the old immediate
+        # stop, not a behavior loss).
+        return tool_input.get("summary", "Coordination complete."), side_effects
 
     if tool_name == "list_agents":
         from server.agent_tools import execute_list_agents

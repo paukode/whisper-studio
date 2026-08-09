@@ -207,18 +207,25 @@ def test_agent_registers_and_emits_resolved_model(monkeypatch):
 
     invoked = {}
 
-    class FakeBody:
-        def read(self):
-            return json.dumps(
-                {"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"}
-            ).encode()
+    # The agent loop's main model call now runs through
+    # server/chat/engine/runner.py (the shared turn engine interactive chat
+    # uses), which resolves its Bedrock client via
+    # server.chat.engine.anthropic, not server.chat directly — patch that
+    # binding instead, with the streaming (invoke_model_with_response_stream)
+    # shape it actually calls.
+    from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block
 
-    class FakeBedrock:
-        def invoke_model(self, **kwargs):
-            invoked["modelId"] = kwargs.get("modelId")
-            return {"body": FakeBody()}
+    class _RecordingFakeBedrockClient(FakeBedrockClient):
+        def invoke_model_with_response_stream(self, modelId, contentType, accept, body):
+            invoked["modelId"] = modelId
+            return super().invoke_model_with_response_stream(
+                modelId=modelId, contentType=contentType, accept=accept, body=body
+            )
 
-    monkeypatch.setattr(chat, "_get_bedrock_client", lambda: FakeBedrock())
+    fake_client = _RecordingFakeBedrockClient(
+        [[msg_start(), *text_block("done"), *msg_end(stop_reason="end_turn")]]
+    )
+    monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_client)
 
     result = asyncio.run(
         run_agent(

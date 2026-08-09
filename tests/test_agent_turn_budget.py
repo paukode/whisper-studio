@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock
 
 from server.agents.config import AgentConfig, get_agent_config
 from server.agents.runtime import run_agent
+from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block, tool_use_block
 
 # ── get_agent_config overrides ────────────────────────────────────────────────
 
@@ -67,6 +68,16 @@ def test_get_agent_config_ignores_invalid_values(monkeypatch):
 
 
 # ── graceful finalize at the turn limit ───────────────────────────────────────
+#
+# The agent loop now runs through server/chat/engine/runner.py — the same
+# shared turn engine interactive chat uses — so its own model calls are
+# scripted with the streaming FakeBedrockClient harness (tests/golden_
+# harness.py), patched at the chat/engine adapter's own Bedrock-client
+# binding. _distill_structured (unchanged, out of scope for the migration —
+# chat/engine's adapters have no forced-tool-call equivalent yet) still goes
+# through the OLD, non-streaming server.agents.providers adapter system, so
+# it needs the OLD _FakeBedrock/_FakeBody shape patched at server.chat's own
+# binding — the two are independent clients for independent call paths.
 
 
 class _FakeBody:
@@ -78,7 +89,9 @@ class _FakeBody:
 
 
 class _FakeBedrock:
-    """Replays canned responses; records each request body."""
+    """Replays canned responses; records each request body. Backs the OLD
+    non-streaming adapter system (server.agents.providers), used only by
+    _distill_structured now."""
 
     def __init__(self, responses: list[dict]):
         self._responses = list(responses)
@@ -89,17 +102,11 @@ class _FakeBedrock:
         return {"body": _FakeBody(self._responses.pop(0))}
 
 
-_TOOL_USE = {
-    "stop_reason": "tool_use",
-    "content": [{"type": "tool_use", "id": "t1", "name": "noop", "input": {}}],
-}
-
-
-def _patch_common(monkeypatch, fake):
-    monkeypatch.setattr("server.chat._get_bedrock_client", lambda: fake)
+def _patch_common(monkeypatch, fake_stream):
+    monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
     monkeypatch.setattr("server.chat.assemble_tool_pool", lambda *a, **k: [])
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
-    monkeypatch.setattr("server.tool_router.route_tool", AsyncMock(return_value=("ok", [])))
+    monkeypatch.setattr("server.tool_executor.route_tool", AsyncMock(return_value=("ok", [])))
 
 
 def test_turn_limit_distills_structured_output(monkeypatch):
@@ -108,6 +115,19 @@ def test_turn_limit_distills_structured_output(monkeypatch):
         "properties": {"answer": {"type": "string"}},
         "required": ["answer"],
     }
+    # Round 0: a tool call. Round 1 is max_turns=2's forced-no-tools last
+    # round (the engine omits tools from that request entirely — see
+    # server/chat/engine/anthropic.py's is_last_round handling), so a real
+    # model has nothing left to call and just answers in text.
+    fake_stream = FakeBedrockClient(
+        [
+            [msg_start(), *tool_use_block("t1", "noop", {}), *msg_end(stop_reason="tool_use")],
+            [msg_start(), *text_block("partial progress"), *msg_end(stop_reason="end_turn")],
+        ]
+    )
+    _patch_common(monkeypatch, fake_stream)
+
+    # The distillation pass (OLD adapter system) forces emit_result.
     structured_resp = {
         "stop_reason": "tool_use",
         "content": [
@@ -119,11 +139,8 @@ def test_turn_limit_distills_structured_output(monkeypatch):
             }
         ],
     }
-    # Two turns of plain tool_use exhaust max_turns=2; the distill pass then
-    # returns the forced emit_result. No 4th call: with structured output in
-    # hand the no-tools text finalize is skipped.
-    fake = _FakeBedrock([_TOOL_USE, _TOOL_USE, structured_resp])
-    _patch_common(monkeypatch, fake)
+    fake_old = _FakeBedrock([structured_resp])
+    monkeypatch.setattr("server.chat._get_bedrock_client", lambda: fake_old)
 
     cfg = AgentConfig(agent_type="general", max_turns=2, deadline_seconds=None)
     result = asyncio.run(
@@ -137,18 +154,29 @@ def test_turn_limit_distills_structured_output(monkeypatch):
     )
     assert result.structured_output == {"answer": "partial but usable"}
     assert result.status == "completed"
+    assert result.stopped_early is True
     assert "turn limit" in result.output.lower()
+    # The distillation call went out with the forced tool_choice, no schema
+    # validation loop needed since it validated on the first attempt.
+    assert fake_old.requests[-1]["tool_choice"] == {"type": "tool", "name": "emit_result"}
 
 
 def test_turn_limit_finalizes_text_when_no_schema(monkeypatch):
-    final_resp = {
-        "stop_reason": "end_turn",
-        "content": [{"type": "text", "text": "Here is my best summary so far."}],
-    }
-    # Two tool-use turns (no text) exhaust max_turns=2; the no-tools finalize
-    # pass then produces the final answer.
-    fake = _FakeBedrock([_TOOL_USE, _TOOL_USE, final_resp])
-    _patch_common(monkeypatch, fake)
+    # Round 0: a tool call. Round 1 is the forced-no-tools last round — the
+    # model has nothing left to call, so its own answer IS the final text
+    # (the engine's own last-round handling replaces the pre-migration
+    # loop's separate manual "out of budget, give your best answer" pass).
+    fake_stream = FakeBedrockClient(
+        [
+            [msg_start(), *tool_use_block("t1", "noop", {}), *msg_end(stop_reason="tool_use")],
+            [
+                msg_start(),
+                *text_block("Here is my best summary so far."),
+                *msg_end(stop_reason="end_turn"),
+            ],
+        ]
+    )
+    _patch_common(monkeypatch, fake_stream)
 
     cfg = AgentConfig(agent_type="general", max_turns=2, deadline_seconds=None)
     result = asyncio.run(
@@ -161,7 +189,8 @@ def test_turn_limit_finalizes_text_when_no_schema(monkeypatch):
     )
     assert "best summary" in result.output
     assert result.status == "completed"
-    # The transcript contains tool_use/tool_result blocks, and Anthropic rejects
-    # such requests without a tools param — the finalize call must therefore
-    # carry the tool definitions (omitting them made this pass silently fail).
-    assert fake.requests[-1].get("tools"), "finalize request must include tools"
+    assert result.stopped_early is True
+    # The last round's request must not offer tools at all — Anthropic's
+    # is_last_round handling omits the key entirely, so the model had no
+    # choice but to answer in text.
+    assert not fake_stream.requests[-1].get("tools")
