@@ -18,6 +18,12 @@ Modes:
   "acceptEdits"      — ws_write_file/ws_create_file auto-allow; delete+commands ask
   "bypassPermissions"— everything allowed, no prompts
   "dontAsk"          — read-only auto-allow; write tools auto-deny silently
+
+"auto" mode's classifier can flip-flop over a long turn; record_classifier_verdict /
+is_auto_mode_tripped / resume_auto_mode below implement a per-turn circuit breaker
+that forces the effective decision back to "ask" once denials pile up (see their
+docstrings for the exact thresholds). server.tool_executor consults it right before
+calling the classifier.
 """
 
 import fnmatch
@@ -51,6 +57,99 @@ DEFAULTS = {
     "mode": "default",
     "rules": [],
 }
+
+# ── Auto-mode circuit breaker ───────────────────────────────────────────────
+# The "auto" mode classifier (server.auto_mode.classify_tool_call) only ever
+# sees one tool call in isolation and can flip-flop across a long turn. This
+# tracks its verdicts per session, scoped to a single turn, and trips the
+# breaker when denials pile up — forcing the effective mode back to "ask"
+# instead of continuing to consult the classifier.
+#
+# Two independent triggers, mirroring hooks/engine.py's simple counted-cap
+# (MAX_STOP_BLOCKS_PER_TURN) but with a rolling window added since a
+# classifier can also deny slowly across many calls without ever stringing
+# 3 in a row:
+#   - consecutive: 3 "confirm" verdicts in a row with no intervening
+#     "allow" — auto mode has clearly stopped agreeing with the work.
+#   - windowed: 5 "confirm" verdicts within the last 10 classifier calls
+#     this turn — catches a slower drip of denials that never quite
+#     strings 3 together.
+AUTO_MODE_CONSECUTIVE_DENIAL_LIMIT = 3
+AUTO_MODE_WINDOW_SIZE = 10
+AUTO_MODE_WINDOW_DENIAL_LIMIT = 5
+
+# session_id -> {"consecutive": int, "window": list[bool], "tripped": bool, "reason": str | None}
+# In-memory, process-wide, keyed by session_id — same shape as
+# server.chat.engine.pause.paused_sessions. Reset at the start of each new
+# turn (server.chat.engine.runner calls reset_auto_mode_breaker when
+# ctx.is_new_turn); a backend restart drops it, same as any other in-flight
+# turn state.
+_auto_mode_breaker: dict[str, dict] = {}
+
+
+def _breaker_state(session_id: str) -> dict:
+    return _auto_mode_breaker.setdefault(
+        session_id, {"consecutive": 0, "window": [], "tripped": False, "reason": None}
+    )
+
+
+def reset_auto_mode_breaker(session_id: str) -> None:
+    """Clear a session's classifier-denial tracking. Called at the start of
+    a genuinely new turn (not a paused-approval continuation) so a breaker
+    tripped last turn doesn't carry over."""
+    _auto_mode_breaker.pop(session_id, None)
+
+
+def is_auto_mode_tripped(session_id: str) -> bool:
+    """True once the breaker has tripped for this session's current turn."""
+    return _auto_mode_breaker.get(session_id, {}).get("tripped", False)
+
+
+def record_classifier_verdict(session_id: str, allowed: bool) -> dict:
+    """Fold one auto-mode classifier verdict into the session's rolling
+    denial tracker. Returns the (possibly just-tripped) breaker state; the
+    caller should emit a one-time notification exactly when
+    ``state["tripped"]`` is True on return (it stays False on every prior
+    call, so this is only "new" once)."""
+    state = _breaker_state(session_id)
+    if state["tripped"]:
+        return state
+    if allowed:
+        state["consecutive"] = 0
+    else:
+        state["consecutive"] += 1
+    state["window"].append(allowed)
+    if len(state["window"]) > AUTO_MODE_WINDOW_SIZE:
+        del state["window"][: len(state["window"]) - AUTO_MODE_WINDOW_SIZE]
+    window_denials = sum(1 for a in state["window"] if not a)
+    if state["consecutive"] >= AUTO_MODE_CONSECUTIVE_DENIAL_LIMIT:
+        state["tripped"] = True
+        state["reason"] = (
+            f"Auto mode asked for confirmation {state['consecutive']} times in a row this turn."
+        )
+    elif window_denials >= AUTO_MODE_WINDOW_DENIAL_LIMIT:
+        state["tripped"] = True
+        state["reason"] = (
+            f"Auto mode asked for confirmation {window_denials} times in the last "
+            f"{len(state['window'])} tool calls this turn."
+        )
+    return state
+
+
+def resume_auto_mode(session_id: str) -> bool:
+    """User override: clear the trip so auto mode resumes for the rest of
+    this turn. Also resets the running counts (not just the flag) so a
+    fresh run of denials can still re-trip before the turn ends, instead of
+    the stale count re-tripping on the very next call. Returns False if
+    there was nothing tripped to resume."""
+    state = _auto_mode_breaker.get(session_id)
+    if state is None or not state["tripped"]:
+        return False
+    state["tripped"] = False
+    state["reason"] = None
+    state["consecutive"] = 0
+    state["window"] = []
+    return True
 
 
 def load_permissions() -> dict:
@@ -258,3 +357,22 @@ async def set_mode(request: Request):
     data["mode"] = mode
     save_permissions(data)
     return {"mode": mode}
+
+
+@router.post("/auto-mode/resume")
+async def resume_auto_mode_route(request: Request):
+    """One-click override for the auto-mode circuit breaker (mirrors Codex's
+    /approve-after-circuit-break): the user asks auto mode to resume
+    classifying for the rest of the current turn instead of asking for
+    every remaining tool call. Does not touch the persisted permission
+    mode — the breaker is turn-scoped, in-memory state."""
+    body = await request.json()
+    session_id = body.get("session_id", "")
+    if not session_id:
+        return Response(
+            content=json.dumps({"error": "session_id is required"}),
+            status_code=400,
+            media_type="application/json",
+        )
+    resumed = resume_auto_mode(session_id)
+    return {"resumed": resumed}

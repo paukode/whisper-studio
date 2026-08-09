@@ -360,6 +360,7 @@ async def process_tool_results(
     model_id: str = "",
     recent_messages: list[dict] | None = None,
     mode: str = "default",
+    session_id: str = "",
 ) -> tuple[list[dict], list[str], bool, bool]:
     """Post-process completed tool states into Bedrock messages and SSE events.
 
@@ -367,6 +368,9 @@ async def process_tool_results(
         states: Completed ToolState objects in request order.
         budget_fn: Function (tool_name, output) -> budgeted_output for large results.
         session_approvals: Category-level pre-approvals from frontend (e.g. {"write": "allow"}).
+        session_id: Keys the auto-mode circuit breaker (server.security.permissions).
+            Empty is treated as "no breaker tracking" (matches existing test callers
+            that don't pass one).
 
     Returns:
         (tool_results, sse_events, has_pending_approval, has_user_question)
@@ -493,8 +497,37 @@ async def process_tool_results(
                 # which must stay Bedrock-free and falls back to asking.
                 cfg = config or {}
                 if model_id:
-                    verdict = await classify_tool_call(state.tool_name, ws_parsed, cfg)
-                    decision = "allow" if verdict.get("decision") == "allow" else "ask"
+                    from server.security.permissions import (
+                        is_auto_mode_tripped,
+                        record_classifier_verdict,
+                    )
+
+                    if session_id and is_auto_mode_tripped(session_id):
+                        # Circuit breaker already tripped this turn (see
+                        # record_classifier_verdict below) — stop consulting
+                        # the classifier and ask for every remaining
+                        # approval-gated call until the user resumes auto
+                        # mode (POST /api/permissions/auto-mode/resume) or a
+                        # new turn starts.
+                        decision = "ask"
+                    else:
+                        verdict = await classify_tool_call(
+                            state.tool_name,
+                            ws_parsed,
+                            cfg,
+                            recent_messages=recent_messages or [],
+                        )
+                        decision = "allow" if verdict.get("decision") == "allow" else "ask"
+                        if session_id:
+                            breaker = record_classifier_verdict(
+                                session_id, allowed=(decision == "allow")
+                            )
+                            if breaker["tripped"]:
+                                sse_events.append(
+                                    ndjson_dumps(
+                                        {"auto_mode_breaker": {"reason": breaker["reason"]}}
+                                    )
+                                )
                 else:
                     decision = "ask"
 
