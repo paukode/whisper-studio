@@ -24,7 +24,11 @@ from server.security.permissions import (
     MODE_DEFAULT,
     MODE_DONT_ASK,
     evaluate_rules,
+    is_auto_mode_tripped,
+    record_classifier_verdict,
+    reset_auto_mode_breaker,
     resolve_static_decision,
+    resume_auto_mode,
 )
 from server.tool_executor import process_tool_results
 
@@ -419,3 +423,168 @@ def test_dry_run_endpoint_tests_a_draft_rule_before_it_is_saved(client):
 def test_dry_run_endpoint_requires_tool(client):
     r = client.post("/api/permissions/rules/test", json={"input": {}})
     assert r.status_code == 400
+
+
+def test_process_tool_results_passes_recent_messages_to_classifier(monkeypatch):
+    # classify_tool_call used to see the tool call in total isolation; it now
+    # receives the turn's recent (assistant) message slice unchanged, so it can
+    # catch a multi-step pattern (e.g. a credentials read before this POST).
+    _patch_rules(monkeypatch, [])
+    classify_mock = AsyncMock(return_value={"decision": "allow", "reason": "ok"})
+    monkeypatch.setattr("server.tool_executor.classify_tool_call", classify_mock)
+    monkeypatch.setattr(
+        "server.tool_executor._execute_ws_approval_inline",
+        AsyncMock(return_value="[OK]"),
+    )
+
+    recent = [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "name": "ws_read_file", "input": {"path": "credentials.json"}}
+            ],
+        }
+    ]
+    asyncio.run(
+        process_tool_results(
+            [_write_approval_state()],
+            budget_fn=_budget_passthrough,
+            session_approvals={},
+            config={},
+            model_id="test-model",
+            recent_messages=recent,
+            mode=MODE_AUTO,
+            session_id="breaker-context-passthrough",
+        )
+    )
+    assert classify_mock.await_args.kwargs["recent_messages"] == recent
+
+
+# ── auto-mode circuit breaker ────────────────────────────────────────────────
+#
+# The classifier can flip-flop over a long turn; record_classifier_verdict /
+# is_auto_mode_tripped / resume_auto_mode (server.security.permissions) track
+# its denials per session, scoped to a turn, and trip a breaker that forces
+# "ask" instead of continuing to consult the classifier. Thresholds: 3
+# "confirm" verdicts in a row, or 5 within the last 10 calls this turn.
+
+
+def _run_write_approval(monkeypatch, session_id):
+    return asyncio.run(
+        process_tool_results(
+            [_write_approval_state()],
+            budget_fn=_budget_passthrough,
+            session_approvals={},
+            config={},
+            model_id="test-model",
+            recent_messages=[],
+            mode=MODE_AUTO,
+            session_id=session_id,
+        )
+    )
+
+
+def test_breaker_trips_after_three_consecutive_denials(monkeypatch):
+    _patch_rules(monkeypatch, [])
+    session_id = "breaker-consecutive"
+    reset_auto_mode_breaker(session_id)
+    monkeypatch.setattr("server.tool_executor.explain_permission", AsyncMock(return_value=None))
+    classify_mock = AsyncMock(return_value={"decision": "confirm", "reason": "no"})
+    monkeypatch.setattr("server.tool_executor.classify_tool_call", classify_mock)
+
+    sse_events = []
+    for _ in range(3):
+        _, sse_events, has_pending_approval, _ = _run_write_approval(monkeypatch, session_id)
+        assert has_pending_approval is True
+
+    assert is_auto_mode_tripped(session_id) is True
+    # The breaker notification fires exactly once, right on the trip.
+    assert any('"auto_mode_breaker":' in e for e in sse_events)
+    assert classify_mock.call_count == 3
+
+    # A 4th call must skip the classifier entirely — straight to "ask".
+    _, sse_events, has_pending_approval, _ = _run_write_approval(monkeypatch, session_id)
+    assert has_pending_approval is True
+    assert classify_mock.call_count == 3
+    assert not any('"auto_mode_breaker":' in e for e in sse_events)
+
+
+def test_breaker_does_not_trip_on_occasional_denials(monkeypatch):
+    _patch_rules(monkeypatch, [])
+    session_id = "breaker-occasional"
+    reset_auto_mode_breaker(session_id)
+    monkeypatch.setattr("server.tool_executor.explain_permission", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "server.tool_executor._execute_ws_approval_inline",
+        AsyncMock(return_value="[OK]"),
+    )
+
+    # 3 denials total, alternating with allows so consecutive never exceeds 1
+    # and the 5-in-10 window never fills either — auto mode should keep
+    # working normally the whole way through.
+    decisions = ["allow", "confirm", "allow", "confirm", "allow", "confirm"]
+    classify_mock = AsyncMock(side_effect=[{"decision": d, "reason": "x"} for d in decisions])
+    monkeypatch.setattr("server.tool_executor.classify_tool_call", classify_mock)
+
+    for expected in decisions:
+        _, sse_events, has_pending_approval, _ = _run_write_approval(monkeypatch, session_id)
+        assert has_pending_approval == (expected == "confirm")
+        assert not any('"auto_mode_breaker":' in e for e in sse_events)
+
+    assert is_auto_mode_tripped(session_id) is False
+    assert classify_mock.call_count == len(decisions)
+
+
+def test_breaker_trips_via_rolling_window_without_three_consecutive():
+    # 5 denials in 9 calls, never more than one in a row — the consecutive
+    # counter alone would never catch this; the window does.
+    session_id = "breaker-window"
+    reset_auto_mode_breaker(session_id)
+    pattern = [False, True, False, True, False, True, False, True, False]
+
+    state = None
+    tripped_at = None
+    for i, allowed in enumerate(pattern):
+        state = record_classifier_verdict(session_id, allowed)
+        if state["tripped"]:
+            tripped_at = i
+            break
+
+    assert tripped_at == 8
+    assert state["reason"] is not None
+    assert "5" in state["reason"]
+
+
+def test_resume_auto_mode_restores_classifier_for_rest_of_turn(monkeypatch):
+    _patch_rules(monkeypatch, [])
+    session_id = "breaker-resume"
+    reset_auto_mode_breaker(session_id)
+    monkeypatch.setattr("server.tool_executor.explain_permission", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        "server.tool_executor._execute_ws_approval_inline",
+        AsyncMock(return_value="[OK]"),
+    )
+    classify_mock = AsyncMock(return_value={"decision": "confirm", "reason": "no"})
+    monkeypatch.setattr("server.tool_executor.classify_tool_call", classify_mock)
+
+    for _ in range(3):
+        _run_write_approval(monkeypatch, session_id)
+    assert is_auto_mode_tripped(session_id) is True
+    assert classify_mock.call_count == 3
+
+    assert resume_auto_mode(session_id) is True
+    assert is_auto_mode_tripped(session_id) is False
+
+    # Subsequent tool calls in the same turn consult the classifier again.
+    classify_mock.return_value = {"decision": "allow", "reason": "fine now"}
+    tool_results, _, has_pending_approval, _ = _run_write_approval(monkeypatch, session_id)
+    assert has_pending_approval is False
+    assert classify_mock.call_count == 4
+    assert tool_results[0]["content"] == "[OK]"
+
+
+def test_resume_auto_mode_is_a_noop_when_nothing_tripped():
+    session_id = "breaker-resume-noop"
+    reset_auto_mode_breaker(session_id)
+    assert resume_auto_mode(session_id) is False
+    assert is_auto_mode_tripped(session_id) is False

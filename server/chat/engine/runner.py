@@ -167,6 +167,13 @@ async def run_turn(ctx: TurnContext):
     if ctx.is_new_turn and goal_text:
         _goal_store.reset_for_new_turn(session_id)
 
+    # Auto-mode circuit breaker (server.security.permissions) is turn-scoped:
+    # a breaker tripped last turn must not carry into this one.
+    if ctx.is_new_turn:
+        from server.security.permissions import reset_auto_mode_breaker
+
+        reset_auto_mode_breaker(session_id)
+
     # Replay protection — skip duplicate tool_use IDs across the stream.
     _seen_tool_ids = BoundedUUIDSet(capacity=256)
 
@@ -525,6 +532,7 @@ async def run_turn(ctx: TurnContext):
                 model_id=ctx.model_id if ctx.tool_exec_model_id is None else ctx.tool_exec_model_id,
                 recent_messages=[m for m in messages if m.get("role") == "assistant"][-3:],
                 mode=ctx.mode,
+                session_id=session_id,
             )
 
             for evt in sse_events:
