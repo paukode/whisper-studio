@@ -98,6 +98,29 @@ class TurnContext:
     # Callbacks into route-owned state (None outside interactive chat).
     heartbeat: Callable[[], None] | None = None
     is_disconnected: Callable[[], Any] | None = None  # async
+    # True for a turn with no human attending it (subagents today; any future
+    # unattended caller). Threaded into execute_tool_batch/process_tool_results
+    # so approval-gated and pause-inducing tools resolve without a human:
+    # WS_APPROVAL executes inline, WS_WORKSPACE_PROMPT and ask_user_question
+    # refuse instead of pausing, and every dispatched call is stamped
+    # __agent__ (mirrors server.agents.runtime._with_session_id).
+    unattended: bool = False
+    # Alternate key for turn-scoped, session_id-keyed global state (goal
+    # store, the auto-mode circuit breaker, the paused-turn store, and the
+    # loop-hints context tracker). None (every existing caller today) means
+    # "key on session_id exactly as before" — byte-identical behavior. Set
+    # this when the real session_id is shared with a concurrently in-flight
+    # turn (e.g. a subagent's inner turn running while the parent chat turn
+    # that spawned it is still streaming): without it, the subagent's turn
+    # would reset the PARENT's in-flight goal tracking / auto-mode breaker
+    # and collide with its paused-approval slot.
+    turn_scope_id: str | None = None
+    # Per-round tool catalog override. When set, called instead of
+    # _assemble_round_tools(ctx) to get (tools, core_count) — lets a caller
+    # (e.g. the agent runtime) supply its own filtered/precomputed tool pool
+    # without the engine reaching into chat-specific tool_pool/tool_partition
+    # modules. None (every existing caller today) keeps current behavior.
+    tool_catalog: Callable[[], tuple[list[dict], int | None]] | None = None
 
 
 def _assemble_round_tools(ctx: TurnContext) -> tuple[list, int | None]:
@@ -139,10 +162,18 @@ async def run_turn(ctx: TurnContext):
 
     messages = ctx.messages
     session_id = ctx.session_id
+    # Turn-scoped global state (goal store, auto-mode breaker, the paused-turn
+    # store, the loop-hints context tracker) keys on this instead of the bare
+    # session_id whenever the caller set one — see TurnContext.turn_scope_id.
+    _scope_id = ctx.turn_scope_id or session_id
     max_rounds = ctx.policy.max_rounds
     deadline = (
         (time.monotonic() + ctx.policy.deadline_seconds) if ctx.policy.deadline_seconds else None
     )
+    # Set once when a deadline-hit round has been given its forced-empty-tools
+    # treatment and finalize-now reminder, so a subsequent round (e.g. a
+    # max_tokens continuation) doesn't re-inject the same reminder every time.
+    _deadline_finalized = False
 
     total_input_tokens = 0
     total_output_tokens = 0
@@ -162,17 +193,17 @@ async def run_turn(ctx: TurnContext):
         _goal_cap = int(_cfg.get("goal_max_consecutive_blocks", _goal_cap))
     except Exception:
         pass
-    _goal_row = _goal_store.get_goal(session_id)
+    _goal_row = _goal_store.get_goal(_scope_id)
     goal_text = _goal_row["goal"]
     if ctx.is_new_turn and goal_text:
-        _goal_store.reset_for_new_turn(session_id)
+        _goal_store.reset_for_new_turn(_scope_id)
 
     # Auto-mode circuit breaker (server.security.permissions) is turn-scoped:
     # a breaker tripped last turn must not carry into this one.
     if ctx.is_new_turn:
         from server.security.permissions import reset_auto_mode_breaker
 
-        reset_auto_mode_breaker(session_id)
+        reset_auto_mode_breaker(_scope_id)
 
     # Replay protection — skip duplicate tool_use IDs across the stream.
     _seen_tool_ids = BoundedUUIDSet(capacity=256)
@@ -197,6 +228,24 @@ async def run_turn(ctx: TurnContext):
         if _reminder and inject_reminder(messages, _reminder):
             log.info("Injected near-cap reminder (%d rounds left)", max_rounds - round_num)
 
+        # Deadline enforcement: the FIRST round observed past the wall-clock
+        # deadline gets a "finalize now" reminder, exactly once (a later
+        # max_tokens/pause_turn continuation must not repeat it every round).
+        # Tool availability is forced off below (parallel to salvage_mode) so
+        # this round is genuinely terminal — tools-wise — regardless of
+        # provider, rather than merely continuing with is_last_round=True.
+        if deadline_hit and not _deadline_finalized:
+            _deadline_finalized = True
+            _deadline_reminder = (
+                "<system-reminder>Time is up for this turn. Finalize your "
+                "answer now with what you have; further tool calls will not "
+                "execute.</system-reminder>"
+            )
+            if inject_reminder(messages, _deadline_reminder):
+                log.info(
+                    "Deadline hit — injected finalize-now reminder and forced a no-tools round"
+                )
+
         # Heartbeat the stream slot so a long multi-round turn is never
         # mistaken for an abandoned stream.
         if ctx.heartbeat:
@@ -217,7 +266,12 @@ async def run_turn(ctx: TurnContext):
             yield "data: [DONE]\n\n"
             return
 
-        tools, core_count = ([], None) if salvage_mode else _assemble_round_tools(ctx)
+        if salvage_mode or deadline_hit:
+            tools, core_count = [], None
+        elif ctx.tool_catalog is not None:
+            tools, core_count = ctx.tool_catalog()
+        else:
+            tools, core_count = _assemble_round_tools(ctx)
 
         _batch_task: asyncio.Task | None = None
         try:
@@ -324,7 +378,7 @@ async def run_turn(ctx: TurnContext):
 
             _ctx_max = context_window_for(ctx.model_key)
             _prompt_tokens = round_input_tokens + round_cache_read + round_cache_creation
-            note_prompt_tokens(session_id, _prompt_tokens, _ctx_max)
+            note_prompt_tokens(_scope_id, _prompt_tokens, _ctx_max)
             yield f"data: {ndjson_dumps({'usage': {'input_tokens': round_input_tokens, 'output_tokens': round_output_tokens, 'total_input': total_input_tokens, 'total_output': total_output_tokens, 'cache_read_tokens': round_cache_read, 'cache_creation_tokens': round_cache_creation, 'total_cache_read': total_cache_read, 'total_cache_creation': total_cache_creation, 'estimated_cost_usd': round(cost, 6), 'model': ctx.model_key, 'context_used': _prompt_tokens, 'context_max': _ctx_max}})}\n\n"
             _record_cost_turn(
                 session_id=session_id,
@@ -409,7 +463,7 @@ async def run_turn(ctx: TurnContext):
 
                     _gate = await run_completion_gate(
                         GateContext(
-                            session_id=session_id,
+                            session_id=_scope_id,
                             messages=messages,
                             goal=goal_text,
                             provider=ctx.adapter.provider,
@@ -481,6 +535,7 @@ async def run_turn(ctx: TurnContext):
                     # Subagents inherit the turn's clamped effort so an
                     # ultracode parent no longer fans out to plain children.
                     effort_label=ctx.effort_label,
+                    unattended=ctx.unattended,
                 )
             )
 
@@ -532,7 +587,10 @@ async def run_turn(ctx: TurnContext):
                 model_id=ctx.model_id if ctx.tool_exec_model_id is None else ctx.tool_exec_model_id,
                 recent_messages=[m for m in messages if m.get("role") == "assistant"][-3:],
                 mode=ctx.mode,
-                session_id=session_id,
+                # Keys the auto-mode circuit breaker — turn-scoped state, same
+                # class as the goal store above.
+                session_id=_scope_id,
+                unattended=ctx.unattended,
             )
 
             for evt in sse_events:
@@ -543,7 +601,7 @@ async def run_turn(ctx: TurnContext):
             if has_user_question or has_pending_approval:
                 # Stash the paused conversation so the continuation turn can
                 # rebuild a well-formed request with placeholders replaced.
-                paused_sessions[session_id] = {
+                paused_sessions[_scope_id] = {
                     "messages": list(messages),
                     "pending_tool_results": list(tool_results),
                     "provider": ctx.adapter.provider,
@@ -565,7 +623,7 @@ async def run_turn(ctx: TurnContext):
             from server.chat.loop_hints import should_nudge_compaction
 
             if estimate_message_size(messages) > COMPACT_TRIGGER_CHARS or should_nudge_compaction(
-                session_id
+                _scope_id
             ):
                 messages = await compact_messages_with_claude(
                     messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
