@@ -19,7 +19,7 @@ import shutil
 import subprocess
 
 from .registry import register
-from .spec import ApprovalOutcome, ApprovalSpec
+from .spec import ApprovalOutcome, ApprovalSpec, refuse_if_agent
 
 # ── Executors ─────────────────────────────────────────────────────────
 
@@ -339,6 +339,65 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
         ok=result.returncode == 0,
         output=output,
         error=None if result.returncode == 0 else f"exit code {result.returncode}",
+    )
+
+
+# ── MCP executors ──────────────────────────────────────────────────
+
+
+async def _do_mcp_tool_call(payload: dict) -> ApprovalOutcome:
+    """Run an MCP tool call the user just approved. Registered under the
+    "mcp" category so server.security.permissions.resolve_static_decision's
+    dedicated tier (and the per-server approval_mode/tool_overrides config
+    in mcp_servers.json) governs it like any other approval-gated tool."""
+    from server.mcp import mcp_manager
+
+    tool_key = payload.get("tool_key", "")
+    arguments = payload.get("arguments") or {}
+    if not tool_key:
+        return ApprovalOutcome(ok=False, error="tool_key is required")
+    output = await mcp_manager.execute_approved_tool_call(tool_key, arguments)
+    if isinstance(output, str) and output.startswith("[MCP Error]"):
+        return ApprovalOutcome(ok=False, error=output)
+    return ApprovalOutcome(ok=True, output=output)
+
+
+def _mcp_tool_call_summary(p: dict) -> str:
+    return f"MCP: {p.get('server', '?')} → {p.get('tool_name', '?')}"
+
+
+async def _do_mcp_elicit_respond(payload: dict) -> ApprovalOutcome:
+    """Deliver a human's answer to a pending MCP elicitation (an MCP server
+    asking for input mid tool-call — see server/mcp.py's
+    _build_elicitation_callback). refuse_if_agent is defense in depth here:
+    the PRIMARY guard against an unattended subagent auto-answering lives in
+    the elicitation callback itself (it declines immediately for a call
+    flagged `__agent__`, before any pending record — or approval action —
+    ever exists), but this executor is the same generic hub every other
+    approval flows through, so it gets the same stamp check as the rest."""
+    refusal = refuse_if_agent(payload, what="Answering an MCP elicitation")
+    if refusal:
+        return refusal
+    from server.mcp import mcp_manager
+
+    elicitation_id = (payload.get("elicitation_id") or "").strip()
+    response_action = payload.get("response_action", "decline")
+    content = payload.get("content")
+    if not elicitation_id:
+        return ApprovalOutcome(ok=False, error="elicitation_id is required")
+    ok = mcp_manager.resolve_elicitation(elicitation_id, response_action, content)
+    if not ok:
+        return ApprovalOutcome(
+            ok=False,
+            error="No pending elicitation with that id (it may have already "
+            "timed out or been answered).",
+        )
+    return ApprovalOutcome(ok=True, output=f"Elicitation answered: {response_action}")
+
+
+def _mcp_elicit_summary(p: dict) -> str:
+    return (
+        f"MCP elicitation ({p.get('response_action', 'decline')}): {p.get('elicitation_id', '?')}"
     )
 
 
@@ -845,6 +904,40 @@ def register_defaults() -> None:
             executor=_do_preview_resize,
             risk_hint="low",
             payload_fields=["session_name", "preset", "width", "height", "colorScheme"],
+        ),
+    )
+
+    # MCP tool calls — dedicated "mcp" category so per-server approval_mode /
+    # tool_overrides (mcp_servers.json) sit on their own tier instead of
+    # falling into "cli" or another generic bucket. Only reached when
+    # server.mcp.MCPManager.call_tool decided the tool's tier isn't "auto"
+    # (or is "writes" on a tool that looks like a mutation).
+    register(
+        "mcp_tool_call",
+        ApprovalSpec(
+            category="mcp",
+            preview="text",
+            summary=_mcp_tool_call_summary,
+            executor=_do_mcp_tool_call,
+            risk_hint="medium",
+            payload_fields=["tool_key", "arguments", "server", "tool_name"],
+        ),
+    )
+
+    # MCP elicitations — an MCP server asking the human for input mid tool
+    # call. Its own category (not "mcp") since it is answered directly via
+    # POST /api/approval/execute from Settings → MCP rather than through the
+    # [WS_APPROVAL] pause-a-chat-turn pipeline the rest of this file uses;
+    # resolve_static_decision never sees this category.
+    register(
+        "mcp_elicit_respond",
+        ApprovalSpec(
+            category="mcp-elicit",
+            preview="text",
+            summary=_mcp_elicit_summary,
+            executor=_do_mcp_elicit_respond,
+            risk_hint="medium",
+            payload_fields=["elicitation_id", "response_action", "content"],
         ),
     )
 
