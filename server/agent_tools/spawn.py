@@ -125,18 +125,50 @@ async def execute_spawn_agent(
     ``detach: true`` runs it in the background instead: the tool returns a
     task_id immediately, progress and completion ride the unified task
     registry (task_status/task_output + a task card + next-turn injection).
+
+    ``agent_definition`` (instead of a registered ``agent_type`` name) builds
+    an EPHEMERAL AgentConfig at call time (server/agents/custom_config.py),
+    never written to disk. It is registered under a synthesized resolution
+    key and that key is used as ``agent_type`` for the rest of this function —
+    the same team scaffolding, run_agent call, and (for detach: true) the same
+    unmodified detached-agent path (server/tasks/agents.py) that a named type
+    goes through, so the ephemeral config gets the identical WRITE_TOOLS /
+    read-only-unless-worktree-isolated guardrails with no separate, laxer
+    code path. ``result.agent_type`` and any team/event display always show
+    the ephemeral definition's clean name, never the synthesized key.
     """
     from server.agents.runtime import run_agent
 
     task = tool_input.get("task", "")
-    agent_type = tool_input.get("agent_type", "general")
     context = tool_input.get("context", "")
-
     isolation = tool_input.get("isolation") or "none"
+
+    # `agent_type` is the string threaded into run_agent/get_agent_config for
+    # LOOKUP; `display_agent_type` is what shows up in events/labels. They
+    # diverge only for an ephemeral definition (lookup = synthesized key,
+    # display = the clean name the model gave it).
+    agent_type = tool_input.get("agent_type", "general")
+    display_agent_type = agent_type
+    ephemeral_meta: dict | None = None
+
+    agent_definition = tool_input.get("agent_definition")
+    if isinstance(agent_definition, dict) and str(agent_definition.get("name") or "").strip():
+        from server.agents.custom_config import register_ephemeral_type
+
+        agent_type, _ephemeral_config, ephemeral_meta = register_ephemeral_type(
+            session_id, agent_definition
+        )
+        display_agent_type = ephemeral_meta["name"]
+
     if tool_input.get("detach"):
-        return _start_detached_from_tool(
+        out = _start_detached_from_tool(
             task, agent_type, context, session_id, model_id, effort_label, isolation
         )
+        if ephemeral_meta:
+            payload = json.loads(out)
+            payload["ephemeral_type"] = ephemeral_meta
+            out = json.dumps(payload)
+        return out
 
     # Wrap the single agent in a one-member "team" so its live tool_call/
     # tool_result/text events render in the rich TeamReportCard (the same view
@@ -168,7 +200,12 @@ async def execute_spawn_agent(
                 "team_name": agent_label,
                 "description": "",
                 "agents": [
-                    {"name": agent_label, "task": task, "agent_type": agent_type, "role": "team"}
+                    {
+                        "name": agent_label,
+                        "task": task,
+                        "agent_type": display_agent_type,
+                        "role": "team",
+                    }
                 ],
             },
         )
@@ -216,15 +253,16 @@ async def execute_spawn_agent(
             )
 
     if stopped_by_user:
-        return json.dumps(
-            {
-                "agent_id": "",
-                "agent_type": agent_type,
-                "team_id": team_id,
-                "status": "stopped",
-                "output": "[Stopped by user]",
-            }
-        )
+        stopped_payload = {
+            "agent_id": "",
+            "agent_type": display_agent_type,
+            "team_id": team_id,
+            "status": "stopped",
+            "output": "[Stopped by user]",
+        }
+        if ephemeral_meta:
+            stopped_payload["ephemeral_type"] = ephemeral_meta
+        return json.dumps(stopped_payload)
 
     _record_agent_cost(session_id, model_id, result)
 
@@ -239,23 +277,24 @@ async def execute_spawn_agent(
                 "phase": "failed",
                 "team_id": team_id,
                 "agent_name": agent_label,
-                "agent_type": agent_type,
+                "agent_type": display_agent_type,
                 "error": (result.output or "")[:500],
             },
         )
 
-    return json.dumps(
-        {
-            "agent_id": result.agent_id,
-            "agent_type": result.agent_type,
-            "team_id": team_id,
-            "status": result.status,
-            "turns_used": result.turns_used,
-            "tools_called": result.tools_called,
-            "usage": result.usage,
-            "output": result.output,
-        }
-    )
+    result_payload = {
+        "agent_id": result.agent_id,
+        "agent_type": result.agent_type,
+        "team_id": team_id,
+        "status": result.status,
+        "turns_used": result.turns_used,
+        "tools_called": result.tools_called,
+        "usage": result.usage,
+        "output": result.output,
+    }
+    if ephemeral_meta:
+        result_payload["ephemeral_type"] = ephemeral_meta
+    return json.dumps(result_payload)
 
 
 def execute_send_message(tool_input: dict) -> str:

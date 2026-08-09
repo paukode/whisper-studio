@@ -101,3 +101,27 @@ def test_allowed_tools_whitelist_bypasses_read_only_filter():
     result = _names(filter_tools_for_agent(pool, config))
 
     assert result == {"memory_read", "memory_write"}
+
+
+def test_read_only_whitelist_cannot_smuggle_write_tool():
+    # SECURITY INVARIANT (custom/ephemeral agent types — server/agents/
+    # custom_config.py): the allowed_tools whitelist path above is trusted for
+    # hardcoded built-in presets (memory_extractor's whitelist is code, not
+    # user/LLM input), but a custom .whisper/agents/*.md file or an ephemeral
+    # spawn_agent agent_definition is NOT a trusted preset. A read_only=True
+    # config must never let its OWN allowed_tools whitelist smuggle a write
+    # tool past the read_only flag — the whitelist branch must apply the same
+    # WRITE_TOOLS/registry-backstop filter the no-whitelist branch does.
+    # Before the fix in server/agents/config.py:filter_tools_for_agent, this
+    # returned {"ws_write_file", "ws_read_file"} (the whitelist path skipped
+    # the read_only filter entirely) — confirm it no longer does.
+    config = AgentConfig(
+        agent_type="custom_x",
+        read_only=True,
+        allowed_tools=frozenset({"ws_write_file", "ws_read_file"}),
+    )
+
+    result = _names(filter_tools_for_agent(_pool("ws_write_file", "ws_read_file"), config))
+
+    assert "ws_write_file" not in result, "read_only whitelist must not smuggle a write tool"
+    assert "ws_read_file" in result

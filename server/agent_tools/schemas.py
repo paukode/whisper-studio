@@ -195,7 +195,11 @@ SPAWN_AGENT_TOOL = {
         "- explore: Read-only, uses fast model — best for code search and analysis\n"
         "- plan: Read-only — produces structured implementation plans\n"
         "- verify: Runs tests and checks, returns PASS/FAIL/PARTIAL verdict\n"
-        "- coordinator: Orchestrates other agents, no direct file access"
+        "- coordinator: Orchestrates other agents, no direct file access\n"
+        "Any custom type saved under .whisper/agents/<name>.md also works as "
+        "agent_type. To define a new type on the fly instead of using a "
+        "registered name, pass agent_definition and omit agent_type. A good "
+        "ephemeral type can later be saved for reuse with promote_agent_type."
     ),
     "input_schema": {
         "type": "object",
@@ -212,7 +216,10 @@ SPAWN_AGENT_TOOL = {
             "agent_type": {
                 "type": "string",
                 "enum": ["general", "explore", "plan", "verify", "coordinator"],
-                "description": "Type of agent to spawn (default: general)",
+                "description": (
+                    "Type of agent to spawn (default: general). Ignored when "
+                    "agent_definition is given."
+                ),
             },
             "context": {
                 "type": "string",
@@ -243,8 +250,95 @@ SPAWN_AGENT_TOOL = {
                     "says where. Default none."
                 ),
             },
+            "agent_definition": {
+                "type": "object",
+                "description": (
+                    "Define a NEW agent type inline instead of a registered "
+                    "agent_type name — use when no built-in or custom type "
+                    "fits the task's tool needs. Goes through the exact same "
+                    "write-tool safety filtering as any other type: if "
+                    "neither 'tools' nor 'read_only' is given it defaults to "
+                    "a read-only tool pool (the safe default, since nobody "
+                    "reviews this definition before it runs)."
+                ),
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": (
+                            "Short identifier (letters/digits/underscore/"
+                            "hyphen), e.g. 'pdf_extractor'"
+                        ),
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": (
+                            "One-line purpose, echoed back in the tool result "
+                            "and usable by promote_agent_type"
+                        ),
+                    },
+                    "system_prompt": {
+                        "type": "string",
+                        "description": "The agent's instructions / system prompt",
+                    },
+                    "tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Exact tool names this agent may use (whitelist). "
+                            "Omit to use read_only instead."
+                        ),
+                    },
+                    "read_only": {
+                        "type": "boolean",
+                        "description": (
+                            "true = read-only tool pool. Defaults to true "
+                            "when neither tools nor read_only is given."
+                        ),
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": (
+                            "Optional informational model hint (not currently "
+                            "used to select the model — the agent always runs "
+                            "on the session's selected model)"
+                        ),
+                    },
+                    "max_turns": {"type": "integer"},
+                },
+                "required": ["name", "description"],
+            },
         },
         "required": ["task"],
+    },
+}
+
+PROMOTE_AGENT_TYPE_TOOL = {
+    "name": "promote_agent_type",
+    "description": (
+        "Save an ephemeral agent type (one used earlier this session via "
+        "spawn_agent's agent_definition) as a persistent custom type at "
+        ".whisper/agents/<name>.md, so future spawn_agent calls can use it "
+        "by name. Re-validates the definition through the same write-tool "
+        "safety filtering it went through when it ran."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "The ephemeral type's name, as given in agent_definition.name",
+            },
+            "scope": {
+                "type": "string",
+                "enum": ["project", "user"],
+                "description": (
+                    "Where to save it: 'project' (.whisper/agents/ in the "
+                    "open workspace, default) or 'user' (applies across every "
+                    "project)"
+                ),
+            },
+        },
+        "required": ["name"],
     },
 }
 
@@ -408,4 +502,5 @@ AGENT_TOOLS = [
     SEND_SESSION_MESSAGE_TOOL,
     TEAM_CREATE_TOOL,
     TEAM_DELETE_TOOL,
+    PROMOTE_AGENT_TYPE_TOOL,
 ]
