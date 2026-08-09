@@ -414,6 +414,14 @@ async def route_tool(
         output = await _submit(loop, executor, lambda ci=tool_input: execute_team_delete(ci))
         return output, side_effects
 
+    if tool_name == "promote_agent_type":
+        from server.agent_tools import execute_promote_agent_type
+
+        output = await _submit(
+            loop, executor, lambda ci=tool_input: execute_promote_agent_type(ci, session_id)
+        )
+        return output, side_effects
+
     # --- Memory tools ---
     from server.memory.tools import MEMORY_TOOL_NAMES
 

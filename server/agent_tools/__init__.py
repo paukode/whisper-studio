@@ -12,6 +12,9 @@ focused submodules, one per tool family:
     cross_session — list_sessions / send_session_message (between sessions,
                     not within one — see spawn's send_message/list_agents)
     teams         — team_create / team_delete (+ the shared ``_teams`` store)
+    promote       — promote_agent_type (saves an ephemeral agent_definition
+                    used via spawn_agent as a persistent .whisper/agents/
+                    <name>.md custom type — see server/agents/custom_config.py)
 
 Every name external code reads off ``server.agent_tools`` is re-exported here
 so importers (server/tool_router.py, server/chat/*, tests) keep working
@@ -28,6 +31,7 @@ from .mcp_tools import (  # noqa: F401
     execute_list_mcp_resources,
     execute_read_mcp_resource,
 )
+from .promote import execute_promote_agent_type  # noqa: F401
 from .schemas import (  # noqa: F401
     AGENT_TOOLS,
     CONFIG_GET_TOOL,
@@ -36,6 +40,7 @@ from .schemas import (  # noqa: F401
     LIST_MCP_RESOURCES_TOOL,
     LIST_SESSIONS_TOOL,
     NOTIFY_USER_TOOL,
+    PROMOTE_AGENT_TYPE_TOOL,
     READ_MCP_RESOURCE_TOOL,
     SEND_MESSAGE_TOOL,
     SEND_SESSION_MESSAGE_TOOL,
