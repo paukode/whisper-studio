@@ -68,6 +68,16 @@ DEFAULTS = {
     "mode": "default",
     "rules": [],
     "category_modes": {},
+    # DEFAULT-OFF egress control for sandboxed commands (server/sandbox.py +
+    # server/security/egress_policy.py). "permissive" == today's behavior:
+    # no domain restriction, no proxy. See egress_policy.py for the tier
+    # semantics and DEFAULT_NETWORK_POLICY (kept in sync with this literal
+    # by hand — a module-level import either way would create a cycle).
+    "network_policy": {
+        "tier": "permissive",
+        "custom_allowed_domains": [],
+        "methods_only_safe": False,
+    },
 }
 
 # ── Auto-mode circuit breaker ───────────────────────────────────────────────
@@ -205,6 +215,24 @@ def _match_rule(tool_name: str, tool_input: dict, rules: list) -> tuple[int | No
                 if pattern == "*" or fnmatch.fnmatch(input_str, pattern):
                     return index, rule
     return None, None
+
+
+def _validate_network_policy(np: object) -> str | None:
+    """Returns an error string if `np` isn't a valid (partial) network_policy
+    body, or None if it's fine to merge onto the saved config."""
+    from server.security.egress_policy import VALID_TIERS
+
+    if not isinstance(np, dict):
+        return "network_policy must be an object"
+    if "tier" in np and np["tier"] not in VALID_TIERS:
+        return f"network_policy.tier must be one of: {', '.join(sorted(VALID_TIERS))}"
+    if "custom_allowed_domains" in np:
+        domains = np["custom_allowed_domains"]
+        if not isinstance(domains, list) or not all(isinstance(d, str) for d in domains):
+            return "network_policy.custom_allowed_domains must be a list of strings"
+    if "methods_only_safe" in np and not isinstance(np["methods_only_safe"], bool):
+        return "network_policy.methods_only_safe must be a boolean"
+    return None
 
 
 def evaluate_rules(tool_name: str, tool_input: dict, rules: list | None = None) -> str | None:
@@ -384,6 +412,14 @@ async def update_permissions(request: Request):
                 )
             cleaned[cat] = cat_mode
         data["category_modes"] = cleaned
+    if "network_policy" in body:
+        error = _validate_network_policy(body["network_policy"])
+        if error:
+            return Response(
+                content=json.dumps({"error": error}), status_code=400, media_type="application/json"
+            )
+        existing = data.get("network_policy") or {}
+        data["network_policy"] = {**existing, **body["network_policy"]}
     save_permissions(data)
     warnings = detect_shadowed_rules(data["rules"])
     return {

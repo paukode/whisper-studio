@@ -43,11 +43,35 @@ interface PermissionRule {
   justification?: string;
 }
 
+// Egress control for sandboxed commands (server/sandbox.py +
+// server/security/egress_policy.py). DEFAULT-OFF: "permissive" matches
+// today's behavior exactly (no domain restriction, no proxy).
+type NetworkPolicyTier = 'permissive' | 'curated' | 'restrictive';
+
+interface NetworkPolicy {
+  tier: NetworkPolicyTier;
+  custom_allowed_domains: string[];
+  methods_only_safe: boolean;
+}
+
+const DEFAULT_NETWORK_POLICY: NetworkPolicy = {
+  tier: 'permissive',
+  custom_allowed_domains: [],
+  methods_only_safe: false,
+};
+
+const TIER_OPTIONS: { value: NetworkPolicyTier; label: string }[] = [
+  { value: 'permissive', label: 'Permissive: no restriction (default)' },
+  { value: 'curated', label: 'Curated: common package/docs domains + custom' },
+  { value: 'restrictive', label: 'Restrictive: nothing outbound except custom domains' },
+];
+
 interface PermissionsData {
   mode: string;
   rules: PermissionRule[];
   category_modes?: Record<string, string>;
   categories?: string[];
+  network_policy?: NetworkPolicy;
 }
 
 interface RuleTestResult {
@@ -82,12 +106,19 @@ export const PermissionsPanel: React.FC = () => {
   const [categories, setCategories] = useState<string[]>([]);
   const [categoryModes, setCategoryModes] = useState<Record<string, string>>({});
 
+  // Egress / network policy for sandboxed commands. custom_allowed_domains
+  // is edited as newline-separated text and split/joined at the boundary.
+  const [networkPolicy, setNetworkPolicy] = useState<NetworkPolicy>(DEFAULT_NETWORK_POLICY);
+  const [customDomainsText, setCustomDomainsText] = useState('');
+
   // Inline save feedback: one for the mode button, one shared by the rule
   // add/delete actions (shown near the rules toolbar so it survives the
-  // editor closing on a successful save), one for the category-mode rows.
+  // editor closing on a successful save), one for the category-mode rows,
+  // one for the network policy form.
   const saveMode = useSaveStatus();
   const ruleStatus = useSaveStatus();
   const categoryModeStatus = useSaveStatus();
+  const saveNetworkPolicy = useSaveStatus();
 
   // Load permissions on mount
   useEffect(() => {
@@ -103,6 +134,9 @@ export const PermissionsPanel: React.FC = () => {
         updateConfig({ permissionMode: data.mode ?? 'default' });
         // Sync plan mode on initial load
         useSettingsStore.getState().setPlanMode((data.mode ?? 'default') === 'plan');
+        const np = { ...DEFAULT_NETWORK_POLICY, ...(data.network_policy ?? {}) };
+        setNetworkPolicy(np);
+        setCustomDomainsText((np.custom_allowed_domains ?? []).join('\n'));
       } catch (err) {
         console.warn('Failed to load permissions:', err);
       }
@@ -127,6 +161,18 @@ export const PermissionsPanel: React.FC = () => {
       useSettingsStore.getState().setPlanMode(mode === 'plan');
     });
   }, [mode, updateConfig, saveMode]);
+
+  const handleSaveNetworkPolicy = useCallback(() => {
+    const custom_allowed_domains = customDomainsText
+      .split('\n')
+      .map((d) => d.trim())
+      .filter(Boolean);
+    const next: NetworkPolicy = { ...networkPolicy, custom_allowed_domains };
+    void saveNetworkPolicy.run(async () => {
+      await put('/api/permissions', { network_policy: next });
+      setNetworkPolicy(next);
+    });
+  }, [networkPolicy, customDomainsText, saveNetworkPolicy]);
 
   const handleAddRule = useCallback(() => {
     setRuleTool('');
@@ -290,6 +336,63 @@ export const PermissionsPanel: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Egress / network policy for sandboxed commands (terminal_run, aws_cli,
+          run_python, hooks). Default-off: "permissive" is today's behavior. */}
+      <div className="settings-form">
+        <h4>Sandbox Network Policy</h4>
+        <p className="settings-item-desc" style={{ marginBottom: 8 }}>
+          Restricts which internet domains commands run inside the sandbox
+          (terminal, AWS CLI, Python) can reach. Permissive matches today's
+          behavior exactly — nothing changes unless you switch tiers.
+        </p>
+
+        <label htmlFor="networkPolicyTierSelect">Tier</label>
+        <select
+          id="networkPolicyTierSelect"
+          className="settings-input"
+          value={networkPolicy.tier}
+          onChange={(e) =>
+            setNetworkPolicy((np) => ({ ...np, tier: e.target.value as NetworkPolicyTier }))
+          }
+        >
+          {TIER_OPTIONS.map((t) => (
+            <option key={t.value} value={t.value}>{t.label}</option>
+          ))}
+        </select>
+
+        <label htmlFor="networkPolicyDomainsInput">Custom allowed domains (one per line)</label>
+        <textarea
+          id="networkPolicyDomainsInput"
+          className="settings-input"
+          rows={4}
+          placeholder={'example.com\ninternal.example.org'}
+          value={customDomainsText}
+          onChange={(e) => setCustomDomainsText(e.target.value)}
+        />
+
+        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input
+            id="networkPolicyMethodsOnlySafe"
+            type="checkbox"
+            checked={networkPolicy.methods_only_safe}
+            onChange={(e) =>
+              setNetworkPolicy((np) => ({ ...np, methods_only_safe: e.target.checked }))
+            }
+          />
+          <label htmlFor="networkPolicyMethodsOnlySafe" style={{ margin: 0 }}>
+            Safe methods only (GET/HEAD/OPTIONS) — best-effort, only enforced on
+            plain (non-HTTPS-tunneled) requests, see docs
+          </label>
+        </div>
+
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button className="btn btn-primary btn-sm" onClick={handleSaveNetworkPolicy}>
+            Save Network Policy
+          </button>
+          <SaveStatus status={saveNetworkPolicy} />
+        </div>
+      </div>
 
       {/* Permission rules */}
       <div className="permissions-rules">
