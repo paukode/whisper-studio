@@ -7,12 +7,17 @@ long-lived session SSE forwards them as ``team_progress``, so the existing
 TeamReportCard/AgentCard fold renders a live per-tool log with zero new
 frontend card code.
 
-Stop is cooperative: `request_stop` sets a per-job threading.Event that the
-run loop checks at round boundaries and between sequential tools, and the
-tool-future wait polls in 1s slices so an in-flight tool is abandoned within
-about a second of the request.
+Stop: `request_stop` sets the per-job threading.Event (kept for observability
+and for any caller that only wants the plain flag — e.g. `stop_requested`
+below) AND, since cron runs as an asyncio.Task on the server's own event loop
+rather than a worker thread, cancels that task directly via
+``asyncio.Task.cancel()``. Cancellation lands at the run's next await point
+(the vast majority of the loop: awaiting the model stream, a tool call, or
+between rounds), which is at least as fast as the old thread's 1-second
+poll slices and often effectively immediate.
 """
 
+import asyncio
 import logging
 import threading
 
@@ -20,6 +25,11 @@ log = logging.getLogger("whisper-studio")
 
 _lock = threading.Lock()
 _stop_events: dict[str, threading.Event] = {}
+# The asyncio.Task actually driving a run, keyed by job_id — registered by
+# _execute_cron_prompt itself (via asyncio.current_task()) so request_stop can
+# cancel it. Optional: callers/tests that only care about the cooperative
+# flag can still call open_run(job_id) with no task.
+_running_tasks: dict[str, asyncio.Task] = {}
 
 
 def emit_progress(
@@ -33,8 +43,7 @@ def emit_progress(
     """Publish one TeamProgressEvent-shaped frame for a cron run.
 
     ``agent_id``/``team_id`` are both ``cron:<run_id>`` so every frame of one
-    run folds into a single card row. Safe from cron's daemon thread (the
-    event bus routes cross-thread publishes through the subscriber's loop).
+    run folds into a single card row.
     """
     if not session_id:
         return
@@ -55,24 +64,36 @@ def emit_progress(
         log.warning("cron progress: publish failed: %s", exc)
 
 
-def open_run(job_id: str) -> None:
-    """Register a fresh stop flag for a starting run."""
+def open_run(job_id: str, task: asyncio.Task | None = None) -> None:
+    """Register a fresh stop flag for a starting run, and (optionally) the
+    asyncio.Task actually running it, so a stop request can cancel it."""
     with _lock:
         _stop_events[job_id] = threading.Event()
+        if task is not None:
+            _running_tasks[job_id] = task
 
 
 def close_run(job_id: str) -> None:
     with _lock:
         _stop_events.pop(job_id, None)
+        _running_tasks.pop(job_id, None)
 
 
 def request_stop(job_id: str) -> bool:
-    """Signal a running job to stop; False when no run is registered."""
+    """Signal a running job to stop; False when no run is registered.
+
+    Sets the cooperative flag (read by `stop_requested`, kept for
+    observability/back-compat) and, when the run registered its own task via
+    `open_run`, cancels it directly.
+    """
     with _lock:
         ev = _stop_events.get(job_id)
+        task = _running_tasks.get(job_id)
     if ev is None:
         return False
     ev.set()
+    if task is not None and not task.done():
+        task.cancel()
     return True
 
 

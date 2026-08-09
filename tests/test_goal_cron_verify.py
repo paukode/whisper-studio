@@ -2,7 +2,7 @@
 (up to MAX_CONTINUATIONS) and, if still unmet, pushed as failed with an
 [UNVERIFIED] prefix. The report content is always preserved.
 
-Reuses the fake-Bedrock cron harness from test_cron_tools.
+Reuses the scripted-Bedrock cron harness from test_cron_tools.
 """
 
 from __future__ import annotations
@@ -13,7 +13,9 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
-from test_cron_tools import _FakeBedrock, _run_cron_job  # noqa: E402
+from test_cron_tools import _run_cron_job  # noqa: E402
+
+from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block  # noqa: E402
 
 _JOB = {
     "id": "job-verify",
@@ -29,7 +31,17 @@ async def _noop_route(name, tool_input, **kwargs):
     return ("ok", [])
 
 
-def _run(monkeypatch, verdict_seq):
+def _end_turn_stream(n: int) -> FakeBedrockClient:
+    """A scripted client that ends the turn with plain text on every one of
+    ``n`` scripted rounds — enough for an initial pass plus every possible
+    verify-driven continuation."""
+    return FakeBedrockClient(
+        [[msg_start(), *text_block("weekly report: all good"), *msg_end(stop_reason="end_turn")]]
+        * n
+    )
+
+
+def _run(monkeypatch, verdict_seq, *, max_rounds_calls=4):
     """Drive a cron job with cron_verify.verify returning each verdict in
     ``verdict_seq`` in turn (last repeats)."""
     import server.goals.cron_verify as CV
@@ -45,7 +57,14 @@ def _run(monkeypatch, verdict_seq):
     recorded: dict = {}
     # verify() is stubbed above, so opting into cron_verify is network-safe
     # (the harness defaults it off to keep the real evaluator out of tests).
-    _run_cron_job(monkeypatch, dict(_JOB), _FakeBedrock(), _noop_route, recorded, cron_verify=True)
+    _run_cron_job(
+        monkeypatch,
+        dict(_JOB),
+        _end_turn_stream(max_rounds_calls),
+        _noop_route,
+        recorded,
+        cron_verify=True,
+    )
     return recorded, calls
 
 
@@ -105,12 +124,13 @@ def test_verify_sees_notify_user_content(monkeypatch):
 
 def test_final_round_is_still_verified(monkeypatch):
     # A run that finishes on its LAST allowed round must still be verified —
-    # only the continuation is round-gated. With the round cap at 2 the fake
-    # harness's end_turn (round 2) lands exactly on the final round.
+    # only the continuation is round-gated.
     from server.goals import Verdict
 
-    monkeypatch.setattr("server.cron_run.CRON_MAX_ROUNDS_DEFAULT", 2)
-    recorded, calls = _run(monkeypatch, [Verdict("not_achieved", "missing the summary", 0.6)])
+    monkeypatch.setattr("server.cron_run.CRON_MAX_ROUNDS_DEFAULT", 1)
+    recorded, calls = _run(
+        monkeypatch, [Verdict("not_achieved", "missing the summary", 0.6)], max_rounds_calls=1
+    )
     assert calls["n"] >= 1  # verify DID run on the final round
     assert recorded["status"] == "failed"
     assert recorded["text"].startswith("[UNVERIFIED]")
@@ -143,7 +163,7 @@ def test_flag_off_is_legacy_behavior(monkeypatch, flag_on):
         CV, "verify", lambda p, m, n=None: Verdict("not_achieved", "would fail", 0.9)
     )
     recorded: dict = {}
-    _run_cron_job(monkeypatch, dict(_JOB), _FakeBedrock(), _noop_route, recorded)
+    _run_cron_job(monkeypatch, dict(_JOB), _end_turn_stream(1), _noop_route, recorded)
     if flag_on:
         assert recorded["status"] == "failed"
     else:
