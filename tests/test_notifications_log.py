@@ -100,13 +100,46 @@ def test_route_tool_choke_point_records_with_origin():
             )
 
     output, side_effects = asyncio.run(_run())
-    assert output == "Notification sent to user."
+    assert output == "Notification sent to user: cron says hi"
     assert side_effects[0]["notify_user"]["status"] == "success"
     rows = notif.list_notifications()
     assert len(rows) == 1
     assert rows[0]["source"] == "cron"
     assert rows[0]["session_id"] == "sess-cron"
     assert rows[0]["title"] == "Done"
+
+
+def test_notify_user_tool_result_carries_delivered_message():
+    """The tool_result must carry the actual delivered text, not a generic
+    ack — server.goals.tail.render_tail renders tool_result content into the
+    transcript tail both the interactive completion gate and cron's own
+    verify-and-continue judge, so a plain "sent." previously hid a genuinely
+    delivered report from both evaluators."""
+    from server.tool_router import route_tool
+
+    async def _run(message):
+        loop = asyncio.get_running_loop()
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            return await route_tool(
+                "notify_user",
+                {"message": message},
+                loop=loop,
+                executor=ex,
+                transcript="",
+                attachments=None,
+                session_id="sess-x",
+                model_id="m",
+                tool_use_id="t1",
+            )
+
+    output, _ = asyncio.run(_run("all endpoints healthy, see https://example.com/status"))
+    assert (
+        output == "Notification sent to user: all endpoints healthy, see https://example.com/status"
+    )
+
+    # An empty message keeps the plain ack (nothing to surface).
+    output_empty, _ = asyncio.run(_run(""))
+    assert output_empty == "Notification sent to user."
 
 
 def test_mark_read_rejects_non_numeric_ids(client):

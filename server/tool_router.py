@@ -298,10 +298,11 @@ async def route_tool(
 
     # --- Notify user ---
     if tool_name == "notify_user":
+        message = tool_input.get("message", "")
         side_effects.append(
             {
                 "notify_user": {
-                    "message": tool_input.get("message", ""),
+                    "message": message,
                     "status": tool_input.get("status", "normal"),
                     "title": tool_input.get("title", ""),
                 }
@@ -316,11 +317,20 @@ async def route_tool(
                 session_id=session_id,
                 source=origin,
                 title=tool_input.get("title", ""),
-                message=tool_input.get("message", ""),
+                message=message,
                 status=tool_input.get("status", "normal"),
             )
         except Exception as e:
             log.warning("notify_user: durable record failed: %s", e)
+        # Carry the delivered message in the tool_result itself instead of a
+        # generic ack. The message previously lived ONLY in the side-effect
+        # dict above, invisible to the model's own transcript and to any
+        # evaluator reading it (server.goals.tail.render_tail renders
+        # tool_result content into the judged tail for both the interactive
+        # completion gate and cron's own verify-and-continue) — a plain
+        # "sent." made a genuinely-delivered report look like missing work.
+        if message.strip():
+            return f"Notification sent to user: {message}", side_effects
         return "Notification sent to user.", side_effects
 
     # --- Workflow tools (ultracode runtime) ---
