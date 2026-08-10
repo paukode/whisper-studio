@@ -2532,6 +2532,12 @@ input.segment-speaker {
     font-size: var(--fs-caption); color: var(--text-muted); margin-top: 2px;
     line-height: 1.45;
 }
+.settings-item-desc-toggle {
+    background: none; border: none; padding: 0; margin-top: 3px;
+    font-size: var(--fs-caption); color: var(--accent);
+    cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+.settings-item-desc-toggle:hover { opacity: 0.8; }
 .settings-item-actions {
     display: flex; align-items: center; gap: 6px; flex-shrink: 0;
 }
@@ -2542,7 +2548,19 @@ input.segment-speaker {
    paragraph rendered as a dense block. These rules give it a comfortable
    reading measure and break the facts into a scannable list. */
 .plugins-panel .settings-panel-header {
-    margin-bottom: 12px;
+    /* .settings-panel-header has no base layout rule anywhere, so its
+       <h3> and button-row div were just stacking as plain block
+       siblings with whatever margin the h3 happened to carry — the
+       margin-bottom below only pushed the whole header away from the
+       intro paragraph, it never created space *inside* the header.
+       Put title and buttons on one row instead, matching
+       .models-panel-header's established pattern. */
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin: 0 0 12px;
+}
+.plugins-panel .settings-panel-header h3 {
+    margin: 0; font-size: var(--fs-title); font-weight: 600;
+    color: var(--text-primary); letter-spacing: -0.2px;
 }
 .plugins-intro {
     font-size: var(--fs-small); line-height: 1.55;
