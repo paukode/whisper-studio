@@ -35,6 +35,14 @@ export interface SplitterProps {
   firstMinPx?: number;
   /** Minimum size in px for slot 2 (width for horizontal, height for vertical). Default 280. */
   secondMinPx?: number;
+  /** Collapses the first pane and the resize handle to zero size and makes
+   *  the handle non-interactive, without removing children[0] from the
+   *  tree. Use this instead of conditionally omitting the Splitter (or
+   *  swapping it for a plain wrapper) when a pane's content isn't
+   *  currently meaningful — an unmount/remount at this level tears down
+   *  every component in slot 2 as well (e.g. the whole chat panel),
+   *  wiping unrelated local state like an in-progress draft. */
+  hideFirstPane?: boolean;
   /** Exactly two children — the two panes. */
   children: [ReactNode, ReactNode];
 }
@@ -53,6 +61,7 @@ export const Splitter: React.FC<SplitterProps> = ({
   handleClassName,
   firstMinPx = 200,
   secondMinPx = 280,
+  hideFirstPane = false,
   children,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -155,14 +164,23 @@ export const Splitter: React.FC<SplitterProps> = ({
         ...style,
       }}
     >
-      <div style={{ ...slotBase, ...slot1Min, flex: `${grow1} 1 0` }}>{children[0]}</div>
+      <div
+        style={{
+          ...slotBase,
+          ...(hideFirstPane ? {} : slot1Min),
+          flex: hideFirstPane ? '0 0 0' : `${grow1} 1 0`,
+          display: hideFirstPane ? 'none' : slotBase.display,
+        }}
+      >
+        {children[0]}
+      </div>
       <div
         className={`resize-handle${handleClassName ? ` ${handleClassName}` : ''}`}
-        onMouseDown={onMouseDown}
+        onMouseDown={hideFirstPane ? undefined : onMouseDown}
         style={{
-          flex: `0 0 ${HANDLE_THICKNESS_PX}px`,
+          flex: hideFirstPane ? '0 0 0' : `0 0 ${HANDLE_THICKNESS_PX}px`,
           cursor: isHorizontal ? 'col-resize' : 'row-resize',
-          display: 'flex',
+          display: hideFirstPane ? 'none' : 'flex',
           alignItems: 'center',
           justifyContent: 'center',
         }}
@@ -172,7 +190,15 @@ export const Splitter: React.FC<SplitterProps> = ({
           style={isHorizontal ? { width: 3, height: '100%' } : { width: '100%', height: 3 }}
         />
       </div>
-      <div style={{ ...slotBase, ...slot2Min, flex: `${grow2} 1 0` }}>{children[1]}</div>
+      <div
+        style={{
+          ...slotBase,
+          ...(hideFirstPane ? {} : slot2Min),
+          flex: hideFirstPane ? '1 1 auto' : `${grow2} 1 0`,
+        }}
+      >
+        {children[1]}
+      </div>
     </div>
   );
 };
