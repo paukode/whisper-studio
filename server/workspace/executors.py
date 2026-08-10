@@ -13,6 +13,7 @@ Also home to:
 - _WORKTREES: in-memory registry shared with the worktree route handlers
 """
 
+import base64
 import json
 import logging
 import os
@@ -37,6 +38,7 @@ from .paths import (
     _ws_validate_path,
 )
 from .state import (
+    _save_location_prompt_payload,
     _workspace_prompt_payload,
     get_workspace_path,
     load_workspace_config,
@@ -386,6 +388,58 @@ def _exec_ws_create_file(tool_input, transcript, current_attachments):
     if os.path.isfile(full):
         return f"File already exists: {path}. Use ws_write_file to modify it."
     payload = json.dumps({"action": "create", "path": path, "content": content})
+    return f"[WS_APPROVAL]{payload}"
+
+
+@register_executor("save_file", read_only=False, concurrent_safe=False)
+def _exec_save_file(tool_input, transcript, current_attachments):
+    """One-shot 'save this file somewhere' — never connects a persistent
+    workspace (get_workspace_path() is not even consulted here).
+
+    First call (no destination_path yet): pause with the save_location
+    variant of the [WS_WORKSPACE_PROMPT] sentinel so the user picks
+    Documents/Downloads/Browse. Re-issued call (destination_path present):
+    validate it, then package the write as a [WS_APPROVAL] (action=
+    save_to_path) so the bytes only actually hit disk once the user clicks
+    Yes on the approval card — same as every other workspace write tool.
+    """
+    filename = (tool_input.get("filename") or "").strip()
+    if not filename:
+        return "Error: filename is required."
+
+    destination_path = tool_input.get("destination_path")
+    if not destination_path:
+        return _save_location_prompt_payload("save_file", tool_input, filename)
+
+    raw_dest = os.path.expanduser(str(destination_path))
+    if not os.path.isabs(raw_dest):
+        return f"Error: destination_path must be an absolute path (got {destination_path!r})."
+    dest = os.path.realpath(raw_dest)
+
+    from server.security.sensitive_paths import is_sensitive_path
+
+    if is_sensitive_path(dest):
+        return f"Error: refusing to save to a sensitive path: {dest}"
+
+    content = tool_input.get("content", "")
+    encoding = tool_input.get("content_encoding") or "utf-8"
+    if encoding not in ("utf-8", "base64"):
+        return f"Error: content_encoding must be 'utf-8' or 'base64' (got {encoding!r})."
+    if encoding == "base64":
+        try:
+            base64.b64decode(content, validate=True)
+        except Exception as e:
+            return f"Error: content is not valid base64: {e}"
+
+    payload = json.dumps(
+        {
+            "action": "save_to_path",
+            "path": dest,
+            "filename": filename,
+            "content": content,
+            "content_encoding": encoding,
+        }
+    )
     return f"[WS_APPROVAL]{payload}"
 
 

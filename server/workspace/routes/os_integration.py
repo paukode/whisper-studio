@@ -12,7 +12,7 @@ from fastapi.responses import Response
 
 from .. import router
 from ..paths import _ws_validate_path
-from ..state import get_workspace_path
+from ..state import get_workspace_path, load_save_locations
 
 
 @router.post("/open-with")
@@ -42,6 +42,15 @@ async def ws_open_with(request: Request):
             from server.index import store as _index_store
 
             roots += [os.path.realpath(r) for r in _index_store.list_indexed_workspaces()]
+        except Exception:
+            pass
+        # Directories the one-shot save_file flow has written to. These
+        # files were never 'connected' or 'indexed', so without this they'd
+        # 404 here the moment the workspace/index roots above don't cover
+        # them — which is the common case, since save_file exists precisely
+        # to save somewhere OUTSIDE the connected workspace.
+        try:
+            roots += [os.path.realpath(r) for r in load_save_locations()]
         except Exception:
             pass
         inside = any(full == r or full.startswith(r + os.sep) for r in roots)
@@ -111,6 +120,15 @@ async def ws_reveal(request: Request):
             from server.index import store as _index_store
 
             roots += [os.path.realpath(r) for r in _index_store.list_indexed_workspaces()]
+        except Exception:
+            pass
+        # Directories the one-shot save_file flow has written to. These
+        # files were never 'connected' or 'indexed', so without this they'd
+        # 404 here the moment the workspace/index roots above don't cover
+        # them — which is the common case, since save_file exists precisely
+        # to save somewhere OUTSIDE the connected workspace.
+        try:
+            roots += [os.path.realpath(r) for r in load_save_locations()]
         except Exception:
             pass
         inside = any(full == r or full.startswith(r + os.sep) for r in roots)

@@ -82,6 +82,47 @@ async def _do_delete(payload: dict) -> ApprovalOutcome:
     return ApprovalOutcome(ok=True, output=f"Deleted {path}")
 
 
+async def _do_save_to_path(payload: dict) -> ApprovalOutcome:
+    """Write a one-shot `save_file` result directly to a caller-given
+    absolute path. Unlike _do_write/_do_create above, this does NOT require
+    a connected workspace — get_workspace_path() is never consulted. The
+    destination came from the native save dialog or a Documents/Downloads
+    quick-pick (server/workspace/routes/browse.py's /pick-save-target), not
+    from resolving a path against a workspace root.
+
+    Re-validates both the absolute-path shape and the sensitive-path
+    denylist here (not just in the save_file tool executor) — this is the
+    single hub every approval executes through, and payload could in
+    principle reach it directly via POST /api/approval/execute."""
+    import base64
+
+    from server.security.sensitive_paths import is_sensitive_path
+    from server.workspace.paths import _atomic_write_bytes
+    from server.workspace.state import record_save_location
+
+    dest = payload.get("path", "")
+    if not dest or not os.path.isabs(dest):
+        return ApprovalOutcome(ok=False, error="destination path must be an absolute path")
+    real_dest = os.path.realpath(dest)
+    if is_sensitive_path(real_dest):
+        return ApprovalOutcome(ok=False, error="Refusing to write to a sensitive path")
+    encoding = payload.get("content_encoding") or "utf-8"
+    content = payload.get("content", "")
+    try:
+        data = base64.b64decode(content) if encoding == "base64" else content.encode("utf-8")
+    except Exception as e:
+        return ApprovalOutcome(ok=False, error=f"Could not decode content ({encoding}): {e}")
+    try:
+        _atomic_write_bytes(real_dest, data)
+    except Exception as e:
+        return ApprovalOutcome(ok=False, error=f"Write failed: {e}")
+    record_save_location(os.path.dirname(real_dest))
+    return ApprovalOutcome(
+        ok=True,
+        output=f"Saved {os.path.basename(real_dest)} to {real_dest} ({len(data)} bytes).",
+    )
+
+
 async def _do_enter_worktree(payload: dict) -> ApprovalOutcome:
     """Create / resume a worktree for the current chat session and switch in."""
     from server import workspace
@@ -434,6 +475,11 @@ def _summary_delete(p: dict) -> str:
     return f"Delete {p.get('path', '?')}"
 
 
+def _summary_save(p: dict) -> str:
+    name = p.get("filename") or os.path.basename(p.get("path", "") or "?")
+    return f"Save {name} to {p.get('path', '?')}"
+
+
 def _summary_command(p: dict) -> str:
     cmd = (p.get("command") or "").strip()
     return cmd if len(cmd) <= 120 else cmd[:117] + "…"
@@ -473,6 +519,23 @@ def register_defaults() -> None:
                 payload_fields=["path", "content"],
             ),
         )
+
+    # save_file's one-shot write — its own category (not "write") so it
+    # neither inherits "Yes for all writes" session-memory from ordinary
+    # workspace writes nor triggers the git-changes cache invalidation
+    # /api/approval/execute does for the write/delete/cli categories (these
+    # files live outside any workspace, so there's no git state to refresh).
+    register(
+        "save_to_path",
+        ApprovalSpec(
+            category="save",
+            preview="text",
+            summary=_summary_save,
+            executor=_do_save_to_path,
+            risk_hint="low",
+            payload_fields=["path", "content", "content_encoding", "filename"],
+        ),
+    )
 
     # Deletes — text preview, delete category
     for action in ("delete", "ws_delete_file"):

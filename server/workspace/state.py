@@ -9,6 +9,7 @@ from contextvars import ContextVar as _ContextVar
 
 from .paths import (
     RECENT_WORKSPACES_PATH,
+    SAVE_LOCATIONS_PATH,
     WORKSPACE_BACKUPS,
     WORKSPACE_CONFIG_PATH,
 )
@@ -90,6 +91,59 @@ def _workspace_prompt_payload(tool_name: str, tool_input: dict, reason: str) -> 
         }
     )
     return f"[WS_WORKSPACE_PROMPT]{payload}"
+
+
+def _save_location_prompt_payload(tool_name: str, tool_input: dict, suggested_name: str) -> str:
+    """Emit a WS_WORKSPACE_PROMPT marker for the one-shot `save_file` tool's
+    "where should this go" prompt.
+
+    Reuses the exact same sentinel prefix as _workspace_prompt_payload so
+    tool_executor.py's pause detection (`tool_output.startswith(
+    "[WS_WORKSPACE_PROMPT]")`) needs NO changes. Unlike that helper, this is
+    NOT about connecting a persistent workspace — reason='save_location'
+    tells the frontend to render the save-target picker (Documents/Downloads
+    quick-picks + a native save dialog) instead of the workspace-connect UI,
+    and 'suggested_name' is the filename being saved (not a folder to
+    connect to).
+    """
+    payload = json.dumps(
+        {
+            "reason": "save_location",
+            "tool_name": tool_name,
+            "tool_input": {k: v for k, v in tool_input.items() if not k.startswith("__")},
+            "suggested_name": suggested_name,
+            "documents_dir": os.path.expanduser("~/Documents"),
+            "downloads_dir": os.path.expanduser("~/Downloads"),
+        }
+    )
+    return f"[WS_WORKSPACE_PROMPT]{payload}"
+
+
+def load_save_locations() -> list[str]:
+    """Directories written to via the one-shot save_file flow. Small, capped
+    list — never 'connected' or 'indexed' — that lets a file saved this way
+    stay clickable/revealable via /open-with and /reveal afterward without
+    the heavyweight persistent-workspace machinery."""
+    try:
+        with open(SAVE_LOCATIONS_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def record_save_location(path: str) -> None:
+    """Record `path` (a directory) as a recent save_file destination. Same
+    insert-front/dedupe/cap-at-10 pattern as save_recent_workspace, in its
+    own small JSON file so it never mixes with the persistent-workspace
+    recents list."""
+    saved = load_save_locations()
+    if path in saved:
+        saved.remove(path)
+    saved.insert(0, path)
+    saved = saved[:10]
+    os.makedirs(os.path.dirname(SAVE_LOCATIONS_PATH), exist_ok=True)
+    with open(SAVE_LOCATIONS_PATH, "w") as f:
+        json.dump(saved, f, indent=2)
 
 
 def connect_workspace(path: str) -> str:

@@ -227,12 +227,25 @@ export async function readSSEStream(
           // ── ws_workspace_prompt ──
           if (parsed.ws_workspace_prompt) {
             hasPendingApprovals = true;
+            // server/tool_executor.py merges the real tool_use_id into this
+            // payload before emitting it (see prompt_parsed = {**prompt_parsed,
+            // "tool_use_id": state.tool_id}). Use it as the toolId so the
+            // resume flow (WorkspacePromptCard) can answer the ACTUAL paused
+            // tool_use block via the answers-array continuation path instead
+            // of a hardcoded id that never matches anything server-side.
+            // Fall back to the old hardcoded string only if some older/odd
+            // payload shape omits the field.
+            const wp = parsed.ws_workspace_prompt as Record<string, unknown>;
+            const toolUseId =
+              typeof wp.tool_use_id === 'string' && wp.tool_use_id
+                ? wp.tool_use_id
+                : 'ws_workspace_prompt';
             store().addMessage({
               role: 'assistant',
               content: '',
               timestamp: new Date().toISOString(),
               toolUse: [{
-                toolId: 'ws_workspace_prompt',
+                toolId: toolUseId,
                 toolName: 'ws_workspace_prompt',
                 input: parsed.ws_workspace_prompt,
                 status: 'pending',

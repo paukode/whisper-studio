@@ -99,6 +99,28 @@ def expanded_sandbox_paths() -> list[str]:
     ] + ABSOLUTE_PATHS
 
 
+def is_sensitive_path(path: str) -> bool:
+    """True if `path` sits inside (or equals) any denylisted location — SSH
+    keys, cloud credentials, browser profiles, system secrets, etc.
+
+    Reuses the same canonical list the OS sandbox already draws from
+    (`expanded_sandbox_paths()`) so a third caller (e.g. save_file's
+    destination check) cannot drift from either existing consumer instead
+    of maintaining its own denylist.
+
+    Resolves both `path` and every denylist entry through realpath() before
+    comparing, so callers don't need to pre-resolve their input and a
+    symlinked prefix (e.g. macOS's /etc -> /private/etc) can't slip past a
+    literal string comparison.
+    """
+    real_path = os.path.realpath(path)
+    for denied in expanded_sandbox_paths():
+        real_denied = os.path.realpath(denied)
+        if real_path == real_denied or real_path.startswith(real_denied + os.sep):
+            return True
+    return False
+
+
 def validator_path_patterns() -> list[re.Pattern]:
     """Compiled regexes for command-text matching.
 

@@ -310,7 +310,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
               if (tool.toolName === 'ws_workspace_prompt') {
                 const input = tool.input as {
                   reason?: string; suggested?: string;
-                  recent?: string[];
+                  recent?: string[]; tool_name?: string;
+                  suggested_name?: string;
+                  documents_dir?: string; downloads_dir?: string;
                 };
                 return (
                   <WorkspacePromptCard
@@ -318,6 +320,14 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
                     reason={input.reason ?? ''}
                     suggested={input.suggested ?? ''}
                     recent={input.recent ?? []}
+                    // tool.toolId now carries the REAL tool_use_id the backend
+                    // stashed this pause under (see sseStream.ts) — resuming
+                    // must answer that exact id, not a hardcoded placeholder.
+                    toolUseId={tool.toolId}
+                    toolName={input.tool_name}
+                    suggestedName={input.suggested_name}
+                    documentsDir={input.documents_dir}
+                    downloadsDir={input.downloads_dir}
                   />
                 );
               }

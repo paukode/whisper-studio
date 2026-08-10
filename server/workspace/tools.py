@@ -290,6 +290,47 @@ def get_workspace_write_tools() -> list[dict]:
             },
         },
         {
+            "name": "save_file",
+            "description": (
+                "[Workspace] Save a one-off file (a report, an export, a generated document) "
+                "to a location the user picks — Documents, Downloads, or anywhere via a native "
+                "save dialog. Use this for deliverables that do NOT belong in the connected "
+                "workspace and should NOT require connecting one. Do not use this for files "
+                "that belong in the current workspace — use ws_create_file for those. "
+                "First call with just filename/content (omit destination_path): this pauses "
+                "and asks the user to pick a location. Once the user picks, re-issue the SAME "
+                "call with destination_path set (as instructed) to actually write the file."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Suggested filename, e.g. 'report.pdf'",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "File content — plain text, or base64 if content_encoding is 'base64'",
+                    },
+                    "content_encoding": {
+                        "type": "string",
+                        "enum": ["utf-8", "base64"],
+                        "description": "Encoding of `content`. Default 'utf-8'. Use 'base64' for binary files.",
+                    },
+                    "suggested_location": {
+                        "type": "string",
+                        "enum": ["Documents", "Downloads"],
+                        "description": "Which folder to suggest first in the picker. Default 'Documents'.",
+                    },
+                    "destination_path": {
+                        "type": "string",
+                        "description": "Absolute path to write to. Omit on the first call — it is supplied after the user picks a location, then re-issue this same call with it set.",
+                    },
+                },
+                "required": ["filename", "content"],
+            },
+        },
+        {
             "name": "ws_edit_file",
             "description": (
                 "[Workspace] Edit an existing file by replacing a specific string. "

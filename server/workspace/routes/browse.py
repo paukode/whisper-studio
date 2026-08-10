@@ -4,6 +4,7 @@ search, and the native folder picker.
 
 import json
 import os
+import re
 import subprocess
 
 from fastapi import Request
@@ -13,6 +14,13 @@ from .. import router
 from ..filesystem import _ws_list_dir, _ws_search_files
 from ..paths import _resolve_path, _ws_validate_path
 from ..state import get_workspace_path
+
+# Characters that would break out of the AppleScript string literal built for
+# `choose file name ... default name "<name>"`. `filename` is a query param
+# (user/model-influenced input) reaching an `osascript -e` command string, so
+# it is stripped — never trusted verbatim — before interpolation. Backslash
+# is included because AppleScript string literals also use it as an escape.
+_UNSAFE_APPLESCRIPT_CHARS = re.compile(r'["\\]')
 
 
 @router.get("/browse")
@@ -169,3 +177,44 @@ async def ws_pick_folder():
         status_code=501,
         media_type="application/json",
     )
+
+
+@router.get("/pick-save-target")
+async def ws_pick_save_target(filename: str = ""):
+    """Open a native macOS save-file dialog pre-filled with `filename` and
+    return the chosen absolute path. This is the one-shot counterpart to
+    /pick-folder for the `save_file` tool — it never connects a workspace,
+    it just resolves a destination path for a single write.
+    """
+    import platform
+
+    system = platform.system()
+    if system != "Darwin":
+        return Response(
+            content=json.dumps({"error": "Native save dialog not available on this platform"}),
+            status_code=501,
+            media_type="application/json",
+        )
+    # Strip characters that would break out of the AppleScript string literal
+    # rather than trying to escape them — this is interpolated into a single
+    # `-e` argument, itself passed as one element of a Python list (never a
+    # shell string), mirroring pick-folder's own subprocess.run construction.
+    safe_name = _UNSAFE_APPLESCRIPT_CHARS.sub("", filename).strip() or "Untitled"
+    try:
+        result = subprocess.run(
+            [
+                "osascript",
+                "-e",
+                f'POSIX path of (choose file name with prompt "Save as" default name "{safe_name}")',
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode == 0:
+            path = result.stdout.strip()
+            if path:
+                return {"path": path}
+        return {"path": None, "cancelled": True}
+    except subprocess.TimeoutExpired:
+        return {"path": None, "cancelled": True}

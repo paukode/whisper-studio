@@ -74,6 +74,56 @@ def _atomic_write_text(full: str, content: str) -> None:
         raise
 
 
+def _atomic_write_bytes(full: str, data: bytes) -> None:
+    """Byte-mode counterpart to `_atomic_write_text`: the exact same
+    atomic temp-file-then-rename pattern (unique mkstemp sibling, fsync,
+    permission-preserving os.replace), just opened in 'wb' with no
+    `_normalize_lf` pass — binary content (e.g. a base64-decoded save_file
+    payload) must round-trip byte-for-byte, not have its line endings
+    rewritten.
+    """
+    parent = os.path.dirname(full) or "."
+    os.makedirs(parent, exist_ok=True)
+    basename = os.path.basename(full)
+    existing_mode: int | None = None
+    try:
+        existing_mode = stat.S_IMODE(os.stat(full).st_mode)
+    except FileNotFoundError:
+        pass
+    fd, tmp = tempfile.mkstemp(dir=parent, prefix=f".{basename}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                # fsync not supported on all filesystems; non-fatal
+                pass
+        if existing_mode is not None:
+            target_mode: int | None = existing_mode
+        else:
+            # New file: match a plain open()'s umask-derived permissions
+            # rather than mkstemp's 0o600, which would silently tighten
+            # new files.
+            umask = os.umask(0)
+            os.umask(umask)
+            target_mode = 0o666 & ~umask
+        if target_mode is not None:
+            try:
+                os.chmod(tmp, target_mode)
+            except OSError as e:
+                log.debug("could not set mode on %s: %s", tmp, e)
+        os.replace(tmp, full)
+    except Exception:
+        # Best-effort cleanup of the temp file on failure
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _resolve_path(path: str) -> str:
     """Resolve a path, handling Unicode normalization and trailing whitespace."""
     if os.path.isdir(path):
@@ -98,6 +148,11 @@ def _resolve_path(path: str) -> str:
 DATA_DIR = data_root()
 WORKSPACE_CONFIG_PATH = os.path.join(DATA_DIR, "workspace_config.json")
 RECENT_WORKSPACES_PATH = os.path.join(DATA_DIR, "recent_workspaces.json")
+# Directories written to via the one-shot save_file flow (server/workspace/
+# state.py's record_save_location). Never 'connected' or 'indexed' — this is
+# purely so a file saved this way stays clickable/revealable via /open-with
+# and /reveal afterward. See server/workspace/routes/os_integration.py.
+SAVE_LOCATIONS_PATH = os.path.join(DATA_DIR, "save_locations.json")
 WORKSPACE_BACKUPS: dict[str, str] = {}
 
 _WS_IGNORED_DIRS = {

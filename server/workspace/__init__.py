@@ -52,8 +52,10 @@ from .executors import (  # noqa: E402,F401
 from .paths import (  # noqa: E402,F401
     DATA_DIR,
     RECENT_WORKSPACES_PATH,
+    SAVE_LOCATIONS_PATH,
     WORKSPACE_BACKUPS,
     WORKSPACE_CONFIG_PATH,
+    _atomic_write_bytes,
     _atomic_write_text,
     _normalize_lf,
     _ws_validate_path,
@@ -62,11 +64,14 @@ from .paths import (  # noqa: E402,F401
 # --- Layer 2: workspace state (depends on paths) -----------------------
 from .state import (  # noqa: E402,F401
     _check_writable,
+    _save_location_prompt_payload,
     connect_workspace,
     get_workspace_path,
     is_plan_mode,
     load_recent_workspaces,
+    load_save_locations,
     load_workspace_config,
+    record_save_location,
     save_recent_workspace,
     save_workspace_config,
 )
