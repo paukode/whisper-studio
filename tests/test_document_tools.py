@@ -190,6 +190,25 @@ def test_create_docx_produces_real_ooxml_and_pauses_for_approval(tmp_path, monke
         assert "Body text" in doc_xml
 
 
+def test_create_docx_applies_standard_layout(tmp_path, monkeypatch):
+    """The standard: A4 page, 1-inch margins, Calibri 11pt body — regardless
+    of what fonts are installed (the post-processor rewrites the Cocoa
+    converter's fallback fonts to Calibri)."""
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
+    out = _exec_create_docx(
+        {"path": "std.docx", "html_content": "<h1>Heading</h1><p>Body paragraph.</p>"}, "", {}
+    )
+    payload = _parse_approval(out)
+    with zipfile.ZipFile(io.BytesIO(_decoded_bytes(payload))) as z:
+        doc_xml = z.read("word/document.xml").decode("utf-8")
+    assert '<w:pgSz w:w="11906" w:h="16838"/>' in doc_xml, "page size must be A4"
+    assert 'w:top="1440"' in doc_xml and 'w:left="1440"' in doc_xml, "1-inch margins"
+    assert "Calibri" in doc_xml, "body font must be Calibri"
+    for fallback in ("Helvetica", ".AppleSystemUIFont", "Times New Roman"):
+        assert f'w:ascii="{fallback}"' not in doc_xml
+    assert 'w:val="22"' in doc_xml, "11pt body text (22 half-points)"
+
+
 def test_create_docx_rejects_empty_html(tmp_path, monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     out = _exec_create_docx({"path": "empty.docx", "html_content": "   "}, "", {})
@@ -212,7 +231,14 @@ def test_create_pptx_round_trips_with_python_pptx(tmp_path, monkeypatch):
 
     from pptx import Presentation
 
+    from server.documents.standards import PPTX_SLIDE_HEIGHT_EMU, PPTX_SLIDE_WIDTH_EMU
+
     prs = Presentation(io.BytesIO(data))
+    assert prs.slide_width == PPTX_SLIDE_WIDTH_EMU, "slides must be standard 16:9"
+    assert prs.slide_height == PPTX_SLIDE_HEIGHT_EMU
+    # Placeholders must span the widescreen slide, not the old 4:3 layout box.
+    title_shape = prs.slides[0].shapes.title
+    assert title_shape.width == prs.slide_width - 2 * title_shape.left
     assert len(prs.slides) == 2
     titles = [s.shapes.title.text for s in prs.slides]
     assert titles == ["Intro", "Conclusion"]
@@ -243,6 +269,10 @@ def test_create_xlsx_round_trips_with_openpyxl(tmp_path, monkeypatch):
     assert ws["A2"].value == "Widget"
     assert ws["B2"].value == 3
     assert wb["Notes"]["A1"].value == "free text"
+    # Standard polish: bold frozen header row, fitted column widths.
+    assert ws["A1"].font.bold is True
+    assert ws.freeze_panes == "A2"
+    assert (ws.column_dimensions["A"].width or 0) >= 10
 
 
 def test_create_pdf_produces_valid_pdf_bytes(tmp_path, monkeypatch):
@@ -262,6 +292,13 @@ def test_create_pdf_produces_valid_pdf_bytes(tmp_path, monkeypatch):
     data = _decoded_bytes(payload)
     assert len(data) > 0
     assert data[:5] == b"%PDF-"
+
+    # Standard layout: A4 pages (595.28 x 841.89 pt).
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument(data)
+    width, height = pdf[0].get_size()
+    assert abs(width - 595.28) < 1 and abs(height - 841.89) < 1
 
 
 def test_create_pdf_escapes_special_characters_without_dropping_content(tmp_path, monkeypatch):

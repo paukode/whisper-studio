@@ -31,6 +31,14 @@ import subprocess
 import tempfile
 from xml.sax.saxutils import escape as _xml_escape
 
+from server.documents.standards import (
+    apply_pptx_standard,
+    apply_xlsx_standard,
+    docx_html_skeleton,
+    fit_pptx_placeholders,
+    normalize_docx_standard,
+    pdf_standard_styles,
+)
 from server.executors import register_executor
 from server.workspace.executors import _stage_and_request_save
 from server.workspace.state import resolve_write_destination
@@ -123,7 +131,7 @@ def _exec_create_docx(tool_input, transcript, current_attachments):
                     "-output",
                     tmp_path,
                 ],
-                input=html_content,
+                input=docx_html_skeleton(html_content),
                 capture_output=True,
                 text=True,
                 timeout=_TEXTUTIL_TIMEOUT_SECONDS,
@@ -148,6 +156,10 @@ def _exec_create_docx(tool_input, transcript, current_attachments):
 
     if not data:
         return "Error: textutil produced an empty docx file."
+    try:
+        data = normalize_docx_standard(data)
+    except Exception as e:
+        return f"Error applying the standard document layout: {e}"
     return _approval_result(resolved, path, data, "docx")
 
 
@@ -171,11 +183,13 @@ def _exec_create_pptx(tool_input, transcript, current_attachments):
 
     try:
         prs = Presentation()
+        apply_pptx_standard(prs)
         layout = prs.slide_layouts[1]  # "Title and Content"
         for slide_spec in slides:
             title = str(slide_spec.get("title", "") or "")
             bullets = slide_spec.get("bullets") or []
             slide = prs.slides.add_slide(layout)
+            fit_pptx_placeholders(prs, slide)
             slide.shapes.title.text = title
             text_frame = slide.placeholders[1].text_frame
             text_frame.clear()
@@ -219,6 +233,7 @@ def _exec_create_xlsx(tool_input, transcript, current_attachments):
                 if not isinstance(row, list):
                     return f"Error: sheets[{i}].rows must be a list of lists."
                 worksheet.append(row)
+            apply_xlsx_standard(worksheet)
         buf = io.BytesIO()
         wb.save(buf)
     except Exception as e:
@@ -241,8 +256,7 @@ def _exec_create_pdf(tool_input, transcript, current_attachments):
     if not title and not paragraphs:
         return "Error: provide a title and/or at least one paragraph."
 
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.pagesizes import A4
     from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
     def _flowable_text(raw: str) -> str:
@@ -253,7 +267,7 @@ def _exec_create_pdf(tool_input, transcript, current_attachments):
         return _xml_escape(raw).replace("\n", "<br/>")
 
     try:
-        styles = getSampleStyleSheet()
+        styles = pdf_standard_styles()
         flowables = []
         if title:
             flowables.append(Paragraph(_flowable_text(title), styles["Title"]))
@@ -264,7 +278,7 @@ def _exec_create_pdf(tool_input, transcript, current_attachments):
                 flowables.append(Spacer(1, 12))
 
         buf = io.BytesIO()
-        doc = SimpleDocTemplate(buf, pagesize=letter)
+        doc = SimpleDocTemplate(buf, pagesize=A4)
         doc.build(flowables)
     except Exception as e:
         return f"Error building pdf: {e}"
