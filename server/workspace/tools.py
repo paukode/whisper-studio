@@ -278,23 +278,23 @@ def get_workspace_write_tools() -> list[dict]:
                 "Parent directories are created automatically, so never create them "
                 "as a separate step. Do not read the file first; it does not exist yet. "
                 "If a workspace is connected, `path` is workspace-relative. If none is "
-                "connected, this does NOT force a full workspace connection — it pauses "
-                "and asks the user to pick a save location (Documents, Downloads, or a "
-                "native save dialog), the same lightweight flow save_file uses. Once the "
-                "user picks, re-issue this same call with destination_path set to "
-                "actually write the file."
+                "connected, never ask the user where to save: pass destination_path "
+                "resolved from the user's own words ('in Downloads' -> "
+                "'~/Downloads/notes.txt'), or omit it to default to their Documents "
+                "folder — then tell the user the full path in your reply. The user "
+                "confirms the exact path on the approval card."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative path for the new file. Used as the suggested filename when no workspace is connected.",
+                        "description": "Relative path for the new file. Used as the default filename when no workspace is connected.",
                     },
                     "content": {"type": "string", "description": "File content"},
                     "destination_path": {
                         "type": "string",
-                        "description": "Absolute path to write to, used only when no workspace is connected. Omit on the first call — it is supplied after the user picks a location via the save prompt, then re-issue this same call with it set.",
+                        "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/notes.txt' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
                     },
                 },
                 "required": ["path", "content"],
@@ -304,20 +304,22 @@ def get_workspace_write_tools() -> list[dict]:
             "name": "save_file",
             "description": (
                 "[Workspace] Save a one-off file (a report, an export, a generated document) "
-                "to a location the user picks — Documents, Downloads, or anywhere via a native "
-                "save dialog. Use this for deliverables that do NOT belong in the connected "
-                "workspace and should NOT require connecting one. Do not use this for files "
-                "that belong in the current workspace — use ws_create_file for those. "
-                "First call with just filename/content (omit destination_path): this pauses "
-                "and asks the user to pick a location. Once the user picks, re-issue the SAME "
-                "call with destination_path set (as instructed) to actually write the file."
+                "directly to the user's disk, in ONE call — never ask the user where to save. "
+                "If the user named a location ('in Downloads', 'on my Desktop', a full path), "
+                "resolve it yourself and pass destination_path (~ is allowed, e.g. "
+                "'~/Downloads/report.pdf'). If they named none, omit destination_path — the "
+                "file goes to their Documents folder (or Downloads via suggested_location). "
+                "The file is prepared immediately and the user confirms the exact path on an "
+                "approval card; your reply after approval must tell the user the full path it "
+                "was saved to. Use ws_create_file instead for files that belong in the "
+                "connected workspace."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "filename": {
                         "type": "string",
-                        "description": "Suggested filename, e.g. 'report.pdf'",
+                        "description": "Filename including extension, e.g. 'report.pdf'",
                     },
                     "content": {
                         "type": "string",
@@ -331,11 +333,11 @@ def get_workspace_write_tools() -> list[dict]:
                     "suggested_location": {
                         "type": "string",
                         "enum": ["Documents", "Downloads"],
-                        "description": "Which folder to suggest first in the picker. Default 'Documents'.",
+                        "description": "Default folder when destination_path is omitted. Default 'Documents'.",
                     },
                     "destination_path": {
                         "type": "string",
-                        "description": "Absolute path to write to. Omit on the first call — it is supplied after the user picks a location, then re-issue this same call with it set.",
+                        "description": "Full destination path resolved from the user's words, e.g. '~/Downloads/report.pdf'. Omit only when the user named no location.",
                     },
                 },
                 "required": ["filename", "content"],

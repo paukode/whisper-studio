@@ -60,12 +60,13 @@ from .paths import (  # noqa: E402,F401
     _normalize_lf,
     _ws_validate_path,
     get_scratch_dir,
+    is_staged_path,
+    stage_file_bytes,
 )
 
 # --- Layer 2: workspace state (depends on paths) -----------------------
 from .state import (  # noqa: E402,F401
     _check_writable,
-    _save_location_prompt_payload,
     connect_workspace,
     get_workspace_path,
     is_plan_mode,
@@ -73,6 +74,7 @@ from .state import (  # noqa: E402,F401
     load_save_locations,
     load_workspace_config,
     record_save_location,
+    resolve_write_destination,
     save_recent_workspace,
     save_workspace_config,
 )

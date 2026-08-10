@@ -7,10 +7,9 @@
  * stashed paused-turn state. A bare string is treated as a brand new chat
  * message and never resumes anything (see sseStream.ts / tool_executor.py).
  *
- * Covers both branches that share this component:
- *  - the classic workspace-connect flow (reason='no_workspace' etc.)
- *  - the new one-shot save_location flow (reason='save_location'), which
- *    must resume WITHOUT ever calling /api/workspace/connect.
+ * This card only handles the workspace-connect flow now: one-off file saves
+ * resolve their destination in the tool executor (user's words or a
+ * Documents default) and go straight to the approval card, never here.
  */
 import { render, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
@@ -63,70 +62,6 @@ describe('WorkspacePromptCard', () => {
       {
         tool_use_id: 'tu_real_123',
         content: expect.stringContaining('/Users/me/Projects/site'),
-      },
-    ]);
-  });
-
-  it('save_location flow: quick-pick resumes with an absolute destination path and never calls /connect', async () => {
-    const captured = captureResumeEvents();
-
-    const { getByText } = render(
-      <WorkspacePromptCard
-        reason="save_location"
-        suggested=""
-        recent={[]}
-        toolUseId="tu_save_456"
-        toolName="save_file"
-        suggestedName="report.pdf"
-        documentsDir="/Users/me/Documents"
-        downloadsDir="/Users/me/Downloads"
-      />,
-    );
-
-    fireEvent.click(getByText('/Users/me/Documents/report.pdf'));
-
-    await waitFor(() => expect(captured.length).toBe(1));
-    expect(captured[0].answers).toEqual([
-      {
-        tool_use_id: 'tu_save_456',
-        content: expect.stringContaining('/Users/me/Documents/report.pdf'),
-      },
-    ]);
-    expect(captured[0].answers?.[0].content).toContain('save_file');
-    // Never touches the persistent-workspace endpoint.
-    expect(globalThis.fetch).not.toHaveBeenCalledWith(
-      '/api/workspace/connect',
-      expect.anything(),
-    );
-  });
-
-  it('save_location flow: Browse button calls pick-save-target (not pick-folder) and resumes with the picked path', async () => {
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: async () => ({ path: '/Users/me/Desktop/custom-name.pdf' }),
-    });
-    const captured = captureResumeEvents();
-
-    const { getByText } = render(
-      <WorkspacePromptCard
-        reason="save_location"
-        suggested=""
-        recent={[]}
-        toolUseId="tu_save_789"
-        suggestedName="report.pdf"
-      />,
-    );
-
-    fireEvent.click(getByText('Browse…'));
-
-    await waitFor(() => expect(captured.length).toBe(1));
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/api/workspace/pick-save-target?filename='),
-    );
-    expect(captured[0].answers).toEqual([
-      {
-        tool_use_id: 'tu_save_789',
-        content: expect.stringContaining('/Users/me/Desktop/custom-name.pdf'),
       },
     ]);
   });

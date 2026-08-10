@@ -36,9 +36,9 @@ from .paths import (
     WORKSPACE_BACKUPS,
     _normalize_lf,
     _ws_validate_path,
+    stage_file_bytes,
 )
 from .state import (
-    _save_location_prompt_payload,
     _workspace_prompt_payload,
     get_workspace_path,
     load_workspace_config,
@@ -374,6 +374,31 @@ def _replace_with_normalization(
     return "".join(result)
 
 
+def _stage_and_request_save(dest: str, filename: str, data: bytes) -> str:
+    """Shared tail of every direct-to-destination save: validate the
+    destination against the sensitive-path denylist, write the FINISHED
+    bytes to the app-sandbox staging area, and return the [WS_APPROVAL]
+    payload whose approval simply MOVES the ready file into place
+    (server/approval/bootstrap.py's _do_save_to_path). By the time the user
+    sees the card the file already exists — approving cannot fail on
+    content problems, and declining leaves nothing outside the sandbox."""
+    from server.security.sensitive_paths import is_sensitive_path
+
+    if is_sensitive_path(dest):
+        return f"Error: refusing to save to a sensitive path: {dest}"
+    staged = stage_file_bytes(data, filename)
+    payload = json.dumps(
+        {
+            "action": "save_to_path",
+            "path": dest,
+            "filename": filename,
+            "staged_path": staged,
+            "size": len(data),
+        }
+    )
+    return f"[WS_APPROVAL]{payload}"
+
+
 @register_executor("ws_create_file", read_only=False, concurrent_safe=False)
 def _exec_ws_create_file(tool_input, transcript, current_attachments):
     resolved = resolve_write_destination("ws_create_file", tool_input)
@@ -383,20 +408,10 @@ def _exec_ws_create_file(tool_input, transcript, current_attachments):
     content = tool_input.get("content", "")
 
     if kind == "absolute":
-        # No workspace connected; the user has picked a save location via
-        # the lightweight flow. Write straight there via the same
-        # save_to_path approval action save_file uses — never connects a
-        # persistent workspace.
-        payload = json.dumps(
-            {
-                "action": "save_to_path",
-                "path": target,
-                "filename": os.path.basename(target),
-                "content": content,
-                "content_encoding": "utf-8",
-            }
-        )
-        return f"[WS_APPROVAL]{payload}"
+        # No workspace connected (or the user named an explicit location):
+        # stage the finished content and request the move — never connects
+        # a persistent workspace.
+        return _stage_and_request_save(target, os.path.basename(target), content.encode("utf-8"))
 
     full = target
     path = tool_input.get("path", "")
@@ -411,32 +426,30 @@ def _exec_ws_create_file(tool_input, transcript, current_attachments):
 @register_executor("save_file", read_only=False, concurrent_safe=False)
 def _exec_save_file(tool_input, transcript, current_attachments):
     """One-shot 'save this file somewhere' — never connects a persistent
-    workspace (get_workspace_path() is not even consulted here).
+    workspace (get_workspace_path() is not even consulted here) and never
+    asks the user where to save.
 
-    First call (no destination_path yet): pause with the save_location
-    variant of the [WS_WORKSPACE_PROMPT] sentinel so the user picks
-    Documents/Downloads/Browse. Re-issued call (destination_path present):
-    validate it, then package the write as a [WS_APPROVAL] (action=
-    save_to_path) so the bytes only actually hit disk once the user clicks
-    Yes on the approval card — same as every other workspace write tool.
+    Destination comes from destination_path when the model resolved one
+    from the user's own words; otherwise it defaults to the user's
+    Documents or Downloads folder (suggested_location, default Documents).
+    Content is decoded and staged immediately; the approval card then just
+    moves the ready file into place.
     """
-    filename = (tool_input.get("filename") or "").strip()
+    filename = os.path.basename((tool_input.get("filename") or "").strip())
     if not filename:
         return "Error: filename is required."
 
     destination_path = tool_input.get("destination_path")
-    if not destination_path:
-        return _save_location_prompt_payload("save_file", tool_input, filename)
-
-    raw_dest = os.path.expanduser(str(destination_path))
-    if not os.path.isabs(raw_dest):
-        return f"Error: destination_path must be an absolute path (got {destination_path!r})."
-    dest = os.path.realpath(raw_dest)
-
-    from server.security.sensitive_paths import is_sensitive_path
-
-    if is_sensitive_path(dest):
-        return f"Error: refusing to save to a sensitive path: {dest}"
+    if destination_path:
+        raw_dest = os.path.expanduser(str(destination_path))
+        if not os.path.isabs(raw_dest):
+            return f"Error: destination_path must be an absolute path (got {destination_path!r})."
+        dest = os.path.realpath(raw_dest)
+    else:
+        folder = tool_input.get("suggested_location") or "Documents"
+        if folder not in ("Documents", "Downloads"):
+            folder = "Documents"
+        dest = os.path.join(os.path.expanduser(f"~/{folder}"), filename)
 
     content = tool_input.get("content", "")
     encoding = tool_input.get("content_encoding") or "utf-8"
@@ -444,20 +457,13 @@ def _exec_save_file(tool_input, transcript, current_attachments):
         return f"Error: content_encoding must be 'utf-8' or 'base64' (got {encoding!r})."
     if encoding == "base64":
         try:
-            base64.b64decode(content, validate=True)
+            data = base64.b64decode(content, validate=True)
         except Exception as e:
             return f"Error: content is not valid base64: {e}"
+    else:
+        data = content.encode("utf-8")
 
-    payload = json.dumps(
-        {
-            "action": "save_to_path",
-            "path": dest,
-            "filename": filename,
-            "content": content,
-            "content_encoding": encoding,
-        }
-    )
-    return f"[WS_APPROVAL]{payload}"
+    return _stage_and_request_save(dest, filename, data)
 
 
 @register_executor("ws_delete_file", read_only=False, concurrent_safe=False, destructive=True)

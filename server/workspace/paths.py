@@ -169,6 +169,63 @@ def get_scratch_dir(session_id: str) -> str:
     return path
 
 
+# ── Save-flow staging ─────────────────────────────────────────────────
+# File-saving tools build their full content BEFORE the approval card is
+# shown: the finished bytes are written to this app-sandbox staging area at
+# tool-call time, and approving just MOVES the ready file to the user's
+# destination (server/approval/bootstrap.py's _do_save_to_path). By the time
+# the user sees the card, the file already exists and cannot fail to build.
+
+_STAGING_MAX_AGE_SECONDS = 24 * 3600
+
+
+def _staging_root() -> str:
+    return os.path.join(DATA_DIR, "scratch", "_staging")
+
+
+def stage_file_bytes(data: bytes, filename: str) -> str:
+    """Write `data` to a fresh staging entry and return its absolute path.
+
+    Each staged file gets its own random subdirectory so the original
+    filename is preserved for the eventual move. Declined approvals leave
+    their staged file behind (the approval pipeline never calls back on No),
+    so every call also garbage-collects entries older than 24h — bounded,
+    best-effort cleanup with no background task needed."""
+    import shutil
+    import time
+    import uuid
+
+    root = _staging_root()
+    os.makedirs(root, exist_ok=True)
+
+    cutoff = time.time() - _STAGING_MAX_AGE_SECONDS
+    for entry in os.listdir(root):
+        full = os.path.join(root, entry)
+        try:
+            if os.path.getmtime(full) < cutoff:
+                shutil.rmtree(full, ignore_errors=True)
+        except OSError:
+            continue
+
+    safe_name = os.path.basename(filename) or "file"
+    entry_dir = os.path.join(root, uuid.uuid4().hex)
+    os.makedirs(entry_dir)
+    staged = os.path.join(entry_dir, safe_name)
+    _atomic_write_bytes(staged, data)
+    return staged
+
+
+def is_staged_path(path: str) -> bool:
+    """True only for paths inside the staging root. _do_save_to_path MUST
+    check this before moving: the approval payload can in principle be
+    forged via a direct POST /api/approval/execute, and without this gate a
+    crafted staged_path could exfiltrate an arbitrary readable file by
+    'moving' it into a user-visible folder."""
+    real = os.path.realpath(path)
+    root = os.path.realpath(_staging_root())
+    return real.startswith(root + os.sep)
+
+
 _WS_IGNORED_DIRS = {
     ".git",
     ".svn",

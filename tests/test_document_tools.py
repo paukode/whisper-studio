@@ -5,25 +5,22 @@ reportlab) rather than mocking them — the whole point of these tools is that
 they produce genuine, round-trippable files, so a mocked subprocess/library
 call would not catch a broken invocation.
 
-The no-workspace case does NOT force a full workspace connection: it pauses
-with the same lightweight "where should this go" prompt save_file uses
-(reason=save_location) rather than ws_create_file's full connect prompt —
-and, the thing that would silently break if someone reordered a check, no
-subprocess/library call happens before that sentinel is returned.
-
-A successful build does NOT write to disk directly: it returns a
-[WS_APPROVAL] pause. With a workspace connected that's action=create_document
-(content_b64=<bytes>), the same human-in-the-loop gate ws_create_file goes
-through. Once destination_path is supplied (after the user picks a save
-location), it's action=save_to_path instead — the exact action save_file
-uses. The actual writes are exercised separately against
-server.approval.bootstrap._do_create_document / _do_save_to_path.
+The tools never ask the user where to save. With no workspace connected the
+destination comes from destination_path (the user's own words) or defaults
+to ~/Documents/<filename>; the finished bytes are STAGED in the app sandbox
+and the [WS_APPROVAL] (action=save_to_path) payload carries staged_path —
+approving just moves the ready file into place. With a workspace connected
+it's action=create_document keyed by the workspace-relative path, same
+human-in-the-loop gate ws_create_file goes through. The actual writes are
+exercised separately against server.approval.bootstrap._do_create_document /
+_do_save_to_path.
 """
 
 import asyncio
 import base64
 import io
 import json
+import os
 import zipfile
 from unittest.mock import patch
 
@@ -36,6 +33,7 @@ from server.documents.executors import (
     _exec_create_pptx,
     _exec_create_xlsx,
 )
+from server.workspace.paths import is_staged_path
 
 
 def _run(coro):
@@ -55,59 +53,66 @@ def _parse_approval(output: str, expected_action: str = "create_document") -> di
 
 
 def _decoded_bytes(payload: dict) -> bytes:
-    key = "content_b64" if "content_b64" in payload else "content"
-    return base64.b64decode(payload[key])
+    if "content_b64" in payload:
+        return base64.b64decode(payload["content_b64"])
+    with open(payload["staged_path"], "rb") as f:
+        return f.read()
 
 
-# ── No workspace connected: lightweight save-location prompt, no shelling out ──
+# ── No workspace connected: default to ~/Documents, stage, never ask ──
 
 
-def test_create_docx_no_workspace_emits_save_location_prompt_and_never_shells_out(monkeypatch):
+def test_create_docx_no_workspace_defaults_to_documents_and_stages(monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
-    with patch("subprocess.run") as mock_run:
-        out = _exec_create_docx({"path": "report.docx", "html_content": "<p>hi</p>"}, "", {})
-    mock_run.assert_not_called()
-    payload = _parse_prompt(out)
-    assert payload["reason"] == "save_location"
-    assert payload["tool_name"] == "create_docx"
-    assert payload["tool_input"]["path"] == "report.docx"
-    assert payload["suggested_name"] == "report.docx"
-    assert "documents_dir" in payload
-    assert "downloads_dir" in payload
+    out = _exec_create_docx({"path": "report.docx", "html_content": "<p>hi</p>"}, "", {})
+    payload = _parse_approval(out, expected_action="save_to_path")
+    assert payload["path"] == os.path.expanduser("~/Documents/report.docx")
+    assert is_staged_path(payload["staged_path"])
+    assert _decoded_bytes(payload)[:2] == b"PK", "staged file must be real OOXML (zip)"
 
 
-def test_create_pptx_no_workspace_emits_save_location_prompt(monkeypatch):
+def test_create_docx_appends_missing_extension(monkeypatch):
+    # Models sometimes pass a bare name like 'document' — the deliverable
+    # must still open in Word.
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
+    out = _exec_create_docx({"path": "document", "html_content": "<p>hi</p>"}, "", {})
+    payload = _parse_approval(out, expected_action="save_to_path")
+    assert payload["path"] == os.path.expanduser("~/Documents/document.docx")
+    assert payload["filename"] == "document.docx"
+
+
+def test_create_pptx_no_workspace_defaults_and_stages(monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     out = _exec_create_pptx(
         {"path": "deck.pptx", "slides": [{"title": "T", "bullets": ["a"]}]}, "", {}
     )
-    payload = _parse_prompt(out)
-    assert payload["reason"] == "save_location"
-    assert payload["tool_name"] == "create_pptx"
+    payload = _parse_approval(out, expected_action="save_to_path")
+    assert payload["path"] == os.path.expanduser("~/Documents/deck.pptx")
+    assert is_staged_path(payload["staged_path"])
 
 
-def test_create_xlsx_no_workspace_emits_save_location_prompt(monkeypatch):
+def test_create_xlsx_no_workspace_defaults_and_stages(monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     out = _exec_create_xlsx(
         {"path": "data.xlsx", "sheets": [{"name": "Sheet1", "rows": [[1, 2]]}]}, "", {}
     )
-    payload = _parse_prompt(out)
-    assert payload["reason"] == "save_location"
-    assert payload["tool_name"] == "create_xlsx"
+    payload = _parse_approval(out, expected_action="save_to_path")
+    assert payload["path"] == os.path.expanduser("~/Documents/data.xlsx")
+    assert is_staged_path(payload["staged_path"])
 
 
-def test_create_pdf_no_workspace_emits_save_location_prompt(monkeypatch):
+def test_create_pdf_no_workspace_defaults_and_stages(monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     out = _exec_create_pdf({"path": "summary.pdf", "title": "T", "paragraphs": ["hello"]}, "", {})
-    payload = _parse_prompt(out)
-    assert payload["reason"] == "save_location"
-    assert payload["tool_name"] == "create_pdf"
+    payload = _parse_approval(out, expected_action="save_to_path")
+    assert payload["path"] == os.path.expanduser("~/Documents/summary.pdf")
+    assert _decoded_bytes(payload)[:5] == b"%PDF-"
 
 
-def test_create_docx_with_destination_path_skips_workspace_and_shells_out(tmp_path, monkeypatch):
-    """Once the user has picked a location (destination_path present), the
-    tool proceeds straight to building the file — get_workspace_path() is
-    never consulted, matching save_file's own no-workspace-required path."""
+def test_create_docx_with_destination_path_from_user_words(tmp_path, monkeypatch):
+    """When the model resolved a destination from the user's words, the tool
+    builds and stages in one call — get_workspace_path() is never consulted,
+    matching save_file's own no-workspace-required path."""
     monkeypatch.setattr(
         "server.workspace.state.get_workspace_path",
         lambda: (_ for _ in ()).throw(AssertionError("must not check workspace")),
@@ -117,9 +122,9 @@ def test_create_docx_with_destination_path_skips_workspace_and_shells_out(tmp_pa
         {"path": "report.docx", "html_content": "<p>hi</p>", "destination_path": dest}, "", {}
     )
     payload = _parse_approval(out, expected_action="save_to_path")
-    assert payload["path"] == dest
+    assert payload["path"] == os.path.realpath(dest)
     assert payload["filename"] == "report.docx"
-    assert payload["content_encoding"] == "base64"
+    assert is_staged_path(payload["staged_path"])
     assert not (tmp_path / "report.docx").exists(), "must not write before approval"
 
 
@@ -133,18 +138,14 @@ def test_create_docx_rejects_relative_destination_path(tmp_path, monkeypatch):
     assert out.startswith("Error"), out
 
 
-def test_do_save_to_path_writes_document_bytes_on_approval(tmp_path):
-    data = b"fake docx bytes for the lightweight save flow"
+def test_do_save_to_path_moves_staged_document_on_approval(tmp_path):
+    from server.workspace.paths import stage_file_bytes
+
+    data = b"fake docx bytes for the direct save flow"
+    staged = stage_file_bytes(data, "notes.docx")
     dest = str(tmp_path / "notes.docx")
     outcome = _run(
-        _do_save_to_path(
-            {
-                "path": dest,
-                "content": base64.b64encode(data).decode("ascii"),
-                "content_encoding": "base64",
-                "filename": "notes.docx",
-            }
-        )
+        _do_save_to_path({"path": dest, "filename": "notes.docx", "staged_path": staged})
     )
     assert outcome.ok, outcome.error
     assert (tmp_path / "notes.docx").read_bytes() == data

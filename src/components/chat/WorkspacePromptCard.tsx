@@ -11,16 +11,6 @@ export interface WorkspacePromptCardProps {
    *  treated as a brand-new chat message, not a continuation, and never
    *  reaches the paused turn. */
   toolUseId: string;
-  /** Name of the tool that emitted this prompt (e.g. 'ws_write_file' or
-   *  'save_file'). Used to phrase the resume instruction precisely. */
-  toolName?: string;
-  /** save_location only: the filename the model wants to save. */
-  suggestedName?: string;
-  /** save_location only: absolute ~/Documents path, from the backend so it
-   *  works regardless of the OS user's home directory. */
-  documentsDir?: string;
-  /** save_location only: absolute ~/Downloads path. */
-  downloadsDir?: string;
 }
 
 /** Dispatch a resume for a paused tool_use block via the SAME mechanism
@@ -37,33 +27,25 @@ function dispatchResume(toolUseId: string, content: string): void {
 }
 
 /**
- * Interactive card shown when a write-type tool pauses mid-turn because it
- * needs the user to choose a filesystem location. Two distinct flows share
- * this component, switched on `reason`:
+ * Interactive card shown when a workspace-write tool pauses mid-turn because
+ * it targets a connected workspace that doesn't exist or a path outside it
+ * ('no_workspace' / 'outside_workspace'): a folder picker that CONNECTS the
+ * chosen folder as the persistent workspace, then resumes so the LLM
+ * re-issues the original write.
  *
- *  - Any workspace-write reason ('no_workspace' / 'outside_workspace' / …):
- *    a folder picker that CONNECTS the chosen folder as the persistent
- *    workspace, then resumes so the LLM re-issues the original write.
- *  - 'save_location': the one-shot `save_file` tool's "where should this
- *    go" prompt. Never connects a workspace — just resolves an absolute
- *    destination path and resumes so the model re-issues save_file with
- *    destination_path set.
+ * One-off "save this file somewhere" requests never reach this card: the
+ * file-saving tools resolve the destination themselves (the user's own
+ * words, or a Documents default) and go straight to the approval card.
  */
 export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
   reason,
   suggested,
   recent,
   toolUseId,
-  toolName,
-  suggestedName,
-  documentsDir,
-  downloadsDir,
 }) => {
   const [isBusy, setIsBusy] = useState(false);
   const [resolved, setResolved] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
-
-  const isSaveLocation = reason === 'save_location';
 
   const connectAndResume = useCallback(async (path: string) => {
     setIsBusy(true);
@@ -130,115 +112,6 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
       setIsBusy(false);
     }
   }, [connectAndResume]);
-
-  // ── save_location flow: resolve a destination path, never connect a
-  // workspace, and resume telling the model to re-issue save_file with
-  // destination_path set. ──
-  const resumeWithSaveLocation = useCallback((path: string) => {
-    setSelectedPath(path);
-    setResolved(true);
-    dispatchResume(
-      toolUseId,
-      `Saving to ${path}. Re-issue ${toolName || 'save_file'} now with destination_path set to '${path}'.`,
-    );
-  }, [toolUseId, toolName]);
-
-  const handleBrowseSaveTarget = useCallback(async () => {
-    setIsBusy(true);
-    try {
-      const resp = await fetch(
-        `/api/workspace/pick-save-target?filename=${encodeURIComponent(suggestedName || '')}`,
-      );
-      const data = (await resp.json()) as { path?: string | null; cancelled?: boolean };
-      if (data.path) {
-        resumeWithSaveLocation(data.path);
-      }
-    } catch (err) {
-      console.error('Save target picker failed:', err);
-    } finally {
-      setIsBusy(false);
-    }
-  }, [suggestedName, resumeWithSaveLocation]);
-
-  if (isSaveLocation) {
-    const name = suggestedName || 'file';
-    // documentsDir/downloadsDir are absolute directories from the backend
-    // (os.path.expanduser); join with '/' for the quick-pick's full path.
-    const docsPath = documentsDir ? `${documentsDir}/${name}` : null;
-    const downloadsPath = downloadsDir ? `${downloadsDir}/${name}` : null;
-
-    return (
-      <div className="ws-approval-card" style={{
-        border: '1px solid var(--accent)',
-        borderRadius: 8,
-        padding: '12px 16px',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round">
-            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-            <path d="M17 21v-8H7v8M7 3v5h8" />
-          </svg>
-          <span style={{ fontSize: '0.85em', fontWeight: 600 }}>
-            Where should I save this?
-          </span>
-        </div>
-
-        <div style={{
-          fontSize: '0.85em',
-          color: 'var(--text-muted)',
-          marginBottom: 12,
-          lineHeight: 1.4,
-        }}>
-          {`Save "${name}" somewhere — this won't connect a workspace.`}
-        </div>
-
-        {resolved && selectedPath ? (
-          <div style={{
-            fontSize: '0.85em',
-            color: 'var(--accent)',
-            padding: '6px 10px',
-            background: 'var(--bg-secondary)',
-            borderRadius: 6,
-          }}>
-            {'✓'} Saving to {selectedPath}
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {docsPath && (
-              <button
-                className="btn btn-primary btn-sm"
-                onClick={() => resumeWithSaveLocation(docsPath)}
-                disabled={isBusy}
-                type="button"
-                style={{ textAlign: 'left', fontFamily: 'var(--font-mono)', fontSize: '0.8em' }}
-              >
-                {docsPath}
-              </button>
-            )}
-            {downloadsPath && (
-              <button
-                className="btn btn-sm"
-                onClick={() => resumeWithSaveLocation(downloadsPath)}
-                disabled={isBusy}
-                type="button"
-                style={{ textAlign: 'left', fontFamily: 'var(--font-mono)', fontSize: '0.8em' }}
-              >
-                {downloadsPath}
-              </button>
-            )}
-            <button
-              className="btn btn-sm"
-              onClick={() => void handleBrowseSaveTarget()}
-              disabled={isBusy}
-              type="button"
-            >
-              {isBusy ? 'Choosing…' : 'Browse…'}
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  }
 
   // Deduplicate: suggested path may also be in recent list
   const recentPaths = recent.filter(p => p !== suggested);

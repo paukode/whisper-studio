@@ -83,21 +83,25 @@ async def _do_delete(payload: dict) -> ApprovalOutcome:
 
 
 async def _do_save_to_path(payload: dict) -> ApprovalOutcome:
-    """Write a one-shot `save_file` result directly to a caller-given
-    absolute path. Unlike _do_write/_do_create above, this does NOT require
-    a connected workspace — get_workspace_path() is never consulted. The
-    destination came from the native save dialog or a Documents/Downloads
-    quick-pick (server/workspace/routes/browse.py's /pick-save-target), not
-    from resolving a path against a workspace root.
+    """Move a STAGED, already-built file to a caller-given absolute path.
 
-    Re-validates both the absolute-path shape and the sensitive-path
-    denylist here (not just in the save_file tool executor) — this is the
-    single hub every approval executes through, and payload could in
-    principle reach it directly via POST /api/approval/execute."""
-    import base64
+    The file-saving tools (save_file, ws_create_file without a workspace,
+    create_docx/pptx/xlsx/pdf) build their full content at tool-call time
+    and stage it in the app sandbox (server/workspace/paths.py's
+    stage_file_bytes); approving here just moves the ready file into place.
+    Unlike _do_write/_do_create above, this does NOT require a connected
+    workspace — get_workspace_path() is never consulted.
+
+    Re-validates everything here (not just in the tool executors) — this is
+    the single hub every approval executes through, and the payload could
+    in principle reach it directly via POST /api/approval/execute. In
+    particular, staged_path MUST be inside the staging root: without that
+    gate a forged payload could 'move' any readable file on disk into a
+    user-visible folder."""
+    import shutil
 
     from server.security.sensitive_paths import is_sensitive_path
-    from server.workspace.paths import _atomic_write_bytes
+    from server.workspace.paths import is_staged_path
     from server.workspace.state import record_save_location
 
     dest = payload.get("path", "")
@@ -106,20 +110,38 @@ async def _do_save_to_path(payload: dict) -> ApprovalOutcome:
     real_dest = os.path.realpath(dest)
     if is_sensitive_path(real_dest):
         return ApprovalOutcome(ok=False, error="Refusing to write to a sensitive path")
-    encoding = payload.get("content_encoding") or "utf-8"
-    content = payload.get("content", "")
+
+    staged = payload.get("staged_path", "")
+    if not staged or not is_staged_path(staged):
+        return ApprovalOutcome(ok=False, error="staged_path is not a staged file")
+    real_staged = os.path.realpath(staged)
+    if not os.path.isfile(real_staged):
+        return ApprovalOutcome(
+            ok=False,
+            error="The staged file no longer exists (staging entries expire after 24h) — re-run the tool.",
+        )
+
+    size = os.path.getsize(real_staged)
     try:
-        data = base64.b64decode(content) if encoding == "base64" else content.encode("utf-8")
+        os.makedirs(os.path.dirname(real_dest), exist_ok=True)
+        shutil.move(real_staged, real_dest)
     except Exception as e:
-        return ApprovalOutcome(ok=False, error=f"Could not decode content ({encoding}): {e}")
+        return ApprovalOutcome(ok=False, error=f"Move failed: {e}")
+    # Best-effort cleanup of the now-empty per-file staging subdirectory.
     try:
-        _atomic_write_bytes(real_dest, data)
-    except Exception as e:
-        return ApprovalOutcome(ok=False, error=f"Write failed: {e}")
+        os.rmdir(os.path.dirname(real_staged))
+    except OSError:
+        pass
     record_save_location(os.path.dirname(real_dest))
+    from server.index.citations import created_file_link
+
+    link = created_file_link(os.path.basename(real_dest), real_dest)
     return ApprovalOutcome(
         ok=True,
-        output=f"Saved {os.path.basename(real_dest)} to {real_dest} ({len(data)} bytes).",
+        output=(
+            f"Saved {os.path.basename(real_dest)} to {real_dest} ({size} bytes). "
+            f"To reference this file for the user, copy this link verbatim: {link}"
+        ),
     )
 
 
@@ -581,9 +603,10 @@ def register_defaults() -> None:
         ),
     )
 
-    # save_file's one-shot write — its own category (not "write") so it
-    # neither inherits "Yes for all writes" session-memory from ordinary
-    # workspace writes nor triggers the git-changes cache invalidation
+    # The direct-save move (save_file, ws_create_file without a workspace,
+    # document tools) — its own category (not "write") so it neither
+    # inherits "Yes for all writes" session-memory from ordinary workspace
+    # writes nor triggers the git-changes cache invalidation
     # /api/approval/execute does for the write/delete/cli categories (these
     # files live outside any workspace, so there's no git state to refresh).
     register(
@@ -594,7 +617,7 @@ def register_defaults() -> None:
             summary=_summary_save,
             executor=_do_save_to_path,
             risk_hint="low",
-            payload_fields=["path", "content", "content_encoding", "filename"],
+            payload_fields=["path", "filename", "staged_path", "size"],
         ),
     )
 

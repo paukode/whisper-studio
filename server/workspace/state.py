@@ -94,59 +94,35 @@ def _workspace_prompt_payload(tool_name: str, tool_input: dict, reason: str) -> 
     return f"[WS_WORKSPACE_PROMPT]{payload}"
 
 
-def _save_location_prompt_payload(tool_name: str, tool_input: dict, suggested_name: str) -> str:
-    """Emit a WS_WORKSPACE_PROMPT marker for the one-shot `save_file` tool's
-    "where should this go" prompt.
-
-    Reuses the exact same sentinel prefix as _workspace_prompt_payload so
-    tool_executor.py's pause detection (`tool_output.startswith(
-    "[WS_WORKSPACE_PROMPT]")`) needs NO changes. Unlike that helper, this is
-    NOT about connecting a persistent workspace — reason='save_location'
-    tells the frontend to render the save-target picker (Documents/Downloads
-    quick-picks + a native save dialog) instead of the workspace-connect UI,
-    and 'suggested_name' is the filename being saved (not a folder to
-    connect to).
-    """
-    payload = json.dumps(
-        {
-            "reason": "save_location",
-            "tool_name": tool_name,
-            "tool_input": {k: v for k, v in tool_input.items() if not k.startswith("__")},
-            "suggested_name": suggested_name,
-            "documents_dir": os.path.expanduser("~/Documents"),
-            "downloads_dir": os.path.expanduser("~/Downloads"),
-        }
-    )
-    return f"[WS_WORKSPACE_PROMPT]{payload}"
-
-
 def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, str] | str:
     """Resolve where a 'create a new file' tool should write its content.
 
     One shared resolver for every tool that creates a brand-new file
-    (ws_create_file, the create_docx/pptx/xlsx/pdf document tools, and
-    conceptually save_file, which already implements this same shape
-    inline) — added so "no workspace connected" behaves identically no
-    matter which tool the model happens to call, rather than each tool
-    carrying its own slightly-different copy of this logic. Per explicit
-    user feedback: writing a file must never force connecting a whole
-    workspace — it should always fall back to a lightweight "where should
-    this go" prompt instead.
+    (ws_create_file, save_file, and the create_docx/pptx/xlsx/pdf document
+    tools) so "no workspace connected" behaves identically no matter which
+    tool the model happens to call.
 
-    Returns ("workspace", full_path) when a workspace is connected — `path`
-    in tool_input is resolved workspace-relative and validated against
-    escaping the workspace root.
-    Returns ("absolute", destination_path) once the user has picked a save
-    location via the lightweight one-shot flow (destination_path present in
-    tool_input — supplied on the re-issued call after the pause below).
-    On failure/pause, returns the string to return directly from the
-    executor: a [WS_WORKSPACE_PROMPT] sentinel or a plain "Error: ..." string.
+    Per explicit user feedback, saving a file NEVER asks "where?" and never
+    forces connecting a workspace. The flow is:
+    - destination_path present (the model resolved it from the user's own
+      words, e.g. "in Downloads" -> ~/Downloads/report.docx): use it.
+    - No destination but a workspace is connected: `path` is resolved
+      workspace-relative, validated against escaping the workspace root.
+    - Neither: default to ~/Documents/<filename> — the approval card shows
+      the full path and is the single human gate; the model's reply tells
+      the user where the file went.
+
+    Returns ("workspace", full_path) or ("absolute", destination_path) on
+    success. On failure returns the string to return directly from the
+    executor: a [WS_WORKSPACE_PROMPT] sentinel (path escaping a connected
+    workspace) or a plain "Error: ..." string.
     """
     destination_path = tool_input.get("destination_path")
     if destination_path:
-        if not os.path.isabs(destination_path):
-            return "Error: destination_path must be an absolute path."
-        return "absolute", destination_path
+        raw = os.path.expanduser(str(destination_path))
+        if not os.path.isabs(raw):
+            return "Error: destination_path must be an absolute path (~ is allowed)."
+        return "absolute", os.path.realpath(raw)
 
     ws = get_workspace_path()
     if ws:
@@ -158,11 +134,8 @@ def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, st
             return _workspace_prompt_payload(tool_name, tool_input, "outside_workspace")
         return "workspace", full
 
-    # No workspace connected and no destination chosen yet: use the
-    # lightweight one-shot save flow instead of forcing a full workspace
-    # connect for a single new file.
-    filename = os.path.basename(tool_input.get("path") or "document")
-    return _save_location_prompt_payload(tool_name, tool_input, filename)
+    filename = os.path.basename(str(tool_input.get("path") or "")) or "document"
+    return "absolute", os.path.join(os.path.expanduser("~/Documents"), filename)
 
 
 def load_save_locations() -> list[str]:

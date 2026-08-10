@@ -1,28 +1,25 @@
 """@register_executor handlers for the document-creation tools.
 
-Two destination paths, mirroring save_file (server/workspace/executors.py):
+The tools NEVER ask the user where to save and never force a workspace
+connection. Destination resolution is the shared
+server.workspace.state.resolve_write_destination (also used by
+ws_create_file/save_file): destination_path from the user's own words wins;
+otherwise a connected workspace's `path`; otherwise ~/Documents/<filename>.
 
-- A workspace IS connected: `path` is workspace-relative, same no-workspace-
-  escape contract as ws_create_file. The write goes through the
-  "create_document" approval action (server/approval/bootstrap.py's
-  _do_create_document), which re-resolves the workspace root at click time.
-- No workspace connected: rather than forcing a full workspace connect for
-  a single deliverable file, this pauses with the same lightweight
-  "where should this go" prompt save_file uses (Documents/Downloads/a native
-  save dialog), via the shared server.workspace.state.resolve_write_destination
-  resolver (also used by ws_create_file, so every "make a new file" tool
-  degrades identically with no workspace connected). Once the user picks a
-  location, the model re-issues the same call with destination_path set,
-  and the write goes through the existing "save_to_path" approval action
-  (server/approval/bootstrap.py's _do_save_to_path) — no new approval
-  action needed, it already handles an arbitrary absolute path, base64
-  content, the sensitive-path denylist, and open-with/reveal registration.
+The document is fully built at tool-call time. For a workspace destination
+the bytes ride in a "create_document" approval payload (server/approval/
+bootstrap.py's _do_create_document re-resolves the workspace root at click
+time). For an absolute destination the finished bytes are STAGED into the
+app sandbox first (server/workspace/paths.py's stage_file_bytes) and the
+"save_to_path" approval simply moves the ready file into place — by the
+time the user sees the card the document already exists, so approving can
+never fail on content problems.
 
-Either way, the actual write only happens after a human clicks Yes on an
-approval card — the executor never writes bytes directly. There is no diff
-to preview (the model supplies HTML/slide-data/rows/paragraphs, not literal
-file bytes), so the approval card shows a plain "Create <path> (<n> bytes)"
-confirmation (preview="text") rather than a diff.
+Either way, nothing lands outside the sandbox until a human clicks Yes.
+There is no diff to preview (the model supplies HTML/slide-data/rows/
+paragraphs, not literal file bytes), so the approval card shows a plain
+"Create <path> (<n> bytes)" confirmation (preview="text") rather than a
+diff.
 """
 
 import base64
@@ -35,6 +32,7 @@ import tempfile
 from xml.sax.saxutils import escape as _xml_escape
 
 from server.executors import register_executor
+from server.workspace.executors import _stage_and_request_save
 from server.workspace.state import resolve_write_destination
 
 log = logging.getLogger("whisper-studio")
@@ -62,38 +60,34 @@ def _resolve_target(tool_name: str, tool_input: dict) -> tuple[str, str] | str:
     return resolved
 
 
+def _ensure_ext(path: str, fmt: str) -> str:
+    """Append the format's extension when missing — models sometimes pass a
+    bare name like 'document', and the deliverable must open in the right
+    app regardless."""
+    return path if path.lower().endswith(f".{fmt}") else f"{path}.{fmt}"
+
+
 def _approval_result(resolved: tuple[str, str], relative_path: str, data: bytes, fmt: str) -> str:
-    """Package generated document bytes as a [WS_APPROVAL] pause instead of
-    writing them straight to disk — same human-in-the-loop gate every other
-    workspace write tool goes through.
+    """Package the FINISHED document bytes for approval — the executor never
+    writes to the destination directly.
 
     `resolved` is _resolve_target's success tuple. For ("workspace", ...),
-    packages a create_document action keyed by the workspace-relative path
-    (server/approval/bootstrap.py's _do_create_document re-resolves the
-    workspace root itself). For ("absolute", ...), packages a save_to_path
-    action — the same one server/workspace/executors.py's save_file uses —
-    keyed by the absolute destination path."""
+    packages a create_document action keyed by the workspace-relative path.
+    For ("absolute", ...), stages the bytes in the app sandbox and packages
+    the shared save_to_path move action (see module docstring)."""
     kind, target = resolved
     if kind == "absolute":
-        payload = json.dumps(
-            {
-                "action": "save_to_path",
-                "path": target,
-                "content": base64.b64encode(data).decode("ascii"),
-                "content_encoding": "base64",
-                "filename": os.path.basename(target),
-            }
-        )
-    else:
-        payload = json.dumps(
-            {
-                "action": "create_document",
-                "path": relative_path,
-                "content_b64": base64.b64encode(data).decode("ascii"),
-                "format": fmt,
-                "size": len(data),
-            }
-        )
+        target = _ensure_ext(target, fmt)
+        return _stage_and_request_save(target, os.path.basename(target), data)
+    payload = json.dumps(
+        {
+            "action": "create_document",
+            "path": _ensure_ext(relative_path, fmt),
+            "content_b64": base64.b64encode(data).decode("ascii"),
+            "format": fmt,
+            "size": len(data),
+        }
+    )
     return f"[WS_APPROVAL]{payload}"
 
 

@@ -1,28 +1,25 @@
 """save_file: the one-shot 'save this file somewhere' tool.
 
-Two-call protocol, mirroring ws_create_file's [WS_APPROVAL] pattern but with
-its own [WS_WORKSPACE_PROMPT]-sentinel pause on the first call instead of an
-immediate approval:
+Single-call protocol — it NEVER asks the user where to save:
 
-  1. First call (no destination_path) -> pauses via the SAME
-     [WS_WORKSPACE_PROMPT] sentinel _workspace_prompt_payload uses, but with
-     reason='save_location' (server/workspace/state.py's
-     _save_location_prompt_payload). No workspace is ever consulted.
-  2. Re-issued call (destination_path set) -> packages a [WS_APPROVAL]
-     (action=save_to_path) for the approval pipeline to actually write.
-     A destination under the sensitive-path denylist is rejected here,
-     before any approval card is even shown.
+  - destination_path present (the model resolved it from the user's own
+    words, '~' allowed) -> that exact path.
+  - Otherwise -> ~/Documents/<filename> (or ~/Downloads via
+    suggested_location).
+
+Either way the content is decoded and STAGED into the app sandbox
+immediately, and the returned [WS_APPROVAL] (action=save_to_path) payload
+carries staged_path — approving just moves the ready file into place. A
+destination under the sensitive-path denylist is rejected here, before any
+approval card is even shown.
 """
 
 import base64
 import json
+import os
 
 from server.workspace.executors import _exec_save_file
-
-
-def _parse_prompt(output: str) -> dict:
-    assert output.startswith("[WS_WORKSPACE_PROMPT]"), output
-    return json.loads(output[len("[WS_WORKSPACE_PROMPT]") :])
+from server.workspace.paths import is_staged_path
 
 
 def _parse_approval(output: str) -> dict:
@@ -30,17 +27,52 @@ def _parse_approval(output: str) -> dict:
     return json.loads(output[len("[WS_APPROVAL]") :])
 
 
-def test_first_call_without_destination_pauses_with_save_location_reason():
+def test_defaults_to_documents_and_stages_content():
     out = _exec_save_file({"filename": "report.pdf", "content": "hello"}, [], [])
-    payload = _parse_prompt(out)
-    assert payload["reason"] == "save_location"
-    assert payload["tool_name"] == "save_file"
-    assert payload["suggested_name"] == "report.pdf"
-    assert "documents_dir" in payload
-    assert "downloads_dir" in payload
+    payload = _parse_approval(out)
+    assert payload["action"] == "save_to_path"
+    assert payload["path"] == os.path.expanduser("~/Documents/report.pdf")
+    assert is_staged_path(payload["staged_path"])
+    # The staged copy holds the content; the destination itself is only
+    # written by the approval move, never by the tool executor.
+    with open(payload["staged_path"], "rb") as f:
+        assert f.read() == b"hello"
 
 
-def test_first_call_never_touches_workspace_state(monkeypatch):
+def test_suggested_location_downloads_changes_the_default():
+    out = _exec_save_file(
+        {"filename": "report.pdf", "content": "hi", "suggested_location": "Downloads"}, [], []
+    )
+    payload = _parse_approval(out)
+    assert payload["path"] == os.path.expanduser("~/Downloads/report.pdf")
+
+
+def test_destination_path_from_user_words_wins(tmp_path):
+    dest = str(tmp_path / "report.pdf")
+    out = _exec_save_file(
+        {"filename": "report.pdf", "content": "hello world", "destination_path": dest},
+        [],
+        [],
+    )
+    payload = _parse_approval(out)
+    assert payload["action"] == "save_to_path"
+    assert payload["path"] == os.path.realpath(dest)
+    assert payload["filename"] == "report.pdf"
+    with open(payload["staged_path"], "rb") as f:
+        assert f.read() == b"hello world"
+
+
+def test_destination_path_tilde_is_expanded():
+    out = _exec_save_file(
+        {"filename": "x.txt", "content": "hi", "destination_path": "~/Downloads/x.txt"},
+        [],
+        [],
+    )
+    payload = _parse_approval(out)
+    assert payload["path"] == os.path.realpath(os.path.expanduser("~/Downloads/x.txt"))
+
+
+def test_never_touches_workspace_state(monkeypatch):
     # get_workspace_path must not even be consulted for save_file — this is
     # the whole point of the one-shot flow (never connects a workspace).
     called = {"hit": False}
@@ -54,31 +86,12 @@ def test_first_call_never_touches_workspace_state(monkeypatch):
     assert called["hit"] is False
 
 
-def test_missing_filename_errors_without_pausing():
+def test_missing_filename_errors():
     out = _exec_save_file({"filename": "", "content": "hi"}, [], [])
     assert out.startswith("Error")
 
 
-def test_resume_call_with_destination_builds_ws_approval(tmp_path):
-    dest = str(tmp_path / "report.pdf")
-    out = _exec_save_file(
-        {
-            "filename": "report.pdf",
-            "content": "hello world",
-            "destination_path": dest,
-        },
-        [],
-        [],
-    )
-    payload = _parse_approval(out)
-    assert payload["action"] == "save_to_path"
-    assert payload["path"] == dest
-    assert payload["content"] == "hello world"
-    assert payload["content_encoding"] == "utf-8"
-    assert payload["filename"] == "report.pdf"
-
-
-def test_resume_call_with_base64_content(tmp_path):
+def test_base64_content_is_decoded_before_staging(tmp_path):
     dest = str(tmp_path / "image.png")
     raw = b"\x89PNG\r\n\x1a\nfakebinarydata"
     encoded = base64.b64encode(raw).decode("ascii")
@@ -93,11 +106,11 @@ def test_resume_call_with_base64_content(tmp_path):
         [],
     )
     payload = _parse_approval(out)
-    assert payload["content_encoding"] == "base64"
-    assert base64.b64decode(payload["content"]) == raw
+    with open(payload["staged_path"], "rb") as f:
+        assert f.read() == raw
 
 
-def test_resume_call_rejects_invalid_base64(tmp_path):
+def test_rejects_invalid_base64(tmp_path):
     dest = str(tmp_path / "bad.bin")
     out = _exec_save_file(
         {
@@ -112,13 +125,9 @@ def test_resume_call_rejects_invalid_base64(tmp_path):
     assert out.startswith("Error")
 
 
-def test_resume_call_rejects_relative_destination():
+def test_rejects_relative_destination():
     out = _exec_save_file(
-        {
-            "filename": "x.txt",
-            "content": "hi",
-            "destination_path": "relative/path.txt",
-        },
+        {"filename": "x.txt", "content": "hi", "destination_path": "relative/path.txt"},
         [],
         [],
     )
@@ -126,7 +135,7 @@ def test_resume_call_rejects_relative_destination():
     assert "absolute" in out
 
 
-def test_resume_call_rejects_sensitive_destination(tmp_path, monkeypatch):
+def test_rejects_sensitive_destination(tmp_path, monkeypatch):
     # Point the denylist at a throwaway tmp_path directory instead of a real
     # user path (e.g. ~/.ssh) — this must never risk touching a real
     # developer's actual credentials regardless of whether the check works.
@@ -138,11 +147,7 @@ def test_resume_call_rejects_sensitive_destination(tmp_path, monkeypatch):
     )
     dest = str(fake_denied / "secret.txt")
     out = _exec_save_file(
-        {
-            "filename": "secret.txt",
-            "content": "should not be written",
-            "destination_path": dest,
-        },
+        {"filename": "secret.txt", "content": "should not be written", "destination_path": dest},
         [],
         [],
     )
@@ -151,7 +156,7 @@ def test_resume_call_rejects_sensitive_destination(tmp_path, monkeypatch):
     assert not (fake_denied / "secret.txt").exists()
 
 
-def test_resume_call_rejects_unknown_encoding():
+def test_rejects_unknown_encoding():
     out = _exec_save_file(
         {
             "filename": "x.txt",

@@ -23,11 +23,12 @@ CREATE_DOCX_TOOL = {
         "paragraphs (p), bold/italic (b/i/strong/em), lists (ul/ol/li), tables "
         "(table/tr/td) — textutil converts them to native Word formatting. "
         "If a workspace is connected, `path` is workspace-relative (same as "
-        "ws_create_file). If none is connected, this does NOT force a full "
-        "workspace connection — it pauses and asks the user to pick a save "
-        "location (Documents, Downloads, or a native save dialog), the same "
-        "lightweight flow save_file uses. Once the user picks, re-issue this "
-        "same call with destination_path set to actually write the file."
+        "ws_create_file). If none is connected, never ask the user where to "
+        "save: pass destination_path resolved from the user's own words "
+        "('in Downloads' -> '~/Downloads/report.docx', ~ allowed), or omit it "
+        "to default to their Documents folder — then tell the user the full "
+        "path in your reply. The document is built immediately and the user "
+        "confirms the exact path on the approval card."
     ),
     "input_schema": {
         "type": "object",
@@ -42,7 +43,7 @@ CREATE_DOCX_TOOL = {
             },
             "destination_path": {
                 "type": "string",
-                "description": "Absolute path to write to, used only when no workspace is connected. Omit on the first call — it is supplied after the user picks a location via the save prompt, then re-issue this same call with it set.",
+                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
             },
         },
         "required": ["path", "html_content"],
@@ -58,11 +59,12 @@ CREATE_PPTX_TOOL = {
         "python-pptx. Do NOT shell out to pandoc, LibreOffice, or a raw python-pptx "
         "one-liner via ws_run_command instead; this tool is the supported path. "
         "If a workspace is connected, `path` is workspace-relative (same as "
-        "ws_create_file). If none is connected, this does NOT force a full "
-        "workspace connection — it pauses and asks the user to pick a save "
-        "location (Documents, Downloads, or a native save dialog), the same "
-        "lightweight flow save_file uses. Once the user picks, re-issue this "
-        "same call with destination_path set to actually write the file."
+        "ws_create_file). If none is connected, never ask the user where to "
+        "save: pass destination_path resolved from the user's own words "
+        "('in Downloads' -> '~/Downloads/deck.pptx', ~ allowed), or omit it "
+        "to default to their Documents folder — then tell the user the full "
+        "path in your reply. The document is built immediately and the user "
+        "confirms the exact path on the approval card."
     ),
     "input_schema": {
         "type": "object",
@@ -89,7 +91,7 @@ CREATE_PPTX_TOOL = {
             },
             "destination_path": {
                 "type": "string",
-                "description": "Absolute path to write to, used only when no workspace is connected. Omit on the first call — it is supplied after the user picks a location via the save prompt, then re-issue this same call with it set.",
+                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
             },
         },
         "required": ["path", "slides"],
@@ -104,11 +106,12 @@ CREATE_XLSX_TOOL = {
         "a genuine OOXML workbook via openpyxl. Do NOT shell out to pandoc, "
         "LibreOffice, or a raw openpyxl one-liner via ws_run_command instead; this "
         "tool is the supported path. If a workspace is connected, `path` is "
-        "workspace-relative (same as ws_create_file). If none is connected, this "
-        "does NOT force a full workspace connection — it pauses and asks the user "
-        "to pick a save location (Documents, Downloads, or a native save dialog), "
-        "the same lightweight flow save_file uses. Once the user picks, re-issue "
-        "this same call with destination_path set to actually write the file."
+        "workspace-relative (same as ws_create_file). If none is connected, never "
+        "ask the user where to save: pass destination_path resolved from the "
+        "user's own words ('in Downloads' -> '~/Downloads/data.xlsx', ~ allowed), "
+        "or omit it to default to their Documents folder — then tell the user the "
+        "full path in your reply. The document is built immediately and the user "
+        "confirms the exact path on the approval card."
     ),
     "input_schema": {
         "type": "object",
@@ -135,7 +138,7 @@ CREATE_XLSX_TOOL = {
             },
             "destination_path": {
                 "type": "string",
-                "description": "Absolute path to write to, used only when no workspace is connected. Omit on the first call — it is supplied after the user picks a location via the save prompt, then re-issue this same call with it set.",
+                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
             },
         },
         "required": ["path", "sheets"],
@@ -154,11 +157,12 @@ CREATE_PDF_TOOL = {
         "This is deliberately simple — plain paragraphs and a title, not a general layout "
         "engine — so it is not the right tool for complex multi-column or richly "
         "formatted documents. If a workspace is connected, `path` is "
-        "workspace-relative (same as ws_create_file). If none is connected, this "
-        "does NOT force a full workspace connection — it pauses and asks the user "
-        "to pick a save location (Documents, Downloads, or a native save dialog), "
-        "the same lightweight flow save_file uses. Once the user picks, re-issue "
-        "this same call with destination_path set to actually write the file."
+        "workspace-relative (same as ws_create_file). If none is connected, never "
+        "ask the user where to save: pass destination_path resolved from the "
+        "user's own words ('in Downloads' -> '~/Downloads/report.pdf', ~ allowed), "
+        "or omit it to default to their Documents folder — then tell the user the "
+        "full path in your reply. The document is built immediately and the user "
+        "confirms the exact path on the approval card."
     ),
     "input_schema": {
         "type": "object",
@@ -178,7 +182,7 @@ CREATE_PDF_TOOL = {
             },
             "destination_path": {
                 "type": "string",
-                "description": "Absolute path to write to, used only when no workspace is connected. Omit on the first call — it is supplied after the user picks a location via the save prompt, then re-issue this same call with it set.",
+                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
             },
         },
         "required": ["path", "paragraphs"],
