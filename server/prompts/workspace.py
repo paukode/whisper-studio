@@ -19,7 +19,7 @@ CODE_OUTPUT_RULE_WORKSPACE = (
 )
 
 
-def workspace_prompt(ws_path: str) -> str:
+def workspace_prompt(ws_path: str, session_id: str = "default") -> str:
     """Product context plus the write-approval contract.
 
     Deliberately short. What the ws_* tools do, when to read a whole file, and
@@ -29,6 +29,9 @@ def workspace_prompt(ws_path: str) -> str:
     turn is PAUSED mid-flight by the harness, and the model has to recognise the
     resume markers and the one-write-per-turn pacing that follows from them.
     """
+    from server.workspace.paths import get_scratch_dir
+
+    scratch_dir = get_scratch_dir(session_id)
     return (
         f"\n\nCODE WORKSPACE: A code workspace is connected at '{ws_path}'. "
         "Edit it with the ws_* tools rather than asking the user where to save."
@@ -42,4 +45,13 @@ def workspace_prompt(ws_path: str) -> str:
         "Because of that pause, propose only ONE write-type call per turn. Reads and searches have "
         "no such limit and are worth batching. Session pre-approval only removes the human click, "
         "so keep the same one-change-per-turn pacing either way."
+        f"\n\nSCRATCH FILES: Use '{scratch_dir}' — not the connected workspace root — for anything "
+        "intermediate or throwaway: temp scripts, probe files, format-conversion intermediates. It's "
+        "there via ws_run_command like any other path. Always delete what you create there, and "
+        "anything throwaway you create in the workspace itself, once you're done with it."
+        "\n\nCLEANUP: Before you consider any task finished, check whether it left behind a "
+        "temporary or throwaway file — a test file, an intermediate conversion file, a "
+        "capability-probe file, anything you created just to get the work done rather than as "
+        "part of the deliverable — and delete it. This applies generally, to every task, not just "
+        "ones a specific skill calls out."
     )

@@ -155,6 +155,20 @@ RECENT_WORKSPACES_PATH = os.path.join(DATA_DIR, "recent_workspaces.json")
 SAVE_LOCATIONS_PATH = os.path.join(DATA_DIR, "save_locations.json")
 WORKSPACE_BACKUPS: dict[str, str] = {}
 
+
+def get_scratch_dir(session_id: str) -> str:
+    """Per-session scratch directory for intermediate/throwaway files (temp
+    scripts, probe files, format-conversion intermediates) that don't belong
+    in the connected workspace. Created on first use; the caller is
+    responsible for deleting anything it writes here once the task is done —
+    this helper never cleans up on its own.
+    """
+    safe_id = session_id.strip() or "default"
+    path = os.path.join(DATA_DIR, "scratch", safe_id)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
 _WS_IGNORED_DIRS = {
     ".git",
     ".svn",

@@ -10,6 +10,10 @@ markitdown[all]==0.1.6
 # ocrmac pulls in pyobjc (macOS-only); marker keeps the Linux CI runner installable.
 pypdfium2==5.9.0
 ocrmac==1.0.1; sys_platform == 'darwin'
+# Document-creation tools (create_pdf): pure Python, no system libraries needed.
+# python-pptx and openpyxl (create_pptx/create_xlsx) are already pulled in
+# transitively by markitdown[all], so only reportlab needs adding here.
+reportlab==5.0.0
 mcp==1.27.2
 tavily-python==0.7.25
 # OpenAI GPT models on Bedrock (GPT-5.5 / GPT-5.4): the Responses API on the

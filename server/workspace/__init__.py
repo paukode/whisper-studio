@@ -59,6 +59,7 @@ from .paths import (  # noqa: E402,F401
     _atomic_write_text,
     _normalize_lf,
     _ws_validate_path,
+    get_scratch_dir,
 )
 
 # --- Layer 2: workspace state (depends on paths) -----------------------

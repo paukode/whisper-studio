@@ -134,10 +134,10 @@ def _build_code_output_rule(ws_path: str | None = None, **_) -> str:
     return CODE_OUTPUT_RULE_WORKSPACE if ws_path else CODE_OUTPUT_RULE_GENERIC
 
 
-def _build_workspace_section(ws_path: str | None = None, **_) -> str:
+def _build_workspace_section(ws_path: str | None = None, session_id: str = "default", **_) -> str:
     if not ws_path:
         return ""
-    return workspace_prompt(ws_path)
+    return workspace_prompt(ws_path, session_id)
 
 
 def _build_no_workspace_section(ws_path: str | None = None, **_) -> str:
