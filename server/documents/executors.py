@@ -9,7 +9,9 @@ Two destination paths, mirroring save_file (server/workspace/executors.py):
 - No workspace connected: rather than forcing a full workspace connect for
   a single deliverable file, this pauses with the same lightweight
   "where should this go" prompt save_file uses (Documents/Downloads/a native
-  save dialog) via _save_location_prompt_payload. Once the user picks a
+  save dialog), via the shared server.workspace.state.resolve_write_destination
+  resolver (also used by ws_create_file, so every "make a new file" tool
+  degrades identically with no workspace connected). Once the user picks a
   location, the model re-issues the same call with destination_path set,
   and the write goes through the existing "save_to_path" approval action
   (server/approval/bootstrap.py's _do_save_to_path) — no new approval
@@ -33,12 +35,7 @@ import tempfile
 from xml.sax.saxutils import escape as _xml_escape
 
 from server.executors import register_executor
-from server.workspace.paths import _ws_validate_path
-from server.workspace.state import (
-    _save_location_prompt_payload,
-    _workspace_prompt_payload,
-    get_workspace_path,
-)
+from server.workspace.state import resolve_write_destination
 
 log = logging.getLogger("whisper-studio")
 
@@ -51,39 +48,18 @@ _TEXTUTIL_TIMEOUT_SECONDS = 30
 
 
 def _resolve_target(tool_name: str, tool_input: dict) -> tuple[str, str] | str:
-    """Resolve where this document tool should write its bytes.
-
-    Returns ("workspace", full_path) when a workspace is connected — `path`
-    is resolved workspace-relative, same contract as ws_create_file.
-    Returns ("absolute", destination_path) once the user has picked a save
-    location via the lightweight one-shot flow (destination_path present in
-    tool_input — supplied on the re-issued call after the pause below).
-    On failure/pause, returns the string to return directly from the
-    executor: a [WS_WORKSPACE_PROMPT] sentinel or a plain "Error: ..." string.
-    """
-    destination_path = tool_input.get("destination_path")
-    if destination_path:
-        if not os.path.isabs(destination_path):
-            return "Error: destination_path must be an absolute path."
-        return "absolute", destination_path
-
-    ws = get_workspace_path()
-    if ws:
+    """Thin wrapper around the shared resolve_write_destination (server/
+    workspace/state.py), adding the is-a-directory check specific to
+    document tools — a docx/pptx/xlsx/pdf can never target an existing
+    directory, unlike the generic resolver's callers."""
+    resolved = resolve_write_destination(tool_name, tool_input)
+    if isinstance(resolved, str):
+        return resolved
+    kind, target = resolved
+    if kind == "workspace" and os.path.isdir(target):
         path = tool_input.get("path", "")
-        if not path:
-            return "Error: path is required."
-        full = os.path.join(ws, path)
-        if not _ws_validate_path(full, ws):
-            return _workspace_prompt_payload(tool_name, tool_input, "outside_workspace")
-        if os.path.isdir(full):
-            return f"Error: {path} is an existing directory, not a file path."
-        return "workspace", full
-
-    # No workspace connected and no destination chosen yet: use the
-    # lightweight one-shot save flow instead of forcing a full workspace
-    # connect for a single deliverable file.
-    filename = os.path.basename(tool_input.get("path") or "document")
-    return _save_location_prompt_payload(tool_name, tool_input, filename)
+        return f"Error: {path} is an existing directory, not a file path."
+    return resolved
 
 
 def _approval_result(resolved: tuple[str, str], relative_path: str, data: bytes, fmt: str) -> str:

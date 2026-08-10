@@ -63,7 +63,7 @@ def _decoded_bytes(payload: dict) -> bytes:
 
 
 def test_create_docx_no_workspace_emits_save_location_prompt_and_never_shells_out(monkeypatch):
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: None)
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     with patch("subprocess.run") as mock_run:
         out = _exec_create_docx({"path": "report.docx", "html_content": "<p>hi</p>"}, "", {})
     mock_run.assert_not_called()
@@ -77,7 +77,7 @@ def test_create_docx_no_workspace_emits_save_location_prompt_and_never_shells_ou
 
 
 def test_create_pptx_no_workspace_emits_save_location_prompt(monkeypatch):
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: None)
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     out = _exec_create_pptx(
         {"path": "deck.pptx", "slides": [{"title": "T", "bullets": ["a"]}]}, "", {}
     )
@@ -87,7 +87,7 @@ def test_create_pptx_no_workspace_emits_save_location_prompt(monkeypatch):
 
 
 def test_create_xlsx_no_workspace_emits_save_location_prompt(monkeypatch):
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: None)
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     out = _exec_create_xlsx(
         {"path": "data.xlsx", "sheets": [{"name": "Sheet1", "rows": [[1, 2]]}]}, "", {}
     )
@@ -97,7 +97,7 @@ def test_create_xlsx_no_workspace_emits_save_location_prompt(monkeypatch):
 
 
 def test_create_pdf_no_workspace_emits_save_location_prompt(monkeypatch):
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: None)
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     out = _exec_create_pdf({"path": "summary.pdf", "title": "T", "paragraphs": ["hello"]}, "", {})
     payload = _parse_prompt(out)
     assert payload["reason"] == "save_location"
@@ -109,7 +109,7 @@ def test_create_docx_with_destination_path_skips_workspace_and_shells_out(tmp_pa
     tool proceeds straight to building the file — get_workspace_path() is
     never consulted, matching save_file's own no-workspace-required path."""
     monkeypatch.setattr(
-        "server.documents.executors.get_workspace_path",
+        "server.workspace.state.get_workspace_path",
         lambda: (_ for _ in ()).throw(AssertionError("must not check workspace")),
     )
     dest = str(tmp_path / "report.docx")
@@ -124,7 +124,7 @@ def test_create_docx_with_destination_path_skips_workspace_and_shells_out(tmp_pa
 
 
 def test_create_docx_rejects_relative_destination_path(tmp_path, monkeypatch):
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: None)
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     out = _exec_create_docx(
         {"path": "report.docx", "html_content": "<p>hi</p>", "destination_path": "relative.docx"},
         "",
@@ -153,7 +153,7 @@ def test_do_save_to_path_writes_document_bytes_on_approval(tmp_path):
 def test_create_docx_path_outside_workspace_emits_sentinel(tmp_path, monkeypatch):
     ws = tmp_path / "ws"
     ws.mkdir()
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: str(ws))
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(ws))
     with patch("subprocess.run") as mock_run:
         out = _exec_create_docx({"path": "../outside.docx", "html_content": "<p>hi</p>"}, "", {})
     mock_run.assert_not_called()
@@ -165,7 +165,7 @@ def test_create_docx_path_outside_workspace_emits_sentinel(tmp_path, monkeypatch
 
 
 def test_create_docx_produces_real_ooxml_and_pauses_for_approval(tmp_path, monkeypatch):
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     out = _exec_create_docx(
         {
             "path": "report.docx",
@@ -190,14 +190,14 @@ def test_create_docx_produces_real_ooxml_and_pauses_for_approval(tmp_path, monke
 
 
 def test_create_docx_rejects_empty_html(tmp_path, monkeypatch):
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     out = _exec_create_docx({"path": "empty.docx", "html_content": "   "}, "", {})
     assert out.startswith("Error"), out
     assert not (tmp_path / "empty.docx").exists()
 
 
 def test_create_pptx_round_trips_with_python_pptx(tmp_path, monkeypatch):
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     slides = [
         {"title": "Intro", "bullets": ["First point", "Second point"]},
         {"title": "Conclusion", "bullets": ["Wrap up"]},
@@ -220,7 +220,7 @@ def test_create_pptx_round_trips_with_python_pptx(tmp_path, monkeypatch):
 
 
 def test_create_xlsx_round_trips_with_openpyxl(tmp_path, monkeypatch):
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     sheets = [
         {"name": "Sales", "rows": [["Item", "Qty"], ["Widget", 3]]},
         {"name": "Notes", "rows": [["free text"]]},
@@ -245,7 +245,7 @@ def test_create_xlsx_round_trips_with_openpyxl(tmp_path, monkeypatch):
 
 
 def test_create_pdf_produces_valid_pdf_bytes(tmp_path, monkeypatch):
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     out = _exec_create_pdf(
         {
             "path": "summary.pdf",
@@ -267,7 +267,7 @@ def test_create_pdf_escapes_special_characters_without_dropping_content(tmp_path
     """A plain paragraph containing '<', '>', '&' must survive verbatim —
     reportlab's Paragraph treats unescaped input as its own mini-XML markup
     and will silently swallow or mangle text that looks like a tag."""
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     tricky = "<unknown>tag</unknown> AT&T reported 5 < 10 items"
     out = _exec_create_pdf({"path": "tricky.pdf", "title": "", "paragraphs": [tricky]}, "", {})
     payload = _parse_approval(out)
@@ -282,7 +282,7 @@ def test_create_pdf_escapes_special_characters_without_dropping_content(tmp_path
 
 
 def test_create_pdf_requires_title_or_paragraphs(tmp_path, monkeypatch):
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     out = _exec_create_pdf({"path": "empty.pdf", "title": "", "paragraphs": []}, "", {})
     assert out.startswith("Error"), out
     assert not (tmp_path / "empty.pdf").exists()
@@ -296,7 +296,7 @@ def test_create_pdf_requires_title_or_paragraphs(tmp_path, monkeypatch):
     ],
 )
 def test_empty_collection_inputs_are_rejected(tmp_path, monkeypatch, executor, tool_input):
-    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     out = executor(tool_input, "", {})
     assert out.startswith("Error"), out
 

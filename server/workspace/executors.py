@@ -42,6 +42,7 @@ from .state import (
     _workspace_prompt_payload,
     get_workspace_path,
     load_workspace_config,
+    resolve_write_destination,
     save_recent_workspace,
     save_workspace_config,
 )
@@ -375,14 +376,30 @@ def _replace_with_normalization(
 
 @register_executor("ws_create_file", read_only=False, concurrent_safe=False)
 def _exec_ws_create_file(tool_input, transcript, current_attachments):
-    ws = get_workspace_path()
-    if not ws:
-        return _workspace_prompt_payload("ws_create_file", tool_input, "no_workspace")
-    path = tool_input.get("path", "")
+    resolved = resolve_write_destination("ws_create_file", tool_input)
+    if isinstance(resolved, str):
+        return resolved
+    kind, target = resolved
     content = tool_input.get("content", "")
-    full = os.path.join(ws, path)
-    if not _ws_validate_path(full, ws):
-        return _workspace_prompt_payload("ws_create_file", tool_input, "outside_workspace")
+
+    if kind == "absolute":
+        # No workspace connected; the user has picked a save location via
+        # the lightweight flow. Write straight there via the same
+        # save_to_path approval action save_file uses — never connects a
+        # persistent workspace.
+        payload = json.dumps(
+            {
+                "action": "save_to_path",
+                "path": target,
+                "filename": os.path.basename(target),
+                "content": content,
+                "content_encoding": "utf-8",
+            }
+        )
+        return f"[WS_APPROVAL]{payload}"
+
+    full = target
+    path = tool_input.get("path", "")
     if os.path.isdir(full):
         return f"Directory already exists: {path}. You don't need to create directories — they are created automatically when you create files inside them. Proceed to create the files directly."
     if os.path.isfile(full):

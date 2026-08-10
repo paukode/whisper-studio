@@ -277,14 +277,25 @@ def get_workspace_write_tools() -> list[dict]:
                 "[Workspace] Create a new file. Requires user approval. "
                 "Parent directories are created automatically, so never create them "
                 "as a separate step. Do not read the file first; it does not exist yet. "
-                "If no workspace is connected, this asks the user to pick a folder "
-                "first, then the create is re-issued against it."
+                "If a workspace is connected, `path` is workspace-relative. If none is "
+                "connected, this does NOT force a full workspace connection — it pauses "
+                "and asks the user to pick a save location (Documents, Downloads, or a "
+                "native save dialog), the same lightweight flow save_file uses. Once the "
+                "user picks, re-issue this same call with destination_path set to "
+                "actually write the file."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Relative path for the new file"},
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path for the new file. Used as the suggested filename when no workspace is connected.",
+                    },
                     "content": {"type": "string", "description": "File content"},
+                    "destination_path": {
+                        "type": "string",
+                        "description": "Absolute path to write to, used only when no workspace is connected. Omit on the first call — it is supplied after the user picks a location via the save prompt, then re-issue this same call with it set.",
+                    },
                 },
                 "required": ["path", "content"],
             },
