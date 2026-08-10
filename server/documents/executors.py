@@ -1,18 +1,26 @@
 """@register_executor handlers for the document-creation tools.
 
-Each executor follows the exact no-workspace contract ws_create_file uses
-(server/workspace/executors.py): no workspace connected -> the same
-_workspace_prompt_payload sentinel, so the frontend shows the same folder
-picker and the harness re-issues the same call once one is connected.
+Two destination paths, mirroring save_file (server/workspace/executors.py):
 
-Like ws_create_file, the actual write only happens after a human clicks Yes
-on an approval card: the executor builds the document bytes, base64-encodes
-them into a [WS_APPROVAL] payload (action=create_document), and the click
-handler (server/approval/bootstrap.py's _do_create_document) re-resolves the
-workspace root and performs the write. There is no diff to preview (the
-model supplies HTML/slide-data/rows/paragraphs, not literal file bytes), so
-the approval card shows a plain "Create <path> (<n> bytes)" confirmation
-(preview="text") rather than a diff.
+- A workspace IS connected: `path` is workspace-relative, same no-workspace-
+  escape contract as ws_create_file. The write goes through the
+  "create_document" approval action (server/approval/bootstrap.py's
+  _do_create_document), which re-resolves the workspace root at click time.
+- No workspace connected: rather than forcing a full workspace connect for
+  a single deliverable file, this pauses with the same lightweight
+  "where should this go" prompt save_file uses (Documents/Downloads/a native
+  save dialog) via _save_location_prompt_payload. Once the user picks a
+  location, the model re-issues the same call with destination_path set,
+  and the write goes through the existing "save_to_path" approval action
+  (server/approval/bootstrap.py's _do_save_to_path) — no new approval
+  action needed, it already handles an arbitrary absolute path, base64
+  content, the sensitive-path denylist, and open-with/reveal registration.
+
+Either way, the actual write only happens after a human clicks Yes on an
+approval card — the executor never writes bytes directly. There is no diff
+to preview (the model supplies HTML/slide-data/rows/paragraphs, not literal
+file bytes), so the approval card shows a plain "Create <path> (<n> bytes)"
+confirmation (preview="text") rather than a diff.
 """
 
 import base64
@@ -26,7 +34,11 @@ from xml.sax.saxutils import escape as _xml_escape
 
 from server.executors import register_executor
 from server.workspace.paths import _ws_validate_path
-from server.workspace.state import _workspace_prompt_payload, get_workspace_path
+from server.workspace.state import (
+    _save_location_prompt_payload,
+    _workspace_prompt_payload,
+    get_workspace_path,
+)
 
 log = logging.getLogger("whisper-studio")
 
@@ -39,43 +51,73 @@ _TEXTUTIL_TIMEOUT_SECONDS = 30
 
 
 def _resolve_target(tool_name: str, tool_input: dict) -> tuple[str, str] | str:
-    """Resolve tool_input['path'] against the connected workspace.
+    """Resolve where this document tool should write its bytes.
 
-    Returns (ws_root, full_path) on success. On failure returns the string to
-    return directly from the executor: the [WS_WORKSPACE_PROMPT] sentinel
-    (no workspace, or the resolved path escapes it) or a plain "Error: ..."
-    string (missing path).
+    Returns ("workspace", full_path) when a workspace is connected — `path`
+    is resolved workspace-relative, same contract as ws_create_file.
+    Returns ("absolute", destination_path) once the user has picked a save
+    location via the lightweight one-shot flow (destination_path present in
+    tool_input — supplied on the re-issued call after the pause below).
+    On failure/pause, returns the string to return directly from the
+    executor: a [WS_WORKSPACE_PROMPT] sentinel or a plain "Error: ..." string.
     """
+    destination_path = tool_input.get("destination_path")
+    if destination_path:
+        if not os.path.isabs(destination_path):
+            return "Error: destination_path must be an absolute path."
+        return "absolute", destination_path
+
     ws = get_workspace_path()
-    if not ws:
-        return _workspace_prompt_payload(tool_name, tool_input, "no_workspace")
-    path = tool_input.get("path", "")
-    if not path:
-        return "Error: path is required."
-    full = os.path.join(ws, path)
-    if not _ws_validate_path(full, ws):
-        return _workspace_prompt_payload(tool_name, tool_input, "outside_workspace")
-    if os.path.isdir(full):
-        return f"Error: {path} is an existing directory, not a file path."
-    return ws, full
+    if ws:
+        path = tool_input.get("path", "")
+        if not path:
+            return "Error: path is required."
+        full = os.path.join(ws, path)
+        if not _ws_validate_path(full, ws):
+            return _workspace_prompt_payload(tool_name, tool_input, "outside_workspace")
+        if os.path.isdir(full):
+            return f"Error: {path} is an existing directory, not a file path."
+        return "workspace", full
+
+    # No workspace connected and no destination chosen yet: use the
+    # lightweight one-shot save flow instead of forcing a full workspace
+    # connect for a single deliverable file.
+    filename = os.path.basename(tool_input.get("path") or "document")
+    return _save_location_prompt_payload(tool_name, tool_input, filename)
 
 
-def _approval_result(path: str, data: bytes, fmt: str) -> str:
+def _approval_result(resolved: tuple[str, str], relative_path: str, data: bytes, fmt: str) -> str:
     """Package generated document bytes as a [WS_APPROVAL] pause instead of
     writing them straight to disk — same human-in-the-loop gate every other
-    workspace write tool goes through. The actual write happens in
-    server/approval/bootstrap.py's _do_create_document once the user clicks
-    Yes, which re-resolves the workspace root itself rather than trusting a
-    path computed at tool-call time."""
-    payload = json.dumps(
-        {
-            "action": "create_document",
-            "path": path,
-            "content_b64": base64.b64encode(data).decode("ascii"),
-            "format": fmt,
-            "size": len(data),
-        }
-    )
+    workspace write tool goes through.
+
+    `resolved` is _resolve_target's success tuple. For ("workspace", ...),
+    packages a create_document action keyed by the workspace-relative path
+    (server/approval/bootstrap.py's _do_create_document re-resolves the
+    workspace root itself). For ("absolute", ...), packages a save_to_path
+    action — the same one server/workspace/executors.py's save_file uses —
+    keyed by the absolute destination path."""
+    kind, target = resolved
+    if kind == "absolute":
+        payload = json.dumps(
+            {
+                "action": "save_to_path",
+                "path": target,
+                "content": base64.b64encode(data).decode("ascii"),
+                "content_encoding": "base64",
+                "filename": os.path.basename(target),
+            }
+        )
+    else:
+        payload = json.dumps(
+            {
+                "action": "create_document",
+                "path": relative_path,
+                "content_b64": base64.b64encode(data).decode("ascii"),
+                "format": fmt,
+                "size": len(data),
+            }
+        )
     return f"[WS_APPROVAL]{payload}"
 
 
@@ -136,7 +178,7 @@ def _exec_create_docx(tool_input, transcript, current_attachments):
 
     if not data:
         return "Error: textutil produced an empty docx file."
-    return _approval_result(path, data, "docx")
+    return _approval_result(resolved, path, data, "docx")
 
 
 @register_executor("create_pptx", read_only=False, concurrent_safe=False)
@@ -175,7 +217,7 @@ def _exec_create_pptx(tool_input, transcript, current_attachments):
     except Exception as e:
         return f"Error building pptx: {e}"
 
-    return _approval_result(path, buf.getvalue(), "pptx")
+    return _approval_result(resolved, path, buf.getvalue(), "pptx")
 
 
 @register_executor("create_xlsx", read_only=False, concurrent_safe=False)
@@ -212,7 +254,7 @@ def _exec_create_xlsx(tool_input, transcript, current_attachments):
     except Exception as e:
         return f"Error building xlsx: {e}"
 
-    return _approval_result(path, buf.getvalue(), "xlsx")
+    return _approval_result(resolved, path, buf.getvalue(), "xlsx")
 
 
 @register_executor("create_pdf", read_only=False, concurrent_safe=False)
@@ -257,4 +299,4 @@ def _exec_create_pdf(tool_input, transcript, current_attachments):
     except Exception as e:
         return f"Error building pdf: {e}"
 
-    return _approval_result(path, buf.getvalue(), "pdf")
+    return _approval_result(resolved, path, buf.getvalue(), "pdf")

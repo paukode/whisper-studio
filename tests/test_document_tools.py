@@ -5,15 +5,19 @@ reportlab) rather than mocking them — the whole point of these tools is that
 they produce genuine, round-trippable files, so a mocked subprocess/library
 call would not catch a broken invocation.
 
-The no-workspace case mirrors ws_create_file exactly: the same
-[WS_WORKSPACE_PROMPT] sentinel, and — the thing that would silently break if
-someone reordered a check — no subprocess/library call happens before that
-sentinel is returned.
+The no-workspace case does NOT force a full workspace connection: it pauses
+with the same lightweight "where should this go" prompt save_file uses
+(reason=save_location) rather than ws_create_file's full connect prompt —
+and, the thing that would silently break if someone reordered a check, no
+subprocess/library call happens before that sentinel is returned.
 
 A successful build does NOT write to disk directly: it returns a
-[WS_APPROVAL] pause (action=create_document, content_b64=<bytes>), the same
-human-in-the-loop gate ws_create_file goes through. The actual write is
-exercised separately against server.approval.bootstrap._do_create_document.
+[WS_APPROVAL] pause. With a workspace connected that's action=create_document
+(content_b64=<bytes>), the same human-in-the-loop gate ws_create_file goes
+through. Once destination_path is supplied (after the user picks a save
+location), it's action=save_to_path instead — the exact action save_file
+uses. The actual writes are exercised separately against
+server.approval.bootstrap._do_create_document / _do_save_to_path.
 """
 
 import asyncio
@@ -25,7 +29,7 @@ from unittest.mock import patch
 
 import pytest
 
-from server.approval.bootstrap import _do_create_document
+from server.approval.bootstrap import _do_create_document, _do_save_to_path
 from server.documents.executors import (
     _exec_create_docx,
     _exec_create_pdf,
@@ -43,57 +47,107 @@ def _parse_prompt(output: str) -> dict:
     return json.loads(output[len("[WS_WORKSPACE_PROMPT]") :])
 
 
-def _parse_approval(output: str) -> dict:
+def _parse_approval(output: str, expected_action: str = "create_document") -> dict:
     assert output.startswith("[WS_APPROVAL]"), output
     payload = json.loads(output[len("[WS_APPROVAL]") :])
-    assert payload["action"] == "create_document"
+    assert payload["action"] == expected_action
     return payload
 
 
 def _decoded_bytes(payload: dict) -> bytes:
-    return base64.b64decode(payload["content_b64"])
+    key = "content_b64" if "content_b64" in payload else "content"
+    return base64.b64decode(payload[key])
 
 
-# ── No workspace connected: sentinel, no shelling out / no library calls ──
+# ── No workspace connected: lightweight save-location prompt, no shelling out ──
 
 
-def test_create_docx_no_workspace_emits_sentinel_and_never_shells_out(monkeypatch):
+def test_create_docx_no_workspace_emits_save_location_prompt_and_never_shells_out(monkeypatch):
     monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: None)
     with patch("subprocess.run") as mock_run:
         out = _exec_create_docx({"path": "report.docx", "html_content": "<p>hi</p>"}, "", {})
     mock_run.assert_not_called()
     payload = _parse_prompt(out)
-    assert payload["reason"] == "no_workspace"
+    assert payload["reason"] == "save_location"
     assert payload["tool_name"] == "create_docx"
     assert payload["tool_input"]["path"] == "report.docx"
+    assert payload["suggested_name"] == "report.docx"
+    assert "documents_dir" in payload
+    assert "downloads_dir" in payload
 
 
-def test_create_pptx_no_workspace_emits_sentinel(monkeypatch):
+def test_create_pptx_no_workspace_emits_save_location_prompt(monkeypatch):
     monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: None)
     out = _exec_create_pptx(
         {"path": "deck.pptx", "slides": [{"title": "T", "bullets": ["a"]}]}, "", {}
     )
     payload = _parse_prompt(out)
-    assert payload["reason"] == "no_workspace"
+    assert payload["reason"] == "save_location"
     assert payload["tool_name"] == "create_pptx"
 
 
-def test_create_xlsx_no_workspace_emits_sentinel(monkeypatch):
+def test_create_xlsx_no_workspace_emits_save_location_prompt(monkeypatch):
     monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: None)
     out = _exec_create_xlsx(
         {"path": "data.xlsx", "sheets": [{"name": "Sheet1", "rows": [[1, 2]]}]}, "", {}
     )
     payload = _parse_prompt(out)
-    assert payload["reason"] == "no_workspace"
+    assert payload["reason"] == "save_location"
     assert payload["tool_name"] == "create_xlsx"
 
 
-def test_create_pdf_no_workspace_emits_sentinel(monkeypatch):
+def test_create_pdf_no_workspace_emits_save_location_prompt(monkeypatch):
     monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: None)
     out = _exec_create_pdf({"path": "summary.pdf", "title": "T", "paragraphs": ["hello"]}, "", {})
     payload = _parse_prompt(out)
-    assert payload["reason"] == "no_workspace"
+    assert payload["reason"] == "save_location"
     assert payload["tool_name"] == "create_pdf"
+
+
+def test_create_docx_with_destination_path_skips_workspace_and_shells_out(tmp_path, monkeypatch):
+    """Once the user has picked a location (destination_path present), the
+    tool proceeds straight to building the file — get_workspace_path() is
+    never consulted, matching save_file's own no-workspace-required path."""
+    monkeypatch.setattr(
+        "server.documents.executors.get_workspace_path",
+        lambda: (_ for _ in ()).throw(AssertionError("must not check workspace")),
+    )
+    dest = str(tmp_path / "report.docx")
+    out = _exec_create_docx(
+        {"path": "report.docx", "html_content": "<p>hi</p>", "destination_path": dest}, "", {}
+    )
+    payload = _parse_approval(out, expected_action="save_to_path")
+    assert payload["path"] == dest
+    assert payload["filename"] == "report.docx"
+    assert payload["content_encoding"] == "base64"
+    assert not (tmp_path / "report.docx").exists(), "must not write before approval"
+
+
+def test_create_docx_rejects_relative_destination_path(tmp_path, monkeypatch):
+    monkeypatch.setattr("server.documents.executors.get_workspace_path", lambda: None)
+    out = _exec_create_docx(
+        {"path": "report.docx", "html_content": "<p>hi</p>", "destination_path": "relative.docx"},
+        "",
+        {},
+    )
+    assert out.startswith("Error"), out
+
+
+def test_do_save_to_path_writes_document_bytes_on_approval(tmp_path):
+    data = b"fake docx bytes for the lightweight save flow"
+    dest = str(tmp_path / "notes.docx")
+    outcome = _run(
+        _do_save_to_path(
+            {
+                "path": dest,
+                "content": base64.b64encode(data).decode("ascii"),
+                "content_encoding": "base64",
+                "filename": "notes.docx",
+            }
+        )
+    )
+    assert outcome.ok, outcome.error
+    assert (tmp_path / "notes.docx").read_bytes() == data
 
 
 def test_create_docx_path_outside_workspace_emits_sentinel(tmp_path, monkeypatch):

@@ -22,20 +22,27 @@ CREATE_DOCX_TOOL = {
         "supported path. Use normal HTML tags for structure — headings (h1-h3), "
         "paragraphs (p), bold/italic (b/i/strong/em), lists (ul/ol/li), tables "
         "(table/tr/td) — textutil converts them to native Word formatting. "
-        "Requires a connected workspace; if none is connected, this asks the user "
-        "to pick a folder first, then the call is re-issued against it (same as "
-        "ws_create_file)."
+        "If a workspace is connected, `path` is workspace-relative (same as "
+        "ws_create_file). If none is connected, this does NOT force a full "
+        "workspace connection — it pauses and asks the user to pick a save "
+        "location (Documents, Downloads, or a native save dialog), the same "
+        "lightweight flow save_file uses. Once the user picks, re-issue this "
+        "same call with destination_path set to actually write the file."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Workspace-relative path for the new file, e.g. 'report.docx'",
+                "description": "Workspace-relative path for the new file, e.g. 'report.docx'. Used as the suggested filename when no workspace is connected.",
             },
             "html_content": {
                 "type": "string",
                 "description": "The document body as HTML (e.g. '<h1>Title</h1><p>Body text.</p>').",
+            },
+            "destination_path": {
+                "type": "string",
+                "description": "Absolute path to write to, used only when no workspace is connected. Omit on the first call — it is supplied after the user picks a location via the save prompt, then re-issue this same call with it set.",
             },
         },
         "required": ["path", "html_content"],
@@ -50,16 +57,19 @@ CREATE_PPTX_TOOL = {
         "produce a .pptx in this app — it builds a genuine OOXML presentation via "
         "python-pptx. Do NOT shell out to pandoc, LibreOffice, or a raw python-pptx "
         "one-liner via ws_run_command instead; this tool is the supported path. "
-        "Requires a connected workspace; if none is connected, this asks the user to "
-        "pick a folder first, then the call is re-issued against it (same as "
-        "ws_create_file)."
+        "If a workspace is connected, `path` is workspace-relative (same as "
+        "ws_create_file). If none is connected, this does NOT force a full "
+        "workspace connection — it pauses and asks the user to pick a save "
+        "location (Documents, Downloads, or a native save dialog), the same "
+        "lightweight flow save_file uses. Once the user picks, re-issue this "
+        "same call with destination_path set to actually write the file."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Workspace-relative path for the new file, e.g. 'deck.pptx'",
+                "description": "Workspace-relative path for the new file, e.g. 'deck.pptx'. Used as the suggested filename when no workspace is connected.",
             },
             "slides": {
                 "type": "array",
@@ -77,6 +87,10 @@ CREATE_PPTX_TOOL = {
                     "required": ["title", "bullets"],
                 },
             },
+            "destination_path": {
+                "type": "string",
+                "description": "Absolute path to write to, used only when no workspace is connected. Omit on the first call — it is supplied after the user picks a location via the save prompt, then re-issue this same call with it set.",
+            },
         },
         "required": ["path", "slides"],
     },
@@ -89,16 +103,19 @@ CREATE_XLSX_TOOL = {
         "This is the standard, correct way to produce a .xlsx in this app — it builds "
         "a genuine OOXML workbook via openpyxl. Do NOT shell out to pandoc, "
         "LibreOffice, or a raw openpyxl one-liner via ws_run_command instead; this "
-        "tool is the supported path. Requires a connected workspace; if none is "
-        "connected, this asks the user to pick a folder first, then the call is "
-        "re-issued against it (same as ws_create_file)."
+        "tool is the supported path. If a workspace is connected, `path` is "
+        "workspace-relative (same as ws_create_file). If none is connected, this "
+        "does NOT force a full workspace connection — it pauses and asks the user "
+        "to pick a save location (Documents, Downloads, or a native save dialog), "
+        "the same lightweight flow save_file uses. Once the user picks, re-issue "
+        "this same call with destination_path set to actually write the file."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Workspace-relative path for the new file, e.g. 'data.xlsx'",
+                "description": "Workspace-relative path for the new file, e.g. 'data.xlsx'. Used as the suggested filename when no workspace is connected.",
             },
             "sheets": {
                 "type": "array",
@@ -116,6 +133,10 @@ CREATE_XLSX_TOOL = {
                     "required": ["name", "rows"],
                 },
             },
+            "destination_path": {
+                "type": "string",
+                "description": "Absolute path to write to, used only when no workspace is connected. Omit on the first call — it is supplied after the user picks a location via the save prompt, then re-issue this same call with it set.",
+            },
         },
         "required": ["path", "sheets"],
     },
@@ -132,16 +153,19 @@ CREATE_PDF_TOOL = {
         "(it cannot produce one) or shell out to another converter via ws_run_command. "
         "This is deliberately simple — plain paragraphs and a title, not a general layout "
         "engine — so it is not the right tool for complex multi-column or richly "
-        "formatted documents. Requires a connected workspace; if none is connected, this "
-        "asks the user to pick a folder first, then the call is re-issued against it "
-        "(same as ws_create_file)."
+        "formatted documents. If a workspace is connected, `path` is "
+        "workspace-relative (same as ws_create_file). If none is connected, this "
+        "does NOT force a full workspace connection — it pauses and asks the user "
+        "to pick a save location (Documents, Downloads, or a native save dialog), "
+        "the same lightweight flow save_file uses. Once the user picks, re-issue "
+        "this same call with destination_path set to actually write the file."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "path": {
                 "type": "string",
-                "description": "Workspace-relative path for the new file, e.g. 'summary.pdf'",
+                "description": "Workspace-relative path for the new file, e.g. 'summary.pdf'. Used as the suggested filename when no workspace is connected.",
             },
             "title": {
                 "type": "string",
@@ -151,6 +175,10 @@ CREATE_PDF_TOOL = {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": "Plain-text paragraphs, in order, each rendered as its own block.",
+            },
+            "destination_path": {
+                "type": "string",
+                "description": "Absolute path to write to, used only when no workspace is connected. Omit on the first call — it is supplied after the user picks a location via the save prompt, then re-issue this same call with it set.",
             },
         },
         "required": ["path", "paragraphs"],
