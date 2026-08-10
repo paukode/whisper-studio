@@ -231,27 +231,37 @@ const AppShell: React.FC = () => {
   );
 
   // The app content (workspace + chat/transcript area) as it existed before
-  // the dock — extracted so it can be the left pane of the chat|dock Splitter
-  // or fill .panels directly when the dock is closed.
-  const renderPanelsInner = () =>
-    wsConnected && !workspacePanelCollapsed ? (
-      <Splitter
-        direction="horizontal"
-        ratio={workspaceFrac}
-        onChange={setWorkspaceFrac}
-        handleClassName="ws-resize-handle"
-        style={{ flex: '1 1 auto' }}
-      >
+  // the dock — extracted so it can be the left pane of the chat|dock Splitter.
+  //
+  // renderRightColumn() is always called in the exact same slot (children[1])
+  // of an always-mounted Splitter. Previously this branched between "Splitter
+  // wrapping both panes" and "renderRightColumn() called directly", which put
+  // its output at two different tree positions — React can't reconcile that
+  // across a type change, so toggling the workspace panel (connect/disconnect,
+  // collapse/expand) unmounted and remounted everything inside it, including
+  // ChatPanel/ChatInput, silently wiping the composer's in-progress draft.
+  // hideFirstPane collapses the workspace pane visually/interactively without
+  // removing it from the tree in a way that shifts renderRightColumn()'s slot.
+  const showWorkspacePane = wsConnected && !workspacePanelCollapsed;
+  const renderPanelsInner = () => (
+    <Splitter
+      direction="horizontal"
+      ratio={workspaceFrac}
+      onChange={setWorkspaceFrac}
+      handleClassName="ws-resize-handle"
+      hideFirstPane={!showWorkspacePane}
+      style={{ flex: '1 1 auto' }}
+    >
+      {showWorkspacePane ? (
         <div className={`panel workspace-panel${hasEditorTabs ? ' ws-ide-open' : ''}`} id="workspacePanel">
           <ErrorBoundary label="Workspace">
             <WorkspacePanel onCollapse={handleCollapseWorkspace} />
           </ErrorBoundary>
         </div>
-        {renderRightColumn()}
-      </Splitter>
-    ) : (
-      renderRightColumn()
-    );
+      ) : null}
+      {renderRightColumn()}
+    </Splitter>
+  );
 
   return (
     <div className="app">

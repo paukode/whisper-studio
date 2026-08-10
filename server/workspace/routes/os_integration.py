@@ -12,28 +12,69 @@ from fastapi.responses import Response
 
 from .. import router
 from ..paths import _ws_validate_path
-from ..state import get_workspace_path
+from ..state import get_workspace_path, load_save_locations
 
 
 @router.post("/open-with")
 async def ws_open_with(request: Request):
-    """Open a file with the system default application."""
+    """Open a file with the system default application.
+
+    Accepts a workspace-relative path (resolved against the connected
+    workspace) or an absolute path — the latter is allowed only when it lives
+    inside the connected workspace or a known indexed workspace, mirroring
+    /reveal below, so a created-file chat link still opens after the user
+    switches to a different workspace."""
     body = await request.json()
-    ws = get_workspace_path()
-    if not ws:
-        return Response(
-            content=json.dumps({"error": "No workspace"}),
-            status_code=400,
-            media_type="application/json",
-        )
     path = body.get("path", "")
-    full = os.path.join(ws, path)
-    if not _ws_validate_path(full, ws) or not os.path.exists(full):
+    if not path:
         return Response(
             content=json.dumps({"error": "File not found"}),
             status_code=404,
             media_type="application/json",
         )
+    if os.path.isabs(path):
+        full = os.path.realpath(path)
+        roots = []
+        ws = get_workspace_path()
+        if ws:
+            roots.append(os.path.realpath(ws))
+        try:  # lazy import to avoid a workspace↔index module cycle
+            from server.index import store as _index_store
+
+            roots += [os.path.realpath(r) for r in _index_store.list_indexed_workspaces()]
+        except Exception:
+            pass
+        # Directories the one-shot save_file flow has written to. These
+        # files were never 'connected' or 'indexed', so without this they'd
+        # 404 here the moment the workspace/index roots above don't cover
+        # them — which is the common case, since save_file exists precisely
+        # to save somewhere OUTSIDE the connected workspace.
+        try:
+            roots += [os.path.realpath(r) for r in load_save_locations()]
+        except Exception:
+            pass
+        inside = any(full == r or full.startswith(r + os.sep) for r in roots)
+        if not inside or not os.path.exists(full):
+            return Response(
+                content=json.dumps({"error": "File not found"}),
+                status_code=404,
+                media_type="application/json",
+            )
+    else:
+        ws = get_workspace_path()
+        if not ws:
+            return Response(
+                content=json.dumps({"error": "No workspace"}),
+                status_code=400,
+                media_type="application/json",
+            )
+        full = os.path.join(ws, path)
+        if not _ws_validate_path(full, ws) or not os.path.exists(full):
+            return Response(
+                content=json.dumps({"error": "File not found"}),
+                status_code=404,
+                media_type="application/json",
+            )
     import platform
 
     system = platform.system()
@@ -79,6 +120,15 @@ async def ws_reveal(request: Request):
             from server.index import store as _index_store
 
             roots += [os.path.realpath(r) for r in _index_store.list_indexed_workspaces()]
+        except Exception:
+            pass
+        # Directories the one-shot save_file flow has written to. These
+        # files were never 'connected' or 'indexed', so without this they'd
+        # 404 here the moment the workspace/index roots above don't cover
+        # them — which is the common case, since save_file exists precisely
+        # to save somewhere OUTSIDE the connected workspace.
+        try:
+            roots += [os.path.realpath(r) for r in load_save_locations()]
         except Exception:
             pass
         inside = any(full == r or full.startswith(r + os.sep) for r in roots)

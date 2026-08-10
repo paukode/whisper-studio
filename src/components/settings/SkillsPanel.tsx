@@ -6,6 +6,7 @@ import { useSaveToast } from '@/hooks/useSaveToast';
 import { ImportSkillsDialog } from './ImportSkillsDialog';
 import { SkillFileTree } from './SkillFileTree';
 import { ConfirmDialog } from './ConfirmDialog';
+import { ExpandableText } from './ExpandableText';
 
 const badgeStyle: React.CSSProperties = {
   marginLeft: '6px',
@@ -265,7 +266,7 @@ export const SkillsPanel: React.FC = () => {
                       {skill.isFolder && <span style={badgeStyle}>folder</span>}
                       {skill.hasScripts && <span style={badgeStyle} title="Contains executable scripts">scripts</span>}
                     </div>
-                    <div className="settings-item-desc">{skill.description ?? ''}</div>
+                    <ExpandableText className="settings-item-desc" text={skill.description ?? ''} />
                   </>
                 )}
               </div>

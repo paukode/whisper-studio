@@ -104,7 +104,9 @@ class _FakeBedrock:
 
 def _patch_common(monkeypatch, fake_stream):
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr("server.chat.assemble_tool_pool", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "server.chat.tool_pool.assemble_partitioned_pool", lambda *a, **k: ([], [], 0)
+    )
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
     monkeypatch.setattr("server.tool_executor.route_tool", AsyncMock(return_value=("ok", [])))
 

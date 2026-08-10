@@ -154,15 +154,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
   const switchSession = useSessionStore((s) => s.switchSession);
   const deleteSession = useSessionStore((s) => s.deleteSession);
   const bulkDeleteSessions = useSessionStore((s) => s.bulkDeleteSessions);
+  const bulkExportSessions = useSessionStore((s) => s.bulkExportSessions);
   const setSessionFlags = useSessionStore((s) => s.setSessionFlags);
   const branchSession = useSessionStore((s) => s.branchSession);
   const importSession = useSessionStore((s) => s.importSession);
+  const importSessions = useSessionStore((s) => s.importSessions);
   const addToast = useUIStore((s) => s.addToast);
   const groupsCollapsed = useUIStore((s) => s.sessionGroupsCollapsed);
   const setSessionGroupCollapsed = useUIStore((s) => s.setSessionGroupCollapsed);
   const [resizing, setResizing] = useState(false);
   const sidebarRef = useRef<HTMLElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
   // Remember the user's chosen width across collapse/expand cycles.
   // Without this, expanding after a collapse would reset to the CSS
   // default (272px) instead of returning to whatever the user dragged
@@ -414,17 +417,33 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
     })();
   }, [selected, bulkDeleteSessions, exitSelectMode, addToast]);
 
-  // Import: file picker -> hand the picked file straight to the store, which
-  // posts it to /api/sessions/import and switches to the new session. Not
-  // tied to any particular row (unlike Export/Branch), so it lives in the
-  // header rather than the per-session context menu.
+  // Multi-select 'Export': same selection, a zip download instead of a
+  // destructive confirm. No confirmation needed (nothing is changed), so
+  // this is a straight call-through rather than a dialogConfirm wrapper.
+  const handleBulkExport = useCallback(() => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    void (async () => {
+      await bulkExportSessions(ids);
+      exitSelectMode();
+    })();
+  }, [selected, bulkExportSessions, exitSelectMode]);
+
+  // Import: file picker -> hand the picked file(s) straight to the store,
+  // which posts them to /api/sessions/import-transcript (one) or
+  // /api/sessions/bulk-import (many, or a bulk-export .zip) and switches to
+  // the last imported session. Not tied to any particular row (unlike
+  // Export/Branch), so it lives in the header rather than the per-session
+  // context menu.
   const handleImportFileChosen = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      e.target.value = ''; // allow re-picking the same file later
-      if (file) void importSession(file);
+      const files = Array.from(e.target.files ?? []);
+      e.target.value = ''; // allow re-picking the same file(s) later
+      if (files.length === 0) return;
+      if (files.length === 1) void importSession(files[0]);
+      else void importSessions(files);
     },
-    [importSession],
+    [importSession, importSessions],
   );
 
   // Sidebar resize handle. Writes the chosen width as an inline style
@@ -480,6 +499,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
   const handleSelectAll = useCallback(() => {
     setSelected(allSelected ? new Set() : new Set(filtered.map((s) => s.id)));
   }, [allSelected, filtered]);
+
+  // `indeterminate` (the visual dash-in-a-box for "some but not all
+  // selected") has no controlled-checkbox JSX prop — it's a DOM-only
+  // property, set imperatively.
+  useEffect(() => {
+    if (selectAllCheckboxRef.current) {
+      selectAllCheckboxRef.current.indeterminate = selected.size > 0 && !allSelected;
+    }
+  }, [selected, allSelected]);
 
   const menuSession = menuFor ? sessions.find((s) => s.id === menuFor.id) : null;
   // Export always offers all three formats, with the combined file FIRST so
@@ -573,53 +601,107 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
           </svg>
           <h2>Conversations</h2>
         </div>
-        <input
-          ref={importInputRef}
-          type="file"
-          accept=".jsonl,application/x-ndjson,text/plain"
-          style={{ display: 'none' }}
-          aria-label="Import session file"
-          onChange={handleImportFileChosen}
-        />
-        <button
-          type="button"
-          className="session-select-toggle"
-          title="Import a session from a portable backup (.jsonl)"
-          onClick={() => importInputRef.current?.click()}
-        >
-          Import
-        </button>
       </div>
+
+      {/* Hidden regardless of mode — Import lives in the toolbar below so
+          it's grouped with Export/Delete instead of stranded up here. */}
+      <input
+        ref={importInputRef}
+        type="file"
+        multiple
+        accept=".jsonl,.zip,application/x-ndjson,application/zip,text/plain"
+        style={{ display: 'none' }}
+        aria-label="Import session file(s)"
+        onChange={handleImportFileChosen}
+      />
 
       {sessions.length > 0 && (
         <div className="session-toolbar">
-          <div className="session-search">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.5" y2="16.5" />
-            </svg>
-            <input
-              type="text"
-              className="session-search-input"
-              placeholder="Search conversations…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            {query && (
-              <button type="button" className="session-search-clear" onClick={() => setQuery('')} aria-label="Clear search">×</button>
-            )}
-          </div>
-          <button
-            type="button"
-            className={`session-select-toggle${selectMode ? ' active' : ''}`}
-            title="Select multiple sessions"
-            aria-pressed={selectMode}
-            onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-          >
-            {selectMode ? 'Done' : 'Select'}
-          </button>
+          {selectMode ? (
+            // One row, right above the list: a real tri-state checkbox for
+            // select-all/none (not a text button), plus every action that
+            // needs a selection — Import stays here too since Export lives
+            // here, rather than splitting the two across the header and a
+            // separate bar further down.
+            <div className="session-select-bar">
+              <input
+                ref={selectAllCheckboxRef}
+                type="checkbox"
+                className="session-select-all-checkbox"
+                checked={allSelected}
+                onChange={handleSelectAll}
+                aria-label={allSelected ? 'Deselect all sessions' : 'Select all sessions'}
+              />
+              <span className="session-select-count">{selected.size} selected</span>
+              <div className="session-select-actions">
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  title="Import sessions from portable backups (.jsonl or .zip)"
+                  onClick={() => importInputRef.current?.click()}
+                >
+                  Import
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={selected.size === 0}
+                  onClick={handleBulkExport}
+                >
+                  Export
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-sm session-select-delete"
+                  disabled={selected.size === 0}
+                  onClick={handleBulkDelete}
+                >
+                  Delete
+                </button>
+                <button type="button" className="session-select-toggle active" onClick={exitSelectMode}>
+                  Done
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="session-search">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                  <circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.5" y2="16.5" />
+                </svg>
+                <input
+                  type="text"
+                  className="session-search-input"
+                  placeholder="Search conversations…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+                {query && (
+                  <button type="button" className="session-search-clear" onClick={() => setQuery('')} aria-label="Clear search">×</button>
+                )}
+              </div>
+              <button
+                type="button"
+                className="session-select-toggle"
+                title="Import sessions from portable backups (.jsonl or .zip) — pick one or several"
+                onClick={() => importInputRef.current?.click()}
+              >
+                Import
+              </button>
+              <button
+                type="button"
+                className="session-select-toggle"
+                title="Select multiple sessions"
+                aria-pressed={selectMode}
+                onClick={() => setSelectMode(true)}
+              >
+                Select
+              </button>
+            </>
+          )}
         </div>
       )}
-      {sessions.length > 0 && query.trim() !== '' && (
+      {sessions.length > 0 && !selectMode && query.trim() !== '' && (
         <label className="session-search-scope" title="Also match message and transcript text, not just titles">
           <input
             type="checkbox"
@@ -787,22 +869,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
         })()}
       </div>
 
-      {selectMode && (
-        <div className="session-select-bar">
-          <span className="session-select-count">{selected.size} selected</span>
-          <button type="button" className="btn btn-sm" onClick={handleSelectAll}>
-            {allSelected ? 'Clear' : 'Select all'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-sm session-select-delete"
-            disabled={selected.size === 0}
-            onClick={handleBulkDelete}
-          >
-            Delete
-          </button>
-        </div>
-      )}
 
       {menuFor && menuSession && (
         <ContextMenu

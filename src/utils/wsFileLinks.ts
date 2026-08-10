@@ -24,16 +24,21 @@ export interface WsFileTarget {
   path: string;
   startLine?: number;
   endLine?: number;
+  /** `os` when the link explicitly asks to open with the OS default app
+   * (server.index.citations.created_file_link — a just-written deliverable,
+   * not a citation into an existing file) rather than the in-app dock. */
+  openMode?: 'os';
 }
 
 /**
- * Parse a `#wsfile=<url-quoted path>&L=<start>-<end>` citation href.
+ * Parse a `#wsfile=<url-quoted path>&L=<start>-<end>` citation href, or a
+ * `#wsfile=<url-quoted path>&open=os` created-file href.
  *
  * The path is url-quoted, so any literal `&`/`:` in it is percent-encoded and the
  * FIRST raw `&` is unambiguously the path/params boundary — we split there BEFORE
  * decoding (decoding the whole slice would corrupt a path containing `%26`).
- * `&L=` is optional (legacy links omit it); malformed/reversed ranges degrade
- * gracefully. Returns null for non-`#wsfile=` hrefs.
+ * `&L=`/`&open=` are optional and independent (legacy citation links omit both);
+ * malformed/reversed ranges degrade gracefully. Returns null for non-`#wsfile=` hrefs.
  */
 export function parseWsFileHref(href: string): WsFileTarget | null {
   if (!href.startsWith(PREFIX)) return null;
@@ -49,14 +54,21 @@ export function parseWsFileHref(href: string): WsFileTarget | null {
   const t: WsFileTarget = { path };
   if (amp !== -1) {
     for (const param of frag.slice(amp + 1).split('&')) {
-      const m = /^L=(\d+)(?:-(\d+))?$/.exec(param);
-      if (!m) continue; // unknown/malformed params are ignored (forward-compatible)
-      let s = parseInt(m[1], 10);
-      let e = m[2] ? parseInt(m[2], 10) : s;
-      if (s < 1) continue;
-      if (e < s) [s, e] = [e, s];
-      t.startLine = s;
-      t.endLine = e;
+      const lineMatch = /^L=(\d+)(?:-(\d+))?$/.exec(param);
+      if (lineMatch) {
+        let s = parseInt(lineMatch[1], 10);
+        let e = lineMatch[2] ? parseInt(lineMatch[2], 10) : s;
+        if (s < 1) continue;
+        if (e < s) [s, e] = [e, s];
+        t.startLine = s;
+        t.endLine = e;
+        continue;
+      }
+      if (param === 'open=os') {
+        t.openMode = 'os';
+        continue;
+      }
+      // unknown/malformed params are ignored (forward-compatible)
     }
   }
   return t;
@@ -91,6 +103,21 @@ async function openCitedFile(t: WsFileTarget): Promise<void> {
   });
 }
 
+// A just-created deliverable: open with the OS default app, the way a Finder
+// double-click would, instead of the in-app dock viewer. /open-with resolves
+// an absolute path fine (os.path.join discards the workspace root when the
+// second argument is already absolute) so no relative-path juggling is needed.
+async function openFileExternally(t: WsFileTarget, name: string): Promise<void> {
+  try {
+    await post('/api/workspace/open-with', { path: t.path });
+  } catch {
+    useUIStore.getState().addToast({
+      type: 'error',
+      message: `Couldn't open ${name} — is its workspace still connected?`,
+    });
+  }
+}
+
 export function attachWsFileHandlers(container: HTMLElement): () => void {
   const onClick = (e: MouseEvent) => {
     const anchor = (e.target as HTMLElement | null)?.closest('a');
@@ -122,6 +149,15 @@ export function attachWsFileHandlers(container: HTMLElement): () => void {
       return;
     }
 
+    // A created-file link has no in-app dock view to fall back to, so a
+    // plain click opens it externally. Modifier-click is handled above and
+    // still means "reveal in Finder" either way, for consistency with every
+    // other #wsfile= link.
+    if (target.openMode === 'os') {
+      void openFileExternally(target, name);
+      return;
+    }
+
     // Default: open the file in the dock at the cited lines (dedupes by path).
     void openCitedFile(target);
   };
@@ -143,9 +179,12 @@ export function attachWsFileHandlers(container: HTMLElement): () => void {
     const isMac = platform.includes('mac');
     // Non-mac says "file manager": Windows reveals in Explorer, but Linux only
     // opens the containing folder, so don't promise a specific app there.
-    anchor.title = isMac
-      ? 'Click to open in the side panel. Cmd-click to reveal in Finder.'
-      : 'Click to open in the side panel. Ctrl-click to reveal in your file manager.';
+    const revealHint = isMac
+      ? 'Cmd-click to reveal in Finder.'
+      : 'Ctrl-click to reveal in your file manager.';
+    anchor.title = href.includes('&open=os')
+      ? `Click to open in your default app. ${revealHint}`
+      : `Click to open in the side panel. ${revealHint}`;
   };
 
   container.addEventListener('click', onClick);

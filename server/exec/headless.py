@@ -17,10 +17,10 @@ first if you're touching this one.
 
 Two differences from ``_run_agent_loop``, both deliberate:
 
-  - The tool catalog is the FULL pool ``assemble_tool_pool`` (== chat/engine's
-    own default per-round assembly, ``assemble_full_catalog`` with
-    plan_mode=False) hands back — no ``filter_tools_for_agent`` narrowing and
-    no ``get_agent_runtime_tools`` (spawn_agent/send_message/
+  - The tool catalog is the same core+activated pool interactive chat gets
+    via progressive tool disclosure (``assemble_partitioned_pool``, built
+    ONCE here rather than reassembled per round) — no ``filter_tools_for_agent``
+    narrowing and no ``get_agent_runtime_tools`` (spawn_agent/send_message/
     complete_coordination): those are agent-hierarchy concepts a standalone
     headless run has no use for.
   - On-device (``local:...``) models are refused outright rather than wired
@@ -152,8 +152,10 @@ async def run_headless_turn(
     from server.agents.config import get_agent_config
     from server.agents.providers import model_key_for_id
     from server.agents.runtime import _distill_structured, _resolve_agent_model
-    from server.chat import assemble_tool_pool
     from server.chat.infra import _get_chat_model_meta
+    from server.chat.tool_activation import activate_from_history
+    from server.chat.tool_index import build_deferred_index
+    from server.chat.tool_pool import assemble_partitioned_pool
     from server.infrastructure.config import load_config
     from server.local.runtime import is_local_model_id
     from server.workspace import get_workspace_path
@@ -217,14 +219,29 @@ async def run_headless_turn(
                 {"role": "user", "content": prompt, "timestamp": _utc_now_iso()},
             )
 
-        # ── Tool catalog: the FULL pool, built ONCE for the whole run ───────
-        # Same call agents/runtime.py makes (assemble_tool_pool(plan_mode=False,
-        # ws_connected=...)) but WITHOUT filter_tools_for_agent or
-        # get_agent_runtime_tools — see the module docstring.
-        all_tools = assemble_tool_pool(plan_mode=False, ws_connected=bool(ws_path))
+        # The turn's only user message, built here (rather than down by
+        # ctx = TurnContext(...)) so it's already in scope for
+        # activate_from_history below; reused verbatim for the TurnContext.
+        messages = [{"role": "user", "content": prompt}]
+
+        # ── Tool catalog: core + this session's activated tools, built ONCE
+        # for the whole run ─────────────────────────────────────────────────
+        # Progressive tool disclosure: re-derive this session's activations
+        # from visible history first (self-healing across restarts, exactly
+        # like server/chat/routes.py), then the same call agents/runtime.py
+        # makes (assemble_partitioned_pool(plan_mode=False, ws_connected=...,
+        # session_id=...)) but WITHOUT filter_tools_for_agent or
+        # get_agent_runtime_tools — see the module docstring. Everything
+        # deferred is folded into a compact index appended to the system
+        # prompt below.
+        activate_from_history(session_id, messages)
+        advertised, deferred, _core_count = assemble_partitioned_pool(
+            plan_mode=False, ws_connected=bool(ws_path), session_id=session_id
+        )
+        deferred_tool_index = build_deferred_index(deferred)
         seen_names: set[str] = set()
         tools: list[dict] = []
-        for t in all_tools:
+        for t in advertised:
             if t["name"] not in seen_names:
                 seen_names.add(t["name"])
                 tools.append(t)
@@ -243,6 +260,8 @@ async def run_headless_turn(
                 "\n\nNo workspace folder is connected. File tools (ws_read_file, ws_grep, "
                 "ws_glob, etc.) are not available."
             )
+        if deferred_tool_index:
+            system += "\n\n" + deferred_tool_index
 
         # ── Provider adapter — same chat_model_meta.provider check
         # server/chat/routes.py and agents/runtime.py both use. ─────────────
@@ -277,8 +296,6 @@ async def run_headless_turn(
 
         from server.chat.engine.policy import TurnPolicy
         from server.chat.engine.runner import TurnContext, run_turn
-
-        messages = [{"role": "user", "content": prompt}]
 
         ctx = TurnContext(
             session_id=session_id,

@@ -16,7 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readSSEStream } from './sseStream';
 import { useUIStore } from '@/stores/uiStore';
-import { dropRuntime, useRuntimeIndex } from '@/stores/sessionRuntimes';
+import { dropRuntime, useRuntimeIndex, getChatStore } from '@/stores/sessionRuntimes';
 
 /** Build an SSE Response from a list of frame objects, terminated by [DONE]. */
 function sseResponse(frames: unknown[]): Response {
@@ -106,6 +106,47 @@ describe('readSSEStream', () => {
 
     expect(result.inputTokens).toBe(7);
     expect(result.outputTokens).toBe(3);
+  });
+
+  it('ws_workspace_prompt uses the real tool_use_id as toolId, not the hardcoded placeholder', async () => {
+    const res = sseResponse([
+      {
+        ws_workspace_prompt: {
+          reason: 'no_workspace',
+          tool_name: 'ws_write_file',
+          suggested: '/Users/me/Documents',
+          recent: [],
+          tool_use_id: 'tu_abc123',
+        },
+      },
+    ]);
+
+    const sessionId = 'sess-ws-prompt';
+    await readSSEStream(res, sessionId, new AbortController().signal);
+
+    const messages = getChatStore(sessionId).getState().messages;
+    const withPrompt = messages.find((m) => m.toolUse?.some((t) => t.toolName === 'ws_workspace_prompt'));
+    expect(withPrompt).toBeTruthy();
+    expect(withPrompt!.toolUse![0].toolId).toBe('tu_abc123');
+  });
+
+  it('ws_workspace_prompt falls back to the hardcoded id when tool_use_id is missing', async () => {
+    const res = sseResponse([
+      {
+        ws_workspace_prompt: {
+          reason: 'no_workspace',
+          suggested: '/Users/me/Documents',
+          recent: [],
+        },
+      },
+    ]);
+
+    const sessionId = 'sess-ws-prompt-fallback';
+    await readSSEStream(res, sessionId, new AbortController().signal);
+
+    const messages = getChatStore(sessionId).getState().messages;
+    const withPrompt = messages.find((m) => m.toolUse?.some((t) => t.toolName === 'ws_workspace_prompt'));
+    expect(withPrompt!.toolUse![0].toolId).toBe('ws_workspace_prompt');
   });
 
   it('surfaces a status frame (mid-turn compaction notice) as an info toast', async () => {

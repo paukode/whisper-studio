@@ -239,7 +239,7 @@ def test_stop_cancels_an_in_flight_cron_run_quickly(monkeypatch):
 
     monkeypatch.setattr(C, "load_cron_jobs", lambda: [job])
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr(TP, "assemble_tool_pool", lambda **k: [])
+    monkeypatch.setattr(TP, "assemble_partitioned_pool", lambda **k: ([], [], 0))
     monkeypatch.setattr(WS, "get_workspace_path", lambda: "")
     monkeypatch.setattr(R, "append_rules", lambda s: s)
     monkeypatch.setattr(TE, "route_tool", fake_route_tool)
@@ -312,7 +312,7 @@ def test_cron_history_lease_transitions_running_to_terminal(monkeypatch, tmp_pat
 
     monkeypatch.setattr(C, "load_cron_jobs", lambda: [job])
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr(TP, "assemble_tool_pool", lambda **k: [])
+    monkeypatch.setattr(TP, "assemble_partitioned_pool", lambda **k: ([], [], 0))
     monkeypatch.setattr(WS, "get_workspace_path", lambda: "")
     monkeypatch.setattr(R, "append_rules", lambda s: s)
     monkeypatch.setattr(

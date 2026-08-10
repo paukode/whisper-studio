@@ -27,7 +27,11 @@ async def _collect(gen):
 
 def _patch_common(monkeypatch, fake_stream, tools=None):
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr("server.chat.assemble_tool_pool", lambda *a, **k: tools or [])
+    _tools = tools or []
+    monkeypatch.setattr(
+        "server.chat.tool_pool.assemble_partitioned_pool",
+        lambda *a, **k: (_tools, [], len(_tools)),
+    )
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
 
     from server.infrastructure import config as config_mod

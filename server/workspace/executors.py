@@ -13,6 +13,7 @@ Also home to:
 - _WORKTREES: in-memory registry shared with the worktree route handlers
 """
 
+import base64
 import json
 import logging
 import os
@@ -35,11 +36,13 @@ from .paths import (
     WORKSPACE_BACKUPS,
     _normalize_lf,
     _ws_validate_path,
+    stage_file_bytes,
 )
 from .state import (
     _workspace_prompt_payload,
     get_workspace_path,
     load_workspace_config,
+    resolve_write_destination,
     save_recent_workspace,
     save_workspace_config,
 )
@@ -371,22 +374,96 @@ def _replace_with_normalization(
     return "".join(result)
 
 
+def _stage_and_request_save(dest: str, filename: str, data: bytes) -> str:
+    """Shared tail of every direct-to-destination save: validate the
+    destination against the sensitive-path denylist, write the FINISHED
+    bytes to the app-sandbox staging area, and return the [WS_APPROVAL]
+    payload whose approval simply MOVES the ready file into place
+    (server/approval/bootstrap.py's _do_save_to_path). By the time the user
+    sees the card the file already exists — approving cannot fail on
+    content problems, and declining leaves nothing outside the sandbox."""
+    from server.security.sensitive_paths import is_sensitive_path
+
+    if is_sensitive_path(dest):
+        return f"Error: refusing to save to a sensitive path: {dest}"
+    staged = stage_file_bytes(data, filename)
+    payload = json.dumps(
+        {
+            "action": "save_to_path",
+            "path": dest,
+            "filename": filename,
+            "staged_path": staged,
+            "size": len(data),
+        }
+    )
+    return f"[WS_APPROVAL]{payload}"
+
+
 @register_executor("ws_create_file", read_only=False, concurrent_safe=False)
 def _exec_ws_create_file(tool_input, transcript, current_attachments):
-    ws = get_workspace_path()
-    if not ws:
-        return _workspace_prompt_payload("ws_create_file", tool_input, "no_workspace")
-    path = tool_input.get("path", "")
+    resolved = resolve_write_destination("ws_create_file", tool_input)
+    if isinstance(resolved, str):
+        return resolved
+    kind, target = resolved
     content = tool_input.get("content", "")
-    full = os.path.join(ws, path)
-    if not _ws_validate_path(full, ws):
-        return _workspace_prompt_payload("ws_create_file", tool_input, "outside_workspace")
+
+    if kind == "absolute":
+        # No workspace connected (or the user named an explicit location):
+        # stage the finished content and request the move — never connects
+        # a persistent workspace.
+        return _stage_and_request_save(target, os.path.basename(target), content.encode("utf-8"))
+
+    full = target
+    path = tool_input.get("path", "")
     if os.path.isdir(full):
         return f"Directory already exists: {path}. You don't need to create directories — they are created automatically when you create files inside them. Proceed to create the files directly."
     if os.path.isfile(full):
         return f"File already exists: {path}. Use ws_write_file to modify it."
     payload = json.dumps({"action": "create", "path": path, "content": content})
     return f"[WS_APPROVAL]{payload}"
+
+
+@register_executor("save_file", read_only=False, concurrent_safe=False)
+def _exec_save_file(tool_input, transcript, current_attachments):
+    """One-shot 'save this file somewhere' — never connects a persistent
+    workspace (get_workspace_path() is not even consulted here) and never
+    asks the user where to save.
+
+    Destination comes from destination_path when the model resolved one
+    from the user's own words; otherwise it defaults to the user's
+    Documents or Downloads folder (suggested_location, default Documents).
+    Content is decoded and staged immediately; the approval card then just
+    moves the ready file into place.
+    """
+    filename = os.path.basename((tool_input.get("filename") or "").strip())
+    if not filename:
+        return "Error: filename is required."
+
+    destination_path = tool_input.get("destination_path")
+    if destination_path:
+        raw_dest = os.path.expanduser(str(destination_path))
+        if not os.path.isabs(raw_dest):
+            return f"Error: destination_path must be an absolute path (got {destination_path!r})."
+        dest = os.path.realpath(raw_dest)
+    else:
+        folder = tool_input.get("suggested_location") or "Documents"
+        if folder not in ("Documents", "Downloads"):
+            folder = "Documents"
+        dest = os.path.join(os.path.expanduser(f"~/{folder}"), filename)
+
+    content = tool_input.get("content", "")
+    encoding = tool_input.get("content_encoding") or "utf-8"
+    if encoding not in ("utf-8", "base64"):
+        return f"Error: content_encoding must be 'utf-8' or 'base64' (got {encoding!r})."
+    if encoding == "base64":
+        try:
+            data = base64.b64decode(content, validate=True)
+        except Exception as e:
+            return f"Error: content is not valid base64: {e}"
+    else:
+        data = content.encode("utf-8")
+
+    return _stage_and_request_save(dest, filename, data)
 
 
 @register_executor("ws_delete_file", read_only=False, concurrent_safe=False, destructive=True)

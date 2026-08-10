@@ -277,16 +277,70 @@ def get_workspace_write_tools() -> list[dict]:
                 "[Workspace] Create a new file. Requires user approval. "
                 "Parent directories are created automatically, so never create them "
                 "as a separate step. Do not read the file first; it does not exist yet. "
-                "If no workspace is connected, this asks the user to pick a folder "
-                "first, then the create is re-issued against it."
+                "If a workspace is connected, `path` is workspace-relative. If none is "
+                "connected, never ask the user where to save: pass destination_path "
+                "resolved from the user's own words ('in Downloads' -> "
+                "'~/Downloads/notes.txt'), or omit it to default to their Documents "
+                "folder — then tell the user the full path in your reply. The user "
+                "confirms the exact path on the approval card."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Relative path for the new file"},
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path for the new file. Used as the default filename when no workspace is connected.",
+                    },
                     "content": {"type": "string", "description": "File content"},
+                    "destination_path": {
+                        "type": "string",
+                        "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/notes.txt' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
+                    },
                 },
                 "required": ["path", "content"],
+            },
+        },
+        {
+            "name": "save_file",
+            "description": (
+                "[Workspace] Save a one-off file (a report, an export, a generated document) "
+                "directly to the user's disk, in ONE call — never ask the user where to save. "
+                "If the user named a location ('in Downloads', 'on my Desktop', a full path), "
+                "resolve it yourself and pass destination_path (~ is allowed, e.g. "
+                "'~/Downloads/report.pdf'). If they named none, omit destination_path — the "
+                "file goes to their Documents folder (or Downloads via suggested_location). "
+                "The file is prepared immediately and the user confirms the exact path on an "
+                "approval card; your reply after approval must tell the user the full path it "
+                "was saved to. Use ws_create_file instead for files that belong in the "
+                "connected workspace."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "filename": {
+                        "type": "string",
+                        "description": "Filename including extension, e.g. 'report.pdf'",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "File content — plain text, or base64 if content_encoding is 'base64'",
+                    },
+                    "content_encoding": {
+                        "type": "string",
+                        "enum": ["utf-8", "base64"],
+                        "description": "Encoding of `content`. Default 'utf-8'. Use 'base64' for binary files.",
+                    },
+                    "suggested_location": {
+                        "type": "string",
+                        "enum": ["Documents", "Downloads"],
+                        "description": "Default folder when destination_path is omitted. Default 'Documents'.",
+                    },
+                    "destination_path": {
+                        "type": "string",
+                        "description": "Full destination path resolved from the user's words, e.g. '~/Downloads/report.pdf'. Omit only when the user named no location.",
+                    },
+                },
+                "required": ["filename", "content"],
             },
         },
         {

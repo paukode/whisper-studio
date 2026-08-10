@@ -309,8 +309,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
               // Workspace prompt — render interactive folder picker card
               if (tool.toolName === 'ws_workspace_prompt') {
                 const input = tool.input as {
-                  reason?: string; suggested?: string;
-                  recent?: string[];
+                  reason?: string; suggested?: string; recent?: string[];
                 };
                 return (
                   <WorkspacePromptCard
@@ -318,6 +317,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
                     reason={input.reason ?? ''}
                     suggested={input.suggested ?? ''}
                     recent={input.recent ?? []}
+                    // tool.toolId now carries the REAL tool_use_id the backend
+                    // stashed this pause under (see sseStream.ts) — resuming
+                    // must answer that exact id, not a hardcoded placeholder.
+                    toolUseId={tool.toolId}
                   />
                 );
               }

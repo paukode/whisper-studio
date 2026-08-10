@@ -9,8 +9,10 @@ from contextvars import ContextVar as _ContextVar
 
 from .paths import (
     RECENT_WORKSPACES_PATH,
+    SAVE_LOCATIONS_PATH,
     WORKSPACE_BACKUPS,
     WORKSPACE_CONFIG_PATH,
+    _ws_validate_path,
 )
 
 
@@ -90,6 +92,77 @@ def _workspace_prompt_payload(tool_name: str, tool_input: dict, reason: str) -> 
         }
     )
     return f"[WS_WORKSPACE_PROMPT]{payload}"
+
+
+def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, str] | str:
+    """Resolve where a 'create a new file' tool should write its content.
+
+    One shared resolver for every tool that creates a brand-new file
+    (ws_create_file, save_file, and the create_docx/pptx/xlsx/pdf document
+    tools) so "no workspace connected" behaves identically no matter which
+    tool the model happens to call.
+
+    Per explicit user feedback, saving a file NEVER asks "where?" and never
+    forces connecting a workspace. The flow is:
+    - destination_path present (the model resolved it from the user's own
+      words, e.g. "in Downloads" -> ~/Downloads/report.docx): use it.
+    - No destination but a workspace is connected: `path` is resolved
+      workspace-relative, validated against escaping the workspace root.
+    - Neither: default to ~/Documents/<filename> — the approval card shows
+      the full path and is the single human gate; the model's reply tells
+      the user where the file went.
+
+    Returns ("workspace", full_path) or ("absolute", destination_path) on
+    success. On failure returns the string to return directly from the
+    executor: a [WS_WORKSPACE_PROMPT] sentinel (path escaping a connected
+    workspace) or a plain "Error: ..." string.
+    """
+    destination_path = tool_input.get("destination_path")
+    if destination_path:
+        raw = os.path.expanduser(str(destination_path))
+        if not os.path.isabs(raw):
+            return "Error: destination_path must be an absolute path (~ is allowed)."
+        return "absolute", os.path.realpath(raw)
+
+    ws = get_workspace_path()
+    if ws:
+        path = tool_input.get("path", "")
+        if not path:
+            return "Error: path is required."
+        full = os.path.join(ws, path)
+        if not _ws_validate_path(full, ws):
+            return _workspace_prompt_payload(tool_name, tool_input, "outside_workspace")
+        return "workspace", full
+
+    filename = os.path.basename(str(tool_input.get("path") or "")) or "document"
+    return "absolute", os.path.join(os.path.expanduser("~/Documents"), filename)
+
+
+def load_save_locations() -> list[str]:
+    """Directories written to via the one-shot save_file flow. Small, capped
+    list — never 'connected' or 'indexed' — that lets a file saved this way
+    stay clickable/revealable via /open-with and /reveal afterward without
+    the heavyweight persistent-workspace machinery."""
+    try:
+        with open(SAVE_LOCATIONS_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def record_save_location(path: str) -> None:
+    """Record `path` (a directory) as a recent save_file destination. Same
+    insert-front/dedupe/cap-at-10 pattern as save_recent_workspace, in its
+    own small JSON file so it never mixes with the persistent-workspace
+    recents list."""
+    saved = load_save_locations()
+    if path in saved:
+        saved.remove(path)
+    saved.insert(0, path)
+    saved = saved[:10]
+    os.makedirs(os.path.dirname(SAVE_LOCATIONS_PATH), exist_ok=True)
+    with open(SAVE_LOCATIONS_PATH, "w") as f:
+        json.dump(saved, f, indent=2)
 
 
 def connect_workspace(path: str) -> str:

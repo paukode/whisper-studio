@@ -10,6 +10,7 @@ import json
 
 from server.workspace import executors
 from server.workspace.executors import (
+    _exec_ws_create_file,
     _exec_ws_edit_file,
     _is_read_only_command,
     _normalize_quotes,
@@ -129,3 +130,70 @@ def test_edit_file_exact_match_omits_normalization_flag(tmp_path, monkeypatch):
     out = _exec_ws_edit_file({"path": "note.txt", "old_string": "hi", "new_string": "bye"}, [], [])
     payload = _parse_ws_approval(out)
     assert "matched_via_normalization" not in payload
+
+
+# ── ws_create_file: shared resolve_write_destination behavior ─────────────
+#
+# Regression coverage: ws_create_file used to force the full workspace-connect
+# prompt whenever no workspace was connected, even for a single new file — and
+# an intermediate design paused to ASK the user where to save. Per explicit
+# user feedback it now never asks: the destination comes from the user's own
+# words (destination_path) or defaults to ~/Documents, the content is staged
+# in the app sandbox immediately, and the approval card (which shows the full
+# path) is the single human gate.
+
+
+def _parse_ws_prompt(output: str) -> dict:
+    assert output.startswith("[WS_WORKSPACE_PROMPT]"), output
+    return json.loads(output[len("[WS_WORKSPACE_PROMPT]") :])
+
+
+def test_create_file_no_workspace_defaults_to_documents_and_stages(monkeypatch):
+    import os
+
+    from server.workspace.paths import is_staged_path
+
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
+    out = _exec_ws_create_file({"path": "notes.txt", "content": "hello"}, [], [])
+    payload = _parse_ws_approval(out)
+    assert payload["action"] == "save_to_path"
+    assert payload["path"] == os.path.expanduser("~/Documents/notes.txt")
+    assert is_staged_path(payload["staged_path"])
+    with open(payload["staged_path"], "rb") as f:
+        assert f.read() == b"hello"
+
+
+def test_create_file_with_destination_path_writes_via_save_to_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "server.workspace.state.get_workspace_path",
+        lambda: (_ for _ in ()).throw(AssertionError("must not check workspace")),
+    )
+    import os
+
+    dest = str(tmp_path / "notes.txt")
+    out = _exec_ws_create_file(
+        {"path": "notes.txt", "content": "hello", "destination_path": dest}, [], []
+    )
+    payload = _parse_ws_approval(out)
+    assert payload["action"] == "save_to_path"
+    assert payload["path"] == os.path.realpath(dest)
+    with open(payload["staged_path"], "rb") as f:
+        assert f.read() == b"hello"
+
+
+def test_create_file_with_workspace_connected_behaves_as_before(tmp_path, monkeypatch):
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
+    out = _exec_ws_create_file({"path": "notes.txt", "content": "hello"}, [], [])
+    payload = _parse_ws_approval(out)
+    assert payload["action"] == "create"
+    assert payload["path"] == "notes.txt"
+    assert payload["content"] == "hello"
+
+
+def test_create_file_outside_workspace_still_emits_full_prompt(tmp_path, monkeypatch):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(ws))
+    out = _exec_ws_create_file({"path": "../outside.txt", "content": "x"}, [], [])
+    payload = _parse_ws_prompt(out)
+    assert payload["reason"] == "outside_workspace"

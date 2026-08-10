@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, put } from '@/api/client';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useSaveToast } from '@/hooks/useSaveToast';
+import { ExpandableText } from './ExpandableText';
 
 interface FlagState {
   enabled: boolean;
@@ -67,7 +68,7 @@ export const FeatureFlagsPanel: React.FC = () => {
                     <span className="model-retention-badge" style={{ textTransform: 'none' }}>overridden</span>
                   )}
                 </div>
-                <div className="settings-item-desc">{f.description}</div>
+                <ExpandableText className="settings-item-desc" text={f.description} />
               </div>
               <div className="settings-item-actions">
                 <label className="toggle-switch" title={f.enabled ? 'On' : 'Off'}>

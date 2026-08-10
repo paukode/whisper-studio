@@ -184,7 +184,7 @@ def test_resolve_type_globs_uses_resolved_rg_path(monkeypatch):
 
 def test_agent_registers_and_emits_resolved_model(monkeypatch):
     import server.agents.tools as agent_tools
-    import server.chat as chat
+    import server.chat.tool_pool as tool_pool
     import server.workspace as workspace
     from server.agents.event_bus import event_bus
     from server.agents.registry import agent_registry
@@ -201,7 +201,7 @@ def test_agent_registers_and_emits_resolved_model(monkeypatch):
     monkeypatch.setattr(event_bus, "publish", lambda ch, ev: events.append(ev))
 
     # Stub the heavy loop dependencies so no real tools/bedrock are needed.
-    monkeypatch.setattr(chat, "assemble_tool_pool", lambda **k: [])
+    monkeypatch.setattr(tool_pool, "assemble_partitioned_pool", lambda **k: ([], [], 0))
     monkeypatch.setattr(workspace, "get_workspace_path", lambda: "")
     monkeypatch.setattr(agent_tools, "get_agent_runtime_tools", lambda *a, **k: [])
 

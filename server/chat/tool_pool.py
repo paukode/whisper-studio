@@ -21,6 +21,7 @@ import os
 from server.agent_tools import AGENT_TOOLS
 from server.ask_user import ALL_TOOLS as ASK_USER_TOOLS
 from server.cron_scheduler import CRON_TOOLS
+from server.documents.tools import DOCUMENT_TOOLS
 from server.executors import is_concurrent_safe as _executor_concurrent_safe
 from server.executors.result_cache import RESULT_CACHE_TOOLS
 from server.executors.tools import CORE_EXECUTOR_TOOLS
@@ -184,6 +185,11 @@ def assemble_full_catalog(
         # answer that with a folder picker and the turn resumes against the
         # folder the user chose. See get_workspace_write_tools.
         builtin_tools += get_workspace_write_tools()
+    # Document-creation tools (create_docx/pptx/xlsx/pdf) follow the same
+    # contract as the write tools above: advertised with or without a
+    # connected workspace, since each executor answers "no workspace" with
+    # its own folder-picker prompt rather than an error.
+    builtin_tools += DOCUMENT_TOOLS
     builtin_tools += RESULT_CACHE_TOOLS
     builtin_tools += TASK_TOOLS
     from server.tasks.tools import BACKGROUND_TASK_TOOLS

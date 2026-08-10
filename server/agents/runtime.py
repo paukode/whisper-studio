@@ -445,7 +445,9 @@ async def _run_agent_loop(
     system, unchanged. _resolve_agent_model's local:* guard is untouched.
     """
     from server.attachment_store import load_session_attachments
-    from server.chat import assemble_tool_pool
+    from server.chat.tool_activation import activate_from_history
+    from server.chat.tool_index import build_deferred_index
+    from server.chat.tool_pool import assemble_partitioned_pool
     from server.workspace import get_workspace_path
 
     loop = asyncio.get_event_loop()
@@ -495,12 +497,22 @@ async def _run_agent_loop(
 
     messages = [{"role": "user", "content": user_content}]
 
-    # Build the filtered tool pool ONCE for the whole run — identical logic
-    # to the pre-migration loop (assemble_tool_pool + agent-runtime tools +
-    # filter_tools_for_agent + final dedup) — and hand it to the engine as a
-    # precomputed TurnContext.tool_catalog instead of letting it reassemble a
-    # chat-shaped catalog every round.
-    all_tools = assemble_tool_pool(plan_mode=False, ws_connected=bool(ws_path))
+    # Progressive tool disclosure: re-derive this session's activations from
+    # visible history first (self-healing across restarts, exactly like
+    # server/chat/routes.py), then build the filtered tool pool ONCE for the
+    # whole run — identical logic to the pre-migration loop (assemble_tool_pool
+    # + agent-runtime tools + filter_tools_for_agent + final dedup), just fed
+    # from the core+activated set instead of the full catalog — and hand it to
+    # the engine as a precomputed TurnContext.tool_catalog instead of letting
+    # it reassemble a chat-shaped catalog every round. Everything deferred is
+    # folded into a compact index appended to the system prompt below.
+    activate_from_history(session_id, messages)
+    all_tools, _deferred, _core_count = assemble_partitioned_pool(
+        plan_mode=False, ws_connected=bool(ws_path), session_id=session_id
+    )
+    deferred_tool_index = build_deferred_index(_deferred)
+    if deferred_tool_index:
+        system += "\n\n" + deferred_tool_index
 
     from server.agents.tools import get_agent_runtime_tools
 
