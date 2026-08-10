@@ -2543,22 +2543,19 @@ input.segment-speaker {
 }
 .settings-item-actions .btn-sm { padding: 3px 8px; font-size: var(--fs-caption); }
 
-/* Plugins panel: intro copy + template viewer.
-   The intro used the undefined .settings-empty class, so the multi-line
-   paragraph rendered as a dense block. These rules give it a comfortable
-   reading measure and break the facts into a scannable list. */
-.plugins-panel .settings-panel-header {
-    /* .settings-panel-header has no base layout rule anywhere, so its
-       <h3> and button-row div were just stacking as plain block
-       siblings with whatever margin the h3 happened to carry — the
-       margin-bottom below only pushed the whole header away from the
-       intro paragraph, it never created space *inside* the header.
-       Put title and buttons on one row instead, matching
-       .models-panel-header's established pattern. */
+/* Base rule for the shared .settings-panel-header hook (title + optional
+   action buttons) — used by every settings panel that has one (Plugins,
+   Import project, and any future one), not just the panel that happened to
+   get patched first. It previously had NO layout rule at all, so a title
+   and a button row (or a lone title before an intro paragraph) just
+   stacked as plain block siblings with whatever margin the <h3> happened
+   to carry, reading as cramped regardless of which panel it was in.
+   Matches .models-panel-header's established row layout. */
+.settings-panel-header {
     display: flex; align-items: center; justify-content: space-between;
     gap: 12px; margin: 0 0 12px;
 }
-.plugins-panel .settings-panel-header h3 {
+.settings-panel-header h3 {
     margin: 0; font-size: var(--fs-title); font-weight: 600;
     color: var(--text-primary); letter-spacing: -0.2px;
 }
@@ -2674,7 +2671,15 @@ input.segment-speaker {
     font-size: var(--fs-small); padding: 8px 10px; border-radius: 6px; outline: none;
 }
 .settings-input:focus { border-color: var(--accent); }
-.settings-hint { font-size: var(--fs-caption); color: var(--text-muted); display: block; margin-top: 2px; }
+/* Used both as a block-level intro paragraph (Feature Flags, Hooks,
+   Permissions, Workflows, Model mode — nothing below it had breathing room
+   since this had no margin-bottom) and as an inline aside next to a label
+   (cron run stats, save-status text). The inline call sites already set
+   their own margin (0, or a left offset) via inline style, which wins over
+   this base rule in the cascade — so this margin-bottom only takes effect
+   where nothing more specific overrides it, i.e. exactly the intro-paragraph
+   case that needs it. */
+.settings-hint { font-size: var(--fs-caption); color: var(--text-muted); display: block; margin: 2px 0 12px; }
 /* A button placed directly under an input/select needs breathing room so it
    doesn't collide with the field's border (e.g. Permissions "Save Mode"). */
 .settings-form .settings-input + .btn { margin-top: 12px; }
