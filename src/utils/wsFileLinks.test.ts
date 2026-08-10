@@ -42,6 +42,17 @@ describe('parseWsFileHref', () => {
     expect(parseWsFileHref('https://example.com')).toBeNull();
     expect(parseWsFileHref('#other=1')).toBeNull();
   });
+
+  it('parses a created-file link (server.index.citations.created_file_link)', () => {
+    expect(parseWsFileHref('#wsfile=/w/report.md&open=os')).toEqual({
+      path: '/w/report.md',
+      openMode: 'os',
+    });
+  });
+
+  it('ignores &open= for anything other than the exact os marker', () => {
+    expect(parseWsFileHref('#wsfile=/w/a.md&open=dock')).toEqual({ path: '/w/a.md' });
+  });
 });
 
 describe('citation link survives marked + DOMPurify', () => {
@@ -51,5 +62,13 @@ describe('citation link survives marked + DOMPurify', () => {
     div.innerHTML = html;
     const href = div.querySelector('a')?.getAttribute('href') ?? '';
     expect(parseWsFileHref(href)).toEqual({ path: '/w/a.md', startLine: 3, endLine: 9 });
+  });
+
+  it('keeps a created-file link with the &open=os param and parses back', () => {
+    const html = renderMarkdownSafe('[report.md](#wsfile=/w/report.md&open=os)');
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    const href = div.querySelector('a')?.getAttribute('href') ?? '';
+    expect(parseWsFileHref(href)).toEqual({ path: '/w/report.md', openMode: 'os' });
   });
 });

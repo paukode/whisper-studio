@@ -45,7 +45,16 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
         workspace._atomic_write_text(full, content)
     except Exception as e:
         return ApprovalOutcome(ok=False, error=f"Write failed: {e}")
-    return ApprovalOutcome(ok=True, output=f"Wrote {path} ({len(content)} bytes)")
+    from server.index.citations import created_file_link
+
+    link = created_file_link(path, full)
+    return ApprovalOutcome(
+        ok=True,
+        output=(
+            f"Wrote {path} ({len(content)} bytes). "
+            f"To reference this file for the user, copy this link verbatim: {link}"
+        ),
+    )
 
 
 async def _do_delete(payload: dict) -> ApprovalOutcome:

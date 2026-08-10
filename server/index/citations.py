@@ -26,3 +26,14 @@ def citation_link(display_path: str, start: int, end: int, href_path: str) -> st
     reader sees (kept relative); ``href_path`` is the target the client opens
     (absolute, so it resolves regardless of which workspace is connected)."""
     return f"[{display_path}:{start}-{end}](#wsfile={quote(href_path)}&L={start}-{end})"
+
+
+def created_file_link(display_path: str, href_path: str) -> str:
+    """Build a ``#wsfile`` link for a file the assistant just wrote/created —
+    same fragment scheme as a citation, but with no ``&L=`` line range (there's
+    no specific range to jump to) and an explicit ``&open=os`` marker. The
+    client treats that marker as "open with the OS default app", the way a
+    Finder double-click would, rather than the in-app dock viewer citations
+    use — a just-created deliverable is meant to be read/used outside the
+    app, not inspected in place."""
+    return f"[{display_path}](#wsfile={quote(href_path)}&open=os)"

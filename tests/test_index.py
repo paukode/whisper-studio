@@ -1852,6 +1852,21 @@ def test_citation_link_encoding():
     )
 
 
+def test_created_file_link_encoding():
+    from server.index.citations import created_file_link
+
+    # No &L= (there's no line range for a freshly written file) and an
+    # explicit &open=os marker instead, so the client opens it with the OS
+    # default app rather than the in-app dock a citation would use.
+    assert (
+        created_file_link("report.md", "/w/report.md")
+        == "[report.md](#wsfile=/w/report.md&open=os)"
+    )
+    assert created_file_link("a & b.md", "/w/a & b.md") == (
+        "[a & b.md](#wsfile=/w/a%20%26%20b.md&open=os)"
+    )
+
+
 def test_textless_file_recorded_then_skipped(tmp_path, monkeypatch, _stub_models):
     """A file that extracts to nothing (failed OCR) must be recorded with 0 chunks
     so the next build skips it instead of re-OCR'ing it forever."""
