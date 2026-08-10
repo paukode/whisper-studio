@@ -50,7 +50,9 @@ def test_ws_approval_sentinel_is_executed_not_left_as_coroutine(monkeypatch):
     # its Bedrock client independently of the chat route's — patch its OWN
     # binding, matching how tests/golden_harness.run_chat_turn does it.
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_bedrock)
-    monkeypatch.setattr("server.chat.assemble_tool_pool", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "server.chat.tool_pool.assemble_partitioned_pool", lambda *a, **k: ([], [], 0)
+    )
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
     # The router hands back the approval sentinel (auto-mode gated tool)...
     route_tool = AsyncMock(return_value=(sentinel, []))

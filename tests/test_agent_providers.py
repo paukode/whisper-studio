@@ -218,7 +218,9 @@ def test_run_agent_structured_schema_end_to_end(monkeypatch):
         ]
     )
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr("server.chat.assemble_tool_pool", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "server.chat.tool_pool.assemble_partitioned_pool", lambda *a, **k: ([], [], 0)
+    )
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
 
     fake_old = _FakeBedrock(

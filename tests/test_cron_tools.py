@@ -73,7 +73,8 @@ def _run_cron_job(
 
     monkeypatch.setattr(C, "load_cron_jobs", lambda: [job])
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr(TP, "assemble_tool_pool", lambda **k: tools or [])
+    _tools = tools or []
+    monkeypatch.setattr(TP, "assemble_partitioned_pool", lambda **k: (_tools, [], len(_tools)))
     monkeypatch.setattr(WS, "get_workspace_path", lambda: "")
     monkeypatch.setattr(R, "append_rules", lambda s: s)
     monkeypatch.setattr(H, "start_run", lambda *a, **k: None)

@@ -155,8 +155,11 @@ async def _execute_cron_prompt(job_id: str) -> None:
     # on an early failure.
     notifications: list[str] = []
     try:
-        from server.chat.tool_pool import assemble_tool_pool
+        from server.chat.tool_activation import activate_from_history
+        from server.chat.tool_index import build_deferred_index
+        from server.chat.tool_pool import assemble_partitioned_pool
         from server.infrastructure.config import load_config
+        from server.infrastructure.sessions import visible_chat_history
         from server.local.runtime import is_local_model_id
         from server.workspace import get_workspace_path
 
@@ -215,14 +218,26 @@ async def _execute_cron_prompt(job_id: str) -> None:
         except (TypeError, ValueError):
             pass
 
-        # Give the scheduled run the same tool pool an interactive chat turn
-        # gets, built ONCE for the whole run (mirrors agents/runtime.py).
-        pool = assemble_tool_pool(
+        # The turn's only user message, built here (rather than down by
+        # ctx = TurnContext(...)) so it's already in scope for
+        # activate_from_history below; reused verbatim for the TurnContext.
+        messages = [{"role": "user", "content": job["prompt"]}]
+
+        # Progressive tool disclosure: re-derive this session's activations
+        # from visible history first (self-healing across restarts, exactly
+        # like server/chat/routes.py), then assemble the same core+activated
+        # pool an interactive chat turn gets, built ONCE for the whole run
+        # (mirrors agents/runtime.py). Everything else is deferred into a
+        # compact index folded into the system prompt below.
+        activate_from_history(session_id, visible_chat_history(messages))
+        advertised, deferred, _core_count = assemble_partitioned_pool(
             plan_mode=False,
             ws_connected=bool(get_workspace_path()),
             suppress_workspace_search=False,
+            session_id=session_id,
         )
-        cron_tools = _assemble_cron_tools(pool)
+        deferred_tool_index = build_deferred_index(deferred)
+        cron_tools = _assemble_cron_tools(advertised)
 
         def _tool_catalog() -> tuple[list[dict], int | None]:
             return cron_tools, None
@@ -241,6 +256,8 @@ async def _execute_cron_prompt(job_id: str) -> None:
             "MCP, when enabled) for web research, AWS reads via aws_boto3, and "
             "workspace tools when a folder is open. Use whatever the task needs."
         )
+        if deferred_tool_index:
+            system += "\n\n" + deferred_tool_index
 
         from server.infrastructure.feature_flags import is_enabled as _ff_enabled
 
@@ -299,8 +316,6 @@ async def _execute_cron_prompt(job_id: str) -> None:
         from server.chat.engine.runner import TurnContext, run_turn
         from server.goals.cron_verify import MAX_CONTINUATIONS
         from server.goals.cron_verify import verify as _cron_verify
-
-        messages = [{"role": "user", "content": job["prompt"]}]
 
         ctx = TurnContext(
             session_id=session_id,
