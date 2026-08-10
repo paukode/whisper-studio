@@ -5018,20 +5018,38 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     cursor: pointer;
 }
 
-/* Sticky footer with the bulk actions, above the resize handle. */
+/* The select-mode action row: replaces search+Import+Select inside
+   .session-toolbar (same row, same position — right above the list — not a
+   separate bar elsewhere), so the select-all checkbox, Import, Export, and
+   Delete are always in one place regardless of mode. Wraps onto a second
+   line at the default (narrow) sidebar width instead of overflowing —
+   checkbox+count don't grow, so the action buttons consistently wrap
+   together as one group rather than splitting mid-button. */
 .session-select-bar {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    border-top: 1px solid var(--border);
-    background: var(--bg-surface);
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-1);
+    width: 100%;
+}
+.session-select-all-checkbox {
+    margin: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
     flex-shrink: 0;
 }
 .session-select-count {
-    flex: 1;
     font-size: var(--fs-caption);
     color: var(--text-muted);
+    white-space: nowrap;
+}
+/* Groups Import/Export/Delete/Done so they wrap onto their own line
+   together (as one flex item) instead of breaking mid-group. */
+.session-select-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-left: auto;
 }
 .session-select-delete:not(:disabled) {
     color: var(--danger, #e5484d);

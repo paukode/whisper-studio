@@ -53,12 +53,18 @@ export interface SessionState {
   switchSession: (id: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
   bulkDeleteSessions: (ids: string[]) => Promise<void>;
+  /** Sidebar multi-select 'Export': zip many sessions' portable JSONL
+   *  exports into one download. */
+  bulkExportSessions: (ids: string[]) => Promise<void>;
   setSessionFlags: (id: string, flags: { pinned?: boolean; archived?: boolean }) => void;
   branchSession: (id: string) => Promise<void>;
   /** Create a brand-new session from an exported JSONL file (see
    *  exportSessionUrl/branchSession — same idea, but the source is a
    *  user-picked file instead of an existing session id). */
   importSession: (file: File) => Promise<void>;
+  /** Same as importSession, but for many files (or a bulk-export .zip) at
+   *  once, picked together from the sidebar's Import file input. */
+  importSessions: (files: File[]) => Promise<void>;
   updateSessionTitle: (id: string, title: string, custom: boolean) => void;
   /** Persist one session's full state (chat + transcript from its own
    *  runtime stores). Returns the underlying update promise so callers
@@ -337,6 +343,24 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
     }
   },
 
+  // Sidebar multi-select 'Export': one zip download, no local state change
+  // (unlike delete, nothing about the existing sessions needs to update).
+  bulkExportSessions: async (ids: string[]) => {
+    if (ids.length === 0) return;
+    try {
+      const { blob, filename } = await sessionsApi.bulkExportSessions(ids);
+      const { downloadFile } = await import('@/utils/downloadFile');
+      downloadFile(blob, filename, 'application/zip');
+    } catch (err) {
+      console.warn('Failed to bulk-export sessions:', err);
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to export sessions',
+        duration: 4000,
+      });
+    }
+  },
+
   // Pin/archive toggles. Optimistic: the sidebar regroups instantly and the
   // PATCH lands in the background; failure rolls nothing back (next
   // loadSessions resyncs) but does surface a toast.
@@ -393,6 +417,51 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
       useUIStore.getState().addToast({
         type: 'error',
         message: err instanceof Error ? err.message : 'Failed to import session',
+        duration: 4000,
+      });
+    }
+  },
+
+  importSessions: async (files: File[]) => {
+    if (files.length === 0) return;
+    try {
+      const res = await sessionsApi.importSessions(files);
+      await get().loadSessions();
+      const last = res.imported[res.imported.length - 1];
+      if (last) await get().switchSession(last.new_session_id);
+
+      if (res.imported.length > 0 && res.failed.length === 0) {
+        useUIStore.getState().addToast({
+          type: 'success',
+          message:
+            res.imported.length === 1
+              ? `Imported "${res.imported[0].title}"`
+              : `Imported ${res.imported.length} sessions`,
+          duration: 2500,
+        });
+      } else if (res.imported.length > 0 && res.failed.length > 0) {
+        useUIStore.getState().addToast({
+          type: 'error',
+          message: `Imported ${res.imported.length}, ${res.failed.length} failed (${res.failed
+            .map((f) => f.filename)
+            .join(', ')})`,
+          duration: 5000,
+        });
+      } else {
+        useUIStore.getState().addToast({
+          type: 'error',
+          message:
+            res.failed.length === 1
+              ? `Import failed: ${res.failed[0].error}`
+              : `All ${res.failed.length} imports failed`,
+          duration: 4000,
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to import sessions:', err);
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to import sessions',
         duration: 4000,
       });
     }

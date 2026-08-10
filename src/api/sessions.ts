@@ -83,6 +83,41 @@ export function importSession(file: File): Promise<{ new_session_id: string; tit
   });
 }
 
+export interface BulkImportResult {
+  imported: { new_session_id: string; title: string; filename: string }[];
+  failed: { filename: string; error: string }[];
+}
+
+/** Create many new sessions from multiple files in one request — each file
+ *  is either a plain .jsonl export or a .zip bundle (as produced by
+ *  bulkExportSessions) whose .jsonl entries are imported individually. */
+export function importSessions(files: File[]): Promise<BulkImportResult> {
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  return fetch('/api/sessions/bulk-import', { method: 'POST', body: fd }).then(async (resp) => {
+    if (!resp.ok) throw new Error(await readImportError(resp));
+    return resp.json() as Promise<BulkImportResult>;
+  });
+}
+
+/** Zip many sessions' portable JSONL exports into one download (sidebar
+ *  multi-select 'Export'). POST (not a plain URL like exportSessionUrl)
+ *  since the id list needs to go in a body; fetched as a blob and handed to
+ *  downloadFile() rather than downloadUrl(), mirroring the other export
+ *  formats that build content client-side. */
+export async function bulkExportSessions(ids: string[]): Promise<{ blob: Blob; filename: string }> {
+  const resp = await fetch('/api/sessions/bulk-export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (!resp.ok) throw new Error(await readImportError(resp));
+  const disposition = resp.headers.get('Content-Disposition') || '';
+  const match = /filename="([^"]+)"/.exec(disposition);
+  const filename = match?.[1] || `sessions-export-${new Date().toISOString().slice(0, 10)}.zip`;
+  return { blob: await resp.blob(), filename };
+}
+
 export type WorkspaceApp = 'vscode' | 'kiro' | 'finder';
 
 export function openSessionWorkspace(id: string, app: WorkspaceApp): Promise<{ ok: boolean }> {

@@ -14,8 +14,8 @@ import os
 import re
 from datetime import datetime, timezone
 
-from fastapi import Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import File, Request, UploadFile
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from server.infrastructure import sessions as _s
 from server.infrastructure.sessions import (
@@ -355,19 +355,12 @@ def _export_slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-") or "session"
 
 
-@router.get("/api/sessions/{session_id}/export")
-async def export_session(session_id: str):
-    """Stream a session as a portable JSONL artifact: one export_meta line,
-    then one line per transcript segment, then one line per chat_history
-    message — the same content /branch copies into a forked session, just
-    serialized for a bug report or external backup instead of a DB row.
-
-    Round-trips through POST /api/sessions/import-transcript.
-    """
-    with _get_conn() as conn:
-        row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
-    if not row:
-        return JSONResponse(status_code=404, content={"error": "not found"})
+def _session_export_lines(session_id: str, row) -> tuple[str, list[str]]:
+    """Build one session's export as (title, jsonl lines) — one export_meta
+    line, then one per transcript segment, then one per chat_history message.
+    Shared by the single-session streaming export and the bulk zip export so
+    both produce byte-identical per-session content."""
+    from server.utils import ndjson_dumps
 
     try:
         segments = json.loads(row["segments"]) or []
@@ -383,28 +376,98 @@ async def export_session(session_id: str):
         speaker_names = {}
     title = row["title"]
 
-    def stream():
-        from server.utils import ndjson_dumps
+    lines = [
+        ndjson_dumps(
+            {
+                "type": "export_meta",
+                "session_id": session_id,
+                "title": title,
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "speaker_names": speaker_names,
+            }
+        )
+    ]
+    lines += [ndjson_dumps({"type": "segment", **seg}) for seg in segments if isinstance(seg, dict)]
+    lines += [
+        ndjson_dumps({"type": "message", **msg}) for msg in chat_history if isinstance(msg, dict)
+    ]
+    return title, lines
 
-        meta = {
-            "type": "export_meta",
-            "session_id": session_id,
-            "title": title,
-            "exported_at": datetime.now(timezone.utc).isoformat(),
-            "speaker_names": speaker_names,
-        }
-        yield ndjson_dumps(meta) + "\n"
-        for seg in segments:
-            if isinstance(seg, dict):
-                yield ndjson_dumps({"type": "segment", **seg}) + "\n"
-        for msg in chat_history:
-            if isinstance(msg, dict):
-                yield ndjson_dumps({"type": "message", **msg}) + "\n"
+
+@router.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str):
+    """Stream a session as a portable JSONL artifact: one export_meta line,
+    then one line per transcript segment, then one line per chat_history
+    message — the same content /branch copies into a forked session, just
+    serialized for a bug report or external backup instead of a DB row.
+
+    Round-trips through POST /api/sessions/import-transcript.
+    """
+    with _get_conn() as conn:
+        row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    if not row:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+
+    title, lines = _session_export_lines(session_id, row)
+
+    def stream():
+        for line in lines:
+            yield line + "\n"
 
     filename = f"session-export-{_export_slug(title)}.jsonl"
     return StreamingResponse(
         stream(),
         media_type="application/x-ndjson",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/api/sessions/bulk-export")
+async def bulk_export_sessions(request: Request):
+    """Zip many sessions' portable JSONL exports into one download (sidebar
+    multi-select 'Export'). Mirrors bulk-delete's id-list contract (JSON
+    body, string list, 500 cap, de-dup preserving order); unknown ids are
+    skipped rather than failing the whole batch, since the selection was
+    made from a list snapshot that could have changed underneath it.
+
+    Round-trips through POST /api/sessions/bulk-import: each entry is a
+    plain single-session export, byte-identical to what GET .../export
+    produces for that session.
+    """
+    import io
+    import zipfile
+
+    body = await request.json()
+    ids = body.get("ids")
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
+        return JSONResponse({"error": "ids must be a list of strings"}, status_code=400)
+    if len(ids) > 500:
+        return JSONResponse({"error": "too many ids (max 500)"}, status_code=400)
+
+    buf = io.BytesIO()
+    used_names: set[str] = set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf, _get_conn() as conn:
+        for session_id in dict.fromkeys(ids):
+            row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            if not row:
+                continue
+            title, lines = _session_export_lines(session_id, row)
+            slug = _export_slug(title)
+            name = f"{slug}.jsonl"
+            n = 2
+            while name in used_names:  # de-dupe same-titled sessions within one zip
+                name = f"{slug}-{n}.jsonl"
+                n += 1
+            used_names.add(name)
+            zf.writestr(name, "\n".join(lines) + "\n")
+
+    if not used_names:
+        return JSONResponse({"error": "no matching sessions"}, status_code=404)
+
+    filename = f"sessions-export-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.zip"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
@@ -459,8 +522,6 @@ async def import_session(request: Request):
     instead of declaring a typed ``UploadFile`` parameter so the same route
     can take either shape.
     """
-    import uuid
-
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("multipart/form-data"):
         form = await request.form()
@@ -480,6 +541,17 @@ async def import_session(request: Request):
         title, segments, chat_history, speaker_names = _parse_session_export(raw)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+
+    new_id = _insert_imported_session(title, segments, chat_history, speaker_names)
+    return {"new_session_id": new_id, "title": title}
+
+
+def _insert_imported_session(
+    title: str, segments: list, chat_history: list, speaker_names: dict
+) -> str:
+    """Insert one new session row from parsed export data, returning its id.
+    Shared by the single-file and bulk import routes."""
+    import uuid
 
     new_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -501,7 +573,68 @@ async def import_session(request: Request):
                 json.dumps(speaker_names),
             ),
         )
-    return {"new_session_id": new_id, "title": title}
+    return new_id
+
+
+@router.post("/api/sessions/bulk-import")
+async def bulk_import_sessions(files: list[UploadFile] = File(...)):
+    """Create many new sessions from multiple uploaded files in one request
+    (sidebar 'Import', multi-file picker). Each file is either a plain
+    .jsonl export (imported directly) or a .zip bundle — as produced by
+    POST /api/sessions/bulk-export, detected by content rather than
+    filename so a renamed file still works — whose .jsonl entries are each
+    imported individually. Mirrors the skills local-folder importer's
+    list[UploadFile] convention (server/skills_routes.py) rather than the
+    single-file route's content-type branching, since a browser file input
+    with multiple files always posts multipart.
+    """
+    import io
+    import zipfile
+
+    MAX_FILES = 200
+    imported: list[dict] = []
+    failed: list[dict] = []
+    count = 0
+
+    def _import_one(name: str, raw_bytes: bytes) -> None:
+        nonlocal count
+        count += 1
+        if count > MAX_FILES:
+            failed.append({"filename": name, "error": f"too many files (> {MAX_FILES})"})
+            return
+        raw = raw_bytes.decode("utf-8", errors="replace")
+        if not raw.strip():
+            failed.append({"filename": name, "error": "empty file"})
+            return
+        try:
+            title, segments, chat_history, speaker_names = _parse_session_export(raw)
+        except ValueError as e:
+            failed.append({"filename": name, "error": str(e)})
+            return
+        new_id = _insert_imported_session(title, segments, chat_history, speaker_names)
+        imported.append({"new_session_id": new_id, "title": title, "filename": name})
+
+    for f in files or []:
+        name = f.filename or "upload"
+        data = await f.read()
+        if zipfile.is_zipfile(io.BytesIO(data)):
+            try:
+                with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                    entries = [
+                        e
+                        for e in zf.infolist()
+                        if not e.is_dir() and e.filename.lower().endswith(".jsonl")
+                    ]
+                    if not entries:
+                        failed.append({"filename": name, "error": "zip has no .jsonl entries"})
+                    for entry in entries:
+                        _import_one(entry.filename, zf.read(entry))
+            except zipfile.BadZipFile:
+                failed.append({"filename": name, "error": "corrupt zip file"})
+        else:
+            _import_one(name, data)
+
+    return {"imported": imported, "failed": failed}
 
 
 @router.get("/api/sessions/{session_id}/events")
