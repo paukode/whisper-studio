@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>The ultracode workflow runtime - Whisper Studio Docs</title>
-  <meta name="description" content="Ultracode: the model authors a deterministic JS orchestration script that a locked-down Node vm harness runs detached, proxying agent() over JSON-RPC into Python with concurrency limits, USD budgets, a resumable journal, and upfront phase-preview approval - on both Claude and GPT-on-Bedrock.">
+  <meta name="description" content="Ultracode: the model authors a deterministic JS orchestration script that a locked-down Node vm harness runs detached, proxying agent() over JSON-RPC into Python with concurrency limits, output-token budgets, a resumable journal, and upfront phase-preview approval - on both Claude and GPT-on-Bedrock.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M11 10l-5 6 5 6'/%3E%3Cpath d='M21 10l5 6-5 6'/%3E%3Cpath d='M17 8l-2 16'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -89,7 +89,7 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
         <tr><td><code>phase(title)</code></td><td>Start a new phase; subsequent <code>agent()</code> calls group under it in the progress display.</td></tr>
         <tr><td><code>log(msg)</code></td><td>Emit a progress line shown above the run's progress tree.</td></tr>
         <tr><td><code>workflow(name, args?)</code></td><td>Run another saved workflow inline as a sub-step (one level of nesting; shares the parent's caps and budget).</td></tr>
-        <tr><td><code>budget</code></td><td><code>{ total, spent(), remaining() }</code> - the run's USD target, for dynamic loops (<code>while (budget.remaining() &gt; 50_000) …</code>).</td></tr>
+        <tr><td><code>budget</code></td><td><code>{ total, spent(), remaining() }</code> - the run's output-token budget, for dynamic loops (<code>while (budget.remaining() &gt; 50_000) …</code>).</td></tr>
         <tr><td><code>args</code></td><td>The JSON value passed into the run, verbatim - the way a saved workflow is parameterized.</td></tr>
       </tbody>
     </table></div>
@@ -131,16 +131,21 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
         rest queue.</p></li>
       <li><h4>A 1000-agent lifetime cap</h4><p>A runaway-loop backstop. The cap is checked before dispatch;
         exceeding it raises an <code>AgentCap</code> error into the script and marks <code>cap_reached</code>.</p></li>
-      <li><h4>A USD budget</h4><p>Optional per-run ceiling. Cost accrues when an agent <em>completes</em>, so
-        the budget is re-checked after acquiring a slot as well as before dispatch - that bounds a
-        parallel burst's overshoot to the concurrency window instead of the whole cap.</p></li>
+      <li><h4>An output-token budget</h4><p>A hard per-run ceiling on agent <em>output</em> tokens - the
+        work measure a user can read off any provider's pricing page. Every run gets one; a launch that
+        sets none gets the 600,000-token default (<code>DEFAULT_WORKFLOW_BUDGET_TOKENS</code>). Tokens
+        accrue when an agent <em>completes</em>, so the budget is re-checked after acquiring a slot as
+        well as before dispatch - that bounds a parallel burst's overshoot to the concurrency window
+        instead of the whole cap.</p></li>
       <li><h4>A resumable journal</h4><p>Every phase and agent call is appended to the run's journal; the
         resume cache is built from it (see below).</p></li>
     </ol>
-    <p>Cost is priced per agent against the model that actually ran (a per-agent <code>opts.model</code>
-      override is billed at that model's rate), and rolls up into the run's ledger and the session cost
-      log. A nested <code>workflow()</code> inherits the parent's <em>remaining</em> budget and merges its
-      spend, agents, and cap back into the parent, so nested work can never exceed the outer cap.</p>
+    <p>USD cost is still priced per agent against the model that actually ran (a per-agent
+      <code>opts.model</code> override is billed at that model's rate) and rolls up into the run's ledger
+      and the session cost log, but it is display only - enforcement is the token counter, which also
+      bounds free local-model runs a dollar cap would never touch. A nested <code>workflow()</code>
+      inherits the parent's <em>remaining</em> budget and merges its spend, agents, and cap back into the
+      parent, so nested work can never exceed the outer cap.</p>
 
     <h2 id="bridge">The Node harness to Python bridge</h2>
     <p>The script and the runtime speak line-delimited JSON-RPC over the child's stdio, framed by
@@ -189,10 +194,22 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
     <h2 id="approval">Approval and trust</h2>
     <p>A brand-new inline script, or a saved workflow that has not been approved, returns a
       <code>workflow_preview</code> side-effect rather than running. <code>WorkflowPreviewCard</code> shows
-      the phases as a stepper and the whole script; approving POSTs to <code>/api/workflows/runs</code> and
-      the run begins. A saved workflow only launches immediately once you have approved it (its trust is
-      revoked automatically if the script is later edited), and a resume replays a run you already
-      approved. This preview-then-approve gate is the same mechanism the CI autofix below reuses.</p>
+      the phases as a stepper, the whole script, and the run's output-token budget; approving POSTs to
+      <code>/api/workflows/runs</code> and the run begins. The card also carries an <b>Always allow this
+      workflow</b> checkbox: approving with it checked saves the script under its (slugified) meta name
+      with its hash recorded as trusted - the same state the Settings &rsaquo; Workflows trust toggle
+      writes - so future runs by name skip the card. Trust is revoked automatically if the saved script
+      is later edited, and a resume replays a run you already approved. This preview-then-approve gate is
+      the same mechanism the CI autofix below reuses.</p>
+    <p>Whether a new script shows the card at all is decided by the <b>workflow</b> row under
+      Settings &rsaquo; Permissions &rsaquo; Per-Category Defaults
+      (<code class="path">server/workflows/launch_policy.py</code> reads the <code>category_modes</code>
+      entry, falling back to the global permission mode): <code>bypassPermissions</code> launches with no
+      card, <code>auto</code> launches runs budgeted within the 600,000-token default and cards anything
+      bigger, <code>dontAsk</code> declines the launch, and every other mode asks as before. Trusted saved
+      workflows and resumes never consult this gate, and no mode loosens the runtime's server-side limits
+      above - the concurrency semaphore, the agent cap, the token budget, and the vm jail apply
+      regardless.</p>
 
     <h2 id="ci-autofix">CI watch and PR autofix: ultracode applied</h2>
     <p>The clearest use of the runtime is the CI loop in <code class="path">server/ci/</code>. After you push,
@@ -224,10 +241,11 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
     <h2 id="key-files">Key files</h2>
     <div class="spec">
       <dt><code class="path">server/workflows/harness/</code></dt><dd><code>harness.mjs</code> (parse + run modes), <code>guards.mjs</code> (determinism guards), <code>api.mjs</code> (the script hooks).</dd>
-      <dt><code class="path">server/workflows/runtime.py</code></dt><dd><code>WorkflowRun</code>: the JSON-RPC server, the semaphore, the agent cap, the USD budget, and the ledger.</dd>
+      <dt><code class="path">server/workflows/runtime.py</code></dt><dd><code>WorkflowRun</code>: the JSON-RPC server, the semaphore, the agent cap, the output-token budget, and the ledger.</dd>
       <dt><code class="path">server/workflows/rpc.py</code> · <code class="path">agent_adapter.py</code></dt><dd>ndjson JSON-RPC framing; the <code>agent()</code>-to-<code>run_agent</code> seam.</dd>
       <dt><code class="path">server/workflows/manager.py</code> · <code class="path">journal.py</code> · <code class="path">store.py</code></dt><dd>Lifecycle + the <code>workflow_runs</code> row; the resumable journal; saved-workflow trust.</dd>
-      <dt><code class="path">server/workflows/tools.py</code> · <code class="path">routes.py</code></dt><dd><code>workflow_run/status/save/list</code>; <code>/api/workflows</code> launch, status, stop, and the per-run SSE stream.</dd>
+      <dt><code class="path">server/workflows/tools.py</code> · <code class="path">routes.py</code></dt><dd><code>workflow_run/status/save/list</code>; <code>/api/workflows</code> launch (including the card's trust checkbox), status, stop, and the per-run SSE stream.</dd>
+      <dt><code class="path">server/workflows/launch_policy.py</code></dt><dd>The category-mode gate for new-script launches: resolves the <code>workflow</code> entry in <code>category_modes</code> to launch, ask, or decline.</dd>
       <dt><code class="path">server/prompts/ultracode.py</code></dt><dd>The script-authoring directive injected in the ultracode tier.</dd>
       <dt><code class="path">server/ci/</code></dt><dd>The CI watch + autofix loop that generates and runs workflows.</dd>
       <dt><code class="path">src/stores/workflowStore.ts</code> · <code class="path">components/chat/WorkflowPreviewCard.tsx</code> · <code class="path">WorkflowRunCard.tsx</code></dt><dd>The approval preview, the live run card, and the run store.</dd>
