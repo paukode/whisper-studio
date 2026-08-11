@@ -64,8 +64,8 @@ export function makeApi(rpcCall, notify, meta, args) {
     return rpcCall("workflow", { name, args: wfArgs ?? null });
   }
 
-  // budget.total is the turn target (or null); spent()/remaining() are live RPC
-  // reads of the run ledger.
+  // budget.total is the run's output-token cap (default 600k, set server-side);
+  // spent()/remaining() are live RPC reads of the run's output-token ledger.
   const budgetTotal = args?.__budget_total__ ?? null;
   const budget = {
     total: budgetTotal,

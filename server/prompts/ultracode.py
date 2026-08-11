@@ -64,7 +64,8 @@ return { fixed: results.filter(Boolean).length, verdicts };
 - `phase(name)` — mark the current phase (must be one of meta.phases).
 - `log(...args)` — progress line to the user.
 - `args` — the frozen value you passed as workflow_run's `args`.
-- `budget` — `{total, spent(), remaining()}`; spent()/remaining() are async.
+- `budget` — `{total, spent(), remaining()}` in agent OUTPUT tokens;
+  spent()/remaining() are async.
 - `workflow(name, args)` — run a SAVED workflow one level deep.
 
 ### Rules
@@ -73,8 +74,9 @@ return { fixed: results.filter(Boolean).length, verdicts };
   no timers — they throw. Derive everything from agent() results (this makes a
   resume replay identically at zero cost).
 - Concurrency is throttled server-side (16). Fire as many promises as you like;
-  the server gates them. Caps: 1000 agents/run and any USD budget you set reject
-  with catchable errors (`AgentCapError`, `BudgetExceededError`).
+  the server gates them. Caps: 1000 agents/run and the output-token budget
+  (600000 by default; override with workflow_run's `budget_tokens`) reject with
+  catchable errors (`AgentCapError`, `BudgetExceededError`).
 - Write each agent prompt as a self-contained brief — the agent sees NONE of this
   conversation: restate the objective, give scope/inputs/constraints, and the
   exact output shape.
@@ -91,9 +93,12 @@ return { fixed: results.filter(Boolean).length, verdicts };
 ### Approval & saving
 
 A NEW script is shown to the user for approval before it runs (you'll get a
-"ready for approval" result — don't wait, continue or end the turn). Save a
-reusable workflow with `workflow_save({name, script})`; run a trusted saved one
-by `workflow_run({name, args})`.
+"ready for approval" result — don't wait, continue or end the turn). If the
+user's workflow permission mode auto-approves it, the result carries
+`auto_approved: true` and a run_id instead. Save a reusable workflow with
+`workflow_save({name, script})`; run a trusted saved one by
+`workflow_run({name, args})` (the user can trust a workflow from the approval
+card itself or in Settings > Workflows).
 """
 
 

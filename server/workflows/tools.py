@@ -20,7 +20,8 @@ import os
 
 from server.workflows import manager, store
 from server.workflows.journal import run_dir
-from server.workflows.runtime import parse_workflow
+from server.workflows.launch_policy import launch_decision
+from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS, parse_workflow
 
 log = logging.getLogger("whisper-studio")
 
@@ -30,10 +31,12 @@ WORKFLOW_TOOLS: list[dict] = [
         "description": (
             "Launch a deterministic multi-agent workflow you author as a JS orchestration "
             "script (see the ultracode directive for the script contract). A new script is "
-            "shown to the user for approval before it runs; a trusted saved workflow (by "
-            "`name`) or a `resume_from_run_id` launches immediately. Runs detached from this "
-            "turn — poll workflow_status for progress. Use for comprehensive, parallel, or "
-            "adversarially-verified work; answer directly for simple tasks."
+            "shown to the user for approval before it runs (or auto-launches when the "
+            "user's workflow permission mode allows it within budget); a trusted saved "
+            "workflow (by `name`) or a `resume_from_run_id` launches immediately. Runs "
+            "detached from this turn — poll workflow_status for progress. Use for "
+            "comprehensive, parallel, or adversarially-verified work; answer directly for "
+            "simple tasks."
         ),
         "input_schema": {
             "type": "object",
@@ -47,9 +50,12 @@ WORKFLOW_TOOLS: list[dict] = [
                     "description": "Run a saved workflow by name instead of an inline script.",
                 },
                 "args": {"description": "JSON value passed to the script as the global `args`."},
-                "budget_usd": {
-                    "type": "number",
-                    "description": "Optional hard USD cap for the run's agent spend.",
+                "budget_tokens": {
+                    "type": "integer",
+                    "description": (
+                        "Hard cap on the run's total agent OUTPUT tokens "
+                        "(default 600000 when omitted)."
+                    ),
                 },
                 "resume_from_run_id": {
                     "type": "string",
@@ -99,7 +105,7 @@ def _model_key_for(model_id: str) -> str:
 
 
 def _preview(
-    script: str, meta: dict, budget_usd, *, name: str | None, args, model_id: str = ""
+    script: str, meta: dict, budget_tokens, *, name: str | None, args, model_id: str = ""
 ) -> tuple[str, list]:
     phases = meta.get("phases", [])
     side = {
@@ -108,7 +114,7 @@ def _preview(
             "name": name or meta.get("name", ""),
             "description": meta.get("description", ""),
             "phases": phases,
-            "budget_usd": budget_usd,
+            "budget_tokens": budget_tokens,
             "args": args,
             # Carry the session's model so the approval launch uses it (not the
             # config default).
@@ -127,11 +133,11 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
     script = (tool_input.get("script") or "").strip()
     name = (tool_input.get("name") or "").strip()
     args = tool_input.get("args")
-    budget_usd = tool_input.get("budget_usd")
+    budget_tokens = tool_input.get("budget_tokens")
     resume_from = (tool_input.get("resume_from_run_id") or "").strip()
     model_key = _model_key_for(model_id)
 
-    def _launch(src, *, wf_name, phases, resume=""):
+    def _launch(src, *, wf_name, phases, resume="", auto=False):
         rid = manager.start_run(
             src,
             args=args,
@@ -139,14 +145,27 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
             model_key=model_key,
             model_id=model_id,
             effort_label=effort_label,
-            budget_usd=budget_usd,
+            budget_tokens=budget_tokens,
             phases=phases,
             name=wf_name,
             resume_from=resume,
         )
-        return json.dumps({"run_id": rid, "status": "running", "name": wf_name}), [
+        body = {"run_id": rid, "status": "running", "name": wf_name}
+        if auto:
+            # Launched with no card because the user's "workflow" category
+            # mode auto-approves within the token threshold.
+            body["auto_approved"] = True
+        return json.dumps(body), [
             {"workflow_started": {"run_id": rid, "name": wf_name, "resumed_from": resume}}
         ]
+
+    def _denied() -> tuple[str, list]:
+        return (
+            "Workflow launches are disabled by the current permission settings "
+            "(workflow category mode dontAsk). Not started. The user can change "
+            "this in Settings > Permissions.",
+            [],
+        )
 
     if resume_from:
         prior = manager.get_run(resume_from)
@@ -163,9 +182,20 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
         # when the re-issued (prompt, opts) match, and those depend on args.
         if args is None:
             args = prior.get("args")
+        # Same for the budget: cached replays cost zero tokens, so the original
+        # cap is the right default for the remainder of the run.
+        if budget_tokens is None:
+            budget_tokens = prior.get("budget_tokens")
+        if budget_tokens is None:
+            budget_tokens = DEFAULT_WORKFLOW_BUDGET_TOKENS
         return _launch(
             src, wf_name=prior.get("name", ""), phases=prior.get("phases", []), resume=resume_from
         )
+
+    # Resolve the default before preview/launch so the approval card and the
+    # run row always carry the real, enforced number.
+    if budget_tokens is None:
+        budget_tokens = DEFAULT_WORKFLOW_BUDGET_TOKENS
 
     if name and not script:
         loaded = store.load_script(name)
@@ -173,8 +203,15 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
             return f"No saved workflow named '{name}'.", []
         meta = {"name": name, **(loaded["meta"] or {})}
         if not loaded["trusted"]:
+            decision = launch_decision(budget_tokens)
+            if decision == "deny":
+                return _denied()
+            if decision == "auto":
+                return _launch(
+                    loaded["script"], wf_name=name, phases=meta.get("phases", []), auto=True
+                )
             return _preview(
-                loaded["script"], meta, budget_usd, name=name, args=args, model_id=model_id
+                loaded["script"], meta, budget_tokens, name=name, args=args, model_id=model_id
             )
         return _launch(loaded["script"], wf_name=name, phases=meta.get("phases", []))
 
@@ -184,7 +221,14 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
         meta = await asyncio.to_thread(parse_workflow, script)  # spawns node; keep off the loop
     except ValueError as e:
         return f"Workflow script error: {e}", []
-    return _preview(script, meta, budget_usd, name=None, args=args, model_id=model_id)
+    decision = launch_decision(budget_tokens)
+    if decision == "deny":
+        return _denied()
+    if decision == "auto":
+        return _launch(
+            script, wf_name=meta.get("name", ""), phases=meta.get("phases", []), auto=True
+        )
+    return _preview(script, meta, budget_tokens, name=None, args=args, model_id=model_id)
 
 
 def execute_workflow_status(tool_input, session_id) -> str:
@@ -234,8 +278,8 @@ async def execute_workflow_save(tool_input) -> str:
     store.save_script(name, script, meta, trusted=False)
     return (
         f"Saved workflow '{name}' ({len(meta.get('phases', []))} phases). Running it by name "
-        "re-shows the approval preview card each time until the user trusts it in "
-        "Settings > Workflows."
+        "re-shows the approval preview card each time until the user trusts it, either in "
+        "Settings > Workflows or via the card's 'Always allow this workflow' checkbox."
     )
 
 

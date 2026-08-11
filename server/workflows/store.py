@@ -28,6 +28,13 @@ def valid_name(name: str) -> bool:
     return bool(name) and bool(_NAME_RE.match(name))
 
 
+def slugify(name: str) -> str:
+    """Best-effort valid_name slug from a free-form meta.name ("Docs refresh!"
+    -> "docs-refresh"). Returns "" when nothing usable survives."""
+    s = re.sub(r"[^a-z0-9_-]+", "-", (name or "").lower()).strip("-_")[:64]
+    return s if valid_name(s) else ""
+
+
 def _dir(name: str) -> str:
     return os.path.join(scripts_root(), name)
 

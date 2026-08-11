@@ -72,7 +72,7 @@ export const SSEEventDataSchema = z.object({
     name: z.string().optional(),
     description: z.string().optional(),
     phases: z.array(z.unknown()).optional(),
-    budget_usd: z.number().nullable().optional(),
+    budget_tokens: z.number().nullable().optional(),
     args: z.unknown().optional(),
   }).optional(),
   workflow_started: z.object({

@@ -99,20 +99,16 @@ def test_agent_cap_enforced(monkeypatch):
     assert out["cap_reached"] is True
 
 
-def test_budget_enforced(monkeypatch):
-    import server.costs.tracker as T
-
-    monkeypatch.setattr(T, "estimate_cost", lambda *a, **k: 5.0)  # $5 per agent
-
+def test_budget_enforced():
     async def fake_agent(prompt, opts):
         return {
             "text": "ok",
-            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "usage": {"input_tokens": 1, "output_tokens": 5},
             "status": "completed",
         }
 
-    # budget $8: first agent ($5) runs, second is rejected (cost 5 >= 8? no —
-    # 5 < 8 so it runs too → 10; third rejected). Assert it stops.
+    # budget 8 output tokens: first agent (5) runs, second runs too (5 < 8,
+    # total 10), third is rejected (10 >= 8). Assert it stops.
     src = (
         "export const meta = { name: 'x', description: 'y', phases: [] }\n"
         "let n = 0;\n"
@@ -120,11 +116,11 @@ def test_budget_enforced(monkeypatch):
         "catch (e) { return { n, err: e.type }; }\n"
         "return { n, err: false };\n"
     )
-    run = _mk(src, agent_runner=fake_agent, budget_usd=8.0, model_key="sonnet")
+    run = _mk(src, agent_runner=fake_agent, budget_tokens=8, model_key="sonnet")
     out = _run(run.run())
     assert out["status"] == "done"
     assert out["result"]["err"] == "BudgetExceededError"
-    assert out["result"]["n"] == 2  # two ran (cost 10), third over budget
+    assert out["result"]["n"] == 2  # two ran (10 tokens), third over budget
 
 
 def test_resume_cache_replays_without_running(monkeypatch):

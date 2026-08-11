@@ -57,13 +57,23 @@ async def get_run(run_id: str):
 
 @router.post("/runs")
 async def launch_run(request: Request):
-    """Launch a run from the approval card (new script) or by saved name."""
+    """Launch a run from the approval card (new script) or by saved name.
+
+    ``trust: true`` is the card's "Always allow this workflow" checkbox: the
+    approved script is saved under its (slugified) name with its hash recorded
+    as trusted — the same state Settings > Workflows' trust toggle writes, so
+    future runs by name skip the card until the script changes."""
     body = await request.json()
     script = (body.get("script") or "").strip()
     name = (body.get("name") or "").strip()
+    trust = bool(body.get("trust"))
     session_id = body.get("session_id", "")
     args = body.get("args")
-    budget_usd = body.get("budget_usd")
+    budget_tokens = body.get("budget_tokens")
+    if budget_tokens is None:
+        from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS
+
+        budget_tokens = DEFAULT_WORKFLOW_BUDGET_TOKENS
     # Honor the session's model (passed through the approval card); fall back to
     # the configured default only when the caller didn't supply one.
     model_id = (body.get("model_id") or "").strip()
@@ -92,17 +102,24 @@ async def launch_run(request: Request):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
+    trusted_as = None
+    if trust:
+        slug = store.slugify(name or str(meta.get("name") or ""))
+        if slug:
+            store.save_script(slug, script, meta, trusted=True)
+            trusted_as = slug
+
     run_id = manager.start_run(
         script,
         args=args,
         session_id=session_id,
         model_key=model_key,
         model_id=model_id,
-        budget_usd=budget_usd,
+        budget_tokens=budget_tokens,
         phases=meta.get("phases", []),
         name=name or meta.get("name", ""),
     )
-    return {"run_id": run_id, "status": "running"}
+    return {"run_id": run_id, "status": "running", "trusted_as": trusted_as}
 
 
 @router.post("/runs/{run_id}/stop")

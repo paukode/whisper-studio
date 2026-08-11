@@ -424,7 +424,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               if (plan.script) {
                 chat.addMessage({
                   role: 'assistant', content: '', timestamp: new Date().toISOString(),
-                  toolUse: [{ toolId: 'workflow_preview', toolName: 'workflow_preview', input: { script: plan.script, name: 'ci-autofix', description: plan.summary, phases: [{ title: 'Fix' }, { title: 'Verify' }], budget_usd: plan.budget_usd ?? null, model_id: modelId }, status: 'complete' }],
+                  toolUse: [{ toolId: 'workflow_preview', toolName: 'workflow_preview', input: { script: plan.script, name: 'ci-autofix', description: plan.summary, phases: [{ title: 'Fix' }, { title: 'Verify' }], budget_tokens: plan.budget_tokens ?? null, model_id: modelId }, status: 'complete' }],
                 });
               } else {
                 addToast({ type: 'info', message: plan.summary, duration: 4000 });

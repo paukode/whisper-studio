@@ -137,7 +137,7 @@ async def execute_ci_autofix(tool_input, session_id, model_id) -> tuple[str, lis
             "name": "ci-autofix",
             "description": plan["summary"],
             "phases": [{"title": "Fix"}, {"title": "Verify"}],
-            "budget_usd": plan.get("budget_usd"),
+            "budget_tokens": plan.get("budget_tokens"),
             "args": None,
             "model_id": model_id,
         }

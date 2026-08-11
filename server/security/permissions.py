@@ -23,7 +23,9 @@ category_modes (optional, in permissions.json):
   {"write": "acceptEdits", "cli": "default", ...} — per-category override of
   the global mode above, keyed by the ApprovalSpec categories declared in
   server/approval/bootstrap.py (write, delete, cli, worktree, preview,
-  github, github-destructive, ...). A category with no entry (including a
+  github, github-destructive, ...) plus the policy-only "workflow" category
+  (new workflow-script launches; resolved by
+  server/workflows/launch_policy.py). A category with no entry (including a
   legacy permissions.json with no "category_modes" key at all) falls back
   to the global mode. The one exception is "github-destructive", which
   always asks no matter what a category mode says — see
@@ -363,7 +365,13 @@ async def get_permissions():
     # "categories" is computed from the live ApprovalSpec registry, not
     # persisted — it just tells the frontend which category_modes rows to
     # render (server/approval/bootstrap.py is the source of truth).
-    return {**data, "categories": all_categories()}
+    categories = all_categories()
+    # "workflow" is a policy-only category: new workflow-script launches
+    # consult it via server/workflows/launch_policy.py instead of the
+    # ApprovalSpec registry, but users configure it like any other row.
+    if "workflow" not in categories:
+        categories.append("workflow")
+    return {**data, "categories": categories}
 
 
 @router.put("")

@@ -33,7 +33,7 @@ export interface CIAutofixPlan {
   findings: Array<Record<string, unknown>>;
   script: string | null;
   summary: string;
-  budget_usd?: number | null;
+  budget_tokens?: number | null;
 }
 
 export const ciStatus = (branch?: string) =>

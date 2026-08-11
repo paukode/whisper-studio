@@ -30,7 +30,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             tokens_in       INTEGER NOT NULL DEFAULT 0,
             tokens_out      INTEGER NOT NULL DEFAULT 0,
             cost_usd        REAL NOT NULL DEFAULT 0,
-            budget_usd      REAL,
+            budget_tokens   INTEGER,
             cap_reached     INTEGER NOT NULL DEFAULT 0,
             error           TEXT NOT NULL DEFAULT '',
             result_json     TEXT NOT NULL DEFAULT 'null',
