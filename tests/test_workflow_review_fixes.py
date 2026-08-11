@@ -105,14 +105,14 @@ def test_per_agent_model_costed_separately(monkeypatch):
 
 # ── HIGH: parallel budget overshoot bounded by concurrency, not the agent cap ──
 @needs_harness
-def test_parallel_budget_overshoot_bounded(monkeypatch):
-    # cost accrues on COMPLETION, so a burst of parallel dispatches all clear the
-    # pre-dispatch budget check at cost≈0. The post-slot re-check must stop the
-    # bleed well before the 1000-agent cap. With a $1 budget and $1/agent, only a
-    # concurrency-window's worth may overshoot — nowhere near 200.
-    import server.costs.tracker as T
-
-    monkeypatch.setattr(T, "estimate_cost", lambda *a, **k: 1.0)
+def test_parallel_budget_overshoot_bounded():
+    # tokens accrue on COMPLETION, so a burst of parallel dispatches all clear
+    # the pre-dispatch budget check at spend≈0. The post-slot re-check must stop
+    # the bleed well before the 1000-agent cap. With a 1-token budget and 1
+    # output token per agent, only a concurrency-window's worth may overshoot —
+    # nowhere near 200.
+    async def one_token_agent(prompt, opts):
+        return {"text": "ok", "usage": {"output_tokens": 1}, "status": "completed"}
 
     src = (
         "export const meta = { name: 'x', description: 'y', phases: [] }\n"
@@ -120,10 +120,12 @@ def test_parallel_budget_overshoot_bounded(monkeypatch):
         "agent('a'+i).then(()=>1).catch(()=>0)));\n"
         "return r.reduce((s,x)=>s+x,0);\n"  # how many actually ran
     )
-    run = _mk(src, agent_runner=_noop_agent, budget_usd=1.0, model_key="sonnet")
+    run = _mk(src, agent_runner=one_token_agent, budget_tokens=1, model_key="sonnet")
     out = _run(run.run())
     assert out["status"] == "done"
-    assert out["result"] < 50, f"overshoot unbounded: {out['result']} agents ran on a $1 budget"
+    assert out["result"] < 50, (
+        f"overshoot unbounded: {out['result']} agents ran on a 1-token budget"
+    )
 
 
 # ── HIGH: nested run spend/agents/cap fold into the parent ledger ──────────────

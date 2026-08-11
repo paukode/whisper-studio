@@ -5,7 +5,7 @@ Responsibilities:
   - spawn the Node harness (scrubbed env, own process group, 10MB line limit)
   - pump ndjson JSON-RPC: dispatch each ``agent`` request as its own task so
     parallel()/pipeline() get real concurrency, gated by a semaphore(16)
-  - enforce the 1000-agent lifetime cap and the USD budget BEFORE dispatch
+  - enforce the 1000-agent lifetime cap and the token budget BEFORE dispatch
   - consult the resume cache (instant, zero-cost hits) then run live via the
     injected agent runner (WS-C adapter in production, a fake in tests)
   - accumulate the token/cost ledger; journal every call; publish live events
@@ -26,6 +26,11 @@ log = logging.getLogger("whisper-studio")
 
 WORKFLOW_MAX_CONCURRENCY = 16
 WORKFLOW_MAX_AGENTS = 1000
+# Every run gets a hard budget in agent OUTPUT tokens (the work measure —
+# input is dominated by cheap cache reads, and output is the number a user
+# can read off any provider's pricing page). Callers that set no budget get
+# this default; None is only possible for pre-migration rows.
+DEFAULT_WORKFLOW_BUDGET_TOKENS = 600_000
 _LINE_LIMIT = 10 * 1024 * 1024
 
 _HARNESS = os.path.join(os.path.dirname(__file__), "harness", "harness.mjs")
@@ -107,7 +112,7 @@ class WorkflowRun:
         model_id: str = "",
         model_key: str = "",
         effort_label: str | None = None,
-        budget_usd: float | None = None,
+        budget_tokens: int | None = None,
         depth: int = 0,
         journal: Journal | None = None,
         resume_cache: dict | None = None,
@@ -122,7 +127,7 @@ class WorkflowRun:
         self.model_id = model_id
         self.model_key = model_key or "sonnet"
         self.effort_label = effort_label
-        self.budget_usd = budget_usd
+        self.budget_tokens = budget_tokens
         self.depth = depth
         self.journal = journal or Journal(run_id)
         self.resume_cache = resume_cache or {}
@@ -177,7 +182,7 @@ class WorkflowRun:
                     "mode": "run",
                     "source": self.source,
                     "run_id": self.run_id,
-                    "args": {"value": self.args, "__budget_total__": self.budget_usd},
+                    "args": {"value": self.args, "__budget_total__": self.budget_tokens},
                 },
             )
         )
@@ -255,7 +260,7 @@ class WorkflowRun:
             if method == "agent":
                 await self._handle_agent(mid, params)
             elif method == "budget_spent":
-                await self._respond(mid, {"spent": self.cost_usd})
+                await self._respond(mid, {"spent": self.tokens_out})
             elif method == "workflow":
                 await self._handle_nested(mid, params)
             else:
@@ -276,9 +281,9 @@ class WorkflowRun:
             return await self._error(
                 mid, rpc.ERR_AGENT_CAP, f"agent cap {WORKFLOW_MAX_AGENTS} reached"
             )
-        if self.budget_usd is not None and self.cost_usd >= self.budget_usd:
+        if self.budget_tokens is not None and self.tokens_out >= self.budget_tokens:
             return await self._error(
-                mid, rpc.ERR_BUDGET, f"budget ${self.budget_usd:.2f} exhausted"
+                mid, rpc.ERR_BUDGET, f"budget {self.budget_tokens} output tokens exhausted"
             )
 
         self.agents_spawned += 1
@@ -310,15 +315,15 @@ class WorkflowRun:
         async with self._sem:
             if self._cancelled:
                 return await self._error(mid, rpc.ERR_CANCELLED, "run cancelled")
-            # Re-check the budget AFTER acquiring a slot: cost accrues only when
+            # Re-check the budget AFTER acquiring a slot: tokens accrue only when
             # agents COMPLETE, so a burst of parallel() dispatches all pass the
-            # pre-dispatch check at cost≈0. The semaphore serializes them to 16
-            # at a time, and this re-check sees the cost accrued by earlier
+            # pre-dispatch check at spend≈0. The semaphore serializes them to 16
+            # at a time, and this re-check sees the tokens accrued by earlier
             # completions — bounding overshoot to the concurrency limit instead
             # of the whole 1000-agent cap.
-            if self.budget_usd is not None and self.cost_usd >= self.budget_usd:
+            if self.budget_tokens is not None and self.tokens_out >= self.budget_tokens:
                 return await self._error(
-                    mid, rpc.ERR_BUDGET, f"budget ${self.budget_usd:.2f} exhausted"
+                    mid, rpc.ERR_BUDGET, f"budget {self.budget_tokens} output tokens exhausted"
                 )
             self._emit(
                 {

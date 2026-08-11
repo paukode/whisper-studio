@@ -113,7 +113,7 @@ def test_plan_budget_is_bounded(monkeypatch):
         lambda *a, **k: [{"check": "J", "category": "test", "summary": "s", "suggested_fix": "f"}],
     )
     plan = autofix.plan_autofix(run, "/repo")
-    assert plan["budget_usd"] == autofix.AUTOFIX_BUDGET_USD and plan["budget_usd"] > 0
+    assert plan["budget_tokens"] == autofix.AUTOFIX_BUDGET_TOKENS and plan["budget_tokens"] > 0
 
 
 if __name__ == "__main__":

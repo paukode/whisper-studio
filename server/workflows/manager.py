@@ -65,7 +65,7 @@ def start_run(
     model_key: str = "",
     model_id: str = "",
     effort_label: str | None = None,
-    budget_usd: float | None = None,
+    budget_tokens: int | None = None,
     phases: list | None = None,
     name: str = "",
     resume_from: str = "",
@@ -73,6 +73,13 @@ def start_run(
 ) -> str:
     """Register + launch a run detached; returns its run_id immediately."""
     from server.infrastructure.async_tasks import spawn
+    from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS
+
+    # Every run is budgeted: entry points resolve the default early so the
+    # approval card shows the real number, but enforce it here too so no
+    # caller can launch uncapped by omission.
+    if budget_tokens is None:
+        budget_tokens = DEFAULT_WORKFLOW_BUDGET_TOKENS
 
     run_id = uuid.uuid4().hex[:12]
 
@@ -86,7 +93,7 @@ def start_run(
         _ensure_table(conn)
         conn.execute(
             "INSERT INTO workflow_runs (run_id, name, session_id, status, phases_json, "
-            "args_json, model_key, budget_usd, resumed_from, started_at) "
+            "args_json, model_key, budget_tokens, resumed_from, started_at) "
             "VALUES (?,?,?,?,?,?,?,?,?,?)",
             (
                 run_id,
@@ -96,7 +103,7 @@ def start_run(
                 json.dumps(phases or []),
                 json.dumps(args),
                 model_key,
-                budget_usd,
+                budget_tokens,
                 resume_from,
                 _now(),
             ),
@@ -114,7 +121,7 @@ def start_run(
         model_id=model_id,
         model_key=model_key,
         effort_label=effort_label,
-        budget_usd=budget_usd,
+        budget_tokens=budget_tokens,
         resume_cache=resume_cache,
         journal=journal,
         agent_runner=agent_runner,
@@ -172,8 +179,8 @@ def _make_nested_runner(session_id, model_key, model_id, effort_label):
         # Depth-1 child inherits the parent's REMAINING budget so nested spend
         # can't exceed the parent's cap; its usage is merged back into the parent.
         child_budget = None
-        if parent.budget_usd is not None:
-            child_budget = max(0.0, parent.budget_usd - parent.cost_usd)
+        if parent.budget_tokens is not None:
+            child_budget = max(0, parent.budget_tokens - parent.tokens_out)
         child_id = uuid.uuid4().hex[:12]
         # Give the nested run its own row so it is queryable and its journal dir
         # isn't an orphan; namespace the name under the parent.
@@ -181,7 +188,7 @@ def _make_nested_runner(session_id, model_key, model_id, effort_label):
             _ensure_table(conn)
             conn.execute(
                 "INSERT INTO workflow_runs (run_id, name, session_id, status, model_key, "
-                "budget_usd, resumed_from, started_at) VALUES (?,?,?,?,?,?,?,?)",
+                "budget_tokens, resumed_from, started_at) VALUES (?,?,?,?,?,?,?,?)",
                 (
                     child_id,
                     f"{parent.run_id}/{name}",
@@ -201,7 +208,7 @@ def _make_nested_runner(session_id, model_key, model_id, effort_label):
             model_id=model_id,
             model_key=model_key,
             effort_label=effort_label,
-            budget_usd=child_budget,
+            budget_tokens=child_budget,
             depth=1,
         )
         outcome = await child.run()

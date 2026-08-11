@@ -120,7 +120,7 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
             name: 'ci-autofix',
             description: plan.summary,
             phases: [{ title: 'Fix' }, { title: 'Verify' }],
-            budget_usd: plan.budget_usd ?? null,
+            budget_tokens: plan.budget_tokens ?? null,
             model_id: modelId,
           },
           status: 'complete',

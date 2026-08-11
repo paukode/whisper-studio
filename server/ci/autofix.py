@@ -18,9 +18,9 @@ from server.ci import diagnose, provider
 
 log = logging.getLogger("whisper-studio")
 
-# A generous-but-bounded default spend ceiling for an approved autofix run so it
+# A generous-but-bounded output-token ceiling for an approved autofix run so it
 # can't loop uncapped; the fix+verify workflow is only ~2 agents deep.
-AUTOFIX_BUDGET_USD = 10.0
+AUTOFIX_BUDGET_TOKENS = 200_000
 
 
 def build_autofix_script(branch: str, findings: list[dict]) -> str:
@@ -93,6 +93,6 @@ def plan_autofix(run: dict, cwd: str, *, session_id: str = "") -> dict:
         "findings": findings,
         "script": script,
         "summary": summary,
-        # A bounded spend ceiling for the approved fix run (None when nothing to fix).
-        "budget_usd": AUTOFIX_BUDGET_USD if script else None,
+        # A bounded token ceiling for the approved fix run (None when nothing to fix).
+        "budget_tokens": AUTOFIX_BUDGET_TOKENS if script else None,
     }

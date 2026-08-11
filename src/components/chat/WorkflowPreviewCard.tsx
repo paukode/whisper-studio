@@ -15,7 +15,7 @@ interface Preview {
   name?: string;
   description?: string;
   phases?: unknown[];
-  budget_usd?: number | null;
+  budget_tokens?: number | null;
   args?: unknown;
   model_id?: string;
 }
@@ -77,7 +77,7 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
         script: preview.script,
         session_id: sessionId,
         args: preview.args,
-        budget_usd: preview.budget_usd ?? null,
+        budget_tokens: preview.budget_tokens ?? null,
         model_id: preview.model_id,
       });
       setRunId(r.run_id);
@@ -111,8 +111,8 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
         {showScript ? '▾ Hide script' : '▸ Show script'}
       </button>
       {showScript && <pre className="workflow-script"><code>{preview.script}</code></pre>}
-      {preview.budget_usd != null && (
-        <div className="workflow-card-meta">Budget cap: ${preview.budget_usd}</div>
+      {preview.budget_tokens != null && (
+        <div className="workflow-card-meta">Budget cap: {preview.budget_tokens.toLocaleString()} output tokens</div>
       )}
 
       {state === 'idle' && (

@@ -21,7 +21,7 @@ export interface WorkflowRun {
 
 export const getRun = (runId: string) => get<WorkflowRun>(`/api/workflows/runs/${encodeURIComponent(runId)}`);
 
-export const launchRun = (body: { script?: string; name?: string; session_id: string; args?: unknown; budget_usd?: number | null; model_id?: string }) =>
+export const launchRun = (body: { script?: string; name?: string; session_id: string; args?: unknown; budget_tokens?: number | null; model_id?: string }) =>
   post<{ run_id: string; status: string }>('/api/workflows/runs', body);
 
 export const stopRun = (runId: string) => post<{ stopped: boolean }>(`/api/workflows/runs/${encodeURIComponent(runId)}/stop`, {});

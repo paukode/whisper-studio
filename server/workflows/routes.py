@@ -63,7 +63,11 @@ async def launch_run(request: Request):
     name = (body.get("name") or "").strip()
     session_id = body.get("session_id", "")
     args = body.get("args")
-    budget_usd = body.get("budget_usd")
+    budget_tokens = body.get("budget_tokens")
+    if budget_tokens is None:
+        from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS
+
+        budget_tokens = DEFAULT_WORKFLOW_BUDGET_TOKENS
     # Honor the session's model (passed through the approval card); fall back to
     # the configured default only when the caller didn't supply one.
     model_id = (body.get("model_id") or "").strip()
@@ -98,7 +102,7 @@ async def launch_run(request: Request):
         session_id=session_id,
         model_key=model_key,
         model_id=model_id,
-        budget_usd=budget_usd,
+        budget_tokens=budget_tokens,
         phases=meta.get("phases", []),
         name=name or meta.get("name", ""),
     )
