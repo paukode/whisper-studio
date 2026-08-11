@@ -375,8 +375,9 @@
           <td>ultracode</td>
           <td>Whisper Studio's top reasoning mode: the model authors a deterministic JavaScript workflow
             script that a Node-24 vm harness runs detached over stdio JSON-RPC into Python, on both Claude
-            and GPT-on-Bedrock, with 16-way agent concurrency, a 1000-agent lifetime cap, USD budgets, a
-            resumable journal, and upfront phase-preview approval of every new script. It is also the
+            and GPT-on-Bedrock, with 16-way agent concurrency, a 1000-agent lifetime cap, output-token
+            budgets (600,000 by default), a resumable journal, and upfront phase-preview approval of
+            every new script. It is also the
             highest <code>/effort</code> level. See <a href="arch-ultracode.html">The ultracode workflow
             runtime</a>.</td>
         </tr>
@@ -415,7 +416,7 @@
         <tr>
           <td>workflow runtime</td>
           <td>The subsystem behind ultracode (<code class="path">server/workflows/</code>): a
-            <code>WorkflowRun</code> that enforces the concurrency semaphore, USD budget, and resume; the
+            <code>WorkflowRun</code> that enforces the concurrency semaphore, output-token budget, and resume; the
             Node-24 harness (<code class="path">harness.mjs</code>, <code class="path">guards.mjs</code>,
             <code class="path">api.mjs</code>); the <code>workflow_runs</code> table; and the
             <code>workflow_run</code> / <code>workflow_status</code> / <code>workflow_save</code> /
