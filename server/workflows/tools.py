@@ -31,10 +31,12 @@ WORKFLOW_TOOLS: list[dict] = [
         "description": (
             "Launch a deterministic multi-agent workflow you author as a JS orchestration "
             "script (see the ultracode directive for the script contract). A new script is "
-            "shown to the user for approval before it runs; a trusted saved workflow (by "
-            "`name`) or a `resume_from_run_id` launches immediately. Runs detached from this "
-            "turn — poll workflow_status for progress. Use for comprehensive, parallel, or "
-            "adversarially-verified work; answer directly for simple tasks."
+            "shown to the user for approval before it runs (or auto-launches when the "
+            "user's workflow permission mode allows it within budget); a trusted saved "
+            "workflow (by `name`) or a `resume_from_run_id` launches immediately. Runs "
+            "detached from this turn — poll workflow_status for progress. Use for "
+            "comprehensive, parallel, or adversarially-verified work; answer directly for "
+            "simple tasks."
         ),
         "input_schema": {
             "type": "object",
@@ -276,8 +278,8 @@ async def execute_workflow_save(tool_input) -> str:
     store.save_script(name, script, meta, trusted=False)
     return (
         f"Saved workflow '{name}' ({len(meta.get('phases', []))} phases). Running it by name "
-        "re-shows the approval preview card each time until the user trusts it in "
-        "Settings > Workflows."
+        "re-shows the approval preview card each time until the user trusts it, either in "
+        "Settings > Workflows or via the card's 'Always allow this workflow' checkbox."
     )
 
 

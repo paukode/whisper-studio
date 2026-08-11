@@ -57,10 +57,16 @@ async def get_run(run_id: str):
 
 @router.post("/runs")
 async def launch_run(request: Request):
-    """Launch a run from the approval card (new script) or by saved name."""
+    """Launch a run from the approval card (new script) or by saved name.
+
+    ``trust: true`` is the card's "Always allow this workflow" checkbox: the
+    approved script is saved under its (slugified) name with its hash recorded
+    as trusted — the same state Settings > Workflows' trust toggle writes, so
+    future runs by name skip the card until the script changes."""
     body = await request.json()
     script = (body.get("script") or "").strip()
     name = (body.get("name") or "").strip()
+    trust = bool(body.get("trust"))
     session_id = body.get("session_id", "")
     args = body.get("args")
     budget_tokens = body.get("budget_tokens")
@@ -96,6 +102,13 @@ async def launch_run(request: Request):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
+    trusted_as = None
+    if trust:
+        slug = store.slugify(name or str(meta.get("name") or ""))
+        if slug:
+            store.save_script(slug, script, meta, trusted=True)
+            trusted_as = slug
+
     run_id = manager.start_run(
         script,
         args=args,
@@ -106,7 +119,7 @@ async def launch_run(request: Request):
         phases=meta.get("phases", []),
         name=name or meta.get("name", ""),
     )
-    return {"run_id": run_id, "status": "running"}
+    return {"run_id": run_id, "status": "running", "trusted_as": trusted_as}
 
 
 @router.post("/runs/{run_id}/stop")

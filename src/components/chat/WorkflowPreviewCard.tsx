@@ -67,6 +67,8 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
   );
   const [runId, setRunId] = useState<string | null>(priorRun);
   const [showScript, setShowScript] = useState(false);
+  const [alwaysAllow, setAlwaysAllow] = useState(false);
+  const [trustedAs, setTrustedAs] = useState<string | null>(null);
   const phases = (preview.phases ?? []).map(phaseTitle);
 
   const approve = async () => {
@@ -79,7 +81,9 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
         args: preview.args,
         budget_tokens: preview.budget_tokens ?? null,
         model_id: preview.model_id,
+        trust: alwaysAllow,
       });
+      setTrustedAs(r.trusted_as ?? null);
       setRunId(r.run_id);
       setState('launched');
       rememberLaunched(scriptHash, r.run_id);
@@ -116,16 +120,29 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
       )}
 
       {state === 'idle' && (
-        <div className="workflow-card-actions">
-          <button type="button" className="btn btn-primary btn-sm" onClick={() => void approve()} disabled={!sessionId}>
-            Approve &amp; run
-          </button>
-          <button type="button" className="btn btn-sm" onClick={() => setState('denied')}>Deny</button>
-        </div>
+        <>
+          <label className="workflow-card-meta" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={alwaysAllow}
+              onChange={(e) => setAlwaysAllow(e.target.checked)}
+            />
+            Always allow this workflow (saves it as trusted; future runs skip this card)
+          </label>
+          <div className="workflow-card-actions">
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => void approve()} disabled={!sessionId}>
+              Approve &amp; run
+            </button>
+            <button type="button" className="btn btn-sm" onClick={() => setState('denied')}>Deny</button>
+          </div>
+        </>
       )}
       {state === 'launching' && <div className="workflow-card-meta">Launching…</div>}
       {state === 'launched' && runId && (
-        <div className="workflow-card-meta workflow-ok">Approved &amp; launched.</div>
+        <div className="workflow-card-meta workflow-ok">
+          Approved &amp; launched.
+          {trustedAs ? ` Saved as trusted workflow '${trustedAs}'.` : ''}
+        </div>
       )}
       {state === 'denied' && <div className="workflow-card-meta">Denied — not run.</div>}
       {state === 'error' && <div className="workflow-card-meta workflow-err">Failed to launch.</div>}

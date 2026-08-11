@@ -205,6 +205,31 @@ def test_permissions_endpoint_lists_workflow_category():
     assert "workflow" in cats
 
 
+def test_route_launch_trust_saves_trusted_workflow():
+    from server.workflows import store
+
+    c = _client()
+    r = c.post("/api/workflows/runs", json={"script": _NOOP, "session_id": "s1", "trust": True})
+    assert r.status_code == 200
+    assert r.json()["trusted_as"] == "noop"
+    loaded = store.load_script("noop")
+    assert loaded and loaded["trusted"] is True
+
+    # Approving without the checkbox must not create trust.
+    other = _NOOP.replace("noop", "other")
+    r2 = c.post("/api/workflows/runs", json={"script": other, "session_id": "s1"})
+    assert r2.json()["trusted_as"] is None
+    assert store.load_script("other") is None
+
+
+def test_slugify_meta_names():
+    from server.workflows import store
+
+    assert store.slugify("Docs Refresh! v2") == "docs-refresh-v2"
+    assert store.slugify("../evil") == "evil"  # traversal chars cannot survive
+    assert store.slugify("???") == ""
+
+
 def test_route_saved_crud_and_trust():
     from server.workflows import store
 
