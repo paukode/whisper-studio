@@ -203,7 +203,13 @@
     <h2 id="permission-modes">Permission modes</h2>
     <p>The <code>permission_mode</code> key controls how the assistant is gated when it wants to run a
       tool. You can also switch it inline with the Mode dropdown in the chat input. Per-tool rules
-      under Settings &gt; Permissions override the mode for specific commands.</p>
+      under Settings &gt; Permissions override the mode for specific commands, and per-category
+      defaults there pin a mode for one kind of action (file writes, deletes, shell commands, workflow
+      runs, and so on). The workflow row gates new
+      <a href="arch-ultracode.html">ultracode workflow</a> launches: <code>auto</code> skips the
+      approval card for runs budgeted within 600,000 output tokens, <code>bypassPermissions</code>
+      never shows it, and <code>dontAsk</code> declines the launch. See
+      <a href="tut-permissions.html#per-category-defaults">Permissions &amp; approvals</a>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Value</th><th>Behavior</th></tr></thead>
       <tbody>
