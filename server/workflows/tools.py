@@ -20,6 +20,7 @@ import os
 
 from server.workflows import manager, store
 from server.workflows.journal import run_dir
+from server.workflows.launch_policy import launch_decision
 from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS, parse_workflow
 
 log = logging.getLogger("whisper-studio")
@@ -134,7 +135,7 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
     resume_from = (tool_input.get("resume_from_run_id") or "").strip()
     model_key = _model_key_for(model_id)
 
-    def _launch(src, *, wf_name, phases, resume=""):
+    def _launch(src, *, wf_name, phases, resume="", auto=False):
         rid = manager.start_run(
             src,
             args=args,
@@ -147,9 +148,22 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
             name=wf_name,
             resume_from=resume,
         )
-        return json.dumps({"run_id": rid, "status": "running", "name": wf_name}), [
+        body = {"run_id": rid, "status": "running", "name": wf_name}
+        if auto:
+            # Launched with no card because the user's "workflow" category
+            # mode auto-approves within the token threshold.
+            body["auto_approved"] = True
+        return json.dumps(body), [
             {"workflow_started": {"run_id": rid, "name": wf_name, "resumed_from": resume}}
         ]
+
+    def _denied() -> tuple[str, list]:
+        return (
+            "Workflow launches are disabled by the current permission settings "
+            "(workflow category mode dontAsk). Not started. The user can change "
+            "this in Settings > Permissions.",
+            [],
+        )
 
     if resume_from:
         prior = manager.get_run(resume_from)
@@ -187,6 +201,13 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
             return f"No saved workflow named '{name}'.", []
         meta = {"name": name, **(loaded["meta"] or {})}
         if not loaded["trusted"]:
+            decision = launch_decision(budget_tokens)
+            if decision == "deny":
+                return _denied()
+            if decision == "auto":
+                return _launch(
+                    loaded["script"], wf_name=name, phases=meta.get("phases", []), auto=True
+                )
             return _preview(
                 loaded["script"], meta, budget_tokens, name=name, args=args, model_id=model_id
             )
@@ -198,6 +219,13 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
         meta = await asyncio.to_thread(parse_workflow, script)  # spawns node; keep off the loop
     except ValueError as e:
         return f"Workflow script error: {e}", []
+    decision = launch_decision(budget_tokens)
+    if decision == "deny":
+        return _denied()
+    if decision == "auto":
+        return _launch(
+            script, wf_name=meta.get("name", ""), phases=meta.get("phases", []), auto=True
+        )
     return _preview(script, meta, budget_tokens, name=None, args=args, model_id=model_id)
 
 

@@ -33,6 +33,13 @@ def _isolate(tmp_path, monkeypatch):
     os.makedirs(storage, exist_ok=True)
     monkeypatch.setattr(sessions, "STORAGE_DIR", str(storage))
     monkeypatch.setattr(sessions, "DB_PATH", str(storage / "sessions.db"))
+    # PERMISSIONS_PATH is resolved at import time, so without this the new
+    # launch-policy gate would read the DEVELOPER's live permissions.json and
+    # a permissive local mode would auto-launch what these tests expect to
+    # preview.
+    from server.security import permissions as P
+
+    monkeypatch.setattr(P, "PERMISSIONS_PATH", str(tmp_path / "permissions.json"))
     from server.workflows import manager
 
     manager._live.clear()
@@ -114,6 +121,88 @@ def test_route_launch_bad_script_400():
     c = _client()
     r = c.post("/api/workflows/runs", json={"script": "garbage", "session_id": "s1"})
     assert r.status_code == 400
+
+
+# ── workflow category-mode launch gate ───────────────────────────────────────
+
+
+def _perm(monkeypatch, mode="default", workflow_mode=None):
+    from server.security import permissions as P
+
+    data = {
+        "mode": mode,
+        "rules": [],
+        "category_modes": {"workflow": workflow_mode} if workflow_mode else {},
+    }
+    monkeypatch.setattr(P, "load_permissions", lambda: data)
+
+
+def test_launch_decision_modes(monkeypatch):
+    from server.workflows.launch_policy import WORKFLOW_AUTO_MAX_TOKENS, launch_decision
+
+    _perm(monkeypatch, workflow_mode="bypassPermissions")
+    assert launch_decision(10**9) == "auto"
+
+    _perm(monkeypatch, workflow_mode="auto")
+    assert launch_decision(WORKFLOW_AUTO_MAX_TOKENS) == "auto"
+    assert launch_decision(WORKFLOW_AUTO_MAX_TOKENS + 1) == "ask"
+
+    _perm(monkeypatch, workflow_mode="dontAsk")
+    assert launch_decision(1) == "deny"
+
+    _perm(monkeypatch)  # global default, no category entry
+    assert launch_decision(1) == "ask"
+
+    # No category entry: the global mode is the fallback.
+    _perm(monkeypatch, mode="bypassPermissions")
+    assert launch_decision(10**9) == "auto"
+
+    # A stricter category entry overrides a permissive global mode.
+    _perm(monkeypatch, mode="bypassPermissions", workflow_mode="default")
+    assert launch_decision(1) == "ask"
+
+
+def test_workflow_run_auto_mode_launches_without_card(monkeypatch):
+    import json
+
+    from server.workflows.tools import execute_workflow_run
+
+    _perm(monkeypatch, workflow_mode="auto")
+    out, side = asyncio.run(execute_workflow_run({"script": _NOOP}, "s1", "", None))
+    body = json.loads(out)
+    assert body["auto_approved"] is True and body["run_id"]
+    assert side and "workflow_started" in side[0]
+
+
+def test_workflow_run_dontask_declines(monkeypatch):
+    from server.workflows.tools import execute_workflow_run
+
+    _perm(monkeypatch, workflow_mode="dontAsk")
+    out, side = asyncio.run(execute_workflow_run({"script": _NOOP}, "s1", "", None))
+    assert "not started" in out.lower() and side == []
+
+
+def test_workflow_run_over_threshold_still_cards(monkeypatch):
+    from server.workflows.launch_policy import WORKFLOW_AUTO_MAX_TOKENS
+    from server.workflows.tools import execute_workflow_run
+
+    _perm(monkeypatch, workflow_mode="auto")
+    out, side = asyncio.run(
+        execute_workflow_run(
+            {"script": _NOOP, "budget_tokens": WORKFLOW_AUTO_MAX_TOKENS + 1}, "s1", "", None
+        )
+    )
+    assert side and "workflow_preview" in side[0]
+    assert side[0]["workflow_preview"]["budget_tokens"] == WORKFLOW_AUTO_MAX_TOKENS + 1
+
+
+def test_permissions_endpoint_lists_workflow_category():
+    from server.security import permissions as P
+
+    app = FastAPI()
+    app.include_router(P.router)
+    cats = TestClient(app).get("/api/permissions").json()["categories"]
+    assert "workflow" in cats
 
 
 def test_route_saved_crud_and_trust():

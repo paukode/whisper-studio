@@ -32,6 +32,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   preview: 'Live preview',
   github: 'GitHub',
   'github-destructive': 'GitHub (destructive)',
+  workflow: 'Workflow runs',
 };
 const categoryLabel = (cat: string): string => CATEGORY_LABELS[cat] ?? cat;
 
@@ -306,26 +307,35 @@ export const PermissionsPanel: React.FC = () => {
           {categories.map((cat) => {
             const isDestructive = cat === 'github-destructive';
             return (
-              <div key={cat} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-                <label style={{ flex: '0 0 180px' }} htmlFor={`categoryMode-${cat}`}>
-                  {categoryLabel(cat)}
-                </label>
-                <select
-                  id={`categoryMode-${cat}`}
-                  className="settings-input"
-                  style={{ flex: 1 }}
-                  value={isDestructive ? '' : (categoryModes[cat] ?? '')}
-                  disabled={isDestructive}
-                  onChange={(e) => handleCategoryModeChange(cat, e.target.value)}
-                >
-                  <option value="">
-                    {isDestructive ? 'Always asks (cannot be overridden)' : 'Use global setting'}
-                  </option>
-                  {!isDestructive && MODE_OPTIONS.map((m) => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
-                  ))}
-                </select>
-              </div>
+              <React.Fragment key={cat}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                  <label style={{ flex: '0 0 180px' }} htmlFor={`categoryMode-${cat}`}>
+                    {categoryLabel(cat)}
+                  </label>
+                  <select
+                    id={`categoryMode-${cat}`}
+                    className="settings-input"
+                    style={{ flex: 1 }}
+                    value={isDestructive ? '' : (categoryModes[cat] ?? '')}
+                    disabled={isDestructive}
+                    onChange={(e) => handleCategoryModeChange(cat, e.target.value)}
+                  >
+                    <option value="">
+                      {isDestructive ? 'Always asks (cannot be overridden)' : 'Use global setting'}
+                    </option>
+                    {!isDestructive && MODE_OPTIONS.map((m) => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
+                  </select>
+                </div>
+                {cat === 'workflow' && (
+                  <p className="settings-hint" style={{ margin: '4px 0 0 188px' }}>
+                    For workflows, Auto launches new scripts budgeted up to 600,000 output tokens
+                    without the approval card; larger budgets still ask. Bypass never asks and
+                    Don&apos;t ask declines launches. Trusted saved workflows always run directly.
+                  </p>
+                )}
+              </React.Fragment>
             );
           })}
           <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
