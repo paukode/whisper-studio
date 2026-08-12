@@ -1,0 +1,191 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>chart host</title>
+<script src="/static/viz/vendor/vega.min.js"></script>
+<script src="/static/viz/vendor/vega-lite.min.js"></script>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  #c { width: 100%; }
+  #c svg { display: block; }
+  .err {
+    font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 14px 16px; white-space: pre-wrap; line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+<div id="c"></div>
+<script>
+/* Chart host — runs inside a `sandbox="allow-scripts"` iframe, so it has an
+ * opaque origin and cannot reach the app's DOM, storage, or backend API.
+ * A Vega-Lite spec is model-authored and therefore attacker-influenceable
+ * (prompt injection through an attachment or a fetched page), which is why
+ * it is evaluated here and not in the app document.
+ *
+ * Protocol with the parent (VizCard.tsx):
+ *   in   {type:'render', spec, tokens}     render a Vega-Lite spec
+ *        {type:'export', format, id}       'svg' | 'png'
+ *   out  {type:'height', height}           after every render
+ *        {type:'error',  message}          spec failed to compile or run
+ *        {type:'exported', id, format, data}
+ */
+const container = document.getElementById('c');
+let view = null;
+let lastSpec = null;
+let lastTokens = null;
+
+const post = (msg) => parent.postMessage(msg, '*');
+
+function reportHeight() {
+  // Round up: a fractional height leaves a 1px scrollbar in the parent.
+  post({ type: 'height', height: Math.ceil(document.body.scrollHeight) });
+}
+
+/* House theme. Every colour arrives from the parent's live CSS variables, so
+ * charts follow the app's active theme (all eight of them) including dark
+ * mode, with no palette duplicated on this side. */
+function houseConfig(t) {
+  const font =
+    '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  return {
+    background: t.bg,
+    font: font,
+    padding: 8,
+    view: { stroke: null },
+    // No domain line, no ticks: the gridline carries the axis on its own and
+    // the chart reads lighter without the extra ink.
+    axis: {
+      domain: false,
+      ticks: false,
+      labelFont: font,
+      labelFontSize: 11,
+      labelColor: t.textSecondary,
+      labelPadding: 8,
+      titleFont: font,
+      titleFontSize: 12,
+      titleFontWeight: 500,
+      titleColor: t.textSecondary,
+      titlePadding: 12,
+      gridColor: t.grid,
+      gridOpacity: 1,
+      gridWidth: 1,
+    },
+    // Category axes get no grid — one gridline set is enough.
+    axisX: { labelAngle: 0 },
+    axisBand: { grid: false },
+    axisPoint: { grid: false },
+    legend: {
+      labelFont: font,
+      labelFontSize: 11,
+      labelColor: t.textSecondary,
+      titleFont: font,
+      titleFontSize: 11,
+      titleFontWeight: 500,
+      titleColor: t.textMuted,
+      symbolType: 'circle',
+      symbolSize: 90,
+      offset: 12,
+      padding: 0,
+      strokeColor: null,
+    },
+    title: {
+      font: font,
+      fontSize: 14,
+      fontWeight: 500,
+      color: t.textPrimary,
+      subtitleFont: font,
+      subtitleFontSize: 12,
+      subtitleColor: t.textSecondary,
+      anchor: 'start',
+      offset: 14,
+    },
+    range: { category: t.category, ramp: t.ramp },
+    bar: { cornerRadiusEnd: 3, color: t.category[0] },
+    point: { filled: true, size: 70, color: t.category[0] },
+    line: { strokeWidth: 2.5, strokeCap: 'round', strokeJoin: 'round', color: t.category[0] },
+    area: { opacity: 0.85, line: false, color: t.category[0] },
+    arc: { innerRadius: 0 },
+    rect: { color: t.category[0] },
+    text: { font: font, fontSize: 11, fill: t.textSecondary },
+  };
+}
+
+function showError(message) {
+  if (view) { view.finalize(); view = null; }
+  const el = document.createElement('div');
+  el.className = 'err';
+  el.style.color = (lastTokens && lastTokens.danger) || '#c0392b';
+  el.textContent = 'Chart could not be rendered.\n' + message;
+  container.replaceChildren(el);
+  reportHeight();
+  post({ type: 'error', message: String(message) });
+}
+
+/* `width: "container"` makes the chart track the card width, but Vega-Lite
+ * rejects it on multi-view specs (facet/concat/repeat), so only single views
+ * that did not ask for an explicit width get it. */
+function fitWidth(spec) {
+  const multiView =
+    spec.facet || spec.hconcat || spec.vconcat || spec.concat || spec.repeat;
+  if (multiView || spec.width != null) return spec;
+  return { ...spec, width: 'container' };
+}
+
+async function render(spec, tokens) {
+  lastSpec = spec;
+  lastTokens = tokens;
+  try {
+    const compiled = vegaLite.compile(fitWidth(spec), { config: houseConfig(tokens) });
+    if (view) view.finalize();
+    view = new vega.View(vega.parse(compiled.spec), {
+      renderer: 'svg',
+      container: container,
+      hover: true,
+    });
+    // No external data loading: every chart carries its own inline values, so
+    // a spec cannot be used to make the app fetch a URL.
+    view.loader({
+      load: () => Promise.reject(new Error('remote data is not allowed in chat charts')),
+      sanitize: () => Promise.reject(new Error('remote data is not allowed in chat charts')),
+    });
+    await view.runAsync();
+    reportHeight();
+  } catch (e) {
+    showError((e && e.message) || String(e));
+  }
+}
+
+async function exportAs(format, id) {
+  if (!view) return post({ type: 'exported', id: id, format: format, data: null });
+  try {
+    const data =
+      format === 'png' ? await view.toImageURL('png', 2) : await view.toSVG();
+    post({ type: 'exported', id: id, format: format, data: data });
+  } catch (e) {
+    post({ type: 'exported', id: id, format: format, data: null });
+  }
+}
+
+window.addEventListener('message', (e) => {
+  if (e.source !== parent) return;
+  const m = e.data;
+  if (!m || typeof m !== 'object') return;
+  if (m.type === 'render') render(m.spec, m.tokens);
+  else if (m.type === 'export') exportAs(m.format, m.id);
+});
+
+// Re-render on width change so the chart stays fitted when the chat pane is
+// resized. Debounced — a drag fires dozens of these.
+let resizeTimer = null;
+new ResizeObserver(() => {
+  if (!lastSpec) return;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => render(lastSpec, lastTokens), 120);
+}).observe(document.body);
+
+post({ type: 'ready' });
+</script>
+</body>
+</html>

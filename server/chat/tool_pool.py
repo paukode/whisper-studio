@@ -34,6 +34,7 @@ from server.prompt_tools import PROMPT_TOOLS
 from server.skills import TOOLS
 from server.tasks_tracker import TASK_TOOLS
 from server.tool_executor import _PLAN_MODE_BLOCKED
+from server.visuals import VISUAL_TOOLS
 from server.workspace import (
     get_global_workspace_tools,
     get_workspace_path,
@@ -199,6 +200,7 @@ def assemble_full_catalog(
     builtin_tools += CRON_TOOLS
     builtin_tools += LSP_TOOLS
     builtin_tools += ASK_USER_TOOLS
+    builtin_tools += VISUAL_TOOLS
     builtin_tools += NOTEBOOK_TOOLS
     builtin_tools += AGENT_TOOLS
 

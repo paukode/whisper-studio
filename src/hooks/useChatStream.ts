@@ -338,7 +338,7 @@ export function useChatStream(): UseChatStreamReturn {
       // If the round had no text response but did emit an artifact, we
       // still synthesize a message so the artifact renders.
       let finalContent = fullResponse;
-      if (!finalContent && (result.pendingArtifact || result.pendingPlan)) {
+      if (!finalContent && (result.pendingArtifact || result.pendingVisuals.length > 0 || result.pendingPlan)) {
         finalContent = '';
       }
       // Move the turn-local team reports onto the message being committed —
@@ -346,7 +346,7 @@ export function useChatStream(): UseChatStreamReturn {
       // since chat_history serializes messages verbatim). Returns undefined
       // if an earlier commit site (approval pause) already took them.
       const turnTeamReports = store().takeTeamReports();
-      const assistantMsg: ChatMessage | undefined = (finalContent || result.pendingArtifact || result.pendingPlan || turnTeamReports)
+      const assistantMsg: ChatMessage | undefined = (finalContent || result.pendingArtifact || result.pendingVisuals.length > 0 || result.pendingPlan || turnTeamReports)
         ? {
             role: 'assistant',
             content: finalContent,
@@ -356,6 +356,7 @@ export function useChatStream(): UseChatStreamReturn {
             toolUse: finalToolUse.length > 0 ? finalToolUse : undefined,
             teamReports: turnTeamReports,
             programArtifact: result.pendingArtifact ?? undefined,
+            visuals: result.pendingVisuals.length > 0 ? result.pendingVisuals : undefined,
             plan: result.pendingPlan ?? undefined,
             _thinkingMs: result.thinkingMs > 0 ? Math.round(result.thinkingMs) : undefined,
             _thinkingText: result.thinkingText || undefined,

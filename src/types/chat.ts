@@ -1,3 +1,14 @@
+/** An inline visual rendered in chat: a hand-authored SVG diagram
+ *  (create_visual) or a Vega-Lite chart spec (create_chart). Persisted with
+ *  the message, so the picture is still there on session resume. */
+export interface VizArtifact {
+  kind: 'svg' | 'chart';
+  title: string;
+  description: string;
+  /** SVG markup for `svg`, a JSON Vega-Lite spec for `chart`. */
+  source: string;
+}
+
 /** Inline cron card payload. Persisted as a ChatMessage row with
  *  role='cron_event' so it shows up both live (via SSE) and on
  *  session resume. Never enters Claude's prompt — the backend's
@@ -116,6 +127,9 @@ export interface ChatMessage {
     toolUseId: string;
     answered?: boolean;
   }>;
+  /** Diagrams and charts from create_visual / create_chart. A list: one
+   *  turn can emit several (e.g. three layout options to choose between). */
+  visuals?: VizArtifact[];
   /** Inline artifact from the create_artifact tool */
   programArtifact?: {
     title: string;
@@ -313,6 +327,7 @@ export interface SSEEventData {
   ci_diagnosis?: { branch?: string; run_id?: number | null; url?: string | null; findings?: Array<Record<string, unknown>> };
   user_question?: Record<string, unknown>;
   program_artifact?: Record<string, unknown>;
+  viz_artifact?: Record<string, unknown>;
   plan_generated?: Record<string, unknown>;
   notify_user?: Record<string, unknown>;
   /** Progressive tool disclosure telemetry (once per turn). */

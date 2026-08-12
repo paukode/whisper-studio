@@ -36,6 +36,9 @@ CORE_TOOLS: frozenset[str] = frozenset(
         "skill_invoke",
         # interaction
         "ask_user_question",
+        # visuals — "draw me a diagram" must work on the first turn
+        "create_visual",
+        "create_chart",
         "notify_user",
         "read_cached_result",
         # todo tracker (in-conversation plans)

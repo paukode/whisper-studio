@@ -14,6 +14,7 @@ import { executeApproval } from '@/api/approval';
 import { getChatStore } from '@/stores/sessionRuntimes';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { PendingApproval } from '@/stores/chatStore';
+import type { VizArtifact } from '@/types/chat';
 import { TOAST_PRIORITY, useUIStore } from '@/stores/uiStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useTaskStore, normalizeTasks } from '@/stores/taskStore';
@@ -68,6 +69,9 @@ export async function readSSEStream(
    *  renders below the model's explanation text and the tool traces only
    *  appear once. */
   pendingArtifact: { title: string; html: string; description: string } | null;
+  /** Diagrams and charts from this round. A list, not a slot: one turn can
+   *  legitimately emit several ("show me three layout options"). */
+  pendingVisuals: VizArtifact[];
   pendingPlan: { id: string; title: string; summary: string } | null;
 }> {
   // Parallel sessions: bind the OWNING session's store from the sessionId
@@ -91,6 +95,7 @@ export async function readSSEStream(
   let hasUserQuestion = false;
   let grounding: { searched: number; passages: number } | undefined;
   let pendingArtifact: { title: string; html: string; description: string } | null = null;
+  const pendingVisuals: VizArtifact[] = [];
   let pendingPlan: { id: string; title: string; summary: string } | null = null;
   const thinkingBlockStart = performance.now();
 
@@ -460,6 +465,27 @@ export async function readSSEStream(
             };
           }
 
+          // ── viz_artifact (create_visual / create_chart) ──
+          // Deferred to the final message for the same reason as artifacts:
+          // the model's explanation streams after the tool call, and the
+          // picture belongs below the sentence that introduces it.
+          if (parsed.viz_artifact) {
+            const va = parsed.viz_artifact as {
+              kind?: string;
+              title?: string;
+              description?: string;
+              source?: string;
+            };
+            if (va.source) {
+              pendingVisuals.push({
+                kind: va.kind === 'chart' ? 'chart' : 'svg',
+                title: va.title ?? 'Visual',
+                description: va.description ?? '',
+                source: va.source,
+              });
+            }
+          }
+
           // ── plan_generated (create_plan tool) ──
           // Stash for the final message (like the artifact) AND open the plan
           // in the dock immediately so the user sees it as soon as it's saved.
@@ -756,6 +782,7 @@ export async function readSSEStream(
     hasUserQuestion,
     grounding,
     pendingArtifact,
+    pendingVisuals,
     pendingPlan,
   };
 }
@@ -873,7 +900,7 @@ export async function sendApprovalContinuation(
     const result = await readSSEStream(response, sessionId, continuationSignal);
 
     const contTeamReports = store().takeTeamReports();
-    if (result.fullResponse || result.pendingArtifact || result.pendingPlan || contTeamReports) {
+    if (result.fullResponse || result.pendingArtifact || result.pendingVisuals.length > 0 || result.pendingPlan || contTeamReports) {
       const contToolUse: ToolUseEvent[] = result.skillTraces.map(t => ({
         toolId: t.name,
         toolName: t.name,
@@ -894,6 +921,7 @@ export async function sendApprovalContinuation(
         // to this message so the artifact card and the model's text live
         // together in one card and tool chips render only once.
         programArtifact: result.pendingArtifact ?? undefined,
+        visuals: result.pendingVisuals.length > 0 ? result.pendingVisuals : undefined,
         plan: result.pendingPlan ?? undefined,
         _thinkingMs: result.thinkingMs > 0 ? Math.round(result.thinkingMs) : undefined,
         _thinkingText: result.thinkingText || undefined,

@@ -13,8 +13,10 @@ TOOL = {
         "preview and download) or a modular multi-file project saved to a folder. Do "
         "not use for slide decks or presentations, or for non-web programs such as "
         "Python scripts or CLI tools (build those with workspace tools or "
-        "run_python). Returns an artifact card or created project files plus a "
-        "short summary of what was built."
+        "run_python). For a single chart of data use create_chart, and for a "
+        "diagram that explains something use create_visual; both render inline "
+        "with no build step. Returns an artifact card or created project files "
+        "plus a short summary of what was built."
     ),
     "input_schema": {
         "type": "object",

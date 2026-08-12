@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useLayoutEffect } from 'react';
 import type { ChatMessage as ChatMessageType } from '@/types/chat';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ProgramArtifactCard } from '@/components/chat/ProgramArtifactCard';
+import { VizCard } from '@/components/chat/VizCard';
 import { WorkspacePromptCard } from '@/components/chat/WorkspacePromptCard';
 import { AgentCard, groupAgentTools, groupForActivity, isActivityEntry, isTasksEntry, friendlyToolName, ACTIVITY_MIN_RUN } from '@/components/chat/AgentCard';
 import { TaskCard } from '@/components/chat/TaskCard';
@@ -408,6 +409,14 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
           <>
             {message.content && <MarkdownRenderer content={message.content} stepFormat />}
             <PlanCard plan={message.plan} />
+          </>
+        ) : !isUser && message.visuals && message.visuals.length > 0 ? (
+          <>
+            {/* The sentence that introduces the picture renders above it. */}
+            {message.content && <MarkdownRenderer content={message.content} stepFormat />}
+            {message.visuals.map((viz, i) => (
+              <VizCard key={`viz-${i}`} viz={viz} />
+            ))}
           </>
         ) : !isUser && message.programArtifact ? (
           <ProgramArtifactCard
