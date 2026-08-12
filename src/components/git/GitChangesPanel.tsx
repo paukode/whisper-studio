@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { getGitChanges, getGitDiff, gitRestoreFile } from '@/api/git';
+import { getGitChanges, gitRestoreFile } from '@/api/git';
 import type { GitFileStatus as GitFileStatusType } from '@/api/git';
 import { GitFileStatus } from './GitFileStatus';
+import { GitDiffViewer } from './GitDiffViewer';
 import { useUIStore, dialogConfirm } from '@/stores/uiStore';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { toError } from '@/utils/toError';
@@ -22,7 +23,7 @@ export interface GitChangesPanelProps {
  * - Collapse/expand toggle with localStorage persistence
  * - Per-file line stats (+X/-Y) from /api/git/changes
  * - Discard/restore button per file with confirm dialog
- * - Click file to open in editor
+ * - Click file to open in editor, click its status letter for the diff
  * - Live refresh via the /api/git/events SSE stream (debounced 150ms)
  * - Listens for whisper-git-refresh events from SSE
  */
@@ -41,12 +42,9 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
   const branch = data?.branch ?? '';
   const perFileStats: Record<string, { added: number; removed: number }> = data?.per_file_stats ?? {};
 
-  // HEAD-content modal — populated when user clicks the eye icon on a
-  // tracked file row. ``null`` means closed. ``loading`` flag is
-  // distinct from ``content === ''`` (an empty HEAD file is valid).
-  const [headView, setHeadView] = useState<
-    { path: string; content: string | null; loading: boolean; error?: string } | null
-  >(null);
+  // Path whose diff is open in the side-by-side viewer, or null. The
+  // viewer owns its own fetching and rendering mode.
+  const [diffPath, setDiffPath] = useState<string | null>(null);
   // Persisted via useLocalStorage so multi-tab edits stay in sync via the
   // 'storage' event and we get a single source of truth for the key.
   const [expanded, setExpanded] = useLocalStorage<boolean>(STORAGE_KEY, true);
@@ -106,41 +104,9 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
     [onFileOpen],
   );
 
-  const handleViewHead = useCallback(async (path: string) => {
-    setHeadView({ path, content: null, loading: true });
-    try {
-      const res = await getGitDiff(path);
-      setHeadView({
-        path,
-        content: res.content,
-        loading: false,
-        error: res.error,
-      });
-    } catch (err) {
-      setHeadView({
-        path,
-        content: null,
-        loading: false,
-        error: toError(err).message,
-      });
-    }
-  }, []);
+  const handleViewDiff = useCallback((path: string) => setDiffPath(path), []);
 
-  const closeHeadView = useCallback(() => setHeadView(null), []);
-
-  // Esc closes the HEAD modal — matches the rest of the app's modal
-  // dismissal pattern (SettingsModal, MemoryEditorModal, etc.).
-  useEffect(() => {
-    if (!headView) return;
-    // document, not window: keeps this dismisser ahead of window-level
-    // global shortcuts (the ESC stream kill switch) regardless of
-    // registration order, matching the other Escape dismissers.
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); closeHeadView(); }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [headView, closeHeadView]);
+  const closeDiff = useCallback(() => setDiffPath(null), []);
 
   const handleDiscard = useCallback(
     async (path: string) => {
@@ -194,50 +160,9 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
         </button>
       </div>
 
-      {/* HEAD viewer — small read-only modal showing the version of
-       *  the file as it exists at HEAD. Click outside or hit Esc to
-       *  close. No editing affordances. */}
-      {headView && (
-        <div
-          className="git-head-modal-backdrop"
-          onClick={(e) => { if (e.target === e.currentTarget) closeHeadView(); }}
-        >
-          <div className="git-head-modal" role="dialog" aria-modal="true">
-            <div className="git-head-modal-header">
-              <span className="git-head-modal-title">
-                HEAD · <code>{headView.path}</code>
-              </span>
-              <button
-                type="button"
-                className="git-head-modal-close"
-                onClick={closeHeadView}
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="git-head-modal-body">
-              {headView.loading && (
-                <div className="git-head-modal-info" aria-busy="true">
-                  <span className="skeleton skeleton-text" style={{ width: '85%' }} />
-                  <span className="skeleton skeleton-text" style={{ width: '70%' }} />
-                </div>
-              )}
-              {!headView.loading && headView.error && (
-                <div className="git-head-modal-error">
-                  Could not load HEAD version: {headView.error}
-                </div>
-              )}
-              {!headView.loading && !headView.error && headView.content !== null && (
-                <pre className="git-head-modal-pre">{headView.content}</pre>
-              )}
-              {!headView.loading && !headView.error && headView.content === null && (
-                <div className="git-head-modal-info">No HEAD content available.</div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Side-by-side diff of one file against HEAD. Opened from a row's
+       *  status letter; click outside or hit Esc to close. Read-only. */}
+      {diffPath && <GitDiffViewer key={diffPath} path={diffPath} onClose={closeDiff} />}
 
       {/* File list — visibility controlled by .expanded class in CSS */}
       <div className="ws-git-changes-list">
@@ -266,7 +191,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
                   added={stats?.added}
                   removed={stats?.removed}
                   onSelect={handleFileSelect}
-                  onViewHead={handleViewHead}
+                  onViewDiff={handleViewDiff}
                 />
               );
             })}
@@ -290,7 +215,7 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
                   removed={stats?.removed}
                   onSelect={handleFileSelect}
                   onDiscard={handleDiscard}
-                  onViewHead={handleViewHead}
+                  onViewDiff={handleViewDiff}
                 />
               );
             })}

@@ -78,7 +78,11 @@ def test_deleted_routes_stay_deleted_and_kept_routes_remain():
 
     g = paths(git_router)
     assert not any("/log" in p or "/branches" in p or "/checkout" in p for p, _m in g)
-    assert any(p.endswith("/show") for p, _m in g)  # kept — UI diff view uses it
+    # /show shipped the HEAD blob for the old HEAD-only viewer. The diff
+    # view now asks /file-diff, which returns both sides (or git's hunks),
+    # so /show lost its last caller and goes with it.
+    assert not any(p.endswith("/show") for p, _m in g)
+    assert any(p.endswith("/file-diff") for p, _m in g)
 
     assert not any(p.endswith("/validate") for p, _m in paths(perm_router))
     assert not any(p.endswith("/fire") for p, _m in paths(hooks_router))

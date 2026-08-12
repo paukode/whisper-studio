@@ -6,17 +6,47 @@ export interface GitFileStatus {
   staged: boolean;
 }
 
-/** HEAD version of a tracked file. Returns ``{content: null, error}``
- *  if git rejects the request (e.g. untracked path), otherwise the
- *  raw file content. Use to power a "View HEAD" affordance next to
- *  modified files in the Git Changes panel. */
-export interface GitHeadContent {
-  content: string | null;
-  error?: string;
+/** One line of a server-parsed hunk. ``old``/``new`` are 1-based line
+ *  numbers, null on the side where the line does not exist. */
+export interface DiffHunkLine {
+  type: 'context' | 'add' | 'del';
+  old: number | null;
+  new: number | null;
+  text: string;
 }
 
-export function getGitDiff(path: string): Promise<GitHeadContent> {
-  return get<GitHeadContent>(`/api/git/show?path=${encodeURIComponent(path)}`);
+export interface DiffHunk {
+  old_start: number;
+  new_start: number;
+  /** The `@@ ... @@` trailer, usually the enclosing function. */
+  header: string;
+  lines: DiffHunkLine[];
+}
+
+/** A single file's diff against HEAD.
+ *
+ *  ``mode`` decides how the viewer renders, and the server picks it:
+ *  - ``full``   both sides present; align them client-side for a
+ *               whole-file view with unchanged context everywhere.
+ *  - ``hunks``  file too large to align in the browser; git did the diff
+ *               and ``hunks`` carries it with real line numbers.
+ *  - ``binary`` nothing to show line by line.
+ *  - ``error``  ``error`` explains why there is no diff. */
+export interface GitFileDiff {
+  path: string;
+  mode: 'full' | 'hunks' | 'binary' | 'error';
+  status: 'modified' | 'added' | 'deleted';
+  old: string | null;
+  new: string | null;
+  hunks: DiffHunk[];
+  added: number;
+  removed: number;
+  truncated: boolean;
+  error: string | null;
+}
+
+export function getGitFileDiff(path: string): Promise<GitFileDiff> {
+  return get<GitFileDiff>(`/api/git/file-diff?path=${encodeURIComponent(path)}`);
 }
 
 /** Combined status + diff, server-cached for 1s. Prefer this over the

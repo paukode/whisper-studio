@@ -253,7 +253,7 @@
       <dt><code class="path">GET /api/git/status</code></dt><dd>Branch, clean flag, and a per-file status list for indicators.</dd>
       <dt><code class="path">GET /api/git/changes</code></dt><dd>Combined status + diff in one round trip, behind a 1-second TTL LRU cache that absorbs the assistant's tool-loop and the panel's auto-poll.</dd>
       <dt><code class="path">GET /api/git/branch</code></dt><dd>Current branch, default branch, and whether they match.</dd>
-      <dt><code class="path">GET /api/git/show</code></dt><dd>The HEAD version of a file, for side-by-side diffing in the editor.</dd>
+      <dt><code class="path">GET /api/git/file-diff</code></dt><dd>One file's diff against HEAD, shaped for the side-by-side viewer. The response's <code>mode</code> tells the client how to render: <code>full</code> ships both sides for whole-file alignment in the browser, <code>hunks</code> ships git's own parsed diff for files too large to align there, <code>binary</code> has nothing to show line by line.</dd>
       <dt><code class="path">POST /api/git/restore</code></dt><dd>Undo changes to a single tracked file, or remove an untracked one.</dd>
       <dt><code class="path">GET / POST /api/git/worktrees</code></dt><dd>List worktrees, or add one (path defaults to <code>../&lt;repo&gt;-&lt;branch&gt;</code> next to the main checkout).</dd>
       <dt><code class="path">POST /api/git/worktrees/remove</code></dt><dd>Remove a worktree; refuses to remove the active workspace.</dd>
