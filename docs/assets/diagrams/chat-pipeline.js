@@ -4,15 +4,15 @@ WSDiagram.mount("chat-pipeline-diagram", {
   grid: { nodeW: 166, nodeH: 60, gapX: 52, gapY: 40 },
   groups: {
     transport: { label: "Transport" }, server: { label: "Chat pipeline" }, model: { label: "Routing" },
-    tools: { label: "Tools" }, security: { label: "Approval" }, external: { label: "Bedrock" }, persist: { label: "Storage" }
+    tools: { label: "Tools" }, security: { label: "Approval" }, external: { label: "Adapter" }, persist: { label: "Storage" }
   },
   nodes: [
     { id: "req", group: "transport", col: 0, row: 0, label: "POST /api/chat", sub: "SSE response", desc: "A chat turn arrives: question, history, model, session, attachments." },
     { id: "setup", group: "server", col: 0, row: 1, label: "Build the turn", sub: "prompt · memory · @files", desc: "Latch session config, assemble the system prompt (WHISPER.md + memory), resolve @file mentions, expand attachments, add index grounding." },
-    { id: "route", group: "model", col: 1, row: 0.5, label: "Model routing", sub: "Anthropic / OpenAI / Gemma", desc: "Local Gemma and OpenAI-on-Bedrock return early on their own paths; otherwise the Anthropic path continues." },
+    { id: "route", group: "model", col: 1, row: 0.5, label: "Model routing", sub: "Anthropic / OpenAI / Gemma", desc: "is_local_model() picks the local adapter; otherwise provider decides Anthropic (Claude) or OpenAI (GPT) - both on Amazon Bedrock. One shared engine loop runs the rest, whichever adapter was picked." },
     { id: "condense", group: "server", col: 1, row: 1.25, label: "Condense transcript", sub: "map-reduce if oversized", desc: "An oversized transcript is condensed to per-chunk extracts before it enters the prompt. See Transcript summarization." },
     { id: "stream", group: "server", col: 2, row: 0.5, label: "Streaming loop", sub: "up to 50 rounds", desc: "Per round: check the budget, invoke the model, stream chunks, act on the stop reason." },
-    { id: "bedrock", group: "external", kind: "external", col: 3, row: 0, label: "Bedrock invoke", sub: "response stream", desc: "invoke_model_with_response_stream, wrapped in retry + reactive compaction." },
+    { id: "bedrock", group: "external", kind: "external", col: 3, row: 0, label: "Adapter invoke", sub: "Bedrock or local", desc: "The routed adapter's own call: invoke_model_with_response_stream (Anthropic), the Responses API over bedrock-mantle (OpenAI), or a local llama-server request (Gemma) - each wrapped in retry + reactive compaction." },
     { id: "parse", group: "server", col: 3, row: 1, label: "Parse chunks", sub: "text · tool_use · thinking", desc: "Content blocks are parsed as they stream: text, thinking, and tool_use." },
     { id: "sseOut", group: "transport", col: 4, row: 0.5, label: "SSE to client", sub: "tokens · events", desc: "Text, usage, skill, grounding, and team_progress events stream to the SPA." },
     { id: "toolbatch", group: "tools", col: 1, row: 2, label: "Execute tool batch", sub: "partition + permissions", desc: "Read-safe tools run in parallel; writes serialize. Each is permission-checked." },

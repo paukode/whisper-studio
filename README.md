@@ -1,9 +1,10 @@
 # Whisper Studio
 
 A local-first AI workspace for macOS. Real-time speech transcription, a
-chat client to Claude (via Amazon Bedrock), and a full development
-environment — file tree, Monaco editor, integrated terminal, Git,
-LSP — in a single browser tab served by a single local process.
+chat client to Claude or GPT (via Amazon Bedrock) or an on-device model in
+local mode, and a full development environment (file tree, Monaco editor,
+integrated terminal, Git, LSP) in a single browser tab served by a single
+local process.
 
 ![Whisper Studio Mac app on first launch, ready to record or chat](docs/assets/img/hero.png)
 
@@ -13,9 +14,10 @@ behind that one composer.*
 
 > **Transcription runs entirely on your machine.** The speech model
 > loads into memory on first record and runs locally on CPU/GPU. Audio
-> never leaves the laptop. Amazon Bedrock is only used for the chat
-> (Claude) responses you explicitly send. No telemetry, no proxies, no
-> per-minute transcription fees.
+> never leaves the laptop. Amazon Bedrock is used only for a cloud chat
+> response (Claude or GPT) you explicitly send; pick an on-device model
+> instead and no chat call leaves the machine either. No telemetry, no
+> proxies, no per-minute transcription fees.
 
 ## Documentation
 
@@ -196,10 +198,11 @@ Each of these has a tutorial or reference page:
 
 Whisper Studio binds `127.0.0.1` by default, sanitizes every Markdown
 render through DOMPurify before it reaches the DOM, routes risky commands
-through a server-side nonce approval flow, and wraps shell + Python
-execution in `sandbox-exec(5)`. Plugins are opt-in, and the only outbound
-call the backend makes on its own is to Amazon Bedrock for chat — no
-telemetry.
+through a server-held approval pause that re-validates the action at
+execute time, and wraps shell + Python execution in `sandbox-exec(5)`.
+Plugins are opt-in, and the only outbound call the backend makes on its
+own is to Amazon Bedrock for a cloud chat model (Claude or GPT), skipped
+entirely in local mode. No telemetry.
 
 In the default permission mode, every command the assistant wants to run stops
 for approval first, showing the exact command, its working directory, and a

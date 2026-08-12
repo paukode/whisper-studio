@@ -4,7 +4,7 @@ WSDiagram.mount("chat-turn-diagram", {
   grid: { nodeW: 156, nodeH: 60, gapX: 46, gapY: 42 },
   groups: {
     browser: { label: "Browser" }, transport: { label: "Transport" },
-    server: { label: "Chat pipeline" }, external: { label: "Bedrock" },
+    server: { label: "Chat pipeline" }, external: { label: "Model" },
     security: { label: "Approval" }, tools: { label: "Tools" },
     persist: { label: "Storage" }
   },
@@ -12,7 +12,7 @@ WSDiagram.mount("chat-turn-diagram", {
     { id: "user", group: "browser", col: 0, row: 0, label: "User types + Send", desc: "The SPA adds the user bubble, marks the session streaming, and opens a fetch to the chat endpoint." },
     { id: "post", group: "transport", col: 1, row: 0, label: "POST /api/chat", sub: "SSE response", desc: "Body carries question, capped history, model, effort, session_id, and attachment_ids. The response is a Server-Sent Events stream, not one JSON body." },
     { id: "build", group: "server", col: 2, row: 0, label: "Build prompt", sub: "history · WHISPER.md · memory", desc: "The endpoint filters visible_chat_history (drops cron_event rows), latches the session config, and assembles the system prompt from workspace context, WHISPER.md, and memory." },
-    { id: "invoke", group: "external", kind: "external", col: 3, row: 0, label: "Invoke Bedrock", sub: "streaming", desc: "invoke_model_with_response_stream opens the upstream SSE. Content blocks arrive as they are generated." },
+    { id: "invoke", group: "external", kind: "external", col: 3, row: 0, label: "Invoke model", sub: "Bedrock or local", desc: "Claude or GPT-5.x on Amazon Bedrock, or an on-device model in local mode. GPT-on-Bedrock and on-device turns run the identical loop shown here; this trace shows the Anthropic-on-Bedrock path as one example: invoke_model_with_response_stream opens the upstream SSE and content blocks arrive as they are generated." },
     { id: "text", group: "server", col: 4, row: 0, label: "Stream tokens", desc: "Each text chunk is yielded to the client as a token; the SPA appends it to the live bubble." },
     { id: "done", group: "transport", col: 5, row: 0, label: "[DONE]", desc: "The stream terminates. The SPA commits the final assistant message atomically with clearing the streaming state." },
     { id: "tooluse", group: "server", col: 4, row: 1, label: "tool_use?", sub: "stop reason", desc: "A tool_use stop reason means the model wants to act. The engine routes each call before continuing." },

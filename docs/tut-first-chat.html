@@ -20,7 +20,8 @@
       commands that live behind the <code>/</code> key.</p>
 
     <p>Everything below happens in the chat input at the bottom of the window. A single turn travels
-      from the composer to <code>POST /api/chat</code>, out to Claude on Amazon Bedrock, and back as a
+      from the composer to <code>POST /api/chat</code>, out to whichever model you have selected -
+      Claude or GPT-5.x on Amazon Bedrock, or an on-device model in local mode - and back as a
       stream you watch fill in live. The conversation is saved as you go, so you can leave and pick it
       back up from the sidebar.</p>
 
