@@ -89,8 +89,10 @@ def build_entry(
     """(key, chat_models entry) for a browsed model — the exact hand-config shape.
 
     Defaults, all overridable in the config editor afterwards:
-      * ``supports_tools`` True — the local tool loop rides on llama-server
-        ``--jinja``, which these instruct families support;
+      * ``supports_tools`` True only at or above ``AGENTIC_MIN_PARAMS_B`` (or when
+        the name carries no size) — the tool loop rides on llama-server
+        ``--jinja``, which these instruct families support, but a model too small
+        to drive it emits raw JSON into the chat instead of a parsed call;
       * ``supports_thinking`` True only for reasoning families (qwen3, QwQ,
         DeepSeek-R1), else False.
     """
@@ -100,7 +102,7 @@ def build_entry(
         "label": label or f"{repo_id.split('/')[-1]} {quant} (Local)",
         "is_local": True,
         "supports_thinking": compat.is_thinking_model(arch, repo_id, filename),
-        "supports_tools": True,
+        "supports_tools": compat.is_agentic_capable(repo_id, filename),
         "repo_id": repo_id,
         "filename": filename,
         "dir": _dir_name(repo_id),
@@ -190,6 +192,54 @@ def adopt_local_index_llm() -> bool:
     config_mod.save_config(raw)
     log.info("First local install: index_llm adopted -> 'local' (follow on-device model).")
     return True
+
+
+# Marker written into the user layer once the sweep below has run. Without it the
+# sweep would re-fire every boot and stomp a user who deliberately turned tools
+# back on for a small model — which is a supported choice, just not the default.
+_TOOLS_SWEEP_FLAG = "small_model_tools_swept"
+
+
+def disable_tools_on_small_models() -> list[str]:
+    """One-shot: turn ``supports_tools`` off for already-installed local models
+    below the agentic threshold, then mark the user layer so it never runs again.
+
+    Installs made before the threshold existed all carry ``supports_tools`` True,
+    because that was the hardcoded default — including 1-3B models that answer a
+    plain "hey" with a raw JSON tool call. Their entries are the only thing
+    keeping them broken, so they are corrected in place ONCE rather than read
+    around forever at runtime. Returns the keys it changed.
+    """
+    raw = config_mod._load_user_config()
+    if raw.get(_TOOLS_SWEEP_FLAG):
+        return []
+
+    chat_models = raw.get("chat_models")
+    changed: list[str] = []
+    if isinstance(chat_models, dict):
+        for key, entry in chat_models.items():
+            if not isinstance(entry, dict) or not entry.get("is_local"):
+                continue
+            if not entry.get("supports_tools"):
+                continue
+            # Judge on the same names the install path judged on. An entry with no
+            # repo_id (hand-written, weights resolved another way) is left alone.
+            if compat.is_agentic_capable(entry.get("repo_id") or "", entry.get("filename") or ""):
+                continue
+            entry["supports_tools"] = False
+            changed.append(key)
+
+    raw[_TOOLS_SWEEP_FLAG] = True
+    config_mod.save_config(raw)
+    if changed:
+        log.info(
+            "Turned tool calling off for %d on-device model(s) under %sB: %s. "
+            "They are chat-only; re-enable in the config if you want to try.",
+            len(changed),
+            compat.AGENTIC_MIN_PARAMS_B,
+            ", ".join(changed),
+        )
+    return changed
 
 
 def remove_entry(key: str) -> bool:

@@ -175,6 +175,10 @@ def search(
                 "trending_score": h.trending_score,
                 "arch": h.arch,
                 "param_size": compat.param_size_label(h.repo_id),
+                # Whether this model would be installed with tools ON, so the row
+                # can say "chat only" BEFORE a multi-GB download rather than
+                # leaving the user to discover it from a broken first turn.
+                "tool_capable": compat.is_agentic_capable(h.repo_id),
                 "context_length": h.context_length,
                 "gated": h.gated,
                 "supported": True,
@@ -221,6 +225,9 @@ def repo_detail(repo_id: str) -> dict:
         "has_chat_template": meta.has_chat_template,
         "gated": hf_client.repo_is_gated(repo_id),
         "recommended_filename": recommended,
+        "param_size": compat.param_size_label(repo_id),
+        "tool_capable": compat.is_agentic_capable(repo_id),
+        "agentic_min_params_b": compat.AGENTIC_MIN_PARAMS_B,
         **mem,
         "quants": [
             {

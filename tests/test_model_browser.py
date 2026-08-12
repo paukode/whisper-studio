@@ -58,6 +58,32 @@ def test_param_size_label():
     assert compat.param_size_label("some/random-repo") is None
 
 
+def test_param_count_b_reads_the_size_not_the_version():
+    # A family version that looks like a size ("Qwen2.5") must not win over the
+    # real parameter count later in the name.
+    assert compat.param_count_b("Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF") == 1.5
+    assert compat.param_count_b("bartowski/Llama-3.2-3B-Instruct-GGUF") == 3.0
+    assert compat.param_count_b("google/gemma-4-12B-it-qat-q4_0-gguf") == 12.0
+    # MoE reads as its TOTAL parameter count, not the active slice.
+    assert compat.param_count_b("unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF") == 30.0
+    # Falls back to the filename when the repo name carries no size.
+    assert compat.param_count_b("some/mystery-gguf", "mystery-7B-Q4_K_M.gguf") == 7.0
+    # A bit-width is not a parameter count (\b guards the suffix).
+    assert compat.param_count_b("some/model-8bit-gguf") is None
+    assert compat.param_count_b("some/random-repo") is None
+
+
+def test_is_agentic_capable_gates_on_the_threshold():
+    assert compat.is_agentic_capable("unsloth/Qwen3.5-9B-GGUF") is True
+    assert compat.is_agentic_capable("google/gemma-4-12B-it-qat-q4_0-gguf") is True
+    # Exactly at the threshold counts as capable.
+    assert compat.is_agentic_capable("meta-llama/Llama-3.1-7B-Instruct-GGUF") is True
+    assert compat.is_agentic_capable("Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF") is False
+    assert compat.is_agentic_capable("unsloth/Qwen3-0.6B-GGUF") is False
+    # Unknown size keeps the capability rather than silently downgrading.
+    assert compat.is_agentic_capable("some/random-repo") is True
+
+
 def test_thinking_default():
     assert compat.is_thinking_model("qwen3", "unsloth/Qwen3-8B-GGUF")
     assert compat.is_thinking_model("llama", "org/DeepSeek-R1-Distill-Llama-8B-GGUF")
@@ -244,6 +270,9 @@ def test_search_filters_unsupported_archs_and_dedups(monkeypatch):
     assert results[0]["downloads"] == 500  # ranked by downloads desc
     assert results[0]["param_size"] == "30B"
     assert results[0]["author"] == "unsloth"
+    # Rows carry the agentic verdict so Discover can badge a chat-only model
+    # before the user commits to the download.
+    assert all(r["tool_capable"] for r in results)
 
 
 def test_search_trusted_scope_queries_each_author(monkeypatch):
@@ -287,6 +316,11 @@ def test_repo_detail_shapes_quants(monkeypatch):
     assert quants == ["Q4_K_M", "Q8_0"]  # mmproj hidden, size-sorted
     assert detail["recommended_filename"] == "Qwen3-0.6B-Q4_K_M.gguf"
     assert next(q for q in detail["quants"] if q["quant"] == "Q4_K_M")["recommended"] is True
+    # 0.6B: the detail view states the chat-only verdict and the threshold it
+    # came from, so the UI quotes the server's rule instead of its own number.
+    assert detail["tool_capable"] is False
+    assert detail["param_size"] == "0.6B"
+    assert detail["agentic_min_params_b"] == compat.AGENTIC_MIN_PARAMS_B
 
 
 def test_repo_detail_quants_carry_fit_for_the_running_machine(monkeypatch):
@@ -420,7 +454,7 @@ def test_install_writes_dict_entry_into_chat_models(isolated_home, monkeypatch):
     assert entry["repo_id"] == "unsloth/Qwen3-0.6B-GGUF"
     assert entry["filename"] == "Qwen3-0.6B-Q4_K_M.gguf"
     assert entry["dir"] == "unsloth__Qwen3-0.6B-GGUF"
-    assert entry["supports_tools"] is True
+    assert entry["supports_tools"] is False  # 0.6B is under the agentic threshold
     assert entry["supports_thinking"] is True  # qwen3 → thinking default on
     assert entry["ctx"] == 32768  # header 40960 capped to the 32K default
 
@@ -445,6 +479,27 @@ def test_install_merges_and_does_not_clobber_existing_user_entry(isolated_home, 
     data = json.loads((isolated_home / "config.user.json").read_text())
     assert "my_custom" in data["chat_models"]
     assert result["key"] in data["chat_models"]
+
+
+def test_install_keeps_tools_on_for_a_model_above_the_threshold(isolated_home, monkeypatch):
+    _stub_hf_and_queue(monkeypatch)
+    result = service.install_model("unsloth/Qwen3-8B-GGUF", "Qwen3-8B-Q4_K_M.gguf")
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert data["chat_models"][result["key"]]["supports_tools"] is True
+    assert result["supports_tools"] is True
+
+
+def test_install_turns_tools_off_for_a_small_model(isolated_home, monkeypatch):
+    # The failure this gate exists for: a 1.5B coder model answering a plain
+    # greeting with a raw JSON tool call because it was handed the full pool.
+    _stub_hf_and_queue(monkeypatch, arch="qwen2")
+    result = service.install_model(
+        "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf"
+    )
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert data["chat_models"][result["key"]]["supports_tools"] is False
+    # The install response carries it too, so the UI can say so in its toast.
+    assert result["supports_tools"] is False
 
 
 def test_install_refuses_unsupported_arch(isolated_home, monkeypatch):
@@ -483,6 +538,90 @@ def test_uninstall_removes_user_entry(isolated_home, monkeypatch):
 def test_uninstall_refuses_non_browser_key(isolated_home, monkeypatch):
     with pytest.raises(service.InstallError):
         service.uninstall_model("local_gemma")  # a built-in, not a user entry
+
+
+# ── one-shot sweep: models installed before the agentic gate existed ──────────
+def _write_user_config(home, payload):
+    (home / "config.user.json").write_text(json.dumps(payload))
+    cfg._invalidate_cache()
+
+
+def test_sweep_disables_tools_on_previously_installed_small_models(isolated_home):
+    _write_user_config(
+        isolated_home,
+        {
+            "chat_models": {
+                "local_small": {
+                    "id": "local:small",
+                    "is_local": True,
+                    "supports_tools": True,
+                    "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+                    "filename": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+                },
+                "local_big": {
+                    "id": "local:big",
+                    "is_local": True,
+                    "supports_tools": True,
+                    "repo_id": "unsloth/Qwen3.5-9B-GGUF",
+                    "filename": "Qwen3.5-9B-Q4_K_M.gguf",
+                },
+                "opus5.0": {"id": "cloud-model", "supports_tools": True},
+            }
+        },
+    )
+
+    assert install.disable_tools_on_small_models() == ["local_small"]
+
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert data["chat_models"]["local_small"]["supports_tools"] is False
+    assert data["chat_models"]["local_big"]["supports_tools"] is True
+    # A cloud model has no local tool loop and must never be touched by this.
+    assert data["chat_models"]["opus5.0"]["supports_tools"] is True
+
+
+def test_sweep_runs_once_so_a_deliberate_re_enable_sticks(isolated_home):
+    _write_user_config(
+        isolated_home,
+        {
+            "chat_models": {
+                "local_small": {
+                    "id": "local:small",
+                    "is_local": True,
+                    "supports_tools": True,
+                    "repo_id": "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+                    "filename": "Qwen2.5-Coder-1.5B-Instruct-Q4_K_M.gguf",
+                }
+            }
+        },
+    )
+    assert install.disable_tools_on_small_models() == ["local_small"]
+
+    # The user turns it back on by hand — a supported choice.
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    data["chat_models"]["local_small"]["supports_tools"] = True
+    _write_user_config(isolated_home, data)
+
+    assert install.disable_tools_on_small_models() == []
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert data["chat_models"]["local_small"]["supports_tools"] is True
+
+
+def test_sweep_leaves_an_entry_with_no_repo_id_alone(isolated_home):
+    _write_user_config(
+        isolated_home,
+        {
+            "chat_models": {
+                "local_handrolled": {
+                    "id": "local:handrolled",
+                    "is_local": True,
+                    "supports_tools": True,
+                }
+            }
+        },
+    )
+    assert install.disable_tools_on_small_models() == []
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert data["chat_models"]["local_handrolled"]["supports_tools"] is True
 
 
 # ── recommended: the curated Discover catalog + one-click install ─────────────
