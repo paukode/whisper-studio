@@ -4123,8 +4123,9 @@ button.ws-git-status-badge:hover {
     border: 1px solid var(--border);
     border-radius: 10px;
     max-width: calc(100vw - 48px);
+    /* Height follows the diff up to the viewport, so a two-line change
+     * doesn't open a half-empty window; past that the body scrolls. */
     max-height: calc(100vh - 48px);
-    height: 70vh;
     display: flex;
     flex-direction: column;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
