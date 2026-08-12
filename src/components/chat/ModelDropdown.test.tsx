@@ -52,4 +52,24 @@ describe('ModelDropdown — on-device load state', () => {
     expect(screen.getByTestId('model-option-opus4.8')).toBeTruthy();
     expect(screen.getByTestId('model-option-local_gemma')).toBeTruthy();
   });
+
+  it('marks an on-device model that has no tool loop as chat only', () => {
+    renderDropdown({
+      open: true,
+      models: [
+        { key: 'opus4.8', name: 'Opus 4.8' },
+        { key: 'local_tiny', name: 'Qwen2.5-Coder 1.5B (Local)', is_local: true, supports_tools: false },
+        { key: 'local_gemma', name: 'Gemma (Local)', is_local: true, supports_tools: true },
+      ],
+    });
+    expect(screen.getAllByText(/chat only/i)).toHaveLength(1);
+  });
+
+  it('never marks a cloud model chat-only, whatever its tool flag says', () => {
+    renderDropdown({
+      open: true,
+      models: [{ key: 'opus4.8', name: 'Opus 4.8', supports_tools: false }],
+    });
+    expect(screen.queryByText(/chat only/i)).toBeNull();
+  });
 });

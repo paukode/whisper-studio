@@ -5,6 +5,10 @@ interface ModelOption {
   name: string;
   requires_data_retention?: boolean;
   is_local?: boolean;
+  /** On-device models under the agentic size threshold install with tool
+   *  calling off (server/model_browser/compat.py), so the row says so at the
+   *  point of choosing rather than leaving it to a turn that never uses a tool. */
+  supports_tools?: boolean;
 }
 
 interface ModelDropdownProps {
@@ -71,6 +75,9 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
             </span>
             {m.requires_data_retention && (
               <span className="toolbar-dropdown-item-desc">Requires data-retention opt-in</span>
+            )}
+            {m.is_local && m.supports_tools === false && (
+              <span className="toolbar-dropdown-item-desc">Chat only — no tools or workspace access</span>
             )}
           </div>
           {selectedModel === m.key && (

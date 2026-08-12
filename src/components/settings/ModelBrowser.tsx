@@ -62,6 +62,34 @@ const FitWarning: React.FC<{
   );
 };
 
+/** The threshold to quote when the server didn't send its own. Only a display
+ *  fallback — `agentic_min_params_b` from the detail response wins. */
+const DEFAULT_AGENTIC_MIN_B = 7;
+
+/** Small amber chip marking a model that installs without tool calling. Sits
+ *  next to the parameter size, so the limitation is visible while scanning a
+ *  result list rather than only after a multi-GB download. */
+const ChatOnlyChip: React.FC = () => (
+  <span
+    className="model-local-badge"
+    style={{ color: 'var(--accent-warn, #b8860b)', borderColor: 'var(--accent-warn, #b8860b)' }}
+    title="Too small to use tools reliably — installs as a chat-only model."
+  >
+    chat only
+  </span>
+);
+
+/** The note shown under a row for a model below the agentic size threshold.
+ *  Informational rather than an error: the download is allowed and the model
+ *  works fine as a chat model, it just won't be given the tool pool. */
+const ToolCapabilityNote: React.FC<{ minParamsB?: number | null }> = ({ minParamsB }) => (
+  <p style={{ fontSize: 11, color: 'var(--text-secondary, #888)', margin: '4px 0 0' }}>
+    Under {minParamsB ?? DEFAULT_AGENTIC_MIN_B}B, so it installs with tool calling off. Models this
+    small answer with a raw tool-call blob instead of running the tool, so they get no tools, no
+    workspace access and a much smaller prompt. Fine for chat and quick code.
+  </p>
+);
+
 type QueryClient = ReturnType<typeof useQueryClient>;
 
 /** After any install, surface the new download row in the manager list above and
@@ -83,10 +111,15 @@ function installToast(res: InstallResult) {
         ? `${res.label} is already downloaded and now in your models.`
         : `${res.label} added and downloading. Track it under Models > Chat.`;
   const suffix = res.adopted_index_llm ? ' Indexing will now use your on-device model.' : '';
+  // State the capability the install actually chose. Without this the first
+  // clue that a small model is chat-only would be a turn that never uses a tool.
+  const tools = res.supports_tools
+    ? ''
+    : ' Tool calling is off for it (too small to drive tools reliably) — it is chat only.';
   return {
     type: (res.download === 'queued' ? 'info' : 'success') as 'info' | 'success',
-    message: base + suffix,
-    duration: 6000,
+    message: base + suffix + tools,
+    duration: res.supports_tools ? 6000 : 9000,
   };
 }
 
@@ -120,6 +153,9 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
     selected ?? detail?.recommended_filename ?? quants[0]?.filename ?? null;
   const selectedQuant = quants.find((q) => q.filename === effectiveSelected);
   const selectedFit = selectedQuant?.fit;
+  // Known from the search row alone, so the chip and note render before the
+  // quant detail is ever fetched; the detail refines it once it lands.
+  const toolCapable = detail?.tool_capable ?? result.tool_capable;
   const activate = () => setActivated(true);
 
   const onInstall = async () => {
@@ -167,6 +203,7 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
                 {result.param_size}
               </span>
             )}
+            {toolCapable === false && <ChatOnlyChip />}
           </div>
           <div className="settings-item-desc">
             {result.arch ? `${result.arch} · ` : ''}
@@ -212,6 +249,9 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
         neededBytes={selectedQuant?.needed_bytes}
         memBudgetBytes={detail?.mem_budget_bytes}
       />
+      {toolCapable === false && (
+        <ToolCapabilityNote minParamsB={detail?.agentic_min_params_b} />
+      )}
     </div>
   );
 };
@@ -254,6 +294,7 @@ const RecommendedRow: React.FC<{ model: RecommendedModel }> = ({ model }) => {
               {model.param_size}
             </span>
           )}
+          {!model.supports_tools && <ChatOnlyChip />}
         </div>
         <div className="settings-item-desc">
           {model.quant}
