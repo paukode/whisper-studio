@@ -1,7 +1,6 @@
 import React from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
-import { useActiveChatStore } from '@/stores/sessionRuntimes';
 import { useBackgroundTaskStore } from '@/stores/backgroundTaskStore';
 import { useGitStatusBar } from '@/hooks/useGitStatusBar';
 import { permissionModeLabel } from '@/utils/permissionModes';
@@ -9,13 +8,15 @@ import { permissionModeLabel } from '@/utils/permissionModes';
 /**
  * Persistent bottom status strip for the workspace column — the glanceable
  * state a CLI status line shows: model, effort/mode, git branch + dirty +
- * sync, live context-window meter, per-turn tokens/cost, and a running
- * background-task count that opens the tasks panel.
+ * sync, and a running background-task count that opens the tasks panel.
+ *
+ * Tokens, cost and the context meter deliberately live in ONE place, the
+ * composer's TokenCounter, which is where the eye already is while typing;
+ * this strip used to duplicate them from the same store fields.
  *
  * Every datum is read from an existing store (no new plumbing): the model
- * from settingsStore, git from the shared /api/git status + events, context
- * and tokens from the live chat store's usage frames, tasks from the
- * background-task store. Primitive selects only (zustand v5 safe).
+ * from settingsStore, git from the shared /api/git status + events, tasks
+ * from the background-task store. Primitive selects only (zustand v5 safe).
  */
 export const AppStatusBar: React.FC = () => {
   const selectedModel = useSettingsStore((s) => s.selectedModel);
@@ -24,12 +25,6 @@ export const AppStatusBar: React.FC = () => {
   const permissionMode = useSettingsStore((s) => s.config.permissionMode);
   const wsConnected = useUIStore((s) => s.wsConnected);
 
-  const inputTokens = useActiveChatStore((s) => s.inputTokens);
-  const outputTokens = useActiveChatStore((s) => s.outputTokens);
-  const estimatedCost = useActiveChatStore((s) => s.estimatedCost);
-  const contextUsed = useActiveChatStore((s) => s.contextUsed);
-  const contextMax = useActiveChatStore((s) => s.contextMax);
-
   const runningTaskCount = useBackgroundTaskStore((s) => s.runningCount);
   const setTaskPanelOpen = useBackgroundTaskStore((s) => s.setPanelOpen);
   const taskPanelOpen = useBackgroundTaskStore((s) => s.panelOpen);
@@ -37,9 +32,6 @@ export const AppStatusBar: React.FC = () => {
   const git = useGitStatusBar(wsConnected);
 
   const modelLabel = models.find((m) => m.key === selectedModel)?.name ?? selectedModel;
-  const hasTokens = inputTokens > 0 || outputTokens > 0;
-  const contextPct =
-    contextMax > 0 ? Math.min(100, Math.round((contextUsed / contextMax) * 100)) : 0;
 
   return (
     <div className="app-status-bar" id="appStatusBar" role="status">
@@ -77,24 +69,6 @@ export const AppStatusBar: React.FC = () => {
       )}
 
       <span className="asb-spacer" />
-
-      {contextMax > 0 && (
-        <span className="asb-seg asb-context" title="Context window used this turn">
-          <span className="asb-ctx-track">
-            <span
-              className={`asb-ctx-fill${contextPct >= 80 ? ' hot' : ''}`}
-              style={{ width: `${contextPct}%` }}
-            />
-          </span>
-          {contextPct}%
-        </span>
-      )}
-
-      {hasTokens && (
-        <span className="asb-seg asb-tokens" title="Tokens this turn / estimated cost">
-          {(inputTokens + outputTokens).toLocaleString()} tok · ${estimatedCost.toFixed(4)}
-        </span>
-      )}
 
       {runningTaskCount > 0 && (
         <button
