@@ -304,16 +304,6 @@ def git_branch_endpoint():
     }
 
 
-@router.get("/show")
-def git_show_endpoint(path: str):
-    """Return the HEAD version of a file for diffing."""
-    ws = _require_git_workspace()
-    result = _run_git(["show", f"HEAD:{path}"], cwd=ws, timeout=10)
-    if result.returncode != 0:
-        return {"content": None, "error": result.stderr.strip()}
-    return {"content": result.stdout}
-
-
 @router.get("/file-diff")
 def git_file_diff_endpoint(path: str):
     """Diff one file against HEAD, shaped for the side-by-side viewer.

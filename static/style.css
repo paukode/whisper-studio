@@ -4024,12 +4024,15 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 .ws-git-changes.expanded .ws-git-changes-list {
     display: block;
 }
+/* Font matches .ws-file-tree above it — the two lists read as one
+ * column, so they must not differ in family or size. */
 .ws-git-change-item {
     display: flex;
     align-items: center;
     gap: 6px;
     padding: 3px 10px 3px 14px;
-    font-size: var(--fs-caption);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: var(--fs-small);
     cursor: pointer;
     color: var(--fg);
 }
@@ -4037,11 +4040,22 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     background: var(--bg-hover);
 }
 .ws-git-status-badge {
+    font-family: inherit;
     font-weight: 700;
-    font-size: var(--fs-caption);
+    font-size: inherit;
     width: 14px;
+    padding: 0;
+    background: none;
+    border: none;
     text-align: center;
     flex-shrink: 0;
+    cursor: pointer;
+    border-radius: 3px;
+    line-height: inherit;
+}
+button.ws-git-status-badge:hover {
+    background: var(--bg-hover);
+    outline: 1px solid var(--border);
 }
 .ws-git-status-badge.status-M { color: var(--warning, #e6a700); }
 .ws-git-status-badge.status-D { color: var(--error, #f44); }
@@ -4056,7 +4070,6 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 }
 .ws-git-change-dir {
     color: var(--muted);
-    font-size: var(--fs-caption);
     margin-left: 2px;
 }
 .ws-git-change-stats {
@@ -4067,8 +4080,7 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 }
 .ws-git-change-stats .added { color: var(--success, #4ade80); }
 .ws-git-change-stats .removed { color: var(--error, #f44); }
-.ws-git-change-undo,
-.ws-git-change-view-head {
+.ws-git-change-undo {
     background: none;
     border: none;
     color: var(--muted);
@@ -4080,21 +4092,22 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     flex-shrink: 0;
     transition: opacity 0.1s;
 }
-.ws-git-change-item:hover .ws-git-change-undo,
-.ws-git-change-item:hover .ws-git-change-view-head {
+.ws-git-change-item:hover .ws-git-change-undo {
     opacity: 1;
 }
-.ws-git-change-undo:hover,
-.ws-git-change-view-head:hover {
+.ws-git-change-undo:hover {
     background: var(--bg-hover);
     color: var(--fg);
 }
 
-/* ─── HEAD viewer modal ────────────────────────────────────────────────
- * Tiny read-only overlay used by the Git Changes panel to show the
- * HEAD version of a tracked file. Backdrop + dialog + close button +
- * <pre> for content. Click outside or press Esc to dismiss. */
-.git-head-modal-backdrop {
+/* ─── Diff viewer ──────────────────────────────────────────────────────
+ * Read-only side-by-side (or unified) diff of one file against HEAD,
+ * opened from a status letter in the Git Changes panel. Resizable and
+ * movable via .ws-rz handles; click outside or press Esc to dismiss.
+ *
+ * Both sides live in ONE grid, so a row's two cells share a row box and
+ * the panes cannot drift apart however the content wraps. */
+.git-diff-overlay {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.55);
@@ -4104,75 +4117,183 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     justify-content: center;
     padding: 24px;
 }
-.git-head-modal {
+.git-diff-dialog {
+    position: relative;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-radius: 10px;
-    max-width: 80vw;
-    max-height: 80vh;
-    width: 900px;
+    max-width: calc(100vw - 48px);
+    max-height: calc(100vh - 48px);
+    height: 70vh;
     display: flex;
     flex-direction: column;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
 }
-.git-head-modal-header {
+.git-diff-header {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     padding: 10px 14px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
+    cursor: move;
+    touch-action: none;
 }
-.git-head-modal-title {
-    flex: 1;
+.git-diff-title {
     font-size: var(--fs-small);
     font-weight: 600;
     color: var(--text-primary);
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
 }
-.git-head-modal-title code {
+.git-diff-status {
+    margin-left: 8px;
+    font-weight: 400;
+    font-size: var(--fs-caption);
+    color: var(--text-muted);
+}
+.git-diff-stats {
     font-family: 'IBM Plex Mono', monospace;
     font-size: var(--fs-caption);
-    color: var(--accent);
+    white-space: nowrap;
 }
-.git-head-modal-close {
+.git-diff-stats .added { color: var(--success, #4ade80); }
+.git-diff-stats .removed { color: var(--error, #f44); }
+.git-diff-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    cursor: default;
+}
+.git-diff-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: var(--fs-caption);
+    cursor: pointer;
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+.git-diff-toggle:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+.git-diff-close {
     background: none;
     border: none;
     color: var(--text-muted);
-    font-size: var(--fs-content);
+    font-size: var(--fs-body);
     cursor: pointer;
     padding: 2px 8px;
     border-radius: 3px;
 }
-.git-head-modal-close:hover {
+.git-diff-close:hover {
     background: var(--bg-hover);
     color: var(--text-primary);
 }
-.git-head-modal-body {
+.git-diff-path {
+    padding: 5px 14px;
+    border-bottom: 1px solid var(--border);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: var(--fs-caption);
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+}
+.git-diff-body {
     flex: 1;
     overflow: auto;
-    padding: 12px 14px;
+    min-height: 0;
 }
-.git-head-modal-info {
+.git-diff-info,
+.git-diff-error,
+.git-diff-notice {
     font-size: var(--fs-small);
+    padding: 10px 14px;
+}
+.git-diff-info { color: var(--text-muted); }
+.git-diff-error { color: var(--error, #f44); }
+.git-diff-notice {
     color: var(--text-muted);
-    padding: 8px 0;
+    background: var(--bg-inset);
+    border-bottom: 1px solid var(--border);
+    font-size: var(--fs-caption);
 }
-.git-head-modal-error {
-    font-size: var(--fs-small);
-    color: #ef4444;
-    padding: 8px 0;
-}
-.git-head-modal-pre {
-    margin: 0;
+.git-diff-grid {
+    display: grid;
     font-family: 'IBM Plex Mono', monospace;
     font-size: var(--fs-small);
-    line-height: 1.5;
+    line-height: 1.55;
+    align-items: stretch;
+}
+/* line no | old code | line no | new code */
+.git-diff-grid.split {
+    grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
+}
+/* old no | new no | code */
+.git-diff-grid.unified {
+    grid-template-columns: auto auto minmax(0, 1fr);
+}
+.git-diff-num {
+    padding: 0 6px;
+    text-align: right;
+    color: var(--text-muted);
+    opacity: 0.65;
+    user-select: none;
+    background: var(--bg-inset);
+    white-space: nowrap;
+}
+.git-diff-num.right {
+    border-left: 1px solid var(--border);
+}
+.git-diff-code {
+    padding-right: 10px;
     color: var(--text-primary);
-    white-space: pre;
-    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.git-diff-code.added {
+    background: color-mix(in srgb, var(--success, #4ade80) 16%, transparent);
+}
+.git-diff-code.removed {
+    background: color-mix(in srgb, var(--error, #f44) 16%, transparent);
+}
+.git-diff-sign {
+    display: inline-block;
+    width: 1ch;
+    margin-right: 6px;
+    opacity: 0.75;
+    user-select: none;
+}
+.git-diff-gap {
+    grid-column: 1 / -1;
+    background: var(--bg-inset);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 1px 10px;
+}
+.git-diff-gap-btn,
+.git-diff-gap-label {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: var(--fs-caption);
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+.git-diff-gap-btn {
+    cursor: pointer;
+}
+.git-diff-gap-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
 }
 
 /* ─── Streaming "working" footer (motion during quiet streaming phases) ─── */

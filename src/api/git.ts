@@ -6,19 +6,6 @@ export interface GitFileStatus {
   staged: boolean;
 }
 
-/** HEAD version of a tracked file. Returns ``{content: null, error}``
- *  if git rejects the request (e.g. untracked path), otherwise the
- *  raw file content. Use to power a "View HEAD" affordance next to
- *  modified files in the Git Changes panel. */
-export interface GitHeadContent {
-  content: string | null;
-  error?: string;
-}
-
-export function getGitDiff(path: string): Promise<GitHeadContent> {
-  return get<GitHeadContent>(`/api/git/show?path=${encodeURIComponent(path)}`);
-}
-
 /** One line of a server-parsed hunk. ``old``/``new`` are 1-based line
  *  numbers, null on the side where the line does not exist. */
 export interface DiffHunkLine {

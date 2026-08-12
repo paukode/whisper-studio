@@ -8,9 +8,10 @@ export interface GitFileStatusProps {
   removed?: number;
   onSelect: (path: string) => void;
   onDiscard?: (path: string) => void;
-  /** Optional "View HEAD" affordance — only meaningful for tracked
-   *  files (untracked have no HEAD version). Parent decides eligibility. */
-  onViewHead?: (path: string) => void;
+  /** Opens the side-by-side diff. Wired to the status letter, which
+   *  works for every status: untracked files read as all additions,
+   *  deleted ones as all removals. */
+  onViewDiff?: (path: string) => void;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -32,6 +33,9 @@ const STATUS_LABELS: Record<string, string> = {
  * Individual file status row in the git changes panel.
  * Displays status badge, file path, per-file line stats, and discard button.
  * Matches the vanilla ws-git-change-item structure.
+ *
+ * Two targets on one row: the row opens the file in the editor, its
+ * status letter opens the diff.
  */
 export const GitFileStatus: React.FC<GitFileStatusProps> = ({
   path,
@@ -41,7 +45,7 @@ export const GitFileStatus: React.FC<GitFileStatusProps> = ({
   removed,
   onSelect,
   onDiscard,
-  onViewHead,
+  onViewDiff,
 }) => {
   const handleClick = useCallback(() => {
     onSelect(path);
@@ -65,12 +69,14 @@ export const GitFileStatus: React.FC<GitFileStatusProps> = ({
     [path, onDiscard],
   );
 
-  const handleViewHead = useCallback(
+  const handleViewDiff = useCallback(
     (e: React.MouseEvent) => {
+      // Without this the row's own handler would also fire and open the
+      // editor behind the diff.
       e.stopPropagation();
-      onViewHead?.(path);
+      onViewDiff?.(path);
     },
-    [path, onViewHead],
+    [path, onViewDiff],
   );
 
   const statusLabel = STATUS_LABELS[status] ?? status.charAt(0).toUpperCase();
@@ -87,9 +93,21 @@ export const GitFileStatus: React.FC<GitFileStatusProps> = ({
       title={path}
       aria-label={`${path}: ${status}${staged ? ', staged' : ''}`}
     >
-      <span className={`ws-git-status-badge status-${statusLabel}`} aria-hidden="true">
-        {statusLabel}
-      </span>
+      {onViewDiff ? (
+        <button
+          type="button"
+          className={`ws-git-status-badge status-${statusLabel}`}
+          onClick={handleViewDiff}
+          title="View changes"
+          aria-label={`View changes in ${path}`}
+        >
+          {statusLabel}
+        </button>
+      ) : (
+        <span className={`ws-git-status-badge status-${statusLabel}`} aria-hidden="true">
+          {statusLabel}
+        </span>
+      )}
       <span className="ws-git-change-path">
         {dirPath && <span className="ws-git-change-dir">{dirPath}</span>}
         <span className="ws-git-change-name">{fileName}</span>
@@ -100,19 +118,6 @@ export const GitFileStatus: React.FC<GitFileStatusProps> = ({
           {added !== undefined && added > 0 && removed !== undefined && removed > 0 && ' '}
           {removed !== undefined && removed > 0 && <span className="removed">-{removed}</span>}
         </span>
-      )}
-      {/* View HEAD is only meaningful for tracked files (status !== '?'),
-       *  since untracked paths have no HEAD revision to fetch. */}
-      {onViewHead && statusLabel !== '?' && (
-        <button
-          className="ws-git-change-view-head"
-          title="View HEAD version"
-          onClick={handleViewHead}
-          type="button"
-          aria-label={`View HEAD version of ${path}`}
-        >
-          👁
-        </button>
       )}
       {onDiscard && !staged && (
         <button
