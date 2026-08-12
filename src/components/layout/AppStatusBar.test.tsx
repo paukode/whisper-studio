@@ -72,20 +72,16 @@ describe('AppStatusBar', () => {
     expect(container.querySelector('.asb-git.dirty')).toBeTruthy();
   });
 
-  it('renders a context meter from live usage', () => {
+  it('leaves tokens, cost and the context meter to the composer readout', () => {
+    // These lived here AND in TokenCounter, off the same store fields. The
+    // strip must stay free of them so the app has one such readout.
     const store = primeActiveSession();
     store.getState().setUsage(1000, 200, 0.05, 100_000, 200_000);
-    const { getByText, container } = render(<AppStatusBar />, { wrapper });
-    expect(getByText('50%')).toBeTruthy();
-    const fill = container.querySelector('.asb-ctx-fill') as HTMLElement;
-    expect(fill.style.width).toBe('50%');
-  });
-
-  it('marks the context meter hot at >=80%', () => {
-    const store = primeActiveSession();
-    store.getState().setUsage(1, 1, 0.01, 170_000, 200_000);
     const { container } = render(<AppStatusBar />, { wrapper });
-    expect(container.querySelector('.asb-ctx-fill.hot')).toBeTruthy();
+    expect(container.querySelector('.asb-ctx-fill')).toBeNull();
+    expect(container.querySelector('.asb-tokens')).toBeNull();
+    expect(container.textContent).not.toContain('50%');
+    expect(container.textContent).not.toContain('$');
   });
 
   it('shows a background-task pill that opens the panel', () => {

@@ -3734,19 +3734,45 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 }
 .toolbar-btn.active:hover { background: var(--accent-dim); color: var(--accent-hover); }
 
-/* Feature 11/17: Token counter in toolbar */
+/* Session token/cost readout in the composer toolbar — the app's single
+   tokens/cost/context surface (the bottom status strip used to repeat it). */
 .token-counter {
-    font-size: 0.75em;
+    /* Same capsule as .toolbar-btn — it shares that row, so it follows the
+       one-pill spec; only the mono/tabular numerals differ. */
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: var(--fs-caption);
+    line-height: 1.4;
     color: var(--text-muted);
     font-family: var(--font-mono);
-    padding: 2px 8px;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 9px;
     background: var(--bg-secondary);
-    border-radius: 4px;
+    border-radius: 999px;
     border: 1px solid var(--border);
     white-space: nowrap;
 }
-.token-counter { cursor: pointer; }
-.token-counter:hover { border-color: var(--accent); }
+.tc-sep { opacity: 0.5; }
+.tc-ctx-track {
+    display: inline-block;
+    width: 40px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--border-strong);
+    overflow: hidden;
+    vertical-align: middle;
+}
+.tc-ctx-fill {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s ease;
+}
+.tc-ctx-fill.hot { background: var(--accent-record); }
+@media (prefers-reduced-motion: reduce) {
+    .tc-ctx-fill { transition: none; }
+}
 
 /* Context usage bar */
 .context-bar-track { height: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden; }

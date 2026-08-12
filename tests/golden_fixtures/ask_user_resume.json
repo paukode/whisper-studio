@@ -16,6 +16,7 @@
       "output_tokens": 50,
       "total_input": 100,
       "total_output": 50,
+      "total_prompt": 100,
       "cache_read_tokens": 0,
       "cache_creation_tokens": 0,
       "total_cache_read": 0,

@@ -146,6 +146,30 @@ def estimate_cost(
     )
 
 
+def prompt_token_total(
+    input_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+    cached_in_input: bool = False,
+) -> int:
+    """Total prompt tokens for one call, across both provider conventions.
+
+    Providers disagree on what ``input_tokens`` counts, so it is never the
+    prompt size on its own:
+      * Anthropic (cached_in_input False): input / cache_read / cache_creation
+        are disjoint buckets — a fully cached prompt reports a handful of
+        input tokens and the rest as cache reads. Sum all three.
+      * OpenAI (True): cache_read is a SUBSET of input_tokens, which is
+        already the whole prompt. Adding the cached portion would double it.
+
+    Same flag semantics as estimate_cost, from the same two sources: the
+    adapter attribute live, the pricing entry for recorded rows.
+    """
+    if cached_in_input:
+        return max(input_tokens, cache_read_tokens) + cache_creation_tokens
+    return input_tokens + cache_read_tokens + cache_creation_tokens
+
+
 # ── Database operations ───────────────────────────────────────────────
 
 
@@ -208,6 +232,50 @@ def get_session_costs(session_id: str) -> list[dict]:
         return [dict(r) for r in rows]
     except Exception:
         return []
+
+
+_EMPTY_USAGE = {"prompt_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "rounds": 0}
+
+
+def get_session_usage(session_id: str) -> dict:
+    """Running token/cost totals for one session, as the live readout shows them.
+
+    Grouped by model because the cache convention (and so what ``input_tokens``
+    means) is per-model: each group is normalized with prompt_token_total before
+    summing, so a session that mixed Claude and GPT turns still adds up.
+    """
+    try:
+        with _get_conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT model,
+                    COUNT(*) as rounds,
+                    COALESCE(SUM(input_tokens), 0) as input_tokens,
+                    COALESCE(SUM(output_tokens), 0) as output_tokens,
+                    COALESCE(SUM(cache_read_tokens), 0) as cache_read,
+                    COALESCE(SUM(cache_creation_tokens), 0) as cache_write,
+                    COALESCE(SUM(cost_usd), 0.0) as cost_usd
+                FROM session_costs WHERE session_id = ? GROUP BY model
+                """,
+                (session_id,),
+            ).fetchall()
+    except Exception:
+        return dict(_EMPTY_USAGE)
+
+    out = dict(_EMPTY_USAGE)
+    for r in rows:
+        pricing = _resolve_pricing(r["model"])
+        out["prompt_tokens"] += prompt_token_total(
+            r["input_tokens"] or 0,
+            r["cache_read"] or 0,
+            r["cache_write"] or 0,
+            cached_in_input=bool(pricing and pricing.get("cached_in_input")),
+        )
+        out["output_tokens"] += r["output_tokens"] or 0
+        out["cost_usd"] += r["cost_usd"] or 0.0
+        out["rounds"] += r["rounds"] or 0
+    out["cost_usd"] = round(out["cost_usd"], 6)
+    return out
 
 
 def get_session_summary(session_id: str) -> dict:
@@ -422,6 +490,17 @@ async def api_cost_summary(session_id: str = ""):
             out["context_used"] = used
             out["context_max"] = cap
     return out
+
+
+@router.get("/session/{session_id}")
+async def api_session_usage(session_id: str):
+    """One session's running token/cost totals, for the composer readout.
+
+    The live numbers arrive on the chat stream's usage frames; this rehydrates
+    them when a session is reopened (or the app reloaded) so the readout keeps
+    counting the whole session instead of restarting at the next turn.
+    """
+    return get_session_usage(session_id)
 
 
 @router.get("/models")

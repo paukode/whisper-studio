@@ -125,3 +125,44 @@ describe('chatStore — approval queue', () => {
     expect(store.getState().approvalQueue).toEqual([]);
   });
 });
+
+describe('chatStore — session usage totals', () => {
+  it('accumulates each turn into the session totals', () => {
+    // Turn 1, streamed as two usage frames (running totals within the turn).
+    store.getState().setUsage(40_000, 500, 0.2, 40_000, 200_000);
+    store.getState().setUsage(60_000, 2_000, 0.3, 60_000, 200_000);
+    expect(store.getState().sessionInputTokens).toBe(60_000);
+    expect(store.getState().sessionOutputTokens).toBe(2_000);
+    expect(store.getState().sessionCost).toBeCloseTo(0.3, 6);
+
+    // Turn 2 — setStreaming clears the per-turn fields, so the next frame's
+    // totals must add to the session rather than replace it.
+    store.getState().setStreaming(true);
+    store.getState().setUsage(58_400, 2_012, 0.1679, 58_400, 200_000);
+    expect(store.getState().inputTokens).toBe(58_400);
+    expect(store.getState().sessionInputTokens).toBe(118_400);
+    expect(store.getState().sessionOutputTokens).toBe(4_012);
+    expect(store.getState().sessionCost).toBeCloseTo(0.4679, 6);
+  });
+
+  it('never subtracts when a turn restarts mid-flight', () => {
+    store.getState().setUsage(50_000, 1_000, 0.25);
+    // An approval resume re-enters the loop and starts its own count lower;
+    // the session total holds and grows from there.
+    store.getState().setUsage(10_000, 100, 0.05);
+    expect(store.getState().sessionInputTokens).toBe(50_000);
+    expect(store.getState().sessionCost).toBeCloseTo(0.25, 6);
+  });
+
+  it('hydrateSessionUsage seeds totals without lowering a live count', () => {
+    store.getState().hydrateSessionUsage(500_000, 20_000, 3.5);
+    expect(store.getState().sessionInputTokens).toBe(500_000);
+    expect(store.getState().sessionOutputTokens).toBe(20_000);
+    expect(store.getState().sessionCost).toBeCloseTo(3.5, 6);
+
+    // A turn that streamed while the fetch was in flight stays counted.
+    store.getState().hydrateSessionUsage(400_000, 10_000, 2.0);
+    expect(store.getState().sessionInputTokens).toBe(500_000);
+    expect(store.getState().sessionCost).toBeCloseTo(3.5, 6);
+  });
+});

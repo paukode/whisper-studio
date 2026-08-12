@@ -119,3 +119,53 @@ def test_pricing_resolves_longest_prefix():
     assert tracker._resolve_pricing("sonnet5_subagent") is tracker._MODEL_PRICING["sonnet5"]
     assert tracker._resolve_pricing("sonnet_subagent") is tracker._MODEL_PRICING["sonnet"]
     assert tracker._resolve_pricing("unknown-model") is None
+
+
+def test_prompt_token_total_across_conventions():
+    """The number a reader means by "tokens in" — the whole prompt — under both
+    provider conventions. Anthropic's buckets are disjoint; OpenAI's input
+    already contains the cached portion."""
+    assert tracker.prompt_token_total(4, 118_000, 396) == 118_400
+    assert tracker.prompt_token_total(100_000, 80_000, 0, cached_in_input=True) == 100_000
+    # A cache read larger than the reported input can only mean the provider
+    # reported the remainder, not the whole prompt — take the larger.
+    assert tracker.prompt_token_total(4, 118_000, 0, cached_in_input=True) == 118_000
+    assert tracker.prompt_token_total(500, 0, 0) == 500
+
+
+def test_session_usage_totals_prompt_tokens():
+    """A warm-cache session's "in" side is the prompt, not the cache misses:
+    4 input + 118K read + 396 write is 118,400 tokens in, not 4."""
+    _record(inp=4, out=2012, read=118_000, write=396, session="s-warm")
+    _record(inp=6, out=1000, read=120_000, write=0, session="s-warm")
+    usage = tracker.get_session_usage("s-warm")
+    assert usage["prompt_tokens"] == 118_400 + 120_006
+    assert usage["output_tokens"] == 3012
+    assert usage["rounds"] == 2
+    assert usage["cost_usd"] > 0
+
+
+def test_session_usage_mixes_model_conventions():
+    """Per-model grouping matters: a session that used both Claude and GPT
+    normalizes each group's convention before summing."""
+    _record(model="opus4.8", inp=1000, out=10, read=50_000, write=0, session="s-mix")
+    _record(model="gpt5.6-sol", inp=100_000, out=20, read=80_000, write=0, session="s-mix")
+    usage = tracker.get_session_usage("s-mix")
+    assert usage["prompt_tokens"] == 51_000 + 100_000
+    assert usage["output_tokens"] == 30
+
+
+def test_session_usage_empty_session():
+    assert tracker.get_session_usage("nobody") == {
+        "prompt_tokens": 0,
+        "output_tokens": 0,
+        "cost_usd": 0.0,
+        "rounds": 0,
+    }
+
+
+def test_session_usage_endpoint(client):
+    _record(inp=4, out=50, read=9000, write=1000, session="s-ep")
+    data = client.get("/api/costs/session/s-ep").json()
+    assert data["prompt_tokens"] == 10_004
+    assert data["output_tokens"] == 50

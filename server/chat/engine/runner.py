@@ -156,6 +156,7 @@ async def run_turn(ctx: TurnContext):
     )
     from server.chat.infra import _estimate_cost
     from server.chat.tool_pool import _is_tool_concurrent_safe
+    from server.costs.tracker import prompt_token_total
     from server.costs.tracker import record_turn as _record_cost_turn
     from server.infrastructure.errors import PromptTooLongError, WhisperAPIError
     from server.tool_executor import execute_tool_batch, process_tool_results
@@ -179,6 +180,11 @@ async def run_turn(ctx: TurnContext):
     total_output_tokens = 0
     total_cache_read = 0
     total_cache_creation = 0
+    # Prompt tokens actually sent, summed over rounds and normalized across the
+    # two cache-reporting conventions (see prompt_token_total). This is the only
+    # one of these that means "tokens in" to a reader: total_input_tokens counts
+    # just the UNCACHED remainder, which with caching on is near zero.
+    total_prompt_tokens = 0
 
     # Completion gate (WS-E): how many times the gate forced this turn to keep
     # going. Capped so a stuck check can't loop forever.
@@ -377,9 +383,15 @@ async def run_turn(ctx: TurnContext):
             from server.chat.loop_hints import context_window_for, note_prompt_tokens
 
             _ctx_max = context_window_for(ctx.model_key)
-            _prompt_tokens = round_input_tokens + round_cache_read + round_cache_creation
+            _prompt_tokens = prompt_token_total(
+                round_input_tokens,
+                round_cache_read,
+                round_cache_creation,
+                cached_in_input=_cached_in_input,
+            )
+            total_prompt_tokens += _prompt_tokens
             note_prompt_tokens(_scope_id, _prompt_tokens, _ctx_max)
-            yield f"data: {ndjson_dumps({'usage': {'input_tokens': round_input_tokens, 'output_tokens': round_output_tokens, 'total_input': total_input_tokens, 'total_output': total_output_tokens, 'cache_read_tokens': round_cache_read, 'cache_creation_tokens': round_cache_creation, 'total_cache_read': total_cache_read, 'total_cache_creation': total_cache_creation, 'estimated_cost_usd': round(cost, 6), 'model': ctx.model_key, 'context_used': _prompt_tokens, 'context_max': _ctx_max}})}\n\n"
+            yield f"data: {ndjson_dumps({'usage': {'input_tokens': round_input_tokens, 'output_tokens': round_output_tokens, 'total_input': total_input_tokens, 'total_output': total_output_tokens, 'total_prompt': total_prompt_tokens, 'cache_read_tokens': round_cache_read, 'cache_creation_tokens': round_cache_creation, 'total_cache_read': total_cache_read, 'total_cache_creation': total_cache_creation, 'estimated_cost_usd': round(cost, 6), 'model': ctx.model_key, 'context_used': _prompt_tokens, 'context_max': _ctx_max}})}\n\n"
             _record_cost_turn(
                 session_id=session_id,
                 turn_number=round_num,
