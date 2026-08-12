@@ -150,6 +150,12 @@
       <code>github-destructive</code>, which ignores overrides entirely. A legacy
       <code>permissions.json</code> with no <code>category_modes</code> key behaves exactly as
       before: every category follows the global mode.</p>
+    <p>One key in that map is not an approval category at all. <code>workflow</code> is read outside
+      this resolver by <code class="path">server/workflows/launch_policy.py</code>, which gates
+      launching a new <a href="arch-ultracode.html">ultracode workflow</a> script rather than a tool
+      call: it resolves the same <code>category_modes</code> entry (falling back to the global mode)
+      to launch with no card, show the phase-preview card, or decline. It is stored, validated, and
+      rendered in Settings like any other category row.</p>
 
     <h3 id="custom-rules">Custom rules</h3>
     <p>Rules let you carve fine-grained exceptions out of a mode. Each is a small JSON object; the
@@ -314,7 +320,8 @@
         not seen as <code>ask</code> lazily. That seeding has no dynamic fetch, so a brand-new
         backend category needs a matching frontend default before it surfaces as a remembered
         "Yes for all" toggle. Separately, <code>GET /api/permissions</code> does return a computed
-        <code>categories</code> list (from <code>registry.all_categories()</code>) - that one exists
+        <code>categories</code> list (from <code>registry.all_categories()</code>, plus the
+        policy-only <code>workflow</code> entry appended for the settings UI) - that one exists
         so Settings can render a <code>category_modes</code> row per category, not to drive the
         session-memory seeding.</p></div>
     </div>

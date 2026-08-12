@@ -110,6 +110,18 @@
         can wave those through.</p></div>
     </div>
 
+    <h3 id="workflow-category">The workflow category</h3>
+    <p>One category gates something larger than a single tool call. <code>workflow</code> decides
+      whether launching a <em>new</em> <a href="arch-ultracode.html">ultracode workflow</a> script
+      stops at its phase-preview approval card, which by default it does. Set the category to
+      <code>auto</code> and a new script launches without the card as long as its budget is within the
+      default 600,000 output tokens, while anything larger still asks;
+      <code>bypassPermissions</code> never shows the card, and <code>dontAsk</code> declines the launch
+      outright. Trusted saved workflows and resumes never consult this gate, and no mode loosens the
+      runtime's own ceilings: the concurrency semaphore, the agent cap, and the token budget hold
+      regardless. See <a href="arch-ultracode.html#approval">Approval and trust</a> for the full
+      flow.</p>
+
     <h2 id="approval-cards">Approval cards: what "ask" looks like</h2>
     <p>When a call resolves to <b>ask</b>, the turn pauses and an approval card appears inline in the
       chat, right where the tool would have run. The card shows the exact thing about to happen, not a
@@ -196,23 +208,6 @@
         stricter per-category mode overrides <code>bypassPermissions</code>, and every other mode
         respects your rules first.</p></div>
     </div>
-
-    <h2 id="per-category-defaults">Per-category defaults: a mode per kind of action</h2>
-    <p>Between the global dial and per-tool rules sits a middle layer, <b>Per-Category Defaults</b>,
-      also under <b>Settings &rsaquo; Permissions</b>. Each approval category - file writes, file
-      deletes, shell commands, worktrees, live preview, GitHub, and workflow runs - can pin its own
-      mode; a category with no entry follows the global dial. So you can let file writes auto-approve
-      while deletes and shell commands still ask, without loosening or tightening everything at once.
-      GitHub (destructive) is the one exception: it always asks and cannot be overridden.</p>
-    <p>The <b>Workflow runs</b> row is special: it gates launching a <em>new</em>
-      <a href="arch-ultracode.html">ultracode workflow</a> script rather than a single tool call. By
-      default every new script stops at the phase-preview approval card. Set the row to
-      <code>auto</code> and new scripts budgeted within the default 600,000 output tokens launch
-      without the card (bigger budgets still ask); <code>bypassPermissions</code> never shows the card;
-      <code>dontAsk</code> declines launches outright. Trusted saved workflows and resumes always run
-      directly, and no mode loosens the runtime's server-side limits (concurrency, the agent cap, the
-      token budget). See <a href="arch-ultracode.html#approval">Approval and trust</a> for the full
-      flow.</p>
 
     <h2 id="hard-guards">The guards that never turn off</h2>
     <p>Modes and rules control the <em>consent</em> layer: whether you are asked. Underneath them sit
