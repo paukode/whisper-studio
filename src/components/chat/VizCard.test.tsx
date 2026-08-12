@@ -9,8 +9,8 @@
  * The rest pins the theme contract: the model never names a colour, so the
  * class hooks that carry the theme must survive sanitisation.
  */
-import { render } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { render, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { VizCard } from './VizCard';
 import type { VizArtifact } from '@/types/chat';
 
@@ -63,11 +63,20 @@ describe('VizCard: SVG diagrams', () => {
 
 describe('VizCard: charts', () => {
   const spec = JSON.stringify({ mark: 'bar', data: { values: [{ a: 1 }] } });
+  const HOST = '<!doctype html><html><body>chart host</body></html>';
 
-  it('runs the Vega runtime in an iframe that cannot reach the app', () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(HOST, { status: 200 })),
+    );
+  });
+
+  it('runs the Vega runtime in an iframe that cannot reach the app', async () => {
     const { container } = render(<VizCard viz={viz({ kind: 'chart', source: spec })} />);
+    await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy());
     const frame = container.querySelector('iframe')!;
-    expect(frame.getAttribute('src')).toBe('/static/viz/chart-host.html');
+    expect(frame.getAttribute('srcdoc')).toContain('chart host');
     const sandbox = frame.getAttribute('sandbox') ?? '';
     expect(sandbox).toContain('allow-scripts');
     // Without this the iframe would share the app's origin and could call the
@@ -83,8 +92,9 @@ describe('VizCard: charts', () => {
     expect(getByText(/not valid JSON/)).toBeTruthy();
   });
 
-  it('does not render an SVG host for chart kind', () => {
+  it('does not render an SVG host for chart kind', async () => {
     const { container } = render(<VizCard viz={viz({ kind: 'chart', source: spec })} />);
+    await waitFor(() => expect(container.querySelector('iframe')).toBeTruthy());
     expect(container.querySelector('.viz-svg')).toBeNull();
   });
 });

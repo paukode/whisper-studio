@@ -59,6 +59,57 @@ function useThemeTokens(): ThemeTokens {
 
 type ExportFormat = 'svg' | 'png';
 
+/* The chart host is delivered as an iframe `srcdoc` with the Vega runtime
+ * inlined into it, assembled once per app session and shared by every chart.
+ *
+ * Why not `src` plus <script src>: the frame is sandboxed without
+ * `allow-same-origin`, so it runs on an opaque origin. Both the document
+ * navigation and its subresource loads are then at the mercy of whichever web
+ * view is hosting the app, and we saw both refused. Inlining makes the frame
+ * self-contained, which is also what keeps charts working with no network at
+ * all. The cost is parsing ~750KB of JS per chart frame, which is a few tens
+ * of milliseconds and only on cards that actually have a chart.
+ *
+ * chart-host.html stays the source of truth and still opens standalone. */
+const HOST_ASSETS = [
+  '/static/viz/chart-host.html',
+  '/static/viz/vendor/vega.min.js',
+  '/static/viz/vendor/vega-lite.min.js',
+] as const;
+
+let hostHtmlPromise: Promise<string> | null = null;
+
+/** Inline a script body safely: a `</script>` inside a JS string literal would
+ *  otherwise close the tag early and truncate the runtime. */
+function inlineScript(source: string): string {
+  return `<script>${source.replace(/<\/script/gi, '<\\/script')}<\/script>`;
+}
+
+function loadChartHost(): Promise<string> {
+  hostHtmlPromise ??= Promise.all(
+    HOST_ASSETS.map((url) =>
+      fetch(url).then((r) => (r.ok ? r.text() : Promise.reject(new Error(url)))),
+    ),
+  )
+    .then(([html, vega, vegaLite]) =>
+      // Replacer FUNCTIONS, not strings: a replacement string would treat the
+      // `$&` / `$'` sequences that occur in minified code as substitution
+      // patterns and splice the surrounding HTML into the runtime.
+      html
+        .replace('<script src="/static/viz/vendor/vega.min.js"></script>', () =>
+          inlineScript(vega),
+        )
+        .replace('<script src="/static/viz/vendor/vega-lite.min.js"></script>', () =>
+          inlineScript(vegaLite),
+        ),
+    )
+    .catch(() => {
+      hostHtmlPromise = null;
+      return '';
+    });
+  return hostHtmlPromise;
+}
+
 /**
  * One card for both inline visual kinds.
  *
@@ -76,6 +127,7 @@ export const VizCard: React.FC<{ viz: VizArtifact }> = ({ viz }) => {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [frameHeight, setFrameHeight] = useState(320);
   const [chartError, setChartError] = useState<string | null>(null);
+  const [hostHtml, setHostHtml] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
 
   // Resolvers for in-flight postMessage export round trips, keyed by request id.
@@ -98,6 +150,17 @@ export const VizCard: React.FC<{ viz: VizArtifact }> = ({ viz }) => {
       return null;
     }
   }, [viz.kind, viz.source]);
+
+  useEffect(() => {
+    if (viz.kind !== 'chart') return;
+    let live = true;
+    void loadChartHost().then((html) => {
+      if (live) setHostHtml(html || null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [viz.kind]);
 
   // ---- chart host bridge -------------------------------------------------
   useEffect(() => {
@@ -220,14 +283,16 @@ export const VizCard: React.FC<{ viz: VizArtifact }> = ({ viz }) => {
       ) : (
         <div className="viz-card-body is-chart">
           {chartError && <div className="viz-error">{chartError}</div>}
-          <iframe
-            ref={frameRef}
-            className="viz-frame"
-            src="/static/viz/chart-host.html"
-            sandbox="allow-scripts"
-            style={{ height: frameHeight }}
-            title={viz.title}
-          />
+          {hostHtml && (
+            <iframe
+              ref={frameRef}
+              className="viz-frame"
+              srcDoc={hostHtml}
+              sandbox="allow-scripts"
+              style={{ height: frameHeight }}
+              title={viz.title}
+            />
+          )}
         </div>
       )}
     </div>

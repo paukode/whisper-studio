@@ -36,6 +36,23 @@ export interface SvgSize {
   height: number;
 }
 
+/**
+ * Browsers resolve the theme's `color-mix()` fills to CSS Color 4 syntax
+ * (`color(srgb 0.24 0.19 0.16)`). Browsers read that back fine, but Figma,
+ * Illustrator and Inkscape drop the fill entirely, so a downloaded diagram
+ * would open as a set of unfilled outlines. Convert to plain rgb()/rgba().
+ */
+export function toLegacyColor(value: string): string {
+  return value.replace(
+    /color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)/gi,
+    (_all, r: string, g: string, b: string, a?: string) => {
+      const ch = (c: string) => Math.round(Math.min(1, Math.max(0, Number(c))) * 255);
+      const rgb = `${ch(r)}, ${ch(g)}, ${ch(b)}`;
+      return a === undefined || Number(a) >= 1 ? `rgb(${rgb})` : `rgba(${rgb}, ${a})`;
+    },
+  );
+}
+
 /** Intrinsic size from the viewBox, falling back to the rendered box. */
 export function svgSize(svg: SVGSVGElement): SvgSize {
   const vb = svg.viewBox?.baseVal;
@@ -61,7 +78,7 @@ export function standaloneSvg(svg: SVGSVGElement, background: string): SVGSVGEle
     for (const prop of CARRIED) {
       const value = computed.getPropertyValue(prop);
       // `none` on fill/stroke is meaningful and must be kept; empty is not.
-      if (value) target.setAttribute(prop, value);
+      if (value) target.setAttribute(prop, toLegacyColor(value));
     }
     target.removeAttribute('class');
   }
