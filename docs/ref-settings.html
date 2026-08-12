@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Settings &amp; config keys - Whisper Studio Docs</title>
-  <meta name="description" content="Every Settings-UI field and the config.json key it maps to: Bedrock region, default model, model mode, feature flags, effort, permission mode, Tavily key, and cost caps.">
+  <meta name="description" content="Every Settings-UI field and the config key it maps to: Bedrock region, default model, model mode, feature flags, effort, permission mode, category modes, network policy, Tavily key, and cost caps.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -16,14 +16,16 @@
   <main class="doc" data-page="ref-settings">
     <h1>Settings &amp; config keys</h1>
     <p class="subtitle">Every field in the in-app Settings panel, and the exact
-      <code class="path">config.json</code> key it writes. Use this page as a lookup when you want to
+      config key it writes. Use this page as a lookup when you want to
       hand-edit config or understand what a toggle actually changes.</p>
 
     <p>Whisper Studio has no separate config UI to learn: the gear icon opens a Settings panel whose
-      fields map one-to-one onto keys in <code class="path">config.json</code>. Everything below is
-      resolved by <code class="path">server/infrastructure/config.py</code>, which merges several
-      layers in priority order (see <a href="#layers">Config layers</a>). If you prefer to edit JSON
-      directly, the key names in the second column are what you write.</p>
+      fields map one-to-one onto keys in your user config file (<code class="path">config.user.json</code>,
+      or legacy <code class="path">config.json</code>; see <a href="#layers">Config layers</a> for where
+      it lives). Everything below is resolved by
+      <code class="path">server/infrastructure/config.py</code>, which merges several layers in
+      priority order. If you prefer to edit JSON directly, the key names in the second column are what
+      you write.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
@@ -51,16 +53,21 @@
             Opus 4.6 / 4.7 / 4.8, Opus 5, Fable 5.0, GPT-5.4 / 5.5, GPT-5.6 Sol / Terra / Luna, or an
             on-device model when local mode is on. The picker only shows
             models valid for the current <b>Model Mode</b> (cloud hides on-device models and vice versa).
-            Default is <code>opus5.0</code>. Fable 5.0 requires the data-retention consent flow before it
-            can be selected. Full catalog on <a href="arch-backends.html">Model backends</a>.</td>
+            The shipped default is <code>opus5.0</code> (set in <code class="path">config.example.json</code>,
+            the SYSTEM layer every install actually reads); <code>opus4.8</code> is only the code-level
+            fallback used if that file is unreadable. Fable 5.0 requires the data-retention consent flow
+            before it can be selected. Full catalog on <a href="arch-backends.html">Model backends</a>.</td>
         </tr>
         <tr>
           <td><b>Model Mode</b></td>
           <td>Where indexing and retrieval run: <code>cloud</code> (all on Amazon Bedrock),
             <code>local</code> (all on-device), or <code>hybrid</code> (pick a backend per
             capability). This also drives which chat models the picker shows. Changing it prompts a
-            reload so the app re-initializes in the new mode. See <a href="tut-model-modes.html">Model
-            modes</a>.</td>
+            reload so the app re-initializes in the new mode. A dev checkout inherits <code>cloud</code>
+            from <code class="path">config.example.json</code>; a fresh packaged install is seeded to
+            <code>hybrid</code> with on-device embed/rerank (Qwen3) and GLiNER entity extraction, but
+            cloud Haiku as the indexing writer until you install a local chat model. See
+            <a href="tut-model-modes.html">Model modes</a>.</td>
         </tr>
         <tr>
           <td><b>Feature Flags</b></td>
@@ -92,9 +99,10 @@
         </tr>
         <tr>
           <td><b>Tavily API Key</b></td>
-          <td>Enables the web-search and web-fetch skills. Left empty by default, which disables web
-            search entirely. The API never returns the raw key back to the UI; you only see a masked
-            hint. Prefer the environment variable path (see <a href="#tavily">Tavily key</a>).</td>
+          <td>Enables the <code>web_search</code> tool; <code>web_fetch</code> works without it. Left
+            empty by default, which disables web search entirely. The API never returns the raw key
+            back to the UI; you only see a masked hint. Prefer the environment variable path (see
+            <a href="#tavily">Tavily key</a>).</td>
         </tr>
         <tr>
           <td><b>Cost Limits</b></td>
@@ -102,18 +110,45 @@
             exceed either, it stops with an error. <code>0</code> means unlimited (the default for
             both). See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td>
         </tr>
+        <tr>
+          <td><b>Models &gt; Discover</b></td>
+          <td>The model browser for on-device models. The app ships with <b>no local model installed by
+            default</b>; Discover lists recommended models you can install, each graded by whether it
+            actually fits your device's memory. Removing a local model deletes its weights; removing a
+            cloud (Bedrock) model just tombstones it in the picker.</td>
+        </tr>
+        <tr>
+          <td><b>Import project</b></td>
+          <td>One-shot migration from a Claude Code or Codex CLI project: its instructions file
+            (<code class="path">CLAUDE.md</code> or <code class="path">AGENTS.md</code>) copies to
+            <code class="path">WHISPER.md</code>, its skills copy into the skills folder, and its
+            <code class="path">.mcp.json</code> translates into MCP server config. Never overwrites a
+            file that already exists, and nothing it imports is executed as part of the import.</td>
+        </tr>
+        <tr>
+          <td><b>Permissions</b></td>
+          <td>The full permission surface beyond the single mode dropdown: per-tool rules, per-category
+            approval defaults, and the network egress policy. See
+            <a href="#permission-modes">Permission modes</a> below.</td>
+        </tr>
       </tbody>
     </table></div>
+    <p>These live inside a grouped settings rail rather than one flat list: <b>Chat and models</b>
+      (Model mode; Models, with Chat / Discover / Transcription / Indexing sub-tabs), <b>Tools and
+      automation</b> (MCP servers; Import project; Skills and plugins; Workflows and tasks, including
+      Scheduled tasks and Hooks), and <b>Access and usage</b> (Keys and permissions - API keys,
+      Permissions; Usage and advanced - Stats, Costs, Feature flags, Live preview).</p>
 
-    <h2 id="keys">The config.json keys</h2>
-    <p>Each UI field above writes one or two keys into <code class="path">config.json</code>. This is
+    <h2 id="keys">The config keys</h2>
+    <p>Each UI field above writes one or two keys into your user config file. This is
       the mapping, with default values from <code class="path">server/infrastructure/config.py</code>:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>UI field</th></tr></thead>
       <tbody>
         <tr><td><code>bedrock_region</code></td><td>string</td><td><code>"us-east-1"</code></td><td>Bedrock Region</td></tr>
-        <tr><td><code>default_chat_model</code></td><td>string</td><td><code>"opus4.8"</code></td><td>Default Model</td></tr>
+        <tr><td><code>default_chat_model</code></td><td>string</td><td><code>"opus4.8"</code> code fallback (shipped default is <code>"opus5.0"</code>)</td><td>Default Model</td></tr>
         <tr><td><code>chat_models</code></td><td>object</td><td>from <code class="path">config.example.json</code></td><td>(the model catalog behind the picker)</td></tr>
+        <tr><td><code>chat_models_disabled</code></td><td>array</td><td><code>[]</code></td><td>(hides shipped models from the picker without deleting them; no dedicated field)</td></tr>
         <tr><td><code>model_mode</code></td><td>string</td><td><code>"cloud"</code></td><td>Model Mode</td></tr>
         <tr><td><code>backends</code></td><td>object</td><td><code>{}</code></td><td>Model Mode (hybrid only)</td></tr>
         <tr><td><code>feature_flags</code></td><td>object</td><td><code>{}</code></td><td>Feature Flags</td></tr>
@@ -142,8 +177,8 @@
     <div class="spec">
       <dt><code class="path">backends.embed</code></dt><dd><code>cohere</code> or <code>qwen3</code> - the embedding model for the index.</dd>
       <dt><code class="path">backends.rerank</code></dt><dd><code>cohere</code> or <code>qwen3</code> - the reranker applied to retrieved passages.</dd>
-      <dt><code class="path">backends.ner</code></dt><dd><code>haiku</code> or <code>gliner</code> - entity extraction for the GraphRAG entity graph.</dd>
-      <dt><code class="path">backends.index_llm</code></dt><dd><code>haiku</code>, <code>local</code>, or <code>none</code> - the model that summarizes and enriches indexed content.</dd>
+      <dt><code class="path">backends.ner</code></dt><dd><code>haiku</code>, <code>gliner</code>, or an on-device model key (LLM-based NER) - entity extraction for the GraphRAG entity graph.</dd>
+      <dt><code class="path">backends.index_llm</code></dt><dd><code>haiku</code>, an on-device model key, <code>local</code> (follow whichever local model is currently active), or <code>none</code> - the model that summarizes and enriches indexed content. Installing a local chat model from Discover flips this to it automatically.</dd>
     </div>
     <p>These map onto the same per-capability picks that <code>setup.sh --hybrid</code> pulls the
       on-device weights for. See <a href="arch-backends.html">Model backends &amp; modes</a> and
@@ -151,20 +186,30 @@
 
     <h2 id="feature-flags">Feature flags</h2>
     <p>The <code>feature_flags</code> key is a small namespace of booleans that gate optional behavior
-      without a code change. Toggling one in Settings persists it immediately. Under the hood the
+      without a code change. The panel lives under Settings &gt; Access and usage &gt; Usage and
+      advanced &gt; Feature flags. Toggling one persists it immediately. Under the hood the
       toggle is surgical: it patches only that one boolean inside the <code>feature_flags</code> object
-      and leaves every other byte of <code class="path">config.json</code> untouched, so it never
-      reflows your formatting or flattens the model catalog. Flags cover features such as hybrid
-      search, the reranker, query rewrite, and prompt caching. The live state of each flag is exposed
+      and leaves every other byte of the config file untouched, so it never
+      reflows your formatting or flattens the model catalog. The live state of each flag is exposed
       to the UI through the config endpoint so the panel can show what is currently on.</p>
 
-    <p>Several flags added with the ultracode program default <b>on</b>:</p>
+    <p>The full registry, from <code class="path">server/infrastructure/feature_flags.py</code>:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Flag</th><th>Default</th><th>What it gates</th></tr></thead>
       <tbody>
+        <tr><td><code>companion</code></td><td><code>false</code></td><td>Show the cosmetic buddy companion in the chat corner. Purely visual; makes no model calls.</td></tr>
+        <tr><td><code>git_context</code></td><td><code>true</code></td><td>Include git status and instructions in the system prompt.</td></tr>
+        <tr><td><code>prompt_caching</code></td><td><code>true</code></td><td>Cloud (Bedrock) prompt caching of tool definitions and the static system prompt, to cut input-token cost on multi-turn conversations.</td></tr>
         <tr><td><code>progressive_tools</code></td><td><code>true</code></td><td>Progressive tool disclosure: advertise a core tool set plus session-activated tools, with everything else discoverable via <code>tool_search</code> from a compact index. Cuts roughly 60-75% of tool-schema tokens per turn.</td></tr>
+        <tr><td><code>strict_rag</code></td><td><code>true</code></td><td>When index grounding is injected, withhold the workspace file/search tools so the model answers from the retrieved passages instead of re-crawling files.</td></tr>
+        <tr><td><code>rag_hybrid_search</code></td><td><code>true</code></td><td>Fuse keyword/BM25 (SQLite FTS5) results with dense vector search via reciprocal-rank fusion.</td></tr>
+        <tr><td><code>rag_reranker</code></td><td><code>true</code></td><td>Cross-encoder reranking of fused retrieval candidates before grounding's top-k (Cohere Rerank 3.5 in cloud mode, Qwen3-Reranker-0.6B in local mode).</td></tr>
+        <tr><td><code>rag_query_rewrite</code></td><td><code>false</code></td><td>Use a fast LLM (Haiku) to rewrite a follow-up question into a standalone search query before grounding. Adds one model call per grounded turn.</td></tr>
+        <tr><td><code>auto_memory</code></td><td><code>true</code></td><td>Two-tier auto memory with extraction and recall: global (cross-workspace) plus project (workspace-scoped). Also gates whether the <code>memory_*</code> tools appear in the catalog.</td></tr>
+        <tr><td><code>session_memory</code></td><td><code>true</code></td><td>Per-session structured summaries injected into the prompt.</td></tr>
         <tr><td><code>goal_loop</code></td><td><code>true</code></td><td>Goal loop + completion gate: a session goal (set with <code>/goal</code>) auto-continues the turn until a cheap evaluator judges it achieved, capped at 8 blocks. See <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</td></tr>
         <tr><td><code>cron_verify</code></td><td><code>true</code></td><td>Verify a cron run actually achieved its prompt before pushing an "ok" status.</td></tr>
+        <tr><td><code>dream_consolidation</code></td><td><code>true</code></td><td>Cross-session memory distillation after 24 hours and 5 sessions.</td></tr>
         <tr><td><code>preview_tools</code></td><td><code>true</code></td><td>Assistant-controllable browser preview tools (start/stop/click/fill/eval/screenshot); they only surface once Playwright and Chromium are installed.</td></tr>
       </tbody>
     </table></div>
@@ -178,8 +223,9 @@
 
     <h2 id="map-reduce">Transcript condensation keys</h2>
     <p>The <code>map_reduce_summary</code> object tunes how an oversized transcript is condensed before
-      the summary skills run. It has no Settings-UI field, so edit <code class="path">config.json</code>
-      (or the <code class="path">config.example.json</code> template) directly. Every size below is in
+      it reaches <code>summarize_transcript</code> or the main model. It has no Settings-UI field, so
+      edit your user config file (or the <code class="path">config.example.json</code> template)
+      directly. Every size below is in
       <b>characters</b> (roughly 4 characters per token), and any malformed numeric value falls back to
       its default rather than failing the chat turn.</p>
     <div class="table-wrap"><table>
@@ -217,9 +263,67 @@
     </table></div>
     <p>The <code>auto</code> mode reads three companion keys - <code>auto_mode_allow</code>,
       <code>auto_mode_soft_deny</code>, and <code>auto_mode_environment</code> - edited with
-      config_set in chat or in <code class="path">config.json</code>. Selecting the mode is the
+      config_set in chat or in your user config file. Selecting the mode is the
       opt-in: the classifier runs on every call that would otherwise ask. See
-      <a href="arch-approval.html">Approval &amp; permissions</a> for the classifier and nonce flow.</p>
+      <a href="arch-approval.html">Approval &amp; permissions</a> for the classifier and the pause-and-resume flow.</p>
+
+    <h3 id="category-modes">Per-category approval defaults</h3>
+    <p>Beyond the single global mode above, <code class="path">permissions.json</code> can carry a
+      <code>category_modes</code> object: a per-category override keyed by the approval categories
+      the app declares (<code>write</code>, <code>delete</code>, <code>cli</code>, <code>save</code>,
+      <code>worktree</code>, <code>preview</code>, <code>github</code>,
+      <code>github-destructive</code>, <code>mcp</code>, <code>mcp-elicit</code>). A category with no
+      entry falls back to the global mode, so you can, for example, leave the global mode at
+      <code>default</code> while setting <code>category_modes.cli</code> to
+      <code>acceptEdits</code> so shell commands stop asking but file deletes still do. One category is
+      absolute: <b><code>github-destructive</code></b> (repo or ref deletion, PR merge, archive or
+      rename, a raw API DELETE) always asks no matter what the global mode, a category override, a
+      bypass mode, or a blanket session approval says.</p>
+
+    <h3 id="rule-testing">Rule justification and dry-run testing</h3>
+    <p>Each permission rule can carry an optional <code>justification</code> string, an audit-trail
+      note with no effect on evaluation, useful for remembering why a rule exists. Before saving a new
+      rule, the rule editor's <b>Test this rule</b> button dry-runs a draft rule list against
+      <code>POST /api/permissions/rules/test</code> without persisting anything, so you can check its
+      effect first. Every rule change (add, edit, or the dry-run) also returns <b>shadowed-rule
+      warnings</b> when an earlier rule in the list already matches everything a later one would, so a
+      rule that can never fire gets flagged instead of silently doing nothing.</p>
+
+    <h3 id="auto-mode-breaker">The auto-mode circuit breaker</h3>
+    <p>Because the <code>auto</code> classifier judges one tool call at a time, it can drift over a
+      long turn. A per-turn circuit breaker in <code class="path">server/security/permissions.py</code>
+      trips auto mode back to asking - for the rest of the turn - after either <b>3 consecutive</b>
+      classifier denials or <b>5 denials in the last 10</b> classifier calls. A tripped breaker surfaces
+      as an <code>AutoModeBreakerBanner</code> in the UI with a one-click <b>resume</b>; the breaker
+      itself resets automatically at the start of the next new turn.</p>
+
+    <h3 id="network-policy">Network egress policy</h3>
+    <p>Sandboxed commands (<code>ws_run_command</code>, <code>terminal_run</code>, and friends) are
+      network-open by default, matching the app's single-trusted-user assumption. An opt-in
+      <code>network_policy</code> object in <code class="path">permissions.json</code> tightens that:
+      a <code>tier</code> of <code>permissive</code> (default, unrestricted), <code>curated</code>, or
+      <code>restrictive</code>, plus a <code>custom_allowed_domains</code> list and a
+      <code>methods_only_safe</code> flag. In a non-permissive tier, sandboxed commands are forced
+      through a local SNI-filtering proxy (it never decrypts traffic, only reads the TLS ClientHello
+      hostname) that enforces the domain allowlist; see
+      <a href="ref-security.html#egress">the egress policy</a> for the enforcement details and
+      documented limitations.</p>
+
+    <h2 id="mcp-fields">Per-server MCP fields</h2>
+    <p>Each connected MCP server (Settings &gt; Tools and automation &gt; MCP servers) carries its own
+      config entry beyond the basic <code>command</code> / <code>args</code> / <code>env</code>
+      (local, stdio) or <code>url</code> (remote, streamable HTTP) transport fields:</p>
+    <div class="spec">
+      <dt><code class="path">url</code></dt><dd>Reaches a remote server over streamable HTTP instead of spawning a local stdio child process. Mutually exclusive with <code>command</code>.</dd>
+      <dt><code class="path">bearer_token_env_var</code></dt><dd>The <em>name</em> of an environment variable holding the bearer token for a remote server. Only the variable name is persisted; the actual token is read from the environment at connect time and never written to config.</dd>
+      <dt><code class="path">approval_mode</code></dt><dd>The server's default approval tier: <code>auto</code> (no approval, the default for an unconfigured server), <code>prompt</code> (every call goes through the normal approval pipeline, category <code>mcp</code>), <code>writes</code> (calls that look read-only by name auto-execute, everything else prompts), or <code>approve</code> (every call always asks - a hard floor that no bypass mode or blanket session approval can skip).</dd>
+      <dt><code class="path">tool_overrides</code></dt><dd>A map of tool name to approval tier, overriding <code>approval_mode</code> for specific tools on that server.</dd>
+      <dt><code class="path">enabled_tools</code> / <code class="path">disabled_tools</code></dt><dd>Allow/deny lists of tool names for the server. An empty allowlist permits everything; <code>disabled_tools</code> wins on overlap with <code>enabled_tools</code>.</dd>
+    </div>
+    <p>When a connected server asks the human a question mid-call (an <b>elicitation</b>), it is
+      surfaced through the approval pipeline under its own category, <code>mcp-elicit</code>, rather
+      than answered silently. See <a href="ref-tools.html#skills-notebooks-mcp">the MCP tools</a> for
+      how these fields interact with what the model can call.</p>
 
     <h2 id="tavily">The Tavily key</h2>
     <p>Web search is off until a Tavily key is present. You can set it two ways, and the environment
@@ -227,15 +331,15 @@
     <ol class="steps">
       <li>
         <h4>Environment variable (preferred)</h4>
-        <p>Export <code>TAVILY_API_KEY</code> in your shell. It overrides
-          <code>config.json:tavily_api_key</code> and is re-read on every config load, so a rotated key
-          applies without a restart and never touches disk.</p>
+        <p>Export <code>TAVILY_API_KEY</code> in your shell. It overrides the
+          <code>tavily_api_key</code> config value and is re-read on every config load, so a rotated
+          key applies without a restart and never touches disk.</p>
         <div class="code-block"><pre><code>echo 'export TAVILY_API_KEY=tvly-...' &gt;&gt; ~/.zshrc</code></pre></div>
       </li>
       <li>
         <h4>Settings field</h4>
-        <p>Paste the key into the Tavily API Key field. It is stored in
-          <code class="path">config.json</code>. The config endpoint never returns the raw value - only
+        <p>Paste the key into the Tavily API Key field. It is stored in your user config file.
+          The config endpoint never returns the raw value - only
           a masked hint like <code>tvly...abcd</code> - so the UI can show that a key is set without
           exposing it.</p>
       </li>
@@ -244,24 +348,39 @@
       <a href="ref-env.html">Environment variables</a> for the full env list.</p>
 
     <h2 id="layers">Config layers</h2>
-    <p>A resolved config is the merge of up to four layers, lowest priority first. Higher layers
-      override lower ones, and nested objects merge key-by-key (except the model catalog, which
-      replaces wholesale).</p>
+    <p>A resolved config is the merge of five layers, lowest priority first. Higher layers
+      override lower ones, and nested objects generally merge key-by-key.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>#</th><th>Layer</th><th>Source</th><th>Scope</th></tr></thead>
       <tbody>
-        <tr><td>1</td><td>Defaults</td><td>built into <code class="path">server/infrastructure/config.py</code></td><td>Fallbacks for everything.</td></tr>
-        <tr><td>2</td><td>User</td><td><code class="path">config.json</code> at the repo root (gitignored)</td><td>Your global preferences for all sessions.</td></tr>
-        <tr><td>3</td><td>Project</td><td><code class="path">.whisper/settings.json</code> in the workspace root</td><td>Per-project overrides for a safe subset of keys.</td></tr>
-        <tr><td>4</td><td>Environment</td><td>shell env vars (e.g. <code>TAVILY_API_KEY</code>)</td><td>Secrets and deployment overrides; wins over everything.</td></tr>
+        <tr><td>1</td><td>Defaults</td><td>built into <code class="path">server/infrastructure/config.py</code></td><td>Fallbacks for everything, used only when the SYSTEM file below can't be read.</td></tr>
+        <tr><td>2</td><td>System</td><td><code class="path">config.example.json</code> at the repo root</td><td>The app-owned shipped defaults and model catalog. Read live on every config load, not just copied once.</td></tr>
+        <tr><td>3</td><td>User</td><td><code class="path">config.user.json</code> (or legacy <code class="path">config.json</code>) at the app home</td><td>Your own deltas on top of the shipped defaults: added local models, region/keys/flags, per-field overrides, a hide-list.</td></tr>
+        <tr><td>4</td><td>Project</td><td><code class="path">.whisper/settings.json</code> in the workspace root</td><td>Per-project overrides for a safe subset of keys.</td></tr>
+        <tr><td>5</td><td>Environment</td><td>shell env vars (e.g. <code>TAVILY_API_KEY</code>)</td><td>Secrets and deployment overrides; wins over everything.</td></tr>
       </tbody>
     </table></div>
-    <p><code class="path">config.json</code> is the <b>User</b> layer. It is gitignored and created on
-      first run when <code>setup.sh</code> copies <code class="path">config.example.json</code> over
-      it. A project's <code class="path">.whisper/settings.json</code> overrides your user config, but
-      only for a project-safe subset of keys (region, model, effort, brief mode, permission mode, the
-      auto-mode lists, cost caps, and feature flags) - global-only secrets like the Tavily key are not
-      accepted there. Environment variables override both.</p>
+    <p>The <b>User</b> layer lives at the app home: the repo root in a dev checkout (where
+      <code>setup.sh</code> still seeds <code class="path">config.user.json</code> - or the legacy
+      monolithic <code class="path">config.json</code> - from the example config on first run), or
+      <code>WHISPER_HOME</code> in a packaged install. A packaged install never seeds
+      <code class="path">config.json</code> at all; it writes <code class="path">config.user.json</code>
+      directly, holding only your deltas. Either file is gitignored where it lives inside the repo. A
+      project's <code class="path">.whisper/settings.json</code> overrides your user config, but only
+      for a project-safe subset of keys (region, model, effort, brief mode, permission mode, the
+      auto-mode lists, cost caps, feature flags, the model catalog and its hide-list, and the
+      permission-explainer and model-fallback toggles) - global-only secrets like the Tavily key are
+      not accepted there. Environment variables override all four config layers.</p>
+
+    <p>The model catalog (<code>chat_models</code>) does not simply replace wholesale at every layer.
+      Across the System and User layers it deep-merges <b>additively</b>: the shipped catalog always
+      appears, and a User-layer entry either adds a new model key or overrides specific fields of a
+      shipped one, so a hand-added local model survives the next app update untouched.
+      <code>chat_models_disabled</code> (a list of keys, honored in the User and Project layers) then
+      drops any of those merged models you don't want to see, without deleting their definition. Only
+      the <b>Project</b> layer keeps the older wholesale-replace behavior: a project config that lists
+      <code>chat_models</code> replaces the merged System+User catalog outright rather than adding to
+      it.</p>
 
     <p>Separately from that config subset, <code class="path">.whisper/settings.json</code> may also carry
       an optional <code>hooks</code> key: arbitrary project hook code from the cloned repo. It is treated
@@ -271,10 +390,10 @@
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p><b>Secrets hygiene.</b> <code class="path">config.json</code> is
-        gitignored, but it sits on disk in plain JSON. Treat it like any credential store: do not sync
-        it to untrusted backups, rotate keys after sharing your screen, and prefer the env-var path for
-        the Tavily key.</p></div>
+      <div class="callout__body"><p><b>Secrets hygiene.</b> Your user config file is
+        gitignored where it lives inside the repo, but it sits on disk in plain JSON either way. Treat
+        it like any credential store: do not sync it to untrusted backups, rotate keys after sharing
+        your screen, and prefer the env-var path for the Tavily key.</p></div>
     </div>
 
     <h2 id="pitfalls">Region and edit pitfalls</h2>

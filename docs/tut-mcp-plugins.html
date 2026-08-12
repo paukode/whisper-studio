@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MCP &amp; plugins - Whisper Studio Docs</title>
-  <meta name="description" content="Extend Whisper Studio: add tools from external MCP servers over stdio, and write opt-in Python plugins that register executors, routes, and pre-tool hooks.">
+  <meta name="description" content="Extend Whisper Studio: add tools from external MCP servers over stdio or remote HTTP, and write opt-in Python plugins that register executors, routes, and pre-tool hooks.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -26,8 +26,9 @@
 
     <figure class="diagram-figure">
       <div id="mcp-flow-diagram" class="diagram"></div>
-      <figcaption>Two ways to add tools. MCP servers run as external stdio child processes and toggle
-        per turn; plugins run in-process and load on restart. Click a box to trace where it goes.</figcaption>
+      <figcaption>Two ways to add tools. MCP servers run over stdio or remote HTTP and stay enabled
+        until you turn them off in Settings; plugins run in-process and most changes take effect live.
+        Click a box to trace where it goes.</figcaption>
     </figure>
 
     <h2 id="which-one">Which one do you want?</h2>
@@ -36,48 +37,56 @@
       <div class="card">
         <h3>MCP server</h3>
         <p>A tool already exists as an MCP server (a database bridge, an issue tracker, a filesystem
-          gateway). You want to connect it without writing Python. It runs as its own process, isolated
-          from the backend, and you flip it on and off per conversation.</p>
+          gateway). You want to connect it without writing Python. It runs as its own process or a
+          remote endpoint, isolated from the backend, and you enable it once in Settings.</p>
       </div>
       <div class="card">
         <h3>Plugin</h3>
         <p>You want custom behaviour that lives inside the backend: a bespoke tool executor, a new REST
           route, or a <code>PreToolUse</code> hook that inspects or blocks other tools. You are
-          comfortable writing a small Python file and restarting the server.</p>
+          comfortable writing a small Python file, and enabling it takes effect live for most changes.</p>
       </div>
     </div>
 
     <h2 id="mcp">Connecting an MCP server</h2>
     <p>MCP (the <a href="https://modelcontextprotocol.io" rel="noopener">Model Context Protocol</a>) is a
       standard way for a host application to talk to external tool providers. Whisper Studio speaks it
-      over <b>stdio</b>: each server you configure is launched as a child process, and the backend
-      exchanges JSON-RPC messages with it over standard input and output. Nothing goes over the network
-      unless the server itself reaches out.</p>
+      over two transports. A <b>command</b> entry is launched as a <b>stdio</b> child process, and the
+      backend exchanges JSON-RPC messages with it over standard input and output. A <b>url</b> entry
+      instead connects to a remote server over streamable HTTP, with an optional
+      <code>bearer_token_env_var</code> naming an environment variable that holds the bearer token (the
+      token itself is never stored in the server entry, only the variable name). Nothing goes over the
+      network for a stdio server unless the server itself reaches out.</p>
 
     <ol class="steps">
       <li>
         <h4>Open Settings and add a server</h4>
-        <p>Click the gear icon, go to the <b>MCP</b> tab, and add a server entry. Each entry is a
-          command the backend runs to start the server (an executable plus its arguments), the same
-          shape you would put in an MCP client config elsewhere.</p>
+        <p>Click the gear icon, go to the <b>MCP</b> tab, and add a server entry: either a command the
+          backend runs to start the server (an executable plus its arguments, the same shape you would
+          put in an MCP client config elsewhere), or a <code>url</code> for a remote server.</p>
       </li>
       <li>
-        <h4>Let the backend launch it</h4>
-        <p>On enable, the backend spawns the command as a stdio child process and performs the MCP
-          handshake to discover the tools and resources the server offers. If the command fails to
-          start, the server shows as unavailable rather than silently doing nothing.</p>
+        <h4>Let the backend connect</h4>
+        <p>On enable, the backend either spawns the command as a stdio child process or opens a
+          streamable-HTTP connection to the url, then performs the MCP handshake to discover the tools
+          and resources the server offers. If the connection fails, the server shows as unavailable
+          rather than silently doing nothing.</p>
       </li>
       <li>
-        <h4>Toggle it per turn from the chat toolbar</h4>
-        <p>A configured MCP server does not force itself into every conversation. Enable or disable each
-          server for the current turn from the chat toolbar, so you only pay the token cost of its tool
-          schemas when you actually want it.</p>
+        <h4>Enable it in Settings &gt; MCP</h4>
+        <p>A configured MCP server does not force itself into every conversation. Each server has its
+          own persisted <b>enabled</b> flag in <b>Settings &gt; MCP</b>, not a per-turn chat-toolbar
+          toggle: flipping it starts or stops the server live, and the tool pool picks up the change on
+          your next message. A disabled server's tools also refuse at execution time, so a session that
+          used a server earlier cannot keep calling it after you turn it off.</p>
       </li>
       <li>
         <h4>Use its tools in chat</h4>
         <p>Once enabled, the server's tools appear alongside the built-ins and the model can call them
           during the tool loop, gated by the same <a href="tut-permissions.html">permission mode</a> as
-          everything else.</p>
+          everything else (unless you have set a per-server approval mode, below). You can also mention
+          a server directly in the composer by typing <code>@mcp:</code> and its name to browse its
+          tools.</p>
       </li>
     </ol>
 
@@ -85,9 +94,36 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p>MCP tools count against your per-turn token budget just like built-in
         tools: every enabled tool's schema is sent to the model before your message. Enable only the
-        servers a conversation needs, and disable them again when you are done. See
+        servers a conversation needs, and disable the ones you are done with in Settings &gt; MCP. See
         <a href="ref-tools.html">Agent tools</a> for how tool schemas are billed.</p></div>
     </div>
+
+    <h3 id="mcp-approval">Per-server approval and tool allowlists</h3>
+    <p>By default an MCP tool call is approved exactly like any other gated tool, under your current
+      <a href="tut-permissions.html">permission mode</a>. You can tighten or loosen that per server from
+      Settings &gt; MCP with an <code>approval_mode</code>:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Mode</th><th>Behavior</th></tr></thead>
+      <tbody>
+        <tr><td><code>auto</code></td><td>No approval needed; the tool executes immediately. The default, so an unconfigured server behaves the way it always has.</td></tr>
+        <tr><td><code>prompt</code></td><td>Every call goes through the normal approval pipeline, subject to your permission mode and any rules.</td></tr>
+        <tr><td><code>writes</code></td><td>Calls that look read-only by name (<code>get_</code>, <code>list_</code>, <code>search_</code>, and similar prefixes) auto-execute; anything else is gated like <code>prompt</code>.</td></tr>
+        <tr><td><code>approve</code></td><td>Every call always asks, and this floor cannot be bypassed by a blanket "yes for all" setting. For a server you do not fully trust yet.</td></tr>
+      </tbody>
+    </table></div>
+    <p>A per-tool <code>tool_overrides</code> map lets one tool on a server use a different mode than the
+      server's default. Two more per-server lists narrow which tools are exposed at all:
+      <code>enabled_tools</code> (an allowlist) and <code>disabled_tools</code> (a denylist, which wins
+      when a tool appears in both). All of these live in Settings &gt; MCP next to the server entry.</p>
+
+    <h3 id="mcp-elicitation">When a server asks you something mid-call</h3>
+    <p>MCP defines <b>elicitation</b>: a server can pause its own tool call to ask the human a question
+      before it finishes (for example, confirming a destructive action or picking among options). When
+      that happens, the request surfaces through the same approval pipeline as everything else, as a
+      card you answer with the <code>mcp_elicit_respond</code> action. If nobody answers within a few
+      minutes, it times out and the server's request is declined on your behalf. In an unattended
+      context such as a <a href="tut-cron.html">cron run</a> or a detached agent, there is nobody to
+      ask, so an elicitation is auto-declined immediately rather than stalling the run.</p>
 
     <h3 id="mcp-resources">Reading MCP resources</h3>
     <p>Beyond tools, MCP servers can expose <b>resources</b> (documents, records, or other readable
@@ -141,11 +177,21 @@ def register(app, executor_registry):
           plugin, so you choose exactly which files load.</p>
       </li>
       <li>
-        <h4>Restart the server</h4>
-        <p>Backend modules are imported once at startup, so a newly enabled plugin loads on the next
-          run. Stop the app (<kbd>Ctrl</kbd>+<kbd>C</kbd>) and start it again with
-          <code>bash setup.sh</code>. The same applies to edits: changing a loaded plugin needs a
-          restart to take effect.</p>
+        <h4>It loads live, mostly</h4>
+        <p>Enabling a plugin calls its <code>register()</code> immediately, so a new tool executor is
+          offered on your very next message, no restart needed. Disabling live-unloads it the same way.
+          Two things still need a restart, and the Settings response says so with a
+          <code>restartRequired</code> flag when it applies: a plugin that mounts new FastAPI
+          <b>routes</b> cannot be hot-mounted, and fully unloading a <b>hook</b> on disable is not clean
+          (enabling a hook plugin does take effect live; it is the disable side that cannot cleanly
+          unhook). Restart with <kbd>Ctrl</kbd>+<kbd>C</kbd> then <code>bash setup.sh</code> when one of
+          those applies.</p>
+      </li>
+      <li>
+        <h4>Editing needs a restart</h4>
+        <p>This part has not changed: backend modules are imported once at startup, so changing the code
+          of an already-loaded plugin needs a restart to pick up the edit. Only enable/disable is live;
+          editing is not.</p>
       </li>
     </ol>
 
@@ -155,7 +201,7 @@ def register(app, executor_registry):
         with the same privileges as the app. If dropping a <code>.py</code> into
         <code class="path">plugins/</code> auto-executed it, a drive-by file (pulled in by a dependency,
         a clone, or a careless copy) would run code the moment the server started. Requiring an explicit
-        enable plus a restart means nothing runs that you did not choose to run. See
+        enable in Settings means nothing runs that you did not choose to run, live-loading or not. See
         <a href="arch-sandbox.html">Sandbox &amp; security</a> and the
         <a href="ref-security.html">security model</a>.</p></div>
     </div>
@@ -178,14 +224,18 @@ def register(app, executor_registry):
     <p>A hook is an async function <code>fn(tool_name, tool_input)</code>. Return <code>None</code> to
       allow the call. Return a dict such as <code>{"reason": "...", "findings": [...]}</code> to block
       it: the tool never runs, and the reason is surfaced back to the model. Hooks run in order and the
-      first block wins.</p>
+      first block wins. <code>register_pre_tool_hook()</code> is a thin adapter over the underlying
+      <code>register_hook(event, fn)</code> API, where <code>fn(payload)</code> returns a structured
+      <code>{"decision", "reason", "updatedInput", "additionalContext"}</code> dict; reach for
+      <code>register_hook</code> directly if you need more than a plain allow/block.</p>
 
-    <p>The bundled <code class="path">plugins/security_checks.py</code> is a working example. It hooks
-      <code>ws_write_file</code>, <code>ws_edit_file</code>, and <code>ws_create_file</code>, scans the
-      content being written for risky patterns (an <code>eval(</code> call, an <code>os.system(</code>
-      shell call, a hardcoded-looking secret), and blocks the write with a summary of what it found. It
-      is disabled by default like any other plugin, so enabling it is a one-line demonstration of the
-      whole flow.</p>
+    <p>The bundled <code class="path">plugins/security_checks.py</code> is a working example, and it is
+      not a normal opt-in plugin: it is a <b>protected plugin</b>, always enabled and not something you
+      can toggle off from Settings. It hooks <code>ws_write_file</code>, <code>ws_edit_file</code>, and
+      <code>ws_create_file</code>, scans the content being written for risky patterns (an
+      <code>eval(</code> call, an <code>os.system(</code> shell call, a hardcoded-looking secret), and
+      blocks the write with a summary of what it found. Read it as the reference example for the hook
+      shape, even though you cannot disable it.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
@@ -199,11 +249,11 @@ def register(app, executor_registry):
     <div class="table-wrap"><table>
       <thead><tr><th></th><th>MCP server</th><th>Plugin</th></tr></thead>
       <tbody>
-        <tr><td>Where it runs</td><td>External child process</td><td>In-process, inside the backend</td></tr>
-        <tr><td>Transport</td><td>stdio (JSON-RPC)</td><td>Direct Python calls</td></tr>
+        <tr><td>Where it runs</td><td>External child process, or a remote server over HTTP</td><td>In-process, inside the backend</td></tr>
+        <tr><td>Transport</td><td>stdio (JSON-RPC), or streamable HTTP</td><td>Direct Python calls</td></tr>
         <tr><td>Language</td><td>Any (it is a separate program)</td><td>Python</td></tr>
-        <tr><td>How you add it</td><td>Command entry in Settings &gt; MCP</td><td>File in <code class="path">plugins/</code></td></tr>
-        <tr><td>How you enable it</td><td>Per turn from the chat toolbar</td><td>Settings &gt; Plugins, then restart</td></tr>
+        <tr><td>How you add it</td><td>Command or url entry in Settings &gt; MCP</td><td>File in <code class="path">plugins/</code></td></tr>
+        <tr><td>How you enable it</td><td>Persisted per-server flag in Settings &gt; MCP</td><td>Settings &gt; Plugins; live for most changes</td></tr>
         <tr><td>Can block other tools?</td><td>No</td><td>Yes, via a <code>PreToolUse</code> hook</td></tr>
         <tr><td>Adds REST routes?</td><td>No</td><td>Yes, through the <code>app</code> handle</td></tr>
       </tbody>
@@ -211,15 +261,22 @@ def register(app, executor_registry):
 
     <h2 id="troubleshooting">Troubleshooting</h2>
     <ul>
-      <li><b>MCP tools are not showing up.</b> Confirm the server is enabled for the current turn in the
-        chat toolbar, not just configured. A configured-but-disabled server contributes nothing.</li>
-      <li><b>The MCP server shows unavailable.</b> The launch command failed. Check that the executable
-        and arguments are correct and runnable from the same shell that started Whisper Studio.</li>
-      <li><b>My plugin does not load.</b> Enablement plus a restart are both required. Enabling in
-        Settings without restarting, or restarting without enabling, both leave it dormant. Watch the
-        server logs at startup for the "Plugin hook registered" line if it installs a hook.</li>
+      <li><b>MCP tools are not showing up.</b> Confirm the server's enabled flag is on in
+        <b>Settings &gt; MCP</b>, not just configured. A configured-but-disabled server contributes
+        nothing, and check <code>enabled_tools</code> / <code>disabled_tools</code> too, a tool named in
+        <code>disabled_tools</code> is hidden even if the server is on.</li>
+      <li><b>The MCP server shows unavailable.</b> For a command entry, the launch failed; check that
+        the executable and arguments are correct and runnable from the same shell that started Whisper
+        Studio. For a <code>url</code> entry, check the address and that
+        <code>bearer_token_env_var</code> (if set) names an environment variable that actually holds a
+        token.</li>
+      <li><b>My plugin does not load.</b> Enablement in Settings is required, but a restart usually is
+        not. If the plugin registers only executors, it should appear on your very next message once
+        enabled. Watch the server logs at startup for the "In-process hook registered for &lt;event&gt;"
+        line if it installs a hook, and check the Settings response for <code>restartRequired</code> if
+        it mounts routes or you just disabled a hook plugin.</li>
       <li><b>My plugin edit did not take.</b> Loaded plugins are imported once at startup. Restart the
-        server after editing the file.</li>
+        server after editing the file; enable/disable alone does not re-import changed code.</li>
     </ul>
 
     <div class="callout callout--tip">

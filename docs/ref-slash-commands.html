@@ -59,6 +59,7 @@
         <tr><td><code>/notify</code></td><td>Request or check browser notification permission.</td></tr>
         <tr><td><code>/settings</code></td><td>Open the Settings panel.</td></tr>
         <tr><td><code>/doctor</code></td><td>Run environment and AWS-access diagnostics.</td></tr>
+        <tr><td><code>/doctor context</code></td><td>Open a report of what the system prompt actually costs and caches.</td></tr>
         <tr><td><code>/ci [branch] | /ci autofix [branch]</code></td><td>Watch a CI run to completion, or propose an autofix for a failing one.</td></tr>
         <tr><td><code>/help</code></td><td>Show the full command reference in a dialog.</td></tr>
       </tbody>
@@ -84,7 +85,8 @@
     </div>
 
     <h3 id="effort">/effort</h3>
-    <p><code>/effort &lt;level&gt;</code> sets thinking depth for models that expose it (the Opus tier).
+    <p><code>/effort &lt;level&gt;</code> sets thinking depth for models that expose it, which is every
+      cloud model except Haiku; the levels offered depend on the model's tier.
       The accepted levels are <code>low</code>, <code>medium</code>, <code>high</code>,
       <code>extra</code>, <code>max</code>, and <code>ultracode</code>. The raw API name
       <code>xhigh</code> is accepted as an alias for <code>extra</code>. <code>ultracode</code> is the
@@ -168,7 +170,9 @@
         background, then the turn sends.</dd>
     </dl>
     <p>The same file reference is also available as an <code>@file:</code> mention from anywhere in the
-      message, alongside <code>@skills:</code> and <code>@mcp:</code>. Documents are extracted to text
+      message, alongside <code>@skills:</code> and <code>@mcp:</code>. A bare
+      <code>@&lt;session-slug&gt;</code> mention pulls another chat session in as context for the turn,
+      resolved server-side from the session's title. Documents are extracted to text
       (large ones are capped) and images become vision blocks; see
       <a href="arch-extraction.html">Attachment extraction</a> for the type-aware pipeline. Supported
       inputs include images, PDF, Office docs, audio, video, code, and text.</p>
@@ -194,7 +198,10 @@
     <p><code>/export</code> downloads the current conversation as a plain-text file
       (<code>chat-export-&lt;timestamp&gt;.txt</code>), with each message prefixed by its role and
       separated by rules. It reads the messages currently in view, so pair it with a fresh session for
-      a clean transcript.</p>
+      a clean transcript. For a <b>portable</b> export that another install can import, use the
+      sessions sidebar instead: it exports a single session as <code>.jsonl</code> or many sessions as
+      a zip (with matching import), via
+      <code class="path">server/infrastructure/sessions_routes.py</code>.</p>
 
     <h3 id="clear">/clear</h3>
     <p><code>/clear</code> wipes the <b>visible</b> chat so you can start fresh in the same tab. It
@@ -217,9 +224,10 @@
 
     <h3 id="theme">/theme</h3>
     <p><code>/theme &lt;name&gt;</code> switches the interface theme immediately and remembers your
-      choice. Accepted values include <code>auto</code>, <code>dark</code>, <code>light</code>, and the
-      accessibility variants such as <code>dark-high-contrast</code>, <code>light-high-contrast</code>,
-      <code>dark-daltonized</code>, and <code>light-daltonized</code>. <code>auto</code> follows your
+      choice. The accepted values are <code>auto</code>, <code>dark</code>, <code>light</code>, the
+      accessibility variants <code>dark-high-contrast</code>, <code>light-high-contrast</code>,
+      <code>dark-daltonized</code>, and <code>light-daltonized</code>, and the alternate looks
+      <code>dark-taw</code> and <code>light-taw</code>. <code>auto</code> follows your
       system's light or dark preference.</p>
 
     <h3 id="notify">/notify</h3>
@@ -238,6 +246,11 @@
       fail. It calls the <code>/api/doctor</code> endpoint served by
       <code class="path">server/doctor.py</code>. Run it first whenever chat is not responding or a
       model call errors.</p>
+    <p><code>/doctor context</code> is a separate check for prompt health: it calls
+      <code>/api/doctor/context</code> (<code class="path">server/context_report.py</code>) and opens a
+      <b>Context report</b> panel showing what the model is actually sent - the per-section cost of the
+      system prompt, how much of it is cached, and any stale or duplicate tool references. Use it when
+      turns feel expensive or slow to see where the tokens go.</p>
 
     <h3 id="ci">/ci</h3>
     <p><code>/ci [branch]</code> watches the branch's latest GitHub Actions run to a terminal state,

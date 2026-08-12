@@ -21,16 +21,21 @@
 
     <p>There is no external database and no server-side session cache to warm. A single file,
       <code class="path">storage/sessions.db</code>, holds every chat, transcript, cost line, and
-      scheduled-run record. It opens in WAL mode so the app can read while a write is in flight, and
-      the schema evolves through numbered migrations that run once at startup. The data-access code
-      lives in <code class="path">server/infrastructure/sessions.py</code>.</p>
+      scheduled-run record. (The path resolves through <code>storage_root()</code> under
+      <code>app_home()</code> in <code class="path">server/infrastructure/paths.py</code>: a packaged
+      .app sets <code>WHISPER_HOME</code> and all storage lives under it; unset, it is the historical
+      repo-relative <code class="path">storage/</code>.) It opens in WAL mode so the app can read while
+      a write is in flight, and the schema evolves through numbered migrations that run once at
+      startup. The data-access code lives in
+      <code class="path">server/infrastructure/sessions.py</code>.</p>
 
     <figure class="diagram-figure wide">
       <div id="persistence-diagram" class="diagram"></div>
       <figcaption>Boot runs migrations, then requests read and write one WAL database. The
         <em>sessions</em> table fans out to a family of companion tables (<em>session_costs</em> and
-        <em>cron_runs</em> shown here, plus <em>agent_tasks</em>, <em>notifications</em>, and
-        <em>workflow_runs</em>), and the session latch snapshots config off the first turn.</figcaption>
+        <em>cron_runs</em> shown here, plus <em>agent_tasks</em>, <em>notifications</em>,
+        <em>workflow_runs</em>, and <em>attachments</em>), and the session latch snapshots config off
+        the first turn.</figcaption>
     </figure>
 
     <h2 id="one-database">One database, WAL mode</h2>
@@ -66,7 +71,7 @@
       <dt><code class="path">title</code>, <code class="path">custom_title</code>, <code class="path">generated_title</code></dt><dd>The display title plus two flags recording whether the user renamed it or the app auto-generated it.</dd>
       <dt><code class="path">created_at</code>, <code class="path">updated_at</code></dt><dd>ISO-8601 UTC timestamps. The list query sorts by <code>updated_at DESC</code>, and an index backs that sort.</dd>
       <dt><code class="path">segments</code></dt><dd>JSON array of transcript segments (text plus speaker) for recorded sessions. Empty <code>[]</code> for chat-only sessions.</dd>
-      <dt><code class="path">chat_history</code></dt><dd>JSON array of chat messages. Holds prompt roles (<code>user</code>, <code>assistant</code>) and UI-only <code>cron_event</code> rows (see below).</dd>
+      <dt><code class="path">chat_history</code></dt><dd>JSON array of chat messages. Holds prompt roles (<code>user</code>, <code>assistant</code>) and the backend-owned rows <code>cron_event</code> and <code>session_message</code> (see below).</dd>
       <dt><code class="path">speaker_names</code></dt><dd>JSON map of speaker id to a human-assigned name for diarized transcripts.</dd>
       <dt><code class="path">workspace_path</code></dt><dd>The folder this session is bound to, if any. The path is read from the DB, never the client, when opening a workspace externally.</dd>
       <dt><code class="path">latched_config</code></dt><dd>JSON snapshot of the config fields frozen for this session on its first turn (see <a href="#session-latch">the session latch</a>).</dd>
@@ -104,33 +109,43 @@
         it sits in the request flow.</p></div>
     </div>
 
-    <h2 id="chat-history">chat_history and cron_event rows</h2>
+    <h2 id="chat-history">chat_history: cron_event and session_message rows</h2>
     <p><code>chat_history</code> holds more than what the model sees. Alongside <code>user</code> and
-      <code>assistant</code> messages, a background scheduled task can append a <code>cron_event</code>
-      row so its result renders inline in the conversation that created it. Those rows are UI-only,
-      and two rules keep them from causing trouble:</p>
+      <code>assistant</code> messages, the backend owns two more row types that it appends directly:
+      a <code>cron_event</code> row so a background scheduled task's result renders inline in the
+      conversation that created it, and a <code>session_message</code> row for a message sent in from
+      another session. Both are UI-only per <code>PROMPT_ROLES</code> (neither is <code>user</code> or
+      <code>assistant</code>), but they are not treated identically once a prompt is built:</p>
     <ol class="steps">
       <li>
-        <h4>They never enter the prompt</h4>
-        <p><code>visible_chat_history()</code> filters <code>chat_history</code> down to the prompt
-          roles (<code>user</code>, <code>assistant</code>) before the Bedrock messages array is
-          built. A cron card you see in the chat does not inflate the token bill.</p>
+        <h4>cron_event never enters the prompt; session_message does</h4>
+        <p><code>visible_chat_history()</code> filters <code>chat_history</code> down before the
+          messages array is built. A <code>cron_event</code> is dropped outright, so a cron card you see
+          in the chat does not inflate the token bill. A <code>session_message</code> is the one
+          exception: it is UI-only in storage, but its content is meant to reach the model, so it is
+          translated into a <code>user</code> turn (<code>[Message from session "…"]</code> plus the
+          original content) rather than dropped (<code class="path">server/infrastructure/sessions.py</code>).</p>
       </li>
       <li>
-        <h4>They are capped</h4>
-        <p>At most 50 <code>cron_event</code> rows are kept per session (<code>MAX_CRON_EVENTS_PER_SESSION</code>).
-          When the cap is exceeded, the oldest are dropped on append. The durable per-run record still
-          lives in <code>cron_runs</code>, so the history drawer never loses data when the inline cap
-          trims.</p>
+        <h4>Both are capped</h4>
+        <p>At most 50 <code>cron_event</code> rows (<code>MAX_CRON_EVENTS_PER_SESSION</code>) and at
+          most 50 <code>session_message</code> rows (<code>MAX_SESSION_MESSAGES_PER_SESSION</code>) are
+          kept per session. <code>_enforce_backend_row_caps()</code> applies both caps, dropping the
+          oldest of each kind first on append. The durable per-run cron record still lives in
+          <code>cron_runs</code>, so the history drawer never loses data when the inline cap trims.</p>
       </li>
     </ol>
+    <p>The same distinction, "everything not in <code>PROMPT_ROLES</code>", is also what
+      <code>_ui_only_rows()</code> uses to pick out backend-owned rows for the save-merge below, so a
+      <code>session_message</code> that lands mid-save survives the round-trip exactly like a
+      <code>cron_event</code> does.</p>
     <p>Reactive compaction is the other force acting on <code>chat_history</code>. When a prompt grows
       too long, the oldest message pairs are summarized or dropped and the turn retries;
       <code>compaction_count</code> is incremented so the UI can show it. See
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for the compaction path.</p>
 
     <h2 id="companion-tables">The companion tables</h2>
-    <p>Five other tables share the same database file, each created by a numbered migration rather than
+    <p>Six other tables share the same database file, each created by a numbered migration rather than
       on import.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Table</th><th>Grain</th><th>Holds</th></tr></thead>
@@ -138,21 +153,36 @@
         <tr><td><code>session_costs</code></td><td>One row per model turn</td><td><code>session_id</code>, <code>turn_number</code>, <code>model</code>, input / output / cache-read / cache-creation tokens, <code>cost_usd</code>, and <code>api_duration_ms</code>. Backs the cost aggregates and spend caps.</td></tr>
         <tr><td><code>cron_runs</code></td><td>One row per scheduled-task fire</td><td><code>run_id</code>, <code>job_id</code>, <code>job_name</code>, <code>session_id</code>, a <code>status</code> lease (<code>running</code> / <code>ok</code> / <code>failed</code>), timestamps, <code>duration_ms</code>, the result <code>text</code>, and the computed <code>next_run</code>.</td></tr>
         <tr><td><code>agent_tasks</code></td><td>One row per background task</td><td><code>task_id</code>, <code>kind</code> (<code>shell</code> / <code>agent</code> / <code>workflow</code>), <code>session_id</code>, <code>title</code>, a <code>status</code> lease with <code>owner_pid</code>, and kind-specific fields. The unified background-task registry (migration 007).</td></tr>
-        <tr><td><code>notifications</code></td><td>One row per <code>notify_user</code></td><td>An id, <code>session_id</code>, <code>source</code> (<code>chat</code> / <code>agent</code> / <code>cron</code>), <code>title</code>, <code>message</code>, <code>status</code>, and a <code>read_at</code> stamp. The durable log written by <code>notify_user</code> (migration 008); exposed at <code>/api/notifications</code> and surfaced by the header bell.</td></tr>
-        <tr><td><code>workflow_runs</code></td><td>One row per workflow run</td><td><code>run_id</code>, <code>name</code>, <code>session_id</code>, a <code>status</code> lease, the phase list, and a token / <code>cost_usd</code> / <code>budget_usd</code> ledger for the <a href="arch-ultracode.html">ultracode workflow runtime</a> (migration 009).</td></tr>
+        <tr><td><code>notifications</code></td><td>One row per notification</td><td>An id, <code>session_id</code>, a free-form <code>source</code> slug (originally a closed <code>chat</code> / <code>agent</code> / <code>cron</code> set; migration 012 rebuilt the table without that CHECK so app-originated toasts - "app", "model-download", "recording", and more - can log too), <code>title</code>, <code>message</code>, <code>status</code>, a <code>read_at</code> stamp, a <code>hidden_at</code> stamp (migration 010: per-row hide and "Clear all" soft-hide instead of deleting; hidden rows are excluded from the list and the unread count), and a <code>count</code> for tight-loop dedupe (migration 012: identical toasts firing within seconds collapse into one row instead of spamming the bell). The durable log written by <code>notify_user</code> and app-side toasts; exposed at <code>/api/notifications</code> and surfaced by the header bell.</td></tr>
+        <tr><td><code>workflow_runs</code></td><td>One row per workflow run</td><td><code>run_id</code>, <code>name</code>, <code>session_id</code>, a <code>status</code> lease, the phase list, and a token ledger for the <a href="arch-ultracode.html">ultracode workflow runtime</a> (migration 009; migration 013 replaced the original <code>budget_usd</code> column with <code>budget_tokens</code>, since a dollar cap has no faithful token equivalent after the fact).</td></tr>
+        <tr><td><code>attachments</code></td><td>One row per uploaded/analyzed file</td><td><code>id</code>, <code>session_id</code>, <code>kind</code>, <code>filename</code>, <code>media_type</code>, extracted <code>text</code> / <code>outline</code> / <code>sections</code>, <code>created</code> and <code>last_used</code> timestamps. Durable session-scoped attachment storage (migration 011); see <a href="#attachments">Attachments</a> below.</td></tr>
       </tbody>
     </table></div>
     <p>The status lease is a recurring pattern: <code>cron_runs</code>, <code>agent_tasks</code>, and
       <code>workflow_runs</code> each write a <code>running</code> row that a boot-time reconcile flips to
       a terminal state (<code>failed</code> / <code>interrupted</code> / <code>stale</code>) if it is
       still open after a restart, so nothing hangs forever; <code>notifications</code> is instead the
-      durable record behind the header bell, read over <code>GET /api/notifications</code>. Each table is
+      durable record behind the header bell, read over <code>GET /api/notifications</code>, and
+      <code>attachments</code> ages out by its own retention GC rather than a lease. Each table is
       indexed for its hot query -
       <code>session_costs</code> by <code>session_id</code> and <code>created_at</code>,
-      <code>cron_runs</code> by <code>(job_id, started_at DESC)</code>, and <code>agent_tasks</code> /
-      <code>notifications</code> / <code>workflow_runs</code> by session and status. See
+      <code>cron_runs</code> by <code>(job_id, started_at DESC)</code>,
+      <code>agent_tasks</code> / <code>notifications</code> / <code>workflow_runs</code> by session and
+      status, and <code>attachments</code> by <code>session_id</code>. See
       <a href="arch-costs.html">Cost tracking &amp; budgets</a> and
       <a href="arch-cron.html">Cron / scheduled tasks</a> for how each is written and read.</p>
+
+    <h3 id="attachments">Attachments</h3>
+    <p>Uploaded files used to live only in a process-global dict with a 3-hour TTL, so their extracted
+      content silently left the conversation on the next turn and died with every restart. The
+      <code>attachments</code> table makes that content durable: an attachment is bound to the session
+      that uploaded it, survives for a <b>30-day sliding retention window</b> from its last use
+      (<code>RETENTION_DAYS</code> in <code class="path">server/attachment_store.py</code>), and is
+      re-injected into the prompt on later turns via its id rather than being re-extracted. A periodic
+      GC sweep drops attachments whose window has lapsed. Deleting a session deletes its
+      <code>attachments</code> rows as part of the delete cascade below. See
+      <a href="arch-extraction.html">Attachment extraction</a> for how a file becomes a row here in the
+      first place.</p>
 
     <h2 id="migrations">Migrations</h2>
     <p>The schema is not frozen. <code class="path">server/migrations/runner.py</code> runs once
@@ -178,6 +208,10 @@
         <tr><td>007</td><td><code class="path">007_add_agent_tasks.py</code></td><td>Creates the <code>agent_tasks</code> table (unified background-task registry) with session and status indexes.</td></tr>
         <tr><td>008</td><td><code class="path">008_add_notifications.py</code></td><td>Creates the <code>notifications</code> table (durable <code>notify_user</code> log) with unread and session indexes.</td></tr>
         <tr><td>009</td><td><code class="path">009_add_workflow_runs.py</code></td><td>Creates the <code>workflow_runs</code> table (ultracode workflow runtime) with session and status indexes.</td></tr>
+        <tr><td>010</td><td><code class="path">010_add_notification_hidden.py</code></td><td>Adds <code>hidden_at</code> to <code>notifications</code> for the bell's per-row hide and "Clear all" soft-hide.</td></tr>
+        <tr><td>011</td><td><code class="path">011_add_attachments.py</code></td><td>Creates the <code>attachments</code> table for durable session-scoped attachments, with a session index.</td></tr>
+        <tr><td>012</td><td><code class="path">012_notification_app_sources.py</code></td><td>Rebuilds <code>notifications</code> without the closed <code>source</code> CHECK, so app-originated toasts can log too, and adds the <code>count</code> dedupe column.</td></tr>
+        <tr><td>013</td><td><code class="path">013_workflow_budget_tokens.py</code></td><td>Replaces <code>workflow_runs.budget_usd</code> with <code>budget_tokens</code> (workflow budgets are token-denominated now); a no-op on databases where migration 009 already created the token column.</td></tr>
       </tbody>
     </table></div>
     <p>Column-adding migrations wrap each <code>ALTER TABLE</code> in a guard so a re-run over a
@@ -212,12 +246,42 @@
           survives the round-trip.</p>
       </li>
     </ol>
-    <p>The cap on <code>cron_event</code> rows is re-applied after the merge, so merging can never push
-      the count over 50. Two save paths share this logic: the normal
-      <code>PUT /api/sessions/{id}</code> and a <code>navigator.sendBeacon</code> POST used on page
-      unload. Deleting a session is also lock-guarded and cascades: it removes the parent row and
-      <code>session_costs</code>, re-homes cron jobs and history to the inbox, and clears the
-      per-session in-memory caches.</p>
+    <p>The caps on both <code>cron_event</code> and <code>session_message</code> rows are re-applied
+      after the merge, so merging can never push either count over its 50-row limit. Two save paths
+      share this logic: the normal <code>PUT /api/sessions/{id}</code> and a
+      <code>navigator.sendBeacon</code> POST used on page unload. Deleting a session is also
+      lock-guarded and cascades (<code>_delete_session_sync</code> in
+      <code class="path">server/infrastructure/sessions.py</code>): it removes the parent row,
+      <code>session_costs</code>, and <code>attachments</code>; hands cron jobs to
+      <code>cron_scheduler.on_session_deleted</code>, which disables them, flags them orphaned and
+      re-homeable, and repoints their run history to the Scheduled Reports inbox rather than silently
+      dropping them; and clears every per-session in-memory cache (tasks, diarization, shell snapshot,
+      cwd tracker, file state, the config latch, and the memory extraction/update-cadence state). Each
+      step is best-effort and independently guarded, so one failing cleanup cannot block the rest.</p>
+
+    <h2 id="export-import">Session export &amp; import</h2>
+    <p>A session can also leave the database entirely, as a portable file, independent of
+      <code>/branch</code>'s in-database fork. The format is <b>newline-delimited JSON (JSONL)</b>: one
+      <code>export_meta</code> line (session id, title, export timestamp, speaker names), then one
+      <code>segment</code> line per transcript segment, then one <code>message</code> line per
+      <code>chat_history</code> entry. <code>_session_export_lines()</code> in
+      <code class="path">server/infrastructure/sessions_routes.py</code> builds this once and is shared
+      by every export path below, so a single-session export and a zip entry are byte-identical for the
+      same session.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
+      <tbody>
+        <tr><td><code>GET /api/sessions/{id}/export</code></td><td>Streams one session as a <code>.jsonl</code> download (<code>session-export-&lt;slug&gt;.jsonl</code>).</td></tr>
+        <tr><td><code>POST /api/sessions/import-transcript</code></td><td>Creates a brand-new session from an uploaded export: either a raw JSONL body or a multipart upload (field <code>file</code>). Unknown line types are ignored rather than rejected, so a future export field cannot break older imports.</td></tr>
+        <tr><td><code>POST /api/sessions/bulk-export</code></td><td>The sidebar multi-select "Export": zips many sessions' portable exports into one download (<code>sessions-export-&lt;date&gt;.zip</code>). Body is a JSON id list, capped at 500, de-duplicated, unknown ids skipped rather than failing the batch.</td></tr>
+        <tr><td><code>POST /api/sessions/bulk-import</code></td><td>The sidebar "Import": accepts multiple uploaded files, each either a plain <code>.jsonl</code> export or a <code>.zip</code> bundle (detected by content, not filename, so a renamed file still works) whose <code>.jsonl</code> entries are imported individually, capped at 200 total. Returns per-file <code>imported</code> / <code>failed</code> lists so one bad file does not sink the batch.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Both import routes funnel through the same <code>_insert_imported_session()</code> helper, so a
+      single-file import and a bulk-import entry produce an identical new session row. Because the
+      format only carries <code>segments</code>, <code>chat_history</code>, and <code>speaker_names</code>,
+      an import is a fresh session: cost rows, attachments, and cron bindings from the source session are
+      not part of the portable file and do not travel with it.</p>
 
     <h2 id="the-cron-inbox">The Scheduled Reports inbox</h2>
     <p>A scheduled task can outlive the session that created it. If that session is deleted or
@@ -229,7 +293,9 @@
     <h2 id="key-files">Key files</h2>
     <div class="spec">
       <dt><code class="path">server/infrastructure/sessions.py</code></dt><dd>Connection pragmas, the schema, reads, the locked/merging UPSERT, and the delete cascade.</dd>
+      <dt><code class="path">server/infrastructure/sessions_routes.py</code></dt><dd>The <code>/api/sessions/*</code> REST surface, including <code>/branch</code> and the export/import routes above.</dd>
       <dt><code class="path">server/infrastructure/config.py</code></dt><dd><code>latch_session()</code> / <code>unlatch_session()</code> and the set of latched fields.</dd>
+      <dt><code class="path">server/attachment_store.py</code></dt><dd>The <code>attachments</code> table's binding, 30-day sliding retention, and GC.</dd>
       <dt><code class="path">server/migrations/runner.py</code></dt><dd>Discovers, orders, and applies migrations; tracks applied versions in <code>schema_version</code>.</dd>
       <dt><code class="path">server/migrations/NNN_*.py</code></dt><dd>The individual migration modules (each with <code>VERSION</code>, <code>DESCRIPTION</code>, <code>migrate</code>).</dd>
     </div>
@@ -238,8 +304,9 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>
         (where the latch and the save happen), <a href="arch-cron.html">Cron / scheduled tasks</a>
-        (who writes <code>cron_runs</code> and <code>cron_event</code> rows), and
-        <a href="arch-costs.html">Cost tracking &amp; budgets</a> (who writes <code>session_costs</code>).</p></div>
+        (who writes <code>cron_runs</code> and <code>cron_event</code> rows),
+        <a href="arch-costs.html">Cost tracking &amp; budgets</a> (who writes <code>session_costs</code>),
+        and <a href="arch-extraction.html">Attachment extraction</a> (who writes <code>attachments</code>).</p></div>
     </div>
   </main>
 

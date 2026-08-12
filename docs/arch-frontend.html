@@ -34,10 +34,17 @@
 
     <h2 id="the-shell">The shell and the startup sequence</h2>
     <p><code class="path">src/components/layout/AppShell.tsx</code> is the top-level component. It renders
-      the four-region layout (sidebar, chat, an optional transcript pane, the workspace IDE, and a
+      the five-region layout (sidebar, chat, an optional transcript pane, the workspace IDE, and a
       right-side dock) and it owns the one-time boot sequence. There is no separate layout engine: every
       visible split is a ratio-flex <code>Splitter</code>, so no pane is ever pinned to a pixel width and
       surviving panes redistribute through flexbox when you open or close one.</p>
+    <p>The layout is always fully mounted, even when a pane is hidden. <code>Splitter</code> used to be
+      rendered conditionally around the workspace panel, which put the chat pane's subtree at two
+      different structural positions and made React unmount and remount it (and every component inside
+      it) on each workspace connect or disconnect - silently wiping local component state like an
+      in-progress composer draft. The fix keeps both children always rendered and collapses the hidden
+      one visually and interactively via a <code>hideFirstPane</code> flag instead of removing it from the
+      tree (<code class="path">Splitter.test.tsx</code> pins the regression).</p>
     <p>The shell also mounts a persistent bottom status strip,
       <code class="path">src/components/layout/AppStatusBar.tsx</code> (WS-H), that reads only from
       existing stores to show the active model, effort, permission mode, git branch with dirty and
@@ -51,9 +58,8 @@
         <em>not</em> eager-loaded at startup, so launch stays fast and memory stays free until you
         actually pick a local model. See <a href="arch-backends.html">Model backends &amp; modes</a>.</li>
       <li><b>Load data retention, skills, and MCP servers.</b> <code>loadDataRetention()</code>,
-        <code>loadSkills()</code>, and <code>loadMCP()</code> populate the settings store; the global
-        tool store is then filled via <code>fetchSkills()</code> and <code>fetchMCPTools()</code> so the
-        skills dropdown and autocomplete have something to filter.</li>
+        <code>loadSkills()</code>, and <code>loadMCP()</code> populate the settings store, which is also
+        where the skill and MCP catalogue used to filter the composer's autocomplete lives.</li>
       <li><b>Restore sessions.</b> <code>loadSessions()</code> lists saved sessions, then the persisted
         <code>currentSessionId</code> is restored and rehydrated through
         <code>switchSession()</code>. A stale persisted id is dropped so the next session prompt starts
@@ -117,8 +123,9 @@
         <tr><td><code>sessionStore</code></td><td>singleton</td><td>The session list, <code>currentSessionId</code>, switching, titling, and saves.</td></tr>
         <tr><td><code>workspaceStore</code></td><td>singleton</td><td>File tree, editor tabs, and dirty state for the connected repo.</td></tr>
         <tr><td><code>uiStore</code>, <code>layoutStore</code>, <code>dockStore</code></td><td>singleton</td><td>Panel visibility, persisted split fractions, and the right-side dock panels.</td></tr>
-        <tr><td><code>settingsStore</code></td><td>singleton</td><td>Config, model list, selected model, effort level, verbosity, data retention.</td></tr>
-        <tr><td><code>toolStore</code>, <code>taskStore</code>, <code>recordingStore</code>, <code>cronUnreadStore</code>, <code>subagentStore</code></td><td>singleton</td><td>Skill/MCP catalogue, the live task list, the shared mic, cron badges, and running subagents.</td></tr>
+        <tr><td><code>settingsStore</code></td><td>singleton</td><td>Config, model list, selected model, effort level, verbosity, data retention, and the skill/MCP catalogue (<code>loadSkills</code> / <code>loadMCP</code>).</td></tr>
+        <tr><td><code>taskStore</code>, <code>recordingStore</code>, <code>cronUnreadStore</code>, <code>subagentStore</code></td><td>singleton</td><td>The live task list, the shared mic, cron badges, and running subagents.</td></tr>
+        <tr><td><code>indexSearchStore</code></td><td>singleton</td><td>Per-session selection of which indexed workspaces a turn should search (<code>selected_search_indexes</code>), persisted to <code>localStorage</code> so a session's choice survives a reload.</td></tr>
         <tr><td><code>backgroundTaskStore</code>, <code>workflowStore</code>, <code>ciStore</code>, <code>goalStore</code></td><td>singleton</td><td>The background-task registry + <code>runningCount</code> (WS-A), <a href="arch-ultracode.html">workflow</a> runs keyed by <code>run_id</code> (WS-D), CI watches keyed by <code>task_id</code> (WS-J), and the active goal + last verdict per session (WS-E).</td></tr>
       </tbody>
     </table></div>
@@ -161,7 +168,9 @@
       (<code>SSEEventDataSchema</code>) before dispatching it to the owning session's store. Validation
       failure logs loudly but still passes the raw payload through, because some event types are
       intentionally loose. The last 200 events are kept on <code>window.__lastSSE</code> for DevTools.</p>
-    <p>Each event type routes to a store action:</p>
+    <p>Each event type routes to a store action. This is a representative selection, not the full list -
+      <code class="path">sseStream.ts</code> and the declarative-card helper
+      <code class="path">sseEventCards.ts</code> route several more:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Event</th><th>Effect</th></tr></thead>
       <tbody>
@@ -169,27 +178,64 @@
         <tr><td><code>thinking</code> / <code>thinking_start</code> / <code>thinking_stop</code></td><td>Drives the adaptive thinking block and its elapsed timer.</td></tr>
         <tr><td><code>skill</code> / <code>skill_input</code> / <code>skill_result</code></td><td>Starts, fills, and completes a live tool trace; also refreshes the Git panel and file tree after mutating tools.</td></tr>
         <tr><td><code>approval_request</code></td><td>Enqueues a <a href="arch-approval.html">pending approval</a>, or auto-accepts/denies it from session memory.</td></tr>
+        <tr><td><code>ws_workspace_prompt</code></td><td>Enqueues the <code>WorkspacePromptCard</code>: a workspace-connect-only prompt, shown when a workspace-write tool pauses because no workspace is connected (or the target is outside it). Save-anywhere requests never reach it; see the callout below.</td></tr>
+        <tr><td><code>ws_auto_applied</code></td><td>Refreshes the workspace tree and marks the affected file dirty in an open editor tab for a pre-approved action the server already executed.</td></tr>
+        <tr><td><code>ws_folder_opened</code></td><td>Flips <code>uiStore</code> to the connected state and refreshes the workspace tree when a tool call connects a workspace mid-turn.</td></tr>
         <tr><td><code>user_question</code></td><td>Collapses parallel <code>ask_user_question</code> calls into one tabbed card.</td></tr>
         <tr><td><code>team_progress</code> / <code>team_results</code></td><td>Folds live <a href="arch-agents.html">sub-agent</a> activity into a turn-local team report.</td></tr>
         <tr><td><code>usage</code></td><td>Updates token counters and the cost estimate; also carries <code>context_used</code>/<code>context_max</code> for the status-bar context meter.</td></tr>
         <tr><td><code>grounding</code></td><td>Records how many folders were searched and passages injected this turn.</td></tr>
         <tr><td><code>cron_event</code></td><td>Appends a live cron card that renders identically to the persisted, resumed one.</td></tr>
+        <tr><td><code>session_message</code></td><td>Appends a live <code>SessionMessageCard</code> for a message pushed in from another session while this one is streaming; renders identically to the persisted, resumed row.</td></tr>
+        <tr><td><code>notify_user</code></td><td>Surfaces the tool's declared status (success / warning / error) as a toast, alongside the durable row it also writes to the notification log.</td></tr>
+        <tr><td><code>todo_update</code></td><td>Replaces the session's task list wholesale in <code>taskStore</code>, so the Tasks pane and the in-chat task row stay a single live source of truth.</td></tr>
+        <tr><td><code>tool_pool</code></td><td>Progressive-disclosure telemetry: how many tools were advertised in the core set versus deferred, recorded on <code>uiStore</code>.</td></tr>
+        <tr><td><code>plan_generated</code> / <code>plan_blocked</code></td><td>Opens a plan in the dock as <code>create_plan</code> saves it, or renders a card explaining why plan mode blocked the turn.</td></tr>
+        <tr><td><code>program_artifact</code></td><td>Stashes a generated mini-app/report so it attaches to the bottom of the settled assistant message as an artifact card.</td></tr>
+        <tr><td><code>tool_result_truncated</code></td><td>Toasts that a tool's output was trimmed to a head+tail slice before reaching the model, linking to the full output in the result cache.</td></tr>
+        <tr><td><code>auto_mode_breaker</code></td><td>Raises a persistent banner (not a toast) when auto mode's rolling-denial circuit breaker trips and falls back to asking, with a one-click resume.</td></tr>
+        <tr><td><code>security_blocked</code></td><td>Renders a card for a tool call the egress/security policy refused outright.</td></tr>
+        <tr><td><code>error</code></td><td>Logs the backend's error text and appends it inline to the response instead of losing the partial answer.</td></tr>
         <tr><td><code>hook_blocked</code> / <code>stop_hook_feedback</code> / <code>stop_hook_block</code></td><td>Surfaces a <a href="arch-tools.html">blocking hook</a>'s veto (a Pre/Post/Stop gate) and its feedback into the turn.</td></tr>
         <tr><td><code>goal_eval</code> / <code>goal_cap_reached</code></td><td>Updates <code>goalStore</code> with the completion-gate verdict and attempt counter for the active goal.</td></tr>
         <tr><td><code>workflow_preview</code> / <code>workflow_started</code></td><td>Renders the ultracode <a href="arch-ultracode.html">workflow</a> phase-preview approval card, then its inline run card.</td></tr>
+        <tr><td><code>ci_started</code> / <code>ci_diagnosis</code></td><td>Renders a CI-watch status card and, on failure, autofix findings above the fix preview. These are chat-stream frames, distinct from the <code>ci_progress</code> / <code>ci_result</code> events the per-session <code>EventSource</code> carries below.</td></tr>
       </tbody>
     </table></div>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p><b><code>WorkspacePromptCard</code> is workspace-connect only.</b> It
+        exists for exactly one situation: a workspace-write tool paused because no workspace is connected,
+        or the target path falls outside the connected one. Picking a suggested or recent folder, or
+        browsing for one, POSTs <code>/api/workspace/connect</code> and then resumes the model with an
+        explicit instruction to re-issue the original write. A one-off "save this file somewhere" request
+        never reaches this card at all: the file-saving tools resolve their own destination from the
+        user's words (or a Documents default) and go straight to a normal approval card - see
+        <a href="arch-tools.html#results-back">Results back to the loop</a> for that staged-then-move
+        flow. The old picker card that also asked <em>where</em> to save a file is gone.</p></div>
+    </div>
     <p>Three more frames route on a different channel. <code>task_event</code>, <code>ci_progress</code>,
       and <code>ci_result</code> arrive on the per-session <code>EventSource</code> in
       <code class="path">src/stores/sessionRuntimes.ts</code> - not the chat POST stream - and feed
       <code>backgroundTaskStore</code> and <code>ciStore</code>, so a detached job keeps updating even
       when its session is not the one on screen.</p>
-    <p>An approval is not a dead end. <code>sendApprovalContinuation</code> POSTs the accept or deny back
-      to <code>/api/chat</code> and feeds the continuation response straight back into
-      <code>readSSEStream</code>; the two functions are mutually recursive, which is why they share one
-      module. The <a href="arch-approval.html">ESC kill switch</a> stops the viewed session's stream and
-      every running subagent synchronously, and a <code>wasKillFinalized</code> guard stops the read loop
-      from resurrecting an answer after a kill.</p>
+    <p>An approval is not a dead end, and there are two entry points onto the same resume channel. A full
+      <a href="arch-approval.html">approval card</a>'s accept/deny buttons call
+      <code>sendApprovalContinuation</code>, which POSTs a single
+      <code>approved_tool_result</code> object (<code>tool_use_id</code>, <code>content</code>,
+      <code>accepted</code>) back to <code>/api/chat</code> and feeds the continuation response straight
+      back into <code>readSSEStream</code>; the two functions are mutually recursive, which is why they
+      share one module. <code>UserQuestionCard</code> and <code>WorkspacePromptCard</code> instead
+      dispatch a <code>whisper-submit-answer</code> DOM event carrying an <code>answers</code> array of
+      <code>tool_use_id</code> / <code>content</code> pairs, which
+      <code>useComposerChatEvents</code> routes into <code>chatStream.send('', &#123; approvedToolResult:
+      answers &#125;)</code> - the same request-body field, just array-shaped, so either path reaches
+      <code class="path">server/chat/routes.py</code>'s <code>approved_tool_result</code> branch and
+      restores the same stashed paused-turn state. A bare answer string sent any other way is treated as
+      a brand-new chat message and never resumes anything. The
+      <a href="arch-approval.html">ESC kill switch</a> stops the viewed session's stream and every running
+      subagent synchronously, and a <code>wasKillFinalized</code> guard stops the read loop from
+      resurrecting an answer after a kill.</p>
 
     <h2 id="rendering-safety">Rendering safety</h2>
     <p>All Markdown passes through <code class="path">src/utils/sanitizeHtml.ts</code> before it reaches
@@ -207,6 +253,32 @@
         <a href="ref-security.html">security model</a>.</p></div>
     </div>
 
+    <h3 id="chat-links">Chat links: citations, created files, and localhost</h3>
+    <p>A rendered message can contain three kinds of link the app intercepts instead of letting the
+      browser handle them, all wired through one delegated click handler,
+      <code>attachWsFileHandlers</code> in <code class="path">src/utils/wsFileLinks.ts</code> (delegated
+      so it survives the streaming <code>innerHTML</code> swaps that would otherwise detach a
+      per-anchor listener):</p>
+    <ul>
+      <li><b>Citation links</b> from index/semantic search use a
+        <code>#wsfile=&lt;url-encoded path&gt;&amp;L=&lt;start&gt;-&lt;end&gt;</code> fragment (chosen
+        because a fragment survives HTML sanitization). A plain click opens the file in the dock at
+        those lines, deduping by path; a modifier-click (Cmd/Ctrl/Alt) reveals it in Finder/Explorer via
+        <code>POST /api/workspace/reveal</code> instead.</li>
+      <li><b>Created-file links</b> mark a file the assistant just wrote rather than an existing one it is
+        citing: <code>created_file_link()</code> in <code class="path">server/index/citations.py</code>
+        (emitted from the save/approval paths in <code class="path">server/approval/bootstrap.py</code>)
+        produces the same scheme with <code>&amp;open=os</code> instead of an <code>&amp;L=</code> range.
+        A plain click opens it with the OS default app - there is no in-app dock view to fall back to for
+        a brand-new file - while a modifier-click still reveals it, for consistency with every other
+        <code>#wsfile=</code> link.</li>
+      <li><b>Localhost links</b> (<code>http://localhost:*</code> / <code>127.0.0.1</code> /
+        <code>[::1]</code>, any port) route into the <a href="arch-preview.html">Live preview</a> pane
+        instead of opening a browser tab, since the assistant only ever names one when it started or is
+        talking about a dev server it spun up itself. A modifier-click is the escape hatch back to a real
+        tab.</li>
+    </ul>
+
     <h2 id="glue">The rest of the glue</h2>
     <ul>
       <li><b>Providers.</b> The app is wrapped with TanStack Query (for cached, non-streaming server
@@ -218,6 +290,17 @@
         <code>MediaStream</code> through the recording controller, so two features can hold the microphone
         without fighting over the device. See <a href="arch-transcription.html">Transcription &amp;
         diarization</a>.</li>
+      <li><b>Bulk session selection.</b> The sidebar's select-all checkbox
+        (<code class="path">src/components/layout/Sidebar.tsx</code>) drives a multi-select mode with an
+        indeterminate state for a partial selection, feeding the bulk export/import/delete flows.</li>
+      <li><b>Collapsible descriptions.</b> <code class="path">src/components/settings/ExpandableText.tsx</code>
+        clamps a long settings-row description to a couple of lines with a See more / See less toggle,
+        measuring actual overflow so short text never shows a toggle it does not need.</li>
+      <li><b>The feature-flags panel.</b> <code class="path">src/components/settings/FeatureFlagsPanel.tsx</code>
+        lists every backend feature flag from <code>GET /api/feature-flags</code> with its default and
+        source (config or default), and flips one with <code>PUT /api/feature-flags/{name}</code>; the
+        one exception is <code>auto_memory</code>, which is also mirrored in the toolbar, so it routes
+        through the settings store setter instead of a direct PUT to keep both in sync.</li>
     </ul>
 
     <h2 id="key-files">Key files</h2>
@@ -227,7 +310,10 @@
       <dt><code class="path">src/stores/sessionRuntimes.ts</code></dt><dd>The per-session runtime registry: stores, event streams, LRU eviction; also routes <code>task_event</code>/<code>ci_progress</code>/<code>ci_result</code>.</dd>
       <dt><code class="path">src/hooks/useChatStream.ts</code></dt><dd>The send path: bind the owning session, POST, commit atomically.</dd>
       <dt><code class="path">src/hooks/chatStream/sseStream.ts</code></dt><dd>The SSE parser and the approval-continuation pump.</dd>
+      <dt><code class="path">src/hooks/chatStream/sseEventCards.ts</code></dt><dd>Declarative one-card-per-frame SSE events split out of <code>sseStream.ts</code> (<code>plan_blocked</code>, <code>security_blocked</code>, <code>hook_blocked</code>, <code>goal_eval</code>, and more).</dd>
       <dt><code class="path">src/utils/sanitizeHtml.ts</code></dt><dd>Safe Markdown rendering (marked + DOMPurify).</dd>
+      <dt><code class="path">src/utils/wsFileLinks.ts</code></dt><dd>Delegated click handling for citation, created-file, and localhost links in rendered messages.</dd>
+      <dt><code class="path">src/components/chat/WorkspacePromptCard.tsx</code></dt><dd>The workspace-connect-only prompt card and its answers-array resume.</dd>
     </div>
 
     <div class="callout callout--tip">
@@ -235,7 +321,9 @@
       <div class="callout__body"><p><b>Related:</b> <a href="arch-overview.html">System overview</a>,
         <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> (the backend this consumes),
         <a href="arch-transcription.html">Transcription &amp; diarization</a>,
-        <a href="arch-agents.html">Sub-agents &amp; the event bus</a>, and
+        <a href="arch-agents.html">Sub-agents &amp; the event bus</a>,
+        <a href="arch-index.html">Index / GraphRAG &amp; search</a> (citation links),
+        <a href="arch-preview.html">Live preview</a> (localhost links), and
         <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</p></div>
     </div>
   </main>

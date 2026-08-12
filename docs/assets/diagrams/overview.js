@@ -31,8 +31,8 @@ WSDiagram.mount("overview-diagram", {
     { id: "ws", group: "transport", col: 1, row: 2, label: "WebSocket", sub: "audio · PTY · LSP", desc: "Binary PCM16 audio in, plus the terminal PTY and the LSP proxy channel." },
 
     { id: "chatR", group: "server", col: 2, row: 0, label: "chat", sub: "chat/routes.py", desc: "The streaming state machine: builds the prompt, invokes the model, and drives the agentic tool loop." },
-    { id: "sessR", group: "server", col: 3, row: 0, label: "sessions", sub: "sessions.py", desc: "List, load, rename, delete, and persist sessions; the per-session UPSERT with merge." },
-    { id: "wsR", group: "server", col: 2, row: 1, label: "workspace", sub: "workspace.py", desc: "Connect a folder and serve the file tree, reads, and validated writes." },
+    { id: "sessR", group: "server", col: 3, row: 0, label: "sessions", sub: "infrastructure/sessions.py", desc: "List, load, rename, delete, and persist sessions (routes in sessions_routes.py); the per-session UPSERT with merge." },
+    { id: "wsR", group: "server", col: 2, row: 1, label: "workspace", sub: "workspace/routes/", desc: "Connect a folder and serve the file tree, reads, and validated writes." },
     { id: "gitR", group: "server", col: 3, row: 1, label: "git", sub: "git/router.py", desc: "Status, diff, log, blame, branches, and PR helpers over the connected repo." },
     { id: "apprR", group: "server", col: 2, row: 2, label: "approval", sub: "approval/router.py", desc: "The consent endpoint: issues a nonce and executes only the exact approved action." },
     { id: "cronR", group: "server", col: 3, row: 2, label: "cron + tasks", sub: "schedulers", desc: "Cron scheduling and the background task tracker. config, plugins, and the LSP proxy mount here too." },
@@ -59,11 +59,11 @@ WSDiagram.mount("overview-diagram", {
 
     { id: "db", group: "persist", kind: "store", col: 7, row: 0, label: "SQLite (WAL)", sub: "sessions · costs · cron", desc: "The single database for sessions, the cost log, and cron runs." },
     { id: "wsfs", group: "persist", kind: "store", col: 7, row: 1, label: "Workspace files", sub: "+ WHISPER.md", desc: "Your connected project files and the project WHISPER.md." },
-    { id: "cfg", group: "persist", kind: "store", col: 7, row: 2, label: "config.json", sub: "+ env overlay", desc: "Per-machine config at the repo root, with the TAVILY_API_KEY env overlay on top." },
+    { id: "cfg", group: "persist", kind: "store", col: 7, row: 2, label: "config.json", sub: "+ env overlay", desc: "Per-machine config: at the repo root in a dev checkout, under the app home (WHISPER_HOME) in a packaged install, with the TAVILY_API_KEY env overlay on top." },
     { id: "memdir", group: "persist", kind: "store", col: 7, row: 3, label: "data/memory", sub: "two-tier", desc: "The two-tier memory store (global + project), injected into later prompts." },
 
     { id: "bedrock", group: "external", kind: "external", col: 7, row: 4, label: "Amazon Bedrock", sub: "Claude · GPT-5", desc: "The only cloud LLM call, made only when you submit a chat message." },
-    { id: "mcp", group: "external", kind: "external", col: 7, row: 5, label: "MCP servers", sub: "stdio, optional", desc: "External tool providers spawned as child processes over stdio. They never see HTTP." },
+    { id: "mcp", group: "external", kind: "external", col: 7, row: 5, label: "MCP servers", sub: "stdio or HTTP, optional", desc: "External tool providers: local child processes over stdio, or remote HTTP servers you explicitly configure (URL plus optional bearer-token env var). Per-server approval_mode and tool allow/deny lists gate what they expose." },
     { id: "tavily", group: "external", kind: "external", col: 7, row: 6, label: "Tavily", sub: "web search", desc: "Optional web-search provider for the research tools." }
   ],
   edges: [

@@ -24,11 +24,13 @@
       <code>BACKEND_PORT</code>, <code>NO_OPEN</code>), one that opens up <b>LAN access</b>
       (<code>WHISPER_TRUSTED_ORIGINS</code>), and one that supplies a <b>secret</b>
       (<code>TAVILY_API_KEY</code>). Everything else is configured through the Settings UI or
-      <code class="path">config.json</code>. A few lower-level knobs also read the environment
-      (<code>TZ</code> for cron scheduling, plus <code>WHISPER_RG_PATH</code>,
+      the user config file. A few lower-level knobs also read the environment
+      (<code>TZ</code> for cron scheduling; <code>WHISPER_RG_PATH</code>,
       <code>WHISPER_SEARCH_TIMEOUT</code>, <code>WHISPER_GLOB_LIMIT</code>, and
-      <code>WHISPER_GREP_LIMIT</code> for the search tools), but the defaults suit almost everyone.
-      See <a href="configuration.html">Configuration</a> for how the layers stack.</p>
+      <code>WHISPER_GREP_LIMIT</code> for the search tools; <code>WHISPER_HOME</code> to relocate the
+      app home for a packaged install; and <code>WHISPER_DATA_DIR</code> to override where app data
+      lives, also settable as the <code>data_dir</code> config key), but the defaults suit almost
+      everyone. See <a href="configuration.html">Configuration</a> for how the layers stack.</p>
 
     <h2 id="the-variables">The variables</h2>
     <div class="table-wrap"><table>
@@ -45,8 +47,10 @@
         <tr>
           <td><code>PORT</code></td>
           <td><code>8000</code></td>
-          <td>Backend port. If the port is already in use the launcher auto-increments to the next free
-            one, so always read the URL the script actually prints.</td>
+          <td>Backend port, honored only when you start the server directly
+            (<code>python -m server.main</code>). Via <code class="path">setup.sh</code> the launcher
+            picks its own port starting at 8000 and increments while busy, overwriting anything you
+            exported, so always read the URL the script actually prints.</td>
         </tr>
         <tr>
           <td><code>BACKEND_PORT</code></td>
@@ -58,8 +62,8 @@
         <tr>
           <td><code>TAVILY_API_KEY</code></td>
           <td><span class="badge badge--muted">unset</span></td>
-          <td>Web-search key. Overrides <code>config.json:tavily_api_key</code>. When both are set, the env
-            var wins, so key rotation is one <code>export</code> away.</td>
+          <td>Web-search key. Overrides the <code>tavily_api_key</code> config value. When both are set,
+            the env var wins, so key rotation is one <code>export</code> away.</td>
         </tr>
         <tr>
           <td><code>WHISPER_TRUSTED_ORIGINS</code></td>
@@ -83,11 +87,14 @@
     <p>The three binding variables shape how the process comes up. The most common way to set them is a
       one-line prefix in front of the launcher:</p>
     <div class="code-block"><pre><code>HOST=0.0.0.0 PORT=8080 bash setup.sh --no-open</code></pre></div>
-    <p><code>PORT</code> is the backend port. Because the launcher auto-increments when the port is busy,
-      the value you pass is a starting point, not a guarantee. If port 8000 is taken and you did not set
-      <code>PORT</code>, the server climbs to 8001, 8002, and so on.
-      <code class="path">setup.sh</code> then propagates the resolved value into
-      <code>BACKEND_PORT</code> so the Vite dev proxy points at wherever the backend actually landed.</p>
+    <p>The two startup paths treat <code>PORT</code> differently. Launching through
+      <code class="path">setup.sh</code>, the script always starts scanning at 8000 and climbs to 8001,
+      8002, and so on while the port is busy - it overwrites any <code>PORT</code> you exported, so
+      setting it before <code>bash setup.sh</code> has no effect. <code class="path">setup.sh</code>
+      then propagates the resolved value into <code>BACKEND_PORT</code> so the Vite dev proxy points at
+      wherever the backend actually landed. Running the server directly with
+      <code>python -m server.main</code> instead, your exported <code>PORT</code> is honored as-is.
+      Either way, read the URL the process actually prints rather than assuming the value you set.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
@@ -126,18 +133,18 @@
       model</a> for the full boundary picture.</p>
 
     <h2 id="secrets">Secrets</h2>
-    <p><code>TAVILY_API_KEY</code> enables the web-search skill. Reading it from the environment is the
-      recommended path because it keeps the key out of the on-disk
-      <code class="path">config.json</code> and makes rotation trivial:</p>
+    <p><code>TAVILY_API_KEY</code> enables the <code>web_search</code> tool (<code>web_fetch</code> needs
+      no key at all). Reading it from the environment is the recommended path because it keeps the key
+      out of the on-disk user config file and makes rotation trivial:</p>
     <div class="code-block"><pre><code>echo 'export TAVILY_API_KEY=tvly-...' &gt;&gt; ~/.zshrc
 source ~/.zshrc</code></pre></div>
     <p>If you also paste a key into Settings, the environment value takes precedence. Without a key set by
       either path, web search is simply unavailable; chat, transcription, and the workspace tools all work
-      as normal. See <a href="tut-research.html">Web research</a> for how the skill uses it.</p>
+      as normal. See <a href="tut-research.html">Web research</a> for how the tool uses it.</p>
 
     <h2 id="precedence">Where the environment fits</h2>
-    <p>Config resolves in three layers, highest priority first. The environment sits at the top, so a value
-      exported in your shell overrides both the project and user layers:</p>
+    <p>Config resolves in five layers, highest priority first. The environment sits at the top, so a value
+      exported in your shell overrides all four config layers below it:</p>
     <dl class="spec">
       <dt><code class="path">Environment</code></dt>
       <dd>Shell variables (<code>HOST</code>, <code>PORT</code>, <code>BACKEND_PORT</code>,
@@ -145,13 +152,23 @@ source ~/.zshrc</code></pre></div>
         priority. Set per-launch or in your shell profile.</dd>
       <dt><code class="path">&lt;workspace&gt;/.whisper/settings.json</code></dt>
       <dd>Project layer. Per-project model, region, and permission mode. Edited through the Settings UI.</dd>
-      <dt><code class="path">config.json</code></dt>
-      <dd>User layer, at the repo root and gitignored. Defaults for all sessions. Edited through the
-        Settings UI or by hand.</dd>
+      <dt><code class="path">config.user.json</code> (or legacy <code class="path">config.json</code>)</dt>
+      <dd>User layer, at the app home: the repo root in a dev checkout, or <code>WHISPER_HOME</code> in a
+        packaged install. Your own deltas on top of the shipped defaults. Edited through the Settings UI
+        or by hand. A dev checkout still seeds this file from the example config on first run; a legacy
+        monolithic <code class="path">config.json</code> keeps acting as the user layer until it is
+        split on migration.</dd>
+      <dt><code class="path">config.example.json</code></dt>
+      <dd>SYSTEM layer, at the repo root. The app-owned shipped defaults and model catalog, read live on
+        every config load (not just copied once), so new template models need no separate sync step.</dd>
+      <dt>Code defaults</dt>
+      <dd>Built-in fallbacks in <code class="path">server/infrastructure/config.py</code>, used only when
+        the SYSTEM file cannot be read.</dd>
     </dl>
     <p>Only the binding and secret keys have an environment override. Most settings (model, region, effort
-      level, permission mode, feature flags, cost caps) live only in the project and user layers. For the
-      complete field-by-field list, see <a href="ref-settings.html">Settings &amp; config keys</a>.</p>
+      level, permission mode, feature flags, cost caps) live only in the project, user, and system layers.
+      For the complete field-by-field list, see <a href="ref-settings.html">Settings &amp; config
+      keys</a>.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>

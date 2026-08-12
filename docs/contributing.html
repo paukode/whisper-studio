@@ -39,8 +39,9 @@ npm test              # vitest frontend unit tests</code></pre></div>
 ruff format .         # format</code></pre></div>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>Run <code>/doctor</code> in the chat input for an automated dependency
-        and AWS-access check. It is the fastest way to confirm a fresh checkout is wired up correctly.</p></div>
+      <div class="callout__body"><p>Run <code>/doctor</code> in the chat input for an automated
+        AWS-credentials and Bedrock-connectivity check (it also verifies the workspace, sessions DB, and
+        config load). It is the fastest way to confirm a fresh checkout is wired up correctly.</p></div>
     </div>
 
     <h2 id="project-layout">Project layout</h2>
@@ -58,19 +59,26 @@ ruff format .         # format</code></pre></div>
 │   ├── diarization/        speaker embedding + VAD
 │   ├── executors/          pluggable tool implementations
 │   ├── agents/             subagent runtime + event bus
-│   ├── approval/           nonce-based approval registry + router
-│   ├── security/           command validator, permission rules
+│   ├── approval/           approval registry + router (server-held pause)
+│   ├── security/           command validator, permission rules, egress policy
 │   ├── memory/             cross-session memory system
 │   ├── index/ · search/    GraphRAG indexing + semantic search
 │   ├── extract/            attachment → Markdown extraction
-│   ├── git/                Git command wrappers
+│   ├── git/                Git command wrappers, worktree session + harvest
 │   ├── preview/            dev-server spawn + screenshots
 │   ├── costs/              per-turn cost tracking + budgets
 │   ├── local/              on-device model runtime
+│   ├── model_browser/      Discover: local-model catalog + memory-fit grading
 │   ├── openai_bedrock/     GPT-on-Bedrock provider
+│   ├── documents/          create_docx/pptx/xlsx/pdf + layout standards
+│   ├── tasks/              background-task registry (shell, agent, workflow, ci)
+│   ├── workflows/          ultracode runtime + Node vm harness
+│   ├── goals/              goal tracking + completion gate
+│   ├── hooks/              blocking Pre/Post/Stop hooks
+│   ├── exec/               headless turn entrypoint
+│   ├── onboarding/         import a Claude Code / Codex CLI project
 │   ├── prompts/            system prompt templates
 │   ├── infrastructure/     config, sessions (SQLite), Bedrock retry
-│   ├── storage/            session/message persistence
 │   └── migrations/         SQLite schema migrations
 ├── src/                    Frontend (TypeScript + React 19)
 │   ├── components/         UI grouped by feature
@@ -80,6 +88,7 @@ ruff format .         # format</code></pre></div>
 │   ├── services/           client-side services
 │   ├── api/                typed fetch + SSE clients
 │   ├── types/              shared types + Zod SSE schemas
+│   ├── test/               frontend test setup + helpers
 │   └── utils/              sanitizeHtml, formatters, error helpers
 ├── skills/                 skill definitions (Markdown)
 ├── plugins/                opt-in Python plugins
@@ -92,8 +101,10 @@ ruff format .         # format</code></pre></div>
     <dl class="spec">
       <dt>Backend edits need a restart</dt>
       <dd>Backend modules are imported once at startup, so edits to <code class="path">server/*.py</code>
-        do not take effect until the process restarts. <code class="path">setup.sh</code> only restarts if
-        the old process is killed first - <code>lsof -ti :8000 | xargs kill</code>.</dd>
+        do not take effect until the process restarts. Kill the old process first
+        (<code>lsof -ti :8000 | xargs kill</code>) before re-running <code class="path">setup.sh</code>:
+        the script port-scans from 8000, so with the old server still alive it starts a second server on
+        the next free port instead of restarting the code you just edited.</dd>
       <dt>Frontend is strict TypeScript + Zod</dt>
       <dd>The SPA uses TypeScript strict mode. SSE event payloads are validated at runtime with Zod schemas
         in <code class="path">src/types/</code>, so a malformed event fails loudly rather than corrupting
@@ -104,8 +115,9 @@ ruff format .         # format</code></pre></div>
         <code class="path">server/executors/</code>. Add a tool by touching all three.</dd>
       <dt>Never reinvent the approval flow</dt>
       <dd>Approval-gated server actions go through <code class="path">server/approval/registry.py</code>,
-        which holds the nonce. Do not build a parallel approval path - see
-        <a href="arch-approval.html">Approval &amp; permissions</a> for why.</dd>
+        which holds the paused turn and re-validates the payload at execute time. Do not build a
+        parallel approval path - see <a href="arch-approval.html">Approval &amp; permissions</a> for
+        why.</dd>
       <dt>Keep files under the size budget</dt>
       <dd>CI fails any <code class="path">server/</code> or <code class="path">src/</code> file over 1200
         lines. Split a growing module into a focused component rather than adding it to the allowlist.</dd>
@@ -117,16 +129,17 @@ ruff format .         # format</code></pre></div>
       <tbody>
         <tr><td>Backend</td><td>FastAPI, Uvicorn, SQLite (WAL), APScheduler</td></tr>
         <tr><td>AI (cloud)</td><td>Amazon Bedrock - Claude Haiku 4.5, Sonnet 4.6/5, Opus 4.6 / 4.7 / 4.8 / 5, Fable 5.0, and GPT-5.4 / 5.5 / 5.6</td></tr>
-        <tr><td>AI (local)</td><td>On-device GGUF models (Gemma, Qwen, Ministral) via llama-server (local mode)</td></tr>
+        <tr><td>AI (local)</td><td>On-device GGUF models (Llama, Gemma, Qwen, Ministral) via llama-server (local mode). None ship by default; they are installed in-app from Settings → Models → Discover</td></tr>
         <tr><td>Transcription</td><td>mlx-whisper + Parakeet, Resemblyzer, WebRTC VAD (all on-device)</td></tr>
         <tr><td>Retrieval</td><td>GraphRAG - embeddings, reranker, entity graph, sqlite-vec (see <a href="arch-index.html">Index / GraphRAG</a>)</td></tr>
         <tr><td>Frontend</td><td>React 19, TypeScript (strict), Vite 8, Zustand, Monaco Editor, xterm.js</td></tr>
         <tr><td>Search</td><td>ripgrep</td></tr>
-        <tr><td>Protocols</td><td>HTTP/JSON, Server-Sent Events, WebSocket, MCP (stdio)</td></tr>
+        <tr><td>Protocols</td><td>HTTP/JSON, Server-Sent Events, WebSocket, MCP (stdio and streamable HTTP)</td></tr>
         <tr><td>LSP</td><td>python-lsp-server, typescript-language-server</td></tr>
-        <tr><td>Sandbox</td><td><code>sandbox-exec(5)</code> (macOS)</td></tr>
+        <tr><td>Sandbox</td><td><code>sandbox-exec(5)</code> (macOS), bubblewrap (Linux)</td></tr>
         <tr><td>Sanitization</td><td>DOMPurify 3.4.6</td></tr>
-        <tr><td>Spreadsheets</td><td>ExcelJS 4.4.0</td></tr>
+        <tr><td>Document generation</td><td>macOS <code>textutil</code> (HTML → docx), python-pptx, openpyxl, reportlab (<code class="path">server/documents/</code>)</td></tr>
+        <tr><td>Spreadsheets (viewer)</td><td>ExcelJS 4.4.0</td></tr>
       </tbody>
     </table></div>
 

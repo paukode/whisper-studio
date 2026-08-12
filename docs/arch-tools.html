@@ -113,8 +113,8 @@
         <code>PostToolUse</code> fires and may return <code>additionalContext</code> that is folded
         back into the tool result the model reads next; on an exception,
         <code>PostToolUseFailure</code> fires. A separate <code>Stop</code> gate
-        (<code>check_stop_hooks</code>) runs at end of turn across chat, sub-agents, and cron. The
-        old <code class="path">server/infrastructure/hooks.py</code> is now a deprecated shim.</p></li>
+        (<code>check_stop_hooks</code>) runs at end of turn via the completion gate, on interactive
+        cloud chat only.</p></li>
       <li><h4>Dispatch</h4><p>Only now is <code>route_tool</code> called. Any exception is caught,
         logged, and returned to the model as a <code>[Tool Error]</code> string, so one failing tool
         never crashes the turn. Errors from command tools cascade to later writes via the sibling-abort
@@ -128,6 +128,14 @@
       calls <code>resolve_static_decision()</code>
       (<code class="path">server/security/permissions.py</code>), whose precedence is:</p>
     <ol>
+      <li><code>github-destructive</code> - always asks. Destructive GitHub mutations (repo/ref
+        delete, PR merge, archive/rename, API DELETE) require an explicit human approval; no mode,
+        rule, or session approval can cover them.</li>
+      <li>MCP per-server floor - a server or tool marked <code>approval_mode: "approve"</code> in
+        <code>mcp_servers.json</code> always asks; also absolute.</li>
+      <li>Per-category <code>category_modes</code> - a category-level override of the effective mode
+        (for example "always confirm deletes" even when the global mode is more permissive). It
+        applies before everything below, including <code>bypassPermissions</code>.</li>
       <li><code>bypassPermissions</code> - everything allowed, no prompts.</li>
       <li>Trusted-skill scripts - a trusted skill running its own bundled command.</li>
       <li>Session approvals - category-level pre-approvals from the frontend (for example
@@ -136,6 +144,9 @@
       <li><code>auto</code> - defer to the classifier (below).</li>
       <li>Otherwise, <code>ask</code>.</li>
     </ol>
+    <p>Custom rules can carry an optional <code>justification</code> that is surfaced with the rule,
+      and <code>POST /api/permissions/rules/test</code> dry-runs a candidate rule against a sample
+      tool call before you commit it.</p>
     <p>An <code>allow</code> runs the action inline through the same <code>ApprovalSpec</code> executor
       the UI's Yes button uses, so there is a single execution path. A <code>deny</code> returns a
       "blocked by user" result. Anything else emits an <code>approval_request</code> event (optionally
@@ -153,9 +164,15 @@
     <h3 id="auto-mode">Auto mode and the classifier</h3>
     <p>In <code>auto</code> mode, when nothing static resolves the decision and a Bedrock model is
       available, <code>classify_tool_call()</code> asks a fast model (Haiku, falling back to Sonnet) to
-      judge the call and returns <code>allow</code> or <code>ask</code>. The classifier is only invoked
+      judge the call and returns <code>allow</code> or <code>ask</code>. The classifier also receives
+      <code>recent_messages</code>, a bounded slice of the turn so far, so it judges the pattern of
+      the turn rather than each call in isolation. The classifier is only invoked
       for actions that actually need approval; read-only tools never reach it, and the offline local
       path stays Bedrock-free because <code>model_id</code> is empty there.</p>
+    <p>A per-turn <b>circuit breaker</b> backstops a flip-flopping classifier: repeated denials
+      recorded via <code>record_classifier_verdict</code> trip <code>is_auto_mode_tripped</code>,
+      dropping the session back to ask-mode with a one-click resume
+      (<code>resume_auto_mode</code>).</p>
 
     <h2 id="routing-categories">How route_tool dispatches</h2>
     <p><code>route_tool</code> is an ordered set of branches by tool category. The first match wins; a
@@ -170,7 +187,8 @@
         <tr><td>Cron</td><td>Cron handlers</td><td>Run via <a href="arch-cron.html">the scheduler</a>.</td></tr>
         <tr><td>Workflows &amp; CI</td><td><code class="path">server/workflows/tools.py</code>, <code class="path">server/ci/tools.py</code></td><td><b>Ultracode-only.</b> <code>workflow_run</code>/<code>workflow_status</code>/<code>workflow_save</code>/<code>workflow_list</code> and <code>ci_watch</code>/<code>ci_status</code>/<code>ci_autofix</code>. See <a href="arch-ultracode.html">Ultracode workflow runtime</a>.</td></tr>
         <tr><td>LSP &amp; worktree</td><td><code>execute_lsp_tool</code>, worktree handlers</td><td>Run on the thread-pool executor. See <a href="arch-git-lsp.html">Git &amp; LSP</a>.</td></tr>
-        <tr><td>Sub-agents &amp; teams</td><td><code>spawn_agent</code>, <code>send_message</code>, <code>list_agents</code>, <code>team_create</code></td><td>The agent runtime. See <a href="arch-agents.html">Sub-agents</a>.</td></tr>
+        <tr><td>Sub-agents &amp; teams</td><td><code>spawn_agent</code>, <code>send_message</code>, <code>receive_messages</code>, <code>complete_coordination</code>, <code>list_agents</code>, <code>promote_agent_type</code>, <code>team_create</code></td><td>The agent runtime; the caller's id, depth, and team ride an ambient <code>agent_nesting_ctx</code>. See <a href="arch-agents.html">Sub-agents</a>.</td></tr>
+        <tr><td>Documents</td><td>Registry executors (<code class="path">server/documents/</code>)</td><td><code>create_docx</code> (HTML via macOS <code>textutil</code>), <code>create_pptx</code> (python-pptx), <code>create_xlsx</code> (openpyxl), <code>create_pdf</code> (reportlab), all normalized to the standard layout in <code class="path">server/documents/standards.py</code> and saved through the staged <code>save_to_path</code> flow below.</td></tr>
         <tr><td><code>skill_invoke</code></td><td>Runs a general agent</td><td>Delegates the named skill to a full sub-agent tool loop.</td></tr>
         <tr><td>Memory</td><td>Registry executor</td><td>Looked up in <code>EXECUTORS</code>. See <a href="arch-memory.html">Memory</a>.</td></tr>
         <tr><td>Config &amp; interaction</td><td><code>config_get</code>/<code>config_set</code>, <code>ask_user_question</code>, <code>notify_user</code></td><td><code>ask_user_question</code> emits <code>_pause</code>.</td></tr>
@@ -185,7 +203,8 @@
       output shapes signalled by internal string prefixes:</p>
     <dl class="spec">
       <dt><code>[WS_APPROVAL]</code></dt><dd>Needs consent; resolved through the precedence chain above.</dd>
-      <dt><code>[WS_WORKSPACE_PROMPT]</code></dt><dd>A write fired with no connected workspace; a folder picker is shown and the turn pauses.</dd>
+      <dt><code>[WS_WORKSPACE_PROMPT]</code></dt><dd>A modify or delete of an <em>existing</em> file (<code>ws_write_file</code>, <code>ws_edit_file</code>, <code>ws_delete_file</code>) fired with no connected workspace, or with a path escaping it; a folder picker is shown and the turn pauses. New-file creation never triggers it.</dd>
+      <dt><code>save_to_path</code></dt><dd>The staged-then-move save flow for every tool that creates a brand-new file (<code>ws_create_file</code>, <code>save_file</code>, and the document tools). The tool never asks where to save: <code>resolve_write_destination</code> (<code class="path">server/workspace/state.py</code>) uses the model-resolved <code>destination_path</code> from the user's own words, else a workspace-relative path, else <code>~/Documents/&lt;filename&gt;</code>. The content is fully built and staged in the app sandbox first (<code>stage_file_bytes</code>, <code class="path">server/workspace/paths.py</code>, with a 24-hour staging GC), and approving the card <em>moves</em> the staged file into place with a staging-root containment check.</dd>
       <dt><code>[WS_PREVIEW_IMAGE]</code></dt><dd>A screenshot; returned as an Anthropic image content block (never budget-truncated) so the model sees pixels, not base64 text.</dd>
     </dl>
     <p>Ordinary string outputs are run through <code>budget_fn</code> to cap oversized results, a
@@ -196,14 +215,14 @@
     <p>Whisper Studio's <em>full</em> tool pool runs on the order of <b>80-plus core tools plus the
       skill-backed tools</b> - grouped by purpose: workspace &amp; files, git, LSP, web, memory,
       tasks &amp; scheduling, sub-agents, skills / notebooks / MCP, config &amp; interaction, and live
-      preview. The interactive chat loop no longer ships all of those schemas every turn. With
+      preview. No consumer ships all of those schemas every turn anymore. With
       <b>progressive tool disclosure</b> (feature flag <code>progressive_tools</code>, default
-      <b>on</b>) it advertises only a curated core set plus whatever this session has activated;
+      <b>on</b>) a turn advertises only a curated core set plus whatever this session has activated;
       every other tool costs a single one-line entry in a deferred index inside the cached system
       block, loadable on demand via <code>tool_search</code>. That trims roughly <b>60-75%</b> of
-      tool-schema tokens per turn. The full ~8K-token pool now survives only off the interactive
-      path - cron and the agent runtime still send every schema (<code>assemble_tool_pool</code>
-      defaults to <code>progressive=False</code>). See
+      tool-schema tokens per turn. As of v2.1 the partitioning applies uniformly to interactive
+      chat, cron runs, sub-agents, and headless turns; the full catalog remains the source of truth
+      for <code>tool_search</code>. See
       <a href="#progressive-disclosure">Progressive tool disclosure</a> below, and note the pool is
       still deduplicated and mode-filtered upstream in the
       <a href="arch-chat-pipeline.html">chat pipeline</a>.</p>
@@ -217,7 +236,7 @@
     </div>
 
     <h2 id="progressive-disclosure">Progressive tool disclosure</h2>
-    <p>On the interactive chat loop the advertised pool is partitioned rather than sent whole. The
+    <p>The advertised pool is partitioned rather than sent whole. The
       split is computed by <code>partition_pool</code> in
       <code class="path">server/chat/tool_partition.py</code> and wired through
       <code>assemble_partitioned_pool</code> (<code class="path">server/chat/tool_pool.py</code>) in
@@ -237,9 +256,11 @@
     <p>Ordering is cache-stable: the core prefix keeps the catalogue's sorted order and a
       <code>core_count</code> breakpoint is placed on it, so a new activation invalidates only the
       appended tail of the tools cache block, not the core prefix. The flag
-      <code>progressive_tools</code> defaults <b>on</b> and applies to the interactive chat loop
-      only; cron and the agent runtime still receive the full pool
-      (<code>assemble_tool_pool</code> defaults to <code>progressive=False</code>).</p>
+      <code>progressive_tools</code> defaults <b>on</b> and, as of v2.1, covers every turn-engine
+      consumer: interactive chat, <a href="arch-cron.html">cron runs</a>,
+      <a href="arch-agents.html">sub-agents</a>, and headless turns all call
+      <code>activate_from_history</code> + <code>assemble_partitioned_pool</code> and carry the
+      deferred index, so <code>tool_search</code> works inside agents and scheduled runs too.</p>
 
     <h2 id="key-files">Key files</h2>
     <div class="spec">

@@ -43,13 +43,6 @@
       NFC and cached in a plain dict capped at <b>50 entries</b>, evicting the oldest key when full.
       Because the SPA panel, prompt building, and every status call hit this repeatedly, the cache
       turns a tree walk into a dict lookup.</p>
-    <p>A companion, <code>find_canonical_git_root()</code>, resolves a worktree back to the main repo
-      identity by following the <code>gitdir:</code> then <code>commondir</code> chain. Two structural
-      checks guard it: the worktree gitdir must be a direct child of
-      <code>&lt;commonDir&gt;/worktrees/</code>, and its <code>gitdir</code> back-link must point at
-      <code>&lt;gitRoot&gt;/.git</code>. Both are required, so a hand-crafted repo cannot borrow
-      another checkout's trust.</p>
-
     <h3 id="run-git">The subprocess wrapper</h3>
     <p><code>_run_git(args, cwd, timeout=15)</code> is the single choke point for running git. Its
       hygiene is the point:</p>
@@ -78,9 +71,11 @@
         <tr><td>Untracked file</td><td>Synthetic diff</td><td>A brand-new file is rendered as one hunk of pure additions.</td></tr>
       </tbody>
     </table></div>
-    <p>Size safeguards are baked in as constants: at most <b>50</b> files get per-file detail, files
-      over <b>1 MB</b> are skipped, and each file is capped at <b>400</b> lines of hunk content
-      (GitHub's auto-load limit). A cheap <code>--shortstat</code> probe gives accurate totals in
+    <p>Size safeguards are baked in as constants: at most <b>50</b> files get per-file detail
+      (<code>MAX_FILES</code>), files over <b>1 MB</b> are skipped
+      (<code>MAX_DIFF_SIZE_BYTES</code>), and a change set over <b>500</b> files
+      (<code>MAX_FILES_FOR_DETAILS</code>) returns accurate shortstat totals only, with no per-file
+      stats at all. A cheap <code>--shortstat</code> probe gives accurate totals in
       O(1) memory first, so the expensive numstat and hunk parsing only run when the change set is
       small enough to be worth it.</p>
     <div class="callout">
@@ -99,8 +94,13 @@
     <h3 id="read-tools">Read tools (no prompting)</h3>
     <p>These are registered <code>read_only=True, concurrent_safe=True</code>, so they run without an
       approval card and can batch in parallel with other reads (see
-      <a href="arch-tools.html">Tool dispatch &amp; executors</a>). Most add
-      <code>--no-optional-locks</code> so they never contend with a concurrent git process.</p>
+      <a href="arch-tools.html">Tool dispatch &amp; executors</a>). The status and diff paths
+      (<code>git_diff</code> and the helpers in <code class="path">core.py</code>,
+      <code class="path">diff.py</code>, and <code class="path">router.py</code>) add
+      <code>--no-optional-locks</code> so they never contend with a concurrent git process. When
+      <a href="arch-tools.html">progressive tool disclosure</a> is on, only <code>git_status</code> and
+      <code>git_diff</code> sit in the always-advertised core set; the rest of the git tools are
+      deferred behind <code>tool_search</code>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>Runs</th></tr></thead>
       <tbody>
@@ -147,13 +147,11 @@
     <h3 id="secret-guard">The secret-file guard</h3>
     <p>Before <code>git_add_commit</code> stages anything, <code>contains_secret_files()</code> in
       <code class="path">server/git/security.py</code> matches every path against a pattern list and
-      aborts the commit if any look sensitive. The patterns include <code>.env</code> and
-      <code>.env.*</code>, <code>*.pem</code>, <code>*.key</code>, <code>credentials.json</code>,
+      refuses the commit if any look sensitive. The patterns include <code>.env</code> and
+      <code>.env.*</code>, <code>*.pem</code>, <code>*.key</code>, <code>*.p12</code>,
+      <code>*.pfx</code>, <code>*.keystore</code>, <code>credentials.json</code>,
       <code>service-account*.json</code>, <code>id_rsa</code>, <code>id_ed25519</code>, and
-      catch-alls like <code>*secret*</code> and <code>*password*</code>. The same module also
-      classifies read-only commands for auto-approval, blocks writes to <code>git config</code> and
-      flags like <code>--no-verify</code> and <code>-i</code>, and warns on destructive shapes such
-      as a force push to <code>main</code> or <code>master</code>.</p>
+      catch-alls like <code>*secret*</code> and <code>*password*</code>.</p>
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p>The secret guard is a safety net, not a boundary. It matches on
@@ -162,6 +160,63 @@
         <a href="ref-security.html">security model</a> for what is a hard boundary versus a
         best-effort check.</p></div>
     </div>
+
+    <h2 id="worktrees">Worktrees</h2>
+    <p>Git worktrees show up in two distinct shapes: a <b>session worktree</b> that pins a whole chat
+      session into its own checkout, and lighter <b>task-branch worktrees</b> a turn can create for an
+      isolated multi-file change. Both build on the same underlying git feature (one branch can be
+      checked out in only one worktree at a time, so collisions are impossible by construction), and
+      the shell cwd is tracked per session (<code class="path">server/cwd_tracker.py</code>), so
+      parallel sessions never trip over each other's checkout. For a hands-on tour, see the
+      <a href="tut-worktrees.html">Worktrees tutorial</a>.</p>
+
+    <h3 id="session-worktrees">Session worktrees: enter and exit</h3>
+    <p><code class="path">server/git/worktree_session.py</code> owns the conventions. The
+      <code>enter_worktree</code> approval action creates (or resumes) a worktree at
+      <code class="path">&lt;repo&gt;/.whisper/worktrees/&lt;slug&gt;</code> on branch
+      <code>worktree-&lt;slug&gt;</code>, branched from the current HEAD, and pins the chat session
+      into it: from then on the session's shell commands and workspace tools operate in that checkout.
+      Slugs pass a strict allowlist (<code>validate_worktree_slug</code>), and a <code>/</code> in a
+      slug is flattened to <code>+</code> so nested names stay flat filesystem and branch components.
+      Entering the same slug again reuses the existing worktree rather than failing, so "resume where I
+      left off" is the default.</p>
+    <p>The pin is durable: every active <code>WorktreeSession</code> (original cwd and branch, worktree
+      path, branch, and name) is persisted to
+      <code class="path">~/.whisper_cache/worktree-sessions.json</code>, so a server restart preserves
+      which sessions live in which worktrees. The frontend reads the pin back through
+      <code>GET /api/git/worktree-session</code>. The matching <code>exit_worktree</code> action removes
+      the worktree and restores the session's original cwd; it refuses to remove a worktree with
+      uncommitted changes unless explicitly forced, so exiting can never silently discard work. Both
+      actions are approval-gated under their own <code>worktree</code> category, so you can trust the
+      flow once ("Yes for all worktree operations") without widening any other write permission.</p>
+
+    <h3 id="task-worktrees">Task-branch worktrees: the ws_* trio</h3>
+    <p>Independently of the session pin, three workspace tools
+      (<code class="path">server/workspace/tools.py</code>, executed in
+      <code class="path">server/workspace/executors.py</code>) give a turn a sandboxed task branch:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>ws_create_worktree</code></td><td>Creates a worktree under <code class="path">&lt;repo&gt;/.worktrees/&lt;name&gt;</code> on branch <code>whisper/&lt;name&gt;</code> (name auto-generated if omitted, validated with the same slug guard).</td></tr>
+        <tr><td><code>ws_diff_worktree</code></td><td>Shows the diff between the worktree branch and the branch it forked from.</td></tr>
+        <tr><td><code>ws_merge_worktree</code></td><td>Merges the task branch back into the current branch, behind approval.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The trio only appears in the tool pool when the connected workspace is a git repository.</p>
+
+    <h3 id="agent-harvest">Agent harvest</h3>
+    <p>Worktree-isolated <a href="arch-agents.html">subagents</a> get an automatic <b>harvest-back</b>
+      (<code class="path">server/git/worktree_harvest.py</code>): when the agent finishes, its
+      worktree's full delta since the branch point, committed or not, is materialized
+      <em>uncommitted</em> into the spawning working tree, so <code>git status</code> shows the agent's
+      new, modified, and deleted files for normal review. It works file by file off the git object
+      database (blob SHAs are shared between a repo and its worktrees), which handles committed work,
+      binary files, deletions, and executable bits, and lets non-conflicting files land even when one
+      file collides. A file is a conflict only when the main tree changed it away from the base
+      <em>and</em> differently from the agent; those files stay in the worktree, which is kept, and the
+      result note says exactly where. Nothing is ever committed or force-resolved on your behalf, and
+      materialization is serialized process-wide so parallel agents finishing together apply one at a
+      time.</p>
 
     <h2 id="watcher">The change watcher</h2>
     <p><code class="path">server/git/watcher.py</code> keeps the frontend honest without polling the
@@ -190,7 +245,9 @@
       <dt><code class="path">GET /api/git/branch</code></dt><dd>Current branch, default branch, and whether they match.</dd>
       <dt><code class="path">GET /api/git/show</code></dt><dd>The HEAD version of a file, for side-by-side diffing in the editor.</dd>
       <dt><code class="path">POST /api/git/restore</code></dt><dd>Undo changes to a single tracked file, or remove an untracked one.</dd>
-      <dt><code class="path">GET / POST /api/git/worktrees</code></dt><dd>List worktrees, add one, or remove one (never the active workspace).</dd>
+      <dt><code class="path">GET / POST /api/git/worktrees</code></dt><dd>List worktrees, or add one (path defaults to <code>../&lt;repo&gt;-&lt;branch&gt;</code> next to the main checkout).</dd>
+      <dt><code class="path">POST /api/git/worktrees/remove</code></dt><dd>Remove a worktree; refuses to remove the active workspace.</dd>
+      <dt><code class="path">GET /api/git/worktree-session</code></dt><dd>The chat session's worktree pin, if it has <a href="#worktrees">entered a worktree</a>, or null.</dd>
       <dt><code class="path">GET /api/git/events</code></dt><dd>The SSE change stream described above.</dd>
     </dl>
 
@@ -252,7 +309,10 @@
       <dt><code class="path">server/git/core.py</code></dt><dd>Root discovery, cached state queries, the <code>_run_git</code> wrapper, remote-URL normalization.</dd>
       <dt><code class="path">server/git/executor.py</code></dt><dd>Read and write git tools; the <code>do_*</code> helpers approval runs after consent.</dd>
       <dt><code class="path">server/git/diff.py</code></dt><dd>Diff fetching and parsing with size limits and transient-state detection.</dd>
-      <dt><code class="path">server/git/security.py</code></dt><dd>Read-only allowlist, blocked flags, destructive warnings, and the secret-file guard.</dd>
+      <dt><code class="path">server/git/security.py</code></dt><dd>The secret-file pattern list and <code>contains_secret_files()</code>.</dd>
+      <dt><code class="path">server/git/worktree_session.py</code></dt><dd>Session worktrees: slug validation, the <code>.whisper/worktrees</code> conventions, enter/exit, and the persisted session pins.</dd>
+      <dt><code class="path">server/git/worktree_harvest.py</code></dt><dd>Harvests a finished agent's worktree delta back into the spawning tree, uncommitted.</dd>
+      <dt><code class="path">server/git/gh_classify.py</code>, <code class="path">gh_executor.py</code>, <code class="path">gh_tools.py</code></dt><dd>The GitHub hybrid tools: table-driven classification of <code>gh</code> invocations (DENY / REDIRECT / READ / WRITE / DANGER / FORBIDDEN, unknown shapes fail closed to approval-gated WRITE) and their executors.</dd>
       <dt><code class="path">server/git/watcher.py</code></dt><dd>The one-second <code>.git</code> watcher and its lazy cache.</dd>
       <dt><code class="path">server/git/router.py</code></dt><dd>The <code>/api/git</code> REST routes and the SSE change stream.</dd>
       <dt><code class="path">server/lsp.py</code></dt><dd>Static-analysis LSP tools for the assistant.</dd>
@@ -263,7 +323,8 @@
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> <a href="tut-workspace.html">The workspace IDE</a>
-        tutorial (where you actually use this), <a href="arch-tools.html">Tool dispatch &amp;
+        tutorial (where you actually use this), the <a href="tut-worktrees.html">Worktrees</a> tutorial,
+        <a href="arch-tools.html">Tool dispatch &amp;
         executors</a>, <a href="arch-approval.html">Approval &amp; permissions</a>, and
         <a href="arch-frontend.html">Frontend architecture</a>.</p></div>
     </div>

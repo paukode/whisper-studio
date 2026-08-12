@@ -89,7 +89,7 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
         <tr><td><code>phase(title)</code></td><td>Start a new phase; subsequent <code>agent()</code> calls group under it in the progress display.</td></tr>
         <tr><td><code>log(msg)</code></td><td>Emit a progress line shown above the run's progress tree.</td></tr>
         <tr><td><code>workflow(name, args?)</code></td><td>Run another saved workflow inline as a sub-step (one level of nesting; shares the parent's caps and budget).</td></tr>
-        <tr><td><code>budget</code></td><td><code>{ total, spent(), remaining() }</code> - the run's USD target, for dynamic loops (<code>while (budget.remaining() &gt; 50_000) …</code>).</td></tr>
+        <tr><td><code>budget</code></td><td><code>{ total, spent(), remaining() }</code> - the run's USD target. <code>spent()</code> and <code>remaining()</code> are async RPCs and must be awaited, for dynamic loops (<code>while (await budget.remaining() &gt; 0.50) …</code>).</td></tr>
         <tr><td><code>args</code></td><td>The JSON value passed into the run, verbatim - the way a saved workflow is parameterized.</td></tr>
       </tbody>
     </table></div>

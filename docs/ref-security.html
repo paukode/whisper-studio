@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Security model - Whisper Studio Docs</title>
-  <meta name="description" content="A reference summary of Whisper Studio's security model: localhost binding, Markdown sanitization, the nonce approval flow, no-shell aws_cli, the OS sandbox, opt-in plugins, and the accepted residual risks.">
+  <meta name="description" content="A reference summary of Whisper Studio's security model: localhost binding, Markdown sanitization, the server-held approval pause, no-shell aws_cli, the OS sandbox, opt-in plugins, and the accepted residual risks.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -27,7 +27,7 @@
       <a href="arch-approval.html">Approval &amp; permissions</a>.</p>
 
     <h2 id="headlines">Headline points</h2>
-    <p>Eleven properties hold by default, out of the box, with no configuration:</p>
+    <p>Fourteen properties hold by default, out of the box, with no configuration:</p>
     <ul>
       <li><b>Localhost-only by default.</b> The server binds <code>127.0.0.1</code>. LAN exposure is an
         explicit opt-in via <code>HOST=0.0.0.0</code> (see <code class="path">server/main.py</code>).
@@ -45,7 +45,27 @@
       <li><b>No client-asserted command approval.</b> The old
         <code>body.user_approved</code> boolean on <code>/api/workspace/shell</code> is gone. Consent
         for risky actions routes through <code class="path">server/approval/router.py</code>, which
-        holds a server-side nonce the client cannot fabricate.</li>
+        holds the paused turn server-side and re-validates the payload itself when the client posts
+        back the registered action - there is no client-fabricatable "already approved" state.</li>
+      <li><b>Direct-save files are contained to a staging root until you approve.</b>
+        <code>save_file</code>, <code>ws_create_file</code> without a workspace, and the document
+        tools build their content and write it into an app-sandbox staging directory
+        <em>before</em> the approval card ever appears. Approving runs <code>_do_save_to_path</code>,
+        which re-validates that the source is inside the staging root
+        (<code class="path">is_staged_path</code>, <code class="path">server/workspace/paths.py</code>)
+        before moving it - so even a forged approval payload sent directly to
+        <code>POST /api/approval/execute</code> cannot "move" an arbitrary readable file into a
+        user-visible folder.</li>
+      <li><b>Destructive GitHub actions always ask.</b> Repo or ref deletion, a PR merge, an
+        archive/rename, or a raw API DELETE carries the <code>github-destructive</code> approval
+        category, and that category is a hard floor: no permission mode, category override, bypass
+        mode, or blanket session approval can skip it
+        (<code class="path">server/security/permissions.py</code>).</li>
+      <li><b>Auto mode has a built-in circuit breaker.</b> The <code>auto</code> classifier judges one
+        tool call in isolation and can drift over a long turn, so a per-session tracker trips the
+        effective mode back to asking after 3 consecutive denials or 5 in the last 10 calls, with an
+        explicit one-click resume. No setup needed beyond selecting <code>auto</code> mode itself. See
+        <a href="ref-settings.html#auto-mode-breaker">the circuit breaker</a>.</li>
       <li><b><code>aws_cli</code> does not use a shell.</b> Commands are <code>shlex.split</code> into
         an argv list, so metacharacters like <code>;</code>, <code>&amp;&amp;</code>, and
         <code>$()</code> become literal arguments to <code>aws</code> rather than shell operators.</li>
@@ -73,8 +93,9 @@
         flow through <code>agent()</code> into <code>run_agent</code> tools, which stay permission-gated
         and sandboxed. See <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</li>
       <li><b>The Tavily key reads from the environment first.</b> <code>TAVILY_API_KEY</code> overrides
-        <code>config.json:tavily_api_key</code>, so rotation is one <code>export</code> away and the key
-        need never be committed.</li>
+        the <code>tavily_api_key</code> config value, so rotation is one <code>export</code> away and the
+        key need never be committed. It enables the <code>web_search</code> tool only;
+        <code>web_fetch</code> needs no key.</li>
       <li><b>No telemetry.</b> The only outbound call the backend makes on its own is to Amazon Bedrock for
         chat. Tool calls and skills reach the network only when a user message invokes them - including
         the <code>/ci</code> command, which shells out to the GitHub CLI (<code>gh</code>) only on explicit
@@ -111,9 +132,29 @@
             rendered through <code>web_fetch</code> could fire arbitrary JS in the SPA origin.</td>
         </tr>
         <tr>
-          <td>Approval router with server-side nonce</td>
+          <td>Approval router with a server-held pause</td>
           <td>A real consent flow for risky commands.</td>
-          <td><b>Boundary</b> - the server holds the nonce, the client cannot fabricate one.</td>
+          <td><b>Boundary</b> - the server stashes the paused turn and re-validates the payload itself;
+            the client cannot fabricate approval.</td>
+        </tr>
+        <tr>
+          <td><code>is_staged_path</code> containment on <code>_do_save_to_path</code></td>
+          <td>Re-checks that a save approval's source file is inside the app-sandbox staging root
+            before moving it to the user's destination.</td>
+          <td><b>Boundary</b> - closes the gap a forged <code>POST /api/approval/execute</code> payload
+            could otherwise exploit to exfiltrate an arbitrary readable file.</td>
+        </tr>
+        <tr>
+          <td><code>github-destructive</code> approval category</td>
+          <td>Repo/ref deletion, PR merge, archive/rename, and raw API DELETE.</td>
+          <td><b>Boundary</b> - unconditional; no mode, override, or bypass setting can skip it.</td>
+        </tr>
+        <tr>
+          <td>Auto-mode circuit breaker</td>
+          <td>Tracks the <code>auto</code> classifier's verdicts per session and trips back to asking
+            after repeated denials.</td>
+          <td><b>Defence-in-depth</b> - a safety net on top of the classifier, not a replacement for
+            it; the classifier itself remains a heuristic, not a boundary.</td>
         </tr>
         <tr>
           <td><code>_validate_command</code> (regex deny-list)</td>
@@ -187,9 +228,38 @@
         (<code class="path">~/.aws</code> is denied for generic commands but re-allowed per-call for the
         AWS tools), git credentials, browser cookies and keychains, shell history, password-manager
         stores, and assorted CLI token files.</dd>
+      <dt><code class="path">server/sandbox.py</code> - <code>_SANDBOX_ENV_DENYLIST</code></dt>
+      <dd>Strips <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, and <code>GH_ENTERPRISE_TOKEN</code>
+        from the environment handed to every sandboxed child, so a GitHub token your shell happens to
+        export cannot leak into a sandboxed command's environment. One more defence-in-depth layer, not
+        a substitute for the path deny-list above.</dd>
     </dl>
     <p>Because the default is <em>allow</em>, the deny-list is broad but not exhaustive, and it is what
       the sandbox leans on. That shapes the accepted risks below.</p>
+
+    <h2 id="egress">Network egress policy</h2>
+    <p>The sandbox's network access is open by default, matching the residual risk above. For anyone who
+      wants to restrict it, <code class="path">server/security/egress_policy.py</code> adds an opt-in,
+      <b>default-off</b> control selected via <code>network_policy.tier</code> in
+      <code class="path">permissions.json</code> (see
+      <a href="ref-settings.html#network-policy">the config field</a>): <code>permissive</code> (no
+      restriction, today's behavior), <code>curated</code> (a seed allowlist of common
+      package-registry/docs/API domains plus your own <code>custom_allowed_domains</code>), or
+      <code>restrictive</code> (nothing outbound except domains you explicitly added).</p>
+    <p>Enforcement is a small local proxy that never terminates TLS. For HTTPS traffic tunneled through
+      it, the proxy reads only the one message every TLS client sends in cleartext before any encryption
+      keys exist - the ClientHello's Server Name Indication (SNI) - checks the hostname against the
+      active tier's allowlist, and either relays the connection untouched or refuses it: no certificate
+      minting, no decryption, no visibility into the payload. When a non-permissive tier is active, the
+      macOS sandbox profile also denies direct outbound connections on ports 80/443 at the kernel level,
+      forcing everything through the allowlist-checking proxy even if a command ignores the
+      <code>HTTPS_PROXY</code>/<code>HTTP_PROXY</code> environment convention.</p>
+    <p>The module documents its own limits rather than overselling itself as airtight: a raw socket that
+      never consults the proxy env vars is still caught by the kernel-level port deny (on macOS; the
+      Linux <code>bwrap</code> path is implemented but untested), but <code>methods_only_safe</code> (block
+      POST/PUT/PATCH/DELETE) has no effect on ordinary HTTPS-over-CONNECT traffic, since the HTTP method
+      lives inside the encrypted payload the proxy never reads; and DNS (port 53) is not restricted at
+      all, so DNS-based exfiltration is out of scope for this feature.</p>
 
     <h2 id="residual-risks">Accepted residual risks</h2>
     <p>These are stated plainly rather than hidden. Each is a deliberate trade-off for a single-user
@@ -197,12 +267,13 @@
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body">
-        <p><b>Network stays open, and non-listed secret reads are possible.</b> Because the sandbox is
-          allow-default, it does <em>not</em> restrict network access and does <em>not</em> block reads
-          of secret files that are not on <code>_DENIED_PATHS</code>. Network is left open on purpose:
-          sandboxed <code>git</code>, <code>npm</code>, <code>pip</code>, <code>aws</code>, and build
-          commands need it. Flipping to deny-default with network restriction is possible but would break
-          those tools, so it is out of scope for now.</p>
+        <p><b>Network stays open by default, and non-listed secret reads are possible.</b> Because the
+          sandbox is allow-default, it does <em>not</em> restrict network access and does <em>not</em>
+          block reads of secret files that are not on <code>_DENIED_PATHS</code>. Network is left open
+          on purpose: sandboxed <code>git</code>, <code>npm</code>, <code>pip</code>, <code>aws</code>,
+          and build commands need it. An opt-in <a href="#egress">network egress policy</a> now exists
+          for anyone who wants to restrict it; the default tier remains exactly today's unrestricted
+          behavior.</p>
         <p><b><code>HOST=0.0.0.0</code> exposes an unauthenticated API.</b> Enabling it puts the API on
           the LAN with no auth. The <code>Origin</code> / <code>Host</code> guard
           (<code class="path">server/infrastructure/security.py</code>) blocks browser-driven cross-site
@@ -242,12 +313,29 @@
 
     <h2 id="approval-path">The one path that bypasses validation</h2>
     <p>The approval flow is the only legitimate path that skips <code>_validate_command</code>, and it
-      is safe precisely because the server holds the nonce. When a tool needs consent it issues a
-      nonce, pauses the turn, and streams an approval request over SSE. The client confirms by
-      re-posting the action, payload, and that exact nonce; the server matches it, runs the validated
-      command under the sandbox, and returns the result. A client cannot mint its own nonce, so it
-      cannot self-approve. See <a href="arch-approval.html">Approval &amp; permissions</a> for the
-      full nonce lifecycle and the per-mode behavior of the Mode dial.</p>
+      is safe precisely because the server holds the pause, not the client. When a tool needs consent
+      the engine stashes the paused turn keyed by its <code>tool_use_id</code> and streams an approval
+      request over SSE. The client confirms by re-posting the action and payload; the server looks up
+      the registered <code>ApprovalSpec</code> for that action and its executor re-validates everything
+      itself - the destination, the staging containment, the sensitive-path check - before it runs the
+      validated command under the sandbox and returns the result. A client cannot skip that
+      re-validation, so it cannot self-approve. See <a href="arch-approval.html">Approval &amp;
+      permissions</a> for the full pause-and-resume lifecycle and the per-mode behavior of the Mode
+      dial.</p>
+
+    <h2 id="mcp-trust">The MCP trust surface</h2>
+    <p>MCP servers add tools the model can call, so each one gets its own trust settings rather than
+      inheriting a single blanket policy. A <b>remote</b> server (reached over streamable HTTP via a
+      <code>url</code>) authenticates with a bearer token read from an environment variable named by
+      <code>bearer_token_env_var</code> - only the variable <em>name</em> is ever persisted to config,
+      never the token itself. Per server, an <code>approval_mode</code> of <code>"approve"</code> is a
+      hard floor exactly like <code>github-destructive</code>: every call from that server always asks,
+      and no bypass mode, trusted skill, or blanket session approval can skip it. <code>enabled_tools</code>
+      / <code>disabled_tools</code> allow/deny lists further narrow what a server's tools can do
+      (<code>disabled_tools</code> wins on overlap). Finally, when a connected server asks the human a
+      question mid-call - an <b>elicitation</b> - the question is routed through the approval pipeline
+      under its own category, <code>mcp-elicit</code>, rather than answered on the server's behalf. See
+      <a href="ref-settings.html#mcp-fields">the per-server MCP fields</a> for the full config shape.</p>
 
     <h2 id="quick-reference">Quick reference</h2>
     <div class="table-wrap"><table>
@@ -255,12 +343,15 @@
       <tbody>
         <tr><td>What does the server bind by default?</td><td><code>127.0.0.1</code>. LAN needs <code>HOST=0.0.0.0</code>.</td></tr>
         <tr><td>What sanitizes rendered Markdown?</td><td><code>marked</code> then DOMPurify 3.4.6, at every render site.</td></tr>
-        <tr><td>How is command consent enforced?</td><td>A server-held nonce via <code class="path">server/approval/router.py</code>.</td></tr>
+        <tr><td>How is command consent enforced?</td><td>A server-held pause plus executor-side re-validation via <code class="path">server/approval/router.py</code>.</td></tr>
         <tr><td>Does <code>aws_cli</code> run through a shell?</td><td>No. <code>shlex.split</code> into argv; no shell operators.</td></tr>
         <tr><td>What contains shell / Python execution?</td><td><code>sandbox-exec(5)</code> (macOS) or <code>bwrap</code> (Linux).</td></tr>
         <tr><td>Are plugins loaded automatically?</td><td>No. Opt-in per plugin; a dropped file does nothing until enabled.</td></tr>
-        <tr><td>Where does the Tavily key come from?</td><td>Env first (<code>TAVILY_API_KEY</code>), then <code>config.json</code>.</td></tr>
+        <tr><td>Where does the Tavily key come from?</td><td>Env first (<code>TAVILY_API_KEY</code>), then your user config file.</td></tr>
         <tr><td>What outbound calls does the backend make on its own?</td><td>Only Amazon Bedrock for chat. No telemetry.</td></tr>
+        <tr><td>Can I restrict what the sandbox reaches on the network?</td><td>Yes, opt-in: <code>network_policy.tier</code> (<code>curated</code>/<code>restrictive</code>), enforced by a local SNI-filtering proxy. Default is <code>permissive</code> (unrestricted).</td></tr>
+        <tr><td>Can a GitHub deletion or an "approve"-tier MCP call ever skip the approval prompt?</td><td>No. <code>github-destructive</code> and a server's <code>approval_mode: "approve"</code> are both unconditional floors.</td></tr>
+        <tr><td>Are direct-saved files exposed before I approve them?</td><td>No. They are built and staged inside the app sandbox first; approving only moves the already-staged file.</td></tr>
       </tbody>
     </table></div>
 
@@ -268,7 +359,9 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> <a href="arch-sandbox.html">Sandbox &amp; security</a>
         (the mechanisms behind these rows), <a href="arch-approval.html">Approval &amp; permissions</a>
-        (the nonce flow and permission modes), and <a href="ref-env.html">Environment variables</a>
+        (the pause-and-resume flow and permission modes), <a href="ref-settings.html#permission-modes">Settings &amp;
+        config keys</a> (category modes and the network policy field), and
+        <a href="ref-env.html">Environment variables</a>
         (<code>HOST</code>, <code>TAVILY_API_KEY</code>, and friends).</p></div>
     </div>
   </main>

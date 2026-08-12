@@ -92,7 +92,16 @@
         static and dynamic parts when prompt caching is on.</li>
       <li><b>Resolve <code>@file</code> mentions and attachments</b> inline into the user message, and
         add <a href="arch-index.html">index grounding</a> if the session selected workspace indexes.</li>
+      <li><b>Build the tool catalogue.</b> <code>activate_from_history</code> replays the session's
+        tool activations, <code>assemble_partitioned_pool</code> splits the pool into an advertised
+        core plus a deferred index, and the index is placed in the cached system block. See
+        <a href="arch-tools.html#progressive-disclosure">progressive tool disclosure</a>.</li>
     </ul>
+    <p>The endpoint then hands a <code>TurnContext</code> to the unified turn engine
+      (<code>run_turn</code>, <code class="path">server/chat/engine/runner.py</code>). This exact
+      sequence - minus the interactive pauses - is also what
+      <a href="arch-agents.html">sub-agents</a>, <a href="arch-cron.html">cron runs</a>, and the
+      Python-only <code>run_headless_turn</code> entrypoint execute.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4M12 17h.01"/></svg></span>
@@ -104,19 +113,23 @@
     </div>
 
     <h2 id="the-stream">3. Bedrock streams, the loop turns</h2>
-    <p>The Anthropic path calls <code>invoke_model_with_response_stream</code> and reads the upstream
-      SSE. Content blocks are parsed as they arrive, and each maps to an event the client folds into
-      the UI. Two block types drive the turn:</p>
+    <p>The streaming loop lives in the engine, not the endpoint: <code>chat_endpoint()</code> owns
+      only turn assembly and SSE delivery. The engine's Anthropic adapter
+      (<code class="path">server/chat/engine/anthropic.py</code>) calls
+      <code>invoke_model_with_response_stream</code> and reads the upstream SSE, while
+      <code>run_turn</code> drives the rounds. GPT-on-Bedrock and on-device turns run the identical
+      sequence through the OpenAI and Local adapters. Content blocks are parsed as they arrive, and
+      each maps to an event the client folds into the UI. Two block types drive the turn:</p>
     <ul>
       <li><b>A <code>text</code> chunk</b> is yielded straight to the client as a token. The SPA
         appends it to the streaming bubble in real time (<code class="path">src/hooks/chatStream/sseStream.ts</code>).</li>
-      <li><b>A <code>tool_use</code> block</b> means the model wants to act. The endpoint collects the
+      <li><b>A <code>tool_use</code> block</b> means the model wants to act. The engine collects the
         tool calls, dispatches them, and feeds the results back so the model can continue. This is the
         loop-back edge in the diagram.</li>
     </ul>
     <p>The turn keeps looping (invoke, stream, act on the stop reason, invoke again) until the model
       stops asking for tools <em>and</em> the completion gate lets it end. On <code>end_turn</code>
-      the endpoint first runs <code>run_completion_gate</code>
+      the engine first runs <code>run_completion_gate</code>
       (<code class="path">server/goals/gate.py</code>): the WS-I Stop hooks always run, and a WS-E
       Haiku goal evaluator runs when the <code>goal_loop</code> flag is on with an active goal. If a
       Stop hook blocks or the goal is judged not achieved, the gate injects
@@ -150,14 +163,15 @@
       <code>tool_result</code> is appended to the messages and the loop invokes Bedrock again. No user
       interaction, no pause.</p>
 
-    <h3 id="approval-gate">Needs consent: pause on a nonce</h3>
+    <h3 id="approval-gate">Needs consent: pause and wait</h3>
     <p>A tool that requires approval takes the guarded path:</p>
     <ol class="steps">
-      <li><h4>Pause and stash state</h4><p>The turn's continuation state is stored in
-        <code>_paused_sessions[session_id]</code> (in-process), keyed so the exact tool call can be
-        resumed later.</p></li>
-      <li><h4>Emit an approval request</h4><p>The server issues a server-held nonce and yields an
-        <code>approval_request</code> event describing the action, category, and preview.</p></li>
+      <li><h4>Pause and stash state</h4><p>The turn's continuation state is stored in the unified
+        pause store (<code class="path">server/chat/engine/pause.py</code>), keyed by session so the
+        exact tool call can be resumed later.</p></li>
+      <li><h4>Emit an approval request</h4><p>The server yields an
+        <code>approval_request</code> event carrying the <code>tool_use_id</code>, action, category,
+        and preview.</p></li>
       <li><h4>Wait for your decision</h4><p>The approval card appears. When you click Approve, the SPA
         calls <code>POST /api/approval/execute</code>
         (<code class="path">server/approval/router.py</code>) with the action and payload; the server
@@ -169,8 +183,8 @@
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6Z"/><path d="m9 12 2 2 4-4"/></svg></span>
       <div class="callout__body"><p><b>The approval path is the only route that bypasses command
-        validation, and it is gated by a nonce the server holds.</b> The client cannot fabricate
-        consent: there is no client-asserted "approved" boolean the endpoint trusts. The nonce lives
+        validation, and the pause is held server-side.</b> The client cannot fabricate consent: there
+        is no client-asserted "approved" boolean the endpoint trusts. The paused turn state lives
         on the server, so a real, server-mediated Approve is the single legitimate way past
         <code>_validate_command</code>. See <a href="arch-approval.html">Approval &amp; permissions</a>
         and the <a href="ref-security.html">security model</a>.</p></div>
@@ -203,7 +217,7 @@
         the evaluator judges not-yet-achieved (the <code>goal_loop</code> flag), re-injects feedback
         and loops again instead of ending. These decisions surface over SSE as <code>goal_eval</code>,
         <code>stop_hook_block</code>, and <code>goal_cap_reached</code> frames. See
-        <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</li>
+        <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</li>
     </ul>
 
     <h2 id="one-worked-path">A worked path</h2>
@@ -214,7 +228,7 @@
       <li><h4>Build + invoke</h4><p>The server filters history, builds the prompt, and invokes
         Bedrock. Explanatory text streams back as tokens.</p></li>
       <li><h4>tool_use</h4><p>The model emits a <code>ws_write_file</code> tool call. Under the current
-        mode it needs consent, so the turn pauses on a nonce and an <code>approval_request</code> is
+        mode it needs consent, so the turn pauses server-side and an <code>approval_request</code> is
         emitted.</p></li>
       <li><h4>Approve</h4><p>You click Approve. <code>POST /api/approval/execute</code> runs the
         validated write; the SPA re-enters <code>/api/chat</code> with the real
@@ -226,7 +240,9 @@
 
     <h2 id="key-files">Key files</h2>
     <div class="spec">
-      <dt><code class="path">server/chat/routes.py</code></dt><dd>The SSE chat endpoint, the streaming loop, and the <code>_paused_sessions</code> approval-resume state.</dd>
+      <dt><code class="path">server/chat/routes.py</code></dt><dd>The SSE chat endpoint: turn assembly and SSE delivery.</dd>
+      <dt><code class="path">server/chat/engine/runner.py</code></dt><dd><code>run_turn</code>, the streaming loop shared by chat, sub-agents, cron, and headless turns.</dd>
+      <dt><code class="path">server/chat/engine/pause.py</code></dt><dd>The unified pause store holding approval-resume state, keyed by session.</dd>
       <dt><code class="path">server/infrastructure/sessions.py</code></dt><dd><code>visible_chat_history()</code> and the session persistence UPSERT with its per-session lock.</dd>
       <dt><code class="path">server/approval/router.py</code></dt><dd><code>POST /api/approval/execute</code>, the single hub the SPA calls to run an approved action.</dd>
       <dt><code class="path">src/hooks/useChatStream.ts</code></dt><dd>The React hook: binds the owning session, POSTs the turn, commits the final message, PUTs the save.</dd>

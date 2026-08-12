@@ -50,33 +50,61 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Mode</th><th>Embeddings</th><th>Reranker</th><th>Entity extraction</th><th>On-device weights</th></tr></thead>
       <tbody>
-        <tr><td><b>Cloud</b> (default)</td><td>Cohere Embed v4 (Bedrock)</td><td>Cohere Rerank 3.5</td><td>Claude Haiku</td><td>none - lean install</td></tr>
-        <tr><td><b>Hybrid</b></td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td><td>pulled, so you can pick them</td></tr>
-        <tr><td><b>Local</b></td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER</td><td>~16 GB, all on-device</td></tr>
+        <tr><td><b>Cloud</b></td><td>Cohere Embed v4 (Bedrock)</td><td>Cohere Rerank 3.5</td><td>Claude Haiku</td><td>none - lean install</td></tr>
+        <tr><td><b>Hybrid</b></td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td><td>index/RAG weights pulled, so you can pick them</td></tr>
+        <tr><td><b>Local</b></td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER</td><td>index/RAG weights, all on-device</td></tr>
       </tbody>
     </table></div>
+    <p>Whisper Studio ships with <b>no local chat model</b>. "On-device weights" above means only the
+      index/RAG stack: the embedder, reranker, and entity extractor. A local (on-device) chat model,
+      if you want one, is a separate download from <b>Settings &rarr; Models &rarr; Discover</b>,
+      covered below.</p>
 
-    <h3 id="cloud">Cloud (default)</h3>
-    <p>The default. Embeddings and reranking go to Cohere on Amazon Bedrock, and entity extraction
-      uses Claude Haiku. Because nothing runs on-device, the install skips roughly 16 GB of model
-      weights, so it is the leanest setup and the fastest to get running. Pick this when you are happy
-      for indexing to use Bedrock (and to be billed for it) and you want the smallest footprint.</p>
+    <h3 id="cloud">Cloud</h3>
+    <p>Embeddings and reranking go to Cohere on Amazon Bedrock, and entity extraction uses Claude
+      Haiku. Because nothing runs on-device, the install skips the index/RAG weights entirely, so it
+      is the leanest setup and the fastest to get running. Pick this when you are happy for indexing to
+      use Bedrock (and to be billed for it) and you want the smallest footprint. It is the default for
+      a source install via <code>setup.sh</code>; see the note on first run below for the packaged
+      app.</p>
 
     <h3 id="hybrid">Hybrid (per capability)</h3>
     <p>Hybrid lets you choose a backend for each capability independently, stored under the
       <code>backends</code> key in config. The capabilities are <code>embed</code>
       (<code>cohere</code> or <code>qwen3</code>), <code>rerank</code> (<code>cohere</code> or
-      <code>qwen3</code>), <code>ner</code> (<code>haiku</code> or <code>gliner</code>), and
-      <code>index_llm</code> (<code>haiku</code>, <code>local</code>, or <code>none</code>). Any
-      capability you leave unset falls back to the cloud backend. This install pulls the on-device
-      weights too, so both sides are available to mix. Pick this when you want, say, local embeddings
-      for privacy but the cloud reranker for quality.</p>
+      <code>qwen3</code>), <code>ner</code> (<code>haiku</code>, <code>gliner</code>, or an on-device
+      chat model key for LLM-based NER), and <code>index_llm</code> (<code>haiku</code>, an on-device
+      chat model key, <code>local</code> to follow whichever on-device model is active, or
+      <code>none</code>). Any capability you leave unset falls back to the cloud backend. This install
+      pulls the on-device index/RAG weights too, so both sides are available to mix. Pick this when you
+      want, say, local embeddings for privacy but the cloud reranker for quality.</p>
+    <p>The named entity extractor for the <a href="tut-index-search.html">entity graph</a> is a related
+      but separate setting: a per-workspace <code>ner_model</code> choice (GLiNER or the heavier
+      GLiNER2) in that folder's Index settings panel, independent of the <code>backends.ner</code>
+      capability above, which is about the model used at query/summarization time, not the extractor
+      used while indexing.</p>
 
     <h3 id="local">Local (fully on-device)</h3>
-    <p>Everything runs on your laptop: Qwen3 for embeddings, the Qwen3 Reranker, and GLiNER for entity
-      extraction. No Bedrock calls are made for indexing or retrieval, so nothing about your indexed
-      folders leaves the machine. The cost is disk and memory: this mode pulls around 16 GB of weights
-      and runs them locally. Pick this when the data you index must never touch the cloud.</p>
+    <p>Everything in the index/RAG stack runs on your laptop: Qwen3 for embeddings, the Qwen3
+      Reranker, and GLiNER for entity extraction. No Bedrock calls are made for indexing or retrieval,
+      so nothing about your indexed folders leaves the machine. Pick this when the data you index must
+      never touch the cloud. Chatting still needs a model, cloud or on-device, chosen separately in the
+      chat toolbar.</p>
+
+    <h3 id="discover">Installing an on-device chat model from Discover</h3>
+    <p>Hybrid and local mode make the index/RAG stack on-device-capable, but they do not, by
+      themselves, give you anything to chat with offline. On-device chat models are opt-in downloads
+      from <b>Settings &rarr; Models &rarr; Discover</b>, which searches Hugging Face for GGUF chat
+      models you can pull down and run locally.</p>
+    <figure class="shot">
+      <img src="assets/img/model-discover.png" alt="The Discover tab in Settings, searching Hugging Face for on-device GGUF chat models">
+      <figcaption><strong>Settings &rarr; Models &rarr; Discover.</strong> Search Hugging Face for a GGUF chat model and install it. A handful of models are marked Recommended if you want a known-good starting point.</figcaption>
+    </figure>
+    <p>Installing your first local chat model does one more thing worth knowing: it automatically
+      flips <code>backends.index_llm</code> from <code>haiku</code> to <code>local</code> if it was
+      still on the cloud default, so the one-shot summarization/relationship work that
+      <code>index_llm</code> covers follows your new on-device model instead of continuing to call
+      Haiku. You can always override it again from the Model Mode tab.</p>
 
     <h2 id="what-stays-local-always">What stays local in every mode</h2>
     <p>Two things do not depend on the mode you choose:</p>
@@ -108,10 +136,13 @@
       <li>
         <h4>At install (optional)</h4>
         <p>Pass a flag to the setup script to choose up front. Cloud is the default and skips the
-          on-device download; hybrid and local pull the ~16 GB of weights so they are ready to use.</p>
+          on-device index/RAG download; hybrid and local pull those weights (roughly 5 GB: Qwen3
+          embedding, GLiNER, GLiNER2, and the Qwen3 reranker) so they are ready to use. None of the
+          three flags download a local chat model; that is always a separate, later choice in
+          Discover.</p>
         <div class="code-block"><pre><code>bash setup.sh --cloud    # default: indexing on Bedrock, lean install
-bash setup.sh --hybrid   # per-capability; pulls on-device weights too
-bash setup.sh --local    # everything on-device; pulls all weights</code></pre></div>
+bash setup.sh --hybrid   # per-capability; pulls on-device index/RAG weights too
+bash setup.sh --local    # index/RAG on-device; pulls those weights</code></pre></div>
       </li>
       <li>
         <h4>In the app</h4>
@@ -119,19 +150,28 @@ bash setup.sh --local    # everything on-device; pulls all weights</code></pre><
           cloud, hybrid, and local there. In hybrid, this is where you pick a backend per capability.</p>
       </li>
       <li>
-        <h4>Confirm the reload</h4>
-        <p>Changing the mode prompts a reload so the app re-initializes in the new mode (it has to load
-          or release the on-device models). Accept it, and the indexing stack comes up on the backends
-          you chose.</p>
+        <h4>Reload when you are done</h4>
+        <p>Saving shows a persistent banner rather than a blocking prompt, so you can finish configuring
+          hybrid's per-capability pickers before it takes effect. Click <b>Reload now</b> on the banner
+          when you are ready; the app re-initializes in the new mode (loading or releasing the on-device
+          models) and the indexing stack comes up on the backends you chose.</p>
       </li>
     </ol>
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 20h20L12 2Z"/><path d="M12 9v5M12 17h.01"/></svg></span>
       <div class="callout__body"><p>If you installed with <code>--cloud</code> (the default), the
-        on-device weights were never downloaded, so switching to hybrid or local will fetch them on
-        first use. Expect a one-time delay of a few minutes and a few gigabytes of disk while that
-        happens.</p></div>
+        on-device index/RAG weights were never downloaded, so switching to hybrid or local will fetch
+        them on first use. Expect a one-time delay of a minute or two and a few gigabytes of disk while
+        that happens. A local chat model, if you want one, is a further download from Discover and is
+        not fetched by this switch.</p></div>
     </div>
+
+    <h2 id="first-run">A note on first launch</h2>
+    <p>If you installed from source with <code>setup.sh</code>, cloud is genuinely the default: it is
+      what <code class="path">config.example.json</code> ships. But a brand-new home directory with no
+      config file at all (for example, a packaged app on its very first launch) is instead seeded with
+      <b>hybrid</b> mode and the on-device index/RAG backends already selected, weights downloading on
+      demand rather than up front. Either way you can change the mode from Settings at any time.</p>
 
     <h2 id="which-mode">Which mode should you pick?</h2>
     <div class="card-grid">
@@ -142,8 +182,9 @@ bash setup.sh --local    # everything on-device; pulls all weights</code></pre><
       </div>
       <div class="card">
         <h3>Pick Local if</h3>
-        <p>The folders you index must never leave the machine. You accept ~16 GB of weights and some
-          local compute in exchange for zero Bedrock calls during indexing and retrieval.</p>
+        <p>The folders you index must never leave the machine. You accept a few gigabytes of index/RAG
+          weights and some local compute in exchange for zero Bedrock calls during indexing and
+          retrieval.</p>
       </div>
       <div class="card">
         <h3>Pick Hybrid if</h3>
@@ -152,16 +193,17 @@ bash setup.sh --local    # everything on-device; pulls all weights</code></pre><
       </div>
       <div class="card">
         <h3>Still not sure?</h3>
-        <p>Start on Cloud. It is the default, needs no download, and you can switch to hybrid or local
-          later without losing your existing cloud index.</p>
+        <p>Start on Cloud. It needs no download, and you can switch to hybrid or local later without
+          losing your existing cloud index.</p>
       </div>
     </div>
 
     <h2 id="config-keys">The config behind it</h2>
-    <p>If you prefer editing <code class="path">config.json</code> directly, these are the keys the
-      Settings tab writes:</p>
+    <p>If you prefer editing the config file directly, these are the keys the Settings tab writes to
+      <code class="path">config.user.json</code> (or a legacy <code class="path">config.json</code> on
+      an unmigrated install):</p>
     <div class="spec">
-      <dt><code class="path">model_mode</code></dt><dd>One of <code>cloud</code> (default), <code>hybrid</code>, or <code>local</code>. Resolved in <code class="path">server/infrastructure/model_mode.py</code>. It also drives which chat models the picker shows: cloud hides on-device models, and local hides cloud ones.</dd>
+      <dt><code class="path">model_mode</code></dt><dd>One of <code>cloud</code>, <code>hybrid</code>, or <code>local</code>; <code>cloud</code> is the code-level default for a source install. Resolved in <code class="path">server/infrastructure/model_mode.py</code>. It also drives which chat models the picker shows: cloud hides on-device models, and local hides cloud ones.</dd>
       <dt><code class="path">backends</code></dt><dd>Consulted only in hybrid mode. A per-capability map with keys <code>embed</code>, <code>rerank</code>, <code>ner</code>, and <code>index_llm</code>. Unset capabilities fall back to the cloud backend.</dd>
     </div>
     <p>For how these settings are read at runtime and how the backend is selected per capability, see

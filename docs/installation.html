@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Installation - Whisper Studio Docs</title>
-  <meta name="description" content="A zero-to-running walk-through of Whisper Studio: prerequisites, aws configure, the setup.sh flags, model modes, in-app configuration, and troubleshooting.">
+  <meta name="description" content="Install the Whisper Studio Mac app from a DMG, or run from source: prerequisites, aws configure, the setup.sh flags, model modes, in-app configuration, and troubleshooting.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -19,6 +19,30 @@
       it installs Homebrew, Python, and the AWS CLI from scratch, then runs one script that builds and
       serves the app. Budget 15 to 25 minutes the first time.</p>
 
+    <h2 id="mac-app">Install the Mac app (recommended)</h2>
+    <p>The fastest path on Apple Silicon is the packaged app: no Homebrew, no Python, no cloning a
+      repo. It is the same codebase as the from-source setup below, built into a native shell around
+      the same backend and SPA.</p>
+    <ol>
+      <li>Download the latest DMG from the
+        <a href="https://github.com/paukode/whisper-studio/releases">GitHub Releases page</a>.</li>
+      <li>Open the DMG and drag <b>Whisper Studio</b> into <b>Applications</b>.</li>
+      <li>On first launch, right-click the app and choose <b>Open</b> (the build is not notarized, so
+        a plain double-click is blocked by Gatekeeper the first time only).</li>
+    </ol>
+    <p>Requirements: Apple Silicon, macOS 14 or later. You still connect AWS and pick a model on first
+      run, exactly as described in <a href="first-run.html">First run &amp; verify</a>; the app version
+      skips Steps 1 to 4 below entirely.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Prefer to run from source?</b> The rest of this page,
+        <code>bash setup.sh</code> and all, is still fully supported: it is what you want for
+        contributing code, running on Apple Silicon builds ahead of a release, or Linux/other
+        platforms the DMG does not cover.</p></div>
+    </div>
+
+    <h2 id="from-source">Install from source</h2>
     <p>Whisper Studio is one local process that serves both the API and the React SPA on a single
       origin. Getting there is a short chain: install a few command-line tools, connect AWS, clone the
       repo, run <code>setup.sh</code>, and configure two fields in the app. <b>Click a box</b> below to
@@ -90,8 +114,11 @@
     </div>
 
     <h2 id="step-3">Step 3 - (Optional) Tavily key for web search</h2>
-    <p>Without a Tavily key, Claude's web-search skill is unavailable; everything else (chat,
-      transcription, the workspace tools) works. You can add this now or any time later.</p>
+    <p>A Tavily key powers the <code>web_search</code> tool. It is optional: without one,
+      <code>web_search</code> falls back to an Amazon Bedrock AgentCore browser MCP server if you
+      have enabled one, and <code>web_fetch</code> (fetching a URL you give it) works with no key at
+      all. Everything else (chat, transcription, the workspace tools) works regardless. You can add
+      this now or any time later.</p>
     <ol class="steps">
       <li><h4>Sign up</h4><p>Create a key at <a href="https://app.tavily.com">app.tavily.com</a>. The
         free tier covers personal use.</p></li>
@@ -163,9 +190,13 @@ bash setup.sh</code></pre></div>
     <p>On the first run the script also seeds <code class="path">config.json</code> from
       <code class="path">config.example.json</code> and downloads model weights into
       <code class="path">models/</code>. Transcription weights (Whisper, Parakeet, and the speaker
-      encoder) are always pulled; the on-device index and chat weights are only pulled for hybrid and
-      local modes (see <a href="#model-modes">Model modes</a>). Every download is idempotent and
-      non-fatal: a pull that cannot finish now retries automatically on first use.</p>
+      encoder) are always pulled. For hybrid and local modes it additionally pulls the on-device
+      index weights (Qwen3 embed and rerank, GLiNER, GLiNER2, about 5 GB) and installs the llama.cpp
+      <code>llama-server</code> runtime via Homebrew. No chat model is pulled on a fresh install:
+      on-device chat models are downloaded from <b>Settings &rarr; Models &rarr; Discover</b>, and any
+      already-registered local models are refreshed on later setup runs (see
+      <a href="#model-modes">Model modes</a>). Every download is idempotent and non-fatal: a pull
+      that cannot finish now retries automatically on first use.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
@@ -183,20 +214,23 @@ bash setup.sh</code></pre></div>
       <tbody>
         <tr><td><code>--new</code></td><td>Wipe <code class="path">venv/</code>,
           <code class="path">node_modules/</code>, and <code class="path">static/dist/</code>, then
-          reinstall from scratch. It also backs up the live <code class="path">config.json</code>
-          (timestamped) and reseeds it from <code class="path">config.example.json</code>, so re-add
-          your Tavily key and any custom settings afterwards, or restore them from the backup.</td></tr>
+          reinstall from scratch. It also backs up the live <code class="path">config.json</code> and
+          <code class="path">pricing.json</code> (timestamped) and reseeds both from their
+          <code>.example.json</code> templates, so re-add your Tavily key and any custom settings
+          afterwards, or restore them from the backups.</td></tr>
         <tr><td><code>--dev</code></td><td>Development mode: run the backend plus the Vite dev server on
           port 5173 with hot-module reload. Open the Vite URL, not the backend.</td></tr>
         <tr><td><code>--prod</code></td><td>Production mode (<b>the default</b>): build the frontend and
           serve it from FastAPI on port 8000. No Vite, no HMR. Mutually exclusive with
           <code>--dev</code>.</td></tr>
         <tr><td><code>--cloud</code></td><td>Cloud mode (<b>the default</b> for a fresh install): all
-          indexing and RAG on Amazon Bedrock. Skips the ~16 GB of on-device weights.</td></tr>
+          indexing and RAG on Amazon Bedrock. Skips the on-device index weights and the llama.cpp
+          runtime install.</td></tr>
         <tr><td><code>--hybrid</code></td><td>Hybrid mode: pick a backend per capability. Pulls the
-          on-device weights so you can choose them.</td></tr>
-        <tr><td><code>--local</code></td><td>Local mode: everything on-device. Pulls all on-device
-          weights.</td></tr>
+          ~5 GB on-device index stack and installs the llama.cpp runtime so you can choose them.</td></tr>
+        <tr><td><code>--local</code></td><td>Local mode: everything on-device. Pulls the same index
+          stack and runtime; chat models are installed separately from Settings &rarr; Models &rarr;
+          Discover.</td></tr>
         <tr><td><code>--no-open</code></td><td>Do not auto-open the browser (also honored via the
           <code>NO_OPEN=1</code> env var). Useful for SSH or headless sessions.</td></tr>
         <tr><td><code>--help</code></td><td>Show all options and exit.</td></tr>
@@ -216,9 +250,13 @@ bash setup.sh</code></pre></div>
       <tbody>
         <tr><td><b>Cloud</b> (default)</td><td>Cohere Embed v4 (Bedrock)</td><td>Cohere Rerank 3.5</td><td>Claude Haiku</td><td>none - lean install</td></tr>
         <tr><td><b>Hybrid</b></td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td><td>pulled</td></tr>
-        <tr><td><b>Local</b></td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER</td><td>~16 GB, all on-device</td></tr>
+        <tr><td><b>Local</b></td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER</td><td>~5 GB index stack; chat models installed from Discover</td></tr>
       </tbody>
     </table></div>
+
+    <p>The mode alone ships no on-device chat model. To chat locally, install one first from
+      <b>Settings &rarr; Models &rarr; Discover</b>, which lists a recommended set (Llama, Gemma,
+      Qwen, Ministral) and grades each against your machine's memory before you download.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
@@ -256,9 +294,30 @@ bash setup.sh</code></pre></div>
       clone has none, so on the first run <code>setup.sh</code> copies
       <code class="path">config.example.json</code> to <code class="path">config.json</code> for you.
       After that you change values either through the Settings UI or by editing the file directly.
-      Environment variables override the file, and a per-project
-      <code class="path">.whisper/settings.json</code> sits between them. See
-      <a href="configuration.html">Configuration</a> for the full three-layer model.</p>
+      Your file is not the whole story, though: <code class="path">config.example.json</code> stays
+      live as a read-only system layer beneath it, so shipped defaults and new template models appear
+      without any sync step, and your file only needs your own deltas. Environment variables override
+      everything, and a per-project <code class="path">.whisper/settings.json</code> sits between
+      them. (In a packaged install the user layer is <code class="path">config.user.json</code> under
+      the app home instead.) See <a href="configuration.html">Configuration</a> for the full layer
+      model.</p>
+
+    <h2 id="import-project">Import an existing Claude Code or Codex project</h2>
+    <p>If you are coming from Claude Code or the Codex CLI, you do not have to re-create your project
+      setup by hand. Connect the workspace, open <b>Settings &rarr; Import project</b>, and point it
+      at the project. It migrates:</p>
+    <ul>
+      <li><b>The instructions file</b>: <code class="path">CLAUDE.md</code> (Claude Code) or
+        <code class="path">AGENTS.md</code> (Codex) becomes the project's
+        <code class="path">WHISPER.md</code>.</li>
+      <li><b>Skills</b>: skill folders (the <code class="path">SKILL.md</code> convention both tools
+        share) are copied into Whisper Studio's app-wide skills directory.</li>
+      <li><b>MCP servers</b>: <code class="path">.mcp.json</code> entries are translated into
+        Whisper Studio's MCP configuration.</li>
+    </ul>
+    <p>The import is copy-only: your source files are never modified, nothing it writes is executed,
+      and it never overwrites an existing <code class="path">WHISPER.md</code>, skill folder, or MCP
+      server entry.</p>
 
     <h2 id="troubleshooting">Troubleshooting</h2>
     <p>Most first-run problems fall into a handful of buckets. Match the symptom, apply the fix, re-run.</p>
@@ -280,8 +339,8 @@ bash setup.sh</code></pre></div>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
       <div class="callout__body"><p><b>When in doubt, run <code>/doctor</code>.</b> Type it in the chat
-        input for an automated dependency and AWS-access check that reports exactly what is missing or
-        misconfigured.</p></div>
+        input for an automated AWS-credentials and Bedrock-connectivity check that reports exactly
+        what is missing or misconfigured.</p></div>
     </div>
 
     <h2 id="next-steps">Next steps</h2>

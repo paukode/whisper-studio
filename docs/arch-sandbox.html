@@ -28,7 +28,8 @@
     <figure class="diagram-figure wide">
       <div id="sandbox-diagram" class="diagram"></div>
       <figcaption>A shell command's route to execution. Validation and approval sit in front; the
-        sandbox is the layer that actually contains the subprocess. Network stays open at the end.</figcaption>
+        sandbox is the layer that actually contains the subprocess. Network stays open by default,
+        with an opt-in egress policy to restrict it.</figcaption>
     </figure>
 
     <h2 id="the-sandbox">The sandbox, and everything it wraps</h2>
@@ -48,7 +49,12 @@
       <code>build_pty_sandbox_wrap</code>, which returns the same profile so an interactive shell runs
       under the identical deny-list as a one-shot command. (On non-macOS or when
       <code>sandbox-exec</code> is missing, it returns the command unchanged and validation becomes
-      the only enforcement.)</p>
+      the only enforcement.) One sibling entry point exists alongside <code>run_sandboxed</code>:
+      <code>popen_sandboxed</code>, a non-blocking <code>Popen</code> variant with the same deny
+      profile and the same egress rules, used by the background-command handoff in
+      <code class="path">server/tasks/handoff.py</code>. It inherits the parent environment, so under
+      a non-permissive egress tier those background commands get no network at all - they fail
+      closed rather than open.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
@@ -90,6 +96,10 @@
       validator but is <em>not</em> sandbox-denied, because NSS reads it on every user and group
       lookup - denying it in the kernel would break ordinary commands. A command that mentions it
       explicitly is still suspicious, so the validator keeps watching for it.</p>
+    <p>The sandbox also scrubs the child's <em>environment</em>: <code>_SANDBOX_ENV_DENYLIST</code>
+      strips <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, and <code>GH_ENTERPRISE_TOKEN</code>
+      from every sandboxed child, so a token exported in your shell profile is never inherited by a
+      command the model runs.</p>
 
     <h3 id="aws-reallow">Why ~/.aws is denied, then re-allowed</h3>
     <p><code>run_sandboxed</code> takes an <code>allow_paths</code> argument that subtracts specific
@@ -104,16 +114,46 @@
     <p>Because the default is <em>allow</em>, two things follow directly, and both are accepted on
       purpose:</p>
     <ul>
-      <li><b>Network is not restricted.</b> Sandboxed <code>git</code>, <code>npm</code>,
+      <li><b>Network is unrestricted by default.</b> Sandboxed <code>git</code>, <code>npm</code>,
         <code>pip</code>, <code>aws</code>, and build commands all need the network to function, so the
-        sandbox leaves it open.</li>
+        default (permissive) tier leaves it open. Users who want less can opt into the
+        <a href="#egress-policy">network egress policy</a> below.</li>
       <li><b>Reads of non-listed secrets are not blocked.</b> The deny-list is broad but not
         exhaustive - a secret file that is not on <code>_DENIED_PATHS</code> can still be read.</li>
     </ul>
-    <p>Flipping to a deny-default profile with network restriction is possible in principle, but it
-      would break the tools above, so it is out of scope. This is the trade-off that makes the sandbox
+    <p>Flipping to a deny-default filesystem profile is still out of scope: it would break the tools
+      above. This is the trade-off that makes the sandbox
       the boundary you trust <em>last</em>: it does not try to be a jail, it guarantees the
       high-value secret stores stay unreadable even if every layer in front of it is defeated.</p>
+
+    <h2 id="egress-policy">The network egress policy (opt-in)</h2>
+    <p>Since the sandbox itself leaves the network open, an opt-in egress policy
+      (<code class="path">server/security/egress_policy.py</code>) restricts <em>where</em> a
+      sandboxed command can send bytes. It is configured in <code>permissions.json</code> under
+      <code>network_policy</code> and is off by default:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tier</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>permissive</code></td><td>No restriction, no proxy. The default, exactly the old behavior.</td></tr>
+        <tr><td><code>curated</code></td><td>A seed allowlist of common package-registry, docs, and API domains, plus any <code>custom_allowed_domains</code> the user adds.</td></tr>
+        <tr><td><code>restrictive</code></td><td>Nothing outbound except the user's own <code>custom_allowed_domains</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Enforcement is an SNI-filtering local TCP proxy that never terminates TLS. The one handshake
+      message every TLS client sends in cleartext, the ClientHello, carries the destination hostname
+      in its SNI extension; the proxy parses just that, checks the hostname against the active tier's
+      allowlist, and either relays the raw bytes transparently or refuses the connection. No key
+      material, no decryption. The proxy is injected into <code>run_sandboxed</code>'s environment
+      via <code>HTTPS_PROXY</code> / <code>HTTP_PROXY</code>, which well-behaved HTTP clients honor
+      voluntarily - so on macOS a non-permissive tier <em>also</em> appends
+      <code>(deny network-outbound (remote ip "*:443"))</code> and <code>"*:80"</code> rules to the
+      sandbox profile, forcing raw-socket traffic through the kernel boundary rather than merely
+      asking nicely. On Linux, bwrap has no equivalent per-port rule, so the non-permissive tiers
+      degrade to <code>--unshare-net</code>: zero egress.</p>
+    <p>Two documented limitations: <code>methods_only_safe</code> (block POST/PUT/PATCH/DELETE even
+      to allowed domains) can only be enforced on plaintext HTTP, since the method of HTTPS traffic
+      lives inside the encrypted tunnel; and DNS on port 53 is neither restricted nor inspected, so
+      DNS-based exfiltration is out of scope.</p>
 
     <h2 id="layers-in-front">Layers in front (defence-in-depth)</h2>
     <p>Before a command reaches the sandbox, several cheaper checks catch the easy cases. It is worth
@@ -148,10 +188,13 @@
     <p>The validator is regex-based and bypassable on its own, so it is explicitly <b>defence-in-depth</b>:
       it sits in front of the sandbox, never in place of it.</p>
 
-    <h3 id="approval">The approval nonce</h3>
-    <p>Risky commands do not run on the model's say-so. They pause the turn and wait for a server-held
-      nonce that the client must echo back to confirm. Because the server holds the nonce, a client
-      cannot fabricate one, which makes approval a genuine <b>boundary</b> rather than a suggestion.
+    <h3 id="approval">The approval pause</h3>
+    <p>Risky commands do not run on the model's say-so. An <em>ask</em> decision pauses the whole
+      turn on the server (in <code>paused_sessions</code>) and nothing executes until the client
+      explicitly posts the action to <code>POST /api/approval/execute</code>, whose hub only runs
+      registered approval executors; the turn itself resumes only when the frontend sends a new turn
+      carrying the approved tool result. Approval is enforced server-side, which makes it a genuine
+      <b>boundary</b> rather than a suggestion.
       See <a href="arch-approval.html">Approval &amp; permissions</a> for the full flow.</p>
 
     <h3 id="aws-readonly-guard">The AWS read-only guard</h3>
@@ -187,7 +230,8 @@
       <tbody>
         <tr><td><code>127.0.0.1</code> default bind</td><td>Closes LAN reachability</td><td><span class="badge">Boundary</span> kernel-level</td></tr>
         <tr><td>DOMPurify sanitization</td><td>Strips scripts and JS URLs from any HTML reaching the DOM</td><td><span class="badge">Boundary</span> for the render path</td></tr>
-        <tr><td>Approval nonce</td><td>Server-held consent token for risky commands</td><td><span class="badge">Boundary</span> client can't forge it</td></tr>
+        <tr><td>Approval pause</td><td>Server-side turn pause; only registered executors run on an explicit client confirm</td><td><span class="badge">Boundary</span> enforced server-side</td></tr>
+        <tr><td>Network egress policy (opt-in)</td><td>SNI-filtering proxy plus profile deny rules for outbound traffic</td><td><span class="badge">Boundary</span> on macOS when enabled; Linux degrades to <code>--unshare-net</code></td></tr>
         <tr><td><code>validate_command</code></td><td>Regex deny-list on every command path</td><td><span class="badge badge--muted">Defence-in-depth</span> bypassable alone</td></tr>
         <tr><td><code>run_sandboxed</code> via <code>sandbox-exec</code> / <code>bwrap</code></td><td>Secret-store deny-list around every shell + code path</td><td><span class="badge">Boundary</span> the strongest layer</td></tr>
         <tr><td><code>_AWS_READONLY_GUARD</code></td><td>Monkey-patches botocore to reject AWS writes</td><td><span class="badge badge--muted">Defence-in-depth</span> user code can <code>del</code> it</td></tr>
@@ -205,6 +249,15 @@
       <code class="path">/dev</code>, <code class="path">/proc</code>, <code class="path">/sys</code>,
       and UNC paths. Writes then go through an atomic <code>_atomic_write_text</code> (temp file plus
       <code>os.replace</code>).</p>
+    <p>The same module also owns the <b>save-flow staging area</b>. New standalone files (the direct
+      save flow) intentionally land outside any workspace, so they bypass the workspace-root check
+      via a separately audited path: <code>stage_file_bytes</code> writes the finished bytes into
+      <code class="path">data/scratch/_staging</code> (each entry in its own random subdirectory,
+      garbage-collected after 24 hours), and the approval executor <code>_do_save_to_path</code>
+      refuses any <code>staged_path</code> that fails the <code>is_staged_path</code> containment
+      check - the path must resolve inside the staging root, or a forged approval payload could
+      "move" an arbitrary readable file into a user-visible folder. See
+      <a href="arch-approval.html#save-flow">the direct save flow</a> for the full picture.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p><b>Accepted TOCTOU residual (S8).</b> This is a check-then-use
@@ -219,11 +272,12 @@
 
     <h2 id="key-files">Key files</h2>
     <div class="spec">
-      <dt><code class="path">server/sandbox.py</code></dt><dd><code>run_sandboxed</code>, the macOS / Linux profile generators, and the PTY wrapper.</dd>
+      <dt><code class="path">server/sandbox.py</code></dt><dd><code>run_sandboxed</code> and <code>popen_sandboxed</code>, the macOS / Linux profile generators, the env denylist, and the PTY wrapper.</dd>
+      <dt><code class="path">server/security/egress_policy.py</code></dt><dd>The opt-in network egress tiers and the SNI-filtering local proxy.</dd>
       <dt><code class="path">server/security/sensitive_paths.py</code></dt><dd>The single source of truth for the secret-path deny-list, shaped for both consumers.</dd>
       <dt><code class="path">server/security/command_validator.py</code></dt><dd>The regex validators and <code>validate_command()</code>.</dd>
       <dt><code class="path">server/executors/code.py</code></dt><dd>The AWS read-only guard and the sandboxed <code>run_python</code> / <code>aws_cli</code> executors.</dd>
-      <dt><code class="path">server/workspace/paths.py</code></dt><dd><code>_ws_validate_path</code> and atomic writes for workspace file ops.</dd>
+      <dt><code class="path">server/workspace/paths.py</code></dt><dd><code>_ws_validate_path</code>, atomic writes for workspace file ops, and the save-flow staging area.</dd>
     </div>
 
     <div class="callout callout--tip">

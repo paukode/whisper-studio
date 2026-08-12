@@ -104,7 +104,7 @@
       <thead><tr><th>Tier</th><th>Location</th><th>Alive when</th><th>Holds</th></tr></thead>
       <tbody>
         <tr><td><b>Global</b></td><td><code class="path">data/global_memory/</code></td><td>Always, including plain chat with no workspace open</td><td>User preferences, role, cross-project feedback</td></tr>
-        <tr><td><b>Project</b></td><td><code class="path">data/memory/&lt;workspace-slug&gt;/</code></td><td>A workspace is open (slug = sanitized basename of its path)</td><td>Goals, deadlines, repo-specific references</td></tr>
+        <tr><td><b>Project</b></td><td><code class="path">data/memory/&lt;workspace-slug&gt;/</code></td><td>A workspace is open (slug = sanitized basename plus a short hash of the workspace's realpath, so two folders both named <code>app</code> never collide; legacy basename-only dirs are migrated)</td><td>Goals, deadlines, repo-specific references</td></tr>
       </tbody>
     </table></div>
     <p>The global directory deliberately sits outside <code class="path">data/memory/</code> so it can
@@ -112,7 +112,7 @@
     <div class="spec">
       <dt><code class="path">MEMORY.md</code></dt><dd>A one-line-per-entry index of that tier's topic files, auto-generated from their frontmatter after every write or delete. Capped at 200 lines and 25 KB when loaded; if it exceeds either limit it is truncated and a warning is appended telling the model to move detail into topic files.</dd>
       <dt><code class="path">&lt;topic&gt;.md</code></dt><dd>Per-topic markdown with YAML frontmatter (name, description, type). The type is a closed taxonomy: <code>user</code>, <code>feedback</code>, <code>project</code>, or <code>reference</code>.</dd>
-      <dt><code class="path">.cursor.json</code></dt><dd>Extraction cursors keyed by session id, one index per session (not a single "last message index"). Persisted in the global tier so a session keeps its place even when it connects or disconnects a workspace mid-life.</dd>
+      <dt><code class="path">.cursor.json</code></dt><dd>Extraction bookkeeping keyed by session id: a <code>sessions</code> map of per-session cursors (not a single "last message index") plus a <code>turns</code> map of per-session throttle counters, each capped in size. Persisted in the global tier so a session keeps its place even when it connects or disconnects a workspace mid-life, and a restart resets neither the cursor nor the throttle.</dd>
       <dt><code class="path">.dream_meta.json</code></dt><dd>Per-tier consolidation bookkeeping (last run time and turn-end count). See <a href="#consolidation">consolidation</a> below.</dd>
     </div>
 
@@ -135,20 +135,28 @@
     <p>After a turn (when the model is not asking for more tools), <code>maybe_extract_memory()</code>
       fires in the background. It runs with or without a workspace: with one the agent sees both tiers
       and routes each write by <code>scope</code>; without one, everything lands in global memory. It
-      is guarded four ways:</p>
+      is guarded five ways:</p>
     <ul>
       <li><b>Feature flag.</b> <code>auto_memory</code> must be enabled. <code>ensure_global_memory_dir()</code>
         returns nothing when it is off, so the whole pipeline (and recall) short-circuits.</li>
       <li><b>Throttle.</b> Extraction runs only every <code>DEFAULT_EXTRACT_INTERVAL</code> (3) turns.</li>
       <li><b>Mutual exclusion.</b> If the model already called <code>memory_write</code> this turn, the
         cursor advances and extraction is skipped, so the model and the agent never fight over the store.</li>
+      <li><b>In-flight.</b> Only one extraction agent runs per session at a time.</li>
       <li><b>Cursor.</b> Cursors are keyed by session id and persisted in the global tier; only messages
-        after this session's saved cursor are considered, then the cursor advances.</li>
+        after this session's saved cursor are considered. The cursor is claimed <em>before</em> the
+        agent runs, so overlapping turns cannot double-extract.</li>
     </ul>
     <p>When it does run, the <code>memory_extractor</code> agent gets an excerpt of the new messages
       (last 20, truncated) plus a manifest of existing memories per tier, and is told to save what
       would be valuable in future sessions. It runs at <code>depth=1</code> so it cannot recurse into
       further extraction.</p>
+    <p>Local-model turns feed this pipeline too: the local path fires the same
+      <code>maybe_extract_memory()</code> and <code>record_and_maybe_dream()</code> hooks after a
+      turn. Both skip gracefully when <code>model_mode</code> is <code>local</code> (fully offline),
+      because the extractor and consolidator agents run on cloud models; in hybrid or cloud modes a
+      local chat gets the same two-tier extraction and dream cadence as a cloud chat. (Session
+      memory's local story is different: there the summary runs on the local model itself.)</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
@@ -159,11 +167,19 @@
     </div>
 
     <h2 id="whisper-md">WHISPER.md</h2>
-    <p><code>WHISPER.md</code> is a plain markdown file at the workspace root, loaded on every turn by
-      <code>get_whisper_md_context()</code> in <code class="path">server/skills.py</code>. It is the
-      Whisper Studio analogue of <code>CLAUDE.md</code>: durable project context that you author by
-      hand rather than have the system extract. It is injected inline as a
+    <p><code>WHISPER.md</code> is markdown you author by hand, loaded on every turn by
+      <code>get_whisper_md_context()</code> in <code class="path">server/whisper_md.py</code>. It is
+      the Whisper Studio analogue of <code>CLAUDE.md</code>: durable project context that you write
+      rather than have the system extract. It is injected inline as a
       <code>[WHISPER.md - project-specific instructions]</code> block.</p>
+    <p>It is a <b>tree</b>, not a single file. The root <code>WHISPER.md</code> at the workspace top
+      always loads (capped at <code>ROOT_MAX_CHARS</code>, 12,000 characters). Directory-scoped
+      <code>WHISPER.md</code> files deeper in the tree (up to <code>MAX_DEPTH</code> 4, at most
+      <code>MAX_SCOPED_FILES</code> 25) load only when the turn's question concerns their directory,
+      each capped at <code>SCOPED_MAX_CHARS</code> (6,000 characters); the rest are announced by path
+      so the model can read them with <code>ws_read_file</code> when needed. Truncation is honest:
+      a capped file gets a note appended telling the model to read the rest with
+      <code>ws_read_file</code>.</p>
     <p>Unlike the other two stores, it is fully under your control. The in-app Project Memory dialog is
       backed by a small CRUD API:</p>
     <div class="table-wrap"><table>
@@ -228,7 +244,8 @@
     </table></div>
     <p>Extraction and consolidation finish after the chat stream closes, so their results surface as
       live "Memory updated" toasts over the session's long-lived event channel rather than inline in
-      the turn.</p>
+      the turn. Recall gets its own variant: a "Recalled N memories" toast when a turn injected
+      memory context.</p>
 
     <h2 id="consolidation">Consolidation (dream)</h2>
     <p>Over time a tier can drift: duplicates pile up, facts go stale, the index grows past its cap.
@@ -253,7 +270,7 @@
       <dt><code class="path">server/memory/dream.py</code></dt><dd>Cross-session consolidation: trigger thresholds, locking, and the four-phase agent.</dd>
       <dt><code class="path">server/memory/prompts.py</code></dt><dd>System prompts for recall, extraction, consolidation, and session summarization.</dd>
       <dt><code class="path">server/memory/tools.py</code></dt><dd>The four memory tool schemas the model can call directly.</dd>
-      <dt><code class="path">server/skills.py</code></dt><dd><code>WHISPER.md</code> loading and its CRUD API.</dd>
+      <dt><code class="path">server/whisper_md.py</code></dt><dd><code>WHISPER.md</code> tree loading: the always-loaded root, question-scoped directory files, and truncation notes. (The CRUD router is declared in <code class="path">server/skills.py</code>; its handlers live in <code class="path">server/skills_routes.py</code>.)</dd>
     </div>
 
     <div class="callout callout--tip">

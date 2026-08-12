@@ -47,7 +47,12 @@
 
     <h3>FastAPI server (the local process)</h3>
     <p>The heart of the system. The <a href="arch-chat-pipeline.html">chat pipeline</a> builds each
-      prompt and drives a streaming tool loop; the <a href="arch-tools.html">tool router and
+      prompt and drives a streaming tool loop - and that loop is <b>one shared turn engine</b>
+      (<code>run_turn</code> in <code class="path">server/chat/engine/runner.py</code>) consumed by
+      interactive chat, <a href="arch-agents.html">sub-agents</a>, <a href="arch-cron.html">cron
+      runs</a>, and the Python-only headless entrypoint <code>run_headless_turn</code>
+      (<code class="path">server/exec/headless.py</code>, with <code>output_schema</code> and
+      <code>ephemeral</code> options, no HTTP route). The <a href="arch-tools.html">tool router and
       executors</a> carry out tool calls; the <a href="arch-agents.html">agent runtime</a> spawns
       sub-agents and teams; and the <a href="arch-approval.html">approval + validator</a> layer gates
       anything that writes.</p>
@@ -71,14 +76,19 @@
       <a href="arch-index.html">workspace index</a>, and the <a href="arch-sandbox.html">sandbox</a>
       all run on-device. Everything durable lives in a single WAL-mode
       <a href="arch-persistence.html">SQLite database</a> plus your workspace files and the
-      <a href="arch-memory.html">memory store</a>.</p>
+      <a href="arch-memory.html">memory store</a>. Sandboxed commands can also be routed through a
+      <b>network egress policy</b> (<code class="path">server/security/egress_policy.py</code>): an
+      SNI-filtering local proxy with three tiers - <code>permissive</code> (the default, no
+      restriction), <code>curated</code>, and <code>restrictive</code> - selected by
+      <code>network_policy.tier</code> in <code>permissions.json</code>.</p>
 
     <h3>External services</h3>
     <p><a href="arch-backends.html">Amazon Bedrock</a> is the only cloud LLM. It is called when you
       submit a message, and now also from detached background work: the goal evaluator
       (<code class="path">server/goals/evaluator.py</code>), CI diagnose
       (<code class="path">server/ci/diagnose.py</code>), and workflow agents make their own (often
-      Haiku) Bedrock calls without a fresh submit. Optional MCP servers and Tavily are reached only
+      Haiku) Bedrock calls without a fresh submit. Optional MCP servers - local processes over stdio or
+      remote HTTP endpoints (<code class="path">server/mcp.py</code>) - and Tavily are reached only
       when a tool invokes them, and CI watch/autofix reaches <b>GitHub</b> through a read-only
       <code>gh</code> CLI wrapper (<code class="path">server/ci/provider.py</code>) when
       <code>ci_watch</code>/<code>ci_status</code>/<code>ci_autofix</code> run - a fourth external

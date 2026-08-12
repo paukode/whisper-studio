@@ -57,7 +57,11 @@
         <code>detach: true</code>: it returns a task id right away, runs <b>read-only by default</b> (or
         writes safely with <code>isolation: 'worktree'</code>), and shows up in the background-tasks panel
         while it works. Its result is folded into a later turn, and you or Claude can check on it with
-        <code>task_status</code> / <code>task_output</code> or stop it with <code>task_cancel</code>.</p></div>
+        <code>task_status</code> / <code>task_output</code> or stop it with <code>task_cancel</code>.
+        When a worktree-isolated agent finishes, its clean changes are automatically applied back to the
+        spawning branch as <em>uncommitted</em> edits (they show up in <code>git status</code> for you to
+        review) and the worktree is removed; an agent stopped early keeps its worktree instead. See
+        <a href="tut-worktrees.html">Branches &amp; worktrees</a>.</p></div>
     </div>
 
     <div class="callout">
@@ -75,15 +79,19 @@
       types can search and read but never write or run commands, which makes them fast and safe to
       parallelize.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Type</th><th>Tools</th><th>Turn limit</th><th>Best for</th></tr></thead>
+      <thead><tr><th>Type</th><th>Tools</th><th>Turn limit</th><th>Time limit</th><th>Best for</th></tr></thead>
       <tbody>
-        <tr><td><code>general</code></td><td>Full tool set</td><td>30</td><td>Do-anything worker: read, edit, run, commit (subject to the session's permission mode).</td></tr>
-        <tr><td><code>explore</code></td><td>Read-only</td><td>10</td><td>Fast search-and-read to answer a question. Concise findings, no side effects.</td></tr>
-        <tr><td><code>plan</code></td><td>Read-only</td><td>15</td><td>Study the codebase and return a step-by-step implementation plan with files to change.</td></tr>
-        <tr><td><code>verify</code></td><td>Full tool set</td><td>10</td><td>Check work by reading and running tests. Ends with <code>VERDICT: PASS</code>, <code>FAIL</code>, or <code>PARTIAL</code>.</td></tr>
-        <tr><td><code>coordinator</code></td><td>Orchestration only</td><td>50</td><td>Manages other agents. No file access at all - it can only spawn, message, list, and finish.</td></tr>
+        <tr><td><code>general</code></td><td>Full tool set</td><td>120</td><td>15 min</td><td>Do-anything worker: read, edit, run, commit (subject to the session's permission mode).</td></tr>
+        <tr><td><code>explore</code></td><td>Read-only</td><td>30</td><td>10 min</td><td>Fast search-and-read to answer a question. Concise findings, no side effects.</td></tr>
+        <tr><td><code>plan</code></td><td>Read-only</td><td>40</td><td>10 min</td><td>Study the codebase and return a step-by-step implementation plan with files to change.</td></tr>
+        <tr><td><code>verify</code></td><td>Full tool set</td><td>30</td><td>10 min</td><td>Check work by reading and running tests. Ends with <code>VERDICT: PASS</code>, <code>FAIL</code>, or <code>PARTIAL</code>.</td></tr>
+        <tr><td><code>coordinator</code></td><td>Orchestration only</td><td>100</td><td>30 min</td><td>Manages other agents. No file access at all - it can only spawn, message, list, and finish.</td></tr>
       </tbody>
     </table></div>
+    <p>The turn limit is a runaway backstop and the time limit a wall-clock budget; whichever trips
+      first ends the run. Both are overridable per deployment through an <code>agent_limits</code>
+      block in <code class="path">config.json</code>, per type or under a <code>"default"</code> key
+      (a <code>null</code> deadline disables the time limit for that type).</p>
     <p>The read-only guarantee is enforced, not just requested: the runtime strips every write tool
       (file writes, <code>ws_run_command</code>, git commits, <code>config_set</code>, memory writes,
       and so on) from an <code>explore</code> or <code>plan</code> agent's tool pool. A coordinator gets
@@ -97,6 +105,26 @@
         the facts, another checks a change and returns a clear PASS or FAIL. Because each runs its own
         loop, the verify agent is a genuine second opinion, not the same context re-reading itself.</p></div>
     </div>
+
+    <h2 id="custom-types">Custom agent types</h2>
+    <p>The built-in types are not the whole menu. You can define your own presets, and Claude can even
+      invent one on the fly:</p>
+    <ul>
+      <li><b>Persistent custom types</b> are Markdown files at
+        <code class="path">.whisper/agents/&lt;name&gt;.md</code>: YAML frontmatter (name, description,
+        tool access, limits) followed by the agent's system prompt as the body. They can live in the
+        project (<code class="path">&lt;workspace&gt;/.whisper/agents/</code>) or in your user config
+        directory; on a name collision the project file wins. Once the file exists, the type is
+        spawnable by name like any built-in.</li>
+      <li><b>Ephemeral types</b> are built in memory when Claude passes an inline
+        <code>agent_definition</code> to <code>spawn_agent</code> instead of a registered type name.
+        Nothing touches disk; the definition lives only for the session.</li>
+      <li><b>Promotion</b> turns an ephemeral type into a persistent one: the
+        <code>promote_agent_type</code> tool writes the definition out as a
+        <code class="path">.whisper/agents/&lt;name&gt;.md</code> file so later sessions can reuse it.</li>
+    </ul>
+    <p>Custom and ephemeral types pass through the same write-tool filtering as the built-ins, so a
+      read-only custom type is enforced read-only, not merely asked to behave.</p>
 
     <h2 id="a-team-run">Running a team</h2>
     <p>When Claude uses <code>team_create</code>, it names the team and lists the members, each with a
@@ -128,7 +156,9 @@
 
     <h2 id="report-card">Reading the team report card</h2>
     <p>The report card (rendered by <code class="path">src/components/chat/TeamReportCard.tsx</code>) is
-      the window into a run. It is one collapsible card per team, with a collapsible row per agent.</p>
+      the window into a run. It is one collapsible card per team, with a collapsible row per agent. A
+      plain single <code>spawn_agent</code> renders in the same card as a one-member team, Stop button
+      included, so one helper and a whole team read the same way.</p>
     <ul>
       <li><b>Header</b> - team name, agent count, and a live status such as
         <code>3/3 done</code> or <code>1/3 done - 2 running</code>, plus elapsed time. A green check
@@ -157,7 +187,10 @@
       completed, and failure or turn-limit phases) to a per-session <b>event bus</b>. The chat endpoint
       drains that bus and relays the events to the browser as <code>team_progress</code> SSE frames,
       which the SPA folds onto the message to build the card you see. Because it is a live stream, the
-      card is accurate the whole way through, not just at the end. For the runtime and bus internals, see
+      card is accurate the whole way through, not just at the end. Agents run on the same unified turn
+      engine as chat, with the same round budgets, salvage round, and tool safety gate, and the same
+      progressive tool disclosure: a compact index of deferred tools that an agent loads on demand via
+      <code>tool_search</code>. For the runtime and bus internals, see
       <a href="arch-agents.html">Sub-agents &amp; the event bus</a>.</p>
 
     <h2 id="agents-talking">Agents that talk to each other</h2>

@@ -8,18 +8,18 @@ WSDiagram.mount("agents-diagram", {
   },
   nodes: [
     { id: "chat", group: "server", col: 0, row: 0, label: "Chat turn", sub: "spawn_agent / team_create", desc: "A tool call in the main /api/chat loop fans out to the agent runtime via spawn_agent or team_create." },
-    { id: "runtime", group: "agents", col: 1, row: 0, label: "Agent runtime", sub: "run_agent loop", desc: "run_agent runs a non-streaming invoke_model loop up to config.max_turns, one agent id per agent." },
+    { id: "runtime", group: "agents", col: 1, row: 0, label: "Agent runtime", sub: "run_turn under a TurnPolicy", desc: "_run_agent_loop runs the same unified turn engine as chat (run_turn) under a per-type TurnPolicy: a turn cap plus a wall-clock deadline, completion_gate off, one agent id per agent." },
     { id: "tools", group: "tools", col: 2, row: 0, label: "execute_tool_batch", sub: "same path as chat", desc: "Tool uses route through the same tool_router / executors the chat pipeline uses; approvals auto-resolve in agent context." },
     { id: "mail", group: "agents", col: 1, row: 1, label: "Mailbox", sub: "inter-agent msgs", desc: "Each agent has an in-memory mailbox on the MessageBus. send_message and broadcast enqueue here." },
     { id: "bus", group: "agents", col: 2, row: 1, kind: "store", label: "Event bus", sub: "per-session queue", desc: "A bounded (about 512) per-session asyncio queue. publish is thread-safe via call_soon_threadsafe." },
-    { id: "sse", group: "transport", col: 3, row: 1, label: "SSE team_progress", sub: "drained per turn", desc: "The chat SSE consumer subscribes to the session channel and re-emits each event as a team_progress frame." },
+    { id: "sse", group: "transport", col: 3, row: 1, label: "SSE team_progress", sub: "drained per turn", desc: "The engine subscribes to the session channel and re-emits each event as a team_progress frame." },
     { id: "spa", group: "browser", col: 4, row: 1, label: "SPA report card", sub: "live agent log", desc: "The React SPA groups team_progress events by team_id and agent_id into a live report card." }
   ],
   edges: [
     { from: "chat", to: "runtime" },
     { from: "runtime", to: "tools" },
     { from: "runtime", to: "mail" },
-    { from: "mail", to: "runtime", label: "poll each turn" },
+    { from: "mail", to: "runtime", label: "drained at start" },
     { from: "runtime", to: "bus", label: "publish" },
     { from: "bus", to: "sse" },
     { from: "sse", to: "spa" }

@@ -20,6 +20,11 @@
       Events the whole way.</p>
 
     <p>Turn assembly lives in <code class="path">server/chat/routes.py</code>; the agentic loop itself is the unified turn engine in <code class="path">server/chat/engine/runner.py</code>, shared verbatim by Claude, GPT, and local models.
+      The same <code>run_turn</code> also serves every unattended consumer:
+      <a href="arch-agents.html">sub-agents</a>, <a href="arch-cron.html">cron runs</a>, and the
+      Python-only <code>run_headless_turn</code> entrypoint
+      (<code class="path">server/exec/headless.py</code>, with <code>output_schema</code> and
+      <code>ephemeral</code> options, callable from code but exposed on no HTTP route).
       <b>Click a box</b> below to trace a path - for example, click <em>Streaming loop</em> to see
       everything a single round can reach.</p>
 
@@ -75,7 +80,11 @@
     <p>See <a href="arch-backends.html">Model backends &amp; modes</a> for the full picture.</p>
 
     <h2 id="the-streaming-loop">The streaming loop</h2>
-    <p>The engine enters a loop of up to <b>50 rounds</b> (the CHAT policy; the same loop serves every provider). Each round:</p>
+    <p>The engine enters a loop of up to <b>50 rounds</b> (the CHAT policy; the same loop serves
+      every provider, and other consumers bring their own <code>TurnPolicy</code>). A policy can also
+      carry a <code>deadline_seconds</code> wall-clock brake - agents set per-type deadlines (for
+      example 900s for <code>general</code>) - and at the round cap or deadline the engine forces one
+      final no-tools best-effort round instead of truncating. Each round:</p>
     <ol class="steps">
       <li><h4>Check the budget</h4><p>If the session or daily <a href="arch-costs.html">cost cap</a>
         is exceeded, emit an error and finish.</p></li>
@@ -85,7 +94,8 @@
       <li><h4>Parse content blocks</h4><p>Chunks are parsed into <code>text</code>,
         <code>thinking</code>, and <code>tool_use</code> blocks and streamed onward.</p></li>
       <li><h4>Act on the stop reason</h4><p><code>tool_use</code> runs the tools, appends the
-        results, and loops again. Any other stop reason (such as <code>end_turn</code>) no longer
+        results, and loops again. Any other stop reason (such as <code>end_turn</code>), when the
+        policy enables the gate (interactive cloud chat), no longer
         ends the turn on its own: the non-tool-use branch first runs the <b>completion gate</b>
         (<code>run_completion_gate</code>, <code class="path">server/goals/gate.py</code>). Phase 1
         always runs the WS-I Stop hooks; phase 2 runs a Haiku goal evaluator when the
@@ -104,14 +114,17 @@
         <code>[[read, read], [write], [read]]</code>.</li>
       <li><b>Permission checks.</b> Every tool is evaluated against the current
         <a href="arch-approval.html">permission mode</a> and per-tool rules - allow, ask, or deny.</li>
-      <li><b>Approval gate.</b> A tool that needs consent issues a nonce, pauses the turn (state is
-        stashed in the unified pause store, <code class="path">server/chat/engine/pause.py</code>), and waits for the client to confirm.</li>
+      <li><b>Approval gate.</b> A tool that needs consent pauses the turn (state is
+        stashed in the unified pause store, <code class="path">server/chat/engine/pause.py</code>, keyed
+        by <code>tool_use_id</code>), and waits for the client to confirm.</li>
       <li><b>Hooks.</b> Hooks are a blocking subsystem (<code class="path">server/hooks/</code>):
         <code>run_hooks(event, payload)</code> fires <code>PreToolUse</code>, which can
         <em>deny</em> or <em>rewrite</em> a call, and <code>PostToolUse</code>, which can inject
-        <code>additionalContext</code>. A parallel <code>check_stop_hooks()</code> gate
-        (<code class="path">server/hooks/engine.py</code>) runs at end-of-turn across chat,
-        subagents, and cron — see <a href="arch-hooks.html">Blocking hooks</a>.</li>
+        <code>additionalContext</code>. A <code>Stop</code> gate (<code>check_stop_hooks</code>,
+        <code class="path">server/hooks/engine.py</code>) runs at end of turn via the completion
+        gate, on the interactive cloud-chat policy only; unattended consumers (sub-agents, cron,
+        headless turns) and the local path run with the gate off, and cron verifies its runs
+        separately (<code>cron_verify</code>). See <a href="arch-hooks.html">Blocking hooks</a>.</li>
     </ul>
     <p>Dispatch itself is a pure mapping in <code class="path">server/tool_router.py</code>; the
       implementations live in <code class="path">server/executors/</code>. See
@@ -123,7 +136,7 @@
       <thead><tr><th>Event</th><th>Meaning</th></tr></thead>
       <tbody>
         <tr><td><code>text</code></td><td>A streamed text chunk.</td></tr>
-        <tr><td><code>thinking</code></td><td>An adaptive thinking block (Opus models).</td></tr>
+        <tr><td><code>thinking</code></td><td>An adaptive thinking block (all providers; the local path routes its reasoning here too).</td></tr>
         <tr><td><code>skill</code> / <code>skill_input</code></td><td>A tool call started, with its parsed input.</td></tr>
         <tr><td><code>usage</code></td><td>Token counters, cost estimate, and forecast.</td></tr>
         <tr><td><code>team_progress</code></td><td>Sub-agent and team events (spawn, progress, completion).</td></tr>

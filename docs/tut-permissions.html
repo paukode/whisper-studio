@@ -80,6 +80,36 @@
       <code>acceptEdits</code> when you are ready to let it act. Toggle it fast with the
       <code>/plan</code> command.</p>
 
+    <h3 id="auto-circuit-breaker">Auto mode's circuit breaker</h3>
+    <p>The <code>auto</code> classifier sees one tool call at a time, so over a long turn it can keep
+      flagging call after call. A per-turn circuit breaker watches its verdicts and trips when the
+      denials pile up: three "confirm" verdicts in a row, or five within the last ten classified
+      calls in the same turn. Once tripped, the rest of the turn falls back to plain
+      <b>ask</b> instead of consulting the classifier again, and a one-time notice tells you what
+      happened with a one-click <b>resume</b> if you want auto mode back for the remainder of the
+      turn. The breaker is turn-scoped and in-memory; it never changes your saved mode, and every new
+      turn starts fresh.</p>
+
+    <h2 id="category-modes">Per-category modes</h2>
+    <p>The global mode is one dial for everything. When you want different latitude for different
+      <em>kinds</em> of action, set a <b>per-category mode</b> under <b>Settings &rsaquo;
+      Permissions</b>: each approval category (for example <code>write</code>, <code>delete</code>,
+      <code>cli</code>, <code>save</code>, <code>worktree</code>, <code>github</code>,
+      <code>workflow</code>) can carry its own mode that overrides the global one for that category
+      only. A category with no entry simply follows the global mode.</p>
+    <p>This cuts both ways. "<code>acceptEdits</code> for writes but <code>default</code> for
+      commands" is the loosening direction; the tightening direction is just as useful, for example
+      pinning <code>delete</code> to <code>default</code> so deletes always confirm even while the
+      global mode is <code>bypassPermissions</code>. The category override is applied before the
+      bypass check, so a stricter category mode holds no matter what the global dial says.</p>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p>One category ignores every override: <code>github-destructive</code>
+        (repo and branch deletes, PR merges, archives and renames, API deletes) <em>always</em> asks
+        for an explicit human approval. No mode, category mode, session-wide "yes to all", or rule
+        can wave those through.</p></div>
+    </div>
+
     <h2 id="approval-cards">Approval cards: what "ask" looks like</h2>
     <p>When a call resolves to <b>ask</b>, the turn pauses and an approval card appears inline in the
       chat, right where the tool would have run. The card shows the exact thing about to happen, not a
@@ -107,14 +137,21 @@
     <p>These session-wide "allow all" and "block all" choices sit above the mode: they are the first
       thing the resolver checks after <code>bypassPermissions</code>, so once you have said "yes to all
       writes" you will not be re-prompted even in <code>default</code>.</p>
+    <p>The category on the buttons is the same category the per-category modes use. One worth knowing
+      about: direct saves to your own folders (the "save this as a Word doc" flow) live in their own
+      <code>save</code> category, so "Yes, all writes" from an editing session never silently covers
+      files landing in Documents or Downloads, and "Yes, all save" never loosens your workspace
+      writes. See <a href="tut-save-files.html">Saving files and creating documents</a> for that
+      flow.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p>The approval is enforced server side, not in the browser. A
-        risky action carries a one-time nonce and the turn stays paused until the client confirms it;
-        the old client-asserted "user_approved" flag was removed. You cannot approve something the
-        server did not gate, and a page cannot fake an approval. See
-        <a href="arch-approval.html">Approval &amp; permissions</a> for the nonce mechanics.</p></div>
+      <div class="callout__body"><p>The approval is enforced server side, not in the browser. The turn
+        is stashed on the server and stays paused until the client posts back the exact registered
+        action for that <code>tool_use_id</code>; the old client-asserted "user_approved" flag was
+        removed. You cannot approve something the server did not gate, and a page cannot fake an
+        approval. See <a href="arch-approval.html">Approval &amp; permissions</a> for the pause and
+        resume mechanics.</p></div>
     </div>
 
     <h2 id="per-tool-rules">Per-tool rules: override any mode</h2>
@@ -128,6 +165,7 @@
         <tr><td><code>tool</code></td><td>The tool name to match, or <code>*</code> for any tool.</td></tr>
         <tr><td><code>pattern</code> / <code>prefix</code></td><td>A glob (<code>pattern</code>) or a literal starts-with (<code>prefix</code>) matched against the tool's key field: the path for file tools, the command for shell, the branch for git, and so on.</td></tr>
         <tr><td><code>action</code></td><td>One of <code>allow</code>, <code>ask</code>, or <code>deny</code>.</td></tr>
+        <tr><td><code>justification</code></td><td>Optional free-text note on why the rule exists. Pure audit trail: it is stored and shown in the rule list but never affects matching, so future-you knows why "allow all git" was ever a good idea.</td></tr>
       </tbody>
     </table></div>
     <p>For example, to let Claude run any <code>git</code> command without prompting but always confirm
@@ -139,12 +177,23 @@
       warns you when a broad earlier rule shadows a narrower later one so you can reorder before it
       surprises you.</p>
 
+    <h3 id="rule-dry-run">Test a rule before you trust it</h3>
+    <p>You do not have to save a rule and wait for a live tool call to find out what it does. The rule
+      editor has a <b>Test this rule</b> dry-run: give it a sample tool name and input (say,
+      <code>ws_run_command</code> with <code>git push origin main</code>) and it runs the exact same
+      matching logic the live gate uses, then reports which rule matched, at which position, and what
+      the decision would be. It can test against your saved rule set or against a draft rule you have
+      not saved yet, so "does my glob actually catch this?" is answered before the rule can ever
+      surprise you.</p>
+
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p>Resolution order, top to bottom:
-        <code>bypassPermissions</code> (absolute) &rarr; a trusted skill script &rarr; your
-        session-wide "all this session" choice &rarr; your custom rules &rarr; the mode's own default.
-        So <code>bypassPermissions</code> overrides even a <code>deny</code> rule, but every other mode
+        <code>github-destructive</code> always asks (absolute) &rarr; the per-category mode, if set,
+        replaces the global mode &rarr; <code>bypassPermissions</code> &rarr; a trusted skill script
+        &rarr; your session-wide "all this session" choice &rarr; your custom rules &rarr; the mode's
+        own default. So <code>bypassPermissions</code> overrides even a <code>deny</code> rule, but a
+        stricter per-category mode overrides <code>bypassPermissions</code>, and every other mode
         respects your rules first.</p></div>
     </div>
 
@@ -186,7 +235,7 @@
     <h2 id="how-it-fits">How this fits the pipeline</h2>
     <p>Permission checks happen inside the tool loop, not before the turn. Each round the model may ask
       for tools; the executor partitions them, evaluates each against your mode and rules, and for
-      anything that resolves to <b>ask</b> it issues a nonce, pauses, and waits. This is why an
+      anything that resolves to <b>ask</b> it pauses the turn on the server and waits. This is why an
       approval can appear mid-answer and why continuing after one picks up exactly where it left off.
       See <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for the surrounding
       state machine.</p>
@@ -195,7 +244,7 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> <a href="tut-workspace.html">The workspace IDE</a>
         (where writes and commands come from), and the architecture behind the gate:
-        <a href="arch-approval.html">Approval &amp; permissions</a> (nonce flow, the auto-mode
+        <a href="arch-approval.html">Approval &amp; permissions</a> (the pause-and-resume flow, the auto-mode
         classifier) and <a href="arch-sandbox.html">Sandbox &amp; security</a>
         (sandbox-exec, the validator, deny lists).</p></div>
     </div>
