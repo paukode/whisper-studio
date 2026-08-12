@@ -368,6 +368,11 @@ export interface SSEEventData {
     output_tokens?: number;
     total_input?: number;
     total_output?: number;
+    /** Prompt tokens actually sent this turn, cumulative and normalized across
+     *  the providers' two cache conventions. The number a reader means by
+     *  "tokens in" — unlike total_input, which counts only the uncached
+     *  remainder and reads as ~0 whenever prompt caching is working. */
+    total_prompt?: number;
     estimated_cost_usd?: number;
     context_used?: number;
     context_max?: number;

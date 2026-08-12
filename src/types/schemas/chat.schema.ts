@@ -179,6 +179,7 @@ export const SSEEventDataSchema = z.object({
     output_tokens: z.number().optional(),
     total_input: z.number().optional(),
     total_output: z.number().optional(),
+    total_prompt: z.number().optional(),
     estimated_cost_usd: z.number().optional(),
     context_used: z.number().optional(),
     context_max: z.number().optional(),

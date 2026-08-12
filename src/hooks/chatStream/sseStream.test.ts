@@ -6,9 +6,10 @@
  *   1. A `budget_warning` frame raises a persistent, error-styled toast — the
  *      event had no handler before, so the user only saw the easy-to-miss
  *      "[Budget exceeded] …" text fallback.
- *   2. A `usage` frame with cumulative `total_input`/`total_output` reports the
- *      totals, not the last round's per-round counts (which the backend always
- *      sends too, so the old precedence collapsed the counter to one round).
+ *   2. A `usage` frame reports cumulative totals, not the last round's per-round
+ *      counts (which the backend always sends too, so the old precedence
+ *      collapsed the counter to one round), and takes its input side from
+ *      `total_prompt` rather than the cache-miss-only `total_input`.
  *
  * We only exercise return values and the (real) UI toast store; the chat store
  * is auto-created per session id by the runtime registry.
@@ -91,6 +92,35 @@ describe('readSSEStream', () => {
 
     expect(result.inputTokens).toBe(100);
     expect(result.outputTokens).toBe(40);
+  });
+
+  it('usage frame counts prompt tokens as input, not the cache-miss remainder', async () => {
+    // With prompt caching warm, total_input is the few tokens that MISSED the
+    // cache; total_prompt is what was actually sent. Preferring total_input is
+    // what produced the nonsensical "4 in / 4,012 out" readout.
+    const res = sseResponse([
+      {
+        usage: {
+          input_tokens: 4,
+          output_tokens: 2012,
+          total_input: 4,
+          total_output: 2012,
+          total_prompt: 118_400,
+          total_cache_read: 118_000,
+          total_cache_creation: 396,
+          estimated_cost_usd: 0.4679,
+        },
+      },
+    ]);
+
+    const result = await readSSEStream(
+      res,
+      'sess-usage-prompt',
+      new AbortController().signal,
+    );
+
+    expect(result.inputTokens).toBe(118_400);
+    expect(result.outputTokens).toBe(2012);
   });
 
   it('usage frame falls back to per-round counts when totals are absent', async () => {

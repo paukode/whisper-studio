@@ -721,14 +721,25 @@ export async function readSSEStream(
           }
 
           // ── usage ──
-          // The backend (server/chat/routes.py) sends BOTH per-round counts
-          // (`input_tokens`/`output_tokens`) and cumulative running totals
-          // (`total_input`/`total_output`) on every usage frame, and its
-          // `estimated_cost_usd` is cumulative too. Prefer the totals so the
-          // counter reflects the whole turn instead of collapsing to the last
-          // round; fall back to per-round for any emitter that omits totals.
+          // The backend (server/chat/engine/runner.py) sends BOTH per-round
+          // counts (`input_tokens`/`output_tokens`) and cumulative running
+          // totals (`total_prompt`/`total_input`/`total_output`) on every usage
+          // frame, and its `estimated_cost_usd` is cumulative too. Prefer the
+          // totals so the counter reflects the whole turn instead of collapsing
+          // to the last round; fall back to per-round for any emitter that
+          // omits totals.
+          //
+          // `total_prompt` is the input side: it counts every prompt token sent,
+          // where `total_input` counts only the portion that missed the prompt
+          // cache — a few tokens on a warm turn, which is what made the counter
+          // read "4 in / 4,012 out". Older emitters that predate total_prompt
+          // fall back to total_input.
           if (parsed.usage) {
-            inputTokens = parsed.usage.total_input ?? parsed.usage.input_tokens ?? inputTokens;
+            inputTokens =
+              parsed.usage.total_prompt ??
+              parsed.usage.total_input ??
+              parsed.usage.input_tokens ??
+              inputTokens;
             outputTokens = parsed.usage.total_output ?? parsed.usage.output_tokens ?? outputTokens;
             const cost = parsed.usage.estimated_cost_usd ?? 0;
             // context_used/context_max are real per-round token counts (WS-F);
