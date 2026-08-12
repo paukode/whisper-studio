@@ -12,7 +12,7 @@ WSDiagram.mount("cron-flow-diagram", {
     { id: "create", group: "server", col: 1, row: 0, label: "cron_create", sub: "job saved", desc: "The assistant calls the cron_create tool. The job is written to disk and a 'Cron scheduled' pill appears inline." },
     { id: "sched", group: "server", col: 2, row: 0, label: "Scheduler", sub: "APScheduler", desc: "APScheduler arms the job on its schedule (interval, wall-clock, or one-shot) inside the running server." },
     { id: "fire", group: "server", col: 3, row: 0, label: "Fires on time", sub: "on schedule", desc: "When the trigger comes due, the scheduler fires the job. Overlapping runs are coalesced." },
-    { id: "agent", group: "agents", col: 4, row: 0, label: "Runs the prompt", sub: "same engine as chat", desc: "The saved prompt runs through the same unified turn engine as chat, on whichever model the job specifies - Claude or GPT-5.x on Bedrock, or a local model - with a small tool loop, and produces a concise status report." },
+    { id: "agent", group: "agents", col: 4, row: 0, label: "Runs the prompt", sub: "same engine as chat", desc: "The saved prompt runs through the same unified turn engine and partitioned tool pool as chat, on whichever cloud model the job specifies (Claude or GPT-5.x on Bedrock; on-device models are refused for now), and produces a concise status report." },
     { id: "card", group: "browser", col: 5, row: 0, label: "Result card in chat", sub: "even on other session", desc: "The result lands as a card in the originating conversation, even if you are viewing a different session." }
   ],
   edges: [

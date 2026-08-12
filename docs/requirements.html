@@ -90,12 +90,14 @@ brew install git python@3.12 awscli</code></pre></div>
       See <a href="installation.html">Installation</a> for the full run-through and the setup flags.</p>
 
     <h2 id="aws-bedrock">Amazon Bedrock access</h2>
-    <p>Chat responses come from Claude on <a href="https://aws.amazon.com/bedrock/">Amazon Bedrock</a>, so
-      you need an AWS account with Bedrock access and the Claude model you want <b>enabled in your
-      region</b>. Two things trip people up here, both region-related:</p>
+    <p>Cloud chat (Claude or GPT-5.x) runs on <a href="https://aws.amazon.com/bedrock/">Amazon
+      Bedrock</a>, so for that path you need an AWS account with Bedrock access and the models you want
+      <b>enabled in your region</b>. Fully on-device (<code>--local</code>) mode skips this section
+      entirely - see <a href="#hardware">Hardware, by model mode</a> below. Two things trip people up
+      here, both region-related:</p>
     <ol>
-      <li><b>Enable model access.</b> In the Bedrock console, request access to the Claude models you
-        plan to use. Access is granted per model, per region.</li>
+      <li><b>Enable model access.</b> In the Bedrock console, request access to the Claude and/or GPT-5.x
+        models you plan to use - each needs its own access grant, per model, per region.</li>
       <li><b>Match the region.</b> Whatever region you set with <code>aws configure</code> must be the
         same <b>Bedrock Region</b> you enter in Whisper Studio's Settings, and the model must be
         enabled there. A mismatch shows up in chat as
@@ -110,11 +112,12 @@ brew install git python@3.12 awscli</code></pre></div>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.6 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p><b>No enabled model, no chat.</b> Transcription and every local
-        workspace tool run without AWS, but until a Claude model is enabled in your region and your
-        credentials can reach it, the chat panel returns
-        <code>AccessDeniedException</code>. If that happens after install, run <code>/doctor</code> in
-        the chat input for an automated AWS-credentials and Bedrock-connectivity check.</p></div>
+      <div class="callout__body"><p><b>No enabled cloud model, no cloud chat.</b> Transcription and
+        every local workspace tool run without AWS, and an on-device chat model needs no AWS at all.
+        But for cloud chat, until the Claude or GPT-5.x model you selected is enabled in your region and
+        your credentials can reach it, the chat panel returns <code>AccessDeniedException</code>. If
+        that happens after install, run <code>/doctor</code> in the chat input for an automated
+        AWS-credentials and Bedrock-connectivity check.</p></div>
     </div>
 
     <h2 id="optional-tavily">Optional: a Tavily key for web search</h2>

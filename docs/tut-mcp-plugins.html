@@ -21,8 +21,10 @@
     <p>Whisper Studio ships with a large built-in tool pool, but you can grow that set two ways. An
       <b>MCP server</b> connects an outside system and exposes its tools over the Model Context
       Protocol. A <b>plugin</b> is a local Python file that registers new executors, API routes, or
-      pre-tool hooks inside the backend. Both are <b>opt-in</b>: configuring a source does nothing until
-      you explicitly enable it.</p>
+      pre-tool hooks inside the backend. Plugins are <b>opt-in</b>: dropping a file into
+      <code class="path">plugins/</code> does nothing until you enable it in Settings. MCP servers are
+      <b>opt-out</b>: adding a server enables and starts it immediately, and you explicitly disable the
+      ones you don't want connected.</p>
 
     <figure class="diagram-figure">
       <div id="mcp-flow-diagram" class="diagram"></div>

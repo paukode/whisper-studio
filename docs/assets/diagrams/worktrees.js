@@ -8,7 +8,7 @@ WSDiagram.mount("worktrees-diagram", {
     repo: { label: "Shared repository" }
   },
   nodes: [
-    { id: "s1", group: "sessions", col: 0, row: 0, label: "Session A", sub: "chat", desc: "A chat session that enters a worktree keeps working in the main conversation while its files live somewhere else on disk." },
+    { id: "s1", group: "sessions", col: 0, row: 0, label: "Session A", sub: "chat", desc: "A chat session records which worktree it entered (for the UI chip); the session must cd into it for shell commands to follow - file tools never do." },
     { id: "s2", group: "sessions", col: 0, row: 1, label: "Session B", sub: "chat", desc: "A second session, entirely independent. Nothing it does can be seen by or collide with Session A's files." },
     { id: "s3", group: "sessions", col: 0, row: 2, label: "Sub-agent C", sub: "spawn_agent isolation: 'worktree'", desc: "A worktree-isolated sub-agent gets the same treatment automatically, keyed by its own agent id." },
     { id: "w1", group: "worktrees", col: 1, row: 0, label: "Worktree A", sub: ".whisper/worktrees/a", desc: "Its own checkout, its own index, its own HEAD, on branch worktree-a. Editing files here never touches the main checkout." },

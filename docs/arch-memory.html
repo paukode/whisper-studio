@@ -65,10 +65,11 @@
         <code>TOOL_CALL_THRESHOLD</code> (10) <code>tool_use</code> blocks since the last update. Local
         chats often have no tools, so the character threshold alone gates them.</li>
     </ul>
-    <p>When both applicable guards pass, the summarizer runs against the last 30 turns (each message
-      capped for the excerpt), writes the new markdown, and the per-session counters advance. The
-      result is capped: each section stays under <code>MAX_SECTION_CHARS</code> (2,000 chars) and the
-      whole file under <code>MAX_TOTAL_CHARS</code> (12,000 chars), truncated if the model overshoots.</p>
+    <p>When both applicable guards pass, the summarizer runs against the last 30 messages (each capped
+      for the excerpt), writes the new markdown, and the per-session counters advance. The whole file is
+      capped at <code>MAX_TOTAL_CHARS</code> (12,000 chars) and truncated in code if the model overshoots;
+      the 2,000-char per-section limit (<code>MAX_SECTION_CHARS</code>) is instructed to the model in the
+      prompt but not separately enforced.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
@@ -257,9 +258,11 @@
       consolidations never run at once.</p>
     <p>When it runs, a single agent works through four phases: <b>Orient</b> (list files, read the
       index), <b>Gather</b> (find stale, contradicted, or overlapping entries), <b>Consolidate</b>
-      (merge related files, update facts, delete superseded entries), and <b>Prune</b> (rewrite
-      <code>MEMORY.md</code> to reflect the current state, keeping it under 200 lines). Think of it as
-      the persistent-memory counterpart to how a single session's memory is periodically resummarized.</p>
+      (merge related files, update facts, delete superseded entries), and <b>Prune</b> (delete topic
+      files that no longer earn their place). The agent never rewrites <code>MEMORY.md</code> itself -
+      the index regenerates deterministically after every write or delete, capped at 200 lines. Think
+      of it as the persistent-memory counterpart to how a single session's memory is periodically
+      resummarized.</p>
 
     <h2 id="key-files">Key files</h2>
     <div class="spec">

@@ -20,7 +20,7 @@ WSDiagram.mount("ultracode-diagram", {
     { id: "agents", group: "agents", col: 1, row: 2, label: "run_agent", sub: "Claude / GPT subagent", desc: "The provider-agnostic runtime runs a real tool-using subagent on Anthropic or OpenAI-on-Bedrock. Its token usage rolls into the run's ledger; structured_schema returns a validated object." },
     { id: "journal", group: "persist", col: 2, row: 3, kind: "store", label: "journal + resume cache", sub: "append-only, by seq", desc: "server/workflows/journal.py records each phase and agent call by issue-order seq. A resume replays cached results for the longest unchanged prefix and only re-runs from the first edited call onward." },
     { id: "sse", group: "transport", col: 3, row: 3, label: "per-run SSE", sub: "channel workflow:{id}", desc: "The run publishes phase / agent / completion events on a per-run event-bus channel, so a reloaded session re-attaches and sees live progress." },
-    { id: "card", group: "browser", col: 4, row: 2, label: "WorkflowRunCard", sub: "live phases · cost · stop", desc: "The SPA renders live phase, agent count, and spend with Stop / Resume, folding the terminal completion into the run row (workflowStore, keyed by run_id)." }
+    { id: "card", group: "browser", col: 4, row: 2, label: "WorkflowRunCard", sub: "live phases · cost · stop", desc: "The SPA renders live phase, agent count, and spend with Stop while running, Refresh once terminal (workflowStore, keyed by run_id). Resuming a run is model-initiated - workflow_run(resume_from_run_id=...) - not a card button." }
   ],
   edges: [
     { from: "author", to: "tool" },

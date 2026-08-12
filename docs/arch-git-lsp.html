@@ -164,31 +164,41 @@
     <h2 id="worktrees">Worktrees</h2>
     <p>Git worktrees show up in two distinct shapes: a <b>session worktree</b> that pins a whole chat
       session into its own checkout, and lighter <b>task-branch worktrees</b> a turn can create for an
-      isolated multi-file change. Both build on the same underlying git feature (one branch can be
-      checked out in only one worktree at a time, so collisions are impossible by construction), and
-      the shell cwd is tracked per session (<code class="path">server/cwd_tracker.py</code>), so
-      parallel sessions never trip over each other's checkout. For a hands-on tour, see the
-      <a href="tut-worktrees.html">Worktrees tutorial</a>.</p>
+      isolated multi-file change. Both build on the same underlying git feature: one branch can be
+      checked out in only one worktree at a time, so two sessions can never end up pointed at the same
+      checkout by construction. Shell cwd is separately tracked per session
+      (<code class="path">server/cwd_tracker.py</code>) so one session's <code>cd</code> never leaks into
+      another's shell state, which is a distinct guarantee from the worktree/branch exclusivity above.
+      For a hands-on tour, see the <a href="tut-worktrees.html">Worktrees tutorial</a>.</p>
 
     <h3 id="session-worktrees">Session worktrees: enter and exit</h3>
     <p><code class="path">server/git/worktree_session.py</code> owns the conventions. The
       <code>enter_worktree</code> approval action creates (or resumes) a worktree at
       <code class="path">&lt;repo&gt;/.whisper/worktrees/&lt;slug&gt;</code> on branch
-      <code>worktree-&lt;slug&gt;</code>, branched from the current HEAD, and pins the chat session
-      into it: from then on the session's shell commands and workspace tools operate in that checkout.
-      Slugs pass a strict allowlist (<code>validate_worktree_slug</code>), and a <code>/</code> in a
-      slug is flattened to <code>+</code> so nested names stay flat filesystem and branch components.
-      Entering the same slug again reuses the existing worktree rather than failing, so "resume where I
-      left off" is the default.</p>
-    <p>The pin is durable: every active <code>WorktreeSession</code> (original cwd and branch, worktree
-      path, branch, and name) is persisted to
+      <code>worktree-&lt;slug&gt;</code>, branched from the current HEAD, and records which worktree the
+      chat session is pinned to. That pin is bookkeeping for the UI chip and
+      <code>GET /api/git/worktree-session</code> - it does not redirect tool execution. File tools
+      (<code>ws_read_file</code>/<code>ws_write_file</code>/etc.) resolve through
+      <code>get_workspace_path()</code>, which only ever returns the single globally-connected workspace
+      (the per-task override that actually redirects file tools into a worktree,
+      <code>set_workspace_override</code>, is consulted only by agent worktree isolation below, never by
+      this session-level pin). Shell commands follow the worktree only if the session itself runs
+      <code>cd &lt;worktree_path&gt;</code>, tracked per session by <code class="path">server/cwd_tracker.py</code>
+      exactly as any other directory change would be. Slugs pass a strict allowlist
+      (<code>validate_worktree_slug</code>), and a <code>/</code> in a slug is flattened to
+      <code>+</code> so nested names stay flat filesystem and branch components. Entering the same slug
+      again reuses the existing worktree rather than failing, so "resume where I left off" is the
+      default.</p>
+    <p>The pin is durable: every active <code>WorktreeSession</code> (original branch, worktree path,
+      branch, and name) is persisted to
       <code class="path">~/.whisper_cache/worktree-sessions.json</code>, so a server restart preserves
       which sessions live in which worktrees. The frontend reads the pin back through
       <code>GET /api/git/worktree-session</code>. The matching <code>exit_worktree</code> action removes
-      the worktree and restores the session's original cwd; it refuses to remove a worktree with
-      uncommitted changes unless explicitly forced, so exiting can never silently discard work. Both
-      actions are approval-gated under their own <code>worktree</code> category, so you can trust the
-      flow once ("Yes for all worktree operations") without widening any other write permission.</p>
+      the worktree and clears the session's worktree record (it does not touch shell cwd, since entering
+      never set one); it refuses to remove a worktree with uncommitted changes unless explicitly forced,
+      so exiting can never silently discard work. Both actions are approval-gated under their own
+      <code>worktree</code> category, so you can trust the flow once ("Yes for all worktree operations")
+      without widening any other write permission.</p>
 
     <h3 id="task-worktrees">Task-branch worktrees: the ws_* trio</h3>
     <p>Independently of the session pin, three workspace tools
@@ -278,8 +288,9 @@
         <tr><td>JavaScript / TypeScript</td><td>typescript-language-server</td><td><code>typescript-language-server --stdio</code></td></tr>
       </tbody>
     </table></div>
-    <p>The proxy checks that the binary is on <code>PATH</code> before accepting, and closes with a
-      helpful install hint if it is missing. On disconnect it terminates the child (then kills it
+    <p>The proxy accepts the connection first (after the origin check), then checks whether the language
+      and its binary are available; if not, it sends an error over the now-open socket and closes with a
+      helpful install hint. On disconnect it terminates the child (then kills it
       after a 3-second grace) so no orphaned language server lingers. If the servers are not
       installed, the editor still works; you just do not get inline diagnostics, hovers, or
       completions there.</p>

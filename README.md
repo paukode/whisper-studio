@@ -1,6 +1,8 @@
 # Whisper Studio
 
-A local-first AI workspace for macOS. Real-time speech transcription, a
+**A native Mac app.** Download it, drag it into Applications, open it -
+that's the whole install (see [Quick start](#quick-start)). Whisper Studio
+is a local-first AI workspace for macOS: real-time speech transcription, a
 chat client to Claude or GPT (via Amazon Bedrock) or an on-device model in
 local mode, and a full development environment (file tree, Monaco editor,
 integrated terminal, Git, LSP) in a single browser tab served by a single
@@ -53,8 +55,8 @@ Deploy setup is in [`docs/README.md`](docs/README.md).
 - **Local transcription** with speaker diarization — two on-device
   engines (Parakeet streaming + Whisper batch), per-session speaker
   memory across reconnects.
-- **Chat with Claude or GPT** (Haiku, Sonnet, Sonnet 5, Opus 4.6/4.7/4.8,
-  Fable 5.0, GPT-5.4/5.5) — streaming tokens, tool use, attachments, slash commands,
+- **Chat with Claude or GPT** (Haiku, Sonnet, Sonnet 5, Opus 4.6/4.7/4.8/5,
+  Fable 5.0, GPT-5.4/5.5/5.6) — streaming tokens, tool use, attachments, slash commands,
   and voice-submit triggers. Or run fully on-device in local mode.
 - **Full workspace IDE** — file tree, Monaco editor, xterm.js terminal,
   Git (status/diff/log/blame/branches/PR), LSP (Python + TypeScript),

@@ -27,8 +27,9 @@
 
     <figure class="diagram-figure wide">
       <div id="sandbox-diagram" class="diagram"></div>
-      <figcaption>A shell command's route to execution. Validation and approval sit in front; the
-        sandbox is the layer that actually contains the subprocess. Network stays open by default,
+      <figcaption>A shell command's route to execution. A gated action pauses for approval first; the
+        command validator then re-checks it once approved, as defense-in-depth rather than a pre-filter.
+        The sandbox is the layer that actually contains the subprocess. Network stays open by default,
         with an opt-in egress policy to restrict it.</figcaption>
     </figure>
 
@@ -103,12 +104,14 @@
 
     <h3 id="aws-reallow">Why ~/.aws is denied, then re-allowed</h3>
     <p><code>run_sandboxed</code> takes an <code>allow_paths</code> argument that subtracts specific
-      entries from the deny-list for that one call. The AWS tools (<code>aws_cli</code>,
-      <code>aws_boto3</code>, and boto3 code inside <code>run_python</code>) pass their cloud-credential
-      paths so authentication works, while every other secret (<code class="path">~/.ssh</code>, git
-      creds, <code class="path">/etc/shadow</code>, and the rest) stays blocked for that command. The
-      re-allow is scoped to the AWS tools; a generic shell command never sees
-      <code class="path">~/.aws</code>.</p>
+      entries from the deny-list for that one call. <code>aws_cli</code> and boto3 code inside
+      <code>run_python</code> pass their cloud-credential paths through this <code>allow_paths</code>
+      re-allow so authentication works, while every other secret (<code class="path">~/.ssh</code>, git
+      creds, <code class="path">/etc/shadow</code>, and the rest) stays blocked for that command.
+      <code>aws_boto3</code> needs no such re-allow: it calls the boto3 SDK directly in-process, never
+      through <code>run_sandboxed</code> at all, so it is restricted instead by a read-only prefix
+      check rather than the filesystem sandbox. The re-allow itself is scoped to the sandboxed AWS
+      calls; a generic shell command never sees <code class="path">~/.aws</code>.</p>
 
     <h2 id="residual-risk">Accepted residual risk</h2>
     <p>Because the default is <em>allow</em>, two things follow directly, and both are accepted on

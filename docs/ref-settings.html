@@ -234,7 +234,7 @@
         <tr><td><code>enabled</code></td><td><code>true</code></td><td>Master switch. When false, transcripts are never condensed and pass through unchanged.</td></tr>
         <tr><td><code>threshold_chars</code></td><td><code>600000</code></td><td>Condense only above this size (about 150k tokens). Below it the transcript passes through with no extra LLM calls.</td></tr>
         <tr><td><code>chunk_chars</code></td><td><code>150000</code></td><td>Per-chunk size for the cloud map step (about 37k tokens).</td></tr>
-        <tr><td><code>local_chunk_chars</code></td><td><code>40000</code></td><td>Per-chunk size in local mode (about 10k tokens; fits the 16k on-device window).</td></tr>
+        <tr><td><code>local_chunk_chars</code></td><td><code>40000</code></td><td>Per-chunk size in local mode (about 10k tokens; comfortably under the 32K on-device window).</td></tr>
         <tr><td><code>overlap_chars</code></td><td><code>800</code></td><td>Overlap between adjacent chunks so nothing is lost at a boundary.</td></tr>
         <tr><td><code>map_max_tokens</code></td><td><code>1200</code></td><td>Output cap for each per-chunk extract.</td></tr>
         <tr><td><code>max_chunks</code></td><td><code>40</code></td><td>Cap on the number of chunks; the splitter re-chunks coarser before hitting it.</td></tr>

@@ -26,9 +26,9 @@
       backend produced the events, and applies speaker identification on its own side so the backends
       stay ignorant of each other and of diarization.</p>
 
-    <p><b>Click a box</b> below to trace where audio flows. Notice the two paths that reach the live
-      transcript: interims stream straight through, while re-clustering corrections arrive later as a
-      separate message.</p>
+    <p><b>Click a box</b> below to trace where audio flows. Notice the three paths that reach the live
+      transcript: interims stream straight through, settled-and-labeled finals post immediately after
+      speaker assignment, and re-clustering corrections arrive later as a separate message.</p>
 
     <figure class="diagram-figure wide">
       <div id="transcription-diagram" class="diagram"></div>
@@ -205,7 +205,8 @@
         <tr><td><code>interim</code></td><td><code>text</code></td><td>A volatile word-by-word draft of the in-flight utterance (Parakeet only).</td></tr>
         <tr><td><code>transcript</code></td><td><code>text</code>, <code>speaker</code>, <code>chunk_id</code></td><td>A settled final, labeled with its speaker and a monotonic chunk id.</td></tr>
         <tr><td><code>speaker_update</code></td><td><code>updates</code> (list of <code>chunk_id</code> to <code>speaker</code>)</td><td>Re-clustering corrections that retroactively re-label earlier segments.</td></tr>
-        <tr><td><code>model_loading</code> / <code>model_unloaded</code></td><td><code>backend</code>, <code>label</code>, <code>progress</code></td><td>Local-mode load banner and the paired unload notice on an engine switch.</td></tr>
+        <tr><td><code>model_loading</code></td><td><code>backend</code>, <code>label</code>, <code>stage</code>, <code>progress</code></td><td>Local-mode load banner, <code>stage</code> one of <code>start</code>/<code>loading</code>/<code>ready</code>.</td></tr>
+        <tr><td><code>model_unloaded</code></td><td><code>backend</code>, <code>label</code></td><td>The paired unload notice on an engine switch.</td></tr>
         <tr><td><code>pong</code></td><td>-</td><td>Reply to a <code>ping</code> keepalive.</td></tr>
         <tr><td><code>session_ended</code></td><td>-</td><td>Acknowledges <code>stop</code> after the last in-flight utterance is drained.</td></tr>
       </tbody>

@@ -16,7 +16,7 @@ WSDiagram.mount("chat-turn-diagram", {
     { id: "text", group: "server", col: 4, row: 0, label: "Stream tokens", desc: "Each text chunk is yielded to the client as a token; the SPA appends it to the live bubble." },
     { id: "done", group: "transport", col: 5, row: 0, label: "[DONE]", desc: "The stream terminates. The SPA commits the final assistant message atomically with clearing the streaming state." },
     { id: "tooluse", group: "server", col: 4, row: 1, label: "tool_use?", sub: "stop reason", desc: "A tool_use stop reason means the model wants to act. The engine routes each call before continuing." },
-    { id: "approve", group: "security", col: 3, row: 2, label: "Approval?", sub: "nonce", desc: "A tool that needs consent pauses the turn, stashes state in the unified pause store (server/chat/engine/pause.py), issues a server-held nonce, and emits an approval_request over SSE." },
+    { id: "approve", group: "security", col: 3, row: 2, label: "Approval?", sub: "pause + resume", desc: "A tool that needs consent pauses the turn, stashes state in the unified pause store (server/chat/engine/pause.py), and emits an approval_request over SSE. The client's decision resumes it; the executor re-validates the action before running it." },
     { id: "exec", group: "tools", col: 4, row: 2, label: "Execute tool", desc: "The validated action runs via its executor. The tool_result is fed back so the model can continue." },
     { id: "persist", group: "persist", kind: "store", col: 5, row: 1, label: "Persist history", sub: "PUT /api/sessions", desc: "The SPA PUTs the session; the server UPSERTs chat_history under a per-session lock + merge so background cron rows are not clobbered." }
   ],

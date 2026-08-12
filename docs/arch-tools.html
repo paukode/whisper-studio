@@ -28,9 +28,10 @@
 
     <figure class="diagram-figure wide">
       <div id="tools-diagram" class="diagram"></div>
-      <figcaption>One batch of tool calls, routed and executed. The <em>write</em> edge into
-        <em>Approval</em> is the consent gate; the <em>allow</em> edge skips it for pre-approved and
-        read-only tools.</figcaption>
+      <figcaption>One batch of tool calls, routed and executed. Dispatch always runs first; a gated
+        action's <code>[WS_APPROVAL]</code> result then hits the permission check, whose <em>ask</em>
+        edge is the consent gate and whose <em>allow</em> edge skips straight to the same
+        ApprovalSpec executor an approval resumes into.</figcaption>
     </figure>
 
     <h2 id="two-layers">Two layers, one seam</h2>
@@ -113,8 +114,9 @@
         <code>PostToolUse</code> fires and may return <code>additionalContext</code> that is folded
         back into the tool result the model reads next; on an exception,
         <code>PostToolUseFailure</code> fires. A separate <code>Stop</code> gate
-        (<code>check_stop_hooks</code>) runs at end of turn via the completion gate, on interactive
-        cloud chat only.</p></li>
+        (<code>check_stop_hooks</code>) runs at end of turn via the completion gate, shared by every
+        chat loop (Claude, GPT, and local) and cron runs; sub-agents and headless turns run with it
+        off.</p></li>
       <li><h4>Dispatch</h4><p>Only now is <code>route_tool</code> called. Any exception is caught,
         logged, and returned to the model as a <code>[Tool Error]</code> string, so one failing tool
         never crashes the turn. Errors from command tools cascade to later writes via the sibling-abort
@@ -188,7 +190,7 @@
         <tr><td>Workflows &amp; CI</td><td><code class="path">server/workflows/tools.py</code>, <code class="path">server/ci/tools.py</code></td><td><b>Ultracode-only.</b> <code>workflow_run</code>/<code>workflow_status</code>/<code>workflow_save</code>/<code>workflow_list</code> and <code>ci_watch</code>/<code>ci_status</code>/<code>ci_autofix</code>. See <a href="arch-ultracode.html">Ultracode workflow runtime</a>.</td></tr>
         <tr><td>LSP &amp; worktree</td><td><code>execute_lsp_tool</code>, worktree handlers</td><td>Run on the thread-pool executor. See <a href="arch-git-lsp.html">Git &amp; LSP</a>.</td></tr>
         <tr><td>Sub-agents &amp; teams</td><td><code>spawn_agent</code>, <code>send_message</code>, <code>receive_messages</code>, <code>complete_coordination</code>, <code>list_agents</code>, <code>promote_agent_type</code>, <code>team_create</code></td><td>The agent runtime; the caller's id, depth, and team ride an ambient <code>agent_nesting_ctx</code>. See <a href="arch-agents.html">Sub-agents</a>.</td></tr>
-        <tr><td>Documents</td><td>Registry executors (<code class="path">server/documents/</code>)</td><td><code>create_docx</code> (HTML via macOS <code>textutil</code>), <code>create_pptx</code> (python-pptx), <code>create_xlsx</code> (openpyxl), <code>create_pdf</code> (reportlab), all normalized to the standard layout in <code class="path">server/documents/standards.py</code> and saved through the staged <code>save_to_path</code> flow below.</td></tr>
+        <tr><td>Documents</td><td>Registry executors (<code class="path">server/documents/</code>)</td><td><code>create_docx</code> (HTML via macOS <code>textutil</code>), <code>create_pptx</code> (python-pptx), <code>create_xlsx</code> (openpyxl), <code>create_pdf</code> (reportlab), all normalized to the standard layout in <code class="path">server/documents/standards.py</code>. With no workspace connected (or an absolute <code>destination_path</code>), the bytes go through the staged <code>save_to_path</code> flow below; with a workspace connected they go straight into a <code>create_document</code> approval instead, same trust tier as an ordinary workspace write, no staging.</td></tr>
         <tr><td><code>skill_invoke</code></td><td>Runs a general agent</td><td>Delegates the named skill to a full sub-agent tool loop.</td></tr>
         <tr><td>Memory</td><td>Registry executor</td><td>Looked up in <code>EXECUTORS</code>. See <a href="arch-memory.html">Memory</a>.</td></tr>
         <tr><td>Config &amp; interaction</td><td><code>config_get</code>/<code>config_set</code>, <code>ask_user_question</code>, <code>notify_user</code></td><td><code>ask_user_question</code> emits <code>_pause</code>.</td></tr>
@@ -204,12 +206,15 @@
     <dl class="spec">
       <dt><code>[WS_APPROVAL]</code></dt><dd>Needs consent; resolved through the precedence chain above.</dd>
       <dt><code>[WS_WORKSPACE_PROMPT]</code></dt><dd>A modify or delete of an <em>existing</em> file (<code>ws_write_file</code>, <code>ws_edit_file</code>, <code>ws_delete_file</code>) fired with no connected workspace, or with a path escaping it; a folder picker is shown and the turn pauses. New-file creation never triggers it.</dd>
-      <dt><code>save_to_path</code></dt><dd>The staged-then-move save flow for every tool that creates a brand-new file (<code>ws_create_file</code>, <code>save_file</code>, and the document tools). The tool never asks where to save: <code>resolve_write_destination</code> (<code class="path">server/workspace/state.py</code>) uses the model-resolved <code>destination_path</code> from the user's own words, else a workspace-relative path, else <code>~/Documents/&lt;filename&gt;</code>. The content is fully built and staged in the app sandbox first (<code>stage_file_bytes</code>, <code class="path">server/workspace/paths.py</code>, with a 24-hour staging GC), and approving the card <em>moves</em> the staged file into place with a staging-root containment check.</dd>
+      <dt><code>save_to_path</code></dt><dd>The staged-then-move save flow for <code>ws_create_file</code>, <code>save_file</code>, and the document tools when there is no connected workspace (or the model resolved an absolute path). With a workspace connected, <code>ws_create_file</code> and the document tools use the plain <code>create</code>/<code>create_document</code> approval instead - no staging. The tool never asks where to save: <code>resolve_write_destination</code> (<code class="path">server/workspace/state.py</code>) uses the model-resolved <code>destination_path</code> from the user's own words, else a workspace-relative path, else <code>~/Documents/&lt;filename&gt;</code>. The content is fully built and staged in the app sandbox first (<code>stage_file_bytes</code>, <code class="path">server/workspace/paths.py</code>, with a 24-hour staging GC), and approving the card <em>moves</em> the staged file into place with a staging-root containment check.</dd>
       <dt><code>[WS_PREVIEW_IMAGE]</code></dt><dd>A screenshot; returned as an Anthropic image content block (never budget-truncated) so the model sees pixels, not base64 text.</dd>
     </dl>
     <p>Ordinary string outputs are run through <code>budget_fn</code> to cap oversized results, a
       truncated preview streams to the SPA as a <code>skill_result</code> event, and the full output
-      becomes the <code>tool_result</code> content the model reads on the next round.</p>
+      becomes the <code>tool_result</code> content the model reads on the next round. Outputs flagged
+      via <code>produces_model_prompt</code> (folder/prompt skills, <code>summarize_transcript</code>,
+      <code>analyze_document</code>) skip <code>budget_fn</code> entirely, so a head-truncation can
+      never silently strip their trailing instructions.</p>
 
     <h2 id="the-catalogue">The tool catalogue</h2>
     <p>Whisper Studio's <em>full</em> tool pool runs on the order of <b>80-plus core tools plus the
