@@ -25,6 +25,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             sections TEXT NOT NULL DEFAULT '[]',
             data TEXT NOT NULL DEFAULT '',
             frames TEXT NOT NULL DEFAULT '[]',
+            source_path TEXT NOT NULL DEFAULT '',
             created REAL NOT NULL,
             last_used REAL NOT NULL
         )

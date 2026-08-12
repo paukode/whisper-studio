@@ -76,8 +76,8 @@ def test_spec_accepts_json_string_or_object():
     [
         ("{not json", "valid JSON"),
         ([], "spec object"),
-        ({"data": {"values": []}}, "no \"mark\""),
-        ({"mark": "bar"}, "no \"data\""),
+        ({"data": {"values": []}}, 'no "mark"'),
+        ({"mark": "bar"}, 'no "data"'),
         ({"mark": "bar", "data": {"url": "https://evil.test/x.csv"}}, "blocked"),
     ],
 )

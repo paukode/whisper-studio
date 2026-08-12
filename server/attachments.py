@@ -227,10 +227,11 @@ async def upload_endpoint(files: list[UploadFile] = File(...)):
             text = await asyncio.to_thread(convert_document, content, ext, filename)
             # Only Markdown/prose formats get a heading outline; code and data
             # dumps (where "#" is a comment or literal) skip it.
-            await _store(
-                aid,
-                _make_document_record(filename, text, outline=ext in OUTLINE_EXTENSIONS),
+            record = _make_document_record(filename, text, outline=ext in OUTLINE_EXTENSIONS)
+            record["source_path"] = await asyncio.to_thread(
+                attachment_store.save_source_file, aid, filename, content
             )
+            await _store(aid, record)
             results.append({"id": aid, "filename": filename, "type": ext.lstrip(".")})
         else:
             # Text fallback: any file whose bytes decode as UTF-8 is treated as
@@ -248,10 +249,11 @@ async def upload_endpoint(files: list[UploadFile] = File(...)):
                 )
             # Plaintext fallback: never outline (a leading "#" here is not a
             # Markdown heading).
-            await _store(
-                aid,
-                _make_document_record(filename, text or "[Empty file]", outline=False),
+            record = _make_document_record(filename, text or "[Empty file]", outline=False)
+            record["source_path"] = await asyncio.to_thread(
+                attachment_store.save_source_file, aid, filename, content
             )
+            await _store(aid, record)
             results.append({"id": aid, "filename": filename, "type": ext.lstrip(".") or "text"})
 
     return {"attachments": results}

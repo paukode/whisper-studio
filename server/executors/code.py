@@ -60,6 +60,13 @@ _AWS_READ_PREFIXES = (
     "select",
 )
 
+# Wall-clock budget for approved Python. Generous enough to read a real
+# spreadsheet end to end (pandas opens a 3MB / 10k-row xlsx in about two
+# seconds, and attachments run to 50MB), short enough that a runaway loop
+# still ends on its own. The user has already approved the code by the time
+# it runs, and it runs under the OS sandbox either way.
+RUN_PYTHON_TIMEOUT_S = 90
+
 _AWS_READONLY_GUARD = """
 import botocore.endpoint as _ep
 _orig_make_request = _ep.Endpoint.make_request
@@ -90,11 +97,11 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
         result = run_sandboxed(
             f"python3 {shlex.quote(script_path)} < /dev/null",
             cwd="/tmp",
-            timeout=15,
+            timeout=RUN_PYTHON_TIMEOUT_S,
             allow_paths=_CLOUD_CRED_PATHS,
         )
     except subprocess.TimeoutExpired:
-        return False, "execution timed out (15s limit)"
+        return False, f"execution timed out ({RUN_PYTHON_TIMEOUT_S}s limit)"
     except Exception as e:
         return False, str(e)
     finally:
