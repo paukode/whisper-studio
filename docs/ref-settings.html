@@ -249,13 +249,8 @@
     <h2 id="permission-modes">Permission modes</h2>
     <p>The <code>permission_mode</code> key controls how the assistant is gated when it wants to run a
       tool. You can also switch it inline with the Mode dropdown in the chat input. Per-tool rules
-      under Settings &gt; Permissions override the mode for specific commands, and per-category
-      defaults there pin a mode for one kind of action (file writes, deletes, shell commands, workflow
-      runs, and so on). The workflow row gates new
-      <a href="arch-ultracode.html">ultracode workflow</a> launches: <code>auto</code> skips the
-      approval card for runs budgeted within 600,000 output tokens, <code>bypassPermissions</code>
-      never shows it, and <code>dontAsk</code> declines the launch. See
-      <a href="tut-permissions.html#per-category-defaults">Permissions &amp; approvals</a>.</p>
+      under Settings &gt; Permissions override the mode for specific commands, and
+      <a href="#category-modes">per-category defaults</a> below pin a mode for one kind of action.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Value</th><th>Behavior</th></tr></thead>
       <tbody>
@@ -278,13 +273,21 @@
       <code>category_modes</code> object: a per-category override keyed by the approval categories
       the app declares (<code>write</code>, <code>delete</code>, <code>cli</code>, <code>save</code>,
       <code>worktree</code>, <code>preview</code>, <code>github</code>,
-      <code>github-destructive</code>, <code>mcp</code>, <code>mcp-elicit</code>). A category with no
+      <code>github-destructive</code>, <code>mcp</code>, <code>mcp-elicit</code>), plus the
+      policy-only <code>workflow</code> entry described below. A category with no
       entry falls back to the global mode, so you can, for example, leave the global mode at
       <code>default</code> while setting <code>category_modes.cli</code> to
       <code>acceptEdits</code> so shell commands stop asking but file deletes still do. One category is
       absolute: <b><code>github-destructive</code></b> (repo or ref deletion, PR merge, archive or
       rename, a raw API DELETE) always asks no matter what the global mode, a category override, a
       bypass mode, or a blanket session approval says.</p>
+    <p><code>workflow</code> is the one entry that is not an approval-card category. It is read by
+      <code class="path">server/workflows/launch_policy.py</code> when the model launches a new
+      <a href="arch-ultracode.html">ultracode workflow</a> script: <code>bypassPermissions</code>
+      launches with no card, <code>auto</code> launches a run whose budget is within the 600,000
+      output-token default and cards anything larger, <code>dontAsk</code> declines the launch, and any
+      other mode shows the phase-preview card. Trusted saved workflows and resumes skip the gate, and
+      no mode relaxes the runtime's server-side caps.</p>
 
     <h3 id="rule-testing">Rule justification and dry-run testing</h3>
     <p>Each permission rule can carry an optional <code>justification</code> string, an audit-trail
