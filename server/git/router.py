@@ -22,6 +22,7 @@ from server.git.core import (
     get_default_branch,
 )
 from server.git.diff import fetch_git_diff
+from server.git.file_diff import build_file_diff
 from server.workspace import get_workspace_path
 
 router = APIRouter(prefix="/api/git", tags=["git"])
@@ -311,6 +312,18 @@ def git_show_endpoint(path: str):
     if result.returncode != 0:
         return {"content": None, "error": result.stderr.strip()}
     return {"content": result.stdout}
+
+
+@router.get("/file-diff")
+def git_file_diff_endpoint(path: str):
+    """Diff one file against HEAD, shaped for the side-by-side viewer.
+
+    The response's ``mode`` tells the client how to render: ``full``
+    ships both sides for client-side alignment, ``hunks`` ships git's own
+    diff for files too large to align in the browser, ``binary`` has
+    nothing to show line by line."""
+    ws = _require_git_workspace()
+    return build_file_diff(ws, path)
 
 
 @router.post("/restore")
