@@ -1,0 +1,121 @@
+/* Inline visuals in chat: SVG diagrams (create_visual) and Vega-Lite charts
+ * (create_chart). Both render in the same card.
+ *
+ * The diagram classes below are the whole styling contract handed to the
+ * model: it picks structure and semantics, the theme picks every colour. That
+ * is what keeps a diagram readable across all eight themes without the model
+ * ever naming a colour. */
+
+.viz-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-surface);
+    margin: 10px 0;
+    overflow: hidden;
+}
+
+.viz-card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px 9px 14px;
+    border-bottom: 1px solid var(--border);
+}
+
+.viz-card-titles { flex: 1; min-width: 0; }
+
+.viz-card-title {
+    font-size: 0.86rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.viz-card-desc {
+    font-size: 0.76rem;
+    color: var(--text-secondary);
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Actions stay quiet until the card is hovered — the picture is the point. */
+.viz-card-actions {
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+
+.viz-card:hover .viz-card-actions,
+.viz-card:focus-within .viz-card-actions { opacity: 1; }
+
+@media (hover: none) { .viz-card-actions { opacity: 1; } }
+
+.viz-card-body { padding: 14px 16px; }
+
+.viz-card-body.is-chart { padding: 6px 8px; }
+
+.viz-frame {
+    display: block;
+    width: 100%;
+    border: 0;
+    background: transparent;
+}
+
+.viz-error {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.75rem;
+    color: var(--accent-record);
+    padding: 10px 14px;
+    white-space: pre-wrap;
+}
+
+/* ---- SVG diagram contract ---------------------------------------------- */
+
+.viz-svg svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+}
+
+.viz-svg text {
+    font-family: inherit;
+    font-size: 14px;
+    fill: var(--text-primary);
+}
+
+.viz-svg .t  { font-size: 14px; fill: var(--text-primary); }
+.viz-svg .th { font-size: 14px; font-weight: 500; fill: var(--text-primary); }
+.viz-svg .ts { font-size: 12px; fill: var(--text-secondary); }
+
+.viz-svg .box {
+    fill: var(--bg-elevated);
+    stroke: var(--border-strong);
+    stroke-width: 1;
+}
+
+.viz-svg .arr {
+    stroke: var(--text-muted);
+    stroke-width: 1.5;
+    fill: none;
+    stroke-linecap: round;
+}
+
+/* Six categorical colours, borrowed from the speaker palette so diagrams use
+ * tokens the themes already tune. Fill is a tint of the hue over the card
+ * surface, so label text keeps full contrast in light and dark alike. */
+.viz-svg .c-1 { fill: color-mix(in srgb, var(--speaker-1) 13%, var(--bg-surface)); stroke: var(--speaker-1); stroke-width: 1; }
+.viz-svg .c-2 { fill: color-mix(in srgb, var(--speaker-2) 13%, var(--bg-surface)); stroke: var(--speaker-2); stroke-width: 1; }
+.viz-svg .c-3 { fill: color-mix(in srgb, var(--speaker-3) 13%, var(--bg-surface)); stroke: var(--speaker-3); stroke-width: 1; }
+.viz-svg .c-4 { fill: color-mix(in srgb, var(--speaker-4) 13%, var(--bg-surface)); stroke: var(--speaker-4); stroke-width: 1; }
+.viz-svg .c-5 { fill: color-mix(in srgb, var(--speaker-5) 13%, var(--bg-surface)); stroke: var(--speaker-5); stroke-width: 1; }
+.viz-svg .c-6 { fill: color-mix(in srgb, var(--speaker-6) 13%, var(--bg-surface)); stroke: var(--speaker-6); stroke-width: 1; }
+
+/* A `c-*` group colours its shapes without dragging its labels along. */
+.viz-svg .c-1 text, .viz-svg .c-2 text, .viz-svg .c-3 text,
+.viz-svg .c-4 text, .viz-svg .c-5 text, .viz-svg .c-6 text { stroke: none; }

@@ -87,6 +87,13 @@ export const SSEEventDataSchema = z.object({
     description: z.string().optional().default(''),
     tool_use_id: z.string().optional(),
   }).optional(),
+  viz_artifact: z.object({
+    kind: z.enum(['svg', 'chart']),
+    title: z.string(),
+    description: z.string().optional().default(''),
+    source: z.string(),
+    tool_use_id: z.string().optional(),
+  }).optional(),
   notify_user: z.record(z.string(), z.unknown()).optional(),
   tool_pool: z
     .object({
