@@ -64,8 +64,8 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Backend</th><th>Model</th><th>Character</th></tr></thead>
       <tbody>
-        <tr><td><code>parakeet</code> (alias <code>streaming</code>)</td><td><code>mlx-community/parakeet-tdt-0.6b-v3</code></td><td>Low-latency. Re-decodes the growing utterance every chunk for word-by-word interims.</td></tr>
-        <tr><td><code>whisper</code> (default)</td><td><code>mlx-community/whisper-large-v3-turbo</code></td><td>Batch. Decodes each settled utterance in one shot; no interims.</td></tr>
+        <tr><td><code>parakeet</code> (alias <code>streaming</code>; the default)</td><td><code>mlx-community/parakeet-tdt-0.6b-v3</code></td><td>Low-latency. Re-decodes the growing utterance every chunk for word-by-word interims. The shipped config default is <code>transcription_backend: "streaming"</code>, so this is the out-of-the-box recorder backend.</td></tr>
+        <tr><td><code>whisper</code></td><td><code>mlx-community/whisper-large-v3-turbo</code></td><td>Batch. Decodes each settled utterance in one shot; no interims. Also the fallback an unrecognized backend name resolves to.</td></tr>
       </tbody>
     </table></div>
     <p>Both run through MLX on a dedicated single-worker thread pool

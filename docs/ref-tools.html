@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Agent tools - Whisper Studio Docs</title>
-  <meta name="description" content="Every tool the Whisper Studio assistant can call, grouped by area: workspace and files, git, LSP, web, memory, tasks and scheduling, sub-agents, skills, MCP, and interaction.">
+  <meta name="description" content="Every tool the Whisper Studio assistant can call, grouped by area: workspace and files, documents, git and GitHub, LSP, web, memory, tasks and scheduling, sub-agents, skills, MCP, and interaction.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -20,25 +20,27 @@
       lists every tool, grouped by area, with what each one does and whether it needs your approval.</p>
 
     <p class="lead">With <b>progressive tool disclosure</b> (feature flag
-      <code>progressive_tools</code>, default on) the interactive chat loop advertises to cloud
-      Claude only a core set plus the tools this session has activated; every other tool lives as a
-      one-line entry in a deferred index and loads on demand via <code>tool_search</code>. The full
-      pool still goes to sub-agents and cron. On-device Gemma can also gate its set with a per-model
-      <b>Tools</b> dropdown (local only). Tools that change files, run commands, or alter git or
-      config state pause for your approval before they take effect; read-only tools run without
-      prompting.</p>
+      <code>progressive_tools</code>, default on) the model is advertised only a core set plus the
+      tools this session has activated; every other tool lives as a one-line entry in a deferred
+      index and loads on demand via <code>tool_search</code>. The same partition applies uniformly
+      to interactive chat, sub-agents, cron runs, and headless turns; there is no separate
+      full-catalogue path left when the flag is on. Tools that change files, run commands, or alter
+      git or config state pause for your approval before they take effect; read-only tools run
+      without prompting.</p>
 
     <h2 id="how-tools-work">How tools reach the model</h2>
-    <p>Tool definitions are part of the input the model reads before your message. But the
-      interactive chat loop no longer sends the whole catalogue every turn: with <b>progressive tool
-      disclosure</b> (<code>progressive_tools</code>, default on) only the core and
-      session-activated schemas are sent, while every deferred tool costs a single index line in the
-      cached system block (<code>build_deferred_index</code>) rather than a full schema. That cuts
-      roughly <b>60-75%</b> of tool-schema tokens per turn, and it applies to cloud Claude too. The
-      ~<b>8K-token</b> full catalogue now describes the non-progressive path (sub-agents and cron),
-      not an interactive cloud turn. For cloud Claude the schemas bill as input tokens (a cost
-      concern, not a speed one); for local Gemma there is no bill, but the extra tokens slow the
-      on-device prefill, which is why you can also shrink the set with the Tools dropdown.</p>
+    <p>Tool definitions are part of the input the model reads before your message. Advertising the
+      full catalogue (roughly 70-99 tool schemas) would cost about <b>15-25K tokens</b> of JSON per
+      turn, so with <b>progressive tool disclosure</b> (<code>progressive_tools</code>, default on)
+      only the core and session-activated schemas are sent, while every deferred tool costs a single
+      index line in the cached system block (<code>build_deferred_index</code>) rather than a full
+      schema. That cuts roughly <b>60-75%</b> of tool-schema tokens per turn. Sub-agents, cron runs,
+      and headless turns go through the same partition as interactive chat (sub-agents additionally
+      filter the pool by agent type). For cloud models the schemas bill as input tokens (a cost
+      concern, not a speed one); local models run through the same unified engine and get the same
+      partition, where fewer schema tokens also speed the on-device prefill. There is no per-model
+      Tools dropdown any more: a tool-capable local model always gets the full treatment, with
+      always-on thinking, a 32K context floor, and a per-turn CTX slider in the composer.</p>
     <p>Dispatch itself is a pure name-to-function mapping. Each executor is registered with safety
       metadata (<code>read_only</code>, <code>concurrent_safe</code>, <code>destructive</code>) that
       the tool loop uses to decide what can run in parallel and what must pause for consent. Defaults
@@ -48,17 +50,15 @@
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/><path d="M9 18h6M10 22h4"/></svg></span>
       <div class="callout__body"><p>Throughout the tables, a <span class="badge">★ Core</span> badge marks
-        a tool in the local <b>Core set</b> (about 11 tools) that the Tools dropdown keeps when you
-        trim the catalogue. This is distinct from the larger progressive-disclosure core set
-        (<code>CORE_TOOLS</code>, ~34 names in
-        <code class="path">server/chat/tool_partition.py</code>) that cloud Claude always advertises:
-        the two overlap but are not the same list. See <a href="#tools-dropdown">the Tools
-        dropdown</a> below.</p></div>
+        a tool in the progressive-disclosure <b>core set</b> (<code>CORE_TOOLS</code>, ~34 names in
+        <code class="path">server/chat/tool_partition.py</code>): always advertised, never deferred.
+        Unbadged tools appear only as one-line entries in the deferred index until
+        <code>tool_search</code> activates them for the session.</p></div>
     </div>
 
     <h2 id="approval-legend">Approval at a glance</h2>
     <p>Two badges appear in the tables. Read the <a href="arch-approval.html">Approval &amp;
-      permissions</a> page for the full nonce flow and per-tool rules.</p>
+      permissions</a> page for the full pause-and-resume flow and per-tool rules.</p>
     <div class="cols-2">
       <div class="card">
         <h3><span class="badge badge--muted">read</span> Runs freely</h3>
@@ -67,8 +67,8 @@
       </div>
       <div class="card">
         <h3><span class="badge">approval</span> Pauses for consent</h3>
-        <p>Tools that write files, run commands, or change git or config state issue a nonce, pause the
-          turn, and wait for you to confirm. The same gate applies to both Claude and Gemma.</p>
+        <p>Tools that write files, run commands, or change git or config state pause the turn on the
+          server and wait for you to confirm. The same gate applies to both Claude and Gemma.</p>
       </div>
     </div>
 
@@ -83,19 +83,45 @@
         <tr><td><code>ws_grep</code> <span class="badge">★ Core</span></td><td>Search file contents with a regex, powered by ripgrep.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>ws_glob</code> <span class="badge">★ Core</span></td><td>Find files by glob pattern, sorted by modification time (most recent first).</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>ws_list_directory</code> <span class="badge">★ Core</span></td><td>List files and directories in a workspace directory.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>workspace_semantic_search</code></td><td>Semantic search over the indexed workspace by meaning, not keywords. See <a href="arch-index.html">Index / GraphRAG</a>.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>workspace_semantic_search</code> <span class="badge">★ Core</span></td><td>Semantic search over the indexed workspace by meaning, not keywords. See <a href="arch-index.html">Index / GraphRAG</a>.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>workspace_graph_query</code></td><td>Look up typed relationships about a specific entity (person, organization, project) in the indexed knowledge graph, with a confidence and source citation for each fact. Prefer it over semantic search for direct relationship questions. Needs the workspace indexed with typed relations. See <a href="arch-index.html">Index / GraphRAG</a>.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>ws_edit_file</code> <span class="badge">★ Core</span></td><td>Edit an existing file by replacing a specific string.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ws_write_file</code> <span class="badge">★ Core</span></td><td>Overwrite or modify an existing file with full new content.</td><td><span class="badge">approval</span></td></tr>
-        <tr><td><code>ws_create_file</code></td><td>Create a new file.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>ws_create_file</code> <span class="badge">★ Core</span></td><td>Create a new file. With a workspace connected the path is workspace-relative; without one it follows the direct-save flow below (a <code>destination_path</code> resolved from your words, defaulting to <code class="path">~/Documents/&lt;filename&gt;</code>).</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>save_file</code></td><td>Save a one-off file (a report, an export, a generated document) directly to your disk in one call, plain text or base64 binary. Uses the direct-save flow below; <code>ws_create_file</code> remains the tool for files that belong in the connected workspace.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ws_delete_file</code></td><td>Delete a file.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ws_run_command</code> <span class="badge">★ Core</span></td><td>Run a shell command in the workspace directory. Sandboxed where it touches the shell.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ws_open_folder</code></td><td>Connect a specific folder as the workspace.</td><td><span class="badge">approval</span></td></tr>
-        <tr><td><code>ws_create_worktree</code></td><td>Create an isolated git worktree branch for multi-file changes.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>ws_create_worktree</code></td><td>Create an isolated task worktree for multi-file changes, under <code class="path">&lt;repo&gt;/.worktrees/&lt;name&gt;</code> on branch <code>whisper/&lt;name&gt;</code>.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>ws_diff_worktree</code></td><td>Show the diff between the worktree branch and the main branch.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>ws_merge_worktree</code></td><td>Merge a worktree branch back into the current branch.</td><td><span class="badge">approval</span></td></tr>
       </tbody>
     </table></div>
+
+    <h3 id="direct-save">The direct-save flow</h3>
+    <p><code>save_file</code>, <code>ws_create_file</code> (without a workspace), and the
+      <a href="#documents">document tools</a> never ask where to save. The destination is resolved
+      from your own words: "put it in Downloads" becomes
+      <code class="path">~/Downloads/&lt;filename&gt;</code> (a <code>~</code> path is allowed), and if
+      you named no location the file goes to <code class="path">~/Documents/&lt;filename&gt;</code>.
+      The content is built and <b>staged</b> inside the app sandbox
+      (<code class="path">server/workspace/paths.py</code>, <code>stage_file_bytes</code>) before the
+      approval card appears, so the card shows the exact final path; approving <b>moves</b> the staged
+      file there (the <code>save_to_path</code> action, its own <code>save</code> approval category).
+      Saved and created files render in the reply as clickable links that open with your OS default
+      app.</p>
+
+    <h3 id="session-worktrees">Session worktrees</h3>
+    <p>Separate from the <code>ws_*_worktree</code> task worktrees above, a chat session can be
+      pinned into its own worktree via the <code>enter_worktree</code> / <code>exit_worktree</code>
+      approval actions (approval category <code>worktree</code>; these are approval-card actions, not
+      tools). Entering creates or reuses
+      <code class="path">&lt;repo&gt;/.whisper/worktrees/&lt;slug&gt;</code> on branch
+      <code>worktree-&lt;slug&gt;</code> and persists across restarts
+      (<code class="path">server/git/worktree_session.py</code>); per-session cwd tracking prevents
+      collisions, and git itself allows a branch in only one worktree at a time. Worktree-isolated
+      sub-agents get a third variant: see <a href="#sub-agents">Sub-agents</a>.</p>
+
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
       <div class="callout__body"><p>Shell commands run through the OS sandbox and the server-side approval
@@ -103,8 +129,26 @@
         paths are refused. See <a href="arch-sandbox.html">Sandbox &amp; security</a>.</p></div>
     </div>
 
-    <h2 id="git">Git</h2>
-    <p>A full git surface, from status and history to branching, stashing, and opening a pull request.
+    <h2 id="documents">Documents</h2>
+    <p>Four tools that produce real Office and PDF files (genuine OOXML via macOS
+      <code>textutil</code>, python-pptx, and openpyxl; PDF via reportlab). They are always in the
+      catalogue, with or without a connected workspace, and follow the same staged
+      <a href="#direct-save">direct-save flow</a>. Every output uses the app's standard layout from
+      <code class="path">server/documents/standards.py</code>, and the extension is appended if the
+      filename lacks it. See <a href="tut-documents.html">the documents tutorial</a>.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>create_docx</code></td><td>Create a Word document from HTML content. Standard layout: A4 page, 1-inch margins, Calibri 11pt body with 16/13/12pt headings.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>create_pptx</code></td><td>Create a PowerPoint deck, one slide per entry with a title and bulleted body. Standard layout: 16:9 widescreen.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>create_xlsx</code></td><td>Create an Excel workbook, one worksheet per entry. Standard layout: bold frozen header row and fitted column widths.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>create_pdf</code></td><td>Create a simple PDF: an optional title plus plain-text paragraphs. Standard layout: A4 page, 11pt body.</td><td><span class="badge">approval</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="git">Git &amp; GitHub</h2>
+    <p>A full git surface, from status and history to branching, stashing, and opening a pull request,
+      plus a GitHub plane backed by the authenticated <code>gh</code> CLI.
       The read side (status, diff, log) runs freely; anything that mutates history or the remote asks
       first. See <a href="arch-git-lsp.html">Git integration &amp; LSP</a>.</p>
     <div class="table-wrap"><table>
@@ -126,8 +170,19 @@
         <tr><td><code>git_push</code></td><td>Push commits to the remote repository.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>git_push_pr</code></td><td>Push the current branch and open a GitHub pull request.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>git_clone</code></td><td>Clone a remote repository and, by default, open it as the workspace.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>github</code></td><td>Run a GitHub CLI (<code>gh</code>) subcommand through the server's authenticated <code>gh</code>: pr, issue, run, checks, release, repo, workflow, label, gist, project, and search. Reads run immediately; mutations show the exact command for approval.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>github_api</code></td><td>Read any GitHub REST or GraphQL resource (GET/HEAD only); <code>{owner}/{repo}</code> resolve to the connected workspace repo. Credential and secret endpoints are blocked.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>github_api_write</code></td><td>Mutate a GitHub resource via the raw REST/GraphQL API when no <code>gh</code> verb fits. Shows the request for approval, then verifies the result by re-reading the resource.</td><td><span class="badge">approval</span></td></tr>
       </tbody>
     </table></div>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
+      <div class="callout__body"><p>The GitHub tools appear only when the workspace is a git repo. Destructive
+        GitHub mutations (repo or ref deletion, PR merge, archive or rename, raw API DELETE) carry the
+        <code>github-destructive</code> approval category and <b>always ask</b>: no permission mode,
+        bypass, category override, or blanket session approval can cover them
+        (<code class="path">server/security/permissions.py</code>).</p></div>
+    </div>
 
     <h2 id="code-intelligence">Code intelligence (LSP)</h2>
     <p>A thin proxy over the language server for the files you have open. All three are read-only.</p>
@@ -141,9 +196,11 @@
     </table></div>
 
     <h2 id="web">Web</h2>
-    <p>Two tools for reaching the live internet, backed by Tavily. Both are read-only. See
+    <p>Two read-only tools for reaching the live internet. <code>web_search</code> is backed by
+      Tavily and needs a <code>TAVILY_API_KEY</code>; <code>web_fetch</code> fetches the URL directly
+      (with an SSRF guard against private addresses) and works without any key. See
       <a href="tut-research.html">Web research</a> for how to prompt for cited answers, and
-      <a href="ref-env.html">environment variables</a> for the <code>TAVILY_API_KEY</code> these need.</p>
+      <a href="ref-env.html">environment variables</a> for the key.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
@@ -155,19 +212,19 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20ZM2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20Z"/></svg></span>
       <div class="callout__body"><p>A page fetched by <code>web_fetch</code> is untrusted content. Its Markdown
         is sanitized through DOMPurify before it reaches the DOM, so a prompt-injected page cannot run
-        arbitrary JavaScript in the app origin. On the local Tools dropdown these two make up the
-        <b>Core + web</b> scope.</p></div>
+        arbitrary JavaScript in the app origin.</p></div>
     </div>
 
     <h2 id="memory">Memory</h2>
     <p>Read and write the workspace memory store, which the assistant injects into the system prompt on
-      later turns. See <a href="arch-memory.html">Memory system</a> and
+      later turns. These four are in the catalogue only while the <code>auto_memory</code> feature
+      flag is on (its default). See <a href="arch-memory.html">Memory system</a> and
       <a href="tut-memory.html">Memory &amp; WHISPER.md</a>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>memory_read</code> <span class="badge">★ Core</span></td><td>Read a memory file from the workspace memory store.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>memory_write</code> <span class="badge">★ Core</span></td><td>Write a memory file, creating or overwriting it.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>memory_read</code></td><td>Read a memory file from the workspace memory store.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>memory_write</code></td><td>Write a memory file, creating or overwriting it.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>memory_list</code></td><td>List all memory files with their type and metadata.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>memory_delete</code></td><td>Delete a memory file from the store.</td><td><span class="badge">approval</span></td></tr>
       </tbody>
@@ -184,13 +241,13 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>task_create</code></td><td>Create a task to track a step in a multi-step workflow.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>task_update</code></td><td>Update a task's status (in_progress, completed).</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>task_list</code></td><td>List all tasks in the session to review progress.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>task_get</code></td><td>Get full details of a specific task by its ID.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>task_stop</code></td><td>Cancel and remove a task that is no longer needed.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>task_status</code></td><td>Check background tasks (shell commands, detached agents, or workflow/CI runs, not the todo list). No id lists them; with an id, full status.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>task_output</code></td><td>Read a background task's output tail (shell output or an agent task's progress log).</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_create</code> <span class="badge">★ Core</span></td><td>Create a task to track a step in a multi-step workflow.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_update</code> <span class="badge">★ Core</span></td><td>Update a task's status (in_progress, completed).</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_list</code> <span class="badge">★ Core</span></td><td>List all tasks in the session to review progress.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_get</code> <span class="badge">★ Core</span></td><td>Get full details of a specific task by its ID.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_stop</code> <span class="badge">★ Core</span></td><td>Cancel and remove a task that is no longer needed.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_status</code> <span class="badge">★ Core</span></td><td>Check background tasks (shell commands, detached agents, or workflow/CI runs, not the todo list). No id lists them; with an id, full status.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>task_output</code> <span class="badge">★ Core</span></td><td>Read a background task's output tail (shell output or an agent task's progress log).</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>task_cancel</code></td><td>Stop a running background task. Mutating, and distinct from the todo tracker's <code>task_stop</code>.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>cron_create</code></td><td>Schedule a recurring or one-time task that runs a prompt on a schedule.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>cron_list</code></td><td>List all scheduled cron jobs with their schedules and next run.</td><td><span class="badge badge--muted">read</span></td></tr>
@@ -206,16 +263,23 @@
 
     <h2 id="sub-agents">Sub-agents</h2>
     <p>The assistant can delegate work to independent agents, each running its own full tool loop, and
-      coordinate them as a team. Agent types range from a read-only <code>explore</code> to a
-      test-running <code>verify</code>. See <a href="arch-agents.html">Sub-agents &amp; the event
+      coordinate them as a team. The built-in agent types are <code>general</code> (full tool
+      access), <code>explore</code> (read-only, fast model), <code>plan</code> (read-only,
+      structured plans), <code>verify</code> (runs tests, returns a PASS/FAIL/PARTIAL verdict), and
+      <code>coordinator</code> (orchestrates other agents, no direct file access). Any custom type
+      saved under <code class="path">.whisper/agents/&lt;name&gt;.md</code> also works as
+      <code>agent_type</code>. See <a href="arch-agents.html">Sub-agents &amp; the event
       bus</a> and <a href="tut-subagents.html">the sub-agents tutorial</a>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>spawn_agent</code></td><td>Spawn one independent agent to handle a subtask with full tool access.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>spawn_agent</code> <span class="badge">★ Core</span></td><td>Spawn one independent agent to handle a subtask. Options: <code>agent_type</code> (built-in or custom), <code>agent_definition</code> (define an ephemeral type inline), <code>detach</code>, and <code>isolation</code>.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>promote_agent_type</code></td><td>Save an ephemeral agent type used earlier this session as a persistent custom type at <code class="path">.whisper/agents/&lt;name&gt;.md</code> (project scope) or user-wide.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>list_agents</code></td><td>List active agents in the session with their IDs, types, and status.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>send_message</code></td><td>Send a message to another agent by ID, or broadcast to all agents.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>team_create</code></td><td>Create a named team of parallel agents for a complex, multi-part task.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>list_sessions</code></td><td>List your other chat sessions (separate conversations, not agents) with IDs and titles.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>send_session_message</code></td><td>Send a short text message to another chat session found via <code>list_sessions</code>; never history or files, just the text.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>team_create</code> <span class="badge">★ Core</span></td><td>Create a named team of parallel agents for a complex, multi-part task.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>team_delete</code></td><td>Disband a team and clean up its resources.</td><td><span class="badge badge--muted">read</span></td></tr>
       </tbody>
     </table></div>
@@ -223,6 +287,19 @@
       self-contained: the agent sees none of the parent conversation, so restate the objective, scope,
       constraints, and expected output. A spawned agent inherits the session-selected model rather than
       an agent-type default.</p>
+    <p>Three <code>spawn_agent</code> options deserve detail. <code>agent_definition</code> defines a
+      new type inline (name, description, system prompt, optional tool whitelist) when no registered
+      type fits; it goes through the same write-tool safety filtering as any other type, and when
+      neither <code>tools</code> nor <code>read_only</code> is given it defaults to a <b>read-only</b>
+      tool pool, since nobody reviews the definition before it runs. A good ephemeral type can then be
+      kept with <code>promote_agent_type</code>. <code>detach: true</code> returns a
+      <code>task_id</code> immediately instead of blocking the turn (poll with
+      <code>task_status</code>/<code>task_output</code>); detached agents run read-only unless
+      isolated. <code>isolation: 'worktree'</code> gives the agent its own git worktree so parallel
+      agents can write without colliding; when it completes, clean changes are applied
+      <b>uncommitted</b> back to the originating branch's working tree and the worktree is removed
+      (<code class="path">server/git/worktree_harvest.py</code>), while a conflicted or failed run
+      keeps the worktree and says where it is.</p>
 
     <h2 id="skills-notebooks-mcp">Skills, notebooks &amp; MCP</h2>
     <p>Delegate to a named skill, edit Jupyter notebooks cell by cell, or read resources from connected
@@ -231,17 +308,28 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>skill_list</code></td><td>List all available Whisper skills with names and descriptions.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>skill_invoke</code></td><td>Invoke a named skill as a tool call, passing an input.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>skill_list</code> <span class="badge">★ Core</span></td><td>List all available Whisper skills with names and descriptions.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>skill_invoke</code> <span class="badge">★ Core</span></td><td>Invoke a named skill as a tool call, passing an input.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>notebook_read</code></td><td>Read a Jupyter notebook (.ipynb) and return all cells with their type and output.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>notebook_edit</code></td><td>Edit a cell in a Jupyter notebook.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>list_mcp_resources</code></td><td>List available resources from all connected MCP servers.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>read_mcp_resource</code></td><td>Read the content of a specific MCP resource by server name and URI.</td><td><span class="badge badge--muted">read</span></td></tr>
       </tbody>
     </table></div>
+    <p>MCP servers themselves come in two transports (<code class="path">server/mcp.py</code>): local
+      servers spawned as stdio child processes, and <b>remote HTTP servers</b> reached over streamable
+      HTTP (a <code>url</code> plus an optional bearer token read from an environment variable named
+      by <code>bearer_token_env_var</code>, never stored raw in config). Each server also carries its
+      own trust settings: a per-server <code>approval_mode</code>, where <code>"approve"</code> is a
+      hard approval floor that no bypass mode, trusted skill, or session approval can skip, and
+      per-server <code>enabled_tools</code> / <code>disabled_tools</code> allow/deny lists
+      (<code>disabled_tools</code> wins on overlap). When an MCP server asks the human for input
+      mid-call (an <b>elicitation</b>), the question is surfaced through the approval pipeline
+      (category <code>mcp-elicit</code>) rather than answered silently. See
+      <a href="ref-settings.html#mcp-fields">the per-server MCP fields</a>.</p>
 
     <h2 id="builtin-tools">Built-in core tools</h2>
-    <p>These ship as native tools — schemas in code next to their executors
+    <p>These ship as native tools, schemas in code next to their executors
       (<code class="path">server/executors/tools.py</code> and <code class="path">server/prompt_tools/</code>),
       always in the pool, and never listed or editable in the Skills panel:</p>
     <ul>
@@ -262,7 +350,7 @@
     <p>Beyond <code>skill_invoke</code>, every skill installed under <code class="path">skills/</code> is
       <em>also</em> advertised to the model as its own top-level tool, named after the skill (dashes become
       underscores), described by its own frontmatter. The model picks a skill the same way it picks any
-      tool — from that description and the skill's triggers; nothing in the app hardcodes when a skill
+      tool, from that description and the skill's triggers; nothing in the app hardcodes when a skill
       should be used. See <a href="tut-skills.html">Skills</a> for the bundled examples and how to add
       your own.</p>
     <div class="callout">
@@ -281,12 +369,13 @@
       <tbody>
         <tr><td><code>config_get</code></td><td>Read one or more Whisper Studio config values (empty = list all, with secrets masked).</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>config_set</code></td><td>Write config values. Only known keys are accepted (for example <code>bedrock_region</code>, <code>default_chat_model</code>, <code>permission_mode</code>).</td><td><span class="badge">approval</span></td></tr>
-        <tr><td><code>ask_user_question</code></td><td>Ask you a multiple-choice question and pause the turn for the answer.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>notify_user</code></td><td>Send a proactive, formatted message card (task done, a blocker, a finding).</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ask_user_question</code> <span class="badge">★ Core</span></td><td>Ask you a multiple-choice question and pause the turn for the answer.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>notify_user</code> <span class="badge">★ Core</span></td><td>Send a proactive, formatted message card (task done, a blocker, a finding).</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>create_artifact</code></td><td>Render a self-contained artifact as an inline card in chat (live preview plus download).</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>create_plan</code></td><td>Save a detailed plan as a document that opens in the side pane; the chat sees only a one-line summary. Used when you ask for a plan or the assistant is in plan mode.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>tool_search</code></td><td>Search the available tools by keyword to find the right one.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>sleep</code></td><td>Wait for a number of seconds, for example while a background process runs.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>read_cached_result</code> <span class="badge">★ Core</span></td><td>Read back the full, untruncated output of an earlier tool call from the result cache; the truncation note names the cache file, and offset/limit page through it.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>tool_search</code> <span class="badge">★ Core</span></td><td>Search the full tool catalogue, including deferred tools; matches are activated for the session and callable from the next round. Never deferred itself: it is the way back to everything else.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>sleep</code> <span class="badge">★ Core</span></td><td>Wait for a number of seconds, for example while a background process runs.</td><td><span class="badge badge--muted">read</span></td></tr>
       </tbody>
     </table></div>
 
@@ -318,20 +407,21 @@
     <h2 id="workflows-ci">Workflows &amp; CI (ultracode)</h2>
     <p>In ultracode mode the assistant gains a deterministic workflow runtime and a CI watch/autofix
       surface. These tools appear in the catalogue only when ultracode is active
-      (<code>assemble_full_catalog(ultracode=True)</code>), so you will not see them in other modes.
+      (<code>assemble_full_catalog(ultracode=True)</code>), so you will not see them in other modes;
+      when present they are all in the core set, never deferred behind <code>tool_search</code>.
       <code>workflow_run</code> and <code>ci_autofix</code> return an approval preview card: the
       generated workflow runs only after you approve it. See
       <a href="arch-ultracode.html">Ultracode workflow runtime</a>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>workflow_run</code></td><td>Launch a deterministic multi-agent workflow from a JS orchestration script (or a saved workflow by name). A new script is shown for approval before it runs; runs detached from the turn.</td><td><span class="badge">approval</span></td></tr>
-        <tr><td><code>workflow_status</code></td><td>Get a run's status, phase/agent journal tail, and spend. Omit the run id to list this session's runs.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>workflow_save</code></td><td>Save a named, reusable workflow script. Stored untrusted until you approve it in the Workflows panel.</td><td><span class="badge">approval</span></td></tr>
-        <tr><td><code>workflow_list</code></td><td>List saved workflows and this session's recent runs.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>ci_watch</code></td><td>Watch a branch's latest GitHub Actions run to its conclusion, detached from the turn; a live card updates as jobs finish. Defaults to the current branch.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>ci_status</code></td><td>Get the latest CI run and any failed jobs for a branch. One-shot, no watching.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>ci_autofix</code></td><td>Diagnose a branch's failing CI and propose a fix as an approvable workflow that applies minimal fixes then runs the verification gate. Shown for approval before it edits anything.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>workflow_run</code> <span class="badge">★ Core</span></td><td>Launch a deterministic multi-agent workflow from a JS orchestration script (or a saved workflow by name). A new script is shown for approval before it runs; runs detached from the turn.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>workflow_status</code> <span class="badge">★ Core</span></td><td>Get a run's status, phase/agent journal tail, and spend. Omit the run id to list this session's runs.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>workflow_save</code> <span class="badge">★ Core</span></td><td>Save a named, reusable workflow script. Stored untrusted until you approve it in the Workflows panel.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>workflow_list</code> <span class="badge">★ Core</span></td><td>List saved workflows and this session's recent runs.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ci_watch</code> <span class="badge">★ Core</span></td><td>Watch a branch's latest GitHub Actions run to its conclusion, detached from the turn; a live card updates as jobs finish. Defaults to the current branch.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ci_status</code> <span class="badge">★ Core</span></td><td>Get the latest CI run and any failed jobs for a branch. One-shot, no watching.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>ci_autofix</code> <span class="badge">★ Core</span></td><td>Diagnose a branch's failing CI and propose a fix as an approvable workflow that applies minimal fixes then runs the verification gate. Shown for approval before it edits anything.</td><td><span class="badge">approval</span></td></tr>
       </tbody>
     </table></div>
     <div class="callout">
@@ -341,29 +431,15 @@
         it is documented in <a href="ref-slash-commands.html">Slash commands</a>, not here.</p></div>
     </div>
 
-    <h2 id="tools-dropdown">The Tools dropdown (local models)</h2>
-    <p>Cloud Claude is trimmed automatically by progressive disclosure (core plus session-activated
-      tools), not by this dropdown. For on-device Gemma, the per-model <b>Tools</b> dropdown lets you
-      shrink the catalogue further so fewer schema tokens slow the prefill. The dropdown itself has
-      no effect on cloud models.</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Scope</th><th>Tools declared</th><th>Use when</th></tr></thead>
-      <tbody>
-        <tr><td><b>Off</b></td><td>None</td><td>Plain chat, fastest prefill.</td></tr>
-        <tr><td><b>Core set</b></td><td>The <span class="badge">★ Core</span> tools (about 11)</td><td>Everyday file, code, and git work.</td></tr>
-        <tr><td><b>Core + web</b></td><td>Core set plus <code>web_search</code> and <code>web_fetch</code></td><td>Core work plus internet lookups.</td></tr>
-        <tr><td><b>All tools</b></td><td>Everything on this page</td><td>Full capability (heaviest, slowest prompt).</td></tr>
-      </tbody>
-    </table></div>
-    <p>See <a href="tut-model-modes.html">Model modes</a> for how local, hybrid, and cloud selection
-      interact with this dropdown, and <a href="arch-backends.html">Model backends &amp; modes</a> for
-      the routing underneath.</p>
-
     <h2 id="key-files">Where these live</h2>
     <div class="spec">
+      <dt><code class="path">server/chat/tool_pool.py</code> / <code class="path">server/chat/tool_partition.py</code></dt><dd>Catalogue assembly (<code>assemble_full_catalog</code>) and the core/deferred partition (<code>CORE_TOOLS</code>, <code>partition_pool</code>).</dd>
       <dt><code class="path">server/agent_tools/</code></dt><dd>Config, skills, MCP, tool-search, and the agent and team tool schemas.</dd>
-      <dt><code class="path">server/workspace/tools.py</code></dt><dd>The <code>ws_*</code> workspace and file tools.</dd>
+      <dt><code class="path">server/workspace/tools.py</code></dt><dd>The <code>ws_*</code> workspace and file tools, plus <code>save_file</code>.</dd>
+      <dt><code class="path">server/documents/tools.py</code></dt><dd>The <code>create_docx</code> / <code>create_pptx</code> / <code>create_xlsx</code> / <code>create_pdf</code> document tools.</dd>
       <dt><code class="path">server/git/tools.py</code></dt><dd>The <code>git_*</code> tool schemas.</dd>
+      <dt><code class="path">server/git/gh_tools.py</code></dt><dd>The <code>github</code>, <code>github_api</code>, and <code>github_api_write</code> tools.</dd>
+      <dt><code class="path">server/executors/tools.py</code></dt><dd><code>CORE_EXECUTOR_TOOLS</code>: command, code, AWS, web, and content tools shipped as native built-ins.</dd>
       <dt><code class="path">server/memory/tools.py</code></dt><dd>The <code>memory_*</code> tools.</dd>
       <dt><code class="path">server/preview/tools.py</code></dt><dd>The <code>preview_*</code> dev-server and browser tools.</dd>
       <dt><code class="path">server/executors/__init__.py</code></dt><dd>The executor registry and per-tool safety metadata (<code>read_only</code>, <code>concurrent_safe</code>, <code>destructive</code>).</dd>

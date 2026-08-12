@@ -16,7 +16,7 @@
   <main class="doc" data-page="tut-goals">
     <h1>Goals &amp; autopilot</h1>
     <p class="subtitle">Most of the time you just type a message. But when a task has many steps and you
-      want Whisper Studio to keep going until it's <em>genuinely done</em> — not stop halfway — you give it
+      want Whisper Studio to keep going until it's <em>genuinely done</em>, not stop halfway, you give it
       a goal. This page shows you which to reach for, and how to set a goal so it runs to completion.</p>
 
     <p>There is no mode to switch and nothing to configure. You decide how much autopilot a task deserves
@@ -26,12 +26,12 @@
 
     <figure class="diagram-figure wide">
       <div id="goals-tut-diagram" class="diagram"></div>
-      <figcaption>The same task, three ways to ask. A goal loops through the completion gate — the model
+      <figcaption>The same task, three ways to ask. A goal loops through the completion gate: the model
         keeps working and re-checking until the goal is achieved (or a cap stops it).</figcaption>
     </figure>
 
     <h2 id="three-ways">Three ways to ask</h2>
-    <p>They are not different products — they are how much you want Whisper to push on its own before it
+    <p>They are not different products; they are how much you want Whisper to push on its own before it
       stops and hands back to you.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Reach for</th><th>When</th><th>How</th></tr></thead>
@@ -39,12 +39,12 @@
         <tr>
           <td><b>A plain prompt</b></td>
           <td>A question, or a small, well-scoped change. One turn or a short tool loop is enough. This is
-            the default — don't over-reach.</td>
+            the default; don't over-reach.</td>
           <td>Just type and press <kbd>Enter</kbd>. See <a href="tut-first-chat.html">Your first chat</a>.</td>
         </tr>
         <tr>
           <td><b>A goal</b></td>
-          <td>A multi-step task you want run to completion — "keep going until this actually works" — where
+          <td>A multi-step task you want run to completion ("keep going until this actually works") where
             the model might otherwise stop as soon as it has done <em>something</em>.</td>
           <td><code>/goal &lt;text&gt;</code>. A completion gate checks each turn and continues until the goal
             is met (capped). See below.</td>
@@ -79,14 +79,14 @@
       </li>
       <li>
         <h4>Give it the first instruction</h4>
-        <p>Then prompt as normal — "start on the failing test" — or just say "go". The goal is context for
+        <p>Then prompt as normal ("start on the failing test") or just say "go". The goal is context for
           every turn, not a replacement for your first message.</p>
       </li>
       <li>
         <h4>It keeps going until it's done</h4>
         <p>When the model stops, the <a href="arch-goals.html">completion gate</a> runs a quick check
           instead of ending the turn: a cheap evaluator (and any <a href="arch-hooks.html">Stop hooks</a>)
-          decide whether the goal is achieved. If not, it feeds back what's missing and the turn continues —
+          decide whether the goal is achieved. If not, it feeds back what's missing and the turn continues,
           so you don't have to keep typing "keep going".</p>
       </li>
       <li>
@@ -100,36 +100,36 @@
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
       <div class="callout__body"><p>Goals shine when "done" is <em>checkable</em>. "Make the build pass" or
-        "all tests green" gives the evaluator a real signal — the <code>verify-change</code> skill runs the
+        "all tests green" gives the evaluator a real signal: the <code>verify-change</code> skill runs the
         actual gate and reports <code>VERIFY PASS</code> / <code>VERIFY FAIL</code>, which the evaluator
         weighs above any confident-sounding summary. Phrase your goal as an outcome it can verify.</p></div>
     </div>
 
     <h2 id="full-stack">Full-stack &amp; UI work</h2>
     <p>This is where a goal earns its keep. For a change that touches the interface, "verify" isn't just
-      running tests — Whisper <b>drives a live browser preview</b> on its own: it starts your dev server,
+      running tests. Whisper <b>drives a live browser preview</b> on its own: it starts your dev server,
       loads the changed page, reads the console for errors, clicks through the changed flow, and takes a
       screenshot, then decides pass or fail. And because a goal isn't "done" until that passes, it keeps
-      re-checking the page and fixing until the UI actually renders and behaves — you never have to say "now
-      check it in the browser".</p>
+      re-checking the page and fixing until the UI actually renders and behaves, so you never have to say
+      "now check it in the browser".</p>
     <p>So phrase a UI goal as something it can see: <em>"the login form submits and shows the dashboard"</em>
       or <em>"the settings toggle persists after a reload"</em>, not "make the form nicer". You'll want the
       <a href="tut-permissions.html">permission mode</a> set the way you like first, since a goal may run for
-      several turns editing and reloading. The mechanics — and the two caveats (the browser tooling has to be
-      installed, and parallel UI checks each spin their own dev server) — are in
+      several turns editing and reloading. The mechanics, plus the two caveats (the browser tooling has to be
+      installed, and parallel UI checks each spin their own dev server), are in
       <a href="arch-preview.html#verify-loop">Verifying the UI in the loop</a>.</p>
 
     <h2 id="when-not">When a goal is overkill</h2>
     <p>Don't set a goal for a plain question or a one-line edit. A goal adds a small evaluator check at the
       end of each turn, which is wasted effort when there was never any doubt the task was done. Keep goals
-      for genuinely multi-step, "run until it holds up" work. And you can always steer mid-goal — your next
+      for genuinely multi-step, "run until it holds up" work. And you can always steer mid-goal: your next
       message is still just a message; the goal is the backdrop, not a cage.</p>
 
     <h2 id="scale-up">Scaling past one worker</h2>
     <p>A goal keeps <em>one</em> line of work going. When the work is naturally parallel, two other tools
       take over:</p>
     <div class="cols-2">
-      <a class="card card--link" href="tut-subagents.html"><h3>Sub-agents &amp; teams</h3><p>Spin off a background helper with <code>/subagent</code>, or let Whisper run a small team — each with its own tool loop.</p></a>
+      <a class="card card--link" href="tut-subagents.html"><h3>Sub-agents &amp; teams</h3><p>Spin off a background helper with <code>/subagent</code>, or let Whisper run a small team, each with its own tool loop.</p></a>
       <a class="card card--link" href="arch-ultracode.html"><h3>Ultracode workflows</h3><p>For wide or adversarial work, the model writes a deterministic script that fans out many subagents under a budget, and you approve it before it runs.</p></a>
     </div>
 
@@ -138,7 +138,7 @@
       parallel scale. From here:</p>
     <div class="card-grid">
       <a class="card card--link" href="arch-goals.html"><h3>How the gate works</h3><p>The two-phase completion gate, the evaluator, and the cap, in detail.</p><span class="card__meta">The goal loop →</span></a>
-      <a class="card card--link" href="tut-permissions.html"><h3>Control what it can do</h3><p>The Mode dial and approval cards — worth setting before you let a goal run for a while.</p><span class="card__meta">Permissions &amp; approvals →</span></a>
+      <a class="card card--link" href="tut-permissions.html"><h3>Control what it can do</h3><p>The Mode dial and approval cards, worth setting before you let a goal run for a while.</p><span class="card__meta">Permissions &amp; approvals →</span></a>
       <a class="card card--link" href="tut-cron.html"><h3>Put it on a schedule</h3><p>Run a prompt (verified against its own goal) on a wall-clock schedule.</p><span class="card__meta">Scheduled tasks →</span></a>
     </div>
 

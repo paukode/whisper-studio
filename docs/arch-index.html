@@ -37,15 +37,17 @@
 
     <h2 id="the-build-flow">The build flow</h2>
     <p><code>build(ws_path)</code> is serialized per workspace with a lock, so a user-triggered build
-      and the daily scheduled refresh can never race the same SQLite index. It walks the tree, decides
+      and the scheduled refresh (per workspace and configurable: daily, every N days, or off) can
+      never race the same SQLite index. It walks the tree, decides
       what changed, extracts and chunks each changed file, embeds it, extracts entities, optionally
       extracts typed relations, and writes everything atomically per file.</p>
 
     <h3 id="change-detection">Walk and change detection</h3>
-    <p>The walker in <code>_iter_files</code> skips anything not worth indexing:
-      <code>.git</code>, <code>node_modules</code>, <code>venv</code> / <code>.venv</code>,
-      <code>__pycache__</code>, <code>dist</code>, <code>build</code>, <code>.next</code>,
-      <code>models</code>, and any dot-directory. For each remaining file the pipeline runs a two-stage
+    <p>The walker in <code>_iter_files</code> skips anything not worth indexing: VCS directories,
+      dependency trees (<code>node_modules</code>, <code>venv</code> / <code>.venv</code>), build
+      output (<code>dist</code>, <code>build</code>, <code>target</code>, <code>.next</code>),
+      caches (<code>__pycache__</code> and friends), <code>models</code>, and any dot-directory.
+      For each remaining file the pipeline runs a two-stage
       change gate so a re-index is cheap:</p>
     <ol class="steps">
       <li><h4>Size + mtime gate</h4><p>If the recorded size and modification time both match the
@@ -76,7 +78,7 @@
       </tbody>
     </table></div>
     <p>A file that yields no usable text still records an empty (zero-chunk) manifest entry, so the next
-      daily refresh skips it via the cheap gate instead of re-OCR-ing it forever.</p>
+      scheduled refresh skips it via the cheap gate instead of re-OCR-ing it forever.</p>
 
     <h3 id="chunking">Chunking</h3>
     <p><code>chunk_text</code> (<code class="path">server/index/chunker.py</code>) splits text into
@@ -121,8 +123,11 @@
     <div class="cols-2">
       <div class="card">
         <h3>Entities (NER)</h3>
-        <p><b>GLiNER</b> (zero-shot, local) returns the spans it believes match at a 0.5 confidence
-          threshold; a workspace can opt into the heavier <b>GLiNER2</b> model instead from the Index
+        <p><b>GLiNER</b> (zero-shot, local) is called at a deliberately low threshold
+          (<code>GLINER_CALL_THRESHOLD</code>, 0.35) and its spans are then accepted against
+          per-label floors (<code>LABEL_THRESHOLDS</code>: 0.55 for people and organizations up to
+          0.65 for metrics, locations, and events), after a salience pre-filter drops hard junk; a
+          workspace can opt into the heavier <b>GLiNER2</b> model instead from the Index
           settings panel. In cloud mode, <b>Claude Haiku</b> extracts entities instead. The label set
           is no longer fixed: an entity-type profile (business vs code) is auto-picked per file from
           its extension, so a CV and a source file are asked for different kinds of entity. Names are
@@ -187,15 +192,21 @@
     <ol class="steps">
       <li><h4>Global dense ranking</h4><p>Cosine is comparable across indexes, so dense matches from
         every index are ranked together in one list rather than by per-index rank.</p></li>
-      <li><h4>Reciprocal-rank fusion</h4><p>The dense and keyword lists (and, for a follow-up, a
-        conversation-contextualized query) are fused by reciprocal rank, so a keyword or filename hit
-        with near-zero cosine is promoted in instead of being lost under the score floor.</p></li>
+      <li><h4>Reciprocal-rank fusion</h4><p>Up to three legs per query are fused by reciprocal rank:
+        the dense list, the keyword (BM25) list, and an entity leg of entity-anchored hits; the same
+        fusion then runs across the original and a conversation-contextualized query. This is how a
+        keyword or filename hit with near-zero cosine is promoted in instead of being lost under the
+        score floor.</p></li>
       <li><h4>Optional rerank</h4><p>Behind the <code>rag_reranker</code> flag, a cross-encoder
         rescores the top candidates by judging each (question, passage) pair directly. On device this
         is <b>Qwen3-Reranker</b> (P("yes") from the final-token logits); in cloud mode it is Cohere
         Rerank on Bedrock. Best-effort: failure keeps the fused order.</p></li>
       <li><h4>Dedup, cap, floor</h4><p>Byte-identical passages collapse, each document contributes at
-        most 3 chunks, and matches below a 0.15 cosine floor are dropped as noise.</p></li>
+        most 3 chunks, and low-cosine matches are dropped as noise. The floor is per embed backend
+        (<code>GROUND_SCORE_FLOORS</code>: 0.15 for Qwen3, 0.10 for Cohere), and the effective floor
+        is the larger of that and a relative guard, <code>GROUND_REL_FLOOR</code> (0.55) times the
+        top score, which adapts to each query's score spread. Keyword and entity hits are exempt from
+        the floor by design.</p></li>
       <li><h4>Auto-merge</h4><p>Parent-document retrieval: once a small, focused file has a chunk in
         the top matches, its remaining chunks are spliced in (bounded by a budget, and never for a
         large document like a book), so a CV's full history grounds the answer rather than just its
@@ -226,12 +237,15 @@
       <thead><tr><th>Endpoint</th><th>Purpose</th></tr></thead>
       <tbody>
         <tr><td><code>GET /status</code></td><td>Index stats for a workspace: files, chunks, nodes, last-indexed time, embed model.</td></tr>
-        <tr><td><code>POST /build</code></td><td>Start (or refresh) a build; streams progress.</td></tr>
+        <tr><td><code>POST /build</code></td><td>Start (or refresh) a build in the background; returns <code>{"started": true}</code> (or <code>false</code> when one is already running). Progress (done / total / current file) is polled via <code>GET /status</code>.</td></tr>
         <tr><td><code>POST /cancel</code></td><td>Ask an in-progress build to stop after the current file.</td></tr>
         <tr><td><code>GET /list</code></td><td>Every workspace that currently has an index on disk.</td></tr>
         <tr><td><code>POST /remove</code></td><td>Delete a workspace's entire on-disk index.</td></tr>
         <tr><td><code>GET /graph</code>, <code>/graph/entity</code>, <code>/graph/umap</code></td><td>Derived views for the entity-graph and semantic-map UI.</td></tr>
-        <tr><td><code>GET</code> / <code>PUT /settings</code></td><td>Per-workspace typed-relations, descriptions, and chunk-context settings.</td></tr>
+        <tr><td><code>GET /graph/all</code>, <code>/graph/umap/all</code></td><td>The all-workspace variants of the graph and semantic-map views.</td></tr>
+        <tr><td><code>GET /engines</code></td><td>Which embed / NER / rerank engines the current model mode resolves to.</td></tr>
+        <tr><td><code>GET /agent</code></td><td>Status of the background refresh helper (macOS).</td></tr>
+        <tr><td><code>GET</code> / <code>PUT /settings</code></td><td>Per-workspace settings: the refresh schedule (daily / every N days / off), <code>ner_model</code> (<code>gliner</code> or <code>gliner2</code>), typed relations (engine <code>none</code> / <code>haiku</code> / <code>local</code> / <code>gliner2</code>), entity descriptions, and chunk context (mode <code>off</code> / <code>filename</code> / <code>llm</code>, engine <code>haiku</code> or <code>local</code>).</td></tr>
       </tbody>
     </table></div>
 

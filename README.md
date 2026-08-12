@@ -5,11 +5,11 @@ chat client to Claude (via Amazon Bedrock), and a full development
 environment — file tree, Monaco editor, integrated terminal, Git,
 LSP — in a single browser tab served by a single local process.
 
-![Whisper Studio: chat, editor and terminal in one window](docs/assets/img/hero.png)
+![Whisper Studio Mac app on first launch, ready to record or chat](docs/assets/img/hero.png)
 
-*Chat, editor and terminal in a single tab. The answer above was generated
-on-device — note the `$0.0000` turn cost and the `Gemma 4 12B (Local)` model
-chip.*
+*The Mac app on first launch. Chat, live transcription, and a full
+development environment (file tree, Monaco editor, terminal, Git, LSP) live
+behind that one composer.*
 
 > **Transcription runs entirely on your machine.** The speech model
 > loads into memory on first record and runs locally on CPU/GPU. Audio
@@ -73,7 +73,12 @@ More screenshots, one per feature, are in the
 
 ## Quick start
 
-If you already have Python 3.10+, Homebrew, Git, and the AWS CLI configured:
+**Mac app (recommended, Apple Silicon, macOS 14+):** download the latest DMG
+from the **[Releases page](https://github.com/paukode/whisper-studio/releases)**,
+drag it into Applications, then right-click and choose Open on first launch
+(the build is not notarized). No Homebrew, Python, or cloning required.
+
+**From source**, if you already have Python 3.10+, Homebrew, Git, and the AWS CLI configured:
 
 ```sh
 git clone https://github.com/paukode/whisper-studio.git

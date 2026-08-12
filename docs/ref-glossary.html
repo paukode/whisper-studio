@@ -33,6 +33,15 @@
       <thead><tr><th>Term</th><th>Definition</th></tr></thead>
       <tbody>
         <tr>
+          <td>approval pause</td>
+          <td>The server-side hold on a turn that needs consent. When a tool needs approval, the engine
+            stashes the in-flight turn in <code>paused_sessions</code> and only resumes it once the
+            client posts back the registered action tied to that tool call's <code>tool_use_id</code>;
+            the executor re-validates the payload itself at execute time rather than trusting anything
+            the client asserts. This is why command approval is a real boundary and not
+            client-asserted. See <a href="arch-approval.html">Approval &amp; permissions</a>.</td>
+        </tr>
+        <tr>
           <td><code>ASR</code></td>
           <td>Automatic Speech Recognition. The task of turning audio into text. Whisper Studio runs ASR
             entirely on-device (Whisper or Parakeet) in every model mode, so audio never leaves your
@@ -82,6 +91,16 @@
       <thead><tr><th>Term</th><th>Definition</th></tr></thead>
       <tbody>
         <tr>
+          <td><code>destination_path</code></td>
+          <td>The parameter that resolves where a direct-saved file lands, taken from your own words
+            rather than asked for: "put it in Downloads" becomes
+            <code class="path">~/Downloads/&lt;filename&gt;</code> (a <code>~</code> path is allowed);
+            naming no location falls back to <code class="path">~/Documents/&lt;filename&gt;</code>.
+            Used by <code>save_file</code>, <code>ws_create_file</code> without a workspace, and the
+            document tools. See the <b>staging area</b> entry and
+            <a href="ref-tools.html#direct-save">The direct-save flow</a>.</td>
+        </tr>
+        <tr>
           <td>detached / worktree agent</td>
           <td>An agent started in the background rather than inline. <code>spawn_agent</code> with
             <code>detach: true</code> returns a <code>task_id</code> at once (read-only by default) so
@@ -96,6 +115,13 @@
             embeddings plus voice-activity detection, and remembers speakers per session across
             reconnects so you can rename them once. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+        </tr>
+        <tr>
+          <td>Discover / memory-fit</td>
+          <td>The model browser under Settings &gt; Models &gt; Discover. The app ships with no local
+            model installed by default; Discover lists recommended on-device models you can install,
+            each graded by whether it actually fits your device's memory before you download it. See
+            <a href="ref-settings.html#fields">Settings &amp; config keys</a>.</td>
         </tr>
         <tr>
           <td><code>DOMPurify</code></td>
@@ -115,6 +141,13 @@
             <a href="arch-ultracode.html">The ultracode workflow runtime</a>.</td>
         </tr>
         <tr>
+          <td>elicitation</td>
+          <td>A mid-call question a connected MCP server asks the human directly, rather than answering
+            itself. Whisper Studio never lets a server ask silently: an elicitation is surfaced through
+            the approval pipeline under its own category, <code>mcp-elicit</code>. See
+            <a href="ref-security.html#mcp-trust">Security model</a>.</td>
+        </tr>
+        <tr>
           <td>embedding</td>
           <td>A numeric vector that represents the meaning of a chunk of text so similar passages sit
             close together. Used by the index to find relevant context for grounding. The embedder
@@ -126,6 +159,17 @@
           <td>A named thing (person, file, project, concept) extracted from your indexed content and
             wired into the knowledge graph. Entities are extracted by Claude Haiku in cloud mode and by
             GLiNER on-device. See <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</td>
+        </tr>
+        <tr>
+          <td>ephemeral agent type</td>
+          <td>An agent type defined inline for one <code>spawn_agent</code> call via
+            <code>agent_definition</code> (name, description, system prompt, optional tool whitelist)
+            when no registered type fits. Nobody reviews the definition before it runs, so it defaults
+            to a read-only tool pool unless <code>tools</code> or <code>read_only</code> says otherwise.
+            A good one can be kept as a <b>persistent custom type</b> with
+            <code>promote_agent_type</code>, which saves it to
+            <code class="path">.whisper/agents/&lt;name&gt;.md</code>. See
+            <a href="ref-tools.html#sub-agents">Agent tools</a>.</td>
         </tr>
         <tr>
           <td>event bus</td>
@@ -197,6 +241,16 @@
             <a href="arch-backends.html">Model backends &amp; modes</a>.</td>
         </tr>
         <tr>
+          <td>import project</td>
+          <td>A one-shot migration from a Claude Code or Codex CLI project into Whisper Studio: its
+            instructions file (<code class="path">CLAUDE.md</code> or <code class="path">AGENTS.md</code>)
+            copies to <code class="path">WHISPER.md</code>, its skills copy across, and its
+            <code class="path">.mcp.json</code> translates into MCP server config. Never overwrites
+            existing files, and nothing imported runs as part of the import. Run it from Settings &gt;
+            Tools and automation &gt; Import project. See
+            <a href="ref-settings.html#fields">Settings &amp; config keys</a>.</td>
+        </tr>
+        <tr>
           <td><code>LSP</code></td>
           <td>Language Server Protocol. Whisper Studio proxies python-lsp-server and
             typescript-language-server to power the <code>lsp_diagnostics</code>, <code>lsp_hover</code>,
@@ -222,24 +276,29 @@
         <tr>
           <td><code>MCP</code></td>
           <td>Model Context Protocol. A standard for exposing tools from external systems. Whisper Studio
-            spawns configured MCP servers as child processes piped over stdio, so they add tools without
-            ever seeing HTTP. Configure servers in Settings and enable them per turn. See
-            <a href="tut-mcp-plugins.html">MCP &amp; plugins</a>.</td>
+            spawns local MCP servers as stdio child processes, and connects to remote servers over
+            streamable HTTP (a <code>url</code> plus an optional bearer token read from an environment
+            variable). Each server can also carry its own approval mode and tool allow/deny lists.
+            Configure servers in Settings. See <a href="tut-mcp-plugins.html">MCP &amp; plugins</a> and
+            <a href="ref-settings.html#mcp-fields">the per-server MCP fields</a>.</td>
         </tr>
         <tr>
           <td>model mode</td>
-          <td>Where indexing and retrieval run: <code>cloud</code> (default), <code>hybrid</code>, or
-            <code>local</code>. This is separate from the chat-model choice in the toolbar. Cohere
-            embed/rerank are pinned to <code>us-east-1</code>; chat can run in any region. See
+          <td>Where indexing and retrieval run: <code>cloud</code> (the code-level default and what a dev
+            checkout inherits), <code>hybrid</code>, or <code>local</code>. A fresh packaged install is
+            actually seeded to <code>hybrid</code> with on-device embed/rerank and entity extraction. This
+            is separate from the chat-model choice in the toolbar. Cohere embed/rerank are pinned to
+            <code>us-east-1</code>; chat can run in any region. See
             <a href="tut-model-modes.html">Model modes</a>.</td>
         </tr>
         <tr>
-          <td>nonce</td>
-          <td>A single-use token the server holds to authorize one risky action. When a tool needs
-            consent, the approval router issues a nonce, pauses the turn, and only runs the action once
-            the client returns that exact nonce. The client cannot fabricate one, which is why command
-            approval is a real boundary and not client-asserted. See
-            <a href="arch-approval.html">Approval &amp; permissions</a>.</td>
+          <td>network egress policy</td>
+          <td>An opt-in, default-off restriction on what sandboxed commands can reach on the network:
+            a <code>network_policy.tier</code> of <code>permissive</code> (default, unrestricted),
+            <code>curated</code> (a seed allowlist plus your own additions), or <code>restrictive</code>
+            (only domains you add). Enforced by a local proxy that reads only the TLS ClientHello's SNI
+            hostname, never the traffic itself. See <a href="ref-security.html#egress">Security
+            model</a>.</td>
         </tr>
       </tbody>
     </table></div>
@@ -280,8 +339,10 @@
         <tr>
           <td>plugin</td>
           <td>An opt-in Python file in <code class="path">plugins/</code> that adds custom API routes
-            and tool executors. Dropping a file in does nothing until you enable it in Settings and
-            restart; this closes the drive-by "plugin over chat" attack vector. See
+            and tool executors. Dropping a file in does nothing until you enable it in Settings, which
+            closes the drive-by "plugin over chat" attack vector; enabling then applies live, with no
+            restart needed. A restart is only required to fully unload a plugin you <em>disable</em>
+            after it registered hooks or routes. See
             <a href="tut-mcp-plugins.html">MCP &amp; plugins</a>.</td>
         </tr>
         <tr>
@@ -321,11 +382,22 @@
             See <a href="arch-sandbox.html">Sandbox &amp; security</a>.</td>
         </tr>
         <tr>
+          <td>session export</td>
+          <td>A portable copy of your chat sessions, separate from <code>/export</code>'s plain-text
+            transcript. Export one session as <code class="path">.jsonl</code>
+            (<code>GET /api/sessions/{id}/export</code>) or many at once as a zip
+            (<code>POST /api/sessions/bulk-export</code>), each with a matching import endpoint, from
+            the sessions sidebar. See <a href="ref-slash-commands.html#export">Slash commands</a>.</td>
+        </tr>
+        <tr>
           <td>skill</td>
-          <td>A Markdown-defined capability the assistant loads when relevant (Web Search, Run Python,
-            Summarize Transcript, and more). Built-in skills load automatically; add your own as files
-            in <code class="path">skills/</code>. Invoke or list them with <code>skill_invoke</code> and
-            <code>skill_list</code>. See <a href="tut-skills.html">Skills</a>.</td>
+          <td>A Markdown-defined capability the assistant loads when relevant, bundled as files in
+            <code class="path">skills/</code> (catch-up, meeting notes, presentation builder, translate
+            text, and more). The former built-in skills - web search, Python execution, transcript
+            summarization, document analysis - are native tools now, not skills; see
+            <a href="ref-tools.html#builtin-tools">Built-in core tools</a>. Invoke or list your own
+            skills with <code>skill_invoke</code> and <code>skill_list</code>. See
+            <a href="tut-skills.html">Skills</a>.</td>
         </tr>
         <tr>
           <td><code>SSE</code></td>
@@ -333,6 +405,17 @@
             usage counters, and sub-agent events to the browser as they happen. A chat turn is an SSE
             stream, not a single JSON body, and it ends with <code>[DONE]</code>. See
             <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.</td>
+        </tr>
+        <tr>
+          <td>staging area</td>
+          <td>The app-sandbox scratch directory (<code class="path">scratch/_staging</code>,
+            <code>stage_file_bytes</code> in <code class="path">server/workspace/paths.py</code>) where
+            a direct-saved file's full content is written <em>before</em> its approval card ever
+            appears. Approving runs the <code>save_to_path</code> action, which re-checks the source is
+            inside the staging root and then moves it to the resolved <code>destination_path</code>;
+            declined or abandoned entries are garbage-collected after 24 hours. See
+            <a href="ref-tools.html#direct-save">The direct-save flow</a> and
+            <a href="ref-security.html">Security model</a>.</td>
         </tr>
         <tr>
           <td>sub-agent</td>
@@ -358,18 +441,18 @@
         </tr>
         <tr>
           <td>Tavily</td>
-          <td>The web-search provider behind the <code>web_search</code> skill. It is optional: without a
-            <code>TAVILY_API_KEY</code>, web search is unavailable and everything else still works. The
-            env var overrides any key stored in <code>config.json</code>. See
-            <a href="tut-research.html">Web research</a> and
+          <td>The web-search provider behind the <code>web_search</code> tool. It is optional: without a
+            <code>TAVILY_API_KEY</code>, web search is unavailable and everything else, including
+            <code>web_fetch</code>, still works. The env var overrides any key stored in your user
+            config file. See <a href="tut-research.html">Web research</a> and
             <a href="https://app.tavily.com">app.tavily.com</a>.</td>
         </tr>
         <tr>
           <td>Transcript condensation</td>
           <td>The server-side step that shrinks a transcript too large for the model context before it
-            enters a chat turn, so a summary skill never silently truncates or overflows the request. See
-            the Map-reduce condensation entry and <a href="arch-summarization.html">Transcript
-            summarization &amp; condensation</a>.</td>
+            enters a chat turn, so <code>summarize_transcript</code> or the main model never silently
+            truncates or overflows the request. See the Map-reduce condensation entry and
+            <a href="arch-summarization.html">Transcript summarization &amp; condensation</a>.</td>
         </tr>
         <tr>
           <td>ultracode</td>
@@ -433,9 +516,18 @@
         <tr>
           <td>worktree</td>
           <td>An isolated Git working tree on its own branch, created so the assistant can make changes
-            without touching your current checkout. Managed with <code>ws_create_worktree</code>,
-            <code>ws_diff_worktree</code>, and <code>ws_merge_worktree</code>. See
-            <a href="arch-git-lsp.html">Git integration &amp; LSP</a>.</td>
+            without touching your current checkout. Task worktrees, managed with
+            <code>ws_create_worktree</code>, <code>ws_diff_worktree</code>, and
+            <code>ws_merge_worktree</code>, live under
+            <code class="path">&lt;repo&gt;/.worktrees/&lt;name&gt;</code> on branch
+            <code>whisper/&lt;name&gt;</code>. Separately, a whole chat <b>session</b> can be pinned into
+            its own worktree via the <code>enter_worktree</code> / <code>exit_worktree</code> approval
+            actions, under <code class="path">&lt;repo&gt;/.whisper/worktrees/&lt;slug&gt;</code> on
+            branch <code>worktree-&lt;slug&gt;</code>, persisted across restarts. A worktree-<b>isolated
+            agent</b> (see the detached/worktree agent entry) gets a third variant: on completion, its
+            clean changes are applied uncommitted back to the originating branch and the worktree is
+            removed. See <a href="arch-git-lsp.html">Git integration &amp; LSP</a> and
+            <a href="ref-tools.html#session-worktrees">Agent tools</a>.</td>
         </tr>
       </tbody>
     </table></div>

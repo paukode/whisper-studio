@@ -14,7 +14,7 @@ WSDiagram.mount("tools-diagram", {
     { id: "appr", group: "security", col: 3, row: 2, label: "Approval", sub: "nonce pause", desc: "A tool that needs consent emits an approval_request, pauses the turn, and waits for a client-confirmed nonce." },
     { id: "route", group: "tools", col: 4, row: 1, label: "route_tool", sub: "tool_router.py", desc: "Pure dispatch: maps a tool name to its handler. No state, no lifecycle." },
     { id: "reg", group: "tools", col: 4, row: 0, label: "Executor registry", sub: "executors/", desc: "@register_executor handlers with read_only / concurrent_safe / destructive metadata." },
-    { id: "mcp", group: "external", kind: "external", col: 4, row: 2, label: "MCP tool", sub: "stdio", desc: "execute_mcp_tool forwards the call to a connected MCP server over stdio." },
+    { id: "mcp", group: "external", kind: "external", col: 4, row: 2, label: "MCP tool", sub: "stdio / HTTP", desc: "execute_mcp_tool forwards the call to a connected MCP server, over stdio for a local process or streamable HTTP for a remote server." },
     { id: "result", group: "transport", col: 5, row: 1, label: "Result + SSE", sub: "tool_result · events", desc: "Output becomes a tool_result for the next round; side effects stream to the SPA as SSE events." }
   ],
   edges: [

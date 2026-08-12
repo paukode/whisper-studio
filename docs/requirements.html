@@ -80,6 +80,9 @@ brew install git python@3.12 awscli</code></pre></div>
       <li>Fetches the Playwright Chromium build used by the live-preview browser tools.</li>
       <li>Downloads the model weights for your <a href="#hardware">chosen model mode</a> into
         <code>models/</code>.</li>
+      <li>For hybrid and local modes, installs the <b>llama.cpp</b> serving runtime
+        (<code>llama-server</code>) via Homebrew. It is the engine behind on-device chat, and the
+        script upgrades it when the installed build is too old.</li>
     </ul>
     <p>Homebrew is therefore doing double duty: it is one of the four things you install by hand, and
       it is what the script reaches for to fill in ffmpeg, ripgrep, and (if needed) Python, Git, or the
@@ -111,14 +114,16 @@ brew install git python@3.12 awscli</code></pre></div>
         workspace tool run without AWS, but until a Claude model is enabled in your region and your
         credentials can reach it, the chat panel returns
         <code>AccessDeniedException</code>. If that happens after install, run <code>/doctor</code> in
-        the chat input for an automated dependency and AWS-access check.</p></div>
+        the chat input for an automated AWS-credentials and Bedrock-connectivity check.</p></div>
     </div>
 
     <h2 id="optional-tavily">Optional: a Tavily key for web search</h2>
-    <p>The assistant's web-search skill is powered by <a href="https://tavily.com">Tavily</a>. It is
-      entirely optional: without a key the <code>web_search</code> and <code>web_fetch</code> tools are
-      unavailable, and everything else (chat, transcription, documents, the workspace IDE) works
-      normally. The free tier covers personal use.</p>
+    <p>The assistant's web-search tool is powered by <a href="https://tavily.com">Tavily</a>. It is
+      entirely optional, and only <code>web_search</code> needs a provider: either a Tavily key, or
+      an enabled Amazon Bedrock AgentCore browser MCP server it falls back to. The
+      <code>web_fetch</code> tool fetches URLs directly and works without any key, and everything
+      else (chat, transcription, documents, the workspace IDE) works normally. The free tier covers
+      personal use.</p>
     <p>If you want it, sign up at <a href="https://app.tavily.com">app.tavily.com</a>, copy the key, and
       either export it in your shell or paste it into the Settings UI. The environment variable takes
       priority when both are set, which makes rotation a one-line change:</p>
@@ -146,22 +151,26 @@ source ~/.zshrc</code></pre></div>
         <tr>
           <td><b>Hybrid</b></td>
           <td>Whatever you choose per capability. You pick a backend (cloud or on-device) for each of embeddings, reranking, and entity extraction.</td>
-          <td>The full on-device stack is pulled so the on-device options are available to select.</td>
-          <td>Same download as Local (~16 GB); you decide at runtime what actually runs.</td>
+          <td>The on-device index stack (Qwen3 embed and rerank, GLiNER, GLiNER2), plus the llama.cpp serving runtime.</td>
+          <td>About 5 GB of index weights; you decide at runtime what actually runs.</td>
         </tr>
         <tr>
           <td><b>Local</b></td>
-          <td>Everything on-device: chat (Gemma), embeddings and reranking (Qwen3), entity extraction (GLiNER), and transcription. Fully offline.</td>
-          <td>The whole stack: Gemma, Qwen3 embed and rerank, GLiNER.</td>
-          <td>~16 GB of weights, plus the RAM to load the ones you run.</td>
+          <td>Everything on-device: chat (a model you install from Discover), embeddings and reranking (Qwen3), entity extraction (GLiNER), and transcription. Fully offline.</td>
+          <td>The same index stack and runtime as Hybrid (~5 GB). Chat models are installed per model from Settings &rarr; Models &rarr; Discover.</td>
+          <td>~5 GB of index weights, plus several GB per chat model you install, plus the RAM to load the ones you run.</td>
         </tr>
       </tbody>
     </table></div>
 
     <p>The rule of thumb: <b>Cloud is the cheap install</b> (nothing but the transcription models lands
-      on disk), while <b>Hybrid and Local both pull roughly 16 GB</b> of on-device weights. The
-      difference between Hybrid and Local is not what gets downloaded; it is what you let run. Hybrid
-      pulls the weights so you can mix per capability; Local commits to running everything locally.</p>
+      on disk), while <b>Hybrid and Local both pull the same ~5 GB index stack</b> (Qwen3 embed and
+      rerank, GLiNER, GLiNER2) and install the llama.cpp serving runtime. Neither pulls a chat model:
+      a fresh install ships none, and on-device chat models are chosen and downloaded per model
+      (several GB each) from <b>Settings &rarr; Models &rarr; Discover</b>, so the total depends on
+      which you install. Once installed, a model is registered in your config and later
+      <code>setup.sh</code> runs will refresh it. The difference between Hybrid and Local is what you
+      let run: Hybrid mixes per capability; Local commits to running everything locally.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM5 11a7 7 0 0 0 14 0M12 18v4"/></svg></span>
@@ -175,8 +184,8 @@ source ~/.zshrc</code></pre></div>
     <p>A few practical notes on the on-device weights:</p>
     <dl class="spec">
       <dt><code class="path">models/</code></dt><dd>Where every weight lands. Downloads are idempotent, so re-running setup skips anything already present.</dd>
-      <dt>Memory</dt><dd>The ~16 GB figure is disk. On-device chat with Gemma additionally needs enough free RAM to hold the model while it runs; the smaller index models (Qwen3, GLiNER) are lighter.</dd>
-      <dt>Apple Silicon</dt><dd>The on-device runtimes (MLX for transcription, llama.cpp with Metal for Gemma) are built for Apple Silicon. On-device chat is a macOS-arm64 feature.</dd>
+      <dt>Memory</dt><dd>The ~5 GB figure is disk for the index stack. On-device chat with whichever model you install additionally needs enough free RAM to hold it while it runs. You do not have to guess: Discover grades every model against your machine's memory before you download, so you see whether it fits (and how much free RAM it needs) before committing. The smaller index models (Qwen3, GLiNER) are lighter.</dd>
+      <dt>Apple Silicon</dt><dd>The on-device runtimes (MLX for transcription, llama.cpp with Metal for chat models) are built for Apple Silicon. On-device chat is a macOS-arm64 feature.</dd>
     </dl>
 
     <h2 id="pick-a-mode">Not sure which mode?</h2>

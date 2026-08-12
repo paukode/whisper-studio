@@ -14,7 +14,7 @@ window.WS_NAV = [
     title: "Get started",
     items: [
       { t: "Requirements", h: "requirements.html", d: "OS, Python, Homebrew, AWS, hardware for model modes." },
-      { t: "Installation", h: "installation.html", d: "Zero-to-running walk-through, setup.sh flags, model modes." },
+      { t: "Installation", h: "installation.html", d: "The Mac app DMG, or a from-source setup.sh walk-through, and model modes." },
       { t: "Configuration", h: "configuration.html", d: "Config layers, environment variables, Settings UI." },
       { t: "First run & verify", h: "first-run.html", d: "Connect AWS, pick a model, first chat and recording." }
     ]
@@ -26,9 +26,12 @@ window.WS_NAV = [
       { t: "Goals & autopilot", h: "tut-goals.html", d: "Prompt vs a goal that runs to completion vs a parallel workflow — and how to set a goal." },
       { t: "Voice & meetings", h: "tut-voice.html", d: "Dictation, diarization, speaker rename, system audio." },
       { t: "Working with documents", h: "tut-documents.html", d: "Drag-drop attachments, extraction, follow-ups." },
+      { t: "Saving files & documents", h: "tut-save-files.html", d: "The never-ask save flow, and creating docx/pptx/xlsx/pdf." },
       { t: "Web research", h: "tut-research.html", d: "Tavily web search & fetch, citations." },
       { t: "The workspace IDE", h: "tut-workspace.html", d: "File tree, Monaco, terminal, Git, LSP, search." },
-      { t: "Permissions & approvals", h: "tut-permissions.html", d: "The Mode dial and approval cards." },
+      { t: "Branches & worktrees", h: "tut-worktrees.html", d: "Parallel sessions and sub-agents on one repo, safely isolated." },
+      { t: "Sessions: export & fork", h: "tut-sessions.html", d: "Back up, share, or duplicate a conversation." },
+      { t: "Permissions & approvals", h: "tut-permissions.html", d: "The Mode dial, approval cards, category rules." },
       { t: "Memory & WHISPER.md", h: "tut-memory.html", d: "Cross-session memory and project context." },
       { t: "Skills", h: "tut-skills.html", d: "Built-in and custom Markdown skills." },
       { t: "Sub-agents & teams", h: "tut-subagents.html", d: "Spawn, coordinate, and watch parallel agents." },

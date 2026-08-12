@@ -26,16 +26,21 @@
     <figure class="diagram-figure wide">
       <div id="skills-flow-diagram" class="diagram"></div>
       <figcaption>From your message to the answer. Each enabled skill is offered to the model as a
-        tool; Claude invokes the matching one, which may use other tools before the result streams back.</figcaption>
+        tool (indexed compactly, loaded on demand); Claude invokes the matching one, which may use
+        other tools before the result streams back.</figcaption>
     </figure>
 
     <h2 id="what-is-a-skill">What a skill actually is</h2>
     <p>A skill is a Markdown file with a small YAML header (the frontmatter) and a body. The
       frontmatter names the skill and describes when to use it; the body is the instructions the
       model follows once the skill runs. On startup, Whisper Studio reads every file in
-      <code class="path">skills/</code>, turns each one into a tool, and hands the whole set to Claude
-      alongside its other tools. Because a skill <em>is</em> a tool, selection is just normal tool
-      use: Claude reads the descriptions and calls the one that fits.</p>
+      <code class="path">skills/</code> and turns each one into a tool. With progressive tool
+      disclosure (the default), skill tools are not all handed to Claude with full schemas up front:
+      the model sees a compact index of names and one-line descriptions, and loads a skill's full
+      definition on demand via <code>tool_search</code>, or drives it through the always-available
+      <code>skill_list</code> and <code>skill_invoke</code> tools. Because a skill <em>is</em> a
+      tool, selection is still just normal tool use: Claude reads the descriptions and calls the one
+      that fits.</p>
     <p>Skills come in two shapes:</p>
     <ul>
       <li><b>Prompt skills.</b> The body is guidance the model reads and applies directly (for
@@ -45,8 +50,8 @@
     </ul>
 
     <h2 id="built-in">Built-in tools vs. bundled skills</h2>
-    <p>Core capabilities — web search and fetch, sandboxed Python, shell commands, AWS reads and
-      writes, document analysis, and transcript summaries — are <em>built-in tools</em>: they ship in
+    <p>Core capabilities, web search and fetch, sandboxed Python, shell commands, AWS reads and
+      writes, document analysis, and transcript summaries, are <em>built-in tools</em>: they ship in
       code, are always available, and do not appear in the Skills panel. You do not enable or invoke
       them by hand; you just ask, and the model picks them by relevance. See
       <a href="ref-tools.html#builtin-tools">Agent tools → Built-in core tools</a> for the list.</p>
@@ -68,10 +73,13 @@
       cleanly; see <a href="arch-summarization.html">Transcript summarization</a>.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Web Search needs a Tavily API key. Set <code>TAVILY_API_KEY</code> in
-        the environment (it takes precedence) or the <code>tavily_api_key</code> field in
-        <code class="path">config.json</code>. Without a key, the Web Search skill is unavailable and
-        everything else keeps working. See <a href="ref-env.html">Environment variables</a>.</p></div>
+      <div class="callout__body"><p>The Web Search tool works best with a Tavily API key. Set
+        <code>TAVILY_API_KEY</code> in the environment (it takes precedence) or the
+        <code>tavily_api_key</code> field in <code class="path">config.json</code>. Without a key the
+        tool stays callable: if an Amazon Bedrock AgentCore browser MCP server is enabled it answers
+        by driving that browser instead, and with neither it returns setup guidance rather than
+        results. Everything else keeps working either way. See
+        <a href="ref-env.html">Environment variables</a>.</p></div>
     </div>
 
     <h2 id="seeing-it-run">Seeing a skill run</h2>
@@ -85,7 +93,9 @@
       read its definition. Disabling a skill removes it from the catalogue, so Claude can no longer
       pick it. The on and off state is stored in <code class="path">data/skills_config.json</code>,
       separately from the skill files themselves, so toggling a built-in skill off never edits or
-      deletes it.</p>
+      deletes it. The same panel has an <b>Import</b> flow for bringing in skills shared by someone
+      else, and <b>Import project</b> during onboarding copies skills over from an existing Claude
+      Code or Codex project.</p>
 
     <h2 id="custom">Writing a custom skill</h2>
     <p>A custom skill is one Markdown file in <code class="path">skills/</code>. The frontmatter is
@@ -154,17 +164,20 @@ under Blockers even if it wasn't labelled that way. Keep it terse.</code></pre><
       grant.</p>
 
     <h2 id="safety">Sandboxing and guardrails</h2>
-    <p>Skills that touch the outside world run behind the same protections as every other tool.</p>
+    <p>Anything a skill reaches for runs behind the same protections as every other tool. Two of the
+      built-in tools skills commonly lean on illustrate the pattern:</p>
     <div class="cols-2">
       <div class="card">
-        <h3>Run Python is sandboxed</h3>
-        <p>Code runs in a subprocess with a short timeout, inside the OS sandbox. It is meant for
-          quick computation, not for running arbitrary programs against your machine.</p>
+        <h3>run_python is sandboxed</h3>
+        <p>The built-in <code>run_python</code> tool runs code in a subprocess with a short timeout,
+          inside the OS sandbox. It is meant for quick computation, not for running arbitrary
+          programs against your machine.</p>
       </div>
       <div class="card">
-        <h3>AWS Boto3 is read-only</h3>
-        <p>The Boto3 skill is guarded to allow only read operations (list, describe, get). Write
-          actions are the job of a separate, gated path, not this skill.</p>
+        <h3>aws_boto3 is read-only</h3>
+        <p>The built-in <code>aws_boto3</code> tool allows only read operations (list, describe,
+          get). Write actions are the job of the separate <code>aws_cli</code> built-in tool, which
+          sits behind an approval card.</p>
       </div>
     </div>
     <p>The real boundary is the OS sandbox (<code>sandbox-exec</code> on macOS); the read-only Boto3

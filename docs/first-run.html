@@ -32,8 +32,8 @@
     </div>
 
     <figure class="shot">
-      <img src="assets/img/settings-api-keys.png" alt="The Settings dialog on the API Keys tab">
-      <figcaption><strong>Settings → API Keys on a fresh install.</strong> Only the Bedrock region is required for cloud chat; the Tavily key is optional and enables web search. Every field here is empty on first run.</figcaption>
+      <img src="assets/img/settings-api-keys.png" alt="The Settings dialog on Keys and permissions, API keys sub-tab">
+      <figcaption><strong>Settings → Keys and permissions → API keys on a fresh install.</strong> Only the Bedrock region is required for cloud chat, and it comes pre-filled with <code>us-east-1</code> from the seeded config; the Tavily key is optional, enables web search, and starts empty.</figcaption>
     </figure>
 
     <h2 id="checklist">The healthy-install checklist</h2>
@@ -86,10 +86,18 @@
       </li>
       <li>
         <h4>Optional: connect a workspace folder</h4>
-        <p>To unlock the file, code, and Git tools, connect a folder with the <b>Workspace</b>
-          control. Once a workspace is connected, Claude can read files, edit code, run commands, and
-          use Git, all gated by your <a href="tut-permissions.html">permission mode</a>. You can skip
-          this if you only want chat and transcription; connect a folder whenever you are ready to code.</p>
+        <p>Creating and saving <em>new</em> files needs no workspace at all: ask for a file and the
+          assistant resolves the destination from your words ("in Downloads" goes to
+          <code class="path">~/Downloads</code>), defaults to
+          <code class="path">~/Documents/&lt;filename&gt;</code> otherwise, builds the file, and shows
+          an approval card; approving moves the finished file into place, and the assistant never asks
+          where to save. The created file then renders as a clickable link that opens with your OS
+          default app.</p>
+        <p>What a workspace unlocks is the IDE and repo tools: connect a folder with the
+          <b>Workspace</b> control and Claude can read your files, edit existing code, run commands,
+          and use Git, all gated by your <a href="tut-permissions.html">permission mode</a>. You can
+          skip this if you only want chat and transcription; connect a folder whenever you are ready
+          to code.</p>
       </li>
     </ol>
 
@@ -102,17 +110,17 @@
 
     <h2 id="doctor">Run /doctor for an automated check</h2>
     <p>Rather than eyeballing each subsystem, you can let the app check itself. Type
-      <code>/doctor</code> in the chat input and send it. This runs an automated dependency and
-      AWS-access check and reports the results inline in the chat.</p>
-    <p>A healthy result confirms the pieces the manual checklist covers, without you having to record
-      or connect anything:</p>
+      <code>/doctor</code> in the chat input and send it. This runs an automated AWS-credentials and
+      Bedrock-connectivity check and reports the results inline in the chat.</p>
+    <p>A healthy result confirms five things, without you having to record or connect anything:</p>
     <ul>
-      <li>The system dependencies <code>setup.sh</code> installs (such as <code>ffmpeg</code> and
-        <code>ripgrep</code>) are present and found on the path.</li>
-      <li>AWS credentials resolve and Bedrock is reachable in your configured region, so a chat turn
-        can actually reach a model.</li>
-      <li>The configured Default Model is enabled and callable in that region (this is exactly the
-        check that a plain <code>hello</code> would exercise).</li>
+      <li><b>AWS credentials</b> resolve (from env vars or <code class="path">~/.aws/credentials</code>).</li>
+      <li><b>Bedrock connectivity</b>: a Claude model is invocable in your configured region, so a
+        chat turn can actually reach a model. (The ping uses a known-good model, not necessarily your
+        configured default.)</li>
+      <li><b>Workspace</b>: the connected folder, if any, still exists on disk.</li>
+      <li><b>Sessions DB</b>: the session store opens and answers a query.</li>
+      <li><b>Config</b>: the effective config loads, reporting your model, effort, and region.</li>
     </ul>
     <p>If <code>/doctor</code> flags something, its output points at the specific failing check, which
       is faster than reading a raw exception from a failed chat turn. Run it any time later, too, if
@@ -183,6 +191,7 @@
       <a class="card card--link" href="tut-first-chat.html"><h3>Your first chat</h3><p>Models, effort levels, slash commands, streaming, and exporting a conversation.</p><span class="card__meta">Tutorial: Your first chat →</span></a>
       <a class="card card--link" href="tut-goals.html"><h3>Goals &amp; autopilot</h3><p>When to just prompt, when to set a goal that runs to completion, and when to run a parallel workflow.</p><span class="card__meta">Tutorial: Goals &amp; autopilot →</span></a>
       <a class="card card--link" href="tut-workspace.html"><h3>The workspace IDE</h3><p>Connect a repo and let Claude read, edit, run, and commit, gated by mode.</p><span class="card__meta">Tutorial: Workspace IDE →</span></a>
+      <a class="card card--link" href="tut-documents.html"><h3>Documents</h3><p>Ask for a .docx, .pptx, .xlsx, or .pdf and get one back in a standard layout, no setup needed.</p><span class="card__meta">Tutorial: Documents →</span></a>
     </div>
 
     <div class="callout callout--tip">

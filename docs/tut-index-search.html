@@ -45,14 +45,16 @@
       as you like with the folder selected.</p>
 
     <h2 id="build-an-index">Build an index for a folder</h2>
-    <p>Indexing is driven from the workspace index controls in Settings. You point it at a connected
-      folder and start a build.</p>
+    <p>Indexing is driven from the <b>workspace connect dialog</b>, the same folder browser you use
+      to connect a folder. You point it at a folder and start a build.</p>
     <ol class="steps">
       <li>
-        <h4>Open the workspace index controls</h4>
-        <p>Go to Settings and find the workspace index section. It lists the folders you have
-          indexed and lets you add a new one. If you have not connected a folder yet, do that first
-          from the <a href="tut-workspace.html">workspace IDE</a>.</p>
+        <h4>Open the workspace connect dialog</h4>
+        <p>Open the folder browser you use to connect a workspace. It lists your recent and indexed
+          folders with their index status, offers a build trigger and an index-on-connect option, and
+          hosts the per-folder <b>Index settings</b> panel (refresh schedule, engines, and the NER
+          model). If you have not connected a folder yet, see the
+          <a href="tut-workspace.html">workspace IDE</a>.</p>
       </li>
       <li>
         <h4>Start the build</h4>
@@ -65,7 +67,10 @@
         <h4>Watch the status</h4>
         <p>A status shows build progress as files are processed, and reports the indexed stats when
           it finishes, for example the number of files and chunks, and how many changed this run.
-          A build runs one folder at a time, so a manual build and the daily refresh never collide.</p>
+          Builds for the same folder are serialized, so a manual build and that folder's scheduled
+          refresh never collide (two different folders can build at the same time). Each indexed
+          folder carries its own refresh schedule, daily, every N days, or weekly on a weekday, at an
+          hour you pick in its index settings.</p>
       </li>
     </ol>
     <p>Builds are <b>incremental</b>. On the first run every file is embedded; after that, a cheap
@@ -87,15 +92,18 @@
     <ol class="steps">
       <li>
         <h4>Select which folders to search</h4>
-        <p>The composer remembers a per-session choice of which indexed folders to search. By default
-          a new session searches every indexed folder; you can narrow it to one. The selection is
-          saved per session, so it survives a reload.</p>
+        <p>The composer remembers a per-session choice of which indexed folders to search. With no
+          workspace connected, a new session defaults to searching every indexed folder; you can
+          narrow it to one. With a workspace connected the default selection is empty, and Claude
+          instead reaches the index on demand through the <code>workspace_semantic_search</code>
+          tool. Either way the selection is saved per session, so it survives a reload.</p>
       </li>
       <li>
         <h4>Ask in plain English</h4>
         <p>Type a question and press <kbd>Enter</kbd>. Your question (and, for a follow-up, a little
-          of the prior turn) is embedded and searched against the selected indexes before the model
-          is called.</p>
+          of the prior turn) is searched against the selected indexes before the model is called.
+          Retrieval is hybrid by default: the vector search is fused with a keyword (BM25) search,
+          and a cross-encoder reranker reorders the combined candidates.</p>
       </li>
       <li>
         <h4>Read the answer and its sources</h4>

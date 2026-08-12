@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sessions: export, import, and fork - Whisper Studio Docs</title>
+  <meta name="description" content="Move a conversation to another machine or a bug report as a portable JSONL file, bulk-export or bulk-import a whole selection at once, and fork a session in place with Branch.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-sessions">
+    <h1>Sessions: export, import, and fork</h1>
+    <p class="subtitle">Every conversation is a session you can move, back up, or duplicate. Export one
+      as a portable file, import it again on any machine, or fork it in place with Branch when you want
+      two directions from the same point without touching the original.</p>
+
+    <p class="lead">A session is a row in the local database: its chat history, and any recorded
+      transcript. That makes it durable, but also stuck on this machine unless you move it deliberately.
+      This tutorial covers the three ways to move or duplicate a session: exporting and importing a
+      single one, doing the same for a whole selection at once, and branching a session into a fork
+      without any file changing hands at all.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="sessions-flow-diagram" class="diagram"></div>
+      <figcaption>Export leaves as a file and import brings it back, on this machine or another one.
+        Branch skips the file entirely and copies straight into a new session. <b>Click a box</b> to
+        trace either path.</figcaption>
+    </figure>
+
+    <h2 id="export-one">Export a single session</h2>
+    <p>Right-click (or open the row menu on) any session in the sidebar and choose <b>Export</b>. The
+      submenu offers four formats, and only one of them round-trips:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Format</th><th>What you get</th><th>Round-trips back in?</th></tr></thead>
+      <tbody>
+        <tr><td><b>Portable backup (.jsonl)</b></td><td>One line per transcript segment and chat message, plus a header line with the title and speaker names.</td><td><b>Yes</b>, via Import.</td></tr>
+        <tr><td>Conversation + transcript (.md)</td><td>A single readable Markdown file combining both, generated in the browser.</td><td>No, read-only.</td></tr>
+        <tr><td>Conversation (.txt)</td><td>Just the chat messages, one after another.</td><td>No, read-only.</td></tr>
+        <tr><td>Transcript (.txt)</td><td>Just the transcript, with speaker names resolved.</td><td>No, read-only.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Reach for the <b>.md</b> or <b>.txt</b> exports when a human is going to read the result, in an
+      email, a wiki page, or a ticket. Reach for the <b>portable backup</b> when the point is to move
+      the session itself, to another machine, into a bug report you want a developer to import and
+      reproduce against, or as a plain backup you keep around.</p>
+    <p>The portable format is deliberately simple: newline-delimited JSON, one <code>export_meta</code>
+      line (session id, title, export time, speaker names), then one <code>segment</code> line per
+      transcript segment, then one <code>message</code> line per chat message. It is the same content a
+      <a href="#branch">Branch</a> copies internally, just serialized to a file instead of a database
+      row, so nothing is lost or summarized in translation. Unknown line types are ignored on import
+      rather than rejected, so an older export still imports cleanly even after the format gains new
+      fields.</p>
+
+    <h2 id="import-one">Import it back</h2>
+    <p>Click <b>Import</b> in the sidebar toolbar and pick a <code class="path">.jsonl</code> file (a
+      single-session export, from this instance or another). A brand-new session is created with a
+      fresh id, and the sidebar switches straight to it. Nothing about the original session that was
+      exported is touched, importing only ever adds.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Import works across machines and across app instances: export on
+        one install, copy the file over however you like (email, a shared drive, a chat attachment),
+        and import on another. There is no pairing or account involved, the file is the whole
+        transfer.</p></div>
+    </div>
+
+    <h2 id="bulk">Select several: bulk export and import</h2>
+    <p>The same two operations work on many sessions at once, from a dedicated selection mode rather than
+      the per-session menu.</p>
+    <ol class="steps">
+      <li>
+        <h4>Enter select mode</h4>
+        <p>Click <b>Select</b> in the sidebar toolbar. The list grows a tri-state checkbox at the top:
+          unchecked (none selected), checked (every visible session selected), or a dash
+          (some but not all). Clicking it toggles between none and all of what is currently visible, so
+          a search filter narrows what "select all" means.</p>
+      </li>
+      <li>
+        <h4>Pick your sessions</h4>
+        <p>Check the ones you want. The bar tracks a live count, "<em>3 selected</em>", so you always
+          know how many you are about to act on.</p>
+      </li>
+      <li>
+        <h4>Export, delete, or import</h4>
+        <p><b>Export</b> zips every selected session's portable JSONL into one
+          <code class="path">sessions-export-&lt;date&gt;.zip</code> download, one entry per session
+          (same-titled sessions get de-duplicated file names inside the zip). <b>Delete</b> removes every
+          selected session after one confirmation. <b>Import</b> stays available here too, so importing
+          and exporting live in the same place.</p>
+      </li>
+      <li>
+        <h4>Done</h4>
+        <p>Click <b>Done</b> to leave select mode. Nothing you did not explicitly Export or Delete is
+          touched.</p>
+      </li>
+    </ol>
+    <p>Bulk import accepts the same picker with multiple files selected: pass it several
+      <code class="path">.jsonl</code> files, or a single <code class="path">.zip</code> produced by
+      bulk export (or both), and each <code class="path">.jsonl</code> entry becomes its own new
+      session. A zip is detected by its actual content, not by the file's name, so a renamed export
+      still imports correctly. When a batch is mixed, some files import while a bad one is reported as
+      failed rather than aborting the whole batch, and the sidebar switches to the last session that
+      imported successfully.</p>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>Bulk export caps out at 500 sessions in one request and bulk import
+        at 200 files in one batch. Both are generous headroom for a whole workspace's history, not a
+        limit you are likely to bump into; if you do, run the operation in a couple of batches.</p></div>
+    </div>
+
+    <h2 id="branch">Branch: fork a session in place</h2>
+    <p>Sometimes you do not want a file at all, you want to keep the current session exactly as it is
+      and try a different direction from the same point, without either copy affecting the other.
+      That is <b>Branch</b>, in the same per-session menu as Export.</p>
+    <ol class="steps">
+      <li>
+        <h4>Choose Branch</h4>
+        <p>Open the session's row menu and click <b>Branch</b>. If the session is actively streaming, its
+          latest state is saved first, so the fork always starts from what you actually see on screen,
+          not a stale snapshot.</p>
+      </li>
+      <li>
+        <h4>A new session appears, already open</h4>
+        <p>The fork is inserted as a new row with the same chat history, transcript, and speaker names,
+          titled <code>&lt;original title&gt; (branch)</code>, or <code>(branch 2)</code>,
+          <code>(branch 3)</code>, and so on if you branch the same session more than once. The sidebar
+          switches to it immediately and a toast confirms the new title.</p>
+      </li>
+      <li>
+        <h4>The two are now independent</h4>
+        <p>From this point the original and the branch are ordinary, unrelated sessions. Nothing you do
+          in one is reflected in the other, and deleting either leaves the other untouched.</p>
+      </li>
+    </ol>
+    <p>Under the hood this is a straight database copy, no file is written or downloaded, which is why
+      it is instant even for a long session. It is the same content an export would serialize to
+      JSONL, just landing directly in a new row instead of a file you would have to re-import.</p>
+
+    <div class="card-grid">
+      <div class="card">
+        <h3>Reach for Branch when</h3>
+        <p>You want to try a second approach from the same conversation without losing the first, or you
+          want a safety copy before an experiment that might go sideways, and you are staying on this
+          machine.</p>
+      </div>
+      <div class="card">
+        <h3>Reach for Export / Import when</h3>
+        <p>The session needs to leave this machine (another install, a teammate, a bug report), or you
+          want a file you can archive outside the app entirely.</p>
+      </div>
+    </div>
+
+    <h2 id="key-files">Where it all lives</h2>
+    <div class="spec">
+      <dt><code class="path">GET /api/sessions/&lt;id&gt;/export</code></dt><dd>Streams one session as portable JSONL.</dd>
+      <dt><code class="path">POST /api/sessions/bulk-export</code></dt><dd>Zips many sessions' JSONL exports into one download (id list, capped at 500).</dd>
+      <dt><code class="path">POST /api/sessions/import-transcript</code></dt><dd>Creates one new session from an uploaded JSONL export.</dd>
+      <dt><code class="path">POST /api/sessions/bulk-import</code></dt><dd>Creates a new session per file from multiple uploads or a bulk-export zip (capped at 200 files).</dd>
+      <dt><code class="path">POST /api/sessions/&lt;id&gt;/branch</code></dt><dd>Copies a session's persisted content into a new session row.</dd>
+      <dt><code class="path">server/infrastructure/sessions_routes.py</code></dt><dd>All five routes above, plus the shared JSONL line-building helper both export paths use.</dd>
+      <dt><code class="path">src/components/layout/Sidebar.tsx</code></dt><dd>The row menu (Export, Branch), select mode, and the select-all / Export / Delete / Import toolbar.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-first-chat.html">Your first chat</a> for
+        the basics of a session, <a href="tut-worktrees.html">Branches &amp; worktrees</a> for forking a
+        <em>codebase</em> rather than a conversation, and <a href="tut-memory.html">Memory &amp;
+        WHISPER.md</a> for what does and does not travel with a session automatically.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/sessions-flow.js"></script>
+</body>
+</html>

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Configuration - Whisper Studio Docs</title>
-  <meta name="description" content="Whisper Studio's three config layers, environment variables, the Settings-UI fields, first-run config.json, and secrets hygiene.">
+  <meta name="description" content="Whisper Studio's five config layers, environment variables, the Settings-UI fields, first-run config.json, and secrets hygiene.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,7 +15,7 @@
 <body>
   <main class="doc" data-page="configuration">
     <h1>Configuration</h1>
-    <p class="subtitle">Whisper Studio reads settings from three layers, merged into one effective
+    <p class="subtitle">Whisper Studio reads settings from five layers, merged into one effective
       config that runs your session. This page covers those layers, the environment variables, every
       Settings-UI field, the first-run <code class="path">config.json</code>, and how to keep your
       secrets safe.</p>
@@ -26,40 +26,46 @@
 
     <figure class="diagram-figure">
       <div id="config-layers-diagram" class="diagram"></div>
-      <figcaption>The four sources on the left merge into one effective config, lowest priority
+      <figcaption>The five sources on the left merge into one effective config, lowest priority
         (<em>DEFAULTS</em>) to highest (<em>Environment</em>). <b>Click a box</b> to trace where it
         feeds.</figcaption>
     </figure>
 
     <figure class="shot">
       <img src="assets/img/settings-api-keys.png" alt="The Settings dialog on the API Keys tab">
-      <figcaption><strong>The Settings dialog.</strong> These fields write to the user layer (<code>config.json</code>); the tab strip along the top is the full set of configurable surfaces.</figcaption>
+      <figcaption><strong>The Settings dialog.</strong> These fields write to the user layer; the
+        grouped left rail (Chat and models, Tools and automation, Access and usage) holds the full
+        set of configurable surfaces, each with its own sub-tabs.</figcaption>
     </figure>
 
-    <h2 id="the-three-layers">The three layers</h2>
+    <h2 id="the-three-layers">The five layers</h2>
     <p>Config is resolved in <code class="path">server/infrastructure/config.py</code> by merging
-      layers from lowest to highest priority: built-in <code>DEFAULTS</code>, then your user
-      <code class="path">config.json</code>, then the per-project
-      <code class="path">.whisper/settings.json</code>, and finally the environment overlay. A value in
-      a higher layer wins. Nested objects (like <code>feature_flags</code> and <code>backends</code>)
-      merge key by key; lists replace wholesale.</p>
+      layers from lowest to highest priority: built-in <code>DEFAULTS</code>, then the shipped
+      system layer (<code class="path">config.example.json</code>, read live), then your user config,
+      then the per-project <code class="path">.whisper/settings.json</code>, and finally the
+      environment overlay. A value in a higher layer wins. Nested objects (like
+      <code>feature_flags</code> and <code>backends</code>) merge key by key; lists replace
+      wholesale.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Layer</th><th>Source</th><th>Priority</th><th>Use for</th></tr></thead>
       <tbody>
         <tr><td>Environment</td><td><code>TAVILY_API_KEY</code>, <code>HOST</code>, <code>PORT</code></td><td>Highest</td><td>Secrets and deployment overrides</td></tr>
-        <tr><td>Project</td><td><code class="path">&lt;workspace&gt;/.whisper/settings.json</code></td><td>Middle</td><td>Per-project model, region, permission mode</td></tr>
-        <tr><td>User</td><td><code class="path">config.json</code> (repo root, gitignored)</td><td>Low</td><td>Defaults for all your sessions</td></tr>
+        <tr><td>Project</td><td><code class="path">&lt;workspace&gt;/.whisper/settings.json</code></td><td>High</td><td>Per-project model, region, permission mode</td></tr>
+        <tr><td>User</td><td><code class="path">config.user.json</code> in the app home; in a dev checkout (or before migration), the legacy <code class="path">config.json</code> at the repo root is the user layer</td><td>Middle</td><td>Your deltas: keys, region, added models, per-field overrides, a hide-list</td></tr>
+        <tr><td>System</td><td><code class="path">config.example.json</code> (read-only, ships with the app, read live)</td><td>Low</td><td>The app-owned model catalog and shipped defaults</td></tr>
         <tr><td>Code defaults</td><td><code>DEFAULTS</code> in <code class="path">server/infrastructure/config.py</code></td><td>Lowest</td><td>Built-in fallbacks you never edit</td></tr>
       </tbody>
     </table></div>
-    <p>Both the project and user layers are edited through the Settings UI. The environment layer is
-      shell-only: there is no UI field for it, and it exists so a machine (or a CI runner, or a
-      LAN-exposed deployment) can override without touching disk.</p>
+    <p>The Settings UI edits the user layer. The project layer is a hand-authored file you can check
+      into the repo; the server reads it but never writes it. The environment layer is shell-only:
+      there is no UI field for it, and it exists so a machine (or a CI runner, or a LAN-exposed
+      deployment) can override without touching disk.</p>
     <p>The project layer is deliberately narrow. Only a safe subset of keys is honored from
-      <code class="path">.whisper/settings.json</code> (model, region, effort, permission mode, cost
-      caps, auto-mode rules, and feature flags), so a checked-in project file can never smuggle in, say,
-      a global API key. See <a href="ref-settings.html">Settings &amp; config keys</a> for the exact
-      per-key breakdown.</p>
+      <code class="path">.whisper/settings.json</code> (model and catalog overrides including
+      <code>chat_models_disabled</code>, region, effort, brief mode, permission mode and explainer,
+      cost caps, auto-mode rules, model fallback, and feature flags), so a checked-in project file
+      can never smuggle in, say, a global API key. See
+      <a href="ref-settings.html">Settings &amp; config keys</a> for the exact per-key breakdown.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
@@ -78,16 +84,19 @@
       <code class="path">config.example.json</code> to <code class="path">config.json</code> for you.
       After that, change values either through the Settings UI (gear icon) or by editing the file
       directly.</p>
-    <p>The seeded file leaves <code>tavily_api_key</code> empty. Web search stays unavailable until you
-      add a Tavily key; everything else (chat, transcription, and the workspace tools) works with no
-      further setup.</p>
+    <p>The seeded file leaves <code>tavily_api_key</code> empty. Without a key,
+      <code>web_search</code> falls back to an Amazon Bedrock AgentCore browser MCP server if you
+      have enabled one; <code>web_fetch</code> and everything else (chat, transcription, and the
+      workspace tools) work with no further setup.</p>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p><code class="path">config.json</code> is the single source of truth
-        for the chat-model catalog. When it defines <code>chat_models</code>, that list <em>replaces</em>
-        the built-in defaults rather than unioning onto them, so a renamed or removed model can never
-        collide with a hardcoded default. To add or change a model, edit
-        <code class="path">config.example.json</code> (the template) and copy it forward.</p></div>
+      <div class="callout__body"><p>The chat-model catalog is a <b>merge, not a copy</b>. The shipped
+        catalog in <code class="path">config.example.json</code> is always read live as the system
+        layer, and <code>chat_models</code> entries in your user config merge onto it additively per
+        key: an entry adds a new model or overrides individual fields of a shipped one. To hide a
+        shipped model, list its key in <code>chat_models_disabled</code> (there is a visibility
+        toggle in Settings for this) rather than deleting anything. Only the project layer still
+        replaces the catalog wholesale.</p></div>
     </div>
 
     <h3 id="map-reduce-summary">Transcript condensation (map_reduce_summary)</h3>
@@ -125,6 +134,8 @@
         <tr><td><code>PORT</code></td><td><code>8000</code></td><td>Backend port. Auto-incremented to the next free port if 8000 is in use, so read the URL the script actually prints.</td></tr>
         <tr><td><code>BACKEND_PORT</code></td><td><code>8000</code></td><td>Read by <code class="path">vite.config.ts</code> so the dev proxy targets the real backend port. <code>setup.sh</code> sets it from <code>$PORT</code> automatically, so the dev server and backend stay in sync even when the port shifted.</td></tr>
         <tr><td><code>TAVILY_API_KEY</code></td><td><em>(unset)</em></td><td>Overrides <code>config.json:tavily_api_key</code>. An empty value is ignored, so the config falls back to whatever is stored. If both are set, the env var wins.</td></tr>
+        <tr><td><code>WHISPER_HOME</code></td><td><em>(unset)</em></td><td>The app home for a packaged install: when set, all user-mutable state (<code class="path">config.user.json</code>, <code class="path">pricing.json</code>, <code class="path">models/</code>, <code class="path">storage/</code>, skills, plugins, logs) lives under it and the code tree stays read-only. Unset means a dev checkout, with everything at the repo root as before.</td></tr>
+        <tr><td><code>WHISPER_DATA_DIR</code></td><td><em>(unset)</em></td><td>Relocates app data (result cache, config stores, DBs) on its own; beats the <code>data_dir</code> config key and the app-home default.</td></tr>
       </tbody>
     </table></div>
     <p>To set the Tavily key the recommended way, export it in your shell profile so rotation is a
@@ -134,18 +145,21 @@ source ~/.zshrc</code></pre></div>
     <p>The full lookup table lives in <a href="ref-env.html">Environment variables</a>.</p>
 
     <h2 id="settings-ui-fields">Settings-UI fields</h2>
-    <p>Click the gear icon to open Settings. These fields write to the user layer (or, when a workspace
-      is connected and you save project-scoped, the project layer). You do not need to touch
-      <code class="path">config.json</code> by hand for any of them.</p>
+    <p>Click the gear icon to open Settings. These fields write to the user layer. You do not need to
+      touch <code class="path">config.json</code> by hand for any of them. (A per-project override
+      goes in a hand-authored <code class="path">.whisper/settings.json</code> instead; the UI never
+      writes that file.)</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Field</th><th>Values</th><th>What it does</th></tr></thead>
       <tbody>
         <tr><td>Bedrock Region</td><td>e.g. <code>us-east-1</code></td><td>The AWS region for Claude. Must match a region where the model is enabled, or chat returns an access error. Never stored blank.</td></tr>
-        <tr><td>Default Model</td><td>Haiku 4.5 · Sonnet 4.6 · Sonnet 5 · Opus 4.6/4.7/4.8 · Opus 5 · Fable 5.0 · GPT-5.4/5.5 · GPT-5.6 Sol/Terra/Luna · on-device models</td><td>The model a new session starts with. GPT-5.x runs through the OpenAI-on-Bedrock path; Fable 5.0 needs the data-retention consent flow first; Gemma appears only in local mode. See <a href="arch-backends.html">Model backends &amp; modes</a>.</td></tr>
+        <tr><td>Default Model</td><td>Haiku 4.5 · Sonnet 4.6 · Sonnet 5 · Opus 4.6/4.7/4.8 · Opus 5 · Fable 5.0 · GPT-5.4/5.5 · GPT-5.6 Sol/Terra/Luna · on-device models</td><td>The model a new session starts with. GPT-5.x runs through the OpenAI-on-Bedrock path; Fable 5.0 needs the data-retention consent flow first; installed on-device models appear only in local mode (a fresh install ships none; add them from Models &rarr; Discover). See <a href="arch-backends.html">Model backends &amp; modes</a>.</td></tr>
         <tr><td>Model Mode</td><td><code>cloud</code> / <code>hybrid</code> / <code>local</code></td><td>Where indexing and retrieval run (<code>config.json:model_mode</code>, plus <code>backends</code> in hybrid). Distinct from the chat-model choice in the toolbar.</td></tr>
-        <tr><td>Feature Flags</td><td>toggles</td><td>Turn gated features on or off (<code>config.json:feature_flags</code>) from the UI without editing the file.</td></tr>
+        <tr><td>Feature Flags</td><td>toggles</td><td>Turn gated features on or off (<code>feature_flags</code>) from the UI without editing the file. The panel lives under <b>Settings &rarr; Usage and advanced &rarr; Feature flags</b>; <code>progressive_tools</code> (progressive tool disclosure) is one example, with the companion <code>progressive_tools_core_extra</code> / <code>progressive_tools_defer_extra</code> config keys for tuning the split.</td></tr>
         <tr><td>Effort Level</td><td><code>low</code> / <code>medium</code> / <code>high</code> / <code>extra</code> (alias <code>xhigh</code>) / <code>max</code> / <code>ultracode</code></td><td>The reasoning budget for a turn. Higher means deeper thinking and more tokens. Which levels are offered depends on the model (Opus 4.8, Opus 5, and Fable reach <code>ultracode</code>; Sonnet and older Opus cap at <code>max</code>; GPT-5.5 and 5.6 run <code>none</code>-<code>ultracode</code>; Haiku and local models have none), and the value is clamped to the nearest supported level when you switch models. <code>ultracode</code> is a session mode that adds workflow orchestration; the old <code>auto</code> value is retired.</td></tr>
         <tr><td>Permission Mode</td><td><code>default</code> / <code>auto</code> / <code>plan</code> / <code>acceptEdits</code> / <code>bypassPermissions</code> / <code>dontAsk</code></td><td>How risky tool calls are gated. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
+        <tr><td>Permissions panel</td><td>rules, category defaults, network policy</td><td>Under <b>Access and usage &rarr; Keys and permissions</b>: per-rule justification notes, a dry-run tester (<code>POST /api/permissions/rules/test</code>), per-category approval defaults (<code>category_modes</code>), and the sandbox network egress policy (<code>network_policy</code>, tiers <code>restrictive</code> / <code>curated</code> / <code>permissive</code>; <code>permissive</code> is the default, meaning no restriction).</td></tr>
+        <tr><td>Import project</td><td>a Claude Code or Codex CLI project</td><td>Migrates CLAUDE.md/AGENTS.md to WHISPER.md, copies skills, and translates <code>.mcp.json</code>. Source files are never modified. See <a href="installation.html#import-project">Installation</a>.</td></tr>
         <tr><td>Tavily API Key</td><td>a key, or blank</td><td>Enables the web-search skill. Only needed if you did not set the <code>TAVILY_API_KEY</code> env var; the env var wins if both are present.</td></tr>
         <tr><td>Cost Limits</td><td>USD caps</td><td>Per-session (<code>max_session_cost_usd</code>) and per-day (<code>max_daily_cost_usd</code>) Bedrock spend caps. <code>0</code> means unlimited. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td></tr>
       </tbody>
@@ -182,16 +196,18 @@ source ~/.zshrc</code></pre></div>
     <h2 id="editing-safely">Editing config.json by hand</h2>
     <p>You can edit <code class="path">config.json</code> directly, but a few habits keep it healthy:</p>
     <ol class="steps">
-      <li><h4>Keep it valid JSON</h4><p>If the file fails to parse, the loader falls back to
-        <code>DEFAULTS</code> rather than crashing, so a stray comma silently reverts your settings.
-        Validate before you save.</p></li>
+      <li><h4>Keep it valid JSON</h4><p>If the file fails to parse, the loader treats the user layer
+        as empty rather than crashing, so the effective config falls back to the shipped defaults
+        (code <code>DEFAULTS</code> plus the live <code class="path">config.example.json</code>
+        layer) and a stray comma silently reverts your settings. Validate before you save.</p></li>
       <li><h4>Never blank a required key</h4><p><code>bedrock_region</code> and
         <code>default_chat_model</code> must not be empty strings. A blank value is dropped on save and
         coerced back to a working default on load, so a partial edit will not brick chat.</p></li>
-      <li><h4>Model catalog lives in the template</h4><p>To add or rename a model, edit
-        <code class="path">config.example.json</code> and copy it to <code class="path">config.json</code>.
-        The catalog in <code class="path">config.json</code> replaces the defaults wholesale, so keep it
-        complete.</p></li>
+      <li><h4>Add models as deltas, hide with the hide-list</h4><p>To add your own model (or override
+        a field of a shipped one), put just that <code>chat_models</code> entry in your user config;
+        the shipped catalog merges in underneath, so you never need a complete copy. To drop a
+        shipped model from the picker, add its key to <code>chat_models_disabled</code> instead of
+        deleting it (the visibility toggle in Settings writes this list for you).</p></li>
     </ol>
 
     <div class="callout callout--tip">

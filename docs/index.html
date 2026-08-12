@@ -42,7 +42,8 @@
       <figcaption><strong>One tab, one local process.</strong> Chat on the right, Monaco and the file
         tree in the middle, a terminal running the project's tests below. The answer shown was
         generated on-device: note the <code>Gemma 4 12B (Local)</code> chip and the
-        <code>$0.0000</code> turn cost.</figcaption>
+        <code>$0.0000</code> turn cost. Local models like this one are installed in-app from
+        Settings &rarr; Models &rarr; Discover; the app ships none by default.</figcaption>
     </figure>
 
     <h2 id="quick-guideline">Quick guideline</h2>
@@ -100,24 +101,27 @@ cd whisper-studio</code></pre></div>
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg></div>
         <h3>Chat with Claude</h3>
         <p>Streaming tokens, tool use, attachments, slash commands, and voice-submit, via Amazon Bedrock
-          (Claude or GPT-5), or an on-device model in local mode.</p>
+          (Claude or GPT-5.x), or an on-device model in local mode.</p>
       </div>
       <div class="card">
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 6-6 6 6 6M16 6l6 6-6 6"/></svg></div>
         <h3>Full workspace IDE</h3>
-        <p>File tree, Monaco editor, xterm terminal, Git, LSP, and ripgrep search in the same tab.</p>
+        <p>File tree, Monaco editor, xterm terminal, Git, LSP, and ripgrep search in the same tab.
+          A session can pin itself into its own Git worktree, so parallel chats work on parallel
+          branches without colliding.</p>
       </div>
       <div class="card">
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6Z"/></svg></div>
         <h3>Consent by design</h3>
-        <p>A nonce-based approval flow and an OS sandbox gate every risky action. Reads run freely.</p>
+        <p>A server-held approval pause and an OS sandbox gate every risky action. Reads run freely.</p>
       </div>
       <div class="card">
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
         <h3>Background jobs</h3>
         <p>A unified background-task registry (kinds shell, agent, workflow, and ci) surfaced by a
-          header running-count pill and a status-bar task pill. Cron-style scheduled tasks are one
-          kind; their output streams back into the chat that created them.</p>
+          header running-count pill and a status-bar task pill. Scheduled (cron) jobs run on their
+          own scheduler; their result cards land back in the chat that created them, or in the
+          Scheduled Reports inbox when that session is gone.</p>
       </div>
       <div class="card">
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M9 6h6a3 3 0 0 1 3 3v6"/></svg></div>
@@ -135,9 +139,22 @@ cd whisper-studio</code></pre></div>
           build back to green (<code>/ci</code>). <a href="tut-goals.html">Get started &rarr;</a></p>
       </div>
       <div class="card">
+        <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M9 15h6M9 11h2"/></svg></div>
+        <h3>Documents on demand</h3>
+        <p>Ask for a <code>.docx</code>, <code>.pptx</code>, <code>.xlsx</code>, or <code>.pdf</code>
+          and get one in a standard layout (A4, Calibri, 16:9 slides). Files save directly: the
+          destination comes from your words ("in Downloads"), defaulting to
+          <code>~/Documents</code>, and the assistant never asks where. Created files render as
+          clickable links that open with the OS default app.</p>
+      </div>
+      <div class="card">
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M6 8.5v3a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-3M12 13.5v2"/></svg></div>
         <h3>Extensible</h3>
-        <p>Cloud / hybrid / local model modes, MCP servers, opt-in Python plugins, and custom skills.</p>
+        <p>Cloud / hybrid / local model modes, with an in-app Discover browser that installs
+          on-device models graded against your machine's memory. MCP servers run locally over stdio
+          or remotely over HTTP. Opt-in Python plugins, custom skills, and custom subagent types
+          round it out, and Settings &rarr; Import project migrates an existing Claude Code or Codex
+          CLI project in one click.</p>
       </div>
     </div>
 
@@ -145,7 +162,7 @@ cd whisper-studio</code></pre></div>
     <p>Whisper Studio fits several very different workflows. Pick the one that sounds like you.</p>
     <div class="card-grid">
       <a class="card card--link" href="tut-first-chat.html"><h3>The question-asker</h3><p>Just wants to ask Claude and get a streamed answer. The simplest flow.</p><span class="card__meta">Tutorial: Your first chat →</span></a>
-      <a class="card card--link" href="tut-documents.html"><h3>The document analyst</h3><p>Drops a contract or deck into chat and asks about it in plain English.</p><span class="card__meta">Tutorial: Documents →</span></a>
+      <a class="card card--link" href="tut-documents.html"><h3>The document analyst</h3><p>Drops a contract or deck into chat and asks about it in plain English, or asks for a fresh .docx, .pptx, .xlsx, or .pdf back.</p><span class="card__meta">Tutorial: Documents →</span></a>
       <a class="card card--link" href="tut-voice.html"><h3>The meeting notetaker</h3><p>Records a call, gets a live diarized transcript, then a summary.</p><span class="card__meta">Tutorial: Voice &amp; meetings →</span></a>
       <a class="card card--link" href="tut-research.html"><h3>The researcher</h3><p>Needs current information with citations, not training-time memory.</p><span class="card__meta">Tutorial: Web research →</span></a>
       <a class="card card--link" href="tut-workspace.html"><h3>The developer</h3><p>Connects a repo and lets Claude read, edit, run, and commit - gated by mode.</p><span class="card__meta">Tutorial: Workspace IDE →</span></a>

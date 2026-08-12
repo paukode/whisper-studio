@@ -34,7 +34,7 @@
 
     <figure class="shot">
       <img src="assets/img/cron-panel.png" alt="The scheduled tasks panel with three jobs and one job's run history">
-      <figcaption><strong>Scheduled tasks with run history open.</strong> Each job shows its schedule, a countdown to the next fire, and its last run. The expanded history includes a failed run with the assertion that broke — failures are kept, not just successes.</figcaption>
+      <figcaption><strong>Scheduled tasks with run history open.</strong> Each job shows its schedule, a countdown to the next fire, and its last run. The expanded history includes a failed run with the assertion that broke, failures are kept, not just successes.</figcaption>
     </figure>
 
     <h2 id="create-a-job">Create a job in plain language</h2>
@@ -102,6 +102,12 @@
       inflating the cost of every reply you send in the same conversation. The runs themselves get the
       same tool pool an interactive turn gets; what stays flat is the cost of your own turns. When a
       single run produces a lot of output, the card keeps it readable rather than sprawling.</p>
+    <p>Under the hood a cron run is a normal turn on the same unified engine as chat, with the same
+      round budgets and tool safety gate, on the session's Claude or GPT-on-Bedrock model (on-device
+      models cannot run scheduled jobs). A job can also pin its own <code>model</code>, as long as it
+      names a configured Anthropic chat model, and by default a quick verification pass checks that a
+      run actually achieved its prompt before the card reports <code>ok</code>, which is why a failed
+      run's history shows the assertion that broke.</p>
 
     <h2 id="schedule-types">Schedule types</h2>
     <p>Every job has one of three schedule shapes. You express them in plain language and Claude picks
@@ -170,12 +176,16 @@
       stale last-run.</p>
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p>A cron run gets the full chat tool pool: web search, tasks,
-        sub-agents, skills, AWS, MCP and the browser, and, when a workspace folder is open, the
-        workspace and Git tools too. Only <code>ask_user_question</code> is removed, because an
-        unattended run has nobody to answer it, and any tool that would pause for your approval stops
-        the run with a "[stopped] a tool requested user input" message rather than hanging. Write
-        prompts that can finish on their own, without a mid-run confirmation.</p></div>
+      <div class="callout__body"><p>A cron run gets the same tool pool an interactive turn gets:
+        web search, tasks, sub-agents, skills, AWS, MCP and the browser, and, when a workspace folder
+        is open, the workspace and Git tools too. As in chat, the core set is advertised up front and
+        the rest sits in a compact deferred index the run loads on demand via <code>tool_search</code>.
+        Only <code>ask_user_question</code> is removed from the pool, because an unattended run has
+        nobody to answer it. Crucially, an unattended run <b>never stops to ask you anything</b>:
+        tools that would normally show an approval card are auto-approved and executed, and a tool
+        that would pause for input gets a refusal message and the run carries on. There is no human
+        veto mid-run, so scope cron prompts carefully; a handful of high-blast-radius tools refuse to
+        run unattended at all.</p></div>
     </div>
 
     <h2 id="good-jobs">What makes a good cron job</h2>

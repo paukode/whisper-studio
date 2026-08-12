@@ -197,9 +197,19 @@
       <dt><code class="path">MAX_FILE_SIZE = 50 MB</code></dt><dd>Documents and images. Over this, the upload is rejected with a 400.</dd>
       <dt><code class="path">MEDIA_MAX_FILE_SIZE = 200 MB</code></dt><dd>Audio and video. They are transcribed to text (only the transcript is retained), so the byte cap can be higher.</dd>
     </dl>
-    <p>Converted attachments are held in memory keyed by a UUID, with a <b>3 hour</b> TTL
-      (<code>ATTACHMENT_TTL</code>) so a message's files survive a later regenerate or edit-resend in the same
-      running session. A background loop prunes expired entries. Anything not matched by an image, media, or
+    <p>Converted attachments are written through to a durable <code>attachments</code> table in
+      <code>sessions.db</code> (<code class="path">server/attachment_store.py</code>, added by
+      migration <code>011_add_attachments.py</code>); the in-memory UUID-keyed dict remains only as a
+      hot cache in front of it. The first chat turn that references an upload binds it to that
+      session (<code>bind_to_session</code>): bound attachments live <b>30 days</b>
+      (<code>RETENTION_DAYS</code>) from their last use, and every turn that references them slides
+      the window - history rows carry per-message <code>attachmentIds</code>, re-collected each turn
+      via <code>collect_history_attachment_ids</code>, so a file re-enters later turns without
+      re-uploading and <code>analyze_document</code> works session-wide on every provider. An upload
+      that is never referenced by a turn keeps only a short grace period
+      (<code>UNBOUND_TTL_SECONDS</code>, 3 hours, matching the in-memory <code>ATTACHMENT_TTL</code>).
+      Content therefore survives backend restarts, not just the running process, and deleting a
+      session deletes its attachments. Anything not matched by an image, media, or
       known-document extension is treated as plain text if its bytes decode as UTF-8, and rejected only when
       it is genuinely binary.</p>
 
@@ -212,7 +222,8 @@
       <dt><code class="path">server/extract/image.py</code></dt><dd>Image OCR for text-only models.</dd>
       <dt><code class="path">server/extract/media.py</code></dt><dd>On-device audio and video transcription, ECAPA speaker labels, and bounded video keyframe sampling with OCR.</dd>
       <dt><code class="path">server/extract/outline.py</code></dt><dd>Heading outline and section slicing for partial injection.</dd>
-      <dt><code class="path">server/attachments.py</code></dt><dd>The upload endpoint, size gates, image sizing, and in-memory storage.</dd>
+      <dt><code class="path">server/attachments.py</code></dt><dd>The upload endpoint, size gates, image sizing, and the in-memory hot cache.</dd>
+      <dt><code class="path">server/attachment_store.py</code></dt><dd>The durable session-scoped attachment store in <code>sessions.db</code>: binding, 30-day sliding retention, and the unbound grace TTL.</dd>
     </div>
 
     <div class="callout callout--tip">

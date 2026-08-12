@@ -48,8 +48,19 @@
       <div class="card"><h3>Bedrock is the only cloud LLM</h3><p>No telemetry, no proxy, no gateway.
         The signed request goes straight from the local process to
         <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code> and back.</p></div>
-      <div class="card"><h3>MCP servers are child processes</h3><p>Spawned by <code>server/mcp.py</code>
-        and piped over stdio. They never see HTTP.</p></div>
+      <div class="card"><h3>MCP servers are explicit</h3><p>Either local child processes spawned by
+        <code>server/mcp.py</code> over stdio, or remote HTTP servers you configure by URL (with an
+        optional bearer-token env var). Per-server <code>approval_mode</code> and
+        <code>enabled_tools</code>/<code>disabled_tools</code> gate what they expose, and a server's
+        mid-call elicitation (asking the human for input) surfaces through the approval
+        pipeline.</p></div>
+      <div class="card"><h3>Sessions can own worktrees</h3><p><code>enter_worktree</code> /
+        <code>exit_worktree</code> pin a session into its own Git worktree under
+        <code class="path">.whisper/worktrees/</code> (persisted across restarts,
+        <code>server/git/worktree_session.py</code>); <code>ws_create_worktree</code> and friends run
+        task branches under <code class="path">.worktrees/</code>, and worktree-isolated subagents
+        harvest clean changes back as uncommitted edits
+        (<code>server/git/worktree_harvest.py</code>).</p></div>
     </div>
 
     <h2 id="chat-turn-sequence">2. Chat-turn sequence</h2>
@@ -63,13 +74,25 @@
 
     <h3>Notes on the sequence</h3>
     <ul>
+      <li><b>One engine for every caller.</b> Chat, scheduled (cron) runs, subagents, and headless
+        runs all execute the same loop: <code>run_turn</code> in
+        <code class="path">server/chat/engine/runner.py</code>. The headless entrypoint
+        <code>run_headless_turn</code> (<code class="path">server/exec/headless.py</code>) is
+        Python-callable only (no HTTP route) and adds <code>output_schema</code> and
+        <code>ephemeral</code> options.</li>
       <li><b><code>visible_chat_history</code> filter.</b> Before building the Bedrock messages array,
-        non-prompt rows (<code>cron_event</code> and future UI-only roles) are stripped. Cron output
-        cards persist on disk and render in the chat, but they never inflate the prompt or the token
-        bill.</li>
-      <li><b>Approval flow.</b> The only legitimate path that bypasses <code>_validate_command</code>:
-        consent is a server-held nonce the client cannot fabricate. See
-        <a href="#security-boundaries">Security boundaries</a>.</li>
+        non-prompt rows (<code>cron_event</code> and <code>task_event</code> lifecycle rows) are
+        stripped; <code>session_message</code> is the one exception: UI-only in storage but translated
+        into a user turn. Cron and task output cards persist on disk and render in the chat, but they
+        never inflate the prompt or the token bill.</li>
+      <li><b>Progressive tool disclosure.</b> With the <code>progressive_tools</code> flag on, a turn
+        advertises a core set plus the tools this session has already activated; the rest are
+        discoverable via <code>tool_search</code> from a compact index
+        (<code class="path">server/chat/tool_partition.py</code>). The same partitioning applies to
+        cron, subagent, and headless turns.</li>
+      <li><b>Approval flow.</b> The only legitimate path that bypasses <code>validate_command</code>:
+        consent is a server-held pause, and the executor re-validates the payload itself rather than
+        trusting the client. See <a href="#security-boundaries">Security boundaries</a>.</li>
       <li><b>Session persistence.</b> A full UPSERT, but under a per-session asyncio lock with merge
         logic so cron-event rows appended by the background daemon between renders aren't clobbered by
         the frontend's save.</li>
@@ -83,8 +106,8 @@
       <tbody>
         <tr><td><code>127.0.0.1</code> default bind</td><td>Closes LAN reachability</td><td><b>Boundary</b> - kernel-level</td></tr>
         <tr><td>DOMPurify on every <code>dangerouslySetInnerHTML</code> site</td><td>Strips <code>&lt;script&gt;</code>, inline handlers, and <code>javascript:</code> URLs from any HTML reaching the React DOM</td><td><b>Boundary</b> for the chat/Markdown render path - without it a prompt-injected page fetched via <code>web_fetch</code> could run JS in the SPA origin</td></tr>
-        <tr><td>Approval router with server-side nonce</td><td>Real consent flow for risky commands</td><td><b>Boundary</b> - the server holds the nonce, the client can't fabricate one</td></tr>
-        <tr><td><code>_validate_command</code> (regex deny-list)</td><td>Catches <code>rm -rf /</code>, <code>mkfs</code>, <code>dd of=/dev/…</code>, reads of sensitive paths</td><td><b>Defence-in-depth</b> in front of the sandbox on every command path; regex-based and bypassable alone</td></tr>
+        <tr><td>Approval router with a server-held pause</td><td>Real consent flow for risky commands</td><td><b>Boundary</b> - the server stashes the paused turn and re-validates the payload itself; the client can't fabricate approval</td></tr>
+        <tr><td><code>validate_command</code> (regex deny-list)</td><td>Catches <code>rm -rf /</code>, <code>mkfs</code>, <code>dd of=/dev/…</code>, reads of sensitive paths</td><td><b>Defence-in-depth</b> in front of the sandbox on every command path; regex-based and bypassable alone</td></tr>
         <tr><td><code>sandbox-exec(5)</code> / <code>bwrap</code></td><td>macOS/Linux sandbox profile around every shell + code execution path (including the terminal PTY)</td><td><b>Boundary</b> - the strongest layer; even if everything above is bypassed, code runs with the secret-store deny-list applied</td></tr>
         <tr><td><code>_AWS_READONLY_GUARD</code> in <code>executors/code.py</code></td><td>Monkey-patches <code>botocore</code> to reject non-read AWS calls</td><td><b>Defence-in-depth only</b> - user code in the same process can <code>del</code> the patch; the real container is <code>sandbox-exec</code></td></tr>
         <tr><td>Plugin loader (<code>enabled</code> allow-list)</td><td>Dropping a <code>.py</code> into <code>plugins/</code> does nothing until explicitly enabled</td><td><b>Boundary</b> for the drive-by-plugin vector</td></tr>
@@ -94,7 +117,9 @@
     <h3>What <code>sandbox-exec</code> actually enforces</h3>
     <p>The sandbox is <b>allowlist-by-exception</b>, not deny-by-default: the macOS profile is
       <code>(allow default)</code> plus <code>deny</code> rules for a curated secret-store list
-      (<code>_DENIED_PATHS</code> in <code>server/sandbox.py</code>), and the Linux bwrap setup
+      (sourced from <code>expanded_sandbox_paths()</code> in
+      <code class="path">server/security/sensitive_paths.py</code>, consumed as
+      <code>_DENIED_PATHS</code> in <code>server/sandbox.py</code>), and the Linux bwrap setup
       <code>--ro-bind</code>s the filesystem read-only and masks the same paths. It denies read/write
       of SSH/GPG keys, cloud credentials (<code>~/.aws</code> is denied for generic commands but
       re-allowed per-call for the AWS tools), git credentials, browser cookies/keychains, shell
@@ -102,9 +127,12 @@
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p><b>Accepted residual.</b> Because the default is <em>allow</em>,
-        the sandbox does not restrict network access (sandboxed <code>git</code>/<code>npm</code>/<code>pip</code>/<code>aws</code>/build
-        commands need it) and does not block reads of secret files that aren't on the deny-list. This
-        is the boundary you should trust last and most - everything above it is layered defence.</p></div>
+        the sandbox by default does not restrict network access (sandboxed <code>git</code>/<code>npm</code>/<code>pip</code>/<code>aws</code>/build
+        commands need it) and does not block reads of secret files that aren't on the deny-list. An
+        opt-in egress policy (Settings → Permissions; <code>network_policy</code>, enforced by an
+        SNI-filtering proxy in <code class="path">server/security/egress_policy.py</code>) can pin
+        sandboxed commands to curated or user-allowed domains. This is the boundary you should trust
+        last and most - everything above it is layered defence.</p></div>
     </div>
 
     <h3>Workspace path containment</h3>
@@ -124,7 +152,7 @@
         <tr><td>Add an HTTP endpoint</td><td>one of the routers in <code>server/</code>, mounted in <code>server/main.py</code></td></tr>
         <tr><td>Add a frontend component</td><td><code>src/components/&lt;area&gt;/</code>, wired into <code>src/App.tsx</code> for a new top-level surface</td></tr>
         <tr><td>Add a session-scoped event</td><td><code>server/agents/event_bus.py</code> (publisher) + <code>src/stores/sessionRuntimes.ts</code> (consumer)</td></tr>
-        <tr><td>Change a permission rule</td><td><code>server/auto_mode.py</code> (classifier) + <code>server/security/command_validator.py</code> (deny patterns)</td></tr>
+        <tr><td>Change a permission rule</td><td><code>server/security/permissions.py</code> (rules, per-category defaults, network policy) + <code>server/security/command_validator.py</code> (deny patterns); the auto-mode classifier lives in <code>server/auto_mode.py</code></td></tr>
         <tr><td>Add a setting</td><td><code>server/infrastructure/config.py</code> (<code>DEFAULTS</code> + optional env overlay) + the relevant Settings panel</td></tr>
       </tbody>
     </table>

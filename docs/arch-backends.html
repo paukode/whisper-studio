@@ -20,9 +20,10 @@
       one thing (the model key you picked in the toolbar) and it happens before any tokens stream.</p>
 
     <p>Every chat turn enters the same endpoint in <code class="path">server/chat/routes.py</code>, but
-      not every turn talks to the same provider. Two of the three backends are self-contained side
-      paths that return their own SSE stream and exit early. <b>Click a box</b> in the diagram to trace
-      where a given model key ends up.</p>
+      not every turn talks to the same provider. Only the on-device branch returns its own response
+      object and exits the endpoint early; even that response runs the same unified engine internally,
+      so the only real fork is which provider adapter the engine drives. <b>Click a box</b> in the
+      diagram to trace where a given model key ends up.</p>
 
     <figure class="diagram-figure wide">
       <div id="backends-diagram" class="diagram"></div>
@@ -61,7 +62,11 @@
         reminders, proactive/reactive compaction, the salvage round, tool execution through the shared
         safety gate, approval pauses, and cost accounting all live in the engine and behave identically
         for every provider. Adapters own only the wire protocol. Compaction summarizes through
-        <code>one_shot</code> with the session's own model, so no provider depends on another.</p></div>
+        <code>one_shot</code> with the session's own model, so no provider depends on another. The same
+        engine also runs cron fires, subagents, and headless turns
+        (<code>run_headless_turn</code> in <code class="path">server/exec/headless.py</code>, a
+        Python-callable entry with <code>output_schema</code> and <code>ephemeral</code> options), which
+        is what gave those paths local-model support.</p></div>
     </div>
 
     <h2 id="anthropic-path">The Anthropic adapter (default)</h2>
@@ -82,7 +87,7 @@
       <code>text</code>, <code>thinking</code>, and <code>tool_use</code> blocks as they stream.</p>
 
     <h3 id="retry-compaction">Retry and reactive compaction</h3>
-    <p>Each streaming invocation is wrapped by <code>invoke_stream_with_retry</code> in
+    <p>Each streaming invocation is wrapped by <code>invoke_with_retry</code> in
       <code class="path">server/infrastructure/bedrock_retry.py</code>. The wrapper classifies every
       Bedrock error and reacts accordingly:</p>
     <div class="table-wrap"><table>
@@ -95,7 +100,8 @@
       </tbody>
     </table></div>
     <p>Backoff is capped exponential: 500ms, 1s, 2s, 4s, up to a 10s ceiling. When the wrapper raises
-      <code>PromptTooLongError</code>, the endpoint runs <b>reactive compaction</b>: it drops the oldest
+      <code>PromptTooLongError</code>, the <b>engine</b> runs <b>reactive compaction</b>
+      (<code class="path">server/chat/engine/runner.py</code>, for every provider): it drops the oldest
       message pairs, calls <code>compact_messages_with_claude(...)</code>, and retries the round. If the
       conversation is still too long after that, it surfaces an error asking you to start a new session.
       (Reactive compaction is the mid-stream safety net; the endpoint also compacts pre-emptively when
@@ -136,8 +142,9 @@
         loose-argument coercion, tool-result message rendering, and the local post-turn memory hooks.
         The agentic loop itself lives in the unified engine.</dd>
       <dt><code class="path">server/local/registry.py</code></dt>
-      <dd>The effective model registry: built-in defaults merged with every <code>is_local</code> entry
-        in config's <code>chat_models</code>, config winning per key.</dd>
+      <dd>The effective model registry: the curated Discover catalog
+        (<code>RECOMMENDED_LOCAL_MODELS</code>) gated on downloaded weights, merged with every
+        <code>is_local</code> entry in config's <code>chat_models</code>, config winning per key.</dd>
       <dt><code class="path">server/local/runtime.py</code></dt>
       <dd>Everything around the weights: the live registry view (<code>LOCAL_MODELS</code>), GGUF
         download and paths, capability flags, the sticky context-size request, and
@@ -174,11 +181,17 @@
 
     <h3 id="local-choices">What a local turn does differently</h3>
     <ul>
-      <li><b>A config-driven registry.</b> The built-ins (<code>local_gemma</code>,
-        <code>local_gemma_coder</code>) stay in code so a fresh checkout with no
-        <code class="path">config.json</code> still has working on-device models, but the effective list
-        is those merged with any <code>is_local</code> entry in <code>chat_models</code>, config winning
-        per key. Adding a model is a one-place change: an entry carrying <code>repo_id</code>,
+      <li><b>A Discover-driven registry.</b> The app ships <b>no</b> local chat models: a fresh install
+        has an empty on-device catalog until you download one from Settings &gt; Models &gt; Discover.
+        <code>RECOMMENDED_LOCAL_MODELS</code> in <code class="path">server/local/registry.py</code> is a
+        curated Discover catalog of four models (<code>local_gemma</code>,
+        <code>local_gemma_coder</code>, <code>local_qwen35_9b</code>,
+        <code>local_ministral3_14b</code>); a recommended model only enters the effective catalog once
+        its weights are on disk, so a model downloaded by a prior release is never orphaned. Each
+        recommended entry carries <code>size_bytes</code> so Discover can warn about memory fit before
+        the download starts. User installs land in <code>chat_models</code> and are always present, even
+        mid-download; the effective list merges config entries over the recommended catalog, config
+        winning per key. Adding a model is a one-place change: an entry carrying <code>repo_id</code>,
         <code>filename</code>, and <code>dir</code> alongside the picker fields becomes downloadable,
         loadable, and selectable with no code change. An entry still missing a weight field after the
         merge is dropped with a warning rather than failing later at load time.</li>
@@ -191,17 +204,23 @@
       <li><b>A configurable context window.</b> llama.cpp fixes the window when the server starts, so
         changing it restarts the process. <code>ensure_serving</code> resolves the size in order: an
         explicit request, then the last size the user asked for, then the model's registry
-        <code>ctx</code> (32K for the built-ins), then 16K. That middle tier is sticky on purpose: a
-        chat turn only asks that the model be resident, and without it a lazy start later in the session
-        would restart the server back down at the model default while the badge still reads 32K or 64K.
-        The chat-input slider is the explicit request, from 16K up to Gemma's 256K maximum, and anything
-        above 16K confirms first because the KV cache grows with the window.</li>
-      <li><b>A shrinkable tool set.</b> The Tools dropdown sets a scope of <code>off</code>,
-        <code>core</code>, <code>core_web</code>, or <code>all</code>, and the default is
-        <code>core_web</code> rather than the full pool: the full pool prefills for around 50s on a 12B
-        model (a few seconds for the core set) and renders a prompt large enough that a 16K window
-        rejects the very first turn, which is why the built-ins default to 32K. Advertising fewer tools
-        makes the prompt smaller and prefill faster.</li>
+        <code>ctx</code>, then 32K (config entries with no <code>ctx</code> also default to 32K). That
+        second tier is sticky on purpose: a chat turn only asks that the model be resident, and without
+        it a lazy start later in the session would restart the server back down at the model default
+        while the badge still reads a larger size. The chat-input slider is the explicit request, from
+        the 32K floor (also the default) up to 256K, and anything above 32K confirms first because the
+        KV cache grows with the window. The slider value rides on <em>every</em> local chat turn
+        (<code>local_context_window</code> in the request body, clamped server-side to 2048 through
+        262144 in <code class="path">server/local/route.py</code>), so a lazy server start can never run
+        at a stale size, and it is recorded via <code>set_requested_n_ctx</code> so non-chat callers
+        reuse it.</li>
+      <li><b>The full tool pool, always.</b> There are no user-facing gates: like the cloud paths, a
+        tool-capable local model always gets the full pool, and a thinking-capable one always thinks.
+        The old per-turn toggles (<code>local_tools</code> / <code>local_tool_scope</code> /
+        <code>local_thinking</code>) are gone; the capability flags in the model registry are the only
+        switch. The full pool renders a roughly 17.2K-token prompt, which is why the 32K default context
+        exists (a 16K window would reject the very first tool turn); because it is a stable prompt
+        prefix, llama-server's prefix cache absorbs the prefill cost after turn one.</li>
       <li><b>Native tool messages, and looser arguments.</b> Executed results go back as real OpenAI
         <code>tool</code> messages, which is a much stronger signal than folding them into a user turn.
         Because llama-server passes through whatever the model produced (Bedrock validates against the
@@ -211,11 +230,17 @@
         reads.</li>
     </ul>
     <p>The loop itself matches the cloud paths: up to 50 tool rounds, with calls forbidden on the last
-      round so the model must synthesize an answer from what it has. It reuses the same executor and
-      approval pipeline (<code>run_tool_round</code>), so an on-device turn is gated by the same
-      <a href="arch-approval.html">permission modes</a> and approval flow, and a pause stores its state
-      in memory for <code>resume_chat(...)</code> to pick up. On-device turns are billed at $0 but still
-      emit a <code>usage</code> frame in the cloud shape. It just never touches AWS.</p>
+      round so the model must synthesize an answer from what it has. Tool execution goes through the
+      engine's shared <code>execute_tool_batch</code> and <code>process_tool_results</code> pipeline, so
+      an on-device turn is gated by the same <a href="arch-approval.html">permission modes</a> and
+      approval flow, and a pause lands in the unified pause store (<code>paused_sessions</code> in
+      <code class="path">server/chat/engine/pause.py</code>) that the
+      <code>approved_tool_result</code> continuation turn restores from, for local and cloud alike. When
+      progressive tool disclosure is on (the <code>progressive_tools</code> flag,
+      <code class="path">server/chat/tool_partition.py</code>), the advertised pool everywhere is the
+      core set plus session-activated tools, with the rest reachable through a deferred index via
+      <code>tool_search</code>. On-device turns are billed at $0 but still emit a <code>usage</code>
+      frame in the cloud shape. It just never touches AWS.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
@@ -260,11 +285,12 @@
       <div class="callout__body"><p>GPT-5.x follows instructions literally, so a prompt like "think for
         N seconds" can turn into an actual wait. To avoid that, the OpenAI path drops the <code>sleep</code>
         tool from the pool and appends a short note to the (Claude-tuned) system prompt telling the model
-        to interpret timing phrases as "reason briefly." The default region for this provider is
-        <code>us-east-2</code>, overridable per model.</p></div>
+        to interpret timing phrases as "reason briefly." Requests route to the app-wide
+        <code>bedrock_region</code>, with an optional per-model <code>openai_region</code> override in
+        <code>chat_model_meta</code>.</p></div>
     </div>
 
-    <p>The "self-contained side path" framing above describes the <em>top-level</em> chat turn. The
+    <p>The decision chain above describes the <em>top-level</em> chat turn. The
       agent and subagent runtime is provider-agnostic too (WS-C):
       <code class="path">server/agents/providers/</code> holds <code>base</code>,
       <code>anthropic</code>, and <code>openai</code> adapters, and
@@ -288,9 +314,10 @@
     </table></div>
     <p>On-device models sit in the same <code>chat_models</code> map, marked <code>is_local</code> and
       carrying their weight fields (<code>repo_id</code>, <code>filename</code>, <code>dir</code>, and
-      optionally <code>ctx</code>). <code class="path">server/local/registry.py</code> merges those over
-      the built-ins it keeps in code, and their <code>id</code> is a <code>local:</code> sentinel that
-      never reaches Bedrock. For every field the Settings UI writes, see
+      optionally <code>ctx</code>, defaulting to 32K). <code class="path">server/local/registry.py</code>
+      merges those over the recommended Discover catalog, where a recommended model only counts once its
+      weights are on disk, and their <code>id</code> is a <code>local:</code> sentinel that never
+      reaches Bedrock. For every field the Settings UI writes, see
       <a href="ref-settings.html">Settings &amp; config keys</a>.</p>
 
     <h3 id="data-retention">Data-retention consent</h3>

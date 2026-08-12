@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Saving files and creating documents - Whisper Studio Docs</title>
+  <meta name="description" content="Ask for a Word doc, deck, spreadsheet, PDF, or plain file and it saves without ever asking where. Content is built and staged first; one approval card with the exact path moves it into place.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-save-files">
+    <h1>Saving files and creating documents</h1>
+    <p class="subtitle">Ask for a Word doc, a deck, a spreadsheet, a PDF, or a plain file and Whisper
+      Studio saves it without ever asking where. The content is built first, staged safely, and a
+      single approval card showing the exact destination path is the only step between your request
+      and a finished, clickable file.</p>
+
+    <p>Say "write up these notes as a Word doc" or "save that as report.md in Downloads" and the flow
+      is the same every time: the destination is worked out from your own words (or a sensible
+      default), the complete file is built and parked in the app's sandbox, and one card asks you to
+      confirm the move. There is no folder picker, no "where should I put this?" question, and no
+      half-written file if you say no.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="save-flow-diagram" class="diagram"></div>
+      <figcaption>The direct save flow. By the time the approval card appears, the file already
+        exists in staging; approving is a single move, and the reply links straight to the result.
+        Click a box to trace the path.</figcaption>
+    </figure>
+
+    <h2 id="never-asked-where">You are never asked where</h2>
+    <p>Every file-saving tool (<code>save_file</code>, <code>ws_create_file</code>, and the four
+      document tools below) resolves its destination the same way, in this order:</p>
+    <ol class="steps">
+      <li>
+        <h4>Your words win</h4>
+        <p>If you named a place, that is where it goes: "in Downloads" becomes
+          <code class="path">~/Downloads/report.docx</code>, "on my Desktop" becomes
+          <code class="path">~/Desktop/...</code>. Any absolute path works, and <code>~</code> is
+          expanded for you.</p>
+      </li>
+      <li>
+        <h4>Otherwise, the connected workspace</h4>
+        <p>With a <a href="tut-workspace.html">workspace</a> connected and no location named, the
+          file is created inside the project at the workspace-relative path, validated so it cannot
+          escape the workspace root.</p>
+      </li>
+      <li>
+        <h4>Otherwise, your Documents folder</h4>
+        <p>No workspace and no location named means
+          <code class="path">~/Documents/&lt;filename&gt;</code>. The approval card shows the full
+          path, and the reply tells you where the file went, so the default is never a mystery.</p>
+      </li>
+    </ol>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Saving a file never forces you to connect a workspace. The direct
+        save flow is one-shot: the folder you saved into is remembered in a small recents list so the
+        file stays openable and revealable afterwards, but it is never connected or indexed.</p></div>
+    </div>
+
+    <h2 id="staged-then-moved">Built first, staged, then moved</h2>
+    <p>The order of operations is the point. When the tool runs, the <em>complete</em> file content
+      is built immediately and written to a staging area inside the app's own data folder. Only then
+      does the approval card appear. Approving does not "run" anything; it performs a single
+      filesystem move of the already-finished file from staging to the destination.</p>
+    <ul>
+      <li><b>Approving cannot fail on content.</b> The file already exists when you see the card, so
+        a "yes" can only succeed or report a plain move error (say, a permissions problem on the
+        target folder). There is no window where a document half-builds after you approved it.</li>
+      <li><b>Declining leaves nothing behind.</b> A refused save never touches the destination. The
+        staged copy stays inside the sandbox and is garbage-collected automatically after 24 hours.</li>
+      <li><b>The card shows the real path.</b> Not a label or a folder name: the exact absolute path
+        the file will land at, plus its size.</li>
+    </ul>
+
+    <figure class="shot">
+      <img src="assets/img/save-approval-card.png" alt="A save approval card showing the exact destination path with Yes, Yes all save, No, and Block save buttons">
+      <figcaption><strong>The card is the only step.</strong> The file is already built and staged
+        when this appears; the card names the exact destination
+        (<code>Save notes.txt to /Users/.../Documents/notes.txt</code>) and <em>Yes</em> performs the
+        single move. <em>Yes, all save</em> waves through further saves this session, and
+        <em>Block save</em> refuses the whole category.</figcaption>
+    </figure>
+
+    <p>Direct saves have their own approval category, <code>save</code>, separate from ordinary
+      workspace writes. That means "Yes, all writes" from an editing session does not silently cover
+      files landing in your home folders, and vice versa. You can also pin a per-category mode or a
+      rule for it; see <a href="tut-permissions.html">Permissions &amp; approvals</a>.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>When the destination is <em>inside a connected workspace</em>,
+        document tools skip staging and carry the finished bytes in a regular workspace-write
+        approval instead: same single card, same "already built" guarantee, but the write lands with
+        your other workspace edits and honors "Yes, all writes". Staging-then-move is the path for
+        everything outside a workspace.</p></div>
+    </div>
+
+    <h2 id="document-tools">The four document tools</h2>
+    <p>Ask for a document in plain language ("turn this into a deck", "make me a spreadsheet of
+      these") and Claude reaches for the matching tool. Each one builds real Office or PDF bytes on
+      your machine, and each appends the right extension if it is missing, so the deliverable always
+      opens in the right app.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>Produces</th><th>You describe</th></tr></thead>
+      <tbody>
+        <tr><td><code>create_docx</code></td><td>A Word document (<code>.docx</code>)</td><td>The document body; headings, paragraphs, lists, and tables all work.</td></tr>
+        <tr><td><code>create_pptx</code></td><td>A PowerPoint deck (<code>.pptx</code>)</td><td>The slides: a title and bullet points per slide, in order.</td></tr>
+        <tr><td><code>create_xlsx</code></td><td>An Excel workbook (<code>.xlsx</code>)</td><td>One or more sheets, each a name plus rows of cell values.</td></tr>
+        <tr><td><code>create_pdf</code></td><td>A PDF (<code>.pdf</code>)</td><td>A title and paragraphs of text.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 id="standard-layout">The standard layout</h3>
+    <p>Every generated document comes out looking like a normal, professionally set-up file rather
+      than each library's quirky default. One shared standard
+      (<code class="path">server/documents/standards.py</code>) is applied on every run:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Format</th><th>Standard</th></tr></thead>
+      <tbody>
+        <tr><td>docx</td><td>A4 page, 1-inch margins, Calibri 11pt body with 16/13/12pt headings.</td></tr>
+        <tr><td>pptx</td><td>16:9 widescreen slides (not the ancient 4:3), Calibri theme, placeholders stretched to use the full width.</td></tr>
+        <tr><td>xlsx</td><td>Bold header row, frozen top row, and column widths fitted to content (bounded so one long cell cannot blow a column out).</td></tr>
+        <tr><td>pdf</td><td>A4 page, 11pt body with comfortable line spacing.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="plain-files">Plain files: save_file and ws_create_file</h2>
+    <p>Not everything is an Office document. Two more tools ride the same flow:</p>
+    <ul>
+      <li><b><code>save_file</code></b> saves any content as a one-shot file: Markdown notes, a CSV,
+        a script, even binary data. With no destination in your words it defaults to Documents (or
+        Downloads if that suits the file better), and it never consults or connects a workspace at
+        all.</li>
+      <li><b><code>ws_create_file</code></b> is the workspace "new file" tool, but it degrades
+        gracefully: with a workspace connected it creates the file in the project behind the normal
+        diff-preview card, and without one it stages the content and requests the same
+        save-and-move approval as everything else, instead of demanding you connect a folder
+        first.</li>
+    </ul>
+
+    <h2 id="clickable-links">The link you can click</h2>
+    <p>After the move, the assistant's reply includes the new file as a clickable link. Click it and
+      the file opens with its OS default app, exactly the way a Finder double-click would: the docx
+      in Word or Pages, the xlsx in Excel or Numbers, the PDF in Preview. Cmd-click reveals the file
+      in Finder instead. Because the save flow records the destination folder, these links keep
+      working later in the session even though the folder was never connected as a workspace.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>The natural pairing: attach a document, ask questions about it,
+        then say "save that summary as a Word doc". Reading is covered in
+        <a href="tut-documents.html">Working with documents</a>; this page is the writing half.</p></div>
+    </div>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Symptom</th><th>Likely cause and fix</th></tr></thead>
+      <tbody>
+        <tr><td>The card is gone and approving says the staged file no longer exists</td><td>Staged entries expire after 24 hours. Ask again; the tool rebuilds and restages the file.</td></tr>
+        <tr><td>The save was refused with a "sensitive path" error</td><td>Destinations like key stores and credential files are refused outright, in every mode. Pick a normal folder.</td></tr>
+        <tr><td>No card appears and files save silently</td><td>You previously clicked <em>Yes, all save</em> this session, or the <code>save</code> category has a permissive mode set. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
+        <tr><td>The file went to Documents but you wanted it elsewhere</td><td>Name the place in the request ("in Downloads", "on my Desktop", or a full path); your words always win over the default.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-documents.html">Working with documents</a>
+        (the reading half), <a href="tut-permissions.html">Permissions &amp; approvals</a> (the
+        <code>save</code> category and per-category modes), and
+        <a href="tut-workspace.html">The workspace IDE</a> (where in-project files live).</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/save-flow.js"></script>
+</body>
+</html>
