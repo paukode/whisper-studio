@@ -178,6 +178,46 @@ async def route_tool(
         output = f"Artifact '{title}' added to the chat. The user can preview and download it."
         return output, side_effects
 
+    # --- create_visual / create_chart: inline diagram or chart card ---
+    # Both emit the same `viz_artifact` side effect (one card, two kinds) and
+    # neither is approval-gated: nothing is written and nothing runs on the
+    # host — the chart spec is evaluated in a sandboxed iframe.
+    if tool_name in ("create_visual", "create_chart"):
+        from server.visuals import validate_chart_spec, validate_svg
+
+        title = tool_input.get("title", "Untitled")
+        description = tool_input.get("description", "")
+
+        if tool_name == "create_visual":
+            svg = tool_input.get("svg", "")
+            error = validate_svg(svg)
+            if error:
+                return error, side_effects
+            payload = {"kind": "svg", "source": svg}
+        else:
+            spec, error = validate_chart_spec(tool_input.get("spec"))
+            if error:
+                return error, side_effects
+            payload = {"kind": "chart", "source": json.dumps(spec)}
+
+        side_effects.append(
+            {
+                "viz_artifact": {
+                    **payload,
+                    "title": title,
+                    "description": description,
+                    "tool_use_id": tool_use_id,
+                }
+            }
+        )
+        noun = "Diagram" if tool_name == "create_visual" else "Chart"
+        return (
+            f"{noun} '{title}' is now rendered in the chat, with download and copy "
+            "buttons. Do not repeat its contents; add at most a short sentence of "
+            "context.",
+            side_effects,
+        )
+
     # --- create_plan: persist a plan doc + emit a plan card ---
     # Mirrors create_artifact: the full markdown goes to data/plans/ (not the
     # chat), and a `plan_generated` side-effect renders a compact card that
