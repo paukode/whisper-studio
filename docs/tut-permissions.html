@@ -197,6 +197,23 @@
         respects your rules first.</p></div>
     </div>
 
+    <h2 id="per-category-defaults">Per-category defaults: a mode per kind of action</h2>
+    <p>Between the global dial and per-tool rules sits a middle layer, <b>Per-Category Defaults</b>,
+      also under <b>Settings &rsaquo; Permissions</b>. Each approval category - file writes, file
+      deletes, shell commands, worktrees, live preview, GitHub, and workflow runs - can pin its own
+      mode; a category with no entry follows the global dial. So you can let file writes auto-approve
+      while deletes and shell commands still ask, without loosening or tightening everything at once.
+      GitHub (destructive) is the one exception: it always asks and cannot be overridden.</p>
+    <p>The <b>Workflow runs</b> row is special: it gates launching a <em>new</em>
+      <a href="arch-ultracode.html">ultracode workflow</a> script rather than a single tool call. By
+      default every new script stops at the phase-preview approval card. Set the row to
+      <code>auto</code> and new scripts budgeted within the default 600,000 output tokens launch
+      without the card (bigger budgets still ask); <code>bypassPermissions</code> never shows the card;
+      <code>dontAsk</code> declines launches outright. Trusted saved workflows and resumes always run
+      directly, and no mode loosens the runtime's server-side limits (concurrency, the agent cap, the
+      token budget). See <a href="arch-ultracode.html#approval">Approval and trust</a> for the full
+      flow.</p>
+
     <h2 id="hard-guards">The guards that never turn off</h2>
     <p>Modes and rules control the <em>consent</em> layer: whether you are asked. Underneath them sit
       two guards that apply no matter which mode you pick, including <code>bypassPermissions</code>.
