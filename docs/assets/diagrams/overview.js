@@ -17,7 +17,7 @@ WSDiagram.mount("overview-diagram", {
     { label: "Tool loop", group: "tools", col: 4, row: 0, cols: 1, rows: 4 },
     { label: "Executors", group: "tools", col: 5, row: 0, cols: 1, rows: 5 },
     { label: "Security", group: "security", col: 6, row: 0, cols: 1, rows: 3 },
-    { label: "Local runtime", group: "local", col: 6, row: 3, cols: 1, rows: 4 },
+    { label: "Local runtime", group: "local", col: 6, row: 3, cols: 1, rows: 5 },
     { label: "Persistence", group: "persist", col: 7, row: 0, cols: 1, rows: 4 },
     { label: "External", group: "external", col: 7, row: 4, cols: 1, rows: 3 }
   ],
@@ -56,13 +56,14 @@ WSDiagram.mount("overview-diagram", {
     { id: "diarize", group: "local", col: 6, row: 4, label: "Resemblyzer", sub: "diarization", desc: "Speaker embeddings and clustering, applied on the orchestrator side." },
     { id: "index", group: "index", col: 6, row: 5, label: "index + search", sub: "embeddings · GraphRAG", desc: "Workspace embeddings, reranking, entities, and retrieval grounding." },
     { id: "sched", group: "local", col: 6, row: 6, label: "APScheduler", sub: "cron jobs", desc: "Fires scheduled jobs, which run a chat turn in the background." },
+    { id: "localchat", group: "local", col: 6, row: 7, label: "On-device chat model", sub: "llama-server", desc: "In local mode, chat runs entirely on your machine through the same turn engine - no Bedrock call at all." },
 
     { id: "db", group: "persist", kind: "store", col: 7, row: 0, label: "SQLite (WAL)", sub: "sessions · costs · cron", desc: "The single database for sessions, the cost log, and cron runs." },
     { id: "wsfs", group: "persist", kind: "store", col: 7, row: 1, label: "Workspace files", sub: "+ WHISPER.md", desc: "Your connected project files and the project WHISPER.md." },
     { id: "cfg", group: "persist", kind: "store", col: 7, row: 2, label: "config.json", sub: "+ env overlay", desc: "Per-machine config: at the repo root in a dev checkout, under the app home (WHISPER_HOME) in a packaged install, with the TAVILY_API_KEY env overlay on top." },
     { id: "memdir", group: "persist", kind: "store", col: 7, row: 3, label: "data/memory", sub: "two-tier", desc: "The two-tier memory store (global + project), injected into later prompts." },
 
-    { id: "bedrock", group: "external", kind: "external", col: 7, row: 4, label: "Amazon Bedrock", sub: "Claude · GPT-5", desc: "The only cloud LLM call, made only when you submit a chat message." },
+    { id: "bedrock", group: "external", kind: "external", col: 7, row: 4, label: "Amazon Bedrock", sub: "Claude · GPT-5", desc: "The only cloud LLM call, made only when you submit a chat message and a cloud model is selected. Bedrock hosts both the Claude and the GPT-5.x models offered in the picker." },
     { id: "mcp", group: "external", kind: "external", col: 7, row: 5, label: "MCP servers", sub: "stdio or HTTP, optional", desc: "External tool providers: local child processes over stdio, or remote HTTP servers you explicitly configure (URL plus optional bearer-token env var). Per-server approval_mode and tool allow/deny lists gate what they expose." },
     { id: "tavily", group: "external", kind: "external", col: 7, row: 6, label: "Tavily", sub: "web search", desc: "Optional web-search provider for the research tools." }
   ],
@@ -76,7 +77,8 @@ WSDiagram.mount("overview-diagram", {
     { from: "rest", to: "gitR" },
     { from: "chatR", to: "sse", label: "stream" },
     { from: "sse", to: "stores" },
-    { from: "chatR", to: "bedrock", label: "invoke" },
+    { from: "chatR", to: "bedrock", label: "invoke, cloud mode" },
+    { from: "chatR", to: "localchat", label: "invoke, local mode" },
     { from: "chatR", to: "trouter" },
     { from: "chatR", to: "agents" },
     { from: "chatR", to: "db", label: "persist" },
