@@ -116,15 +116,16 @@
         <a href="arch-approval.html">permission mode</a> and per-tool rules - allow, ask, or deny.</li>
       <li><b>Approval gate.</b> A tool that needs consent pauses the turn (state is
         stashed in the unified pause store, <code class="path">server/chat/engine/pause.py</code>, keyed
-        by <code>tool_use_id</code>), and waits for the client to confirm.</li>
+        by session), and waits for the client to confirm.</li>
       <li><b>Hooks.</b> Hooks are a blocking subsystem (<code class="path">server/hooks/</code>):
         <code>run_hooks(event, payload)</code> fires <code>PreToolUse</code>, which can
         <em>deny</em> or <em>rewrite</em> a call, and <code>PostToolUse</code>, which can inject
         <code>additionalContext</code>. A <code>Stop</code> gate (<code>check_stop_hooks</code>,
         <code class="path">server/hooks/engine.py</code>) runs at end of turn via the completion
-        gate, on the interactive cloud-chat policy only; unattended consumers (sub-agents, cron,
-        headless turns) and the local path run with the gate off, and cron verifies its runs
-        separately (<code>cron_verify</code>). See <a href="arch-hooks.html">Blocking hooks</a>.</li>
+        gate, shared by every chat loop (Claude, GPT, and local, all on the unified engine) and
+        cron runs; sub-agents and headless turns run with the gate off, and cron additionally
+        verifies its runs separately (<code>cron_verify</code>). See
+        <a href="arch-hooks.html">Blocking hooks</a>.</li>
     </ul>
     <p>Dispatch itself is a pure mapping in <code class="path">server/tool_router.py</code>; the
       implementations live in <code class="path">server/executors/</code>. See
@@ -138,7 +139,7 @@
         <tr><td><code>text</code></td><td>A streamed text chunk.</td></tr>
         <tr><td><code>thinking</code></td><td>An adaptive thinking block (all providers; the local path routes its reasoning here too).</td></tr>
         <tr><td><code>skill</code> / <code>skill_input</code></td><td>A tool call started, with its parsed input.</td></tr>
-        <tr><td><code>usage</code></td><td>Token counters, cost estimate, and forecast.</td></tr>
+        <tr><td><code>usage</code></td><td>Token counters, cost estimate, and remaining context (<code>context_used</code>/<code>context_max</code>).</td></tr>
         <tr><td><code>team_progress</code></td><td>Sub-agent and team events (spawn, progress, completion).</td></tr>
         <tr><td><code>grounding</code></td><td>Index-search metadata (folders searched, passages retrieved).</td></tr>
         <tr><td><code>user_question</code></td><td>The turn paused on an approval or an <code>ask_user_question</code>.</td></tr>

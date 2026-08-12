@@ -48,9 +48,11 @@
         holds the paused turn server-side and re-validates the payload itself when the client posts
         back the registered action - there is no client-fabricatable "already approved" state.</li>
       <li><b>Direct-save files are contained to a staging root until you approve.</b>
-        <code>save_file</code>, <code>ws_create_file</code> without a workspace, and the document
-        tools build their content and write it into an app-sandbox staging directory
-        <em>before</em> the approval card ever appears. Approving runs <code>_do_save_to_path</code>,
+        <code>save_file</code>, and <code>ws_create_file</code> and the document tools when there is
+        no connected workspace, build their content and write it into an app-sandbox staging directory
+        <em>before</em> the approval card ever appears. (With a workspace connected, <code>ws_create_file</code>
+        and the document tools go through the plain <code>create</code>/<code>create_document</code>
+        approval instead - no staging.) Approving a staged save runs <code>_do_save_to_path</code>,
         which re-validates that the source is inside the staging root
         (<code class="path">is_staged_path</code>, <code class="path">server/workspace/paths.py</code>)
         before moving it - so even a forged approval payload sent directly to
@@ -314,8 +316,9 @@
     <h2 id="approval-path">The one path that bypasses validation</h2>
     <p>The approval flow is the only legitimate path that skips <code>_validate_command</code>, and it
       is safe precisely because the server holds the pause, not the client. When a tool needs consent
-      the engine stashes the paused turn keyed by its <code>tool_use_id</code> and streams an approval
-      request over SSE. The client confirms by re-posting the action and payload; the server looks up
+      the engine stashes the paused turn in the session-keyed pause store and streams an approval
+      request over SSE, tagged with the tool call's <code>tool_use_id</code> so the resume step
+      knows which placeholder to fill. The client confirms by re-posting the action and payload; the server looks up
       the registered <code>ApprovalSpec</code> for that action and its executor re-validates everything
       itself - the destination, the staging containment, the sensitive-path check - before it runs the
       validated command under the sandbox and returns the result. A client cannot skip that

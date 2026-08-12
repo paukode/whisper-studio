@@ -34,8 +34,9 @@
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p><b>You need a Tavily API key for web search.</b> Without one,
-        <code>web_search</code> is unavailable and everything else in the app still works. Setting the
+      <div class="callout__body"><p><b>A Tavily API key gives the best web search.</b> Without one,
+        <code>web_search</code> falls back to an Amazon Bedrock AgentCore browser MCP server if you've
+        enabled one; otherwise it's unavailable, and everything else in the app still works. Setting the
         key takes two minutes. See <a href="installation.html">Installation</a> (step 3) and
         <a href="configuration.html">Configuration</a>.</p></div>
     </div>

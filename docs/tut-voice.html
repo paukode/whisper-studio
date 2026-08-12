@@ -174,7 +174,7 @@
 
     <p>Other prompts that work well: "What did we decide about the launch date?", "Draft a follow-up
       email to the team", or "List every open question raised in this call". When you are happy with
-      the result, use <code>/export</code> to download the chat (including the summary) as Markdown.
+      the result, use <code>/export</code> to download the chat (including the summary) as a plain-text file.
       See <a href="tut-first-chat.html">Your first chat</a> for more on prompting and export.</p>
 
     <div class="callout callout--tip">
@@ -187,9 +187,11 @@
     <h2 id="system-audio">Capturing system audio (Zoom, Meet, and calls)</h2>
     <p>The Record button captures your default <b>microphone</b>. That records your side of a call and
       anything your mic picks up from the room, but not the audio the other participants send to your
-      speakers. There are two ways to add that other side. The quickest is built into the app: add a
-      <b>Chrome tab</b> as a second source, with no system setup. For a system-wide capture that covers
-      every app and browser at once, route mic and system audio into one virtual input device with
+      speakers. There are three ways to add that other side. In the Mac app, the headphones button's
+      <b>This Mac</b> section captures system audio or a single running app (Zoom, for example) natively,
+      with no setup at all. Also built into the app: add a <b>Chrome tab</b> as a second source, with no
+      system setup. For a system-wide capture that covers every app and browser at once regardless of
+      platform, route mic and system audio into one virtual input device with
       <a href="https://existential.audio/blackhole/">BlackHole</a>.</p>
 
     <h3 id="tab-audio">In the app: add a Chrome tab (no setup)</h3>
@@ -267,8 +269,7 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p><b>Caveats.</b> A Multi-Output device's volume cannot be adjusted
         from the menu bar, so use per-app volume instead. Bluetooth headsets often run at a lower
-        sample rate, so avoid using one as the clock source. For the full walk-through and the latest
-        details, see the <b>Capturing system audio (macOS)</b> section of the project README.</p></div>
+        sample rate, so avoid using one as the clock source.</p></div>
     </div>
 
     <div class="callout callout--tip">

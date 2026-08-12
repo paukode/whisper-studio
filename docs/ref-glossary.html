@@ -50,9 +50,12 @@
         <tr>
           <td><code>Bedrock</code></td>
           <td>Amazon Bedrock, the AWS managed service Whisper Studio uses to call Claude (and GPT-5.x)
-            for chat. Requests go from the local process straight to
-            <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code> and back. It is the only cloud LLM
-            call the app makes. See <a href="arch-backends.html">Model backends &amp; modes</a> and
+            for chat. Two distinct endpoints, depending on the model: Claude goes straight to
+            <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code> via
+            <code>invoke_model_with_response_stream</code>; GPT-5.x goes to
+            <code>bedrock-mantle.&lt;region&gt;.api.aws</code>'s OpenAI-compatible Responses API. Either
+            way, it is the only cloud LLM call the app makes. See
+            <a href="arch-backends.html">Model backends &amp; modes</a> and
             <a href="https://docs.aws.amazon.com/bedrock/">the Amazon Bedrock docs</a>.</td>
         </tr>
         <tr>
@@ -457,7 +460,7 @@
         <tr>
           <td>ultracode</td>
           <td>Whisper Studio's top reasoning mode: the model authors a deterministic JavaScript workflow
-            script that a Node-24 vm harness runs detached over stdio JSON-RPC into Python, on both Claude
+            script that a Node-22 vm harness runs detached over stdio JSON-RPC into Python, on both Claude
             and GPT-on-Bedrock, with 16-way agent concurrency, a 1000-agent lifetime cap, output-token
             budgets (600,000 by default), a resumable journal, and upfront phase-preview approval of
             every new script. It is also the
@@ -500,7 +503,7 @@
           <td>workflow runtime</td>
           <td>The subsystem behind ultracode (<code class="path">server/workflows/</code>): a
             <code>WorkflowRun</code> that enforces the concurrency semaphore, output-token budget, and resume; the
-            Node-24 harness (<code class="path">harness.mjs</code>, <code class="path">guards.mjs</code>,
+            Node-22 harness (<code class="path">harness.mjs</code>, <code class="path">guards.mjs</code>,
             <code class="path">api.mjs</code>); the <code>workflow_runs</code> table; and the
             <code>workflow_run</code> / <code>workflow_status</code> / <code>workflow_save</code> /
             <code>workflow_list</code> tools, available only in ultracode mode. See

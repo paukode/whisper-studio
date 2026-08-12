@@ -118,9 +118,10 @@
       tools). Entering creates or reuses
       <code class="path">&lt;repo&gt;/.whisper/worktrees/&lt;slug&gt;</code> on branch
       <code>worktree-&lt;slug&gt;</code> and persists across restarts
-      (<code class="path">server/git/worktree_session.py</code>); per-session cwd tracking prevents
-      collisions, and git itself allows a branch in only one worktree at a time. Worktree-isolated
-      sub-agents get a third variant: see <a href="#sub-agents">Sub-agents</a>.</p>
+      (<code class="path">server/git/worktree_session.py</code>); collisions are prevented by git itself,
+      which allows a branch in only one worktree at a time - a session must <code>cd</code> in for its
+      shell commands to follow, and file tools never do. Worktree-isolated sub-agents get a third
+      variant that does redirect file tools automatically: see <a href="#sub-agents">Sub-agents</a>.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
@@ -132,8 +133,10 @@
     <h2 id="documents">Documents</h2>
     <p>Four tools that produce real Office and PDF files (genuine OOXML via macOS
       <code>textutil</code>, python-pptx, and openpyxl; PDF via reportlab). They are always in the
-      catalogue, with or without a connected workspace, and follow the same staged
-      <a href="#direct-save">direct-save flow</a>. Every output uses the app's standard layout from
+      catalogue, with or without a connected workspace. With no workspace connected (or an absolute
+      path), they follow the staged <a href="#direct-save">direct-save flow</a>; with a workspace
+      connected they instead go through the plain <code>create_document</code> approval, same trust
+      tier as an ordinary workspace write, no staging. Every output uses the app's standard layout from
       <code class="path">server/documents/standards.py</code>, and the extension is appended if the
       filename lacks it. See <a href="tut-documents.html">the documents tutorial</a>.</p>
     <div class="table-wrap"><table>

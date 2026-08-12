@@ -74,14 +74,18 @@
     <ul>
       <li><b>Entering</b> creates (or resumes) <code class="path">&lt;repo&gt;/.whisper/worktrees/&lt;slug&gt;</code>
         on branch <code>worktree-&lt;slug&gt;</code>, branched from the repo's current <code>HEAD</code>
-        at that moment, and pins the session to it: from then on that session's shell commands and
-        workspace tools operate with their cwd set to the worktree, tracked per session by
-        <code class="path">server/cwd_tracker.py</code>. If the worktree path already exists, it is
-        reused rather than recreated, so re-entering the same slug picks up where it left off instead of
-        erroring.</li>
-      <li><b>Exiting</b> runs <code>git worktree remove</code> on that path, restores the session's
-        original cwd, and clears the session record. It refuses to remove a worktree with uncommitted
-        changes unless forced, so exiting does not silently discard work.</li>
+        at that moment, and records which worktree the session is pinned to - this is bookkeeping for the
+        UI chip and the <code>GET /api/git/worktree-session</code> endpoint, not a cwd redirect. File
+        tools (<code>ws_read_file</code>/<code>ws_write_file</code>/etc.) never follow it: they always
+        resolve against the one globally-connected workspace. For shell commands to actually run inside
+        the worktree, the session has to <code>cd</code> into it itself - that then affects only later
+        shell calls (tracked per session by <code class="path">server/cwd_tracker.py</code>), not file
+        tools. If the worktree path already exists, it is reused rather than recreated, so re-entering
+        the same slug picks up where it left off instead of erroring.</li>
+      <li><b>Exiting</b> runs <code>git worktree remove</code> on that path and clears the session's
+        worktree record (it does not touch shell cwd, since entering never set one). It refuses to
+        remove a worktree with uncommitted changes unless forced, so exiting does not silently discard
+        work.</li>
     </ul>
     <p>Both actions sit behind their own <code>worktree</code> approval category, distinct from ordinary
       file writes, so you can trust the flow once ("Yes for all worktree operations") without widening
@@ -174,11 +178,11 @@
           where to find them.</p>
       </div>
     </div>
-    <p>The result is one of <code>clean</code> (nothing to bring back), <code>applied</code> (everything
-      landed), <code>partial</code> (some files landed, some conflicted, worktree kept for the rest), or
-      <code>conflict</code> (nothing could land, worktree kept). Materialization is serialized process-wide,
-      so if two agents finish at the same moment they apply to your tree one at a time rather than
-      racing each other.</p>
+    <p>The result is one of five statuses: <code>clean</code> (nothing to bring back), <code>applied</code>
+      (everything landed), <code>partial</code> (some files landed, some conflicted, worktree kept for the
+      rest), <code>kept</code> (not applied - the agent did not finish, or every file conflicted; worktree
+      kept), or <code>error</code>. Materialization is serialized process-wide, so if two agents finish at
+      the same moment they apply to your tree one at a time rather than racing each other.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>

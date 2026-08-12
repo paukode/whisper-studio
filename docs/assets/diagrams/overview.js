@@ -34,7 +34,7 @@ WSDiagram.mount("overview-diagram", {
     { id: "sessR", group: "server", col: 3, row: 0, label: "sessions", sub: "infrastructure/sessions.py", desc: "List, load, rename, delete, and persist sessions (routes in sessions_routes.py); the per-session UPSERT with merge." },
     { id: "wsR", group: "server", col: 2, row: 1, label: "workspace", sub: "workspace/routes/", desc: "Connect a folder and serve the file tree, reads, and validated writes." },
     { id: "gitR", group: "server", col: 3, row: 1, label: "git", sub: "git/router.py", desc: "Status, diff, log, blame, branches, and PR helpers over the connected repo." },
-    { id: "apprR", group: "server", col: 2, row: 2, label: "approval", sub: "approval/router.py", desc: "The consent endpoint: issues a nonce and executes only the exact approved action." },
+    { id: "apprR", group: "server", col: 2, row: 2, label: "approval", sub: "approval/router.py", desc: "The consent endpoint, POST /api/approval/execute: looks up the approved action's ApprovalSpec by name and runs its executor with the payload." },
     { id: "cronR", group: "server", col: 3, row: 2, label: "cron + tasks", sub: "schedulers", desc: "Cron scheduling and the background task tracker. config, plugins, and the LSP proxy mount here too." },
 
     { id: "trouter", group: "tools", col: 4, row: 0, label: "tool_router", sub: "dispatch", desc: "Pure dispatch: maps each tool call to its executor." },
@@ -49,7 +49,7 @@ WSDiagram.mount("overview-diagram", {
     { id: "ex_mem", group: "tools", col: 5, row: 4, label: "memory", sub: "recall · write", desc: "Reads and writes the cross-session memory store. content, search, and other executors sit alongside these." },
 
     { id: "validator", group: "security", col: 6, row: 0, label: "command validator", sub: "deny-list", desc: "Regex + AST deny-list in front of the sandbox: catches rm -rf /, mkfs, sensitive reads." },
-    { id: "apprReg", group: "security", col: 6, row: 1, label: "approval registry", sub: "server nonce", desc: "Holds the single-use nonce for a risky command; the client cannot fabricate one." },
+    { id: "apprReg", group: "security", col: 6, row: 1, label: "approval registry", sub: "action to executor", desc: "Maps each approval action name to its ApprovalSpec and executor. The executor re-validates the payload at execute time, since the endpoint could in principle be POSTed directly." },
     { id: "sandbox", group: "security", col: 6, row: 2, label: "sandbox", sub: "sandbox-exec / bwrap", desc: "The OS jail around every shell and code path, with a secret-store deny-list. The boundary trusted last and most." },
 
     { id: "whisper", group: "local", col: 6, row: 3, label: "Whisper / Parakeet", sub: "ASR", desc: "On-device transcription. Audio bytes never leave the machine." },
@@ -93,7 +93,7 @@ WSDiagram.mount("overview-diagram", {
     { from: "agents", to: "ebus" },
     { from: "ebus", to: "sse", label: "events" },
     { from: "apprR", to: "apprReg" },
-    { from: "apprReg", to: "sandbox", label: "nonce" },
+    { from: "apprReg", to: "sandbox", label: "re-validated" },
     { from: "ex_code", to: "validator" },
     { from: "ex_term", to: "validator" },
     { from: "validator", to: "sandbox" },

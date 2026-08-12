@@ -26,6 +26,7 @@ WSDiagram.mount("transcription-diagram", {
     { from: "ecapa", to: "cluster" },
     { from: "cluster", to: "recluster" },
     { from: "interim", to: "spa", label: "interim" },
+    { from: "cluster", to: "spa", label: "transcript" },
     { from: "recluster", to: "spa", label: "speaker_update" }
   ]
 });

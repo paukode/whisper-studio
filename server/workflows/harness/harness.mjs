@@ -1,4 +1,4 @@
-// Workflow harness bootstrap (Node 24, zero npm deps).
+// Workflow harness bootstrap (Node 22, zero npm deps).
 //
 // A child process launched by server/workflows/runtime.py. It speaks ndjson
 // JSON-RPC over stdio: it EMITS requests ({id, method, params}: agent, workflow,

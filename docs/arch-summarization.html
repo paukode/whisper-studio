@@ -116,7 +116,7 @@
         <tr><td><code>enabled</code></td><td><code>true</code></td><td>Master switch. When off, no condensation runs and even an oversized transcript passes through unchanged, which can overflow the request.</td></tr>
         <tr><td><code>threshold_chars</code></td><td><code>600000</code></td><td>Condense only above this size; smaller transcripts pass through with no LLM calls.</td></tr>
         <tr><td><code>chunk_chars</code></td><td><code>150000</code></td><td>Per-chunk size for the cloud window (about 37k tokens).</td></tr>
-        <tr><td><code>local_chunk_chars</code></td><td><code>40000</code></td><td>Per-chunk size for local (about 10k tokens, to fit the 16k local window).</td></tr>
+        <tr><td><code>local_chunk_chars</code></td><td><code>40000</code></td><td>Per-chunk size for local (about 10k tokens, comfortably under the 32K local context window).</td></tr>
         <tr><td><code>overlap_chars</code></td><td><code>800</code></td><td>Overlap between adjacent chunks.</td></tr>
         <tr><td><code>map_max_tokens</code></td><td><code>1200</code></td><td>Output cap per map extract.</td></tr>
         <tr><td><code>max_chunks</code></td><td><code>40</code></td><td>Cap on the number of chunks; re-chunk coarser, then hard-cap.</td></tr>
@@ -135,7 +135,7 @@
       <dt><code class="path">server/infrastructure/oneshot.py</code></dt><dd>The mode-aware one-shot completion, <code>resolve_map_engine</code>, and local-key resolution; raises on hard failure so the condenser can fall back explicitly.</dd>
       <dt><code class="path">server/chat/routes.py</code></dt><dd>The single condense call site in <code>chat_endpoint</code>, right after the model is resolved.</dd>
       <dt><code class="path">server/skills.py</code></dt><dd>The <code>_TRANSCRIPT_SKILLS</code> set (skill-folder summarizers only), the transcript-arg fallback, and the secondary condense of a huge pasted notes / text argument.</dd>
-      <dt><code class="path">server/local/route.py</code>, <code class="path">server/local/server_stream.py</code></dt><dd>The local path: the condensed transcript threaded through <code>tool_ctx["transcript"]</code> into the tool loop.</dd>
+      <dt><code class="path">server/local/route.py</code></dt><dd>The local path: builds the <code>TurnContext</code> (with <code>transcript=</code>) passed into the unified engine's <code>run_turn</code>.</dd>
       <dt><code class="path">server/chat/engine/runner.py</code></dt><dd>The unified turn engine threads the (condensed) transcript into tool execution identically for every provider.</dd>
       <dt><code class="path">server/local/runtime.py</code></dt><dd>The on-device runtime: <code>loaded_key()</code>, <code>is_downloaded()</code>, and <code>complete()</code>.</dd>
     </div>

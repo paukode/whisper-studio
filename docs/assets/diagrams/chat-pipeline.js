@@ -16,7 +16,7 @@ WSDiagram.mount("chat-pipeline-diagram", {
     { id: "parse", group: "server", col: 3, row: 1, label: "Parse chunks", sub: "text · tool_use · thinking", desc: "Content blocks are parsed as they stream: text, thinking, and tool_use." },
     { id: "sseOut", group: "transport", col: 4, row: 0.5, label: "SSE to client", sub: "tokens · events", desc: "Text, usage, skill, grounding, and team_progress events stream to the SPA." },
     { id: "toolbatch", group: "tools", col: 1, row: 2, label: "Execute tool batch", sub: "partition + permissions", desc: "Read-safe tools run in parallel; writes serialize. Each is permission-checked." },
-    { id: "approve", group: "security", col: 2, row: 2, label: "Approval gate", sub: "nonce pause", desc: "Risky tools pause the turn and wait for a client-confirmed nonce." },
+    { id: "approve", group: "security", col: 2, row: 2, label: "Approval gate", sub: "pause + resume", desc: "Risky tools pause the turn in the server-held pause store; the client's decision resumes it, and the executor re-validates the action before running it." },
     { id: "exec", group: "tools", col: 3, row: 2, label: "Executor runs", sub: "files · git · web · code", desc: "The tool's implementation runs, sandboxed where it touches the shell." },
     { id: "persist", group: "persist", kind: "store", col: 4, row: 2, label: "Persist session", sub: "SQLite UPSERT", desc: "On end_turn, the message is added and the session is saved to SQLite." }
   ],

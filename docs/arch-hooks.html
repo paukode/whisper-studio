@@ -42,7 +42,7 @@
       <tbody>
         <tr><td><code>PreToolUse</code></td><td>Just before a tool executes</td><td><b>Deny</b> the call (the model gets the reason instead of a result) or <b>rewrite</b> its input via <code>updatedInput</code>.</td></tr>
         <tr><td><code>PostToolUse</code></td><td>Just after a tool returns</td><td>Fold <code>additionalContext</code> into the result the model sees, for example a lint summary after a write.</td></tr>
-        <tr><td><code>Stop</code></td><td>When the turn is about to end</td><td>Refuse to end: return a reason and the turn continues. Bounded by <code>MAX_STOP_BLOCKS_PER_TURN</code> so it can't loop forever.</td></tr>
+        <tr><td><code>Stop</code></td><td>When the turn is about to end</td><td>Refuse to end: return a reason and the turn continues. Bounded by <code>goal_max_consecutive_blocks</code> (default 8) so it can't loop forever.</td></tr>
       </tbody>
     </table></div>
     <p>A hook is a <code>HookDef</code> (<code class="path">server/hooks/schema.py</code>): an

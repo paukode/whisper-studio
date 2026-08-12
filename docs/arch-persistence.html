@@ -145,8 +145,9 @@
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for the compaction path.</p>
 
     <h2 id="companion-tables">The companion tables</h2>
-    <p>Six other tables share the same database file, each created by a numbered migration rather than
-      on import.</p>
+    <p>Seven other tables share the same database file. Six are each created by a numbered migration
+      rather than on import; the seventh, <code>tasks</code>, is created inline by its own module
+      instead.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Table</th><th>Grain</th><th>Holds</th></tr></thead>
       <tbody>
@@ -156,6 +157,7 @@
         <tr><td><code>notifications</code></td><td>One row per notification</td><td>An id, <code>session_id</code>, a free-form <code>source</code> slug (originally a closed <code>chat</code> / <code>agent</code> / <code>cron</code> set; migration 012 rebuilt the table without that CHECK so app-originated toasts - "app", "model-download", "recording", and more - can log too), <code>title</code>, <code>message</code>, <code>status</code>, a <code>read_at</code> stamp, a <code>hidden_at</code> stamp (migration 010: per-row hide and "Clear all" soft-hide instead of deleting; hidden rows are excluded from the list and the unread count), and a <code>count</code> for tight-loop dedupe (migration 012: identical toasts firing within seconds collapse into one row instead of spamming the bell). The durable log written by <code>notify_user</code> and app-side toasts; exposed at <code>/api/notifications</code> and surfaced by the header bell.</td></tr>
         <tr><td><code>workflow_runs</code></td><td>One row per workflow run</td><td><code>run_id</code>, <code>name</code>, <code>session_id</code>, a <code>status</code> lease, the phase list, and a token ledger for the <a href="arch-ultracode.html">ultracode workflow runtime</a> (migration 009; migration 013 replaced the original <code>budget_usd</code> column with <code>budget_tokens</code>, since a dollar cap has no faithful token equivalent after the fact).</td></tr>
         <tr><td><code>attachments</code></td><td>One row per uploaded/analyzed file</td><td><code>id</code>, <code>session_id</code>, <code>kind</code>, <code>filename</code>, <code>media_type</code>, extracted <code>text</code> / <code>outline</code> / <code>sections</code>, <code>created</code> and <code>last_used</code> timestamps. Durable session-scoped attachment storage (migration 011); see <a href="#attachments">Attachments</a> below.</td></tr>
+        <tr><td><code>tasks</code></td><td>One row per todo-list item</td><td><code>id</code>, <code>session_id</code>, <code>subject</code>, <code>description</code>, <code>status</code>, timestamps. The in-conversation todo tracker (<code>task_create</code>/<code>task_update</code>/<code>task_list</code>/<code>task_get</code>/<code>task_stop</code>); its table is created inline by <code class="path">server/tasks_tracker.py</code>, not by a numbered migration. Distinct from <code>agent_tasks</code> above - <code>clear_session_tasks</code> genuinely deletes these rows on session delete, not just an in-memory cache.</td></tr>
       </tbody>
     </table></div>
     <p>The status lease is a recurring pattern: <code>cron_runs</code>, <code>agent_tasks</code>, and
@@ -167,8 +169,9 @@
       indexed for its hot query -
       <code>session_costs</code> by <code>session_id</code> and <code>created_at</code>,
       <code>cron_runs</code> by <code>(job_id, started_at DESC)</code>,
-      <code>agent_tasks</code> / <code>notifications</code> / <code>workflow_runs</code> by session and
-      status, and <code>attachments</code> by <code>session_id</code>. See
+      <code>agent_tasks</code> / <code>workflow_runs</code> by session and status,
+      <code>notifications</code> by session and by unread state (<code>read_at</code>, <code>created_at DESC</code>),
+      and <code>attachments</code> by <code>session_id</code>. See
       <a href="arch-costs.html">Cost tracking &amp; budgets</a> and
       <a href="arch-cron.html">Cron / scheduled tasks</a> for how each is written and read.</p>
 

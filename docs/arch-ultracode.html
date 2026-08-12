@@ -89,7 +89,7 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
         <tr><td><code>phase(title)</code></td><td>Start a new phase; subsequent <code>agent()</code> calls group under it in the progress display.</td></tr>
         <tr><td><code>log(msg)</code></td><td>Emit a progress line shown above the run's progress tree.</td></tr>
         <tr><td><code>workflow(name, args?)</code></td><td>Run another saved workflow inline as a sub-step (one level of nesting; shares the parent's caps and budget).</td></tr>
-        <tr><td><code>budget</code></td><td><code>{ total, spent(), remaining() }</code> - the run's output-token budget, for dynamic loops (<code>while (budget.remaining() &gt; 50_000) …</code>).</td></tr>
+        <tr><td><code>budget</code></td><td><code>{ total, spent(), remaining() }</code> - the run's output-token budget. <code>spent()</code>/<code>remaining()</code> are async (a live RPC read of the token ledger), for dynamic loops (<code>while (await budget.remaining() &gt; 50_000) …</code>).</td></tr>
         <tr><td><code>args</code></td><td>The JSON value passed into the run, verbatim - the way a saved workflow is parameterized.</td></tr>
       </tbody>
     </table></div>
@@ -142,8 +142,10 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
     </ol>
     <p>USD cost is still priced per agent against the model that actually ran (a per-agent
       <code>opts.model</code> override is billed at that model's rate) and rolls up into the run's ledger
-      and the session cost log, but it is display only - enforcement is the token counter, which also
-      bounds free local-model runs a dollar cap would never touch. A nested <code>workflow()</code>
+      and the session cost log, but it is display only - enforcement is the token counter. Workflow
+      agents are cloud-only regardless: <code>agent()</code> is a <code>run_agent</code> call, and the
+      agent runtime skips <code>local:*</code> models when resolving which one to use, failing the run
+      early if every configured chat model is on-device. A nested <code>workflow()</code>
       inherits the parent's <em>remaining</em> budget and merges its spend, agents, and cap back into the
       parent, so nested work can never exceed the outer cap.</p>
 
@@ -233,7 +235,7 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       duplicating them.</p>
     <div class="spec">
       <dt><a href="arch-agents.html">Provider-agnostic agents</a></dt><dd>Every <code>agent()</code> is a <code>run_agent</code> call, so workflows inherit Claude/GPT parity, usage accounting, effort, structured output, and worktree isolation.</dd>
-      <dt><a href="arch-cron.html">The task registry</a></dt><dd>A workflow run and a CI watch are rows in the unified background-task registry, so they appear in the tasks panel and the header running-count pill.</dd>
+      <dt><a href="arch-agents.html">The task registry</a></dt><dd>A CI watch is a row in the unified background-task registry, so it appears in the tasks panel and the header running-count pill. A workflow run is tracked separately in its own <code>workflow_runs</code> row and <code>WorkflowRunCard</code>.</dd>
       <dt><a href="arch-tools.html">Tool disclosure and hooks</a></dt><dd>The workflow and CI tools surface only in the ultracode tier; workflow subagents still pass through the same Pre/PostToolUse hooks and tool executors.</dd>
       <dt>The built-in verify_change tool</dt><dd>Generated fix workflows end by running the repo's verification gate, which emits a deterministic <code>VERIFY PASS</code> / <code>VERIFY FAIL</code> line - the same tool the goal completion gate keys on.</dd>
     </div>

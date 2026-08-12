@@ -303,9 +303,10 @@
       and drains it in a tight loop, re-emitting each event as a <code>team_progress</code> SSE frame.
       Draining happens <em>during</em> the batch, so a long-running <code>team_create</code> streams
       activity in real time instead of arriving in one burst when the tool finally returns.</p>
-    <p>Six event types are filtered out here: <code>cron_event</code>, <code>memory_event</code>,
-      <code>task_event</code>, <code>cron_progress</code>, <code>ci_progress</code>, and
-      <code>ci_result</code> are skipped, because a separate long-lived stream,
+    <p>Seven event types are filtered out here: <code>cron_event</code>, <code>memory_event</code>,
+      <code>task_event</code>, <code>cron_progress</code>, <code>ci_progress</code>,
+      <code>ci_result</code>, and <code>session_message</code> are skipped, because a separate
+      long-lived stream,
       <code>/api/sessions/{id}/events</code>, delivers those (<code>task_event</code> is the new unified
       background-task lifecycle role). Skipping them prevents double-rendering. On the client, the SPA groups
       <code>team_progress</code> frames by <code>team_id</code> and <code>agent_id</code> into the live

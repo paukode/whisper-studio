@@ -91,17 +91,18 @@
       </li>
       <li>
         <h4>Clear it when you're done</h4>
-        <p><code>/goal clear</code> ends the goal. It also clears itself naturally: the loop is bounded by a
-          consecutive-block cap (default 8) so a stuck task can never run away, and a confident "can't do
-          this" ends the turn rather than looping.</p>
+        <p><code>/goal clear</code> ends the goal, and so does an achieved verdict - those are the only
+          two ways it clears. The consecutive-block cap (default 8) and a confident "can't do this"
+          verdict stop the loop from forcing more turns right now, but the goal itself stays set and
+          resumes gating on your very next message.</p>
       </li>
     </ol>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
       <div class="callout__body"><p>Goals shine when "done" is <em>checkable</em>. "Make the build pass" or
-        "all tests green" gives the evaluator a real signal: the <code>verify-change</code> skill runs the
-        actual gate and reports <code>VERIFY PASS</code> / <code>VERIFY FAIL</code>, which the evaluator
+        "all tests green" gives the evaluator a real signal: the built-in <code>verify_change</code> tool
+        runs the actual gate and reports <code>VERIFY PASS</code> / <code>VERIFY FAIL</code>, which the evaluator
         weighs above any confident-sounding summary. Phrase your goal as an outcome it can verify.</p></div>
     </div>
 

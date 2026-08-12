@@ -37,7 +37,8 @@
 
     <h2 id="the-build-flow">The build flow</h2>
     <p><code>build(ws_path)</code> is serialized per workspace with a lock, so a user-triggered build
-      and the scheduled refresh (per workspace and configurable: daily, every N days, or off) can
+      and the scheduled refresh (per workspace and configurable: daily, every N days, weekly on a
+      chosen weekday, or off) can
       never race the same SQLite index. It walks the tree, decides
       what changed, extracts and chunks each changed file, embeds it, extracts entities, optionally
       extracts typed relations, and writes everything atomically per file.</p>
@@ -71,7 +72,7 @@
       <thead><tr><th>File type</th><th>How it becomes text</th></tr></thead>
       <tbody>
         <tr><td>Text and code</td><td>Decoded directly (binary and oversized files are skipped).</td></tr>
-        <tr><td>Spreadsheets (CSV / XLSX)</td><td>Small ones via MarkItDown; large ones via a bounded, streamed schema-plus-sample so a huge grid never loads into memory.</td></tr>
+        <tr><td>Spreadsheets (CSV / XLSX)</td><td>Small CSVs are read directly as text; small XLSX/XLS via MarkItDown; large ones of either type via a bounded, streamed schema-plus-sample so a huge grid never loads into memory.</td></tr>
         <tr><td>Rich docs (PDF / DOCX / PPTX / HTML / EPUB)</td><td>MarkItDown, with OCR for PDFs. Inlined base64 images are stripped so they do not pollute the embedding.</td></tr>
         <tr><td>Images</td><td>OCR (Apple Vision, falling back to Haiku).</td></tr>
         <tr><td>Audio and video</td><td>Local transcription (see <a href="arch-transcription.html">Transcription</a>).</td></tr>
@@ -109,9 +110,9 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body"><p>The MPS path can intermittently emit a non-finite (NaN) vector. A
         persisted NaN silently makes a document unfindable and breaks sqlite-vec, so the embedder
-        re-computes any bad row (up to three retries) and zeroes it only as a last resort. There is
-        also a <code>repair_nonfinite_vectors</code> repair pass in the store for indexes built before
-        this guard existed.</p></div>
+        re-computes any bad row (up to three retries) and zeroes it only as a last resort. A non-finite
+        vector left over from an older index (built before this guard existed) is simply skipped at
+        read time - never matched, never ranked - rather than repaired in place.</p></div>
     </div>
 
     <h3 id="entities-relations">Entities and relations</h3>
@@ -182,7 +183,9 @@
       <li><b>Keyword hits.</b> A BM25/FTS5 leg (behind the <code>rag_hybrid_search</code> flag) catches
         exact terms (filenames, ids, codes) that dense embeddings miss.</li>
       <li><b>Related passages.</b> One GraphRAG <em>hop</em>: <code>store.expand</code> returns chunks
-        that share entity nodes with the dense matches, ranked by how many they share.</li>
+        that share entity nodes with the dense matches, ranked by salience- and IDF-weighted
+        shared-entity mass (not raw count, so a rare, discriminative entity outweighs a ubiquitous
+        one).</li>
     </ul>
 
     <h3 id="grounding">Retrieval grounding</h3>
@@ -243,9 +246,9 @@
         <tr><td><code>POST /remove</code></td><td>Delete a workspace's entire on-disk index.</td></tr>
         <tr><td><code>GET /graph</code>, <code>/graph/entity</code>, <code>/graph/umap</code></td><td>Derived views for the entity-graph and semantic-map UI.</td></tr>
         <tr><td><code>GET /graph/all</code>, <code>/graph/umap/all</code></td><td>The all-workspace variants of the graph and semantic-map views.</td></tr>
-        <tr><td><code>GET /engines</code></td><td>Which embed / NER / rerank engines the current model mode resolves to.</td></tr>
+        <tr><td><code>GET /engines</code></td><td>Engine choices for the index's LLM passes (typed relations, entity descriptions, chunk-context headers): Bedrock Haiku plus every on-device model, with download state for the settings picker.</td></tr>
         <tr><td><code>GET /agent</code></td><td>Status of the background refresh helper (macOS).</td></tr>
-        <tr><td><code>GET</code> / <code>PUT /settings</code></td><td>Per-workspace settings: the refresh schedule (daily / every N days / off), <code>ner_model</code> (<code>gliner</code> or <code>gliner2</code>), typed relations (engine <code>none</code> / <code>haiku</code> / <code>local</code> / <code>gliner2</code>), entity descriptions, and chunk context (mode <code>off</code> / <code>filename</code> / <code>llm</code>, engine <code>haiku</code> or <code>local</code>).</td></tr>
+        <tr><td><code>GET</code> / <code>PUT /settings</code></td><td>Per-workspace settings: the refresh schedule (daily / every N days / weekly / off), <code>ner_model</code> (<code>gliner</code> or <code>gliner2</code>), typed relations (engine <code>none</code> / <code>haiku</code> / <code>local</code> / <code>gliner2</code>), entity descriptions, and chunk context (mode <code>off</code> / <code>filename</code> / <code>llm</code>, engine <code>haiku</code> or <code>local</code>).</td></tr>
       </tbody>
     </table></div>
 
