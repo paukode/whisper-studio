@@ -17,6 +17,28 @@ import { useUIStore } from './uiStore';
 import { useIndexSearchStore } from './indexSearchStore';
 import { useCronUnreadStore } from './cronUnreadStore';
 
+/** Seed a reopened session's token/cost readout from the spend the server
+ *  recorded for it, so the composer counter covers the whole conversation
+ *  rather than restarting at the next turn. Best-effort: a session with no
+ *  recorded turns (or a failed fetch) just starts the counter at zero. */
+async function hydrateSessionUsage(sessionId: string): Promise<void> {
+  try {
+    const { get } = await import('@/api/client');
+    const usage = await get<{
+      prompt_tokens?: number;
+      output_tokens?: number;
+      cost_usd?: number;
+    }>(`/api/costs/session/${encodeURIComponent(sessionId)}`);
+    getChatStore(sessionId).getState().hydrateSessionUsage(
+      usage.prompt_tokens ?? 0,
+      usage.output_tokens ?? 0,
+      usage.cost_usd ?? 0,
+    );
+  } catch {
+    // Cosmetic counter — never let it fail a session load.
+  }
+}
+
 /** Deleting a session that owns the live recording must stop the engine
  *  first (websocket, mic worklet, watchdog), or it would keep streaming
  *  audio for a session that no longer exists. Lazy import avoids a
@@ -246,6 +268,7 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
             normalized.segments,
             normalized.speakerNames ?? {},
           );
+          void hydrateSessionUsage(id);
           entry.hydrated = true;
         } catch (err) {
           console.warn('Failed to load session:', err);

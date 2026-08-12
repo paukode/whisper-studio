@@ -70,9 +70,17 @@ export interface ChatState {
   inputTokens: number;
   outputTokens: number;
   estimatedCost: number;
+  /** Session-cumulative counterparts: every turn's tokens and cost added up,
+   *  which is what the composer readout shows. The per-turn fields above reset
+   *  at the head of each turn (each message's meta line reads them); these keep
+   *  counting, and are rehydrated from /api/costs/session/{id} when a session is
+   *  reopened so they cover the whole conversation, not just this page load. */
+  sessionInputTokens: number;
+  sessionOutputTokens: number;
+  sessionCost: number;
   /** Live context-window usage for the turn, from the usage SSE frame's
    *  context_used/context_max (real per-round token counts). Drives the
-   *  status bar's context meter. 0 = not yet reported this session. */
+   *  composer readout's context meter. 0 = not yet reported this session. */
   contextUsed: number;
   contextMax: number;
 
@@ -127,6 +135,10 @@ export interface ChatState {
   setThinkingStart: () => void;
   setThinkingStop: () => void;
   setUsage: (input: number, output: number, cost?: number, contextUsed?: number, contextMax?: number) => void;
+  /** Seed the session-cumulative totals from the server's recorded spend
+   *  (session hydration). Never lowers a running total, so it can't undo a
+   *  turn that streamed while the fetch was in flight. */
+  hydrateSessionUsage: (input: number, output: number, cost: number) => void;
   setThinkingElapsed: (ms: number) => void;
 
   // Tool tracking
@@ -172,6 +184,9 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   inputTokens: 0,
   outputTokens: 0,
   estimatedCost: 0,
+  sessionInputTokens: 0,
+  sessionOutputTokens: 0,
+  sessionCost: 0,
   contextUsed: 0,
   contextMax: 0,
   sseEventCount: 0,
@@ -398,12 +413,33 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   },
 
   setUsage: (input: number, output: number, cost?: number, contextUsed?: number, contextMax?: number) => {
+    // Usage frames carry running totals for the CURRENT turn, and every stream
+    // start resets the per-turn fields (see setStreaming), so the growth since
+    // the last frame is what the session totals accrue. Clamped at 0: a turn
+    // that ends and restarts (approval resume, retry) begins its own count
+    // again, and that must never subtract from the session.
+    const prev = get();
+    const dIn = Math.max(0, input - prev.inputTokens);
+    const dOut = Math.max(0, output - prev.outputTokens);
+    const dCost = cost !== undefined ? Math.max(0, cost - prev.estimatedCost) : 0;
     set({
       inputTokens: input,
       outputTokens: output,
+      sessionInputTokens: prev.sessionInputTokens + dIn,
+      sessionOutputTokens: prev.sessionOutputTokens + dOut,
+      sessionCost: prev.sessionCost + dCost,
       ...(cost !== undefined ? { estimatedCost: cost } : {}),
       ...(contextUsed !== undefined ? { contextUsed } : {}),
       ...(contextMax !== undefined ? { contextMax } : {}),
+    });
+  },
+
+  hydrateSessionUsage: (input: number, output: number, cost: number) => {
+    const prev = get();
+    set({
+      sessionInputTokens: Math.max(prev.sessionInputTokens, input),
+      sessionOutputTokens: Math.max(prev.sessionOutputTokens, output),
+      sessionCost: Math.max(prev.sessionCost, cost),
     });
   },
 
