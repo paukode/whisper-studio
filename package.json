@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest --run",
     "lint": "eslint src/",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\""
+    "format": "prettier --write \"src/**/*.{ts,tsx,css,json}\"",
+    "vendor:viz": "bash scripts/vendor-viz.sh"
   },
   "keywords": [],
   "author": "",
