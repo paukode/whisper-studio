@@ -115,6 +115,19 @@ def render_attachment_blocks(
                     f"section in full.]"
                 )
                 doc_text = f"[Outline]\n{outline}\n\n{head}{note}" if outline else head + note
+            source = att.get("source_path")
+            if source:
+                # Unconditional, not only when the text was truncated above:
+                # the extractor ALREADY samples large sheets down to a header
+                # plus 20 rows, so the stored text can be small and still be a
+                # sample. Without this line a model happily totals 20 of
+                # 10,000 rows and reports the answer as fact.
+                doc_text += (
+                    f"\n\n[Complete file on disk: {source}\n"
+                    "The text above may be a sample of it. Compute any count, "
+                    "total, average, or chart of this data from the file itself "
+                    "with run_python (pandas), never from the text above.]"
+                )
             attachment_texts.append(f"[File: {att['filename']}]\n{doc_text}")
             # Video documents carry retained keyframes — surface them as image
             # blocks so vision models can see the actual frames (hybrid video

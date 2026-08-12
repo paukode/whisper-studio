@@ -23,11 +23,12 @@ video documents additionally keep sampled ``frames``.
 import json
 import logging
 import os
+import shutil
 import sqlite3
 import time
 from contextlib import contextmanager
 
-from server.infrastructure.paths import storage_root
+from server.infrastructure.paths import data_root, storage_root
 
 log = logging.getLogger("whisper-studio")
 
@@ -53,6 +54,7 @@ _TABLE_DDL = """
         sections TEXT NOT NULL DEFAULT '[]',
         data TEXT NOT NULL DEFAULT '',
         frames TEXT NOT NULL DEFAULT '[]',
+        source_path TEXT NOT NULL DEFAULT '',
         created REAL NOT NULL,
         last_used REAL NOT NULL
     )
@@ -95,8 +97,8 @@ def save_attachment(aid: str, record: dict) -> None:
         conn.execute(
             "INSERT OR REPLACE INTO attachments "
             "(id, session_id, kind, filename, media_type, text, outline, sections, "
-            " data, frames, created, last_used) "
-            "VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " data, frames, source_path, created, last_used) "
+            "VALUES (?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 aid,
                 record.get("kind", "document"),
@@ -108,10 +110,83 @@ def save_attachment(aid: str, record: dict) -> None:
                 json.dumps(record.get("sections") or []),
                 record.get("data", ""),
                 json.dumps(record.get("frames") or []),
+                record.get("source_path", ""),
                 now,
                 now,
             ),
         )
+
+
+# ---------------------------------------------------------------------------
+# Original bytes on disk
+# ---------------------------------------------------------------------------
+#
+# Extraction is lossy on purpose: a 10k-row spreadsheet becomes a header plus a
+# 20-row sample, because the full markdown would not fit any context window.
+# That sample is fine to read and useless to compute over — asked for a total,
+# a model summing 20 of 10,000 rows produces a confident wrong number. So the
+# upload's bytes are kept next to the extracted text and the path travels into
+# the prompt, which lets run_python open the real file with pandas.
+
+
+def source_files_dir() -> str:
+    """Directory holding uploads' original bytes. Under data_root so it moves
+    with a packaged install's app home."""
+    return os.path.join(data_root(), "attachments")
+
+
+def save_source_file(aid: str, filename: str, content: bytes) -> str:
+    """Persist an upload's bytes; returns the path, or '' if it could not be
+    written. Never raises: losing the original degrades analysis quality, it
+    does not break the attachment."""
+    ext = os.path.splitext(filename)[1].lower()[:16]
+    directory = source_files_dir()
+    path = os.path.join(directory, f"{aid}{ext}")
+    try:
+        os.makedirs(directory, exist_ok=True)
+        with open(path, "wb") as fh:
+            fh.write(content)
+        return path
+    except OSError as e:
+        log.warning("could not keep source bytes for %s: %s", filename, e)
+        return ""
+
+
+def _row_value(row, column: str, default=""):
+    """Read a column that may not exist yet on a database the migration
+    runner has not reached (tests reach this module directly)."""
+    try:
+        return row[column]
+    except (IndexError, KeyError):
+        return default
+
+
+def sweep_source_files() -> int:
+    """Delete files whose attachment row is gone, so retention and session
+    deletion need no path bookkeeping of their own. Returns files removed.
+
+    Files younger than the unbound TTL are skipped: an upload writes its bytes
+    before its row, and a sweep in that window would delete a live attachment.
+    """
+    directory = source_files_dir()
+    if not os.path.isdir(directory):
+        return 0
+    with _get_conn() as conn:
+        live = {r[0] for r in conn.execute("SELECT id FROM attachments")}
+    cutoff = time.time() - UNBOUND_TTL_SECONDS
+    removed = 0
+    for name in os.listdir(directory):
+        path = os.path.join(directory, name)
+        if os.path.splitext(name)[0] in live:
+            continue
+        try:
+            if os.path.getmtime(path) > cutoff:
+                continue
+            shutil.rmtree(path) if os.path.isdir(path) else os.unlink(path)
+            removed += 1
+        except OSError:
+            continue
+    return removed
 
 
 def _row_to_record(row, include_binary: bool = True) -> dict:
@@ -123,6 +198,11 @@ def _row_to_record(row, include_binary: bool = True) -> dict:
         "sections": json.loads(row["sections"] or "[]"),
         "created": row["created"],
     }
+    # The original bytes, when we kept them. This is what lets run_python
+    # compute over the WHOLE file instead of the sample in the prompt.
+    source = _row_value(row, "source_path")
+    if source and os.path.exists(source):
+        rec["source_path"] = source
     if row["kind"] == "image":
         rec["ocr_text"] = row["text"]
         if include_binary:
@@ -189,7 +269,9 @@ def gc(now: float | None = None) -> int:
             "(session_id != '' AND last_used < ?)",
             (now - UNBOUND_TTL_SECONDS, now - RETENTION_SECONDS),
         )
-        return cur.rowcount
+        deleted = cur.rowcount
+    sweep_source_files()
+    return deleted
 
 
 _ensure_table()

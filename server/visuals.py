@@ -14,9 +14,11 @@ chart host page, which carries a vendored offline Vega runtime.
 import json
 
 # A chart spec is inlined into the session's chat_history blob, which is
-# rewritten on every message append. Cap it so a runaway data dump cannot make
-# every later turn in the session pay to re-serialise it.
-MAX_SPEC_CHARS = 400_000
+# rewritten on every message append, so a huge spec taxes every later turn.
+# The cap is a backstop against a runaway data dump, not the working limit:
+# the model has to WRITE every inlined row, which prices real charts down to a
+# few hundred rows long before this bites. Aggregate first, then chart.
+MAX_SPEC_CHARS = 1_000_000
 MAX_SVG_CHARS = 200_000
 
 _MULTI_VIEW_KEYS = ("layer", "facet", "hconcat", "vconcat", "concat", "repeat", "spec")
