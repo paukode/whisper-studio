@@ -41,6 +41,7 @@ Deploy setup is in [`docs/README.md`](docs/README.md).
 | Install from scratch (zero prior tooling) | [Installation](https://paukode.github.io/whisper-studio/installation.html) · [Requirements](https://paukode.github.io/whisper-studio/requirements.html) |
 | Configure region, model, keys, feature flags | [Configuration](https://paukode.github.io/whisper-studio/configuration.html) · [Env vars](https://paukode.github.io/whisper-studio/ref-env.html) · [Settings keys](https://paukode.github.io/whisper-studio/ref-settings.html) |
 | Learn a task (chat, voice, docs, research, coding, cron) | [Tutorials](https://paukode.github.io/whisper-studio/tut-first-chat.html) |
+| Review a repo with a background agent swarm | [Ultracode](ULTRACODE.md) |
 | Look up a slash command or agent tool | [Slash commands](https://paukode.github.io/whisper-studio/ref-slash-commands.html) · [Agent tools](https://paukode.github.io/whisper-studio/ref-tools.html) |
 | Record mic, a Chrome tab, or system audio for meetings | [Voice & meetings](https://paukode.github.io/whisper-studio/tut-voice.html) |
 | Understand the internals | [Architecture](https://paukode.github.io/whisper-studio/arch-overview.html) |
