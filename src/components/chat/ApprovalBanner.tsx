@@ -3,7 +3,8 @@ import { getChatStore, useActiveChatStore } from '@/stores/sessionRuntimes';
 import type { PendingApproval } from '@/stores/chatStore';
 import { sendApprovalContinuation } from '@/hooks/useChatStream';
 import { useUIStore } from '@/stores/uiStore';
-import { executeApproval } from '@/api/approval';
+import { executeApproval, type ApprovalOutcome } from '@/api/approval';
+import { toError } from '@/utils/toError';
 import { DiffPreview } from './previews/DiffPreview';
 import { CommandPreview } from './previews/CommandPreview';
 import { FileListPreview } from './previews/FileListPreview';
@@ -31,33 +32,53 @@ export function ApprovalBanner() {
     }
     chat.getState().clearCurrentApproval();
 
-    // Single executor: backend looks up the spec and runs its registered
-    // function. No per-action switch on the frontend.
-    const outcome = await executeApproval({ action: approval.action, payload: approval.payload });
-
-    if (!outcome.ok) {
-      useUIStore.getState().addToast({
-        type: 'error',
-        message: `Approval failed: ${outcome.error ?? 'unknown error'}`,
-        duration: 6000,
-        key: 'approval-apply-error',
-      });
-    } else {
-      // An action may have connected a new workspace (e.g. git_clone with
-      // open=true). Switch the active workspace so the panel opens — the
-      // backend already updated its config, this brings the UI in line.
-      if (outcome.ws_folder_opened) {
-        useUIStore.getState().setWsConnected(true, outcome.ws_folder_opened);
+    try {
+      // Single executor: backend looks up the spec and runs its registered
+      // function. No per-action switch on the frontend.
+      //
+      // executeApproval THROWS an ApiError on any non-2xx / network failure.
+      // Letting that escape rejected the whole handler: the continuation was
+      // never sent, so the paused turn sat there with no card, no message and
+      // no toast, and the user had to nudge the model by hand to discover the
+      // approval had gone nowhere. Convert it into a truthful FAILED outcome
+      // instead (same guard the auto-approve path in sseStream applies) so the
+      // model learns the action did not happen and can react.
+      let outcome: ApprovalOutcome;
+      try {
+        outcome = await executeApproval({ action: approval.action, payload: approval.payload });
+      } catch (err) {
+        console.error('Approval execution failed:', err);
+        outcome = { ok: false, error: toError(err).message };
       }
-      window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
-    }
 
-    await sendApprovalContinuation(approval, approval.sessionId, true, undefined, outcome);
+      if (!outcome.ok) {
+        useUIStore.getState().addToast({
+          type: 'error',
+          message: `Approval failed: ${outcome.error ?? 'unknown error'}`,
+          duration: 6000,
+          key: 'approval-apply-error',
+        });
+      } else {
+        // An action may have connected a new workspace (e.g. git_clone with
+        // open=true). Switch the active workspace so the panel opens — the
+        // backend already updated its config, this brings the UI in line.
+        if (outcome.ws_folder_opened) {
+          useUIStore.getState().setWsConnected(true, outcome.ws_folder_opened);
+        }
+        window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
+      }
 
-    if (!chat.getState().currentApproval) {
-      chat.getState().showNextApproval();
+      await sendApprovalContinuation(approval, approval.sessionId, true, undefined, outcome);
+    } finally {
+      // Always recover the card UI. Skipping this on the failure path left
+      // `isProcessing` stuck true, which disabled every button on the NEXT
+      // approval card ("Running…") until a reload, and left queued approvals
+      // permanently unshown.
+      if (!chat.getState().currentApproval) {
+        chat.getState().showNextApproval();
+      }
+      setIsProcessing(false);
     }
-    setIsProcessing(false);
   }, []);
 
   const handleDeny = useCallback(async (approval: PendingApproval, denyAll: boolean) => {
@@ -69,12 +90,14 @@ export function ApprovalBanner() {
     }
     chat.getState().clearCurrentApproval();
 
-    await sendApprovalContinuation(approval, approval.sessionId, false);
-
-    if (!chat.getState().currentApproval) {
-      chat.getState().showNextApproval();
+    try {
+      await sendApprovalContinuation(approval, approval.sessionId, false);
+    } finally {
+      if (!chat.getState().currentApproval) {
+        chat.getState().showNextApproval();
+      }
+      setIsProcessing(false);
     }
-    setIsProcessing(false);
   }, []);
 
   const handleUndo = useCallback(async (approval: PendingApproval) => {
