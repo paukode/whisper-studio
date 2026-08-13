@@ -1,5 +1,14 @@
 import { post } from './client';
 
+/**
+ * What actually happened when an approved action ran.
+ *
+ * THE definition — the approval card and the continuation leg
+ * (sendApprovalContinuation, which turns this into the model's tool_result)
+ * both import it from here. A second, narrower copy used to live in sseStream;
+ * the two only ever type-checked because they were structurally compatible, and
+ * `ws_folder_opened` was invisible to everything that used the narrow one.
+ */
 export interface ApprovalOutcome {
   ok: boolean;
   output?: string;

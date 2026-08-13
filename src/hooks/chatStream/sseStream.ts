@@ -10,7 +10,7 @@
  * They call each other (an approval re-enters the stream), so they share a
  * module to keep the import graph acyclic.
  */
-import { executeApproval } from '@/api/approval';
+import { executeApproval, type ApprovalOutcome } from '@/api/approval';
 import { getChatStore } from '@/stores/sessionRuntimes';
 import type { PendingApproval } from '@/stores/chatStore';
 import type { VizArtifact } from '@/types/chat';
@@ -31,6 +31,7 @@ import { registerStreamController, releaseStreamController } from './streamContr
 import { renderEventCards } from './sseEventCards';
 import { emptyResponseFallback } from './emptyResponse';
 import { turnModelSettings } from './turnSettings';
+import { buildHistoryPayload } from './history';
 
 // Augment Window for SSE diagnostics access
 declare global {
@@ -799,23 +800,14 @@ export async function readSSEStream(
   };
 }
 
-/** Outcome of actually executing the approved (or denied) action on the
- *  backend. Pass this into `sendApprovalContinuation` so Bedrock receives a
- *  truthful tool_result instead of a hard-coded "succeeded" string — the
- *  pre-existing message lied to the model whenever a write actually failed
- *  (or, in the worst case I just shipped, when the write was never even
- *  attempted because no one called the workspace endpoint).
- */
-export interface ApprovalOutcome {
-  ok: boolean;
-  /** Free-form output to forward to the model (stdout, error message…). */
-  output?: string;
-  /** Concise error description; rendered if ok is false. */
-  error?: string;
-}
-
 /**
  * Send an approval continuation (accept or deny) through the full SSE pipeline.
+ *
+ * `outcome` is what actually happened when the action ran (see ApprovalOutcome
+ * in @/api/approval — ONE definition, shared with the endpoint that produces
+ * it). Passing it is what keeps the tool_result truthful: the string used to be
+ * a hard-coded "succeeded" that lied to the model whenever the write failed, or
+ * was never attempted at all.
  */
 export async function sendApprovalContinuation(
   approval: PendingApproval,
@@ -835,13 +827,19 @@ export async function sendApprovalContinuation(
     ?? (approval.payload?.command as string | undefined)
     ?? approval.summary
     ?? 'N/A';
+  // Nouns stay action-neutral: this text is what the MODEL reasons from, and
+  // the approval registry covers far more than writes — git_push, terminal_run,
+  // GitHub API writes, workspace connects. Calling every one of them a
+  // "filesystem operation" (or a "change") misdescribed the tool it is
+  // answering. The action name is already in the string; the verb carries the
+  // outcome.
   let content: string;
   if (!accepted) {
-    content = `[User denied] ${approval.action}: ${target}. The user rejected this change.`;
+    content = `[User denied] ${approval.action}: ${target}. The user rejected this action; it did not run.`;
   } else if (outcome) {
     if (outcome.ok) {
       const detail = outcome.output ? `\n\n${outcome.output}` : '';
-      content = `[User approved] ${approval.action}: ${target}. The filesystem operation succeeded.${detail}`;
+      content = `[User approved] ${approval.action}: ${target}. The action succeeded.${detail}`;
     } else {
       const detail = outcome.error ?? outcome.output ?? 'unknown error';
       content = `[User approved but the operation FAILED] ${approval.action}: ${target}. Error: ${detail}`;
@@ -876,6 +874,12 @@ export async function sendApprovalContinuation(
     // verbosity the post-approval half of the turn silently dropped to the
     // config defaults (an Ultracode turn finished at normal effort).
     ...turnModelSettings(),
+    // The conversation so far. Normally unused — the backend restores the
+    // stashed paused messages and ignores this — but it is the ONLY context the
+    // server has left when that paused state is gone (a backend restart while
+    // the card sat on screen). Sending nothing is what made that path answer
+    // from an empty conversation.
+    history: buildHistoryPayload(store().messages, true),
     approved_tool_result: {
       tool_use_id: approval.toolUseId,
       content,
