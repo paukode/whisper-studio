@@ -71,8 +71,7 @@ const DEFAULT_AGENTIC_MIN_B = 7;
  *  result list rather than only after a multi-GB download. */
 const ChatOnlyChip: React.FC = () => (
   <span
-    className="model-local-badge"
-    style={{ color: 'var(--accent-warn, #b8860b)', borderColor: 'var(--accent-warn, #b8860b)' }}
+    className="model-local-badge model-chatonly-badge"
     title="Too small to use tools reliably — installs as a chat-only model."
   >
     chat only
