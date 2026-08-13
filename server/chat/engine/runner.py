@@ -128,12 +128,25 @@ def _assemble_round_tools(ctx: TurnContext) -> tuple[list, int | None]:
     round so a tool_search activation in round N is advertised in round N+1."""
     from server.chat.tool_partition import partition_pool
     from server.chat.tool_pool import assemble_full_catalog
+    from server.infrastructure.effort import is_ultracode
     from server.infrastructure.feature_flags import is_enabled
 
     catalog = assemble_full_catalog(
         plan_mode=ctx.plan_mode,
         ws_connected=bool(ctx.ws_path),
         suppress_workspace_search=ctx.suppress_ws_search,
+        # The workflow runtime + CI tools live behind this one flag (the only
+        # ultracode gate in tool_pool). THIS catalog becomes the request's
+        # tools array, so omitting the flag here kept workflow_run off the wire
+        # on every interactive round: an ultracode turn was handed a system
+        # prompt ordering it to "write a workflow script and run it with
+        # workflow_run" (server/prompts/ultracode.py) while the tool itself was
+        # never advertised, leaving spawn_agent as the only orchestration it
+        # could actually call. The route builds its own ultracode-aware pool,
+        # but only for the deferred index and the SSE counts — never for this.
+        # Callers that supply their own tool_catalog (cron, agents, headless)
+        # never reach here, so nested workflows stay impossible.
+        ultracode=is_ultracode(ctx.effort_label),
     )
     if is_enabled("progressive_tools"):
         from server.chat.tool_activation import get_ordered

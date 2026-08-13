@@ -310,15 +310,19 @@ async def route_tool(
     if tool_name == "tool_search":
         from server.agent_tools import execute_tool_search
         from server.chat.tool_pool import assemble_full_catalog
+        from server.infrastructure.effort import is_ultracode
         from server.workspace import get_workspace_path
 
         # The TRUE full catalog (pre-partition): every registered tool,
         # including plan/result-cache/preview/worktree/background-task tools.
         # Deferred tools found here are ACTIVATED for this session so they're
-        # callable next round.
+        # callable next round. ultracode rides along so the catalog matches the
+        # round's own — searching for "workflow" from an ultracode turn must not
+        # come back empty for tools the very same turn can call.
         all_t = assemble_full_catalog(
             plan_mode=False,
             ws_connected=bool(get_workspace_path()),
+            ultracode=is_ultracode(effort_label),
         )
         output = execute_tool_search(tool_input, all_t, session_id=session_id)
         return output, side_effects
