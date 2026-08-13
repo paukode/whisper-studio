@@ -30,6 +30,8 @@ import {
   readSSEStream,
   sendApprovalContinuation,
 } from './chatStream/sseStream';
+import { emptyResponseFallback } from './chatStream/emptyResponse';
+import { turnModelSettings } from './chatStream/turnSettings';
 import {
   abortSessionStream,
   killSessionStream,
@@ -201,25 +203,18 @@ export function useChatStream(): UseChatStreamReturn {
     // wasteful to ship them over the wire.
     const cappedHistory = buildHistoryPayload(store().messages, isContinuation);
 
-    // Unified "Response length" control (Brief/Normal/Detailed) is stored as
-    // verbosity (low/medium/high). Apply it per model: GPT-5.x uses text.verbosity
-    // natively, so it gets the value as-is and no brief instruction; models
-    // without native verbosity get a concise-instruction (brief_mode) only at
-    // the Brief end, with verbosity ignored server-side.
-    const _model = settings.models?.find((m) => m.key === settings.selectedModel);
-    const _supportsVerbosity = !!_model?.supports_verbosity;
     const body: Record<string, unknown> = {
       question,
       transcript,
       history: cappedHistory,
       attachment_ids: opts?.attachmentIds ?? [],
       attachment_names: opts?.attachmentNames ?? [],
-      model: settings.selectedModel,
+      // Model + effort + response length. Shared with the approval-resume leg
+      // (sendApprovalContinuation) so one turn can never finish on different
+      // settings than it started with.
+      ...turnModelSettings(),
       force_skill: opts?.forceSkill ?? null,
       session_id: activeSessionId,
-      brief_mode: _supportsVerbosity ? false : settings.verbosity === 'low',
-      effort_level: settings.effortLevel,
-      verbosity: settings.verbosity,
       // Local thinking and tools have no per-turn client flags any more: the
       // backend keys both on the model registry's capability flags, so capable
       // on-device models always think and always get the full tool pool.
@@ -287,18 +282,11 @@ export function useChatStream(): UseChatStreamReturn {
       if (wasKillFinalized(controller)) return;
       fullResponse = result.fullResponse;
 
-      // Empty-bubble fallback (matching original chat-stream.js)
+      // Empty-bubble fallback (matching original chat-stream.js). Shared with
+      // the approval-resume leg — see ./chatStream/emptyResponse.
       // Skip when a user_question was emitted — the question card IS the response
       if (!fullResponse && !result.hasPendingApprovals && !result.hasUserQuestion) {
-        const { lastToolError, lastToolName, lastToolOutput, sseEventCount } = store();
-        if (lastToolError) {
-          fullResponse = `**${lastToolName ?? 'tool'}** returned an error:\n\n\`\`\`\n${lastToolError}\n\`\`\`\n\n*(The model sent no text response. This usually means it stopped after seeing the tool error. Ask again or rephrase.)*`;
-        } else if (lastToolOutput) {
-          const preview = lastToolOutput.length > 800 ? lastToolOutput.substring(0, 800) + '…' : lastToolOutput;
-          fullResponse = `*(No text response from the model.)*\n\nLast tool: **${lastToolName ?? '(unknown)'}**\n\`\`\`\n${preview}\n\`\`\``;
-        } else if (sseEventCount > 0) {
-          fullResponse = `*(The model ended the turn without text or tool calls. SSE events received: ${sseEventCount}. Inspect \`window.__lastSSE\` in DevTools for details.)*`;
-        }
+        fullResponse = emptyResponseFallback(store());
       }
 
       // Build tool trace entries from accumulated skill data.

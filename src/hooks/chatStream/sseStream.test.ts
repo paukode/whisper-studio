@@ -14,9 +14,11 @@
  * We only exercise return values and the (real) UI toast store; the chat store
  * is auto-created per session id by the runtime registry.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readSSEStream } from './sseStream';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readSSEStream, sendApprovalContinuation } from './sseStream';
 import { useUIStore } from '@/stores/uiStore';
+import { useSettingsStore } from '@/stores/settingsStore';
+import type { PendingApproval } from '@/stores/chatStore';
 import { dropRuntime, useRuntimeIndex, getChatStore } from '@/stores/sessionRuntimes';
 
 /** Build an SSE Response from a list of frame objects, terminated by [DONE]. */
@@ -192,5 +194,80 @@ describe('readSSEStream', () => {
     expect(toast).toBeTruthy();
     expect(toast!.type).toBe('info');
     expect(toast!.message).toContain('Compacting context');
+  });
+});
+
+/**
+ * The approval-resume leg. Two contracts the fresh-turn path already had and
+ * this one silently lacked: a turn that comes back with no text still says so,
+ * and the resumed half runs on the same per-turn settings as the paused half.
+ */
+describe('sendApprovalContinuation', () => {
+  const approval: PendingApproval = {
+    toolUseId: 'tu_branch',
+    action: 'git_create_branch',
+    category: 'cli',
+    preview: 'command',
+    summary: 'Create branch docs/x from main',
+    payload: { command: 'git checkout -b docs/x' },
+    sessionId: 'sess-resume',
+  };
+
+  afterEach(() => {
+    for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
+    vi.restoreAllMocks();
+  });
+
+  it('commits a visible message when the continuation returns no text', async () => {
+    // The exact shape a GPT turn ending in `end_turn` with an empty output
+    // produces: frames, but not one text frame. This used to commit NOTHING,
+    // so an approved turn looked dead and the user had to prod the model.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      sseResponse([{ usage: { input_tokens: 10, output_tokens: 0 } }]),
+    );
+
+    await sendApprovalContinuation(approval, 'sess-resume', true, undefined, {
+      ok: true,
+      output: 'Created branch docs/x',
+    });
+
+    const messages = getChatStore('sess-resume').getState().messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0].role).toBe('assistant');
+    expect(messages[0].content).toContain('ended the turn without text');
+    expect(getChatStore('sess-resume').getState().isStreaming).toBe(false);
+  });
+
+  it('carries model, effort and response length so the resumed half matches', async () => {
+    useSettingsStore.setState({
+      selectedModel: 'gpt5.6sol',
+      effortLevel: 'ultracode',
+      verbosity: 'high',
+    });
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(sseResponse([{ text: 'branch created' }]));
+
+    await sendApprovalContinuation(approval, 'sess-resume', true, undefined, { ok: true });
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]!.body)) as Record<string, unknown>;
+    expect(body.model).toBe('gpt5.6sol');
+    expect(body.effort_level).toBe('ultracode');
+    expect(body.verbosity).toBe('high');
+  });
+
+  it('reports the server’s own reason when the continuation request is rejected', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ error: 'This session already has a response in progress.' }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    await sendApprovalContinuation(approval, 'sess-resume', true, undefined, { ok: true });
+
+    const messages = getChatStore('sess-resume').getState().messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toContain('already has a response in progress');
   });
 });

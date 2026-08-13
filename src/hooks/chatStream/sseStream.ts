@@ -12,7 +12,6 @@
  */
 import { executeApproval } from '@/api/approval';
 import { getChatStore } from '@/stores/sessionRuntimes';
-import { useSettingsStore } from '@/stores/settingsStore';
 import type { PendingApproval } from '@/stores/chatStore';
 import type { VizArtifact } from '@/types/chat';
 import { TOAST_PRIORITY, useUIStore } from '@/stores/uiStore';
@@ -30,6 +29,8 @@ import { SSEEventDataSchema } from '@/types/schemas';
 import { toError } from '@/utils/toError';
 import { registerStreamController, releaseStreamController } from './streamControl';
 import { renderEventCards } from './sseEventCards';
+import { emptyResponseFallback } from './emptyResponse';
+import { turnModelSettings } from './turnSettings';
 
 // Augment Window for SSE diagnostics access
 declare global {
@@ -868,10 +869,13 @@ export async function sendApprovalContinuation(
   const body: Record<string, unknown> = {
     question: '',
     session_id: sessionId,
-    // Carry the selected model so the continuation resumes on the SAME backend
-    // it paused on. Without this the endpoint falls back to the default cloud
-    // model, which would strand a paused local (Gemma) tool turn.
-    model: useSettingsStore.getState().selectedModel,
+    // Carry the model AND the per-turn effort/response-length so the
+    // continuation resumes on the SAME backend at the SAME settings it paused
+    // on. Without the model the endpoint falls back to the default cloud model,
+    // which would strand a paused local (Gemma) tool turn; without effort and
+    // verbosity the post-approval half of the turn silently dropped to the
+    // config defaults (an Ultracode turn finished at normal effort).
+    ...turnModelSettings(),
     approved_tool_result: {
       tool_use_id: approval.toolUseId,
       content,
@@ -906,23 +910,46 @@ export async function sendApprovalContinuation(
       signal: continuationSignal,
     });
 
-    if (!response.ok || !response.body) throw new Error('Continuation failed');
+    if (!response.ok || !response.body) {
+      // Surface the server's own words (e.g. the 409 SESSION_BUSY guidance:
+      // "reset it from the chat ⋯ menu") instead of a bare "Continuation
+      // failed" the user can't act on.
+      const detail = await response.json()
+        .then((d: { error?: string }) => d?.error)
+        .catch(() => null);
+      throw new Error(detail || `Continuation failed (HTTP ${response.status})`);
+    }
 
     const result = await readSSEStream(response, sessionId, continuationSignal);
 
     const contTeamReports = store().takeTeamReports();
-    if (result.fullResponse || result.pendingArtifact || result.pendingVisuals.length > 0 || result.pendingPlan || contTeamReports) {
-      const contToolUse: ToolUseEvent[] = result.skillTraces.map(t => ({
-        toolId: t.name,
-        toolName: t.name,
-        input: t.input ?? {},
-        result: t.output || undefined,
-        status: 'complete' as const,
-        previewImage: t.previewImage,
-      }));
+    const contToolUse: ToolUseEvent[] = result.skillTraces.map(t => ({
+      toolId: t.name,
+      toolName: t.name,
+      input: t.input ?? {},
+      result: t.output || undefined,
+      status: 'complete' as const,
+      previewImage: t.previewImage,
+    }));
+
+    // Same empty-answer fallback the fresh-turn path applies (useChatStream's
+    // send). Without it a continuation that ended with no text committed
+    // NOTHING: the transcript kept only the "Awaiting approval" trace, so an
+    // approved turn looked like it had died and the user had to nudge the model
+    // by hand. Skipped when the continuation paused again — the new card (or
+    // question) IS the visible outcome.
+    let contText = result.fullResponse;
+    if (!contText && !result.hasPendingApprovals && !result.hasUserQuestion) {
+      contText = emptyResponseFallback(store());
+    }
+
+    // Tool traces are committed even with no text (mirroring the fresh path's
+    // approval-pause commit) so the work the continuation did survives the
+    // streaming state being cleared.
+    if (contText || result.pendingArtifact || result.pendingVisuals.length > 0 || result.pendingPlan || contTeamReports || contToolUse.length > 0) {
       store().addMessage({
         role: 'assistant',
-        content: result.fullResponse,
+        content: contText,
         timestamp: new Date().toISOString(),
         skills: result.skillsUsed.length > 0 ? result.skillsUsed : undefined,
         traces: result.skillTraces.length > 0 ? result.skillTraces : undefined,
@@ -954,7 +981,7 @@ export async function sendApprovalContinuation(
       console.error('Approval continuation failed:', err);
       store().addMessage({
         role: 'assistant',
-        content: '*Error: Failed to continue after approval.*',
+        content: `*Error: Failed to continue after approval — ${toError(err).message}*`,
         timestamp: new Date().toISOString(),
       });
     }
