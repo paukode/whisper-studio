@@ -114,15 +114,26 @@ describe('chatStore — approval queue', () => {
     expect(store.getState().currentApproval).toBeNull();
   });
 
-  it('session-allow short-circuits enqueue (caller auto-applies)', () => {
-    // Pre-set a category-level approval so the matching action gets dropped
-    // from the queue (handled by the caller path instead of the modal).
+  // Routing on session memory (allow → execute, deny → refuse) is the CALLER's
+  // job — sseStream decides before it ever enqueues. enqueueApproval used to
+  // re-check `sessionApprovals` and return early for those two modes, so
+  // anything that reached it with a pre-approved (or pre-blocked) category
+  // vanished: no card, no queue entry, and a paused turn with nothing left to
+  // resume it. Showing a card the user may not have needed is the safe failure.
+  it('shows an approval whose category is already allowed rather than dropping it', () => {
     store.setState({
       sessionApprovals: { write: 'allow', delete: 'ask', cli: 'ask' },
     });
     store.getState().enqueueApproval(make('write-1', 'write'));
-    expect(store.getState().currentApproval).toBeNull();
-    expect(store.getState().approvalQueue).toEqual([]);
+    expect(store.getState().currentApproval?.toolUseId).toBe('write-1');
+  });
+
+  it('shows an approval whose category is blocked rather than dropping it', () => {
+    store.setState({
+      sessionApprovals: { write: 'deny', delete: 'ask', cli: 'ask' },
+    });
+    store.getState().enqueueApproval(make('write-2', 'write'));
+    expect(store.getState().currentApproval?.toolUseId).toBe('write-2');
   });
 });
 
