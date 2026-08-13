@@ -40,11 +40,21 @@ def _isolate(tmp_path, monkeypatch):
     from server.security import permissions as P
 
     monkeypatch.setattr(P, "PERMISSIONS_PATH", str(tmp_path / "permissions.json"))
+    # A launched run now mirrors into the background-task registry, which
+    # resolves its own DB_PATH at import time — without this, every run these
+    # tests start leaves a phantom "Workflow: noop" task in the running
+    # checkout's real sessions.db, visible in the developer's own app.
+    from server.tasks import registry
+
+    monkeypatch.setattr(registry, "STORAGE_DIR", str(storage))
+    monkeypatch.setattr(registry, "DB_PATH", str(storage / "sessions.db"))
     from server.workflows import manager
 
     manager._live.clear()
+    manager._task_ids.clear()
     yield
     manager._live.clear()
+    manager._task_ids.clear()
 
 
 def _client():

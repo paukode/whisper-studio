@@ -30,11 +30,21 @@ def _isolate(tmp_path, monkeypatch):
     os.makedirs(storage, exist_ok=True)
     monkeypatch.setattr(sessions, "STORAGE_DIR", str(storage))
     monkeypatch.setattr(sessions, "DB_PATH", str(storage / "sessions.db"))
+    # A launched run now mirrors into the background-task registry, which
+    # resolves its own DB_PATH at import time — without this, every run these
+    # tests start leaves a phantom "Workflow: noop" task in the running
+    # checkout's real sessions.db, visible in the developer's own app.
+    from server.tasks import registry
+
+    monkeypatch.setattr(registry, "STORAGE_DIR", str(storage))
+    monkeypatch.setattr(registry, "DB_PATH", str(storage / "sessions.db"))
     from server.workflows import manager
 
     manager._live.clear()
+    manager._task_ids.clear()
     yield
     manager._live.clear()
+    manager._task_ids.clear()
 
 
 async def _await_done(run_id, timeout=15):

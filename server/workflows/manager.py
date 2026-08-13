@@ -24,6 +24,86 @@ log = logging.getLogger("whisper-studio")
 
 # Live in-process runs, keyed by run_id.
 _live: dict[str, WorkflowRun] = {}
+# run_id -> background-task registry id for the same run. In-memory like _live
+# (a restart kills the run anyway, and boot reconcile flips both sides), so a
+# missing entry just means "nothing to close".
+_task_ids: dict[str, str] = {}
+
+# Workflow status (this module's vocabulary) -> registry status + its event.
+_TASK_TERMINAL = {
+    "done": ("completed", "task_completed"),
+    "completed": ("completed", "task_completed"),
+    "stopped": ("stopped", "task_stopped"),
+}
+
+
+def _register_task(run_id: str, name: str, session_id: str, model_key: str) -> str:
+    """Mirror a launched run into the unified background-task registry.
+
+    The registry has allowed ``kind="workflow"`` since it was written and
+    completion_inject already reports finished workflow tasks back to the model
+    on the next turn — but nothing ever created such a row, so both were dead
+    code and a detached run notified nobody: no Background Tasks entry, no chat
+    card, no next-turn report. Best-effort by design; a registry hiccup must
+    never stop the run itself.
+    """
+    try:
+        from server.tasks import registry
+        from server.tasks.events import emit_task_event
+
+        task_id = registry.create_task(
+            "workflow",
+            session_id=session_id,
+            title=f"Workflow: {name or run_id}",
+            meta={"run_id": run_id, "model": model_key},
+        )
+        row = registry.get_task(task_id)
+        if row and session_id:
+            emit_task_event(session_id, "task_started", row)
+        return task_id
+    except Exception as e:  # noqa: BLE001 — mirroring is never load-bearing
+        log.warning("workflow %s: task registry mirror failed: %s", run_id, e)
+        return ""
+
+
+def _finish_task(run_id: str, status: str, outcome: dict) -> None:
+    """Close the mirrored task so the run's end is announced once, wherever
+    background tasks are shown, and picked up by completion_inject."""
+    task_id = _task_ids.pop(run_id, "")
+    if not task_id:
+        return
+    try:
+        from server.tasks import registry
+        from server.tasks.events import emit_task_event
+
+        task_status, event = _TASK_TERMINAL.get(status, ("failed", "task_failed"))
+        finished = registry.finish_task(
+            task_id, status=task_status, result_text=_task_result_text(status, outcome)
+        )
+        if finished:
+            emit_task_event(finished.get("session_id") or "", event, finished)
+    except Exception as e:  # noqa: BLE001
+        log.warning("workflow %s: task registry close failed: %s", run_id, e)
+
+
+def _task_result_text(status: str, outcome: dict) -> str:
+    """What the user's task card and the model's next-turn injection read.
+    Leads with the headline numbers, then the script's own return value."""
+    head = (
+        f"Workflow {status}: {outcome.get('agents_spawned', 0)} agent(s), "
+        f"${outcome.get('cost_usd', 0.0):.2f}, "
+        f"{outcome.get('tokens_in', 0) + outcome.get('tokens_out', 0)} tokens"
+        + (" (budget cap reached)" if outcome.get("cap_reached") else "")
+    )
+    if outcome.get("error"):
+        return f"{head}\n\nError: {outcome['error']}"
+    try:
+        body = json.dumps(outcome.get("result"), indent=2)
+    except (TypeError, ValueError):
+        body = str(outcome.get("result"))
+    if body and body != "null":
+        return f"{head}\n\nResult:\n{body[:4000]}"
+    return head
 
 
 def _now() -> str:
@@ -108,6 +188,8 @@ def start_run(
                 _now(),
             ),
         )
+
+    _task_ids[run_id] = _register_task(run_id, name, session_id, model_key)
 
     resume_cache = jnl.load_resume_cache(resume_from) if resume_from else {}
     journal = jnl.Journal(run_id)
@@ -258,6 +340,7 @@ def _finalize(run: WorkflowRun, outcome: dict) -> None:
                 run.run_id,
             ),
         )
+    _finish_task(run.run_id, status, outcome)
     _publish(
         run.run_id,
         run.session_id,
@@ -277,6 +360,7 @@ async def stop_run(run_id: str) -> bool:
     if not run:
         return False
     await run.cancel()
+    _finish_task(run_id, "stopped", {})
     with _conn() as conn:
         _ensure_table(conn)
         conn.execute(

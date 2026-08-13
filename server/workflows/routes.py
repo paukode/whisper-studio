@@ -47,6 +47,21 @@ def _default_model():
         return "sonnet", ""
 
 
+@router.get("/runs")
+async def list_runs(session_id: str = "", limit: int = 50):
+    """Runs, newest first — app-wide by default.
+
+    The module docstring promised this from the start but the route was never
+    written, so a launched run was visible ONLY as the inline card in the chat
+    that started it: nothing listed runs, and the Settings panel (saved scripts)
+    stayed empty no matter how many ran. App-wide rather than session-scoped by
+    default because someone asking "what have my workflows been doing" is not
+    thinking per-session; pass ``session_id`` for the scoped view.
+    """
+    runs = manager.list_runs(session_id or None, limit=max(1, min(limit, 200)))
+    return {"runs": runs}
+
+
 @router.get("/runs/{run_id}")
 async def get_run(run_id: str):
     run = manager.get_run(run_id)
