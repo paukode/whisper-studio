@@ -16,6 +16,11 @@ export interface BrowseResult {
   arch: string | null;
   /** Human parameter-size label parsed from the repo name (e.g. "0.6B", "8B"). */
   param_size: string | null;
+  /** Whether this model is big enough to be installed with tool calling on.
+   *  False for models under the backend's agentic threshold: they install as
+   *  chat-only, because a model that small emits raw JSON into the answer
+   *  instead of a parsed tool call. True when the size can't be parsed. */
+  tool_capable?: boolean;
   context_length: number | null;
   gated: boolean;
   /** Always true in returned rows — the backend hides unsupported archs. */
@@ -51,6 +56,13 @@ export interface BrowseRepoDetail {
   has_chat_template: boolean;
   gated: boolean;
   recommended_filename: string | null;
+  param_size?: string | null;
+  /** Same meaning as on BrowseResult — repeated here so the detail view can
+   *  stand on its own. */
+  tool_capable?: boolean;
+  /** The backend's threshold in billions of parameters, so the UI states the
+   *  server's actual rule rather than hardcoding a number of its own. */
+  agentic_min_params_b?: number | null;
   /** This machine's total physical RAM, measured server-side at request time. */
   mem_total_bytes?: number | null;
   /** Slice of total RAM a chat model can claim, after the budget fraction and

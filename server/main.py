@@ -250,6 +250,17 @@ async def lifespan(app):
     # scanned/older PDFs during folder indexing. Harmless; keep ERROR+ only.
     logging.getLogger("pdfminer").setLevel(logging.ERROR)
     run_migrations()
+    # Config-side one-shot: on-device models installed before the agentic-size
+    # gate existed all carry supports_tools True, which is what makes a 1-3B
+    # model answer "hey" with a raw JSON tool call. Correct those entries once,
+    # then never again (the sweep marks the user layer), so a deliberate
+    # re-enable afterwards sticks.
+    try:
+        from server.model_browser.install import disable_tools_on_small_models
+
+        disable_tools_on_small_models()
+    except Exception as e:
+        logging.getLogger("whisper-studio").warning("Small-model tool sweep skipped: %s", e)
     init_skills()
     init_plugins(app)
     init_memory()

@@ -311,4 +311,81 @@ describe('ModelBrowser (Discover)', () => {
     expect(screen.getByText(/won't fit on this machine/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Download anyway' })).toBeInTheDocument();
   });
+
+  it('marks a model under the agentic threshold as chat-only before any download', async () => {
+    const SMALL_SEARCH = {
+      count: 1,
+      results: [{ ...SEARCH.results[0], tool_capable: false }],
+    };
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(SMALL_SEARCH);
+      if (url.startsWith('/api/models/browse/repo/'))
+        return Promise.resolve({ ...REPO_DETAIL, tool_capable: false, agentic_min_params_b: 7 });
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+
+    renderBrowser();
+    await screen.findByText('Qwen3-0.6B-GGUF');
+
+    // Visible from the search row alone — no quant fetch, no download needed.
+    expect(screen.getByText('chat only')).toBeInTheDocument();
+    expect(screen.getByText(/installs with tool calling off/i)).toBeInTheDocument();
+    // The threshold is quoted from the server, not hardcoded in the component.
+    expect(screen.getByText(/Under 7B/i)).toBeInTheDocument();
+
+    // It is a note, not a block: the model still downloads normally.
+    const select = screen.getByRole('combobox', {
+      name: /choose a quant for Qwen3-0\.6B-GGUF/i,
+    }) as HTMLSelectElement;
+    fireEvent.focus(select);
+    await waitFor(() => expect(select.value).toBe('Qwen3-0.6B-Q4_K_M.gguf'));
+    expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+  });
+
+  it('says tools are off in the install toast when the backend installed a chat-only model', async () => {
+    api.post.mockResolvedValue({
+      key: 'local_qwen_qwen2_5_coder_1_5b_instruct_gguf__q4_k_m',
+      id: 'local:qwen-qwen2-5-coder-1-5b-instruct-gguf-q4-k-m',
+      label: 'Qwen2.5-Coder-1.5B-Instruct-GGUF Q4_K_M (Local)',
+      ctx: 32768,
+      supports_thinking: false,
+      supports_tools: false,
+      download: 'started',
+    });
+
+    renderBrowser();
+    await screen.findByText('Qwen3-0.6B-GGUF');
+    const select = screen.getByRole('combobox', {
+      name: /choose a quant for Qwen3-0\.6B-GGUF/i,
+    }) as HTMLSelectElement;
+    fireEvent.focus(select);
+    await waitFor(() => expect(select.value).toBe('Qwen3-0.6B-Q4_K_M.gguf'));
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+
+    await waitFor(() => {
+      const toasts = useUIStore.getState().toasts;
+      const toast = toasts[toasts.length - 1];
+      expect(toast?.message).toMatch(/Tool calling is off for it/i);
+      expect(toast?.message).toMatch(/chat only/i);
+    });
+  });
+
+  it('leaves the install toast alone for a tool-capable model', async () => {
+    renderBrowser();
+    await screen.findByText('Qwen3-0.6B-GGUF');
+    const select = screen.getByRole('combobox', {
+      name: /choose a quant for Qwen3-0\.6B-GGUF/i,
+    }) as HTMLSelectElement;
+    fireEvent.focus(select);
+    await waitFor(() => expect(select.value).toBe('Qwen3-0.6B-Q4_K_M.gguf'));
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+
+    await waitFor(() => {
+      const toasts = useUIStore.getState().toasts;
+      const toast = toasts[toasts.length - 1];
+      expect(toast?.message).toBeDefined();
+      expect(toast?.message).not.toMatch(/Tool calling is off/i);
+    });
+  });
 });

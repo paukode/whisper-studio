@@ -69,6 +69,26 @@ TRUSTED_AUTHORS: tuple[str, ...] = (
 _THINKING_ARCH_PREFIXES = ("qwen3",)
 _THINKING_NAME_HINTS = ("thinking", "reasoning", "qwq", "-r1", "deepseek-r")
 
+# ── Agentic (tool-calling) gate ──────────────────────────────────────────────
+# Running the tool loop is a capability, not a format switch. llama-server's
+# --jinja parses whatever tool-call syntax the model's template declares, so the
+# plumbing works for any instruct family; what small models cannot do is USE it.
+# Below roughly 7B they reliably fail in one of two ways:
+#   * they emit the call as bare JSON in the answer instead of the template's
+#     tool-call syntax, so upstream's parser never sees a call and the raw JSON
+#     lands in the chat as text (the exact symptom this gate exists to prevent);
+#   * they fire a tool at all on a message that needed none, because the tool
+#     pool dominates a prompt that is mostly schemas.
+# So a model under the threshold is installed as chat-only: no pool, no tool
+# instructions, a much smaller prompt, and answers instead of JSON. It is a
+# DEFAULT, not a lock — `supports_tools` is editable in the config afterwards.
+AGENTIC_MIN_PARAMS_B = 7.0
+
+# "1.5B", "8B", "30B-A3B" → the leading number. Anchored with \b so a quant token
+# or a bit-width ("8bit") can't be read as a parameter count. Underscores are
+# normalized to dashes by the callers before matching.
+_PARAM_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*[bB]\b")
+
 # ── Memory-fit gate ──────────────────────────────────────────────────────────
 # Nothing here is sized for any particular machine — the caller (service.py)
 # measures the RUNNING machine's physical memory and companion-model footprint
@@ -198,14 +218,42 @@ def is_mmproj(filename: str) -> bool:
     return "mmproj" in filename.lower()
 
 
+def param_count_b(repo_id: str, filename: str = "") -> float | None:
+    """Parameter count in BILLIONS parsed from the repo name, falling back to the
+    GGUF filename, or None when neither carries a size.
+
+    First match wins, so an MoE "30B-A3B" reads as its 30B total rather than its
+    3B active count, and a family version ("Qwen2.5-Coder-1.5B") can't be
+    mistaken for a size — "2.5" is not followed by a B.
+    """
+    for text in (repo_id, filename):
+        if not text:
+            continue
+        m = _PARAM_SIZE_RE.search(text.replace("_", "-"))
+        if m:
+            return float(m.group(1))
+    return None
+
+
 def param_size_label(repo_id: str) -> str | None:
     """A human parameter-size label parsed from the repo name (e.g. "0.6B",
-    "8B", "30B"), or None. First match wins so "30B-A3B" reads as "30B"."""
-    m = re.search(r"(\d+(?:\.\d+)?)\s*[bB]\b", repo_id.replace("_", "-"))
-    if not m:
+    "8B", "30B"), or None."""
+    n = param_count_b(repo_id)
+    if n is None:
         return None
-    num = m.group(1)
-    return f"{num}B"
+    return f"{n:g}B"
+
+
+def is_agentic_capable(repo_id: str, filename: str = "") -> bool:
+    """Whether this model is big enough to be trusted with the tool pool, i.e.
+    the ``supports_tools`` default on install.
+
+    Unknown size counts as capable: a repo that simply doesn't put its parameter
+    count in the name should not silently lose a capability, and the warning this
+    feeds only makes a claim we can actually support.
+    """
+    n = param_count_b(repo_id, filename)
+    return True if n is None else n >= AGENTIC_MIN_PARAMS_B
 
 
 @dataclass

@@ -5566,6 +5566,19 @@ button.ws-git-status-badge:hover {
     vertical-align: 1px;
 }
 
+/* Same pill as the Local badge, deliberately NOT accent-coloured: an on-device
+   model too small to be given the tool pool, so it installs (and runs)
+   chat-only. Muted rather than amber because it sits directly beside the author
+   / Local badges — in the dark theme the warn accent is close enough to
+   --accent that it read as another decorative chip instead of a qualifier. All
+   three colour channels are restated; overriding only `color` would leave the
+   accent-tinted fill and border of the base badge behind it. */
+.model-chatonly-badge {
+    color: var(--text-secondary);
+    background: transparent;
+    border-color: var(--border-strong);
+}
+
 
 /* Cited-line highlight for #wsfile citations opened in the dock (Monaco). The
    accent-tinted whole-line band + gutter marker show which lines a source link
