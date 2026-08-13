@@ -576,6 +576,13 @@ async def run_turn(ctx: TurnContext):
                     "ci_progress",
                     "ci_result",
                     "session_message",
+                    # A workflow's own events reach the UI two other ways: the
+                    # run card's per-run EventSource for live progress, and a
+                    # task_event (above) for the terminal outcome. Without this
+                    # they were relabelled as team_progress mid-batch, which
+                    # renders a detached workflow as if it were this turn's
+                    # subagent team.
+                    "workflow_event",
                 ):
                     return None
                 return {"team_progress": ev}
