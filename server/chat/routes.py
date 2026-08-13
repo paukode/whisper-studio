@@ -143,6 +143,62 @@ async def _rewrite_query_for_retrieval(question: str, history: list[dict]) -> st
 # ``routes._paused_sessions``.
 from server.chat.engine.pause import paused_sessions as _paused_sessions  # noqa: E402
 
+
+def _resume_messages(messages: list, answers: list[dict], paused: dict | None) -> list:
+    """The message list for a continuation turn (approval decision / answer).
+
+    With paused state: restore the stashed messages — which already carry the
+    assistant message holding every tool_use block — and fill the pre-computed
+    placeholder tool_results in by tool_use_id, so every tool_use is answered.
+    Bedrock rejects the whole request otherwise. An id with no placeholder is
+    appended (the tool that triggered the pause may not have one).
+
+    WITHOUT paused state (the backend restarted while the card sat on screen):
+    the assistant message carrying the tool_use is gone with it, so a
+    tool_result block here would be an orphan — sanitize_tool_pairs strips it
+    and the model would answer a turn with neither the tool call nor its
+    outcome in context, which reads as a confident non-answer rather than the
+    loud error the old comment promised. Replay the outcome as plain text
+    instead: well-formed for every provider, and the client-rebuilt `history`
+    in ``messages`` gives it the conversation it belongs to.
+    """
+    if paused:
+        blocks = list(paused["pending_tool_results"])
+        for ans in answers:
+            tool_use_id = ans.get("tool_use_id", "")
+            replaced = False
+            for block in blocks:
+                if block.get("tool_use_id") == tool_use_id:
+                    block["content"] = ans.get("content", "")
+                    replaced = True
+                    break
+            if not replaced:
+                blocks.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_use_id,
+                        "content": ans.get("content", ""),
+                    }
+                )
+        return [*paused["messages"], {"role": "user", "content": blocks}]
+
+    outcomes = "\n\n".join(str(a.get("content", "")) for a in answers if a.get("content"))
+    return [
+        *messages,
+        {
+            "role": "user",
+            "content": (
+                "[The tool call you were waiting on is no longer in context — the "
+                "app restarted while it awaited the user's decision. What the user "
+                "decided:]\n\n"
+                f"{outcomes}\n\n"
+                "Continue from here. Re-issue that call only if the outcome above "
+                "says it did not happen."
+            ),
+        },
+    ]
+
+
 # Session id -> monotonic start time of its in-flight NEW-turn stream. Guards
 # the pause/resume state above against a second concurrent turn for the same
 # session (e.g. two windows); different sessions stream in parallel freely.
@@ -1084,13 +1140,7 @@ async def chat_endpoint(request: Request):
     grounding_active = False
 
     if approved_tool_result:
-        # Continuation turn. Restore the paused `messages` list (which already
-        # contains the assistant message with every tool_use block) and fill
-        # in the user tool_result message using the pre-computed placeholders
-        # so every tool_use_id is matched — Bedrock rejects the request
-        # otherwise.
-        #
-        # `approved_tool_result` accepts two shapes:
+        # Continuation turn. `approved_tool_result` accepts two shapes:
         #   1. A single dict {tool_use_id, content}     — approval flow,
         #                                                 single ask_user_question
         #   2. A list of those dicts                     — multi-question batch
@@ -1100,48 +1150,15 @@ async def chat_endpoint(request: Request):
         else:
             answers = [approved_tool_result]
 
-        # Extract a representative user-facing string for logging only.
-        user_text = " | ".join(str(a.get("content", "")) for a in answers)
-
         paused = _paused_sessions.pop(session_id, None)
-        if paused:
-            messages = paused["messages"]
-            tool_results_blocks = list(paused["pending_tool_results"])
-            for ans in answers:
-                tool_use_id = ans.get("tool_use_id", "")
-                result_content = ans.get("content", "")
-                replaced = False
-                for block in tool_results_blocks:
-                    if block.get("tool_use_id") == tool_use_id:
-                        block["content"] = result_content
-                        replaced = True
-                        break
-                if not replaced:
-                    tool_results_blocks.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "content": result_content,
-                        }
-                    )
-            messages.append({"role": "user", "content": tool_results_blocks})
-        else:
-            # No paused state (e.g. server restart). Best-effort fallback: send
-            # the answers as raw tool_result blocks and let Bedrock error loudly
-            # if the history is malformed rather than silently drop the turn.
-            messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": ans.get("tool_use_id", ""),
-                            "content": ans.get("content", ""),
-                        }
-                        for ans in answers
-                    ],
-                }
+        if not paused:
+            log.warning(
+                "Continuation for session %s found no paused state (backend "
+                "restarted?) — replaying %d outcome(s) as text",
+                session_id,
+                len(answers),
             )
+        messages = _resume_messages(messages, answers, paused)
     else:
         parts = []
         if attachment_texts:
@@ -1498,8 +1515,12 @@ async def chat_endpoint(request: Request):
         try:
             # Emit the grounding frame from INSIDE the guard so the slot-cleanup
             # finally wraps the whole stream (a client disconnect after this
-            # first frame still frees the slot). The _prepend wrapper is only
-            # used for local/openai, which don't hold an _active_chat_streams slot.
+            # first frame still frees the slot). Only the LOCAL path uses the
+            # _prepend_grounding_event wrapper instead — it returns its own
+            # StreamingResponse above and never takes an _active_chat_streams
+            # slot. GPT is not in that group: since the engine cutover it runs
+            # this very path (the provider split is adapter selection above), so
+            # it holds and frees a slot exactly like Anthropic.
             if grounding_meta:
                 yield f"data: {ndjson_dumps({'grounding': grounding_meta})}\n\n"
             async for chunk in run_turn(turn_ctx):

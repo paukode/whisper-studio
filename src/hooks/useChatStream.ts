@@ -32,6 +32,7 @@ import {
 } from './chatStream/sseStream';
 import { emptyResponseFallback } from './chatStream/emptyResponse';
 import { turnModelSettings } from './chatStream/turnSettings';
+import { buildHistoryPayload } from './chatStream/history';
 import {
   abortSessionStream,
   killSessionStream,
@@ -72,26 +73,6 @@ export function buildDisplayQuestion(
 ): string {
   const shown = opts?.displayText ?? question;
   return opts?.forceSkill ? `@${opts.forceSkill}${shown ? ' ' + shown : ''}` : shown;
-}
-
-/** History rows shipped to /api/chat (capped to the last 40). Per-message
- *  attachment ids ride along so the backend can re-inject each file's content
- *  at its original position — attachments are session state, not turn state.
- *  Names only feed the "no longer available" marker for unresolvable ids. */
-export function buildHistoryPayload(
-  allMessages: ChatMessage[],
-  isContinuation: boolean,
-): Array<Record<string, unknown>> {
-  const history = allMessages
-    .slice(0, isContinuation ? allMessages.length : -1)
-    .filter(m => m.role === 'user' || m.role === 'assistant')
-    .map(m => ({
-      role: m.role,
-      content: m.content,
-      ...(m.attachmentIds?.length ? { attachmentIds: m.attachmentIds } : {}),
-      ...(m.attachmentNames?.length ? { attachmentNames: m.attachmentNames } : {}),
-    }));
-  return history.length > 40 ? history.slice(-40) : history;
 }
 
 /** The user-facing parallelism ceiling: how many sessions may be ACTIVE

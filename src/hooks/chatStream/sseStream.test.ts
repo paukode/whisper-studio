@@ -256,6 +256,49 @@ describe('sendApprovalContinuation', () => {
     expect(body.verbosity).toBe('high');
   });
 
+  it('carries the conversation so a lost paused state still has context', async () => {
+    // Normally the backend restores its stashed messages and ignores this. When
+    // the app restarted while the card sat on screen, this history is the ONLY
+    // context left — sending none is what made that path answer from nothing.
+    const chat = getChatStore('sess-resume').getState();
+    chat.addMessage({ role: 'user', content: 'make me a branch', timestamp: 't' });
+    chat.addMessage({ role: 'assistant', content: "I'll create it.", timestamp: 't' });
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(sseResponse([{ text: 'done' }]));
+
+    await sendApprovalContinuation(approval, 'sess-resume', true, undefined, { ok: true });
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]!.body)) as {
+      history: Array<{ role: string; content: string }>;
+    };
+    // Continuations keep the LAST row too: nothing new was appended for them.
+    expect(body.history.map((r) => r.content)).toEqual([
+      'make me a branch',
+      "I'll create it.",
+    ]);
+  });
+
+  it('describes the outcome without calling every action a filesystem write', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(sseResponse([{ text: 'done' }]));
+
+    await sendApprovalContinuation(approval, 'sess-resume', true, undefined, {
+      ok: true,
+      output: 'Switched to a new branch',
+    });
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]!.body)) as {
+      approved_tool_result: { content: string };
+    };
+    const content = body.approved_tool_result.content;
+    expect(content).toContain('git_create_branch');
+    expect(content).toContain('The action succeeded');
+    expect(content).toContain('Switched to a new branch');
+    expect(content).not.toContain('filesystem');
+  });
+
   it('reports the server’s own reason when the continuation request is rejected', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ error: 'This session already has a response in progress.' }), {

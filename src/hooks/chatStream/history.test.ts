@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildHistoryPayload } from './useChatStream';
-import type { ChatMessage } from '../types/chat';
+import { buildHistoryPayload } from './history';
+import type { ChatMessage } from '@/types/chat';
 
 const msg = (over: Partial<ChatMessage>): ChatMessage => ({
   role: 'user',

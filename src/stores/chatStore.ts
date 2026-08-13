@@ -337,21 +337,19 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
 
   // ── Approval queue ──
 
+  /**
+   * Show this approval, or queue it behind the one already on screen.
+   *
+   * ALWAYS one of the two — never a silent drop. Routing on session memory
+   * (allow → execute, deny → refuse) belongs to the caller, which decides
+   * before it gets here; this used to re-check `sessionApprovals` and return
+   * early for those modes, so a caller that skipped the check (or a category
+   * whose mode changed in between) lost the approval with no card, no queue
+   * entry and no trace. Showing a card the user did not strictly need is the
+   * safe failure; dropping the only prompt to resume a paused turn is not.
+   */
   enqueueApproval: (approval: PendingApproval) => {
-    const { currentApproval, sessionApprovals } = get();
-    const category = approval.category;
-    const mode = sessionApprovals[category];
-
-    if (mode === 'allow') {
-      // Session already approved this category — will be auto-applied by the caller
-      return;
-    }
-    if (mode === 'deny') {
-      // Session blocked this category — will be auto-denied by the caller
-      return;
-    }
-
-    // Queue for display
+    const { currentApproval } = get();
     if (!currentApproval) {
       set({ currentApproval: approval });
     } else {
