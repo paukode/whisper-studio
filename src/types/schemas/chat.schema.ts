@@ -74,6 +74,12 @@ export const SSEEventDataSchema = z.object({
     phases: z.array(z.unknown()).optional(),
     budget_tokens: z.number().nullable().optional(),
     args: z.unknown().optional(),
+    // The session's model, sent so the approved run uses it instead of the
+    // config default. Absent from this schema, Zod stripped it out of the
+    // parsed event (a plain z.object drops unknown keys), so the card posted
+    // no model and every approved swarm silently ran — and was priced — on
+    // the default model.
+    model_id: z.string().optional(),
   }).optional(),
   workflow_started: z.object({
     run_id: z.string(),

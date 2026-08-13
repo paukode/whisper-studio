@@ -186,4 +186,24 @@ describe('SSEEventDataSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.ws_auto_applied?.path).toBe('/a.ts');
   });
+
+  // Top-level passthrough (above) does NOT extend into nested objects: a plain
+  // z.object drops unknown keys. workflow_preview.model_id was being stripped
+  // here, so the approval card posted no model and every approved workflow ran
+  // — and was priced — on the config default instead of the session's model.
+  it('keeps workflow_preview.model_id so the approved run uses the session model', () => {
+    const input = {
+      workflow_preview: {
+        script: 'export const meta = {}',
+        name: 'fix-and-verify',
+        model_id: 'openai.gpt-5.6-sol',
+        budget_tokens: null,
+      },
+    };
+    const result = SSEEventDataSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.workflow_preview?.model_id).toBe('openai.gpt-5.6-sol');
+    }
+  });
 });
