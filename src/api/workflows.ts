@@ -21,6 +21,12 @@ export interface WorkflowRun {
 
 export const getRun = (runId: string) => get<WorkflowRun>(`/api/workflows/runs/${encodeURIComponent(runId)}`);
 
+/** Every run, newest first (app-wide). Pass a session id to scope it. */
+export const listRuns = (sessionId?: string) =>
+  get<{ runs: WorkflowRun[] }>(
+    `/api/workflows/runs${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`,
+  );
+
 export const launchRun = (body: { script?: string; name?: string; session_id: string; args?: unknown; budget_tokens?: number | null; model_id?: string; trust?: boolean }) =>
   post<{ run_id: string; status: string; trusted_as?: string | null }>('/api/workflows/runs', body);
 
