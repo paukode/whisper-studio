@@ -69,6 +69,7 @@ class AnthropicAdapter:
         force_skill: str | None,
         loop,
         executor,
+        meta: dict | None = None,
     ):
         self.model_key = model_key
         self.model_id = model_id
@@ -82,13 +83,20 @@ class AnthropicAdapter:
         self._loop = loop
         self._executor = executor
         self._client = _get_bedrock_client()
-        # Per-model output cap: chat_model_meta.max_output when configured,
-        # else the Claude-on-Bedrock default.
-        from server.infrastructure.config import load_config
+        # Per-model metadata, driving the output cap (chat_model_meta.max_output)
+        # and the effort mapping ("ultracode" has no fixed wire value; it rides
+        # this model's own top reasoning rung).
+        #
+        # The caller passes the metadata it resolved the effort FROM, which for a
+        # chat turn is the workspace-aware latched snapshot. Re-reading the global
+        # config here would disagree with it for a model defined only in a
+        # workspace's .whisper/settings.json: the label would say ultracode and
+        # the wire value would come from a config entry that does not exist.
+        # The global read stays as the fallback for callers with no metadata.
+        if meta is None:
+            from server.infrastructure.config import load_config
 
-        meta = (load_config().get("chat_model_meta") or {}).get(model_key) or {}
-        # Kept for the effort mapping too: "ultracode" has no fixed wire value,
-        # it rides this model's own top reasoning rung.
+            meta = (load_config().get("chat_model_meta") or {}).get(model_key) or {}
         self._meta = meta
         try:
             self.max_tokens = int(meta.get("max_output") or 128000)

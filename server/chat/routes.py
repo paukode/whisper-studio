@@ -647,6 +647,7 @@ async def subagent_stream_endpoint(request: Request):
 
     from server.agents.event_bus import event_bus as _agent_event_bus
     from server.agents.runtime import run_agent
+    from server.chat.infra import effort_for_model
 
     body = await request.json()
     task = (body.get("task") or "").strip()
@@ -713,6 +714,10 @@ async def subagent_stream_endpoint(request: Request):
                 team_id=team_id,
                 agent_name="Subagent",
                 event_channel=event_channel,
+                # /subagent is a subagent like any other: it runs at the
+                # composer's effort. It was the last entry point still passing
+                # nothing, which on the Anthropic path means no thinking block.
+                effort_label=effort_for_model(model_key, body.get("effort_level")),
             )
         )
         # Register the live coroutine so POST /api/background-tasks/{id}/stop
@@ -1483,6 +1488,9 @@ async def chat_endpoint(request: Request):
             force_skill=force_skill,
             loop=loop,
             executor=executor,
+            # The SAME metadata the effort was resolved from, so the label and the
+            # wire value cannot come from two different config snapshots.
+            meta=_model_meta,
         )
 
     def _heartbeat():
