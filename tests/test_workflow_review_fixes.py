@@ -41,7 +41,18 @@ def _mk(source, **kw):
 
 
 async def _noop_agent(prompt, opts):
-    return {"text": "ok", "usage": {}, "status": "completed"}
+    # Mirrors the real runner's contract (server/workflows/agent_adapter.py):
+    # it reports back the model key the work ACTUALLY ran on, empty when it
+    # used the run's own model. The ledger prices from this rather than from
+    # the raw opts.model, since an unknown or on-device override is refused
+    # and falls back — pricing the raw value would charge a model that never
+    # ran.
+    return {
+        "text": "ok",
+        "usage": {},
+        "status": "completed",
+        "model_key": opts.get("model") or "",
+    }
 
 
 # ── HIGH: host-RCE sandbox escape must be blocked ──────────────────────────────

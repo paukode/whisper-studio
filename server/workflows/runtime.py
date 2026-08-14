@@ -344,9 +344,15 @@ class WorkflowRun:
             )
             result = await self._agent_runner(prompt, opts)
 
-        # Price with the per-agent model when opts.model overrode the run's
-        # model; opts.model is a config KEY (e.g. "sonnet"/"gpt5.6").
-        self._account(result.get("usage") or {}, model_key=opts.get("model") or self.model_key)
+        # Price with the model the agent ACTUALLY ran on. The runner reports
+        # it back as `model_key` (empty when it used the run's own model),
+        # because an unknown or on-device `opts.model` is rejected and falls
+        # back — pricing the raw opts.model would then charge the work to a
+        # model that never ran, at best mis-priced and at worst $0.
+        self._account(
+            result.get("usage") or {},
+            model_key=result.get("model_key") or self.model_key,
+        )
         self.journal.agent_call(
             {
                 "seq": seq,
@@ -358,6 +364,11 @@ class WorkflowRun:
                 "output": result.get("output"),
                 "usage": result.get("usage"),
                 "agent_id": result.get("agent_id", ""),
+                # Non-empty when the script's opts.model was rejected (unknown
+                # key, or on-device with no agent adapter) and the run's own
+                # model was used instead — journaled so a script author can
+                # see why their override did nothing.
+                "model_warning": result.get("model_warning", ""),
             }
         )
         self._emit(
@@ -367,6 +378,7 @@ class WorkflowRun:
                 "status": result.get("status", "completed"),
                 "label": opts.get("label", ""),
                 "cost_usd": round(self.cost_usd, 4),
+                "model_warning": result.get("model_warning", ""),
             }
         )
         await self._respond(mid, result)

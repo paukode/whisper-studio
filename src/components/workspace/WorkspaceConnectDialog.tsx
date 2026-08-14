@@ -432,17 +432,22 @@ export const WorkspaceConnectDialog: React.FC = () => {
       setConnecting(true);
 
       try {
-        await post('/api/workspace/connect', { path: trimmed });
+        const data = await post<{ path?: string }>('/api/workspace/connect', { path: trimmed });
+        // Use the CANONICAL path the server resolved (~ expanded, symlinks
+        // and relative segments collapsed) rather than the raw input, so the
+        // stored root and everything keyed off it (LSP roots, indexing,
+        // workspace-containment checks) match the server's own view.
+        const connectedPath = data?.path || trimmed;
         // Clear old editor tabs from previous workspace
         const ws = useWorkspaceStore.getState();
         for (const tab of ws.editorTabs) {
           ws.closeTab(tab.path);
         }
-        useUIStore.getState().setWsConnected(true, trimmed);
+        useUIStore.getState().setWsConnected(true, connectedPath);
         // Kick off indexing in the background if requested; it continues
         // server-side after the dialog closes.
         if (indexOnConnect) {
-          buildIndex(trimmed).catch(() => {});
+          buildIndex(connectedPath).catch(() => {});
         }
         closeDialog();
       } catch (err: unknown) {

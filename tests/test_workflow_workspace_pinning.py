@@ -32,6 +32,21 @@ HARNESS_OK = os.path.exists(NODE) and os.path.exists(
 _NOOP = "export const meta = { name: 'noop', description: 'no agents', phases: ['a'] }\nphase('a')\nreturn { ok: 1 }\n"
 
 
+@pytest.fixture(autouse=True)
+def _grant_tmp_paths(tmp_path, monkeypatch):
+    """Pinning a workflow to a folder outside the connected workspace now
+    requires an ask-once grant (server/security/folder_grants.py). These tests
+    are about the PINNING logic, not the grant prompt, so isolate the store to
+    tmp and pre-approve the tmp tree — the grant flow has its own coverage in
+    tests/test_folder_grants.py.
+    """
+    from server.security import folder_grants as fg
+
+    monkeypatch.setattr(fg, "GRANTS_PATH", str(tmp_path / "folder_grants.json"))
+    fg.grant(str(tmp_path))
+    yield
+
+
 # ── resolve_workflow_workspace ───────────────────────────────────────────────
 
 

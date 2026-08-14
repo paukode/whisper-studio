@@ -39,19 +39,52 @@ def _agent_effort(opts: dict, run_effort: str | None) -> str | None:
     return label
 
 
-def _resolve_model(opts: dict, default_model_id: str) -> str | None:
-    """opts.model may be a config KEY (e.g. 'sonnet'); resolve it to a Bedrock
-    id. Unknown key → None so run_agent falls back to the run's model."""
+def _resolve_model(opts: dict, default_model_id: str) -> tuple[str | None, str, str]:
+    """Resolve a script's ``opts.model`` (a config KEY, e.g. 'sonnet') to a
+    Bedrock id. Returns ``(model_id, effective_key, warning)``.
+
+    Two overrides used to fail silently and are now reported instead:
+
+    * An UNKNOWN key fell through to the run's model, but the caller still
+      priced the work under the invalid name — producing real work with a
+      zero or wrong recorded cost. The effective key comes back so the ledger
+      charges what actually ran.
+    * A LOCAL (on-device) key resolved to a ``local:*`` id that the agent
+      runtime has no adapter for, so it was handed to the Bedrock adapter and
+      failed at invoke. Refused up front with a readable reason.
+
+    ``warning`` is empty when the override resolved cleanly.
+    """
     key = opts.get("model")
     if not key:
-        return default_model_id or None
+        return (default_model_id or None), "", ""
     try:
         from server.infrastructure.config import load_config
 
         models = load_config().get("chat_models", {}) or {}
     except Exception:
-        return default_model_id or None
-    return models.get(key) or default_model_id or None
+        return (default_model_id or None), "", ""
+
+    resolved = models.get(key)
+    if not resolved:
+        return (
+            (default_model_id or None),
+            "",
+            f"unknown model '{key}' — ran on the workflow's own model instead",
+        )
+
+    from server.local.runtime import is_local_model_id
+
+    if is_local_model_id(resolved):
+        return (
+            (default_model_id or None),
+            "",
+            (
+                f"model '{key}' is on-device and workflow agents have no local "
+                "adapter — ran on the workflow's own model instead"
+            ),
+        )
+    return resolved, key, ""
 
 
 async def run_workflow_agent(
@@ -74,7 +107,9 @@ async def run_workflow_agent(
     schema = opts.get("schema") if isinstance(opts.get("schema"), dict) else None
     effort = _agent_effort(opts, effort_label)
     isolation = "worktree" if opts.get("isolation") == "worktree" else "none"
-    model_id = _resolve_model(opts, default_model_id)
+    model_id, effective_model_key, model_warning = _resolve_model(opts, default_model_id)
+    if model_warning:
+        log.warning("workflow %s agent model override: %s", run_id, model_warning)
 
     try:
         res = await run_agent(
@@ -107,6 +142,11 @@ async def run_workflow_agent(
         }
 
     return {
+        # The key the work ACTUALLY ran on, so the ledger prices reality
+        # rather than an override that silently fell back (see _resolve_model).
+        # Empty means "the run's own model" — the caller's default.
+        "model_key": effective_model_key,
+        "model_warning": model_warning,
         "text": res.output or "",
         "output": res.structured_output,
         "usage": res.usage or {},
