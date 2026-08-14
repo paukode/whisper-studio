@@ -19,7 +19,7 @@ import shutil
 import subprocess
 
 from .registry import register
-from .spec import ApprovalOutcome, ApprovalSpec, refuse_if_agent
+from .spec import ApprovalOutcome, ApprovalSpec, refuse_if_agent, refuse_if_agent_rm
 
 # ── Executors ─────────────────────────────────────────────────────────
 
@@ -55,6 +55,33 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
             f"To reference this file for the user, copy this link verbatim: {link}"
         ),
     )
+
+
+async def _do_folder_access(payload: dict) -> ApprovalOutcome:
+    """Persist an ask-once grant for a folder OUTSIDE the connected workspace.
+
+    Approving this is the user saying "yes, this app may read that folder" —
+    recorded permanently (server/security/folder_grants.py) so the same
+    folder is never asked about again. Refused outright for credential
+    stores and for any ancestor of one, no matter what the prompt said:
+    that refusal is the whole reason a prompt-injected "approve my ~/.ssh
+    access" can't become a durable grant.
+
+    Never auto-approvable by an unattended agent — granting the app new
+    filesystem reach is exactly the decision that needs a human.
+    """
+    refusal = refuse_if_agent(payload, what="Granting access to a new folder")
+    if refusal:
+        return refusal
+    from server.security.folder_grants import _canonical, grant
+
+    raw = payload.get("path") or ""
+    ok, err = grant(raw)
+    if not ok:
+        return ApprovalOutcome(ok=False, error=err)
+    # Report the CANONICAL path, not the raw input — the user should see the
+    # folder that was actually recorded, not "~/x" or a relative spelling.
+    return ApprovalOutcome(ok=True, output=f"Access granted to {_canonical(raw)}")
 
 
 async def _do_delete(payload: dict) -> ApprovalOutcome:
@@ -235,6 +262,9 @@ async def _do_git_clone(payload: dict) -> ApprovalOutcome:
 
 
 async def _do_terminal_run(payload: dict) -> ApprovalOutcome:
+    refusal = refuse_if_agent_rm(payload)
+    if refusal:
+        return refusal
     from server.executors.terminal_run import do_terminal_run
 
     ok, output = await do_terminal_run(payload)
@@ -397,6 +427,9 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
     """Run a shell command in the workspace. Mirrors ws_shell_endpoint but
     without the request/response plumbing. user_approved is implicit — the
     user just approved via the banner."""
+    refusal = refuse_if_agent_rm(payload)
+    if refusal:
+        return refusal
     from server import workspace
     from server.cwd_tracker import (
         extract_cwd_from_output,
@@ -618,6 +651,22 @@ def register_defaults() -> None:
             executor=_do_save_to_path,
             risk_hint="low",
             payload_fields=["path", "filename", "staged_path", "size"],
+        ),
+    )
+
+    # Folder access — its own category so it is never covered by "Yes for all
+    # writes"/"all commands". Granting the app reach into a NEW folder outside
+    # the connected workspace is a distinct, durable decision (it persists
+    # across sessions), so it gets its own prompt and its own session bucket.
+    register(
+        "folder_access",
+        ApprovalSpec(
+            category="folder-access",
+            preview="text",
+            summary=lambda p: f"Allow access to {p.get('path', '?')}",
+            executor=_do_folder_access,
+            risk_hint="medium",
+            payload_fields=["path", "reason"],
         ),
     )
 

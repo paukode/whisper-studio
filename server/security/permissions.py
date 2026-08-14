@@ -27,9 +27,10 @@ category_modes (optional, in permissions.json):
   (new workflow-script launches; resolved by
   server/workflows/launch_policy.py). A category with no entry (including a
   legacy permissions.json with no "category_modes" key at all) falls back
-  to the global mode. The one exception is "github-destructive", which
-  always asks no matter what a category mode says — see
-  resolve_static_decision below.
+  to the global mode. Two exceptions always ask no matter what a category
+  mode (or bypassPermissions, or a blanket session approval) says — see
+  resolve_static_decision below: "github-destructive", and any command
+  input that is rm or a close cousin (is_rm_command).
 
 "auto" mode's classifier can flip-flop over a long turn; record_classifier_verdict /
 is_auto_mode_tripped / resume_auto_mode below implement a per-turn circuit breaker
@@ -260,10 +261,11 @@ def resolve_static_decision(
     Returns "allow" | "ask" | "deny", or None when mode is "auto" and nothing
     else resolved it — the caller should fall back to the classifier in that case.
 
-    Evaluation order: github-destructive (absolute) → category mode override →
-    bypassPermissions (absolute) → trusted skill script → session approvals
-    ("yes/no for all this session") → explicit custom rules → dontAsk →
-    acceptEdits (write category only) → auto (defer) → ask.
+    Evaluation order: github-destructive (absolute) → rm-class command
+    (absolute) → category mode override → bypassPermissions (absolute) →
+    trusted skill script → session approvals ("yes/no for all this session")
+    → explicit custom rules → dontAsk → acceptEdits (write category only) →
+    auto (defer) → ask.
     """
     # Destructive GitHub mutations (repo/ref delete, PR merge, archive/rename,
     # API DELETE) ALWAYS require an explicit human approval — no bypass mode,
@@ -273,6 +275,21 @@ def resolve_static_decision(
     # right below.
     if category == "github-destructive":
         return "ask"
+
+    # rm (and its close cousins — see is_rm_command): the same absolute floor
+    # as github-destructive, for the same reason — no bypass mode, category
+    # override, trusted-skill flag, blanket "allow all commands" session
+    # approval, custom rule, or dontAsk/acceptEdits default may let it run
+    # without a real human clicking Approve. Checked against whatever shell
+    # command the tool input actually carries, so it applies uniformly to
+    # ws_run_command, terminal_run, and any future command-shaped tool
+    # without needing its own category or tool-name special case.
+    command = tool_input.get("command")
+    if isinstance(command, str) and command.strip():
+        from server.security.command_validator import is_rm_command
+
+        if is_rm_command(command):
+            return "ask"
 
     # MCP tool calls: a dedicated tier on top of (not instead of) everything
     # below. A server/tool marked `approval_mode: "approve"` in
@@ -548,3 +565,32 @@ async def resume_auto_mode_route(request: Request):
         )
     resumed = resume_auto_mode(session_id)
     return {"resumed": resumed}
+
+
+# ── Folder access grants ───────────────────────────────────────────────────
+# The ask-once-remember-after store (server/security/folder_grants.py). Listed
+# and revocable here so a grant is never a one-way door the user can't see or
+# undo. Granting itself is NOT exposed as a route — it only ever happens
+# through the approval card, so a page (or a prompt-injected fetch) can't mint
+# itself filesystem reach.
+
+
+@router.get("/folder-grants")
+async def list_folder_grants():
+    from server.security.folder_grants import load_grants
+
+    return {"granted": load_grants()}
+
+
+@router.delete("/folder-grants")
+async def delete_folder_grant(request: Request):
+    from server.security.folder_grants import revoke
+
+    path = request.query_params.get("path", "")
+    if not path:
+        return Response(
+            content=json.dumps({"error": "path required"}),
+            status_code=400,
+            media_type="application/json",
+        )
+    return {"revoked": revoke(path)}

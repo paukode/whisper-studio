@@ -42,6 +42,34 @@ def refuse_if_agent(payload: dict, what: str = "This action") -> ApprovalOutcome
     return None
 
 
+def refuse_if_agent_rm(payload: dict, command_field: str = "command") -> ApprovalOutcome | None:
+    """Refuse rm (and its close cousins — see is_rm_command) from an unattended
+    subagent, unconditionally.
+
+    Deleting files is exactly the kind of irreversible action a human must see
+    before it happens; the unattended auto-approve path (agent=True) skips
+    every other gate (category, session rules, the classifier) by design, so
+    this is the only check standing between an agent's own `rm` and actually
+    running it. Belt-and-suspenders with the interactive-mode guardrail in
+    server/tool_executor.py, which forces a real approval prompt for rm even
+    when a human WOULD normally have pre-approved the whole "cli" category.
+    """
+    if not payload.get("__agent__"):
+        return None
+    from server.security.command_validator import is_rm_command
+
+    if not is_rm_command(payload.get(command_field) or ""):
+        return None
+    return ApprovalOutcome(
+        ok=False,
+        error=(
+            "rm (or an equivalent delete) is never run from an unattended "
+            "subagent or workflow, no matter the permission mode. Ask the "
+            "top-level session, where a human can approve it, to run this."
+        ),
+    )
+
+
 # Executor signature: takes the approval payload dict, returns an outcome.
 # Sync functions are wrapped at registration time so the registry exposes
 # a uniform Awaitable interface to /api/approval/execute.
