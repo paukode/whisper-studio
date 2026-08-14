@@ -212,7 +212,13 @@ def api_effort_for(level: str, meta: dict | None, key: str) -> str:
     """
     if level != "ultracode":
         return api_effort(level)
-    ladder = [lv for lv in EFFORT_TIERS.get(effort_tier_for(meta, key), []) if lv != "none"]
+    # Fall back to the SAME ladder effort_levels_for uses for an unrecognised
+    # tier. Falling back to an empty ladder here instead sent the model-unaware
+    # xhigh to a model whose config offered ultracode off the standard ladder —
+    # a typo in effort_tier was enough to put a rung on the wire that the model
+    # rejects.
+    tier = EFFORT_TIERS.get(effort_tier_for(meta, key), EFFORT_TIERS["standard"])
+    ladder = [lv for lv in tier if lv != "none"]
     if not ladder:
         return api_effort(level)
     top = "extra" if "extra" in ladder else ladder[-1]
