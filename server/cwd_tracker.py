@@ -12,6 +12,10 @@ _lock = threading.Lock()
 # tracking key -> absolute cwd path. The key is session_id alone outside
 # worktree isolation; see _key() for what changes under it.
 _session_cwd: dict[str, str] = {}
+# Overrides an agent is still running under. A write for a retired override
+# is refused rather than silently resurrecting the entry clear_override just
+# removed — see the race this closes in update_cwd's docstring.
+_live_overrides: set[str] = set()
 
 
 def _active_override() -> str | None:
@@ -66,6 +70,24 @@ def get_cwd(session_id: str, default: str) -> str:
     return default
 
 
+def register_override(override: str) -> None:
+    """Mark a worktree override as live, so a write against it is trusted until
+    clear_override retires it.
+
+    Call this once, right after set_workspace_override, for every override
+    that will call update_cwd. Without it, a command still running when its
+    agent is cancelled can finish AFTER clear_override has already popped the
+    entry — the command's own update_cwd call runs in a frozen copy of the
+    override contextvar (dispatched to a worker thread before cancellation)
+    and would otherwise resurrect the retired entry with no owner left to
+    clear it again.
+    """
+    if not override:
+        return
+    with _lock:
+        _live_overrides.add(override)
+
+
 def update_cwd(session_id: str, cwd: str):
     """Store the working directory for a session."""
     override = _active_override()
@@ -73,6 +95,11 @@ def update_cwd(session_id: str, cwd: str):
         return  # never let an isolated agent's cwd escape its own worktree
     key = _key(session_id, override)
     with _lock:
+        # A write for an override that clear_override already retired is a
+        # command that outlived its agent (see register_override) — refuse it
+        # rather than resurrecting an entry nothing will ever clear again.
+        if override and override not in _live_overrides:
+            return
         _session_cwd[key] = cwd
 
 
@@ -90,10 +117,17 @@ def clear_override(session_id: str, override: str) -> None:
     """Drop the cwd entry scoped to one worktree, once that worktree is torn
     down. Without this every isolated agent run leaves a permanently orphaned
     entry for the life of the process — each worktree path is unique, so
-    nothing else will ever look it up again."""
+    nothing else will ever look it up again.
+
+    Retirement and the dict pop happen under the SAME lock acquisition as
+    update_cwd's liveness check, so whichever runs second wins deterministically
+    — a still-in-flight write either lands just before retirement (harmless,
+    cleaned up here) or is cleanly refused just after (see update_cwd).
+    """
     if not override:
         return
     with _lock:
+        _live_overrides.discard(override)
         _session_cwd.pop(_key(session_id, override), None)
 
 
