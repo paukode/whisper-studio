@@ -11,6 +11,7 @@ from ..filesystem import _ws_list_dir
 from ..paths import WORKSPACE_BACKUPS, _resolve_path
 from ..state import (
     _check_writable,
+    clear_workspace_scoped_state,
     connect_workspace,
     load_workspace_config,
     save_workspace_config,
@@ -54,6 +55,12 @@ async def ws_disconnect():
     config.pop("mode", None)  # retired field; scrub it from old configs
     save_workspace_config(config)
     WORKSPACE_BACKUPS.clear()
+    # Immediately, not deferred to the next connect: connect_workspace's own
+    # switch detection requires a truthy `previous` path, which this call just
+    # nulled out — reconnecting to a DIFFERENT workspace afterward would
+    # otherwise skip the clear entirely and keep running commands against the
+    # disconnected workspace's stale cwd.
+    clear_workspace_scoped_state()
     from server.git.watcher import git_watcher
 
     git_watcher.set_workspace(None)

@@ -80,6 +80,36 @@ def test_reconnect_same_path_keeps_state(monkeypatch, tmp_path):
     }
 
 
+def test_disconnect_then_connect_a_different_workspace_clears_state(monkeypatch, tmp_path):
+    """Report item #9: connect_workspace's switch check requires a truthy
+    `previous` path. Disconnecting nulls that path out FIRST, so reconnecting
+    to a different workspace afterward used to see `previous=None` and skip
+    the clear entirely — a stale cwd from the disconnected workspace kept
+    resolving commands there even after moving to an unrelated one."""
+    _isolate_config(monkeypatch, tmp_path)
+    _reset_registries()
+
+    ws_a = tmp_path / "ws_a"
+    ws_b = tmp_path / "ws_b"
+    ws_a.mkdir()
+    ws_b.mkdir()
+
+    real_a = connect_workspace(str(ws_a))
+    update_cwd("sess1", real_a)
+    executors._WORKTREES["wt1"] = {"path": str(ws_a / ".worktrees/wt1"), "branch": "whisper/wt1"}
+
+    import asyncio
+
+    from server.workspace.routes.connection import ws_disconnect
+
+    asyncio.run(ws_disconnect())
+
+    real_b = connect_workspace(str(ws_b))
+    assert real_b != real_a
+    assert get_cwd("sess1", real_b) == real_b  # not the stale A path
+    assert executors._WORKTREES == {}
+
+
 def test_initial_connect_does_not_crash_with_no_prior_config(monkeypatch, tmp_path):
     # First-ever connect (no config file, previous path is None) must not be
     # treated as a switch and must not raise.

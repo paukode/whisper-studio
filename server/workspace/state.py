@@ -175,6 +175,26 @@ def record_save_location(path: str) -> None:
         json.dump(saved, f, indent=2)
 
 
+def clear_workspace_scoped_state() -> None:
+    """Drop state scoped to a workspace that is going away.
+
+    Without this, per-session shell cwds keep running read-only commands in
+    the old folder and the worktree registry resolves stale branch names.
+    Called both on an actual workspace switch (connect_workspace) and on
+    disconnect — disconnecting represents "no workspace connected" regardless
+    of what gets connected next, so it must not defer this to whatever
+    connect happens to follow. A disconnect immediately followed by
+    reconnecting to a DIFFERENT path used to skip this entirely: connect's own
+    switch check only fires on a truthy `previous`, and disconnect had
+    already nulled it out.
+    """
+    from server.cwd_tracker import _session_cwd
+    from server.workspace.executors import _WORKTREES
+
+    _session_cwd.clear()
+    _WORKTREES.clear()
+
+
 def connect_workspace(path: str) -> str:
     """Mark `path` as the active workspace, persist it, refresh recents, and
     re-point the git file watcher. Returns the canonicalised realpath that
@@ -201,13 +221,7 @@ def connect_workspace(path: str) -> str:
     # resolves stale branch names. Skip on the initial connect / reconnect to
     # the same path so we don't needlessly wipe live session state.
     if switched:
-        # No clear-all helper exists on either module (only per-session
-        # cwd_tracker.clear_session), so reset the module-level registries.
-        from server.cwd_tracker import _session_cwd
-        from server.workspace.executors import _WORKTREES
-
-        _session_cwd.clear()
-        _WORKTREES.clear()
+        clear_workspace_scoped_state()
     # Re-target the git file watcher so its cache invalidates on the new
     # repo's branch/HEAD changes and the SSE subscribers (panel, terminal
     # header) update without polling.
