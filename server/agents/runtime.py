@@ -238,6 +238,7 @@ async def run_agent(
 
     _ws_token = None
     _wt_session = None
+    _override_path = None
     if isolation == "worktree":
         # git worktree add does a full checkout (seconds on a big repo) — offload
         # it so a fan-out of agents doesn't serialize on the event loop.
@@ -245,9 +246,17 @@ async def run_agent(
             _git_executor, _enter_agent_worktree, agent_id, session_id
         )
         if _wt_session:
+            from server.cwd_tracker import register_override
             from server.workspace.state import set_workspace_override
 
-            _ws_token = set_workspace_override(_wt_session.worktree_path)
+            _override_path = _wt_session.worktree_path
+            _ws_token = set_workspace_override(_override_path)
+            # Mark the override live BEFORE any tool call can dispatch a
+            # command against it, so a command that outlives this agent's own
+            # cancellation (still running in a worker thread when the finally
+            # below retires the override) gets refused instead of resurrecting
+            # a cwd entry nothing will ever clear again.
+            register_override(_override_path)
         elif not config.read_only:
             # Isolation was REQUESTED but could not be created (non-git
             # workspace, transient git error). Never let an agent that was
@@ -368,6 +377,13 @@ async def run_agent(
                 from server.workspace.state import reset_workspace_override
 
                 reset_workspace_override(_ws_token)
+            except Exception:  # noqa: BLE001 — teardown hygiene only
+                pass
+        if _override_path:
+            try:
+                from server.cwd_tracker import clear_override
+
+                clear_override(session_id, _override_path)
             except Exception:  # noqa: BLE001 — teardown hygiene only
                 pass
         if _wt_session is not None:

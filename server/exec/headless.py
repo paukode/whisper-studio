@@ -208,6 +208,16 @@ async def run_headless_turn(
 
     # ── Workspace override (this call only; never touches the global one) ──
     _ws_token = set_workspace_override(workspace_path) if workspace_path is not None else None
+    if workspace_path is not None:
+        # Same cwd-tracker scoping a worktree-isolated agent gets (see
+        # server.agents.runtime.run_agent): without this, a shell tool call
+        # made under this override stores its cwd under a key keyed to
+        # `workspace_path`, and nothing below ever clears it — a guaranteed
+        # per-call leak, not just a race, since this override has no worktree
+        # teardown to piggyback cleanup on.
+        from server.cwd_tracker import register_override
+
+        register_override(workspace_path)
     try:
         ws_path = get_workspace_path()
 
@@ -458,3 +468,7 @@ async def run_headless_turn(
     finally:
         if _ws_token is not None:
             reset_workspace_override(_ws_token)
+        if workspace_path is not None:
+            from server.cwd_tracker import clear_override
+
+            clear_override(session_id, workspace_path)
