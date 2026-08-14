@@ -556,9 +556,14 @@ async def _run_agent_loop(
     # not, and returns None for models with no effort at all (Haiku).
     # This value rides ctx.effort_label too, so agents nested below this one
     # inherit the same level instead of restarting from a default.
+    # Skipped for OpenAI children: reasoning_effort_for already maps EVERY app
+    # label to that model's ladder itself, including "extra", which the openai
+    # tier list deliberately omits because the GPT picker does not offer it.
+    # Clamping against that list would read the omission as "unsupported" and
+    # demote an extra-effort parent's GPT child from xhigh to high.
     from server.infrastructure.effort import resolve_effort
 
-    if effort_label is not None:
+    if effort_label is not None and _provider != "openai_bedrock":
         effort_label = resolve_effort(_agent_meta, model_key, effort_label)
     if _provider == "openai_bedrock":
         from server.chat.engine.openai import OpenAIResponsesAdapter
