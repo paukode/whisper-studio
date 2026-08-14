@@ -611,7 +611,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             const response = await fetch('/api/subagent/stream', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ task, model: selectedModel, session_id: sessionId ?? '', team_id: teamId }),
+              // effort_level so the subagent reasons at the composer's depth,
+              // like every other agent the session spawns.
+              body: JSON.stringify({ task, model: selectedModel, session_id: sessionId ?? '', team_id: teamId, effort_level: useSettingsStore.getState().effortLevel }),
               signal: controller.signal,
             });
             if (!response.ok || !response.body) throw new Error(`subagent HTTP ${response.status}`);

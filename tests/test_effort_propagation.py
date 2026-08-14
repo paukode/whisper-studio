@@ -310,6 +310,94 @@ def test_unattended_runs_resolve_the_configured_effort(monkeypatch):
     assert infra.effort_for_model("haiku") is None
 
 
+def test_unreversible_model_id_does_not_guess_a_key(monkeypatch):
+    """A model id that is not in the global catalogue (a workspace-only entry, a
+    renamed or removed one, a stale approval card) must not resolve its effort
+    against a guessed key. It used to answer "sonnet", which silently clamped an
+    ultracode run down to max."""
+    from server.workflows.tools import _default_model_key, _model_key_for
+
+    monkeypatch.setattr(
+        "server.infrastructure.config.load_config",
+        lambda *a, **k: {
+            "chat_models": {"opus5.0": "global.anthropic.claude-opus-5"},
+            "default_chat_model": "opus5.0",
+        },
+    )
+    assert _model_key_for("global.anthropic.claude-opus-5") == "opus5.0"
+    assert _model_key_for("global.anthropic.claude-does-not-exist") == ""
+    # ...and the caller's fallback is the configured default, never "" (an empty
+    # key infers the standard ladder, clamping ultracode away just as quietly).
+    assert _default_model_key() == "opus5.0"
+
+
+def test_openai_children_keep_extra_which_their_ladder_omits():
+    """The openai tier list has no "extra" rung because the GPT picker does not
+    offer it, but the provider maps that label itself. Clamping against the list
+    would demote an extra-effort parent's GPT child from xhigh to high."""
+    from server.openai_bedrock.runtime import _EFFORT_MAP
+
+    assert _EFFORT_MAP["extra"] == "xhigh"
+    import inspect
+
+    from server.agents import runtime
+
+    src = inspect.getsource(runtime._run_agent_loop)
+    assert 'effort_label is not None and _provider != "openai_bedrock"' in src
+
+
+def test_malformed_effort_tier_cannot_put_a_bad_rung_on_the_wire():
+    """effort_tier comes from config unvalidated. A typo used to make
+    api_effort_for fall back to a model-unaware xhigh while the picker still
+    offered ultracode off the standard ladder."""
+    from server.infrastructure.effort import api_effort_for, effort_levels_for, resolve_effort
+
+    typo = {"id": "global.anthropic.claude-sonnet-5", "effort_tier": "standrd"}
+    assert "ultracode" in effort_levels_for(typo, "sonnet5")
+    assert resolve_effort(typo, "sonnet5", "ultracode") == "ultracode"
+    # The wire value follows the SAME fallback ladder the picker was built from.
+    assert api_effort_for("ultracode", typo, "sonnet5") == "max"
+
+
+def test_adapter_uses_the_metadata_the_effort_was_resolved_from(monkeypatch):
+    """The label is resolved from the latched, workspace-aware snapshot. The wire
+    value must come from that same snapshot, or a workspace-only model gets a
+    label from one config and a rung from another."""
+    from server.chat.engine import anthropic as A
+
+    monkeypatch.setattr(A, "_get_bedrock_client", lambda: object())
+    # Global config does NOT know this key — only the passed-in meta does.
+    monkeypatch.setattr(
+        "server.infrastructure.config.load_config", lambda *a, **k: {"chat_model_meta": {}}
+    )
+    adapter = A.AnthropicAdapter(
+        model_key="workspace-opus",
+        model_id="global.anthropic.claude-opus-5",
+        system_prompt="s",
+        system_static="",
+        system_dynamic="",
+        caching_on=False,
+        cache_ttl="5m",
+        effort_label="ultracode",
+        force_skill=None,
+        loop=None,
+        executor=None,
+        meta={"id": "global.anthropic.claude-opus-5", "effort_tier": "full"},
+    )
+    body = adapter._build_body([{"role": "user", "content": "hi"}], None, 0, 1, True)
+    assert body["output_config"] == {"effort": "xhigh"}
+
+
+def test_subagent_endpoint_resolves_an_effort():
+    """/subagent was the last agent entry point passing nothing at all."""
+    import inspect
+
+    from server.chat import routes
+
+    src = inspect.getsource(routes.subagent_stream_endpoint)
+    assert "effort_for_model(model_key" in src
+
+
 def test_cron_and_headless_no_longer_hardcode_no_effort():
     """Guard the specific regression: both files passed effort_label=None into
     their adapters, so every scheduled turn ran without adaptive thinking."""
