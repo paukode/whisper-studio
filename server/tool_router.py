@@ -302,6 +302,9 @@ async def route_tool(
             agent_type="general",
             session_id=session_id,
             model_id_override=model_id,
+            # Same as spawn_agent and team_create below: the skill's agent runs
+            # at the turn's effort. Omitting it ran skills at no effort at all.
+            effort_label=effort_label,
         )
         output = f"[Skill Agent Result]\n{result.output}"
         return output, side_effects
@@ -416,7 +419,7 @@ async def route_tool(
     if tool_name == "ci_autofix":
         from server.ci.tools import execute_ci_autofix
 
-        output, extra = await execute_ci_autofix(tool_input, session_id, model_id)
+        output, extra = await execute_ci_autofix(tool_input, session_id, model_id, effort_label)
         side_effects.extend(extra)
         return output, side_effects
 

@@ -106,6 +106,24 @@ def _task_result_text(status: str, outcome: dict) -> str:
     return head
 
 
+def resolve_workflow_effort(effort_label: str | None, model_key: str) -> str | None:
+    """Clamp a run's requested effort to what its model actually supports.
+
+    ``None`` in means "not supplied" — an omission, not a decision — so it falls
+    back to the configured default rather than to no effort at all. That is what
+    kept a manually approved run reasoning shallower than an auto-approved one.
+    ``None`` out means the model has no effort support (Haiku).
+    """
+    try:
+        from server.chat.infra import effort_for_model
+
+        return effort_for_model(model_key, effort_label)
+    except Exception:  # noqa: BLE001 — config unavailable; infer from the key
+        from server.infrastructure.effort import resolve_effort
+
+        return resolve_effort({}, model_key, effort_label)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -161,6 +179,12 @@ def start_run(
     if budget_tokens is None:
         budget_tokens = DEFAULT_WORKFLOW_BUDGET_TOKENS
 
+    # The run's effort is the session's effort, resolved once against the run's
+    # own model and then frozen for every agent it spawns. Resolving HERE means
+    # every entry point (tool dispatch, approval card, saved-workflow launch,
+    # resume) lands on the same value instead of each carrying its own default.
+    effort_label = resolve_workflow_effort(effort_label, model_key)
+
     run_id = uuid.uuid4().hex[:12]
 
     # Immutable snapshot so a later saved-script edit never confuses a resume.
@@ -173,8 +197,8 @@ def start_run(
         _ensure_table(conn)
         conn.execute(
             "INSERT INTO workflow_runs (run_id, name, session_id, status, phases_json, "
-            "args_json, model_key, budget_tokens, resumed_from, started_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "args_json, model_key, effort_label, budget_tokens, resumed_from, started_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 run_id,
                 name,
@@ -183,6 +207,7 @@ def start_run(
                 json.dumps(phases or []),
                 json.dumps(args),
                 model_key,
+                effort_label,
                 budget_tokens,
                 resume_from,
                 _now(),
@@ -270,13 +295,14 @@ def _make_nested_runner(session_id, model_key, model_id, effort_label):
             _ensure_table(conn)
             conn.execute(
                 "INSERT INTO workflow_runs (run_id, name, session_id, status, model_key, "
-                "budget_tokens, resumed_from, started_at) VALUES (?,?,?,?,?,?,?,?)",
+                "effort_label, budget_tokens, resumed_from, started_at) VALUES (?,?,?,?,?,?,?,?,?)",
                 (
                     child_id,
                     f"{parent.run_id}/{name}",
                     session_id,
                     "running",
                     model_key,
+                    effort_label,
                     child_budget,
                     parent.run_id,
                     _now(),

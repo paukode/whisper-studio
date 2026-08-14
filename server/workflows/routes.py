@@ -91,18 +91,50 @@ async def launch_run(request: Request):
         budget_tokens = DEFAULT_WORKFLOW_BUDGET_TOKENS
     # Honor the session's model (passed through the approval card); fall back to
     # the configured default only when the caller didn't supply one.
+    # The session's model, given either way round: the approval card echoes back
+    # the `model_id` the tool put on the preview, while the slash command knows
+    # only the config KEY (the frontend never sees Bedrock ids).
     model_id = (body.get("model_id") or "").strip()
-    if model_id:
+    model_key = (body.get("model_key") or "").strip()
+    if model_key:
+        from server.chat.infra import _get_chat_models
+
+        resolved = (_get_chat_models() or {}).get(model_key)
+        if resolved:
+            model_id = resolved
+        else:
+            model_key = ""
+    if not model_key and model_id:
         from server.workflows.tools import _model_key_for
 
         model_key = _model_key_for(model_id)
-    else:
+    if not model_key:
         model_key, model_id = _default_model()
+    # Same for the effort: the approval card and the /workflow slash command
+    # both pass the session's level, so an approved run reasons exactly like an
+    # auto-approved one. Omitted ⇒ start_run resolves the configured default.
+    effort_label = (body.get("effort_label") or "").strip() or None
 
     if not script and name:
         loaded = store.load_script(name)
         if not loaded:
             return JSONResponse({"error": f"no saved workflow '{name}'"}, status_code=404)
+        # Trust is enforced HERE, not only in the model-facing workflow_run
+        # tool. This route is what /workflow <name> calls, so gating trust only
+        # on the tool path let an untrusted saved script run with no preview at
+        # all — the one thing "untrusted" is supposed to prevent.
+        if not loaded["trusted"]:
+            return JSONResponse(
+                {
+                    "error": f"workflow '{name}' is not trusted",
+                    "preview_required": True,
+                    "detail": (
+                        "Trust it in Settings > Workflows (or approve it once from the "
+                        "preview card) before launching it by name."
+                    ),
+                },
+                status_code=403,
+            )
         script = loaded["script"]
 
     if not script:
@@ -130,6 +162,7 @@ async def launch_run(request: Request):
         session_id=session_id,
         model_key=model_key,
         model_id=model_id,
+        effort_label=effort_label,
         budget_tokens=budget_tokens,
         phases=meta.get("phases", []),
         name=name or meta.get("name", ""),

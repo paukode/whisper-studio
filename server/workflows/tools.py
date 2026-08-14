@@ -105,7 +105,14 @@ def _model_key_for(model_id: str) -> str:
 
 
 def _preview(
-    script: str, meta: dict, budget_tokens, *, name: str | None, args, model_id: str = ""
+    script: str,
+    meta: dict,
+    budget_tokens,
+    *,
+    name: str | None,
+    args,
+    model_id: str = "",
+    effort_label: str | None = None,
 ) -> tuple[str, list]:
     phases = meta.get("phases", [])
     side = {
@@ -116,9 +123,12 @@ def _preview(
             "phases": phases,
             "budget_tokens": budget_tokens,
             "args": args,
-            # Carry the session's model so the approval launch uses it (not the
-            # config default).
+            # Carry the session's model AND effort so the approval launch runs
+            # the run identically to an auto-approved one. Without the effort
+            # the card's launch fell back to the provider default, so clicking
+            # Approve silently downgraded every child agent's reasoning.
             "model_id": model_id,
+            "effort_label": effort_label or "",
         }
     }
     msg = (
@@ -188,6 +198,10 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
             budget_tokens = prior.get("budget_tokens")
         if budget_tokens is None:
             budget_tokens = DEFAULT_WORKFLOW_BUDGET_TOKENS
+        # And the effort: a resume continues the ORIGINAL run, so the agents it
+        # still has to execute reason at the level the run was approved at, not
+        # at whatever the composer happens to be set to now.
+        effort_label = prior.get("effort_label") or effort_label
         return _launch(
             src, wf_name=prior.get("name", ""), phases=prior.get("phases", []), resume=resume_from
         )
@@ -211,7 +225,13 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
                     loaded["script"], wf_name=name, phases=meta.get("phases", []), auto=True
                 )
             return _preview(
-                loaded["script"], meta, budget_tokens, name=name, args=args, model_id=model_id
+                loaded["script"],
+                meta,
+                budget_tokens,
+                name=name,
+                args=args,
+                model_id=model_id,
+                effort_label=effort_label,
             )
         return _launch(loaded["script"], wf_name=name, phases=meta.get("phases", []))
 
@@ -228,7 +248,15 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
         return _launch(
             script, wf_name=meta.get("name", ""), phases=meta.get("phases", []), auto=True
         )
-    return _preview(script, meta, budget_tokens, name=None, args=args, model_id=model_id)
+    return _preview(
+        script,
+        meta,
+        budget_tokens,
+        name=None,
+        args=args,
+        model_id=model_id,
+        effort_label=effort_label,
+    )
 
 
 def execute_workflow_status(tool_input, session_id) -> str:

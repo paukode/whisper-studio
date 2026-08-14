@@ -26,6 +26,7 @@ def migrate(conn: sqlite3.Connection) -> None:
             args_json       TEXT NOT NULL DEFAULT 'null',
             script_hash     TEXT NOT NULL DEFAULT '',
             model_key       TEXT NOT NULL DEFAULT '',
+            effort_label    TEXT,
             agents_spawned  INTEGER NOT NULL DEFAULT 0,
             tokens_in       INTEGER NOT NULL DEFAULT 0,
             tokens_out      INTEGER NOT NULL DEFAULT 0,
