@@ -87,6 +87,9 @@ class AnthropicAdapter:
         from server.infrastructure.config import load_config
 
         meta = (load_config().get("chat_model_meta") or {}).get(model_key) or {}
+        # Kept for the effort mapping too: "ultracode" has no fixed wire value,
+        # it rides this model's own top reasoning rung.
+        self._meta = meta
         try:
             self.max_tokens = int(meta.get("max_output") or 128000)
         except (TypeError, ValueError):
@@ -95,7 +98,7 @@ class AnthropicAdapter:
     # ── Request building (port of call_bedrock_stream) ───────────────────────
 
     def _build_body(self, messages, tools, core_count, round_num, is_last_round) -> dict:
-        from server.infrastructure.effort import api_effort
+        from server.infrastructure.effort import api_effort_for
 
         body = {
             "anthropic_version": "bedrock-2023-05-31",
@@ -107,7 +110,9 @@ class AnthropicAdapter:
         # effort tier (Haiku) send neither.
         if self.effort_label is not None:
             body["thinking"] = {"type": "adaptive"}
-            body["output_config"] = {"effort": api_effort(self.effort_label)}
+            body["output_config"] = {
+                "effort": api_effort_for(self.effort_label, self._meta, self.model_key)
+            }
         if not is_last_round:
             # Prompt caching: checkpoint on the LAST tool and the STATIC system
             # block; third moving checkpoint on the last message. Only when

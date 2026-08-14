@@ -12,8 +12,14 @@ reviewed properly.
 ## Setup
 
 1. **Pick a model with Ultracode.** Click the model chip in the composer. Opus 5,
-   Fable and the GPT-5.x models expose Ultracode; Haiku has no effort levels at
-   all, and Sonnet tops out at Max.
+   Sonnet 5, Fable and the GPT-5.x models expose Ultracode. Haiku has no effort
+   levels at all, and the pre-5 models (Sonnet 4.5, Opus 4.7 and below) top out
+   at Max.
+
+   Ultracode is orchestration, not a reasoning value, so it does not require a
+   model with the deepest reasoning rung — it rides whatever each model's top
+   rung is. That is why Sonnet 5 has it even though its ladder stops one step
+   below Opus's.
 2. **Set the effort chip to Ultracode.** This is the switch. Nothing else in the
    UI turns workflows on.
 3. **Connect the workspace.** Workspace chip, then pick the cloned folder.

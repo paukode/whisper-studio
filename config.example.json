@@ -27,7 +27,8 @@
       "id": "global.anthropic.claude-sonnet-5",
       "label": "Sonnet 5",
       "context_window": 200000,
-      "thinking": "adaptive"
+      "thinking": "adaptive",
+      "supports_ultracode": true
     },
     "haiku": {
       "id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",

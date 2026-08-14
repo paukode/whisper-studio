@@ -252,6 +252,7 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
         if isinstance(val, str):
             ids[key] = val
             meta[key] = {
+                "id": val,
                 "label": key.capitalize(),
                 "thinking": _infer_thinking_default(key),
                 "requires_data_retention": False,
@@ -272,6 +273,10 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
                 "openai_bedrock" if model_id.startswith("openai.") else "anthropic"
             )
             meta[key] = {
+                # The Bedrock id, alongside the ids map. Capability inference
+                # reads it so a renamed config key ("my-sonnet5") keeps the
+                # capabilities of the model it actually points at.
+                "id": model_id,
                 "label": val.get("label") or key.capitalize(),
                 "thinking": val.get("thinking") or _infer_thinking_default(key),
                 # Mythos-class models (e.g. Fable 5) require the AWS account's
@@ -291,6 +296,12 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
                 # picker and the Bedrock output_config.effort.
                 "effort_tier": val.get("effort_tier")
                 or ("openai" if provider == "openai_bedrock" else infer_effort_tier(key)),
+                # Whether this model can drive workflow orchestration. Kept
+                # SEPARATE from effort_tier: the tier says which raw reasoning
+                # values the provider accepts, this says whether the model can
+                # author and run a workflow. Sonnet 5 orchestrates on a standard
+                # ladder. None ⇒ inferred (see effort.supports_ultracode).
+                "supports_ultracode": val.get("supports_ultracode"),
                 "provider": provider,
                 # OpenAI-on-Bedrock only: an optional per-model region override
                 # (absent ⇒ the account-wide bedrock_region is used, same as the
