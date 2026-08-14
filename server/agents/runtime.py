@@ -544,7 +544,22 @@ async def _run_agent_loop(
     from server.chat.infra import _get_chat_model_meta
 
     model_key = model_key_for_id(model_id)
-    _provider = _get_chat_model_meta().get(model_key, {}).get("provider", "anthropic")
+    _agent_meta = _get_chat_model_meta().get(model_key, {})
+    _provider = _agent_meta.get("provider", "anthropic")
+
+    # The parent's effort was clamped to the PARENT's model. An agent can run on
+    # a different one (opts.model, a config default, a per-agent-type pin), so
+    # re-resolve against this model rather than forwarding a label it may not
+    # support: an ultracode parent used to hand a Sonnet child a raw reasoning
+    # value from Opus's ladder. resolve_effort keeps the level where it is when
+    # the model does support it, drops to the nearest lower rung when it does
+    # not, and returns None for models with no effort at all (Haiku).
+    # This value rides ctx.effort_label too, so agents nested below this one
+    # inherit the same level instead of restarting from a default.
+    from server.infrastructure.effort import resolve_effort
+
+    if effort_label is not None:
+        effort_label = resolve_effort(_agent_meta, model_key, effort_label)
     if _provider == "openai_bedrock":
         from server.chat.engine.openai import OpenAIResponsesAdapter
 

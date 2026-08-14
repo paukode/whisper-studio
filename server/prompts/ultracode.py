@@ -50,7 +50,9 @@ return { fixed: results.filter(Boolean).length, verdicts };
 
 - `agent(prompt, opts?) -> {text, output, usage, status, agent_id}` — spawn a
   subagent. `opts`: `label`, `phase`, `schema` (JSON Schema → `output` is the
-  validated object, else null), `effort` (low|medium|high|xhigh|max),
+  validated object, else null), `effort` (low|medium|high|extra|max — omit to
+  inherit the session's level, which is the right default; whatever you pass is
+  clamped to what the agent's model supports),
   `isolation:"worktree"` (isolated git worktree for parallel writers),
   `agentType`, `model`. A failed agent resolves with `status:"failed"` (it does
   NOT throw) — the script decides what to do.

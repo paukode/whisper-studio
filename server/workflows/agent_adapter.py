@@ -13,7 +13,30 @@ import logging
 
 log = logging.getLogger("whisper-studio")
 
-_ALLOWED_EFFORT = {"low", "medium", "high", "xhigh", "max"}
+
+def _agent_effort(opts: dict, run_effort: str | None) -> str | None:
+    """The effort for ONE workflow agent: the script's `effort` opt when it gave
+    one, else the run's own level.
+
+    The script contract documents Claude Code's raw names ("xhigh"), while the
+    app speaks labels ("extra"), so a script asking for xhigh used to fall
+    through every mapping and land on high at Anthropic but medium at OpenAI —
+    the same word, two different depths. normalize_effort folds the raw names
+    onto app labels so one vocabulary reaches both providers; run_agent then
+    clamps whatever comes out to the child model's own ladder.
+
+    "ultracode" is deliberately NOT accepted from a script: it is the mode that
+    launched this run, and a child agent inside a workflow does not orchestrate
+    a second one. A script asking for it gets the run's level, which already
+    carries ultracode's reasoning depth.
+    """
+    from server.infrastructure.effort import known_effort_label
+
+    label = known_effort_label(opts.get("effort"))
+    if label is None or label == "ultracode":
+        # Absent, misspelt, or ultracode — inherit rather than invent a level.
+        return run_effort
+    return label
 
 
 def _resolve_model(opts: dict, default_model_id: str) -> str | None:
@@ -48,7 +71,7 @@ async def run_workflow_agent(
     opts = opts or {}
     agent_type = opts.get("agentType") or "general"
     schema = opts.get("schema") if isinstance(opts.get("schema"), dict) else None
-    effort = opts.get("effort") if opts.get("effort") in _ALLOWED_EFFORT else effort_label
+    effort = _agent_effort(opts, effort_label)
     isolation = "worktree" if opts.get("isolation") == "worktree" else "none"
     model_id = _resolve_model(opts, default_model_id)
 
