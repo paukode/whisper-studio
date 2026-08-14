@@ -89,11 +89,10 @@ async def launch_run(request: Request):
         from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS
 
         budget_tokens = DEFAULT_WORKFLOW_BUDGET_TOKENS
-    # Honor the session's model (passed through the approval card); fall back to
-    # the configured default only when the caller didn't supply one.
-    # The session's model, given either way round: the approval card echoes back
-    # the `model_id` the tool put on the preview, while the slash command knows
-    # only the config KEY (the frontend never sees Bedrock ids).
+    # Honor the session's model, given either way round: the approval card
+    # echoes back the `model_id` the tool put on the preview, while the slash
+    # command knows only the config KEY (the frontend never sees Bedrock ids).
+    # Fall back to the configured default only when the caller supplied neither.
     model_id = (body.get("model_id") or "").strip()
     model_key = (body.get("model_key") or "").strip()
     if model_key:
