@@ -86,6 +86,12 @@ WRITE_TOOLS = frozenset(
         "aws_boto3",
         "run_python",
         "terminal_run",
+        # Dispatched directly in tool_router.py (server/workspace/tools.py),
+        # so the registry never sees it either. Creates a directory on disk
+        # and persists it as the connected workspace (server/workspace/
+        # executors.py::execute_ws_open_folder) — a read_only agent must not
+        # be able to redirect the workspace out from under later tools.
+        "ws_open_folder",
     }
 )
 

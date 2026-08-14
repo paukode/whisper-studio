@@ -95,4 +95,9 @@ def plan_autofix(run: dict, cwd: str, *, session_id: str = "") -> dict:
         "summary": summary,
         # A bounded token ceiling for the approved fix run (None when nothing to fix).
         "budget_tokens": AUTOFIX_BUDGET_TOKENS if script else None,
+        # The repo this plan was diagnosed against — callers building a
+        # workflow_preview card from this plan pin the run to it, so the fix
+        # cannot launch against whatever happens to be connected by the time
+        # the user clicks Approve.
+        "cwd": cwd,
     }

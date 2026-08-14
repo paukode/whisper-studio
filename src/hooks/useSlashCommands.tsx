@@ -443,9 +443,12 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               if (plan.script) {
                 chat.addMessage({
                   role: 'assistant', content: '', timestamp: new Date().toISOString(),
-                  // effort_label rides the card for the same reason model_id
-                  // does: without it the approved fix run launches at no effort.
-                  toolUse: [{ toolId: 'workflow_preview', toolName: 'workflow_preview', input: { script: plan.script, name: 'ci-autofix', description: plan.summary, phases: [{ title: 'Fix' }, { title: 'Verify' }], budget_tokens: plan.budget_tokens ?? null, model_id: modelId, effort_label: s.effortLevel }, status: 'complete' }],
+                  // effort_label and workspace_path ride the card for the same
+                  // reason model_id does: without them the approved fix run
+                  // launches at no effort, or against whatever is connected by
+                  // the time the user clicks Approve instead of the repo the
+                  // plan was actually diagnosed against.
+                  toolUse: [{ toolId: 'workflow_preview', toolName: 'workflow_preview', input: { script: plan.script, name: 'ci-autofix', description: plan.summary, phases: [{ title: 'Fix' }, { title: 'Verify' }], budget_tokens: plan.budget_tokens ?? null, model_id: modelId, effort_label: s.effortLevel, workspace_path: plan.cwd }, status: 'complete' }],
                 });
               } else {
                 addToast({ type: 'info', message: plan.summary, duration: 4000 });

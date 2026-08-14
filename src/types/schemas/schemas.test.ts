@@ -226,4 +226,24 @@ describe('SSEEventDataSchema', () => {
       expect(result.data.workflow_preview?.effort_label).toBe('ultracode');
     }
   });
+
+  // Same trap again: without workspace_path in the schema, the card shows no
+  // pinned folder and the approved run falls back to whatever is connected
+  // when the user clicks Approve, not the folder the preview actually showed.
+  it('keeps workflow_preview.workspace_path so the approved run stays pinned', () => {
+    const input = {
+      workflow_preview: {
+        script: 'export const meta = {}',
+        name: 'repo-review',
+        model_id: 'global.anthropic.claude-sonnet-5',
+        workspace_path: '/Users/me/Downloads/project1',
+        budget_tokens: null,
+      },
+    };
+    const result = SSEEventDataSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.workflow_preview?.workspace_path).toBe('/Users/me/Downloads/project1');
+    }
+  });
 });

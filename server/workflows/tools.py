@@ -61,6 +61,17 @@ WORKFLOW_TOOLS: list[dict] = [
                     "type": "string",
                     "description": "Resume a failed/stopped run, replaying cached agent results.",
                 },
+                "workspace_path": {
+                    "type": "string",
+                    "description": (
+                        "Pin every agent this run spawns to this folder (e.g. the exact path "
+                        "the user named, like '~/Downloads/project1'), instead of whatever "
+                        "workspace happens to be connected. Must already exist as a directory — "
+                        "use ws_open_folder first if it needs creating. Omit to pin to the "
+                        "CURRENTLY connected workspace at launch time (frozen for the whole run, "
+                        "so a later workspace switch cannot redirect it mid-run)."
+                    ),
+                },
             },
         },
     },
@@ -138,6 +149,7 @@ def _preview(
     args,
     model_id: str = "",
     effort_label: str | None = None,
+    workspace_path: str | None = None,
 ) -> tuple[str, list]:
     phases = meta.get("phases", [])
     side = {
@@ -154,6 +166,9 @@ def _preview(
             # Approve silently downgraded every child agent's reasoning.
             "model_id": model_id,
             "effort_label": effort_label or "",
+            # The resolved root this run will be pinned to — shown so the user
+            # approves the actual folder the agents will touch, not a guess.
+            "workspace_path": workspace_path or "",
         }
     }
     msg = (
@@ -172,7 +187,7 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
     resume_from = (tool_input.get("resume_from_run_id") or "").strip()
     model_key = _model_key_for(model_id) or _default_model_key()
 
-    def _launch(src, *, wf_name, phases, resume="", auto=False):
+    def _launch(src, *, wf_name, phases, resume="", auto=False, workspace_path=None):
         rid = manager.start_run(
             src,
             args=args,
@@ -180,6 +195,7 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
             model_key=model_key,
             model_id=model_id,
             effort_label=effort_label,
+            workspace_path=workspace_path,
             budget_tokens=budget_tokens,
             phases=phases,
             name=wf_name,
@@ -227,14 +243,31 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
         # still has to execute reason at the level the run was approved at, not
         # at whatever the composer happens to be set to now.
         effort_label = prior.get("effort_label") or effort_label
+        # Same for the workspace: a resume replays the SAME deterministic run
+        # against the folder it was originally pinned to, never re-resolved
+        # from whatever happens to be connected now.
+        workspace_path = prior.get("workspace_path")
         return _launch(
-            src, wf_name=prior.get("name", ""), phases=prior.get("phases", []), resume=resume_from
+            src,
+            wf_name=prior.get("name", ""),
+            phases=prior.get("phases", []),
+            resume=resume_from,
+            workspace_path=workspace_path,
         )
 
     # Resolve the default before preview/launch so the approval card and the
     # run row always carry the real, enforced number.
     if budget_tokens is None:
         budget_tokens = DEFAULT_WORKFLOW_BUDGET_TOKENS
+
+    # The root every agent in this run resolves against, frozen NOW — before
+    # any approval delay, and before the workflow can outlive a later
+    # workspace switch. An explicit path must already exist; see
+    # resolve_workflow_workspace's docstring for why this never falls back or
+    # creates one.
+    workspace_path, ws_error = manager.resolve_workflow_workspace(tool_input.get("workspace_path"))
+    if ws_error:
+        return ws_error, []
 
     if name and not script:
         loaded = store.load_script(name)
@@ -247,7 +280,11 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
                 return _denied()
             if decision == "auto":
                 return _launch(
-                    loaded["script"], wf_name=name, phases=meta.get("phases", []), auto=True
+                    loaded["script"],
+                    wf_name=name,
+                    phases=meta.get("phases", []),
+                    auto=True,
+                    workspace_path=workspace_path,
                 )
             return _preview(
                 loaded["script"],
@@ -257,8 +294,14 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
                 args=args,
                 model_id=model_id,
                 effort_label=effort_label,
+                workspace_path=workspace_path,
             )
-        return _launch(loaded["script"], wf_name=name, phases=meta.get("phases", []))
+        return _launch(
+            loaded["script"],
+            wf_name=name,
+            phases=meta.get("phases", []),
+            workspace_path=workspace_path,
+        )
 
     if not script:
         return "Error: provide a `script`, a saved `name`, or a `resume_from_run_id`.", []
@@ -271,7 +314,11 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
         return _denied()
     if decision == "auto":
         return _launch(
-            script, wf_name=meta.get("name", ""), phases=meta.get("phases", []), auto=True
+            script,
+            wf_name=meta.get("name", ""),
+            phases=meta.get("phases", []),
+            auto=True,
+            workspace_path=workspace_path,
         )
     return _preview(
         script,
@@ -281,6 +328,7 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
         args=args,
         model_id=model_id,
         effort_label=effort_label,
+        workspace_path=workspace_path,
     )
 
 

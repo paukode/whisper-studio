@@ -29,8 +29,11 @@ export const listRuns = (sessionId?: string) =>
 
 /** Launch a run. `model_id` and `effort_label` carry the SESSION's model and
  *  effort so an approved run behaves identically to an auto-approved one;
- *  omitting either falls back to the configured default on the server. */
-export const launchRun = (body: { script?: string; name?: string; session_id: string; args?: unknown; budget_tokens?: number | null; model_id?: string; model_key?: string; effort_label?: string; trust?: boolean }) =>
+ *  omitting either falls back to the configured default on the server.
+ *  `workspace_path` echoes back the root the preview card showed (frozen at
+ *  the moment the script was proposed, not re-derived at click time);
+ *  omitting it pins to whatever is connected right now. */
+export const launchRun = (body: { script?: string; name?: string; session_id: string; args?: unknown; budget_tokens?: number | null; model_id?: string; model_key?: string; effort_label?: string; workspace_path?: string; trust?: boolean }) =>
   post<{ run_id: string; status: string; trusted_as?: string | null }>('/api/workflows/runs', body);
 
 export const stopRun = (runId: string) => post<{ stopped: boolean }>(`/api/workflows/runs/${encodeURIComponent(runId)}/stop`, {});

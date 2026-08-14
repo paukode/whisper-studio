@@ -61,6 +61,7 @@ async def run_workflow_agent(
     session_id: str,
     default_model_id: str,
     effort_label: str | None,
+    workspace_path: str | None,
     run_id: str,
     depth: int,
 ) -> dict:
@@ -86,6 +87,10 @@ async def run_workflow_agent(
             session_id=session_id,
             model_id_override=model_id,
             effort_label=effort,
+            # The run's pinned root, not whatever happens to be globally
+            # connected when this particular agent starts — a workflow can
+            # run long enough for the user to switch workspaces mid-run.
+            workspace_path=workspace_path,
             structured_schema=schema,
             isolation=isolation,
             depth=depth,
