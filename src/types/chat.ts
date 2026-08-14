@@ -383,6 +383,18 @@ export interface SSEEventData {
   /** Emitted once at the head of a turn: how many indexed folders were searched
    *  and how many passages were injected as grounding for this question. */
   grounding?: { searched: number; passages: number };
+  /** Emitted at the head of a turn that is NOT running what the composer
+   *  shows — a budget fallback swapped the model, and/or the resolved model
+   *  could not honour the requested effort. */
+  turn_downgrade?: {
+    requested_model: string;
+    effective_model: string;
+    requested_effort: string;
+    effective_effort: string;
+    model_changed: boolean;
+    effort_changed: boolean;
+    reason: string;
+  };
 
   // Tasks
   todo_update?: unknown;

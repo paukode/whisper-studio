@@ -957,6 +957,7 @@ async def chat_endpoint(request: Request):
     # Apply model fallback chain if enabled
     from server.infrastructure.model_fallback import resolve_model_with_fallback
 
+    _requested_model_key = model_key
     model_key, model_id = resolve_model_with_fallback(model_key, chat_models, session_id=session_id)
 
     # A forced skill may pin its own (often cheaper) model for the turn it owns
@@ -1024,6 +1025,27 @@ async def chat_endpoint(request: Request):
     )
     effort_label = clamp_effort(_requested_effort, _allowed_effort)  # None ⇒ no effort
     ultracode_active = is_ultracode(effort_label)
+
+    # A budget fallback swaps the model BEFORE effort is resolved, so the
+    # clamp above can quietly drop the turn's reasoning (ultracode → max, or
+    # away entirely on a model with no effort ladder) while the composer still
+    # shows what the user picked. Surface both halves as one event so the
+    # downgrade is visible rather than inferred from a cheaper-looking bill.
+    _downgrade = None
+    if _requested_model_key != model_key or _requested_effort != (effort_label or ""):
+        _downgrade = {
+            "requested_model": _requested_model_key,
+            "effective_model": model_key,
+            "requested_effort": _requested_effort,
+            "effective_effort": effort_label or "none",
+            "model_changed": _requested_model_key != model_key,
+            "effort_changed": _requested_effort != (effort_label or ""),
+            "reason": (
+                "model fallback"
+                if _requested_model_key != model_key
+                else "model does not support the requested effort"
+            ),
+        }
 
     # Load WHISPER.md from workspace
     # `question` selects which directory-scoped WHISPER.md files load this turn.
@@ -1540,6 +1562,12 @@ async def chat_endpoint(request: Request):
             # it holds and frees a slot exactly like Anthropic.
             if grounding_meta:
                 yield f"data: {ndjson_dumps({'grounding': grounding_meta})}\n\n"
+            # Tell the UI when this turn is NOT running what the composer
+            # shows — a budget fallback swapped the model, or the resolved
+            # model could not honour the requested effort. Emitted before the
+            # first token so the notice is visible while the turn runs.
+            if _downgrade:
+                yield f"data: {ndjson_dumps({'turn_downgrade': _downgrade})}\n\n"
             async for chunk in run_turn(turn_ctx):
                 yield chunk
         finally:

@@ -405,12 +405,21 @@ class WorkflowRun:
         try:
             from server.costs.tracker import estimate_cost
 
+            # run_agent reports these as *_tokens (server/agents/runtime.py);
+            # reading the un-suffixed names silently scored every cache
+            # read/write as zero, so a run's displayed cost omitted the cache
+            # charges entirely. The bare names are still accepted as a
+            # fallback so any other producer keeps working.
             self.cost_usd += estimate_cost(
                 model_key or self.model_key,
                 ti,
                 to,
-                cache_read_tokens=int(usage.get("cache_read", 0) or 0),
-                cache_creation_tokens=int(usage.get("cache_creation", 0) or 0),
+                cache_read_tokens=int(
+                    usage.get("cache_read_tokens") or usage.get("cache_read") or 0
+                ),
+                cache_creation_tokens=int(
+                    usage.get("cache_creation_tokens") or usage.get("cache_creation") or 0
+                ),
             )
         except Exception:
             pass
