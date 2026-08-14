@@ -406,12 +406,27 @@ async def _drive(run: WorkflowRun) -> None:
 
 
 def _finalize(run: WorkflowRun, outcome: dict) -> None:
+    """Record a run's terminal state — FIRST writer wins.
+
+    Stopping a run and the run finishing naturally are two independent
+    writers racing for the same row: stop_run cancels the harness and writes
+    'stopped', while _drive is still awaiting run() and will write whatever
+    outcome that returns (usually 'failed', since the harness was just
+    killed). Without a guard the later write clobbers the earlier one, so a
+    run the user deliberately stopped shows up as failed, and the completion
+    event fires twice.
+
+    The ``WHERE status='running'`` clause makes the claim atomic in SQLite:
+    exactly one writer's UPDATE touches a row, and only that one announces
+    the run's end.
+    """
     status = outcome.get("status", "failed")
     with _conn() as conn:
         _ensure_table(conn)
-        conn.execute(
+        cur = conn.execute(
             "UPDATE workflow_runs SET status=?, agents_spawned=?, tokens_in=?, tokens_out=?, "
-            "cost_usd=?, cap_reached=?, error=?, result_json=?, finished_at=? WHERE run_id=?",
+            "cost_usd=?, cap_reached=?, error=?, result_json=?, finished_at=? "
+            "WHERE run_id=? AND status='running'",
             (
                 status,
                 outcome.get("agents_spawned", 0),
@@ -425,6 +440,13 @@ def _finalize(run: WorkflowRun, outcome: dict) -> None:
                 run.run_id,
             ),
         )
+        claimed = cur.rowcount > 0
+    if not claimed:
+        # Someone else (stop_run, or a boot reconcile that flipped this to
+        # 'stale') already recorded the end. Their status stands and their
+        # event already went out; adding ours would contradict it.
+        log.info("workflow %s already terminal; not overwriting with %s", run.run_id, status)
+        return
     _finish_task(run.run_id, status, outcome)
     _publish(
         run.run_id,
@@ -441,17 +463,26 @@ def _finalize(run: WorkflowRun, outcome: dict) -> None:
 
 
 async def stop_run(run_id: str) -> bool:
+    """Stop a live run. Claims the terminal state the same first-writer-wins
+    way _finalize does, so a run that finished naturally in the instant
+    between the click and this write keeps its real outcome instead of being
+    relabelled 'stopped'."""
     run = _live.get(run_id)
     if not run:
         return False
     await run.cancel()
-    _finish_task(run_id, "stopped", {})
     with _conn() as conn:
         _ensure_table(conn)
-        conn.execute(
-            "UPDATE workflow_runs SET status='stopped', finished_at=? WHERE run_id=?",
+        cur = conn.execute(
+            "UPDATE workflow_runs SET status='stopped', finished_at=? "
+            "WHERE run_id=? AND status='running'",
             (_now(), run_id),
         )
+        claimed = cur.rowcount > 0
+    if claimed:
+        # Only the winner closes the mirrored background task, so the run's
+        # end is announced exactly once.
+        _finish_task(run_id, "stopped", {})
     _live.pop(run_id, None)
     return True
 
