@@ -9,6 +9,7 @@ splitting compound commands on ;, &&, ||.
 """
 
 import re
+import shlex
 
 from server.security.sensitive_paths import validator_path_patterns
 
@@ -80,6 +81,94 @@ def check_dangerous_patterns(command: str) -> str | None:
         if pattern.search(command):
             return f"Blocked: dangerous pattern ({pattern.pattern})"
     return None
+
+
+# ---------------------------------------------------------------------------
+# rm / recursive-delete detection — the "never without a human's approval"
+# guardrail. Deliberately separate from _DANGEROUS_PATTERNS: those BLOCK a
+# command outright (validate_command's callers reject it, full stop); this
+# one only marks a command for the stronger approval rule in
+# server/tool_executor.py and server/approval/bootstrap.py (always ask a real
+# human, never satisfied by a session-wide "allow all commands", the
+# auto-mode classifier, bypassPermissions, or an unattended agent's
+# unconditional auto-approve). A command an agent or a blanket approval would
+# otherwise run silently must still stop for `rm`.
+# ---------------------------------------------------------------------------
+
+# The verb itself, plus the closest cousins that destroy data the same way.
+# Kept separate from find/xargs invocation below, which needs its own check.
+_DELETE_VERBS = frozenset({"rm", "rmdir", "unlink", "shred", "srm"})
+# Wrapper commands whose ARGUMENT list eventually names the command actually
+# run — strip them so `sudo rm`, `env FOO=bar rm`, `nice -19 rm`, `xargs rm`
+# are still caught. `env`'s own VAR=value arguments are handled by re-running
+# the var-assignment skip after each wrapper, since `env` can take several
+# before the real command.
+_INVOKE_WRAPPERS = frozenset(
+    {"sudo", "env", "command", "nice", "exec", "doas", "xargs", "parallel"}
+)
+# find's own -delete action, and the common find ... -exec rm pattern, destroy
+# files without the literal token "rm" ever being find's own argv[0].
+_FIND_DELETE_RE = re.compile(r"\bfind\b.*?(-delete\b|-exec\s+rm\b)")
+
+
+def _leading_command_token(segment: str) -> str | None:
+    """The basename of the first real command word in a shell segment, after
+    stripping environment-variable assignments (FOO=bar rm ...) and any
+    invocation wrapper (sudo/env/nice/xargs/... rm ...). None if the segment
+    can't be tokenized (unbalanced quotes) — callers should treat that as
+    suspicious rather than as "not rm", since a parse failure is exactly the
+    kind of thing an obfuscated command produces."""
+    try:
+        tokens = shlex.split(segment, posix=True)
+    except ValueError:
+        return None
+
+    def _skip_assignments_and_flags(i: int) -> int:
+        while i < len(tokens) and (
+            re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[i]) or tokens[i].startswith("-")
+        ):
+            i += 1
+        return i
+
+    i = _skip_assignments_and_flags(0)
+    while i < len(tokens) and tokens[i].rsplit("/", 1)[-1] in _INVOKE_WRAPPERS:
+        i += 1
+        i = _skip_assignments_and_flags(i)  # the wrapper's own flags/env args
+    if i >= len(tokens):
+        return None
+    return tokens[i].rsplit("/", 1)[-1]
+
+
+def is_rm_command(command: str) -> bool:
+    """True if any statement in this shell command deletes files: rm and its
+    close cousins directly, `sudo`/`env`/etc.-wrapped, piped, chained with
+    ;/&&/||, on its own line with no separator (a multi-line terminal_run/
+    workflow script), or find's own -delete / -exec rm. A parse failure on
+    any segment (unbalanced quotes — the kind of thing a disguised command
+    produces) is treated as rm-like: fail toward requiring approval, not
+    away from it.
+
+    Heredoc bodies are stripped first — they are literal data (e.g. a file
+    being written), not commands, so text that merely CONTAINS the word "rm"
+    must not trip this.
+    """
+    command = strip_heredoc_bodies(command)
+    if _FIND_DELETE_RE.search(command):
+        return True
+    # split_subcommands only splits on ;/&&/||, not bare newlines — a
+    # multi-line script has no separator between lines at all, so without
+    # this a line merely following an rm-free first line would never be
+    # inspected on its own.
+    for line in command.split("\n"):
+        for sub in split_subcommands(line):
+            for segment in sub.split("|"):
+                segment = segment.strip()
+                if not segment:
+                    continue
+                token = _leading_command_token(segment)
+                if token is None or token in _DELETE_VERBS:
+                    return True
+    return False
 
 
 # ---------------------------------------------------------------------------
