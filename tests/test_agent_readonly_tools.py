@@ -28,6 +28,10 @@ READ_TOOLS = ("ws_read_file", "grep_search", "web_fetch")
 # Execution/write tools that must be stripped for a read_only agent. These are
 # skill-backed (no @register_executor) and would otherwise auto-approve.
 EXEC_TOOLS = ("aws_cli", "run_python", "aws_boto3")
+# Dispatched directly in tool_router.py (never registered), so only the
+# explicit denylist catches them — the registry backstop sees no metadata at
+# all and treats an unknown name as a read by default.
+DIRECT_DISPATCH_WRITE_TOOLS = ("ws_open_folder", "config_set", "promote_agent_type")
 
 
 def test_read_only_agent_drops_execution_tools_keeps_read_tools():
@@ -49,6 +53,25 @@ def test_execution_tools_are_in_the_denylist():
     # in the explicit denylist (the registry backstop cannot catch them).
     for tool in ("aws_cli", "aws_boto3", "run_python", "terminal_run"):
         assert tool in WRITE_TOOLS, f"{tool} must be in WRITE_TOOLS"
+
+
+def test_direct_dispatch_tools_are_in_the_denylist():
+    for tool in DIRECT_DISPATCH_WRITE_TOOLS:
+        assert tool in WRITE_TOOLS, f"{tool} must be in WRITE_TOOLS"
+
+
+def test_read_only_agent_cannot_reach_ws_open_folder():
+    """ws_open_folder creates a directory on disk and persists it as the
+    connected workspace (server/workspace/executors.py) — a read_only agent
+    keeping it could redirect every later tool call to a folder it chose."""
+    pool = _pool(*READ_TOOLS, "ws_open_folder")
+    config = AgentConfig(agent_type="explore", read_only=True)
+
+    result = _names(filter_tools_for_agent(pool, config))
+
+    assert "ws_open_folder" not in result
+    for tool in READ_TOOLS:
+        assert tool in result
 
 
 def test_aws_boto3_gated_despite_registry_read_only():
