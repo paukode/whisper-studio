@@ -106,7 +106,13 @@ async def launch_run(request: Request):
     if not model_key and model_id:
         from server.workflows.tools import _model_key_for
 
+        # A miss returns "" — an id we cannot reverse (a workspace-only model, a
+        # renamed or removed entry, a stale card) must not resolve its effort
+        # against a guessed key. Keep the id the caller gave us and take the
+        # configured default key below.
         model_key = _model_key_for(model_id)
+        if not model_key:
+            model_key = _default_model()[0]
     if not model_key:
         model_key, model_id = _default_model()
     # Same for the effort: the approval card and the /workflow slash command

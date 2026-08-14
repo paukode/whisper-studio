@@ -93,6 +93,15 @@ WORKFLOW_TOOLS: list[dict] = [
 
 
 def _model_key_for(model_id: str) -> str:
+    """Reverse a Bedrock id back to its config key, or "" when nothing matches.
+
+    Returning a plausible-looking "sonnet" on a miss used to be harmless — the
+    key only labelled the run row, and the run still executed on the id it was
+    given. It is not harmless now that the key also resolves the run's effort: a
+    model that exists only in a workspace's .whisper/settings.json misses this
+    global lookup, and the run would silently drop from ultracode to Sonnet's
+    max. Callers must supply their own default (see _default_model_key).
+    """
     try:
         from server.infrastructure.config import load_config
 
@@ -101,7 +110,23 @@ def _model_key_for(model_id: str) -> str:
                 return k
     except Exception:
         pass
-    return "sonnet"
+    return ""
+
+
+def _default_model_key() -> str:
+    """The configured default chat model key — the right fallback when an id
+    cannot be reversed. Never "" (an empty key infers the standard ladder, which
+    would clamp ultracode away just as silently as the old "sonnet" did)."""
+    try:
+        from server.infrastructure.config import load_config
+
+        cfg = load_config()
+        key = cfg.get("default_chat_model")
+        if key and key in (cfg.get("chat_models") or {}):
+            return key
+        return next(iter(cfg.get("chat_models") or {}), "sonnet")
+    except Exception:
+        return "sonnet"
 
 
 def _preview(
@@ -145,7 +170,7 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
     args = tool_input.get("args")
     budget_tokens = tool_input.get("budget_tokens")
     resume_from = (tool_input.get("resume_from_run_id") or "").strip()
-    model_key = _model_key_for(model_id)
+    model_key = _model_key_for(model_id) or _default_model_key()
 
     def _launch(src, *, wf_name, phases, resume="", auto=False):
         rid = manager.start_run(
