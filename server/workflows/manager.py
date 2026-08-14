@@ -139,15 +139,27 @@ def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:
     switch after launch can never redirect an already-running run's later
     agents.
     """
+    from server.workspace.state import get_workspace_path
+
+    connected = get_workspace_path()
     raw = (raw or "").strip()
     if raw:
         resolved = os.path.realpath(os.path.expanduser(raw))
         if not os.path.isdir(resolved):
             return None, f"Error: workspace path '{raw}' does not exist or is not a directory."
-        return resolved, ""
-    from server.workspace.state import get_workspace_path
+        # Pinning a run to a folder the user has not approved would give every
+        # agent in that run read/write reach into it without ever asking. The
+        # grant is asked for once (ws_open_folder's approval card) and
+        # remembered, so this only ever fires the first time.
+        from server.security.folder_grants import needs_grant
 
-    connected = get_workspace_path()
+        if needs_grant(resolved, connected):
+            return None, (
+                f"Error: '{raw}' is outside the connected workspace and has not been "
+                "approved yet. Call ws_open_folder with that path first so the user "
+                "can grant access (they are only asked once), then retry."
+            )
+        return resolved, ""
     return (os.path.realpath(connected), "") if connected else (None, "")
 
 

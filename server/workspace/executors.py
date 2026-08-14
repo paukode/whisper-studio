@@ -64,6 +64,23 @@ def execute_ws_open_folder(tool_input: dict) -> str:
                 "error": f"A workspace is already connected at '{existing}'. Use ws_read_file, ws_write_file, and ws_create_file to work with it. Do not switch workspaces unless the user explicitly asks."
             }
         )
+    # Ask the user once before reaching into a folder they have not already
+    # approved, then remember the answer forever (folder_grants). Returning
+    # the approval sentinel hands this to the normal approval card; the
+    # model re-issues the call after the user says yes, and this check
+    # passes silently from then on — including for every later folder
+    # beneath the one they granted.
+    from server.security.folder_grants import needs_grant
+
+    if needs_grant(path, existing):
+        payload = json.dumps(
+            {
+                "action": "folder_access",
+                "path": path,
+                "reason": "open this folder as the workspace",
+            }
+        )
+        return f"[WS_APPROVAL]{payload}"
     try:
         os.makedirs(path, exist_ok=True)
     except Exception as e:

@@ -33,6 +33,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   github: 'GitHub',
   'github-destructive': 'GitHub (destructive)',
   workflow: 'Workflow runs',
+  'folder-access': 'Folder access',
 };
 const categoryLabel = (cat: string): string => CATEGORY_LABELS[cat] ?? cat;
 
@@ -121,6 +122,31 @@ export const PermissionsPanel: React.FC = () => {
   const categoryModeStatus = useSaveStatus();
   const saveNetworkPolicy = useSaveStatus();
 
+  // Folders outside the workspace the user has approved access to. Granted
+  // only through the approval card (never from here — this panel can revoke
+  // but not widen reach); listed so a grant is never an invisible one-way
+  // door.
+  const [folderGrants, setFolderGrants] = useState<string[]>([]);
+  const folderGrantStatus = useSaveStatus();
+
+  const loadFolderGrants = useCallback(async () => {
+    try {
+      const data = await get<{ granted: string[] }>('/api/permissions/folder-grants');
+      setFolderGrants(Array.isArray(data.granted) ? data.granted : []);
+    } catch {
+      setFolderGrants([]);
+    }
+  }, []);
+
+  const handleRevokeFolderGrant = (path: string) =>
+    folderGrantStatus.run(
+      async () => {
+        await del(`/api/permissions/folder-grants?path=${encodeURIComponent(path)}`);
+        await loadFolderGrants();
+      },
+      { saving: 'Revoking…', saved: 'Access revoked', error: 'Could not revoke' },
+    );
+
   // Load permissions on mount
   useEffect(() => {
     let cancelled = false;
@@ -141,9 +167,10 @@ export const PermissionsPanel: React.FC = () => {
       } catch (err) {
         console.warn('Failed to load permissions:', err);
       }
+      if (!cancelled) await loadFolderGrants();
     })();
     return () => { cancelled = true; };
-  }, [updateConfig]);
+  }, [updateConfig, loadFolderGrants]);
 
   // Re-sync the local selection when the mode changes externally (e.g. the
   // Plan-mode toggle in the composer). During-render previous-value pattern
@@ -401,6 +428,43 @@ export const PermissionsPanel: React.FC = () => {
             Save Network Policy
           </button>
           <SaveStatus status={saveNetworkPolicy} />
+        </div>
+      </div>
+
+      {/* Folder access grants — approved once, remembered after */}
+      <div className="permissions-rules">
+        <h4>Folder Access</h4>
+        <p className="settings-hint">
+          Folders outside the connected workspace that you have allowed this app to
+          read. You are asked once per folder; a grant also covers everything inside
+          it. Revoking makes the app ask again next time.
+        </p>
+        <div className="settings-toolbar">
+          <SaveStatus status={folderGrantStatus} style={{ marginRight: 'auto' }} />
+        </div>
+        <div className="settings-list">
+          {folderGrants.length === 0 && (
+            <p className="settings-empty">
+              No folders approved yet. Approvals appear here after you allow one.
+            </p>
+          )}
+          {folderGrants.map((path) => (
+            <div key={path} className="settings-item">
+              <div className="settings-item-info">
+                <div className="settings-item-name">{path}</div>
+                <div className="settings-item-desc">Includes everything inside this folder</div>
+              </div>
+              <div className="settings-item-actions">
+                <button
+                  className="btn btn-sm"
+                  style={{ color: 'var(--accent-record)' }}
+                  onClick={() => void handleRevokeFolderGrant(path)}
+                >
+                  Revoke
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
