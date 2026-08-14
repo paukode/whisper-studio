@@ -47,6 +47,16 @@ def reset_workspace_override(token) -> None:
     _WS_OVERRIDE.reset(token)
 
 
+def get_workspace_override() -> str | None:
+    """The raw per-task override, or None outside worktree isolation.
+
+    Distinct from get_workspace_path(), which falls back to the globally
+    connected workspace when no override is set — callers that need to know
+    specifically whether isolation is active (e.g. cwd_tracker) want this one.
+    """
+    return _WS_OVERRIDE.get()
+
+
 def get_workspace_path() -> str | None:
     override = _WS_OVERRIDE.get()
     if override:
