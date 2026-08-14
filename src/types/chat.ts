@@ -321,7 +321,7 @@ export interface SSEEventData {
   goal_eval?: { verdict?: string; feedback?: string; confidence?: number; attempt?: number; cap?: number };
   stop_hook_block?: { reason?: string; attempt?: number };
   goal_cap_reached?: { attempt?: number; cap?: number; source?: string };
-  workflow_preview?: { script: string; name?: string; description?: string; phases?: unknown[]; budget_tokens?: number | null; args?: unknown; model_id?: string };
+  workflow_preview?: { script: string; name?: string; description?: string; phases?: unknown[]; budget_tokens?: number | null; args?: unknown; model_id?: string; effort_label?: string };
   workflow_started?: { run_id: string; name?: string; resumed_from?: string };
   ci_started?: { task_id: string; branch?: string };
   ci_diagnosis?: { branch?: string; run_id?: number | null; url?: string | null; findings?: Array<Record<string, unknown>> };

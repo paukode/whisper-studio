@@ -80,6 +80,10 @@ export const SSEEventDataSchema = z.object({
     // no model and every approved swarm silently ran — and was priced — on
     // the default model.
     model_id: z.string().optional(),
+    // The session's effort, for exactly the same reason and with exactly the
+    // same failure mode if it is left out: an approved run would launch with no
+    // effort at all while the composer still read "Ultracode".
+    effort_label: z.string().optional(),
   }).optional(),
   workflow_started: z.object({
     run_id: z.string(),

@@ -387,16 +387,35 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           return true;
         }
         void (async () => {
+          // Launch on the composer's CURRENT model and effort. Sending neither
+          // used to drop the run onto the configured default model at the
+          // provider's default reasoning, so the same saved workflow behaved
+          // differently depending on how it was started.
+          const { selectedModel, effortLevel } = useSettingsStore.getState();
           try {
-            const r = await launchRun({ name: wfName, session_id: sessionId });
+            const r = await launchRun({
+              name: wfName,
+              session_id: sessionId,
+              model_key: selectedModel || undefined,
+              effort_label: effortLevel || undefined,
+            });
             getChatStore(sessionId).getState().addMessage({
               role: 'assistant',
               content: '',
               timestamp: new Date().toISOString(),
               toolUse: [{ toolId: 'workflow_started', toolName: 'workflow_started', input: { run_id: r.run_id, name: wfName }, status: 'complete' }],
             });
-          } catch {
-            addToast({ type: 'error', message: `Could not run workflow '${wfName}'. Is it saved?`, duration: 3000 });
+          } catch (e) {
+            // 403 = saved but not trusted; the server refuses to run it without
+            // an approval, so say which of the two it is.
+            const untrusted = (e as { status?: number })?.status === 403;
+            addToast({
+              type: 'error',
+              message: untrusted
+                ? `Workflow '${wfName}' is not trusted yet. Trust it in Settings > Workflows.`
+                : `Could not run workflow '${wfName}'. Is it saved?`,
+              duration: 4000,
+            });
           }
         })();
         return true;
@@ -424,7 +443,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               if (plan.script) {
                 chat.addMessage({
                   role: 'assistant', content: '', timestamp: new Date().toISOString(),
-                  toolUse: [{ toolId: 'workflow_preview', toolName: 'workflow_preview', input: { script: plan.script, name: 'ci-autofix', description: plan.summary, phases: [{ title: 'Fix' }, { title: 'Verify' }], budget_tokens: plan.budget_tokens ?? null, model_id: modelId }, status: 'complete' }],
+                  // effort_label rides the card for the same reason model_id
+                  // does: without it the approved fix run launches at no effort.
+                  toolUse: [{ toolId: 'workflow_preview', toolName: 'workflow_preview', input: { script: plan.script, name: 'ci-autofix', description: plan.summary, phases: [{ title: 'Fix' }, { title: 'Verify' }], budget_tokens: plan.budget_tokens ?? null, model_id: modelId, effort_label: s.effortLevel }, status: 'complete' }],
                 });
               } else {
                 addToast({ type: 'info', message: plan.summary, duration: 4000 });

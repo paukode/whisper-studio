@@ -206,4 +206,24 @@ describe('SSEEventDataSchema', () => {
       expect(result.data.workflow_preview?.model_id).toBe('openai.gpt-5.6-sol');
     }
   });
+
+  // Same trap, same nested object: without effort_label in the schema the card
+  // posts no effort and the approved run reasons at the provider default while
+  // the composer still reads "Ultracode".
+  it('keeps workflow_preview.effort_label so the approved run uses the session effort', () => {
+    const input = {
+      workflow_preview: {
+        script: 'export const meta = {}',
+        name: 'repo-review',
+        model_id: 'global.anthropic.claude-sonnet-5',
+        effort_label: 'ultracode',
+        budget_tokens: null,
+      },
+    };
+    const result = SSEEventDataSchema.safeParse(input);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.workflow_preview?.effort_label).toBe('ultracode');
+    }
+  });
 });
