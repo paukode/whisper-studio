@@ -73,10 +73,14 @@ class AnthropicBedrockAdapter:
             if tools:
                 body["tools"] = tools
             if effort_label is not None:
-                from server.infrastructure.effort import api_effort
+                from server.chat.infra import _get_chat_model_meta
+                from server.infrastructure.effort import api_effort_for
 
+                meta = _get_chat_model_meta().get(self.model_key, {})
                 body["thinking"] = {"type": "adaptive"}
-                body["output_config"] = {"effort": api_effort(effort_label)}
+                body["output_config"] = {
+                    "effort": api_effort_for(effort_label, meta, self.model_key)
+                }
 
         bedrock = self._bedrock_client()
 

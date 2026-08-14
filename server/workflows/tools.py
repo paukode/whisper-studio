@@ -93,6 +93,15 @@ WORKFLOW_TOOLS: list[dict] = [
 
 
 def _model_key_for(model_id: str) -> str:
+    """Reverse a Bedrock id back to its config key, or "" when nothing matches.
+
+    Returning a plausible-looking "sonnet" on a miss used to be harmless — the
+    key only labelled the run row, and the run still executed on the id it was
+    given. It is not harmless now that the key also resolves the run's effort: a
+    model that exists only in a workspace's .whisper/settings.json misses this
+    global lookup, and the run would silently drop from ultracode to Sonnet's
+    max. Callers must supply their own default (see _default_model_key).
+    """
     try:
         from server.infrastructure.config import load_config
 
@@ -101,11 +110,34 @@ def _model_key_for(model_id: str) -> str:
                 return k
     except Exception:
         pass
-    return "sonnet"
+    return ""
+
+
+def _default_model_key() -> str:
+    """The configured default chat model key — the right fallback when an id
+    cannot be reversed. Never "" (an empty key infers the standard ladder, which
+    would clamp ultracode away just as silently as the old "sonnet" did)."""
+    try:
+        from server.infrastructure.config import load_config
+
+        cfg = load_config()
+        key = cfg.get("default_chat_model")
+        if key and key in (cfg.get("chat_models") or {}):
+            return key
+        return next(iter(cfg.get("chat_models") or {}), "sonnet")
+    except Exception:
+        return "sonnet"
 
 
 def _preview(
-    script: str, meta: dict, budget_tokens, *, name: str | None, args, model_id: str = ""
+    script: str,
+    meta: dict,
+    budget_tokens,
+    *,
+    name: str | None,
+    args,
+    model_id: str = "",
+    effort_label: str | None = None,
 ) -> tuple[str, list]:
     phases = meta.get("phases", [])
     side = {
@@ -116,9 +148,12 @@ def _preview(
             "phases": phases,
             "budget_tokens": budget_tokens,
             "args": args,
-            # Carry the session's model so the approval launch uses it (not the
-            # config default).
+            # Carry the session's model AND effort so the approval launch runs
+            # the run identically to an auto-approved one. Without the effort
+            # the card's launch fell back to the provider default, so clicking
+            # Approve silently downgraded every child agent's reasoning.
             "model_id": model_id,
+            "effort_label": effort_label or "",
         }
     }
     msg = (
@@ -135,7 +170,7 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
     args = tool_input.get("args")
     budget_tokens = tool_input.get("budget_tokens")
     resume_from = (tool_input.get("resume_from_run_id") or "").strip()
-    model_key = _model_key_for(model_id)
+    model_key = _model_key_for(model_id) or _default_model_key()
 
     def _launch(src, *, wf_name, phases, resume="", auto=False):
         rid = manager.start_run(
@@ -188,6 +223,10 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
             budget_tokens = prior.get("budget_tokens")
         if budget_tokens is None:
             budget_tokens = DEFAULT_WORKFLOW_BUDGET_TOKENS
+        # And the effort: a resume continues the ORIGINAL run, so the agents it
+        # still has to execute reason at the level the run was approved at, not
+        # at whatever the composer happens to be set to now.
+        effort_label = prior.get("effort_label") or effort_label
         return _launch(
             src, wf_name=prior.get("name", ""), phases=prior.get("phases", []), resume=resume_from
         )
@@ -211,7 +250,13 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
                     loaded["script"], wf_name=name, phases=meta.get("phases", []), auto=True
                 )
             return _preview(
-                loaded["script"], meta, budget_tokens, name=name, args=args, model_id=model_id
+                loaded["script"],
+                meta,
+                budget_tokens,
+                name=name,
+                args=args,
+                model_id=model_id,
+                effort_label=effort_label,
             )
         return _launch(loaded["script"], wf_name=name, phases=meta.get("phases", []))
 
@@ -228,7 +273,15 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
         return _launch(
             script, wf_name=meta.get("name", ""), phases=meta.get("phases", []), auto=True
         )
-    return _preview(script, meta, budget_tokens, name=None, args=args, model_id=model_id)
+    return _preview(
+        script,
+        meta,
+        budget_tokens,
+        name=None,
+        args=args,
+        model_id=model_id,
+        effort_label=effort_label,
+    )
 
 
 def execute_workflow_status(tool_input, session_id) -> str:

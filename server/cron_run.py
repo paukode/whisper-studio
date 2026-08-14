@@ -277,9 +277,15 @@ async def _execute_cron_prompt(job_id: str) -> None:
 
         # Provider adapter — the same chat_model_meta.provider check
         # server/chat/routes.py and agents/runtime.py both use.
-        from server.chat.infra import _get_chat_model_meta
+        from server.chat.infra import _get_chat_model_meta, effort_for_model
 
         _provider = _get_chat_model_meta().get(model_key, {}).get("provider", "anthropic")
+        # A scheduled run reasons at the app's configured effort, clamped to the
+        # job's model. It used to pass None, which is not "the default" — it is
+        # no ``thinking`` block at all, so every cron turn (and every agent it
+        # spawned, which inherits this via ctx) ran shallower than the same work
+        # done in chat.
+        _effort_label = effort_for_model(model_key)
         if _provider == "openai_bedrock":
             from server.chat.engine.openai import OpenAIResponsesAdapter
 
@@ -287,7 +293,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 model_key=model_key,
                 model_id=model_id,
                 system_prompt=system,
-                effort_label=None,
+                effort_label=_effort_label,
                 session_id=session_id,
             )
         else:
@@ -306,7 +312,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 system_dynamic="",
                 caching_on=_caching_on,
                 cache_ttl=cache_ttl_for(model_id),
-                effort_label=None,
+                effort_label=_effort_label,
                 force_skill=None,
                 loop=loop,
                 executor=_CRON_EXECUTOR,
@@ -339,6 +345,9 @@ async def _execute_cron_prompt(job_id: str) -> None:
             loop=loop,
             executor=_CRON_EXECUTOR,
             tool_exec_model_id=model_id,
+            # Agents this run spawns inherit the same level (and the ultracode
+            # directive with it, when that is what the app is configured to).
+            effort_label=_effort_label,
             # Cron never ran interactive chat's post-turn memory hooks (auto
             # memory / session memory / dream consolidation) before either.
             memory_hooks=lambda msgs: None,

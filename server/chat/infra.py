@@ -115,6 +115,24 @@ def _get_default_model() -> str:
     return config.get("default_chat_model", "opus4.6")
 
 
+def effort_for_model(model_key: str, requested: str | None = None) -> str | None:
+    """The effort label to run ``model_key`` at, resolved against its own
+    capabilities.
+
+    ``requested`` is the caller's level — a chat turn's, a workflow run's, a
+    parent agent's. Omit it and the configured ``effort_level`` is used, which
+    is what every unattended entry point (cron, headless) should do: they have
+    no composer to read, but "no session" is not the same as "no effort", and
+    passing None all the way down meant those turns sent no ``thinking`` block
+    at all. ``None`` comes back only for models with no effort support (Haiku).
+    """
+    from server.infrastructure.effort import resolve_effort
+
+    config = load_config()
+    level = requested or config.get("effort_level") or None
+    return resolve_effort(_get_chat_model_meta().get(model_key, {}), model_key, level)
+
+
 def _estimate_cost(
     model_key: str,
     input_tokens: int,

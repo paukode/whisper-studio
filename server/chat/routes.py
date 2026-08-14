@@ -647,6 +647,7 @@ async def subagent_stream_endpoint(request: Request):
 
     from server.agents.event_bus import event_bus as _agent_event_bus
     from server.agents.runtime import run_agent
+    from server.chat.infra import effort_for_model
 
     body = await request.json()
     task = (body.get("task") or "").strip()
@@ -713,6 +714,10 @@ async def subagent_stream_endpoint(request: Request):
                 team_id=team_id,
                 agent_name="Subagent",
                 event_channel=event_channel,
+                # /subagent is a subagent like any other: it runs at the
+                # composer's effort. It was the last entry point still passing
+                # nothing, which on the Anthropic path means no thinking block.
+                effort_label=effort_for_model(model_key, body.get("effort_level")),
             )
         )
         # Register the live coroutine so POST /api/background-tasks/{id}/stop
@@ -1003,7 +1008,16 @@ async def chat_endpoint(request: Request):
         normalize_effort,
     )
 
-    _model_meta = _get_chat_model_meta().get(model_key, {})
+    # Read the metadata from the LATCHED session config, not the global one:
+    # chat_model_meta is a latched field, so a model defined only in the
+    # workspace's .whisper/settings.json carries its own effort tier and
+    # ultracode capability here. Going back to the global config would resolve
+    # that model against metadata it does not have and silently downgrade it.
+    # Fall back to the global lookup for keys the latch does not know (a local
+    # model downloaded mid-session is folded in there, not in the snapshot).
+    _model_meta = (session_config.get("chat_model_meta") or {}).get(model_key) or (
+        _get_chat_model_meta().get(model_key, {})
+    )
     _allowed_effort = effort_levels_for(_model_meta, model_key)
     _requested_effort = normalize_effort(
         body.get("effort_level") or session_config.get("effort_level") or DEFAULT_EFFORT
@@ -1474,6 +1488,9 @@ async def chat_endpoint(request: Request):
             force_skill=force_skill,
             loop=loop,
             executor=executor,
+            # The SAME metadata the effort was resolved from, so the label and the
+            # wire value cannot come from two different config snapshots.
+            meta=_model_meta,
         )
 
     def _heartbeat():

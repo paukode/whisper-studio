@@ -27,7 +27,10 @@ export const listRuns = (sessionId?: string) =>
     `/api/workflows/runs${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`,
   );
 
-export const launchRun = (body: { script?: string; name?: string; session_id: string; args?: unknown; budget_tokens?: number | null; model_id?: string; trust?: boolean }) =>
+/** Launch a run. `model_id` and `effort_label` carry the SESSION's model and
+ *  effort so an approved run behaves identically to an auto-approved one;
+ *  omitting either falls back to the configured default on the server. */
+export const launchRun = (body: { script?: string; name?: string; session_id: string; args?: unknown; budget_tokens?: number | null; model_id?: string; model_key?: string; effort_label?: string; trust?: boolean }) =>
   post<{ run_id: string; status: string; trusted_as?: string | null }>('/api/workflows/runs', body);
 
 export const stopRun = (runId: string) => post<{ stopped: boolean }>(`/api/workflows/runs/${encodeURIComponent(runId)}/stop`, {});

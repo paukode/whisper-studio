@@ -106,7 +106,9 @@ async def execute_ci_status(tool_input, session_id) -> str:
     return json.dumps(snap, indent=2)
 
 
-async def execute_ci_autofix(tool_input, session_id, model_id) -> tuple[str, list]:
+async def execute_ci_autofix(
+    tool_input, session_id, model_id, effort_label: str | None = None
+) -> tuple[str, list]:
     if not provider.gh_available():
         return _no_gh()
     branch, cwd = _resolve(tool_input)
@@ -140,6 +142,10 @@ async def execute_ci_autofix(tool_input, session_id, model_id) -> tuple[str, lis
             "budget_tokens": plan.get("budget_tokens"),
             "args": None,
             "model_id": model_id,
+            # Carried for the same reason WS-D's own preview carries it: the
+            # card's launch must reason at the turn's effort, not the provider
+            # default. See server/workflows/tools.py::_preview.
+            "effort_label": effort_label or "",
         }
     }
     diagnosis = {

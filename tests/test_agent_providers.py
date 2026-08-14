@@ -185,13 +185,16 @@ def test_anthropic_adapter_structured_forcing_omits_thinking(anthropic_adapter):
 
 
 def test_openai_tier_offers_ultracode():
-    from server.infrastructure.effort import EFFORT_TIERS, clamp_effort, is_ultracode
+    from server.infrastructure.effort import clamp_effort, effort_levels_for, is_ultracode
 
-    assert "ultracode" in EFFORT_TIERS["openai"]
-    assert clamp_effort("ultracode", EFFORT_TIERS["openai"]) == "ultracode"
-    assert is_ultracode(clamp_effort("ultracode", EFFORT_TIERS["openai"]))
-    # standard tier still clamps it away
-    assert clamp_effort("ultracode", EFFORT_TIERS["standard"]) == "max"
+    levels = effort_levels_for({"effort_tier": "openai"}, "gpt5.5")
+    assert "ultracode" in levels
+    assert clamp_effort("ultracode", levels) == "ultracode"
+    assert is_ultracode(clamp_effort("ultracode", levels))
+    # A model on the standard ladder that cannot orchestrate still clamps it away.
+    plain = effort_levels_for({"supports_ultracode": False}, "sonnet")
+    assert "ultracode" not in plain
+    assert clamp_effort("ultracode", plain) == "max"
 
 
 def test_run_agent_structured_schema_end_to_end(monkeypatch):

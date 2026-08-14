@@ -18,6 +18,10 @@ interface Preview {
   budget_tokens?: number | null;
   args?: unknown;
   model_id?: string;
+  /** The session's effort at the moment the model proposed this run. Replayed
+   *  on approval so clicking Approve does not quietly reason shallower than an
+   *  auto-approved launch would have. */
+  effort_label?: string;
 }
 
 function phaseTitle(p: unknown): string {
@@ -81,6 +85,7 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
         args: preview.args,
         budget_tokens: preview.budget_tokens ?? null,
         model_id: preview.model_id,
+        effort_label: preview.effort_label || undefined,
         trust: alwaysAllow,
       });
       setTrustedAs(r.trusted_as ?? null);
