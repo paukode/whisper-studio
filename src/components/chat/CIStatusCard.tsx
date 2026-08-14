@@ -122,6 +122,13 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
             phases: [{ title: 'Fix' }, { title: 'Verify' }],
             budget_tokens: plan.budget_tokens ?? null,
             model_id: modelId,
+            // Mirror the /ci autofix slash command's card (useSlashCommands.tsx):
+            // without these, this button's approved run would reason at the
+            // provider default and could launch against whatever workspace is
+            // connected at click time, not the repo the plan was diagnosed
+            // against.
+            effort_label: s.effortLevel,
+            workspace_path: plan.cwd,
           },
           status: 'complete',
         }],

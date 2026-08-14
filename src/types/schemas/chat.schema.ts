@@ -84,6 +84,10 @@ export const SSEEventDataSchema = z.object({
     // same failure mode if it is left out: an approved run would launch with no
     // effort at all while the composer still read "Ultracode".
     effort_label: z.string().optional(),
+    // The resolved root every agent this run spawns will be pinned to — shown
+    // so the user approves the actual folder, and echoed back on launch so a
+    // workspace switch during the approval delay can't silently change it.
+    workspace_path: z.string().optional(),
   }).optional(),
   workflow_started: z.object({
     run_id: z.string(),

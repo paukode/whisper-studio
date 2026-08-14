@@ -34,6 +34,9 @@ export interface CIAutofixPlan {
   script: string | null;
   summary: string;
   budget_tokens?: number | null;
+  /** The repo this plan was diagnosed against — pin the fix run's preview
+   *  card to it rather than whatever is connected when the user approves. */
+  cwd?: string;
 }
 
 export const ciStatus = (branch?: string) =>

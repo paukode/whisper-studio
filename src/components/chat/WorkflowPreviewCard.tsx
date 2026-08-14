@@ -22,6 +22,12 @@ interface Preview {
    *  on approval so clicking Approve does not quietly reason shallower than an
    *  auto-approved launch would have. */
   effort_label?: string;
+  /** The resolved root every agent this run spawns will be pinned to, frozen
+   *  at the moment the script was proposed. Shown so the user approves the
+   *  actual folder, and replayed on approval unchanged — a workspace switch
+   *  during the approval delay must not silently redirect an already-shown
+   *  run to a different repo. */
+  workspace_path?: string;
 }
 
 function phaseTitle(p: unknown): string {
@@ -86,6 +92,14 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
         budget_tokens: preview.budget_tokens ?? null,
         model_id: preview.model_id,
         effort_label: preview.effort_label || undefined,
+        // `??`, not `||`: an empty string here means the preview genuinely
+        // had nothing to pin (shown with no "Workspace:" line) and that must
+        // reach the server AS an empty string, not collapse to a dropped key
+        // — a dropped key tells the server "no card was involved, snapshot
+        // whatever is connected now", which would let a workspace connected
+        // during the approval delay silently become this run's root even
+        // though the card never showed the user a folder at all.
+        workspace_path: preview.workspace_path ?? undefined,
         trust: alwaysAllow,
       });
       setTrustedAs(r.trusted_as ?? null);
@@ -109,6 +123,11 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
         <span className="workflow-card-badge">{phases.length} phase{phases.length === 1 ? '' : 's'}</span>
       </div>
       {preview.description && <div className="workflow-card-desc">{preview.description}</div>}
+      {preview.workspace_path && (
+        <div className="workflow-card-meta" title={preview.workspace_path}>
+          Workspace: <code>{preview.workspace_path}</code>
+        </div>
+      )}
       {phases.length > 0 && (
         <ol className="workflow-stepper">
           {phases.map((p, i) => (
