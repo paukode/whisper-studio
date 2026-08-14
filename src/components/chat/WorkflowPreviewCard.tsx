@@ -38,15 +38,39 @@ function phaseTitle(p: unknown): string {
 
 // A preview message persists in chat history, but the approve state is
 // component-local — so a page reload would reset it to 'idle' and let the SAME
-// script be launched twice. We remember launched (scriptHash -> runId) in
-// localStorage, keyed by a stable hash of the script, so a reloaded preview
-// restores its launched run instead of offering Approve again.
+// script be launched twice. We remember launched (previewKey -> runId) in
+// localStorage so a reloaded preview restores its launched run instead of
+// offering Approve again.
 const LAUNCHED_KEY = 'whisper.wf-launched';
 
-function hashScript(s: string): string {
+function hashString(s: string): string {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
+}
+
+/** Identity of a preview = everything that changes what the run will DO.
+ *
+ *  Hashing the script alone made two genuinely different launches collide:
+ *  re-running the same saved script against another workspace, model, effort,
+ *  budget, or args would show as "already launched" and refuse a legitimate
+ *  second run — or, worse, surface an unrelated older run's card in its
+ *  place. Session is included too, so the same script proposed in two chats
+ *  tracks separately. */
+function previewKey(preview: Preview, sessionId: string | null): string {
+  return hashString(
+    JSON.stringify([
+      preview.script,
+      sessionId ?? '',
+      preview.model_id ?? '',
+      preview.effort_label ?? '',
+      preview.workspace_path ?? '',
+      preview.budget_tokens ?? null,
+      // args is arbitrary JSON; stringify is stable enough for identity here
+      // because it comes back verbatim from the same server payload.
+      JSON.stringify(preview.args ?? null),
+    ]),
+  );
 }
 function readLaunched(): Record<string, string> {
   try {
@@ -55,10 +79,10 @@ function readLaunched(): Record<string, string> {
     return {};
   }
 }
-function rememberLaunched(scriptHash: string, runId: string): void {
+function rememberLaunched(key: string, runId: string): void {
   try {
     const m = readLaunched();
-    m[scriptHash] = runId;
+    m[key] = runId;
     // Bound growth: keep the most-recent ~50 entries.
     const keys = Object.keys(m);
     if (keys.length > 50) delete m[keys[0]];
@@ -70,8 +94,8 @@ function rememberLaunched(scriptHash: string, runId: string): void {
 
 export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview }) => {
   const sessionId = useSessionStore((s) => s.currentSessionId);
-  const scriptHash = hashScript(preview.script);
-  const priorRun = readLaunched()[scriptHash] ?? null;
+  const launchKey = previewKey(preview, sessionId);
+  const priorRun = readLaunched()[launchKey] ?? null;
   const [state, setState] = useState<'idle' | 'launching' | 'launched' | 'denied' | 'error'>(
     priorRun ? 'launched' : 'idle',
   );
@@ -105,7 +129,7 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
       setTrustedAs(r.trusted_as ?? null);
       setRunId(r.run_id);
       setState('launched');
-      rememberLaunched(scriptHash, r.run_id);
+      rememberLaunched(launchKey, r.run_id);
       useWorkflowStore.getState().upsertRun({
         run_id: r.run_id, name: preview.name ?? '', status: 'running',
         agents_spawned: 0, tokens_in: 0, tokens_out: 0, cost_usd: 0, cap_reached: false, error: '',

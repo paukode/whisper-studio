@@ -14,10 +14,17 @@ from typing import Protocol
 
 log = logging.getLogger("whisper-studio")
 
-# Concurrent model calls across ALL agents. The workflow runtime (workstream
-# D) raises this toward its 16-way design; keep the constant here so there is
-# exactly one knob.
-AGENT_CALL_CONCURRENCY = 4
+# Concurrent model calls across ALL agents — one knob, deliberately equal to
+# server.workflows.runtime.WORKFLOW_MAX_CONCURRENCY.
+#
+# It used to be 4 while the workflow scheduler admitted 16, so ULTRACODE.md's
+# "agents run 16 at a time" was never true on the Anthropic path: 16 agents
+# were dispatched and 12 of them sat blocked waiting for a thread. Matching
+# the two makes the documented number the real one. Safe at this width
+# because the shared Bedrock client uses adaptive retries (see
+# server/chat/infra.py) — a burst that trips the account's quota is paced and
+# retried rather than failed.
+AGENT_CALL_CONCURRENCY = 16
 
 
 @dataclass

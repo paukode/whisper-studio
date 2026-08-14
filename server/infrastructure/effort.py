@@ -80,15 +80,22 @@ _OPUS_RE = re.compile(r"opus(\d+)\.(\d+)$", re.IGNORECASE)
 _SONNET_KEY_RE = re.compile(r"sonnet(\d+)", re.IGNORECASE)
 _SONNET_ID_RE = re.compile(r"claude-sonnet-(\d+)", re.IGNORECASE)
 _OPUS_ID_RE = re.compile(r"claude-opus-(\d+)", re.IGNORECASE)
+# The Bedrock id's own version, for a key that doesn't carry one. Opus ids
+# spell the minor separately ("claude-opus-4-8"), so capture both parts.
+_OPUS_ID_VER_RE = re.compile(r"claude-opus-(\d+)(?:-(\d+))?", re.IGNORECASE)
 
 
-def infer_effort_tier(key: str) -> str:
-    """Infer a model's raw reasoning ladder from its config key when the entry
-    does not declare one.
+def infer_effort_tier(key: str, model_id: str = "") -> str:
+    """Infer a model's raw reasoning ladder when the entry does not declare one.
 
     full     — Opus ≥ 4.8 and Fable (low…max, including the xhigh rung)
     standard — Sonnet and Opus 4.0–4.7 (low/medium/high/max)
     none     — Haiku (no effort/thinking)
+
+    Reads the config key first, then falls back to the Bedrock model id, so a
+    renamed or dotless entry ("my-opus", "opus5") keeps the ladder of the
+    model it actually points at instead of silently degrading to standard and
+    losing its top rung.
     """
     k = key.lower()
     if "haiku" in k:
@@ -98,12 +105,24 @@ def infer_effort_tier(key: str) -> str:
     m = _OPUS_RE.match(k)
     if m and (int(m.group(1)), int(m.group(2))) >= (4, 8):
         return "full"
+
+    mid = (model_id or "").lower()
+    if mid:
+        if "haiku" in mid:
+            return "none"
+        if "fable" in mid:
+            return "full"
+        m = _OPUS_ID_VER_RE.search(mid)
+        if m and (int(m.group(1)), int(m.group(2) or 0)) >= (4, 8):
+            return "full"
     return "standard"
 
 
 def effort_tier_for(meta: dict | None, key: str) -> str:
-    """This model's raw reasoning ladder name. Explicit config wins."""
-    return (meta or {}).get("effort_tier") or infer_effort_tier(key)
+    """This model's raw reasoning ladder name. Explicit config wins, then the
+    key, then the Bedrock id (see infer_effort_tier)."""
+    meta = meta or {}
+    return meta.get("effort_tier") or infer_effort_tier(key, str(meta.get("id") or ""))
 
 
 def infer_supports_ultracode(meta: dict | None, key: str) -> bool:

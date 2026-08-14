@@ -205,6 +205,18 @@ export const SSEEventDataSchema = z.object({
     searched: z.number(),
     passages: z.number(),
   }).optional(),
+  // This turn is not running what the composer shows: a budget fallback
+  // swapped the model, and/or the resolved model could not honour the
+  // requested effort. Both halves ride one event so the UI can say which.
+  turn_downgrade: z.object({
+    requested_model: z.string(),
+    effective_model: z.string(),
+    requested_effort: z.string(),
+    effective_effort: z.string(),
+    model_changed: z.boolean(),
+    effort_changed: z.boolean(),
+    reason: z.string(),
+  }).optional(),
 
   // Tasks
   todo_update: z.unknown().optional(),

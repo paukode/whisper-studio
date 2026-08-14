@@ -604,6 +604,25 @@ export async function readSSEStream(
             });
           }
 
+          // ── turn_downgrade (this turn isn't what the composer shows) ──
+          // Emitted once by server/chat/routes.py when a budget fallback
+          // swapped the model and/or the resolved model couldn't honour the
+          // requested effort. Without this the turn silently runs cheaper
+          // and shallower while the chips still read what the user picked.
+          if (parsed.turn_downgrade) {
+            const d = parsed.turn_downgrade;
+            const parts: string[] = [];
+            if (d.model_changed) parts.push(`model ${d.requested_model} → ${d.effective_model}`);
+            if (d.effort_changed) parts.push(`effort ${d.requested_effort} → ${d.effective_effort}`);
+            useUIStore.getState().addToast({
+              type: 'info',
+              title: 'This turn was downgraded',
+              message: `${parts.join(', ')} (${d.reason}).`,
+              duration: 8000,
+              persist: false,
+            });
+          }
+
           // ── todo_update (full session task list on every task change) ──
           // The backend (server/tool_router.py) emits the whole session list on
           // every task_* call; the Tasks pane + the in-chat task row read this

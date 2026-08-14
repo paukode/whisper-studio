@@ -94,7 +94,10 @@ slash command:
 
 ## Limits and controls
 
-- 16 agents run concurrently; queue as many as you like beyond that.
+- 16 agents run concurrently; queue as many as you like beyond that. That is a
+  real 16, not just 16 scheduled: the model-call pool is sized to the same
+  number, and the Bedrock client uses adaptive retries so a burst that trips
+  your account's quota is paced rather than failed.
 - 1000 agents per run, 600k output tokens by default. Both raise catchable
   errors inside the script rather than dying silently.
 - Stop a run from its card in chat.

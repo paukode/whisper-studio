@@ -43,7 +43,12 @@ def _get_bedrock_client():
                 config=BotoConfig(
                     read_timeout=600,
                     connect_timeout=10,
-                    retries={"max_attempts": 2},
+                    # "adaptive" (not the default legacy mode): it backs off
+                    # AND rate-limits client-side when Bedrock starts
+                    # throttling. That is what makes a 16-wide agent fan-out
+                    # safe — without it, a burst that trips the account quota
+                    # fails the agents outright instead of pacing them.
+                    retries={"max_attempts": 5, "mode": "adaptive"},
                     # Bound the pool so a parallel team spawn can't
                     # fan out into hundreds of sockets. 32 is well
                     # above the executor sizes that share it.

@@ -56,6 +56,38 @@ describe('WorkflowPreviewCard workspace_path wiring', () => {
     expect(call.workspace_path).toBe('');
   });
 
+  it('does not treat a different workspace as an already-launched run', async () => {
+    // Audit item #16b: the dedup key was a hash of the SCRIPT ALONE, so
+    // re-running the same saved script against another folder showed as
+    // "already launched" and refused a legitimate second run.
+    const first = basePreview({ workspace_path: '/Users/me/projA' });
+    const { unmount } = render(<WorkflowPreviewCard preview={first} />);
+    await act(async () => {
+      fireEvent.click(screen.getByText('Approve & run'));
+      await Promise.resolve();
+    });
+    expect(launchRunMock).toHaveBeenCalledTimes(1);
+    unmount();
+
+    // Same script, different pinned workspace → must still offer Approve.
+    render(<WorkflowPreviewCard preview={basePreview({ workspace_path: '/Users/me/projB' })} />);
+    expect(screen.getByText('Approve & run')).toBeTruthy();
+  });
+
+  it('still restores the launched state for an identical preview', async () => {
+    const p = basePreview({ workspace_path: '/Users/me/projA' });
+    const { unmount } = render(<WorkflowPreviewCard preview={p} />);
+    await act(async () => {
+      fireEvent.click(screen.getByText('Approve & run'));
+      await Promise.resolve();
+    });
+    unmount();
+
+    // Identical preview (a page reload) → no second Approve button.
+    render(<WorkflowPreviewCard preview={basePreview({ workspace_path: '/Users/me/projA' })} />);
+    expect(screen.queryByText('Approve & run')).toBeNull();
+  });
+
   it('omits the key entirely for a legacy preview with no workspace_path field at all', async () => {
     const legacyPreview = basePreview();
     delete (legacyPreview as { workspace_path?: string }).workspace_path;

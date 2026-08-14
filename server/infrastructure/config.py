@@ -256,7 +256,7 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
                 "label": key.capitalize(),
                 "thinking": _infer_thinking_default(key),
                 "requires_data_retention": False,
-                "effort_tier": infer_effort_tier(key),
+                "effort_tier": infer_effort_tier(key, val),
                 "context_window": None,
                 "max_output": None,
             }
@@ -295,7 +295,7 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
                 # everything else infers from the key. Drives the per-model effort
                 # picker and the Bedrock output_config.effort.
                 "effort_tier": val.get("effort_tier")
-                or ("openai" if provider == "openai_bedrock" else infer_effort_tier(key)),
+                or ("openai" if provider == "openai_bedrock" else infer_effort_tier(key, model_id)),
                 # Whether this model can drive workflow orchestration. Kept
                 # SEPARATE from effort_tier: the tier says which raw reasoning
                 # values the provider accepts, this says whether the model can

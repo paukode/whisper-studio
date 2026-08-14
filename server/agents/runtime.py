@@ -22,12 +22,17 @@ from server.agents.config import (
 )
 from server.agents.event_bus import event_bus
 from server.agents.messaging import message_bus
+from server.agents.providers.base import AGENT_CALL_CONCURRENCY
 from server.agents.registry import agent_registry
 
 log = logging.getLogger("whisper-studio")
 
-# Shared executor for agent bedrock calls
-_agent_executor = ThreadPoolExecutor(max_workers=4)
+# Shared executor for agent bedrock calls. Sized from the ONE concurrency
+# knob (server/agents/providers/base.py) rather than its own literal: this
+# pool is what actually gates how many agent model calls can be in flight on
+# the chat/engine path, so a smaller number here silently capped the
+# workflow runtime's 16-way fan-out no matter what the scheduler admitted.
+_agent_executor = ThreadPoolExecutor(max_workers=AGENT_CALL_CONCURRENCY)
 # Separate small pool for git/worktree harvesting so a burst of finishing
 # agents doing git ops can't head-of-line-block model calls on _agent_executor.
 _git_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="agent-git")
