@@ -315,7 +315,10 @@ def test_run_agent_applies_only_on_genuine_finish(monkeypatch, repo):
         worktree_branch="worktree-agent-x",
         original_head_commit="deadbeef",
     )
-    monkeypatch.setattr(rt, "_enter_agent_worktree", lambda a, s: fake_session)
+    # (agent_id, session_id, repo_root) — repo_root lets a caller with its own
+    # pinned root (a workflow run) fork from that instead of the globally
+    # connected workspace.
+    monkeypatch.setattr(rt, "_enter_agent_worktree", lambda a, s, r=None: fake_session)
     seen = {}
 
     def _fake_harvest(root, path, branch, key, apply, base_commit=None):

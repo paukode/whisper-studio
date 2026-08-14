@@ -1483,7 +1483,12 @@ async def chat_endpoint(request: Request):
     from server.chat.engine.policy import CHAT_POLICY
     from server.chat.engine.runner import TurnContext, run_turn
 
-    _provider = _get_chat_model_meta().get(model_key, {}).get("provider", "anthropic")
+    # Same latched, workspace-aware metadata the effort was resolved from
+    # (_model_meta above) — NOT a fresh global lookup. A model defined only in
+    # the workspace's .whisper/settings.json is absent from the global
+    # catalogue, so re-reading it here would default this to "anthropic" and
+    # send an OpenAI model id through the Anthropic adapter.
+    _provider = _model_meta.get("provider", "anthropic")
     if _provider == "openai_bedrock":
         from server.chat.engine.openai import OpenAIResponsesAdapter
 

@@ -94,10 +94,18 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // so the user gets early warning that writes may fail, without
       // blocking the connection (os.access lies on network mounts /
       // root / macOS extended ACLs, so we never refuse based on it).
-      const data = await post<{ writable?: boolean }>('/api/workspace/connect', { path: wsPath });
-      useUIStore.getState().setWsConnected(true, wsPath);
+      const data = await post<{ path?: string; writable?: boolean }>(
+        '/api/workspace/connect',
+        { path: wsPath },
+      );
+      // Store the CANONICAL path the server resolved (~ expanded, symlinks
+      // and relative segments collapsed), not the raw input — everything
+      // downstream compares against the server's own notion of the
+      // workspace root, and an unexpanded "~/..." never matches it.
+      const connectedPath = data?.path || wsPath;
+      useUIStore.getState().setWsConnected(true, connectedPath);
       setWsDropdownOpen(false);
-      const name = wsPath.split('/').pop();
+      const name = connectedPath.split('/').pop();
       if (data?.writable === false) {
         useUIStore.getState().addToast({
           type: 'info',
