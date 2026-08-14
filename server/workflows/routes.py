@@ -119,6 +119,28 @@ async def launch_run(request: Request):
     # both pass the session's level, so an approved run reasons exactly like an
     # auto-approved one. Omitted ⇒ start_run resolves the configured default.
     effort_label = (body.get("effort_label") or "").strip() or None
+    # And the workspace: the card echoes back the exact root it resolved and
+    # showed at preview time — re-validated here (it must still exist) but
+    # never swapped for a fresh snapshot, or the card would have shown the
+    # user one folder and launched against another. A caller with no card
+    # value at all (the /workflow slash command) pins to whatever is
+    # connected right now, same as the tool path's own no-card-shown case.
+    #
+    # "The key is present" (even as "") and "the key is absent" are NOT the
+    # same thing here: a card previewed with nothing connected legitimately
+    # echoes back "" (stay unpinned), which must not be treated as "no card
+    # was involved, snapshot whatever is connected now" — that would let a
+    # workspace connected during the approval delay silently become the run's
+    # root, on a run whose card never showed a folder at all.
+    if "workspace_path" in body:
+        raw_ws = (body.get("workspace_path") or "").strip()
+        workspace_path, ws_error = (
+            manager.resolve_workflow_workspace(raw_ws) if raw_ws else (None, "")
+        )
+    else:
+        workspace_path, ws_error = manager.resolve_workflow_workspace(None)
+    if ws_error:
+        return JSONResponse({"error": ws_error}, status_code=400)
 
     if not script and name:
         loaded = store.load_script(name)
@@ -168,6 +190,7 @@ async def launch_run(request: Request):
         model_key=model_key,
         model_id=model_id,
         effort_label=effort_label,
+        workspace_path=workspace_path,
         budget_tokens=budget_tokens,
         phases=meta.get("phases", []),
         name=name or meta.get("name", ""),

@@ -146,6 +146,10 @@ async def execute_ci_autofix(
             # card's launch must reason at the turn's effort, not the provider
             # default. See server/workflows/tools.py::_preview.
             "effort_label": effort_label or "",
+            # Pin to the SAME repo the CI plan was diagnosed against — already
+            # resolved above via _resolve(tool_input), not re-derived from
+            # whatever happens to be connected when the user clicks Approve.
+            "workspace_path": cwd,
         }
     }
     diagnosis = {
