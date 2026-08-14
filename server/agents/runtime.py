@@ -144,6 +144,7 @@ async def run_agent(
     effort_label: str | None = None,
     structured_schema: dict | None = None,
     isolation: str = "none",
+    workspace_path: str | None = None,
 ) -> AgentResult:
     """Run an agent with full tool execution loop.
 
@@ -156,6 +157,12 @@ async def run_agent(
         model_id_override: Explicit Bedrock model ID. If None, resolved from the config default.
         context: Additional context prepended to the task.
         depth: Nesting depth (prevents infinite recursion).
+        workspace_path: Pin this agent's workspace to an explicit root instead
+            of whatever is globally connected — a workflow run's frozen
+            launch-time workspace (server.workflows.manager.
+            resolve_workflow_workspace). Ignored outside that caller; None
+            preserves the ambient global-workspace behavior every other
+            caller already gets.
 
     Returns:
         AgentResult with the agent's final output.
@@ -236,41 +243,66 @@ async def run_agent(
         session_id=session_id,
     )
 
+    def _pin_plain_override(path: str):
+        # Mark the override live BEFORE any tool call can dispatch a command
+        # against it, so a command that outlives this agent's own cancellation
+        # (still running in a worker thread when the finally below retires the
+        # override) gets refused instead of resurrecting a cwd entry nothing
+        # will ever clear again.
+        from server.cwd_tracker import register_override
+        from server.workspace.state import set_workspace_override
+
+        tok = set_workspace_override(path)
+        register_override(path)
+        return tok
+
     _ws_token = None
     _wt_session = None
     _override_path = None
     if isolation == "worktree":
         # git worktree add does a full checkout (seconds on a big repo) — offload
-        # it so a fan-out of agents doesn't serialize on the event loop.
+        # it so a fan-out of agents doesn't serialize on the event loop. Fork
+        # from the caller's pinned root when it gave one (a workflow run),
+        # else whatever is globally connected (loop.run_in_executor does NOT
+        # propagate contextvars, so the ambient override wouldn't be visible
+        # here anyway — repo_root is how a pin actually reaches this thread).
         _wt_session = await asyncio.get_running_loop().run_in_executor(
-            _git_executor, _enter_agent_worktree, agent_id, session_id
+            _git_executor, _enter_agent_worktree, agent_id, session_id, workspace_path
         )
         if _wt_session:
-            from server.cwd_tracker import register_override
-            from server.workspace.state import set_workspace_override
-
             _override_path = _wt_session.worktree_path
-            _ws_token = set_workspace_override(_override_path)
-            # Mark the override live BEFORE any tool call can dispatch a
-            # command against it, so a command that outlives this agent's own
-            # cancellation (still running in a worker thread when the finally
-            # below retires the override) gets refused instead of resurrecting
-            # a cwd entry nothing will ever clear again.
-            register_override(_override_path)
-        elif not config.read_only:
-            # Isolation was REQUESTED but could not be created (non-git
-            # workspace, transient git error). Never let an agent that was
-            # meant to be isolated — possibly a detached one with no human and
-            # auto-approved writes — write into the shared workspace instead.
-            # Degrade to read-only for this run.
-            from dataclasses import replace as _dc_replace
+            _ws_token = _pin_plain_override(_override_path)
+        else:
+            if not config.read_only:
+                # Isolation was REQUESTED but could not be created (non-git
+                # workspace, transient git error). Never let an agent that was
+                # meant to be isolated — possibly a detached one with no human
+                # and auto-approved writes — write into the shared workspace
+                # instead. Degrade to read-only for this run.
+                from dataclasses import replace as _dc_replace
 
-            config = _dc_replace(config, read_only=True)
-            log.warning(
-                "agent %s requested worktree isolation but none was created; "
-                "running read-only to protect the shared workspace",
-                agent_id,
-            )
+                config = _dc_replace(config, read_only=True)
+                log.warning(
+                    "agent %s requested worktree isolation but none was created; "
+                    "running read-only to protect the shared workspace",
+                    agent_id,
+                )
+            if workspace_path:
+                # Isolation degraded (or was already unavailable), but a
+                # pinned root still exists — this agent must still resolve
+                # every workspace tool against IT, not whatever is globally
+                # connected. Without this fallback, a workflow pinned to a
+                # plain (non-git) folder silently lost its pin the moment a
+                # script asked for isolation:"worktree".
+                _override_path = workspace_path
+                _ws_token = _pin_plain_override(_override_path)
+    elif workspace_path:
+        # No isolation requested, but the caller has a pinned root (a workflow
+        # run without isolation:"worktree") — this agent must still resolve
+        # every workspace tool against THAT root, not whatever the global
+        # connection happens to be by the time this particular agent starts.
+        _override_path = workspace_path
+        _ws_token = _pin_plain_override(_override_path)
     try:
         result = await _run_agent_loop(
             effort_label=effort_label,
@@ -904,15 +936,21 @@ async def _run_agent_loop(
     )
 
 
-def _enter_agent_worktree(agent_id: str, session_id: str):
+def _enter_agent_worktree(agent_id: str, session_id: str, repo_root: str | None = None):
     """Create (or resume) an isolated git worktree for this agent.
 
-    Only when the global workspace is a git repo; failures degrade to the
-    shared workspace with a warning (isolation is an optimization for
-    parallel writes, not a correctness gate). Returns the WorktreeSession so
-    run_agent can HARVEST it on completion: the agent's changes are applied
-    uncommitted back to the originating working tree and the worktree +
-    branch are removed (see server/git/worktree_harvest.py).
+    Only when the target is a git repo; failures degrade to the shared
+    workspace with a warning (isolation is an optimization for parallel
+    writes, not a correctness gate). Returns the WorktreeSession so run_agent
+    can HARVEST it on completion: the agent's changes are applied uncommitted
+    back to the originating working tree and the worktree + branch are
+    removed (see server/git/worktree_harvest.py).
+
+    ``repo_root`` lets a caller with its own pinned root (a workflow run) fork
+    from that instead of whatever is globally connected. This runs on a
+    worker thread via loop.run_in_executor, which does NOT propagate
+    contextvars, so a caller cannot rely on set_workspace_override being
+    visible here — it must pass the root explicitly.
     """
     try:
         import os as _os
@@ -920,7 +958,7 @@ def _enter_agent_worktree(agent_id: str, session_id: str):
         from server.git.worktree_session import enter_worktree
         from server.workspace.state import get_workspace_path
 
-        repo_root = get_workspace_path()
+        repo_root = repo_root or get_workspace_path()
         if not repo_root or not _os.path.exists(_os.path.join(repo_root, ".git")):
             return None
         # Namespaced session key: enter_worktree records a session->worktree

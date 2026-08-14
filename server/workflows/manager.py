@@ -124,6 +124,33 @@ def resolve_workflow_effort(effort_label: str | None, model_key: str) -> str | N
         return resolve_effort({}, model_key, effort_label)
 
 
+def resolve_workflow_workspace(raw: str | None) -> tuple[str | None, str]:
+    """Resolve the workspace a run is pinned to. Returns (path, error) — path
+    is ``None`` with error set on a bad explicit path, or ``None`` with no
+    error when nothing is connected and none was given (the fully-legacy,
+    unpinned case — nothing to pin to).
+
+    An explicit path (the model resolved one from the user's own words, e.g.
+    "check ~/Downloads/project1") must already exist: silently creating it, or
+    falling back to whatever else happens to be connected, is exactly the
+    "workflow ran against the wrong repo" failure this exists to prevent — the
+    model can call ws_open_folder first if the folder genuinely needs creating.
+    Omitted, it snapshots whatever is connected RIGHT NOW, so a workspace
+    switch after launch can never redirect an already-running run's later
+    agents.
+    """
+    raw = (raw or "").strip()
+    if raw:
+        resolved = os.path.realpath(os.path.expanduser(raw))
+        if not os.path.isdir(resolved):
+            return None, f"Error: workspace path '{raw}' does not exist or is not a directory."
+        return resolved, ""
+    from server.workspace.state import get_workspace_path
+
+    connected = get_workspace_path()
+    return (os.path.realpath(connected), "") if connected else (None, "")
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -163,13 +190,24 @@ def start_run(
     model_key: str = "",
     model_id: str = "",
     effort_label: str | None = None,
+    workspace_path: str | None = None,
     budget_tokens: int | None = None,
     phases: list | None = None,
     name: str = "",
     resume_from: str = "",
     agent_runner=None,
 ) -> str:
-    """Register + launch a run detached; returns its run_id immediately."""
+    """Register + launch a run detached; returns its run_id immediately.
+
+    ``workspace_path`` is taken as-is, already resolved by the caller — unlike
+    effort, it must NOT be re-derived here: a value shown on an approval card
+    has to be the exact value the run launches with, or the card would be
+    lying about what it is asking the user to approve. Every entry point
+    resolves it once, at the point a script is either previewed or launched
+    (server.workflows.manager.resolve_workflow_workspace), and callers
+    re-validate it still exists right before calling this rather than
+    swapping to something else if it does not.
+    """
     from server.infrastructure.async_tasks import spawn
     from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS
 
@@ -197,8 +235,8 @@ def start_run(
         _ensure_table(conn)
         conn.execute(
             "INSERT INTO workflow_runs (run_id, name, session_id, status, phases_json, "
-            "args_json, model_key, effort_label, budget_tokens, resumed_from, started_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "args_json, model_key, effort_label, workspace_path, budget_tokens, resumed_from, "
+            "started_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 run_id,
                 name,
@@ -208,6 +246,7 @@ def start_run(
                 json.dumps(args),
                 model_key,
                 effort_label,
+                workspace_path,
                 budget_tokens,
                 resume_from,
                 _now(),
@@ -228,11 +267,14 @@ def start_run(
         model_id=model_id,
         model_key=model_key,
         effort_label=effort_label,
+        workspace_path=workspace_path,
         budget_tokens=budget_tokens,
         resume_cache=resume_cache,
         journal=journal,
         agent_runner=agent_runner,
-        nested_runner=_make_nested_runner(session_id, model_key, model_id, effort_label),
+        nested_runner=_make_nested_runner(
+            session_id, model_key, model_id, effort_label, workspace_path
+        ),
         on_event=lambda ev: _publish(run_id, session_id, ev),
     )
     _live[run_id] = run
@@ -272,7 +314,7 @@ def _server_loop():
         return None
 
 
-def _make_nested_runner(session_id, model_key, model_id, effort_label):
+def _make_nested_runner(session_id, model_key, model_id, effort_label, workspace_path):
     async def nested(name, args, parent):
         loaded = _load_trusted_saved(name)
         if not loaded:
@@ -295,7 +337,8 @@ def _make_nested_runner(session_id, model_key, model_id, effort_label):
             _ensure_table(conn)
             conn.execute(
                 "INSERT INTO workflow_runs (run_id, name, session_id, status, model_key, "
-                "effort_label, budget_tokens, resumed_from, started_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                "effort_label, workspace_path, budget_tokens, resumed_from, started_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (
                     child_id,
                     f"{parent.run_id}/{name}",
@@ -303,6 +346,7 @@ def _make_nested_runner(session_id, model_key, model_id, effort_label):
                     "running",
                     model_key,
                     effort_label,
+                    workspace_path,
                     child_budget,
                     parent.run_id,
                     _now(),
@@ -316,6 +360,9 @@ def _make_nested_runner(session_id, model_key, model_id, effort_label):
             model_id=model_id,
             model_key=model_key,
             effort_label=effort_label,
+            # A nested workflow() call is not a new user instruction naming a
+            # folder — it inherits the SAME pinned root as its parent.
+            workspace_path=workspace_path,
             budget_tokens=child_budget,
             depth=1,
         )

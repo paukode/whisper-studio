@@ -112,6 +112,7 @@ class WorkflowRun:
         model_id: str = "",
         model_key: str = "",
         effort_label: str | None = None,
+        workspace_path: str | None = None,
         budget_tokens: int | None = None,
         depth: int = 0,
         journal: Journal | None = None,
@@ -127,6 +128,12 @@ class WorkflowRun:
         self.model_id = model_id
         self.model_key = model_key or "sonnet"
         self.effort_label = effort_label
+        # The canonical workspace root every agent this run spawns resolves
+        # against, frozen at launch (server.workflows.manager.
+        # resolve_workflow_workspace) — None only for a pre-migration row or a
+        # launch with nothing connected and no explicit path, matching the
+        # fully-unpinned legacy behavior.
+        self.workspace_path = workspace_path
         self.budget_tokens = budget_tokens
         self.depth = depth
         self.journal = journal or Journal(run_id)
@@ -155,6 +162,7 @@ class WorkflowRun:
             session_id=self.session_id,
             default_model_id=self.model_id,
             effort_label=self.effort_label,
+            workspace_path=self.workspace_path,
             run_id=self.run_id,
             depth=self.depth + 1,
         )
