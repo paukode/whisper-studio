@@ -248,6 +248,15 @@ async def run_agent(
         session_id=session_id,
     )
 
+    # Give this agent its own working-directory identity. Worktree isolation
+    # already separates agents by their unique worktree path, but a
+    # NON-isolated agent shares its session_id — and, in a pinned workflow
+    # run, its workspace path — with every sibling, so without this one
+    # agent's `cd sub` silently relocates the next agent's commands.
+    from server.cwd_tracker import set_cwd_scope
+
+    _cwd_scope_token = set_cwd_scope(agent_id)
+
     def _pin_plain_override(path: str):
         # Mark the override live BEFORE any tool call can dispatch a command
         # against it, so a command that outlives this agent's own cancellation
@@ -423,6 +432,15 @@ async def run_agent(
                 clear_override(session_id, _override_path)
             except Exception:  # noqa: BLE001 — teardown hygiene only
                 pass
+        try:
+            from server.cwd_tracker import clear_scope, reset_cwd_scope
+
+            reset_cwd_scope(_cwd_scope_token)
+            # Drop this agent's own cwd entries so a long-lived server does
+            # not accumulate one per agent forever.
+            clear_scope(session_id, agent_id)
+        except Exception:  # noqa: BLE001 — teardown hygiene only
+            pass
         if _wt_session is not None:
             # Non-success exit (cancel / unexpected exception): never apply, but
             # tidy a pristine worktree and keep a dirty one for inspection —

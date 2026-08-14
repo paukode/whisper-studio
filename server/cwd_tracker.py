@@ -5,6 +5,7 @@ Appends `; pwd` to commands to capture the final working directory,
 then stores it per session so the next command starts from there.
 """
 
+import contextvars
 import os
 import threading
 
@@ -16,6 +17,24 @@ _session_cwd: dict[str, str] = {}
 # is refused rather than silently resurrecting the entry clear_override just
 # removed — see the race this closes in update_cwd's docstring.
 _live_overrides: set[str] = set()
+
+# Per-agent cwd identity. Worktree isolation already separates agents by
+# their unique worktree path, but agents that are NOT isolated still share
+# one session_id — and, since workflow runs are pinned, one workspace path
+# too. Without a third component, sibling agents in the same run share a cwd
+# slot: one agent's `cd sub` silently relocates the next agent's commands.
+# Set per run_agent call and inherited by anything it dispatches (contextvars
+# copy into asyncio tasks and, via tool_router._submit, onto worker threads).
+_CWD_SCOPE: contextvars.ContextVar[str | None] = contextvars.ContextVar("cwd_scope", default=None)
+
+
+def set_cwd_scope(scope: str | None):
+    """Give the current task its own cwd slot. Returns a token for reset."""
+    return _CWD_SCOPE.set(scope)
+
+
+def reset_cwd_scope(token) -> None:
+    _CWD_SCOPE.reset(token)
 
 
 def _active_override() -> str | None:
@@ -31,17 +50,23 @@ def _active_override() -> str | None:
 
 
 def _key(session_id: str, override: str | None) -> str:
-    """Fold the active override into the tracking key.
+    """Fold the active override AND the per-agent scope into the tracking key.
 
-    Without this, a worktree-isolated agent shares its cwd slot with the
-    parent session (and with every sibling isolated agent running the same
-    session_id): a cwd the user or another agent left behind in the ORIGINAL
-    checkout would silently become the isolated agent's effective_cwd, and an
-    isolated agent that itself cd's around would leak that path back out.
-    Every worktree path is unique, so folding it in gives each isolated agent
-    its own slot for free. Unchanged (session_id alone) outside isolation.
+    Without the override, a worktree-isolated agent shares its cwd slot with
+    the parent session: a cwd the user or another agent left behind in the
+    ORIGINAL checkout would silently become the isolated agent's
+    effective_cwd, and an isolated agent that itself cd's around would leak
+    that path back out.
+
+    Without the scope, agents that are NOT worktree-isolated still collide:
+    every agent in a workflow run shares one session_id and one pinned
+    workspace, so parallel siblings would read and overwrite each other's
+    working directory. Both absent (ordinary interactive chat) leaves the key
+    exactly as it always was: the bare session_id.
     """
-    return f"{session_id}\x00{override}" if override else session_id
+    key = f"{session_id}\x00{override}" if override else session_id
+    scope = _CWD_SCOPE.get()
+    return f"{key}\x00{scope}" if scope else key
 
 
 def _is_within(path: str, root: str) -> bool:
@@ -129,6 +154,18 @@ def clear_override(session_id: str, override: str) -> None:
     with _lock:
         _live_overrides.discard(override)
         _session_cwd.pop(_key(session_id, override), None)
+
+
+def clear_scope(session_id: str, scope: str) -> None:
+    """Drop every cwd entry belonging to one agent's scope, whichever
+    override it ran under. Called when the agent finishes so a long-lived
+    server does not accumulate one entry per agent forever."""
+    if not scope:
+        return
+    suffix = "\x00" + scope
+    with _lock:
+        for k in [k for k in _session_cwd if k.startswith(session_id) and k.endswith(suffix)]:
+            _session_cwd.pop(k, None)
 
 
 def wrap_command_for_cwd(command: str) -> str:
