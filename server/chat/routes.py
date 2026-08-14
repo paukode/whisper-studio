@@ -1003,7 +1003,16 @@ async def chat_endpoint(request: Request):
         normalize_effort,
     )
 
-    _model_meta = _get_chat_model_meta().get(model_key, {})
+    # Read the metadata from the LATCHED session config, not the global one:
+    # chat_model_meta is a latched field, so a model defined only in the
+    # workspace's .whisper/settings.json carries its own effort tier and
+    # ultracode capability here. Going back to the global config would resolve
+    # that model against metadata it does not have and silently downgrade it.
+    # Fall back to the global lookup for keys the latch does not know (a local
+    # model downloaded mid-session is folded in there, not in the snapshot).
+    _model_meta = (session_config.get("chat_model_meta") or {}).get(model_key) or (
+        _get_chat_model_meta().get(model_key, {})
+    )
     _allowed_effort = effort_levels_for(_model_meta, model_key)
     _requested_effort = normalize_effort(
         body.get("effort_level") or session_config.get("effort_level") or DEFAULT_EFFORT

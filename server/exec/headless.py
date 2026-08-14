@@ -267,6 +267,12 @@ async def run_headless_turn(
         # server/chat/routes.py and agents/runtime.py both use. ─────────────
         loop = asyncio.get_event_loop()
         _provider = _get_chat_model_meta().get(resolved_model_key, {}).get("provider", "anthropic")
+        # Same rule as cron: a headless turn reasons at the configured effort,
+        # clamped to its model. None here meant no ``thinking`` block at all,
+        # so headless work was quietly shallower than the same prompt in chat.
+        from server.chat.infra import effort_for_model
+
+        _effort_label = effort_for_model(resolved_model_key)
         if _provider == "openai_bedrock":
             from server.chat.engine.openai import OpenAIResponsesAdapter
 
@@ -274,7 +280,7 @@ async def run_headless_turn(
                 model_key=resolved_model_key,
                 model_id=model_id,
                 system_prompt=system,
-                effort_label=None,
+                effort_label=_effort_label,
                 session_id=session_id,
             )
         else:
@@ -288,7 +294,7 @@ async def run_headless_turn(
                 system_dynamic="",
                 caching_on=False,
                 cache_ttl="5m",
-                effort_label=None,
+                effort_label=_effort_label,
                 force_skill=None,
                 loop=loop,
                 executor=_HEADLESS_EXECUTOR,
@@ -311,6 +317,8 @@ async def run_headless_turn(
             loop=loop,
             executor=_HEADLESS_EXECUTOR,
             tool_exec_model_id=model_id,
+            # Agents this run spawns inherit the same level.
+            effort_label=_effort_label,
             memory_hooks=lambda msgs: None,
             unattended=True,
             turn_scope_id=turn_scope_id,
