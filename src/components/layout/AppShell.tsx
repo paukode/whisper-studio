@@ -51,6 +51,12 @@ import { CommandPalette } from '@/components/common/CommandPalette';
  *           div.resize-handle#resizeHandle
  *           div#chatPanelWrap
  */
+
+// Workspace status recovery backoff: 1s, 2s, 4s, 8s, 15s, 15s — enough to
+// ride out a backend restart without hammering it while it boots.
+const WORKSPACE_SYNC_MAX_RETRIES = 6;
+const WORKSPACE_SYNC_MAX_DELAY_MS = 15_000;
+
 const AppShell: React.FC = () => {
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const transcriptVisible = useUIStore((s) => s.transcriptVisible);
@@ -133,16 +139,52 @@ const AppShell: React.FC = () => {
     })();
   }, [loadConfig, loadModels, loadDataRetention, loadSkills, loadMCP, loadSessions]);
 
-  // Check if workspace was already connected (page refresh recovery)
+  // Recover the connected workspace on load — and after a backend blip.
+  //
+  // This used to be a single fetch whose failure was swallowed, so any
+  // moment the backend was unreachable (a restart, a sleep/wake, the app
+  // relaunching) left the workspace panel gone from the UI with no way
+  // back except reconnecting by hand — even though the server still had
+  // the workspace connected the whole time. Retry until the server gives
+  // an authoritative answer, and re-ask whenever the window regains
+  // focus, which covers outages longer than the backoff window.
   useEffect(() => {
-    fetch('/api/workspace/status')
-      .then((r) => r.ok ? r.json() : null)
-      .then((data: { connected?: boolean; path?: string } | null) => {
-        if (data?.connected && data.path) {
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const sync = async (attempt = 0): Promise<void> => {
+      if (cancelled) return;
+      try {
+        const response = await fetch('/api/workspace/status');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = (await response.json()) as { connected?: boolean; path?: string };
+        if (cancelled) return;
+        if (data.connected && data.path) {
           useUIStore.getState().setWsConnected(true, data.path);
         }
-      })
-      .catch(() => { /* ignore */ });
+        // A clean response is authoritative either way — stop retrying.
+      } catch {
+        if (cancelled || attempt >= WORKSPACE_SYNC_MAX_RETRIES) return;
+        timer = window.setTimeout(
+          () => void sync(attempt + 1),
+          Math.min(1000 * 2 ** attempt, WORKSPACE_SYNC_MAX_DELAY_MS),
+        );
+      }
+    };
+
+    const resync = () => {
+      if (document.visibilityState === 'visible') void sync();
+    };
+
+    void sync();
+    window.addEventListener('focus', resync);
+    document.addEventListener('visibilitychange', resync);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      window.removeEventListener('focus', resync);
+      document.removeEventListener('visibilitychange', resync);
+    };
   }, []);
 
   // Auto-save is owned by the session runtime registry now: every live
@@ -311,23 +353,30 @@ const AppShell: React.FC = () => {
             </div>
           )}
 
-          {dockOpen ? (
-            <Splitter
-              direction="horizontal"
-              ratio={1 - dockFrac}
-              onChange={(r) => setDockFrac(1 - r)}
-              firstMinPx={420}
-              secondMinPx={320}
-              style={{ flex: '1 1 auto' }}
-            >
-              {renderPanelsInner()}
+          {/* The dock Splitter is ALWAYS rendered, hiding slot 2 when the
+            * dock is closed. Swapping between <Splitter> and a bare
+            * renderPanelsInner() changes the element type at this position,
+            * so React unmounts and remounts everything below it — including
+            * the chat transcript's scroll container, which then comes back
+            * scrolled to the top. Opening a task card and closing the dock
+            * both flip this flag, which is why both jumped the session back
+            * to the top. Same reasoning as hideFirstPane below. */}
+          <Splitter
+            direction="horizontal"
+            ratio={1 - dockFrac}
+            onChange={(r) => setDockFrac(1 - r)}
+            firstMinPx={420}
+            secondMinPx={320}
+            hideSecondPane={!dockOpen}
+            style={{ flex: '1 1 auto' }}
+          >
+            {renderPanelsInner()}
+            {dockOpen ? (
               <ErrorBoundary label="RightDock">
                 <RightDock />
               </ErrorBoundary>
-            </Splitter>
-          ) : (
-            renderPanelsInner()
-          )}
+            ) : null}
+          </Splitter>
         </div>
 
         {/* Persistent status strip — model, effort, git, context, tokens,

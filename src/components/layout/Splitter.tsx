@@ -43,6 +43,11 @@ export interface SplitterProps {
    *  every component in slot 2 as well (e.g. the whole chat panel),
    *  wiping unrelated local state like an in-progress draft. */
   hideFirstPane?: boolean;
+  /** Mirror of hideFirstPane for slot 2. Same reason: the right dock opens
+   *  and closes constantly, and swapping the Splitter out when it closes
+   *  remounts slot 1 — which is the whole chat panel, so the transcript's
+   *  scroll position resets to the top every time. */
+  hideSecondPane?: boolean;
   /** Exactly two children — the two panes. */
   children: [ReactNode, ReactNode];
 }
@@ -62,6 +67,7 @@ export const Splitter: React.FC<SplitterProps> = ({
   firstMinPx = 200,
   secondMinPx = 280,
   hideFirstPane = false,
+  hideSecondPane = false,
   children,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -150,6 +156,8 @@ export const Splitter: React.FC<SplitterProps> = ({
   };
   const slot1Min = isHorizontal ? { minWidth: firstMinPx } : { minHeight: firstMinPx };
   const slot2Min = isHorizontal ? { minWidth: secondMinPx } : { minHeight: secondMinPx };
+  // With either pane hidden there is nothing to drag between.
+  const hidden = hideFirstPane || hideSecondPane;
 
   return (
     <div
@@ -168,7 +176,7 @@ export const Splitter: React.FC<SplitterProps> = ({
         style={{
           ...slotBase,
           ...(hideFirstPane ? {} : slot1Min),
-          flex: hideFirstPane ? '0 0 0' : `${grow1} 1 0`,
+          flex: hideFirstPane ? '0 0 0' : hideSecondPane ? '1 1 auto' : `${grow1} 1 0`,
           display: hideFirstPane ? 'none' : slotBase.display,
         }}
       >
@@ -176,11 +184,11 @@ export const Splitter: React.FC<SplitterProps> = ({
       </div>
       <div
         className={`resize-handle${handleClassName ? ` ${handleClassName}` : ''}`}
-        onMouseDown={hideFirstPane ? undefined : onMouseDown}
+        onMouseDown={hidden ? undefined : onMouseDown}
         style={{
-          flex: hideFirstPane ? '0 0 0' : `0 0 ${HANDLE_THICKNESS_PX}px`,
+          flex: hidden ? '0 0 0' : `0 0 ${HANDLE_THICKNESS_PX}px`,
           cursor: isHorizontal ? 'col-resize' : 'row-resize',
-          display: hideFirstPane ? 'none' : 'flex',
+          display: hidden ? 'none' : 'flex',
           alignItems: 'center',
           justifyContent: 'center',
         }}
@@ -193,8 +201,9 @@ export const Splitter: React.FC<SplitterProps> = ({
       <div
         style={{
           ...slotBase,
-          ...(hideFirstPane ? {} : slot2Min),
-          flex: hideFirstPane ? '1 1 auto' : `${grow2} 1 0`,
+          ...(hideSecondPane || hideFirstPane ? {} : slot2Min),
+          flex: hideSecondPane ? '0 0 0' : hideFirstPane ? '1 1 auto' : `${grow2} 1 0`,
+          display: hideSecondPane ? 'none' : slotBase.display,
         }}
       >
         {children[1]}
