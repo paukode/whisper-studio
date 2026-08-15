@@ -42,8 +42,12 @@ from server.workspace.paths import is_staged_path
 # The other docx tests assert validation failures that happen BEFORE the
 # conversion, so they stay platform-neutral and keep running everywhere.
 # create_pptx / create_xlsx / create_pdf use pure-Python libraries and are
-# unaffected. The macOS build workflow (.github/workflows/build-macapp.yml)
-# is where these get exercised on a host that has textutil.
+# unaffected.
+#
+# NO CI job covers the skipped tests: ci.yml runs on ubuntu, and
+# build-macapp.yml only builds and packages, it never invokes pytest. They are
+# exercised solely by a local run on a macOS host, so a break in the textutil
+# invocation reaches a release unless someone runs the suite before shipping.
 requires_textutil = pytest.mark.skipif(
     not os.path.exists("/usr/bin/textutil"),
     reason="create_docx converts via macOS textutil, absent on the Linux CI runner",
