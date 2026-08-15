@@ -5,6 +5,7 @@ grounded citations resolve.
 
 import json
 import os
+import platform
 import subprocess
 
 from fastapi import Request
@@ -13,6 +14,16 @@ from fastapi.responses import Response
 from .. import router
 from ..paths import _ws_validate_path
 from ..state import get_workspace_path, load_save_locations
+
+
+def _system() -> str:
+    """The host OS family, behind one seam.
+
+    Both routes below branch on it to pick `open` / `xdg-open` / explorer.
+    Tests pin this instead of patching the stdlib module globally, so the
+    macOS branch stays covered on a Linux CI runner without the assertions
+    silently becoming host-dependent."""
+    return platform.system()
 
 
 @router.post("/open-with")
@@ -75,9 +86,7 @@ async def ws_open_with(request: Request):
                 status_code=404,
                 media_type="application/json",
             )
-    import platform
-
-    system = platform.system()
+    system = _system()
     if system == "Darwin":
         subprocess.Popen(["open", full])
     elif system == "Linux":
@@ -153,9 +162,7 @@ async def ws_reveal(request: Request):
                 status_code=404,
                 media_type="application/json",
             )
-    import platform
-
-    system = platform.system()
+    system = _system()
     if system == "Darwin":
         subprocess.Popen(["open", "-R", full])  # reveal + select in Finder
     elif system == "Linux":
