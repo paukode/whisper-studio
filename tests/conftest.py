@@ -98,6 +98,48 @@ def _isolate_app_databases(tmp_path_factory, monkeypatch, _db_template):
                 monkeypatch.setattr(mod, attr, db_path)
 
 
+# Every module holding an import-time COPY of the workspace-state file paths.
+_WS_STATE_MODULES = (
+    "server.workspace.paths",
+    "server.workspace.state",
+    "server.workspace.routes.recent",
+    "server.workspace",
+)
+
+_WS_STATE_FILES = {
+    "WORKSPACE_CONFIG_PATH": "workspace_config.json",
+    "RECENT_WORKSPACES_PATH": "recent_workspaces.json",
+    "SAVE_LOCATIONS_PATH": "save_locations.json",
+}
+
+
+@pytest.fixture(autouse=True)
+def _isolate_workspace_state(tmp_path_factory, monkeypatch):
+    """Give every test its own workspace_config.json / recent_workspaces.json /
+    save_locations.json.
+
+    Same import-time-copy problem as the databases above, with a sharper edge.
+    A test that connects a workspace and then disconnects writes
+    ``{"path": null}`` into the REAL config of whichever WHISPER_HOME is in the
+    environment, and connecting also pushes its tmp_path into the real recents
+    list. When that WHISPER_HOME is an installed app's Application Support
+    directory (a dev backend launched with the packaged app's home, which is
+    how this surfaced), the suite silently disconnects the user's RUNNING app:
+    the frontend keeps rendering its cached tree while every turn assembles the
+    tool pool with ws_connected=False, so the git and GitHub tools disappear
+    from the catalog with no visible cause.
+    """
+    ws_state = tmp_path_factory.mktemp("app-workspace-state")
+    for name in _WS_STATE_MODULES:
+        try:
+            mod = importlib.import_module(name)
+        except Exception:  # noqa: BLE001 — a missing optional module isn't fatal
+            continue
+        for attr, filename in _WS_STATE_FILES.items():
+            if hasattr(mod, attr):
+                monkeypatch.setattr(mod, attr, str(ws_state / filename))
+
+
 @pytest.fixture(autouse=True)
 def _drop_cached_bedrock_clients():
     """server.chat.infra caches one boto3 bedrock-runtime client per region for

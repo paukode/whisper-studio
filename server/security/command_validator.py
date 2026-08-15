@@ -8,6 +8,7 @@ validate_command() runs all validators against each subcommand after
 splitting compound commands on ;, &&, ||.
 """
 
+import os
 import re
 import shlex
 
@@ -402,13 +403,36 @@ _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _CMD_WRAPPERS = frozenset({"env", "command", "sudo", "nohup", "time", "exec", "builtin"})
 
 
+def _github_tools_in_catalog() -> bool:
+    """Whether the authenticated GitHub tools are actually reachable this turn.
+
+    Mirrors the catalog gate in server/chat/tool_pool.py: github / github_api /
+    github_api_write only enter the pool when a workspace is connected AND it
+    is a git repo. They are deferred tools, so when that gate is closed
+    tool_search cannot recover them either: it searches the same catalog they
+    were excluded from."""
+    try:
+        # Lazy: server.workspace pulls fastapi, and this module is imported
+        # from places that must stay cheap to import.
+        from server.workspace.state import get_workspace_path
+
+        ws = get_workspace_path()
+        return bool(ws) and os.path.exists(os.path.join(ws, ".git"))
+    except Exception:  # noqa: BLE001 — advice quality only, never block on this
+        return False
+
+
 def check_gh_command(command: str) -> str | None:
     """Block the GitHub CLI in the command sandbox.
 
     The sandbox has no GitHub auth (the credential file is denied, and any env
     token is stripped), so `gh` there fails silently or misleads — this is the
     exact path behind the false 'closed the PR' incident. The authenticated
-    github / github_api / github_api_write tools are the only correct path."""
+    github / github_api / github_api_write tools are the only correct path.
+
+    When those tools are NOT in the catalog, naming them is a dead end: the
+    model retries `gh` through the shell, exhausts itself, and hands the user
+    a link to click. Say what would actually unblock it instead."""
     toks = command.strip().split()
     i = 0
     while i < len(toks) and (_ENV_ASSIGN.match(toks[i]) or toks[i] in _CMD_WRAPPERS):
@@ -416,9 +440,17 @@ def check_gh_command(command: str) -> str | None:
     if i < len(toks):
         prog = toks[i].rsplit("/", 1)[-1]
         if prog == "gh":
+            if _github_tools_in_catalog():
+                return (
+                    "`gh` is unavailable in the command sandbox (no GitHub auth). Use the "
+                    "github, github_api, or github_api_write tools — they run gh authenticated."
+                )
             return (
-                "`gh` is unavailable in the command sandbox (no GitHub auth). Use the "
-                "github, github_api, or github_api_write tools — they run gh authenticated."
+                "`gh` is unavailable in the command sandbox (no GitHub auth), and the "
+                "authenticated github tools are not in this session's tool pool: they "
+                "require a connected workspace that is a git repository. Do not retry "
+                "`gh` through the shell. Ask the user to connect the repository as the "
+                "workspace, then use the github / github_api / github_api_write tools."
             )
     return None
 

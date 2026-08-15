@@ -35,6 +35,20 @@ from server.documents.executors import (
 )
 from server.workspace.paths import is_staged_path
 
+# create_docx converts HTML through macOS's textutil (server/documents/
+# executors.py); there is no cross-platform substitute, and this module
+# deliberately drives the REAL converter rather than mocking it, so the tests
+# that actually reach the conversion can only run where the binary exists.
+# The other docx tests assert validation failures that happen BEFORE the
+# conversion, so they stay platform-neutral and keep running everywhere.
+# create_pptx / create_xlsx / create_pdf use pure-Python libraries and are
+# unaffected. The macOS build workflow (.github/workflows/build-macapp.yml)
+# is where these get exercised on a host that has textutil.
+requires_textutil = pytest.mark.skipif(
+    not os.path.exists("/usr/bin/textutil"),
+    reason="create_docx converts via macOS textutil, absent on the Linux CI runner",
+)
+
 
 def _run(coro):
     return asyncio.run(coro)
@@ -62,6 +76,7 @@ def _decoded_bytes(payload: dict) -> bytes:
 # ── No workspace connected: default to ~/Documents, stage, never ask ──
 
 
+@requires_textutil
 def test_create_docx_no_workspace_defaults_to_documents_and_stages(monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     out = _exec_create_docx({"path": "report.docx", "html_content": "<p>hi</p>"}, "", {})
@@ -71,6 +86,7 @@ def test_create_docx_no_workspace_defaults_to_documents_and_stages(monkeypatch):
     assert _decoded_bytes(payload)[:2] == b"PK", "staged file must be real OOXML (zip)"
 
 
+@requires_textutil
 def test_create_docx_appends_missing_extension(monkeypatch):
     # Models sometimes pass a bare name like 'document' — the deliverable
     # must still open in Word.
@@ -109,6 +125,7 @@ def test_create_pdf_no_workspace_defaults_and_stages(monkeypatch):
     assert _decoded_bytes(payload)[:5] == b"%PDF-"
 
 
+@requires_textutil
 def test_create_docx_with_destination_path_from_user_words(tmp_path, monkeypatch):
     """When the model resolved a destination from the user's words, the tool
     builds and stages in one call — get_workspace_path() is never consulted,
@@ -165,6 +182,7 @@ def test_create_docx_path_outside_workspace_emits_sentinel(tmp_path, monkeypatch
 # ── Real conversions: build succeeds, pauses for approval, never touches disk ──
 
 
+@requires_textutil
 def test_create_docx_produces_real_ooxml_and_pauses_for_approval(tmp_path, monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     out = _exec_create_docx(
@@ -190,6 +208,7 @@ def test_create_docx_produces_real_ooxml_and_pauses_for_approval(tmp_path, monke
         assert "Body text" in doc_xml
 
 
+@requires_textutil
 def test_create_docx_applies_standard_layout(tmp_path, monkeypatch):
     """The standard: A4 page, 1-inch margins, Calibri 11pt body — regardless
     of what fonts are installed (the post-processor rewrites the Cocoa

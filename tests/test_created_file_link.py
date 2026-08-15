@@ -10,12 +10,21 @@ import asyncio
 from unittest.mock import patch
 from urllib.parse import unquote
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server import workspace
 from server.approval.bootstrap import _do_write
 from server.workspace.routes import os_integration  # noqa: F401 — registers routes
+
+
+@pytest.fixture(autouse=True)
+def _pin_darwin(monkeypatch):
+    """The argv assertions below pin the macOS branch (`open`). CI runs on
+    Linux, where the route correctly picks xdg-open, so pin the platform
+    rather than letting the expected argv follow the host."""
+    monkeypatch.setattr(os_integration, "_system", lambda: "Darwin")
 
 
 def test_do_write_output_includes_a_ready_made_open_os_link(tmp_path, monkeypatch):

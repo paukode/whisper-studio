@@ -7,11 +7,20 @@ indexed-workspace acceptance pinned in test_created_file_link.py.
 
 from unittest.mock import patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server import workspace
 from server.workspace.routes import os_integration
+
+
+@pytest.fixture(autouse=True)
+def _pin_darwin(monkeypatch):
+    """The argv assertions below pin the macOS branch (`open`, `open -R`).
+    CI runs on Linux, where the route correctly picks xdg-open, so pin the
+    platform rather than letting the expected argv follow the host."""
+    monkeypatch.setattr(os_integration, "_system", lambda: "Darwin")
 
 
 def _client() -> TestClient:
