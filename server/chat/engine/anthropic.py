@@ -116,8 +116,17 @@ class AnthropicAdapter:
         }
         # Effort → adaptive thinking + output_config.effort. Models with no
         # effort tier (Haiku) send neither.
+        #
+        # ``display`` is what puts text in the thinking blocks. It defaults to
+        # "omitted" on every current model (Opus 4.7+, Sonnet 5, Fable), which
+        # still streams a thinking block — it just carries an empty string. That
+        # reads in the UI as a "Thinking…" header that never fills in, because
+        # ThinkingStart fires on content_block_start while no ThinkingDelta ever
+        # carries text. Asking for "summarized" is what Opus 4.6 and Sonnet 4.6
+        # did by default, and it does not change what is thought or billed —
+        # only whether the summary comes back on the wire.
         if self.effort_label is not None:
-            body["thinking"] = {"type": "adaptive"}
+            body["thinking"] = {"type": "adaptive", "display": "summarized"}
             body["output_config"] = {
                 "effort": api_effort_for(self.effort_label, self._meta, self.model_key)
             }

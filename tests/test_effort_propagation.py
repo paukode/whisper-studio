@@ -119,8 +119,47 @@ def test_anthropic_body_sends_sonnet5s_own_top_rung_for_ultracode(monkeypatch):
         executor=None,
     )
     body = adapter._build_body([{"role": "user", "content": "hi"}], None, 0, 1, True)
-    assert body["thinking"] == {"type": "adaptive"}
+    assert body["thinking"] == {"type": "adaptive", "display": "summarized"}
     assert body["output_config"] == {"effort": "max"}
+
+
+def test_thinking_asks_for_a_visible_summary(monkeypatch):
+    """A thinking turn has to ask for the summary or it gets an empty one.
+
+    ``display`` defaults to "omitted" on every current model, and an omitted
+    display still streams a thinking block — carrying an empty string. The UI
+    opens a "Thinking…" block on content_block_start and then has nothing to
+    put in it, so the model looks like it is thinking silently forever. Verified
+    live against Bedrock: Opus 5 and Sonnet 5 return 0 thinking characters
+    without this field and a real summary with it.
+    """
+    from server.chat.engine import anthropic as A
+
+    monkeypatch.setattr(A, "_get_bedrock_client", lambda: object())
+    monkeypatch.setattr(
+        "server.infrastructure.config.load_config",
+        lambda *a, **k: {"chat_model_meta": {"opus5.0": _OPUS5}},
+    )
+
+    def _body(effort_label):
+        adapter = A.AnthropicAdapter(
+            model_key="opus5.0",
+            model_id=_OPUS5["id"],
+            system_prompt="s",
+            system_static="",
+            system_dynamic="",
+            caching_on=False,
+            cache_ttl="5m",
+            effort_label=effort_label,
+            force_skill=None,
+            loop=None,
+            executor=None,
+        )
+        return adapter._build_body([{"role": "user", "content": "hi"}], None, 0, 1, True)
+
+    assert _body("high")["thinking"]["display"] == "summarized"
+    # Haiku's None still means no thinking block at all — not a silent one.
+    assert "thinking" not in _body(None)
 
 
 # ── propagation: the workflow launch paths agree ─────────────────────────────
