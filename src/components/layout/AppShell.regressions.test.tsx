@@ -166,4 +166,57 @@ describe('AppShell — workspace status recovery', () => {
     expect(useUIStore.getState().wsConnected).toBe(true);
     expect(useUIStore.getState().wsPath).toBe('/repo');
   });
+
+  /**
+   * The other direction, and the one that cost a session: the sync only ever
+   * set `true`, so once the server lost the workspace (a second backend
+   * sharing WHISPER_HOME writing workspace_config.json, a stray /disconnect)
+   * the stale `true` survived every reload and focus event. The panel kept
+   * rendering a tree the server no longer had, while each turn assembled its
+   * tool pool with ws_connected=False and dropped the git and GitHub tools.
+   */
+  it('clears a stale connection when the server answers that it has none', async () => {
+    useUIStore.setState({ wsConnected: true, wsPath: '/repo' }); // stale
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(status(null)));
+
+    render(<AppShell />);
+    await act(async () => { await Promise.resolve(); });
+
+    expect(useUIStore.getState().wsConnected).toBe(false);
+    expect(useUIStore.getState().wsPath).toBe('');
+  });
+
+  it('clears a stale connection on focus, not just on mount', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(status('/repo'));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<AppShell />);
+    await act(async () => { await Promise.resolve(); });
+    expect(useUIStore.getState().wsConnected).toBe(true);
+
+    fetchMock.mockResolvedValue(status(null)); // workspace went away
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+      await Promise.resolve();
+    });
+    expect(useUIStore.getState().wsConnected).toBe(false);
+  });
+
+  /**
+   * Guards the fix above from undoing PR #71: an UNREACHABLE backend is not an
+   * answer, so it must never clear a live workspace. Only a clean response
+   * saying connected:false may.
+   */
+  it('keeps the workspace while the backend is unreachable', async () => {
+    vi.useFakeTimers();
+    useUIStore.setState({ wsConnected: true, wsPath: '/repo' });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Load failed')));
+
+    render(<AppShell />);
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+
+    expect(useUIStore.getState().wsConnected).toBe(true);
+    expect(useUIStore.getState().wsPath).toBe('/repo');
+    vi.useRealTimers();
+  });
 });

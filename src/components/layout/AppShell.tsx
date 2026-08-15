@@ -139,7 +139,8 @@ const AppShell: React.FC = () => {
     })();
   }, [loadConfig, loadModels, loadDataRetention, loadSkills, loadMCP, loadSessions]);
 
-  // Recover the connected workspace on load — and after a backend blip.
+  // Reconcile the connected workspace on load, after a backend blip, and
+  // whenever the window regains focus.
   //
   // This used to be a single fetch whose failure was swallowed, so any
   // moment the backend was unreachable (a restart, a sleep/wake, the app
@@ -148,6 +149,14 @@ const AppShell: React.FC = () => {
   // the workspace connected the whole time. Retry until the server gives
   // an authoritative answer, and re-ask whenever the window regains
   // focus, which covers outages longer than the backoff window.
+  //
+  // The answer is authoritative in BOTH directions. Only ever setting `true`
+  // let a stale `wsConnected` survive forever once the server lost the
+  // workspace (another process writing the shared workspace_config.json, a
+  // /disconnect from a second backend sharing WHISPER_HOME): the tree, the
+  // git panel and the chip all kept rendering a workspace the server no
+  // longer had, while every turn assembled its tool pool with
+  // ws_connected=False and silently dropped the git and GitHub tools.
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
@@ -161,6 +170,8 @@ const AppShell: React.FC = () => {
         if (cancelled) return;
         if (data.connected && data.path) {
           useUIStore.getState().setWsConnected(true, data.path);
+        } else {
+          useUIStore.getState().setWsConnected(false);
         }
         // A clean response is authoritative either way — stop retrying.
       } catch {
