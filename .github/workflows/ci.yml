@@ -8,12 +8,17 @@ name: CI
 # push builds only main + version tags (post-merge / release), while
 # pull_request covers the review gate. Listing both unscoped ran every check
 # twice on PRs.
+#
+# workflow_dispatch exists for the macOS backend job below, which is skipped on
+# pull_request to keep the pricier runner off every review cycle. Dispatch this
+# workflow against a branch to run it before merging a macOS-only change.
 
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
+  workflow_dispatch:
 
 jobs:
   backend:
@@ -55,6 +60,48 @@ jobs:
 
       - name: Format check (ruff)
         run: ruff format --check .
+
+      - name: Run tests
+        run: python -m pytest tests/
+
+  backend-macos:
+    name: Backend (pytest on macOS)
+    # Parts of the suite can only run on a macOS host: create_docx converts
+    # through /usr/bin/textutil, and the open-with / reveal routes shell out to
+    # `open`. Those tests skip on the ubuntu job above, so before this job
+    # existed a break in the textutil invocation reached a release with nothing
+    # red anywhere.
+    #
+    # Scoped to push (main + version tags) and manual dispatch, NOT every PR:
+    # macOS runners bill at 10x, and this repo's flow is verify locally then
+    # merge, with CI on main as the safety net. Use workflow_dispatch to run it
+    # against a branch when a change touches the macOS-only paths.
+    if: github.event_name != 'pull_request'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      # Same strip and torch constraint as the ubuntu job: the transcription /
+      # ML stack is not exercised by the suite, and installing it here would
+      # dominate the runtime on the pricier runner. Keep the two install steps
+      # in sync.
+      - name: Install Python deps (test subset)
+        run: |
+          grep -vE '^(mlx|mlx-whisper|parakeet-mlx|torch|torchaudio|speechbrain)==' requirements.txt > /tmp/requirements-ci.txt
+          printf 'torch==2.11.0\n' > /tmp/constraints-ci.txt
+          python -m pip install --upgrade pip
+          pip install -c /tmp/constraints-ci.txt -r /tmp/requirements-ci.txt
+
+      # Guard the reason this job exists: if textutil ever leaves the runner
+      # image, the docx tests would skip here too and the job would go green
+      # while covering nothing.
+      - name: Assert the macOS-only tooling is present
+        run: test -x /usr/bin/textutil
 
       - name: Run tests
         run: python -m pytest tests/
