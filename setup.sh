@@ -717,6 +717,12 @@ while lsof -i :"$PORT" >/dev/null 2>&1; do
 done
 export PORT
 
+# Only the packaged macOS shell owns the backend parent-watchdog contract.
+# A dev server launched from an app terminal can inherit its outer shell's
+# WHISPER_PARENT_PID; passing that stale PID to this new backend makes it exit
+# as soon as startup completes. setup.sh is the direct parent here, so clear it.
+unset WHISPER_PARENT_PID
+
 python -m server.main &
 SERVER_PID=$!
 

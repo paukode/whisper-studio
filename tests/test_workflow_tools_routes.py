@@ -105,10 +105,9 @@ def test_workflow_save_rejects_bad_name():
 
 
 def test_route_launch_list_get():
-    # The launch route creates the run row and returns its id immediately; the
-    # detached run itself executes on the server loop (covered end-to-end by the
-    # manager/runtime tests — TestClient's portal can't keep the background task
-    # alive between requests).
+    # The launch route creates the run row and returns its id immediately. This
+    # is also a regression test for TestClient portal shutdown: a detached task
+    # must not keep the short-lived request loop open after the response.
     c = _client()
     r = c.post("/api/workflows/runs", json={"script": _NOOP, "session_id": "s1"})
     assert r.status_code == 200

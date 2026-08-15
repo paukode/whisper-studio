@@ -41,7 +41,11 @@ import time
 
 from fastapi import APIRouter, Request
 
-from server.infrastructure.effort import infer_effort_tier, normalize_effort
+from server.infrastructure.effort import (
+    infer_effort_tier,
+    infer_supports_ultracode,
+    normalize_effort,
+)
 from server.infrastructure.paths import config_dir, repo_root
 
 log = logging.getLogger("whisper-studio")
@@ -329,6 +333,14 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
             }
         # Silently skip malformed entries — a typo in config.json shouldn't
         # take the server down. The model just won't appear in the picker.
+        # When the entry does not declare orchestration capability (legacy
+        # flat strings never do, rich entries may omit it), infer it from the
+        # actual model id via effort.infer_supports_ultracode so raw
+        # load_config() consumers match startup behavior. Explicit true/false
+        # values pass through untouched.
+        entry = meta.get(key)
+        if entry is not None and entry.get("supports_ultracode") is None:
+            entry["supports_ultracode"] = infer_supports_ultracode(entry, key)
     return ids, meta
 
 

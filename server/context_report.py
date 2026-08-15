@@ -158,14 +158,19 @@ def build_context_report(
     whisper_md = get_whisper_md_context(ws_path, question)
 
     kwargs = {"ws_path": ws_path, "session_id": session_id, "deferred_tool_index": ""}
+    injected = {"whisper_md": whisper_md, "memory_context": "", "session_memory_context": ""}
     sections: list[dict] = []
     texts: dict[str, str] = {}
     for section in registry.get_sections():
         if not section.enabled:
             continue
-        # whisper_md is content-injected by the caller, not resolved by the
-        # registry, so substitute the real thing rather than reporting it empty.
-        text = whisper_md if section.name == "whisper_md" else section.resolve(**kwargs)
+        # These sections are content-injected per request by the caller,
+        # not resolved by the registry. Reading the registry here would
+        # report whatever the LAST chat turn left behind (its recalled
+        # memories, its session summary) as if it were the shipped prompt.
+        # Substitute fresh values: the real WHISPER.md, and empty memory
+        # blocks, because a doctor report has no chat turn to recall for.
+        text = injected[section.name] if section.name in injected else section.resolve(**kwargs)
         if not text:
             continue
         cached = int(section.layer) <= int(PromptLayer.WORKSPACE)

@@ -301,8 +301,30 @@ def _schedule(coro, run_id: str, spawn) -> None:
     import asyncio
 
     try:
-        asyncio.get_running_loop()
-        spawn(coro, name=f"workflow-{run_id}")
+        loop = asyncio.get_running_loop()
+        # TestClient creates a short-lived portal loop for each request. A
+        # detached workflow task scheduled there prevents the response context
+        # from closing because AnyIO waits for every task on that loop. The real
+        # app loop is captured by init_task_service during lifespan startup, so
+        # only schedule directly when we are running on that long-lived loop.
+        server_loop = _server_loop()
+        if server_loop is None:
+            # No application lifespan owns this loop (for example a unit-test
+            # TestClient request). Drive the short workflow to completion in a
+            # helper thread so the request's portal has no detached task to wait
+            # for while it shuts down.
+            import threading
+
+            threading.Thread(
+                target=asyncio.run,
+                args=(coro,),
+                name=f"workflow-{run_id}",
+                daemon=True,
+            ).start()
+        elif loop is server_loop:
+            spawn(coro, name=f"workflow-{run_id}")
+        else:
+            asyncio.run_coroutine_threadsafe(coro, server_loop)
         return
     except RuntimeError:
         pass
