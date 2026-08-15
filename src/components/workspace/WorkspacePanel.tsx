@@ -424,11 +424,18 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
             className="btn btn-sm"
             id="wsDisconnectBtn"
             onClick={() => void handleDisconnect()}
-            title="Disconnect workspace"
+            // A bare ✕ sitting next to the collapse chevron reads as "close
+            // this panel", so it got clicked when the user meant to hide the
+            // tree — and disconnecting is not a view toggle: it drops the
+            // workspace, its editor tabs, and the session's shell cwd. An
+            // unplug glyph says what the button does.
+            title="Disconnect workspace (the tree hides with the chevron)"
+            aria-label="Disconnect workspace"
             type="button"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>
+              <line x1="12" y1="2" x2="12" y2="12"/>
             </svg>
           </button>
           {onCollapse && (

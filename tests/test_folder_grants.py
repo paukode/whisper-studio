@@ -192,6 +192,102 @@ def test_ws_open_folder_proceeds_silently_once_granted(tmp_path, monkeypatch):
     assert _json.loads(out)["opened"] is True
 
 
+# ── approving the card must OPEN the folder, not just record the grant ──────
+
+
+def _wire_workspace_to_tmp(monkeypatch, tmp_path):
+    """Point the workspace config at tmp and give it a real getter/setter, so
+    these tests observe an actual connect instead of a stubbed no-op."""
+    import server.workspace.executors as E
+    import server.workspace.state as S
+
+    monkeypatch.setattr(S, "WORKSPACE_CONFIG_PATH", str(tmp_path / "workspace.json"))
+    monkeypatch.setattr(S, "RECENT_WORKSPACES_PATH", str(tmp_path / "recent.json"))
+    monkeypatch.setattr(E, "load_workspace_config", S.load_workspace_config)
+    monkeypatch.setattr(E, "save_workspace_config", S.save_workspace_config)
+    monkeypatch.setattr(E, "save_recent_workspace", S.save_recent_workspace)
+    monkeypatch.setattr(E, "get_workspace_path", S.get_workspace_path)
+    return S
+
+
+def test_approving_the_card_actually_connects_the_workspace(tmp_path, monkeypatch):
+    """The regression: the executor recorded the grant and stopped, so the
+    user clicked Approve and the workspace stayed disconnected — then every
+    later tool still reported "no workspace connected"."""
+    import json as _json
+
+    from server.approval.bootstrap import _do_folder_access
+    from server.workspace.executors import execute_ws_open_folder
+
+    S = _wire_workspace_to_tmp(monkeypatch, tmp_path)
+    target = tmp_path / "project1"
+    target.mkdir()
+
+    out = execute_ws_open_folder({"path": str(target)})
+    assert out.startswith("[WS_APPROVAL]")
+    payload = _json.loads(out[len("[WS_APPROVAL]") :])
+
+    outcome = asyncio.run(_do_folder_access(payload))
+    assert outcome.ok is True
+    # The workspace is genuinely connected, not merely permitted.
+    assert S.get_workspace_path() == os.path.realpath(str(target))
+    # And the model gets the real connection info back, so it can proceed.
+    assert _json.loads(outcome.output)["opened"] is True
+
+
+def test_approving_the_card_creates_a_folder_that_does_not_exist_yet(tmp_path, monkeypatch):
+    """ws_open_folder has always been allowed to create the folder it opens.
+    The grant gate broke that: grant() refuses a path that isn't there, so
+    "make me a new project folder" failed after the user approved it."""
+    import json as _json
+
+    from server.approval.bootstrap import _do_folder_access
+    from server.workspace.executors import execute_ws_open_folder
+
+    S = _wire_workspace_to_tmp(monkeypatch, tmp_path)
+    target = tmp_path / "brand-new"
+    assert not target.exists()
+
+    out = execute_ws_open_folder({"path": str(target)})
+    payload = _json.loads(out[len("[WS_APPROVAL]") :])
+    outcome = asyncio.run(_do_folder_access(payload))
+
+    assert outcome.ok is True
+    assert target.is_dir()
+    assert S.get_workspace_path() == os.path.realpath(str(target))
+
+
+def test_reopening_after_a_disconnect_works_in_one_approval(tmp_path, monkeypatch):
+    """The exact sequence the user hit: connected, disconnected, reopened.
+    The reopen must take ONE approval and leave the workspace connected."""
+    import json as _json
+
+    from server.approval.bootstrap import _do_folder_access
+    from server.workspace.executors import execute_ws_open_folder
+
+    S = _wire_workspace_to_tmp(monkeypatch, tmp_path)
+    target = tmp_path / "project1"
+    target.mkdir()
+
+    # First open: one approval, connected.
+    payload = _json.loads(execute_ws_open_folder({"path": str(target)})[len("[WS_APPROVAL]") :])
+    asyncio.run(_do_folder_access(payload))
+    assert S.get_workspace_path() == os.path.realpath(str(target))
+
+    # Disconnect (the ✕ in the workspace panel).
+    cfg = S.load_workspace_config()
+    cfg["path"] = None
+    S.save_workspace_config(cfg)
+    assert S.get_workspace_path() is None
+
+    # Reopen: already granted, so it must connect straight away with NO
+    # second approval card.
+    out = execute_ws_open_folder({"path": str(target)})
+    assert not out.startswith("[WS_APPROVAL]")
+    assert _json.loads(out)["opened"] is True
+    assert S.get_workspace_path() == os.path.realpath(str(target))
+
+
 # ── the approval executor ───────────────────────────────────────────────────
 
 
@@ -266,3 +362,19 @@ def test_workflow_pin_inside_the_connected_workspace_needs_no_grant(tmp_path, mo
     resolved, err = resolve_workflow_workspace(str(sub))
     assert err == ""
     assert resolved == os.path.realpath(str(sub))
+
+
+def test_create_never_makes_a_directory_inside_a_protected_path(tmp_path, monkeypatch):
+    """`create` runs before grant() gets to refuse, so the sensitivity check has
+    to come first — otherwise approving a card for ~/.ssh/anything would leave a
+    new directory sitting inside the credential store before being rejected."""
+    from server.approval.bootstrap import _do_folder_access
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".ssh").mkdir()
+    victim = tmp_path / ".ssh" / "planted"
+
+    outcome = asyncio.run(_do_folder_access({"path": str(victim), "create": True, "connect": True}))
+    assert outcome.ok is False
+    assert "protected" in (outcome.error or "")
+    assert not victim.exists()  # nothing was created on the way to the refusal
