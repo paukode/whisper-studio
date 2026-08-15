@@ -100,6 +100,35 @@ def test_access_denied_returns_403(monkeypatch):
     assert "permission" in r.json()["error"].lower()
 
 
+def test_missing_credentials_read_is_non_fatal(monkeypatch):
+    from botocore.exceptions import NoCredentialsError
+
+    class MissingCredentials:
+        def get_account_data_retention(self):
+            raise NoCredentialsError()
+
+    c = _client(monkeypatch, MissingCredentials())
+    r = c.get("/api/data-retention")
+    assert r.status_code == 200
+    assert r.json()["mode"] == "unavailable"
+    assert r.json()["enabled"] is False
+    assert r.json()["available"] is False
+    assert "credentials" in r.json()["error"].lower()
+
+
+def test_missing_credentials_write_returns_503(monkeypatch):
+    from botocore.exceptions import NoCredentialsError
+
+    class MissingCredentials:
+        def put_account_data_retention(self, mode):
+            raise NoCredentialsError()
+
+    c = _client(monkeypatch, MissingCredentials())
+    r = c.put("/api/data-retention", json={"enabled": True})
+    assert r.status_code == 503
+    assert "credentials" in r.json()["error"].lower()
+
+
 def test_models_endpoint_includes_retention_flag():
     # Shape only — every model object carries the flag as a bool. (Does not
     # assert a specific model's value: this reads the live config.json, whose

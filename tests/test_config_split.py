@@ -229,3 +229,35 @@ def test_registry_sees_user_added_model(monkeypatch):
         assert "local_gemma" not in reg
     finally:
         cfg._invalidate_cache()
+
+
+# -- Legacy capability inference through the raw loader --------------------
+
+
+def test_raw_load_infers_supports_ultracode_for_legacy_config(split_env):
+    """A legacy config.json whose Sonnet 5 entries lack an explicit
+    ``supports_ultracode`` exposes the same capability through a direct
+    load_config() as startup resolves: inferred from the model id (True for
+    Sonnet 5, flat-string and rich shapes alike). An explicit ``false`` is
+    preserved untouched, never overridden by inference."""
+    from server.infrastructure.effort import infer_supports_ultracode
+
+    tmp = split_env
+    sonnet_id = "global.anthropic.claude-sonnet-5-20250929-v1:0"
+    legacy = {
+        "chat_models": {
+            "sonnet5": {"id": sonnet_id},  # rich shape, field absent
+            "flat5": sonnet_id,  # legacy flat string, field impossible
+            "muted5": {"id": sonnet_id, "supports_ultracode": False},
+        }
+    }
+    (tmp / "config.json").write_text(json.dumps(legacy))
+
+    meta = cfg.load_config()["chat_model_meta"]
+    # What startup resolves for a Sonnet 5 entry that lacks the explicit field.
+    expected = infer_supports_ultracode({"id": sonnet_id}, "sonnet5")
+    assert expected is True
+    assert meta["sonnet5"]["supports_ultracode"] is expected
+    assert meta["flat5"]["supports_ultracode"] is expected
+    # Explicit false wins over inference.
+    assert meta["muted5"]["supports_ultracode"] is False

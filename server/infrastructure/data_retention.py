@@ -22,7 +22,7 @@ import time
 
 import boto3
 from botocore.config import Config as BotoConfig
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -203,6 +203,27 @@ def _error_response(e: ClientError) -> JSONResponse:
     )
 
 
+def _transport_error_response(e: BotoCoreError, *, read_only: bool) -> JSONResponse:
+    """Translate credential and transport failures without leaking a raw 500.
+
+    Reading retention is an optional startup probe. If AWS is not configured or
+    the control plane is temporarily unreachable, report an unavailable state
+    with HTTP 200 so the rest of the UI can load cleanly. A requested mutation
+    must still fail, with a useful 503 that the consent flow can surface.
+    """
+    if isinstance(e, NoCredentialsError):
+        message = "AWS credentials are unavailable; Bedrock data retention cannot be checked."
+    else:
+        message = "The Bedrock data-retention service is temporarily unavailable."
+    log.warning("Data retention control-plane unavailable: %s", e)
+    if read_only:
+        return JSONResponse(
+            status_code=200,
+            content={"mode": "unavailable", "enabled": False, "available": False, "error": message},
+        )
+    return JSONResponse(status_code=503, content={"error": message})
+
+
 @router.get("")
 async def get_data_retention():
     """Report the account's current retention mode."""
@@ -211,6 +232,8 @@ async def get_data_retention():
         return {"mode": mode, "enabled": mode == SHARING_MODE}
     except ClientError as e:
         return _error_response(e)
+    except BotoCoreError as e:
+        return _transport_error_response(e, read_only=True)
 
 
 @router.put("")
@@ -224,3 +247,5 @@ async def put_data_retention(request: Request):
         return {"mode": mode, "enabled": mode == SHARING_MODE}
     except ClientError as e:
         return _error_response(e)
+    except BotoCoreError as e:
+        return _transport_error_response(e, read_only=False)
