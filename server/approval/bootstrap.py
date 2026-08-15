@@ -73,15 +73,46 @@ async def _do_folder_access(payload: dict) -> ApprovalOutcome:
     refusal = refuse_if_agent(payload, what="Granting access to a new folder")
     if refusal:
         return refusal
-    from server.security.folder_grants import _canonical, grant
+    from server.security.folder_grants import _canonical, grant, is_sensitive
 
     raw = payload.get("path") or ""
+    real = _canonical(raw)
+    if not real:
+        return ApprovalOutcome(ok=False, error="No folder path given — nothing to grant.")
+
+    # Refuse protected paths BEFORE creating anything. grant() would reject
+    # them anyway, but only after makedirs had already put a directory inside
+    # a credential store.
+    if is_sensitive(real):
+        return ApprovalOutcome(ok=False, error=f"{real} is protected and can never be granted.")
+
+    # ws_open_folder has always been allowed to create the folder it opens, and
+    # that is what the user just approved. Create it BEFORE granting so grant()
+    # keeps its own rule (never pre-authorize a path that does not exist) for
+    # every other caller.
+    if payload.get("create") and not os.path.isdir(real):
+        try:
+            os.makedirs(real, exist_ok=True)
+        except Exception as e:  # noqa: BLE001
+            return ApprovalOutcome(ok=False, error=f"Could not create folder: {e}")
+
     ok, err = grant(raw)
     if not ok:
         return ApprovalOutcome(ok=False, error=err)
+
+    # Finish the action the user actually approved. The card says "open this
+    # folder as the workspace", so recording the grant and stopping there left
+    # the workspace disconnected — the user clicked Approve and nothing opened.
+    # Connecting here also makes /api/approval/execute's before/after diff fire
+    # ws_folder_opened, so the panel switches to the new root.
+    if payload.get("connect"):
+        from server.workspace.executors import open_folder_now
+
+        return ApprovalOutcome(ok=True, output=open_folder_now(real))
+
     # Report the CANONICAL path, not the raw input — the user should see the
     # folder that was actually recorded, not "~/x" or a relative spelling.
-    return ApprovalOutcome(ok=True, output=f"Access granted to {_canonical(raw)}")
+    return ApprovalOutcome(ok=True, output=f"Access granted to {real}")
 
 
 async def _do_delete(payload: dict) -> ApprovalOutcome:
@@ -666,7 +697,7 @@ def register_defaults() -> None:
             summary=lambda p: f"Allow access to {p.get('path', '?')}",
             executor=_do_folder_access,
             risk_hint="medium",
-            payload_fields=["path", "reason"],
+            payload_fields=["path", "reason", "create", "connect"],
         ),
     )
 

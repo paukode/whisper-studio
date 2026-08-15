@@ -50,37 +50,14 @@ from .state import (
 log = logging.getLogger("whisper-studio")
 
 
-def execute_ws_open_folder(tool_input: dict) -> str:
-    """Create folder if needed, connect workspace, return connection info."""
-    path = tool_input.get("path", "").strip()
-    if not path:
-        return json.dumps({"error": "path is required"})
-    path = os.path.expanduser(path)
-    path = os.path.realpath(path)
-    existing = get_workspace_path()
-    if existing and os.path.realpath(existing) != path:
-        return json.dumps(
-            {
-                "error": f"A workspace is already connected at '{existing}'. Use ws_read_file, ws_write_file, and ws_create_file to work with it. Do not switch workspaces unless the user explicitly asks."
-            }
-        )
-    # Ask the user once before reaching into a folder they have not already
-    # approved, then remember the answer forever (folder_grants). Returning
-    # the approval sentinel hands this to the normal approval card; the
-    # model re-issues the call after the user says yes, and this check
-    # passes silently from then on — including for every later folder
-    # beneath the one they granted.
-    from server.security.folder_grants import needs_grant
+def open_folder_now(path: str) -> str:
+    """Create the folder if needed, connect it, and return connection info.
 
-    if needs_grant(path, existing):
-        payload = json.dumps(
-            {
-                "action": "folder_access",
-                "path": path,
-                "reason": "open this folder as the workspace",
-            }
-        )
-        return f"[WS_APPROVAL]{payload}"
+    The part of ws_open_folder that actually DOES the thing, split out so the
+    approval executor (server/approval/bootstrap.py::_do_folder_access) can
+    complete the very action the user approved instead of only recording the
+    permission for it. ``path`` must already be expanded and realpath'd.
+    """
     try:
         os.makedirs(path, exist_ok=True)
     except Exception as e:
@@ -101,6 +78,45 @@ def execute_ws_open_folder(tool_input: dict) -> str:
             "__ws_switch__": path,  # Signal frontend to switch workspace view
         }
     )
+
+
+def execute_ws_open_folder(tool_input: dict) -> str:
+    """Create folder if needed, connect workspace, return connection info."""
+    path = tool_input.get("path", "").strip()
+    if not path:
+        return json.dumps({"error": "path is required"})
+    path = os.path.expanduser(path)
+    path = os.path.realpath(path)
+    existing = get_workspace_path()
+    if existing and os.path.realpath(existing) != path:
+        return json.dumps(
+            {
+                "error": f"A workspace is already connected at '{existing}'. Use ws_read_file, ws_write_file, and ws_create_file to work with it. Do not switch workspaces unless the user explicitly asks."
+            }
+        )
+    # Ask the user once before reaching into a folder they have not already
+    # approved, then remember the answer forever (folder_grants). Approving
+    # the card OPENS the folder as well as recording the grant — the user
+    # approved "open this folder", so granting without opening would leave
+    # them staring at a still-disconnected workspace. From then on this check
+    # passes silently, including for every folder beneath the granted one.
+    from server.security.folder_grants import needs_grant
+
+    if needs_grant(path, existing):
+        payload = json.dumps(
+            {
+                "action": "folder_access",
+                "path": path,
+                "reason": "open this folder as the workspace",
+                # The approval executor finishes the job: create the folder if
+                # it does not exist yet (ws_open_folder has always been allowed
+                # to), then connect it.
+                "create": True,
+                "connect": True,
+            }
+        )
+        return f"[WS_APPROVAL]{payload}"
+    return open_folder_now(path)
 
 
 # --- Workspace Tool Executors ---
