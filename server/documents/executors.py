@@ -20,6 +20,12 @@ There is no diff to preview (the model supplies HTML/slide-data/rows/
 paragraphs, not literal file bytes), so the approval card shows a plain
 "Create <path> (<n> bytes)" confirmation (preview="text") rather than a
 diff.
+
+office_script is the exception to that build-then-approve shape. It carries
+model-written Python rather than data, so it follows run_python's contract
+instead: the executor only packages the code, the approval card shows it,
+and it runs (in server/documents/script.py's sandbox) after the click. Its
+read-only companion inspect_document needs no approval at all.
 """
 
 import base64
@@ -31,6 +37,8 @@ import subprocess
 import tempfile
 from xml.sax.saxutils import escape as _xml_escape
 
+from server.documents.inspect import inspect_document
+from server.documents.script import resolve_source_path, validate_script_request
 from server.documents.standards import (
     apply_pptx_standard,
     apply_xlsx_standard,
@@ -240,6 +248,56 @@ def _exec_create_xlsx(tool_input, transcript, current_attachments):
         return f"Error building xlsx: {e}"
 
     return _approval_result(resolved, path, buf.getvalue(), "xlsx")
+
+
+@register_executor("inspect_document", read_only=True, concurrent_safe=True)
+def _exec_inspect_document(tool_input, transcript, current_attachments):
+    """Read-only structural map of an existing Office file. No approval:
+    it opens the file, reports its skeleton, and changes nothing."""
+    ok, resolved = resolve_source_path(tool_input.get("path", ""))
+    if not ok:
+        return resolved
+    return inspect_document(resolved)
+
+
+@register_executor("office_script", read_only=False, concurrent_safe=False)
+def _exec_office_script(tool_input, transcript, current_attachments):
+    """Package model-written python-docx/pptx/openpyxl code for approval.
+
+    Nothing runs here — the code executes only after the user clicks Yes
+    (server/documents/approval.py's _do_office_script). What this DOES do is
+    resolve and validate the request up front, so the errors a model can fix
+    on its own (missing code, wrong extension, unreadable source file) come
+    back as tool results instead of wasting the user's click."""
+    resolved = _resolve_target("office_script", tool_input)
+    if isinstance(resolved, str):
+        return resolved
+    kind, target = resolved
+    path = tool_input.get("path", "")
+
+    # The extension that decides the format is the one on the FINAL
+    # destination: with destination_path set, that is the resolved target,
+    # not the (possibly bare) suggested `path`.
+    named = path if kind == "workspace" else target
+    out_format = os.path.splitext(named)[1].lower().lstrip(".")
+    code = tool_input.get("code", "")
+    source_path = str(tool_input.get("source_path") or "").strip()
+    error = validate_script_request(code, out_format, source_path)
+    if error:
+        return error
+
+    payload = json.dumps(
+        {
+            "action": "office_script",
+            "path": path if kind == "workspace" else target,
+            "dest_kind": kind,
+            "format": out_format,
+            "code": code,
+            "source_path": source_path,
+            "summary": str(tool_input.get("summary") or "").strip(),
+        }
+    )
+    return f"[WS_APPROVAL]{payload}"
 
 
 @register_executor("create_pdf", read_only=False, concurrent_safe=False)
