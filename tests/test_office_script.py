@@ -454,3 +454,65 @@ def test_approval_summary_distinguishes_editing_from_building():
     assert _summary({"path": "a/b.docx", "summary": "color cells"}) == "Build b.docx — color cells"
     edit = _summary({"path": "b.docx", "summary": "color cells", "source_path": "b.docx"})
     assert edit == "Edit b.docx — color cells"
+
+
+# ── One deliverable, one file ───────────────────────────────────────────
+
+
+def test_every_document_tool_states_the_same_path_rule():
+    """Iterating on one deliverable must not mint a filename per attempt
+    (the four-strays-for-one-document bug): every document-producing tool
+    description carries the reuse-the-same-path rule."""
+    from server.documents.tools import DOCUMENT_TOOLS
+
+    producing = [t for t in DOCUMENT_TOOLS if t["name"] != "inspect_document"]
+    assert len(producing) == 5
+    for tool in producing:
+        assert "ONE DELIVERABLE, ONE FILE" in tool["description"], tool["name"]
+
+
+def test_office_script_advertises_in_place_revision():
+    from server.documents.tools import OFFICE_SCRIPT_TOOL
+
+    desc = OFFICE_SCRIPT_TOOL["description"]
+    assert "MAY be the same file as source_path" in desc
+    src = OFFICE_SCRIPT_TOOL["input_schema"]["properties"]["source_path"]
+    assert "same file as the destination" in src["description"]
+
+
+def test_write_outcome_points_the_next_revision_at_the_same_path(tmp_path, monkeypatch):
+    """The write result is read at the exact moment the model picks its next
+    attempt's path — it must say: same destination, replaces the file."""
+    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: str(tmp_path))
+    outcome = _run(_do_office_script(_payload(tmp_path, _MAKE_DOCX)))
+    assert outcome.ok, outcome.error
+    assert "same destination" in outcome.output
+    assert "unless the user asks for a separate copy" in outcome.output
+
+
+def test_revising_in_place_replaces_rather_than_multiplies(tmp_path):
+    """source_path == destination is the supported revision flow: the input
+    is copied before the run, the output replaces the file, and the folder
+    ends up holding exactly one file."""
+    dest = str(tmp_path / "report.docx")
+    build = (
+        "from docx import Document\nd = Document()\nd.add_paragraph('v1')\nd.save(OUTPUT_PATH)\n"
+    )
+    outcome = _run(_do_office_script(_payload(tmp_path, build, "absolute", dest)))
+    assert outcome.ok, outcome.error
+
+    revise = (
+        "from docx import Document\n"
+        "d = Document(INPUT_PATH)\n"
+        "d.add_paragraph('v2')\n"
+        "d.save(OUTPUT_PATH)\n"
+    )
+    outcome = _run(
+        _do_office_script(_payload(tmp_path, revise, "absolute", dest, source_path=dest))
+    )
+    assert outcome.ok, outcome.error
+
+    from docx import Document
+
+    assert [p.text for p in Document(dest).paragraphs] == ["v1", "v2"]
+    assert [p.name for p in tmp_path.iterdir()] == ["report.docx"]
