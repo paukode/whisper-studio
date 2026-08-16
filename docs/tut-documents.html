@@ -149,9 +149,15 @@
     <p>Everything above is the reading direction. The reverse works too: ask for "a Word doc of this
       summary" or "a deck from these notes" and Whisper Studio builds the finished file in a standard
       layout (A4 Word docs, 16:9 decks, formatted spreadsheets, A4 PDFs) and saves it after a single
-      approval card, never asking where to put it. The full flow, including the four document tools
-      and the staged-then-move save, is in
-      <a href="tut-save-files.html">Saving files and creating documents</a>.</p>
+      approval card, never asking where to put it.</p>
+    <p>Those standard layouts are quick but fixed. When you want something specific &mdash; shade
+      these table cells, merge that column, drop in a logo, apply a number format &mdash; or when you
+      want to change a document you already have rather than get a new one, the assistant switches to
+      writing real python-docx / python-pptx / openpyxl code against your file. You see that code on
+      the approval card before it runs, it works on a copy so your original is never touched, and the
+      result is saved the same way as everything else. Just ask for what you want in the file; the
+      routing is automatic. The full flow, including the document tools and the staged-then-move
+      save, is in <a href="tut-save-files.html">Saving files and creating documents</a>.</p>
 
     <h2 id="how-it-works">Go deeper</h2>
     <p>This tutorial stays at the "what you click" level. For the type-aware router, the OCR fallback,

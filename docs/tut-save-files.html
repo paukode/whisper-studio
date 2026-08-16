@@ -102,11 +102,13 @@
         everything outside a workspace.</p></div>
     </div>
 
-    <h2 id="document-tools">The four document tools</h2>
+    <h2 id="document-tools">The four quick document tools</h2>
     <p>Ask for a document in plain language ("turn this into a deck", "make me a spreadsheet of
       these") and Claude reaches for the matching tool. Each one builds real Office or PDF bytes on
       your machine, and each appends the right extension if it is missing, so the deliverable always
-      opens in the right app.</p>
+      opens in the right app. These four are the fast path for ordinary documents; for anything with
+      specific formatting, or for editing a file you already have, see
+      <a href="#office-script">full control</a> below.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>Produces</th><th>You describe</th></tr></thead>
       <tbody>
@@ -130,6 +132,37 @@
         <tr><td>pdf</td><td>A4 page, 11pt body with comfortable line spacing.</td></tr>
       </tbody>
     </table></div>
+
+    <h2 id="office-script">Full control: formatting and editing</h2>
+    <p>The standard layout is a good default and a hard ceiling. The four tools above take a fixed
+      description &mdash; a document body, a title and bullets, rows of values &mdash; so anything
+      outside that vocabulary has nowhere to go: cell shading and fills, merged cells, custom
+      borders, per-word fonts and colors, shapes, text boxes, images, charts, number formats,
+      speaker notes. The Word path drops the most: it converts your content through macOS
+      <code>textutil</code>, which discards table cell background colors on the way, so asking for a
+      colored table there produces an uncolored one and reports no error. And none of the four can
+      touch a file that already exists; they only ever create a new one.</p>
+    <p>So when you ask for something specific &mdash; "shade the header row blue", "merge those
+      cells", "color these squares to make a shape", "add our logo to slide 1" &mdash; or when you
+      point at a document you already have and ask for a change, Claude switches to
+      <code>office_script</code>: it writes real Python against your file using the same libraries
+      Word, Excel, and PowerPoint tooling everywhere else uses (python-docx, python-pptx, openpyxl).
+      Whatever those libraries can express, you can ask for. You do not need to name the tool; asking
+      for the formatting is enough.</p>
+    <p>Before editing, Claude usually calls <code>inspect_document</code> first. That is a read-only
+      look at the file's structure &mdash; which tables exist and how many rows and columns each has,
+      which sheet ranges are used and what is merged, what sits on each slide &mdash; so it colors
+      the cells you actually meant instead of guessing at coordinates.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>What you approve here is <em>code</em>, so the card shows you the
+        code rather than a summary, and nothing runs until you click. It then runs sandboxed, in a
+        throwaway directory, against a <em>copy</em> of your file &mdash; your original is never
+        opened for writing, so a script that goes wrong cannot damage it. Only after the script
+        succeeds is the result written to the destination. This is its own permission category
+        ("Word/Excel/PowerPoint scripts"), separate from file writes and shell commands, so
+        approving one never quietly covers the others.</p></div>
+    </div>
 
     <h2 id="plain-files">Plain files: save_file and ws_create_file</h2>
     <p>Not everything is an Office document. Two more tools ride the same flow:</p>

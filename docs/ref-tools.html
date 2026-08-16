@@ -146,8 +146,28 @@
         <tr><td><code>create_pptx</code></td><td>Create a PowerPoint deck, one slide per entry with a title and bulleted body. Standard layout: 16:9 widescreen.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>create_xlsx</code></td><td>Create an Excel workbook, one worksheet per entry. Standard layout: bold frozen header row and fitted column widths.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>create_pdf</code></td><td>Create a simple PDF: an optional title plus plain-text paragraphs. Standard layout: A4 page, 11pt body.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>office_script</code></td><td>Build or edit a .docx/.xlsx/.pptx by running real python-docx / python-pptx / openpyxl code. The escape hatch from the fixed schemas above: cell shading, merges, shapes, images, charts, number formats, and editing files that already exist.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>inspect_document</code></td><td>Read-only structural map of an existing .docx/.xlsx/.pptx: table indices and dimensions, sheet ranges and merged cells, slide shape inventories. Reported in the coordinates the editing libraries use.</td><td>&mdash;</td></tr>
       </tbody>
     </table></div>
+
+    <p>The four <code>create_*</code> tools take a fixed schema, which is also their ceiling. They
+      cannot express cell shading, merges, custom borders, shapes, images, or charts, and they only
+      ever create a new file. The <code>.docx</code> path is lossier still: it converts HTML through
+      macOS <code>textutil</code>, which drops table cell background colors silently, so asking
+      <code>create_docx</code> for a colored table returns an uncolored one with no error. Anything
+      beyond plain prose, plain bullets, or plain rows belongs in <code>office_script</code>, and so
+      does every edit of an existing document.</p>
+    <p><code>office_script</code> carries model-written Python rather than data, so it follows
+      <code>run_python</code>'s contract instead of the build-then-approve shape above: the approval
+      card shows the code, and it runs only after the click, sandboxed, in a throwaway directory
+      (<code class="path">server/documents/script.py</code>). The script reads
+      <code>INPUT_PATH</code> &mdash; a <em>copy</em> of the source, so the user's own file is never
+      touched &mdash; and writes <code>OUTPUT_PATH</code>; only then does the approval handler
+      re-resolve the destination and place the result. A script cannot choose where its output lands,
+      and a script that fails writes nothing anywhere. It sits in its own <code>office-script</code>
+      approval category, so approving document writes never silently authorizes running code, and
+      approving shell commands never silently authorizes writing documents.</p>
 
     <h2 id="git">Git &amp; GitHub</h2>
     <p>A full git surface, from status and history to branching, stashing, and opening a pull request,
@@ -439,7 +459,7 @@
       <dt><code class="path">server/chat/tool_pool.py</code> / <code class="path">server/chat/tool_partition.py</code></dt><dd>Catalogue assembly (<code>assemble_full_catalog</code>) and the core/deferred partition (<code>CORE_TOOLS</code>, <code>partition_pool</code>).</dd>
       <dt><code class="path">server/agent_tools/</code></dt><dd>Config, skills, MCP, tool-search, and the agent and team tool schemas.</dd>
       <dt><code class="path">server/workspace/tools.py</code></dt><dd>The <code>ws_*</code> workspace and file tools, plus <code>save_file</code>.</dd>
-      <dt><code class="path">server/documents/tools.py</code></dt><dd>The <code>create_docx</code> / <code>create_pptx</code> / <code>create_xlsx</code> / <code>create_pdf</code> document tools.</dd>
+      <dt><code class="path">server/documents/tools.py</code></dt><dd>The <code>create_docx</code> / <code>create_pptx</code> / <code>create_xlsx</code> / <code>create_pdf</code> document tools, plus <code>office_script</code> and <code>inspect_document</code>.</dd>
       <dt><code class="path">server/git/tools.py</code></dt><dd>The <code>git_*</code> tool schemas.</dd>
       <dt><code class="path">server/git/gh_tools.py</code></dt><dd>The <code>github</code>, <code>github_api</code>, and <code>github_api_write</code> tools.</dd>
       <dt><code class="path">server/executors/tools.py</code></dt><dd><code>CORE_EXECUTOR_TOOLS</code>: command, code, AWS, web, and content tools shipped as native built-ins.</dd>
