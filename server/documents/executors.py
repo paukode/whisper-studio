@@ -33,18 +33,18 @@ import io
 import json
 import logging
 import os
-import subprocess
-import tempfile
 from xml.sax.saxutils import escape as _xml_escape
 
+from server.documents.docx_html import render_html
 from server.documents.inspect import inspect_document
 from server.documents.script import resolve_source_path, validate_script_request
 from server.documents.standards import (
+    DOCX_BODY_FONT,
+    DOCX_BODY_SIZE_PT,
+    apply_docx_standard,
     apply_pptx_standard,
     apply_xlsx_standard,
-    docx_html_skeleton,
     fit_pptx_placeholders,
-    normalize_docx_standard,
     pdf_standard_styles,
 )
 from server.executors import register_executor
@@ -53,12 +53,10 @@ from server.workspace.state import resolve_write_destination
 
 log = logging.getLogger("whisper-studio")
 
-_TEXTUTIL = "/usr/bin/textutil"
 # Generous but bounded: this is HTML *source*, not the rendered document —
 # a few MB of markup is already a very large document. Guards against
-# shelling out to textutil with a runaway payload.
+# handing the parser a runaway payload.
 _MAX_HTML_CONTENT_BYTES = 5_000_000
-_TEXTUTIL_TIMEOUT_SECONDS = 30
 
 
 def _resolve_target(tool_name: str, tool_input: dict) -> tuple[str, str] | str:
@@ -124,51 +122,23 @@ def _exec_create_docx(tool_input, transcript, current_attachments):
             f"{_MAX_HTML_CONTENT_BYTES} bytes."
         )
 
-    fd, tmp_path = tempfile.mkstemp(suffix=".docx", prefix="whisper_docx_")
-    os.close(fd)
-    try:
-        try:
-            result = subprocess.run(
-                [
-                    _TEXTUTIL,
-                    "-stdin",
-                    "-format",
-                    "html",
-                    "-convert",
-                    "docx",
-                    "-output",
-                    tmp_path,
-                ],
-                input=docx_html_skeleton(html_content),
-                capture_output=True,
-                text=True,
-                timeout=_TEXTUTIL_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired:
-            return f"Error: textutil timed out after {_TEXTUTIL_TIMEOUT_SECONDS}s."
-        except OSError as e:
-            return f"Error: could not run textutil: {e}"
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "").strip()
-            return f"Error: textutil failed converting HTML to docx: {detail}"
-        try:
-            with open(tmp_path, "rb") as f:
-                data = f.read()
-        except OSError as e:
-            return f"Error reading converted docx: {e}"
-    finally:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
+    from docx import Document
 
-    if not data:
-        return "Error: textutil produced an empty docx file."
     try:
-        data = normalize_docx_standard(data)
+        doc = Document()
+        apply_docx_standard(doc)
+        render_html(
+            doc,
+            html_content,
+            body_font=DOCX_BODY_FONT,
+            body_size_pt=DOCX_BODY_SIZE_PT,
+        )
+        buf = io.BytesIO()
+        doc.save(buf)
     except Exception as e:
-        return f"Error applying the standard document layout: {e}"
-    return _approval_result(resolved, path, data, "docx")
+        return f"Error building docx: {e}"
+
+    return _approval_result(resolved, path, buf.getvalue(), "docx")
 
 
 @register_executor("create_pptx", read_only=False, concurrent_safe=False)

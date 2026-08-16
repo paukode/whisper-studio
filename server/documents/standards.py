@@ -3,8 +3,8 @@
 One place defines what "a normal-looking document" means so create_docx /
 create_pptx / create_xlsx / create_pdf all produce consistent, professional
 output by default, instead of each underlying library's own quirky default
-(textutil: US Letter + whatever system font the HTML resolved to; reportlab:
-US Letter 10pt; python-pptx: the ancient 4:3 slide size).
+(python-docx: US Letter, 11pt Calibri body but blue Calibri Light headings;
+reportlab: US Letter 10pt; python-pptx: the ancient 4:3 slide size).
 
 The standard:
 - docx: A4 page, 1-inch margins, Calibri 11pt body, 16/13/12pt headings.
@@ -14,93 +14,56 @@ The standard:
 - pdf: A4 page, 1-inch margins, 11pt body with comfortable leading.
 """
 
-import io
-import re
-import zipfile
-
 # ── docx ──────────────────────────────────────────────────────────────
 
-# A4 in twips (1/20pt): 210x297mm.
-_A4_PGSZ = '<w:pgSz w:w="11906" w:h="16838"/>'
-# 1-inch margins all around, standard 0.5-inch header/footer.
-_A4_PGMAR = (
-    '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" '
-    'w:header="720" w:footer="720" w:gutter="0"/>'
-)
+# A4 in millimetres. python-docx's bundled template is US Letter.
+DOCX_PAGE_WIDTH_MM = 210
+DOCX_PAGE_HEIGHT_MM = 297
+DOCX_MARGIN_INCHES = 1
 
-_PGSZ_RE = re.compile(r"<w:pgSz[^/]*/>")
-_PGMAR_RE = re.compile(r"<w:pgMar[^/]*/>")
-
-# Fonts the Cocoa HTML importer falls back to when Calibri isn't installed
-# (it's a Microsoft font, absent on Macs without Office). The run properties
-# in the emitted OOXML get rewritten to Calibri so the document opens with
-# the intended font wherever it ends up; Word substitutes sensibly on
-# systems that lack it. Deliberately narrow — Courier/monospace runs from
-# <code> blocks are left alone.
-_FALLBACK_FONTS_RE = re.compile(
-    r'(w:(?:ascii|hAnsi|cs|eastAsia)=")'
-    r"(?:Helvetica Neue|Helvetica|Times New Roman|Times|\.AppleSystemUIFont|\.SF NS(?: Text)?)"
-    r'(")'
-)
-
-# The Cocoa HTML importer converts CSS point sizes at 96 DPI, inflating them
-# by 4/3 (11pt CSS arrives as w:sz 29 = 14.5pt in Word). Scaling every run's
-# size back by 0.75 restores the sizes the skeleton CSS asked for: body 11pt
-# (w:sz 22), h1 16pt, h2 13pt, h3 12pt. The Cocoa writer emits the
-# non-standard <w:sz-cs> spelling alongside <w:sz>; both are matched.
-_SZ_RE = re.compile(r'(<w:sz(?:-cs)?\s+w:val=")(\d+)(")')
+DOCX_BODY_FONT = "Calibri"
+DOCX_BODY_SIZE_PT = 11
+# h1/h2/h3 carry the house sizes; h4-h6 inherit the template's own ramp.
+DOCX_HEADING_SIZES_PT = {1: 16, 2: 13, 3: 12}
 
 
-def _rescale_sz(match: re.Match) -> str:
-    return f"{match.group(1)}{round(int(match.group(2)) * 0.75)}{match.group(3)}"
+def apply_docx_standard(doc) -> None:
+    """Put an open python-docx Document on the house standard: A4 page,
+    1-inch margins, Calibri 11pt body, black 16/13/12pt headings.
 
+    Set on the STYLES, so it holds for content added afterwards and for
+    anything the renderer does not stamp per run. Headings need the explicit
+    pass because the bundled template styles them as blue Calibri Light,
+    which reads as a template rather than as a plain document."""
+    from docx.oxml.ns import qn
+    from docx.shared import Inches, Mm, Pt, RGBColor
 
-# Body/heading sizes the HTML skeleton asks the converter for. The Cocoa
-# importer honors font-size reliably (it becomes w:sz on each run) even when
-# the font-family needs the post-conversion rewrite above.
-DOCX_STANDARD_CSS = (
-    "body { font-family: Calibri, 'Helvetica Neue', sans-serif; font-size: 11pt; } "
-    "h1 { font-size: 16pt; } h2 { font-size: 13pt; } h3 { font-size: 12pt; } "
-    "table { border-collapse: collapse; } td, th { border: 0.5pt solid #999999; padding: 3pt; }"
-)
+    for section in doc.sections:
+        section.page_width = Mm(DOCX_PAGE_WIDTH_MM)
+        section.page_height = Mm(DOCX_PAGE_HEIGHT_MM)
+        section.left_margin = Inches(DOCX_MARGIN_INCHES)
+        section.right_margin = Inches(DOCX_MARGIN_INCHES)
+        section.top_margin = Inches(DOCX_MARGIN_INCHES)
+        section.bottom_margin = Inches(DOCX_MARGIN_INCHES)
 
+    normal = doc.styles["Normal"]
+    normal.font.name = DOCX_BODY_FONT
+    normal.font.size = Pt(DOCX_BODY_SIZE_PT)
+    # font.name only writes w:ascii/w:hAnsi; without the east-asian slot Word
+    # substitutes its own font for any run it decides is not Latin.
+    normal.element.rPr.rFonts.set(qn("w:eastAsia"), DOCX_BODY_FONT)
 
-def docx_html_skeleton(body_html: str) -> str:
-    """Wrap tool-supplied body HTML in the standard skeleton. Content that
-    is already a full document (has its own <html>) is trusted as-is."""
-    if "<html" in body_html.lower():
-        return body_html
-    return (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
-        f"<style>{DOCX_STANDARD_CSS}</style></head><body>{body_html}</body></html>"
-    )
-
-
-def normalize_docx_standard(data: bytes) -> bytes:
-    """Rewrite a textutil-produced docx to the standard layout: A4 page,
-    1-inch margins, Calibri run fonts (see _FALLBACK_FONTS_RE). Everything
-    else in the archive passes through untouched."""
-    src = zipfile.ZipFile(io.BytesIO(data))
-    out_buf = io.BytesIO()
-    with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as out:
-        for item in src.infolist():
-            payload = src.read(item.filename)
-            if item.filename == "word/document.xml":
-                xml = payload.decode("utf-8")
-                if _PGSZ_RE.search(xml):
-                    xml = _PGSZ_RE.sub(_A4_PGSZ, xml)
-                    xml = _PGMAR_RE.sub(_A4_PGMAR, xml)
-                elif "</w:body>" in xml:
-                    # No section properties at all — append a minimal one.
-                    xml = xml.replace(
-                        "</w:body>",
-                        f"<w:sectPr>{_A4_PGSZ}{_A4_PGMAR}</w:sectPr></w:body>",
-                    )
-                xml = _FALLBACK_FONTS_RE.sub(r"\1Calibri\2", xml)
-                xml = _SZ_RE.sub(_rescale_sz, xml)
-                payload = xml.encode("utf-8")
-            out.writestr(item, payload)
-    return out_buf.getvalue()
+    for level in range(1, 7):
+        try:
+            style = doc.styles[f"Heading {level}"]
+        except KeyError:
+            continue
+        style.font.name = DOCX_BODY_FONT
+        style.font.bold = True
+        style.font.color.rgb = RGBColor(0, 0, 0)
+        size = DOCX_HEADING_SIZES_PT.get(level)
+        if size:
+            style.font.size = Pt(size)
 
 
 # ── pptx ──────────────────────────────────────────────────────────────
