@@ -89,9 +89,42 @@ def _workspace_prompt_payload(tool_name: str, tool_input: dict, reason: str) -> 
     The picker lets the user choose where the pending write should happen.
     After they pick (or create) a folder and it's connected as the workspace,
     the frontend replays the original intent via a continuation turn so the
-    LLM re-issues the tool call against the now-connected workspace."""
-    recent = load_recent_workspaces()[:5]
+    LLM re-issues the tool call against the now-connected workspace.
+
+    The payload carries the two facts the card needs to explain ITSELF:
+    ``workspace`` (the root the containment check actually used) and
+    ``attempted`` (the absolute path it rejected). Without them the card can
+    only show the bare ``reason`` slug, which is unreadable and, worse,
+    unfalsifiable: a user looking at a workspace panel that still renders the
+    folder they connected has no way to see that the server's root moved
+    underneath them (another process writing the shared workspace_config.json
+    is the usual culprit).
+
+    ``recent`` is pruned to directories that still exist and never includes the
+    currently connected root. Dead entries linger in the recents file for a
+    long time — a pytest temp workspace that leaked into it outlives the test
+    run by weeks — and the first entry is what the card promotes as its primary
+    button, so an unpruned list hands the user a button that can only fail.
+    """
+    ws = get_workspace_path()
+    ws_real = os.path.realpath(ws) if ws else None
+
+    def _offerable(path: str) -> bool:
+        if not os.path.isdir(path):
+            return False
+        return os.path.realpath(path) != ws_real
+
+    recent = [p for p in load_recent_workspaces() if _offerable(p)][:5]
     suggested = recent[0] if recent else os.path.expanduser("~/Documents")
+
+    # The path the check rejected. Only meaningful when a workspace WAS
+    # connected: with no workspace there is nothing to have been outside of,
+    # and the tool's relative path has no absolute form yet.
+    attempted = None
+    raw_path = tool_input.get("path")
+    if ws and raw_path:
+        attempted = os.path.realpath(os.path.join(ws, str(raw_path)))
+
     payload = json.dumps(
         {
             "reason": reason,
@@ -99,6 +132,8 @@ def _workspace_prompt_payload(tool_name: str, tool_input: dict, reason: str) -> 
             "tool_input": {k: v for k, v in tool_input.items() if not k.startswith("__")},
             "suggested": suggested,
             "recent": recent,
+            "workspace": ws,
+            "attempted": attempted,
         }
     )
     return f"[WS_WORKSPACE_PROMPT]{payload}"
