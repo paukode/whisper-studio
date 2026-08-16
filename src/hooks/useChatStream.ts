@@ -266,7 +266,15 @@ export function useChatStream(): UseChatStreamReturn {
       // Empty-bubble fallback (matching original chat-stream.js). Shared with
       // the approval-resume leg — see ./chatStream/emptyResponse.
       // Skip when a user_question was emitted — the question card IS the response
-      if (!fullResponse && !result.hasPendingApprovals && !result.hasUserQuestion) {
+      // — and when a mid-turn card already flushed this turn's text into the
+      // transcript, where "no text response from the model" would be a lie
+      // printed directly under the model's own paragraphs.
+      if (
+        !fullResponse &&
+        !result.hasPendingApprovals &&
+        !result.hasUserQuestion &&
+        result.flushedSegments === 0
+      ) {
         fullResponse = emptyResponseFallback(store());
       }
 
@@ -280,11 +288,17 @@ export function useChatStream(): UseChatStreamReturn {
         previewImage: t.previewImage,
       }));
 
-      // When pending approvals exist but no text response, add a message
-      // with the accumulated tool traces so they don't vanish when
-      // finishStream clears the streaming state. Team reports folded so far
-      // ride along — the approval pause must not orphan a live team card.
-      if (!fullResponse && result.hasPendingApprovals && finalToolUse.length > 0) {
+      // When the turn has no text of its own but did work, add a message with
+      // the accumulated tool traces so they don't vanish when finishStream
+      // clears the streaming state. Two ways to get there: a pending approval
+      // paused the turn, or a card flushed the text above it and the model
+      // called more tools before ending. Team reports folded so far ride along
+      // — neither case may orphan a live team card.
+      if (
+        !fullResponse &&
+        (result.hasPendingApprovals || result.flushedSegments > 0) &&
+        finalToolUse.length > 0
+      ) {
         store().addMessage({
           role: 'assistant',
           content: '',

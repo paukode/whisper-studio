@@ -62,6 +62,11 @@ export async function readSSEStream(
   outputTokens: number;
   hasPendingApprovals: boolean;
   hasUserQuestion: boolean;
+  /** How many mid-turn segments were committed before a card (see
+   *  `flushSegment`). Non-zero means this turn's text is ALREADY in the
+   *  transcript, so callers must not treat an empty `fullResponse` as "the
+   *  model said nothing" and synthesize the empty-answer fallback over it. */
+  flushedSegments: number;
   /** Index-grounding summary for this turn (folders searched / passages
    *  injected), from the `grounding` SSE event. Undefined on resume turns. */
   grounding?: { searched: number; passages: number };
@@ -99,7 +104,54 @@ export async function readSSEStream(
   let pendingArtifact: { title: string; html: string; description: string } | null = null;
   const pendingVisuals: VizArtifact[] = [];
   let pendingPlan: { id: string; title: string; summary: string } | null = null;
-  const thinkingBlockStart = performance.now();
+  let flushedSegments = 0;
+  // Not const: each flushed segment restarts the thinking clock, so a "Thinking
+  // 42s" after a card measures the wait since that card rather than replaying
+  // the whole turn's elapsed time under every segment.
+  let thinkingBlockStart = performance.now();
+
+  /**
+   * Close off everything streamed so far as its own assistant message, so a
+   * card appended next lands BELOW the prose and tool traces that led to it.
+   *
+   * Cards arrive mid-turn; the turn's text is committed only when the stream
+   * ends. Left alone, that ordering is inverted on screen — the card is
+   * appended immediately and the whole discussion lands underneath it, which
+   * is what pushed a workflow's Approve button up out of view.
+   *
+   * Everything folded in here is drained: leaving it would re-commit the same
+   * prose below the card at stream end and render every tool chip twice.
+   * A no-op when there is nothing to commit (a card that arrives before any
+   * text or tool call), so it never adds an empty bubble.
+   */
+  const flushSegment = (): void => {
+    const toolUse: ToolUseEvent[] = skillTraces.map((t) => ({
+      toolId: t.name,
+      toolName: t.name,
+      input: t.input ?? {},
+      result: t.output || undefined,
+      status: 'complete' as const,
+      previewImage: t.previewImage,
+    }));
+    if (!fullResponse && !thinkingText && toolUse.length === 0) return;
+    store().flushStreamSegment({
+      role: 'assistant',
+      content: fullResponse,
+      timestamp: new Date().toISOString(),
+      toolUse: toolUse.length > 0 ? toolUse : undefined,
+      _thinkingMs: thinkingMs > 0 ? Math.round(thinkingMs) : undefined,
+      _thinkingText: thinkingText || undefined,
+    });
+    fullResponse = '';
+    thinkingText = '';
+    thinkingMs = 0;
+    skillTraces.length = 0;
+    // The next segment times its own pre-text wait from here (the store's live
+    // timer was restarted in the same update by flushStreamSegment).
+    thinkingBlockStart = performance.now();
+    firstTextReceived = false;
+    flushedSegments += 1;
+  };
 
   try {
     for (;;) {
@@ -215,7 +267,7 @@ export async function readSSEStream(
             }
           }
 
-          renderEventCards(parsed, store, sessionId);
+          renderEventCards(parsed, store, sessionId, flushSegment);
           // ── ws_auto_applied (pre-approved action executed server-side) ──
           if (parsed.ws_auto_applied) {
             // Refresh workspace tree
@@ -247,6 +299,10 @@ export async function readSSEStream(
               typeof wp.tool_use_id === 'string' && wp.tool_use_id
                 ? wp.tool_use_id
                 : 'ws_workspace_prompt';
+            // Same ordering rule as the event cards: commit the prose that led
+            // up to the picker first, so the folder buttons sit at the bottom
+            // of the conversation where the user is already looking.
+            flushSegment();
             store().addMessage({
               role: 'assistant',
               content: '',
@@ -662,6 +718,13 @@ export async function readSSEStream(
           if (parsed.cron_event) {
             const payload = parsed.cron_event;
             const st = store();
+            // A created/updated/deleted row is this turn's own tool call
+            // landing, so it belongs after the sentence that announced it —
+            // flush like the event cards do. `cron_fired` is NOT flushed: a
+            // background firing is timed by the scheduler, not the model, and
+            // splitting the reply wherever it happens to land could tear a
+            // paragraph (or a fenced code block) in half.
+            if (payload.event_type !== 'cron_fired') flushSegment();
             st.addMessage({
               role: 'cron_event',
               content: '',
@@ -812,6 +875,7 @@ export async function readSSEStream(
     outputTokens,
     hasPendingApprovals,
     hasUserQuestion,
+    flushedSegments,
     grounding,
     pendingArtifact,
     pendingVisuals,
@@ -962,7 +1026,12 @@ export async function sendApprovalContinuation(
     // by hand. Skipped when the continuation paused again — the new card (or
     // question) IS the visible outcome.
     let contText = result.fullResponse;
-    if (!contText && !result.hasPendingApprovals && !result.hasUserQuestion) {
+    if (
+      !contText &&
+      !result.hasPendingApprovals &&
+      !result.hasUserQuestion &&
+      result.flushedSegments === 0
+    ) {
       contText = emptyResponseFallback(store());
     }
 
