@@ -110,6 +110,12 @@ export interface ChatState {
   setStreaming: (streaming: boolean) => void;
   /** Atomically stop streaming and add the final message in one render pass. */
   finishStream: (message?: ChatMessage) => void;
+  /** Commit what the turn has streamed SO FAR as its own assistant message and
+   *  reset the live accumulators, WITHOUT ending the turn. Used right before a
+   *  standalone card (workflow approval, workspace picker, CI status) is
+   *  appended mid-turn, so the card lands below the prose that introduced it
+   *  and whatever the model says next lands below the card. */
+  flushStreamSegment: (message: ChatMessage) => void;
   clearMessages: () => void;
 
   // Message editing
@@ -310,6 +316,24 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         messages: message ? [...cleaned, message] : cleaned,
       };
     });
+  },
+
+  flushStreamSegment: (message: ChatMessage) => {
+    // Same single-update discipline as finishStream: append the segment and
+    // clear the live accumulators in one set() so no render frame shows the
+    // text twice (once committed, once still in the streaming bubble).
+    // `isStreaming` stays true — the turn is still running, this only closes
+    // one segment of it. The thinking clock restarts with the new segment so
+    // its live timer reads the wait since the card, not since the top of a
+    // turn whose earlier thinking is already committed above.
+    set((state) => ({
+      messages: [...state.messages, message],
+      currentStreamContent: '',
+      currentThinkingContent: '',
+      currentStreamToolUse: [],
+      thinkingStartTime: performance.now(),
+      thinkingElapsedMs: 0,
+    }));
   },
 
   clearMessages: () => {
