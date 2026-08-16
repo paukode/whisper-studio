@@ -476,4 +476,12 @@ if __name__ == "__main__":
     #
     #   HOST=0.0.0.0 bash setup.sh --prod
     host = os.environ.get("HOST", "127.0.0.1")
-    uvicorn.run(app, host=host, port=port)
+    # uvicorn closes idle keep-alive sockets after 5s by default, which is
+    # shorter than most of the UI's poll intervals (4s, 5s, 10s, 15s, 30s,
+    # 60s). The browser holds those sockets open across the gap and picks
+    # one up again for the next request; when its pick lands on the same
+    # tick as the server's teardown, the request dies at the transport
+    # layer with no response at all ("Load failed" in the WebView). It hit
+    # whatever request happened to grab the dying socket, which is why it
+    # looked random. 75s clears the slowest poll with room to spare.
+    uvicorn.run(app, host=host, port=port, timeout_keep_alive=75)
