@@ -192,13 +192,15 @@ async def _do_save_to_path(payload: dict) -> ApprovalOutcome:
         pass
     record_save_location(os.path.dirname(real_dest))
     from server.index.citations import created_file_link
+    from server.workspace.state import REVISION_HINT
 
     link = created_file_link(os.path.basename(real_dest), real_dest)
     return ApprovalOutcome(
         ok=True,
         output=(
             f"Saved {os.path.basename(real_dest)} to {real_dest} ({size} bytes). "
-            f"To reference this file for the user, copy this link verbatim: {link}"
+            f"To reference this file for the user, copy this link verbatim: {link} "
+            f"{REVISION_HINT}"
         ),
     )
 
@@ -228,13 +230,15 @@ async def _do_create_document(payload: dict) -> ApprovalOutcome:
     except Exception as e:
         return ApprovalOutcome(ok=False, error=f"Write failed: {e}")
     from server.index.citations import created_file_link
+    from server.workspace.state import REVISION_HINT
 
     link = created_file_link(path, full)
     return ApprovalOutcome(
         ok=True,
         output=(
             f"Created {path} ({len(data)} bytes). "
-            f"To reference this file for the user, copy this link verbatim: {link}"
+            f"To reference this file for the user, copy this link verbatim: {link} "
+            f"{REVISION_HINT}"
         ),
     )
 

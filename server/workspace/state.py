@@ -139,6 +139,17 @@ def _workspace_prompt_payload(tool_name: str, tool_input: dict, reason: str) -> 
     return f"[WS_WORKSPACE_PROMPT]{payload}"
 
 
+# Appended to every successful file-creating approval outcome. The moment the
+# model reads a write result is the moment it picks its next attempt's path;
+# without this line, an iterating model invents a fresh name per attempt and
+# strews 'v2'/'final'/'clean' copies across the user's folder.
+REVISION_HINT = (
+    "If a follow-up produces a revised version of this file, write it to this "
+    "exact same destination — the write replaces the file — do NOT save it under "
+    "a new name unless the user asks for a separate copy."
+)
+
+
 def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, str] | str:
     """Resolve where a 'create a new file' tool should write its content.
 
