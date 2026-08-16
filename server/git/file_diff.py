@@ -99,7 +99,10 @@ def build_file_diff(workspace: str, rel_path: str) -> dict:
     if not tracked:
         return asdict(_untracked_diff(workspace, rel_path, abs_path))
 
-    if _is_binary(workspace, rel_path):
+    # One numstat call answers both "is this binary?" and "how many lines
+    # changed?". They used to be two invocations of the identical command.
+    is_binary, added, removed = _numstat(workspace, rel_path)
+    if is_binary:
         return asdict(FileDiff(path=rel_path, mode="binary", status="modified"))
 
     head = _show_head(workspace, rel_path)
@@ -108,23 +111,34 @@ def build_file_diff(workspace: str, rel_path: str) -> dict:
         head = ""
 
     if not on_disk:
-        return asdict(_full_or_hunks(workspace, rel_path, head, "", "deleted"))
+        return asdict(_full_or_hunks(workspace, rel_path, head, "", "deleted", added, removed))
 
     current = _read_text(abs_path)
     if current is None:
         return asdict(_error(rel_path, "Could not read working copy."))
 
     status = "added" if head == "" else "modified"
-    return asdict(_full_or_hunks(workspace, rel_path, head, current, status))
+    return asdict(_full_or_hunks(workspace, rel_path, head, current, status, added, removed))
 
 
 # --- Mode selection ---
 
 
-def _full_or_hunks(workspace: str, rel_path: str, old: str, new: str, status: str) -> FileDiff:
-    """Ship both blobs when the client can align them, else parsed hunks."""
+def _full_or_hunks(
+    workspace: str,
+    rel_path: str,
+    old: str,
+    new: str,
+    status: str,
+    added: int,
+    removed: int,
+) -> FileDiff:
+    """Ship both blobs when the client can align them, else parsed hunks.
+
+    ``added``/``removed`` come from git's numstat so the viewer's header
+    agrees with the panel's +/- badges instead of recomputing them.
+    """
     if _fits_full_mode(old, new):
-        added, removed = _count_changed_lines(workspace, rel_path)
         return FileDiff(
             path=rel_path,
             mode="full",
@@ -313,8 +327,13 @@ def _is_tracked(workspace: str, rel_path: str) -> bool:
         return False
 
 
-def _is_binary(workspace: str, rel_path: str) -> bool:
-    """git reports '-\t-\t<path>' in --numstat for binary files."""
+def _numstat(workspace: str, rel_path: str) -> tuple[bool, int, int]:
+    """Read one file's numstat against HEAD.
+
+    Returns (is_binary, added, removed). git writes '-\t-\t<path>' for a
+    binary file, and nothing at all for an unchanged one — both leave the
+    counts at zero.
+    """
     try:
         result = _run_git(
             ["--no-optional-locks", "diff", "HEAD", "--numstat", "--", rel_path],
@@ -322,13 +341,16 @@ def _is_binary(workspace: str, rel_path: str) -> bool:
             timeout=FILE_DIFF_TIMEOUT_S,
         )
     except Exception:
-        return False
+        return (False, 0, 0)
     if result.returncode != 0:
-        return False
+        return (False, 0, 0)
     for line in result.stdout.strip().split("\n"):
         if line.startswith("-\t-\t"):
-            return True
-    return False
+            return (True, 0, 0)
+        parts = line.split("\t")
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            return (False, int(parts[0]), int(parts[1]))
+    return (False, 0, 0)
 
 
 def _has_nul_bytes(abs_path: str) -> bool:
@@ -349,26 +371,6 @@ def _show_head(workspace: str, rel_path: str) -> str | None:
     except Exception:
         return None
     return result.stdout if result.returncode == 0 else None
-
-
-def _count_changed_lines(workspace: str, rel_path: str) -> tuple[int, int]:
-    """Added/removed counts straight from git, so the viewer's header
-    agrees with the panel's +/- badges instead of recomputing them."""
-    try:
-        result = _run_git(
-            ["--no-optional-locks", "diff", "HEAD", "--numstat", "--", rel_path],
-            cwd=workspace,
-            timeout=FILE_DIFF_TIMEOUT_S,
-        )
-    except Exception:
-        return (0, 0)
-    if result.returncode != 0:
-        return (0, 0)
-    for line in result.stdout.strip().split("\n"):
-        parts = line.split("\t")
-        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
-            return (int(parts[0]), int(parts[1]))
-    return (0, 0)
 
 
 def _read_text(abs_path: str) -> str | None:

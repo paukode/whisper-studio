@@ -215,9 +215,34 @@ describe('collapseUnchanged', () => {
 
 describe('computeLineDiff guard', () => {
   it('throws rather than allocating an unbounded LCS table', () => {
-    const side = 'x\n'.repeat(Math.ceil(Math.sqrt(MAX_DIFF_CELLS)) + 10);
+    // Both sides must differ throughout: the guard measures the changed
+    // span, and a shared head or tail is stripped before it is consulted.
+    const n = Math.ceil(Math.sqrt(MAX_DIFF_CELLS)) + 10;
+    const left = Array.from({ length: n }, (_, i) => `l${i}`).join('\n');
+    const right = Array.from({ length: n }, (_, i) => `r${i}`).join('\n');
 
-    expect(() => computeLineDiff(side, `${side}tail`)).toThrow(DiffTooLargeError);
+    expect(() => computeLineDiff(left, right)).toThrow(DiffTooLargeError);
+  });
+
+  it('strips the common head and tail so a small edit stays cheap', () => {
+    // Far past the cell cap as whole files, but only one line differs, so
+    // the LCS never sees a table anywhere near MAX_DIFF_CELLS.
+    const n = Math.ceil(Math.sqrt(MAX_DIFF_CELLS)) + 10;
+    const lines = Array.from({ length: n }, (_, i) => `line ${i}`);
+    const edited = lines.slice();
+    edited[Math.floor(n / 2)] = 'edited';
+    const before = lines.join('\n');
+    const after = edited.join('\n');
+
+    const diff = computeLineDiff(before, after);
+
+    expect(diff.filter((l) => l.type === 'removed')).toEqual([
+      { type: 'removed', text: `line ${Math.floor(n / 2)}` },
+    ]);
+    expect(diff.filter((l) => l.type === 'added')).toEqual([
+      { type: 'added', text: 'edited' },
+    ]);
+    expect(diff).toHaveLength(n + 1);
   });
 
   it('still diffs inputs inside the bound', () => {

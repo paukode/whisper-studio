@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getGitFileDiff } from '@/api/git';
 import { useResizableDialog } from '@/hooks/useResizableDialog';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
@@ -43,13 +43,33 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({ path, onClose }) =
   const [layout, setLayout] = useLocalStorage<Layout>(STORAGE_KEYS.GIT_DIFF_LAYOUT, 'split');
   const [openGaps, setOpenGaps] = useState<Set<number>>(() => new Set());
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ['git-file-diff', path],
+  const queryClient = useQueryClient();
+  const queryKey = useMemo(() => ['git-file-diff', path], [path]);
+
+  const { data, isPending, error, isFetching, fetchStatus } = useQuery({
+    queryKey,
     queryFn: () => getGitFileDiff(path),
     // A diff is a snapshot of the working tree; refetching on window focus
     // would swap the content out from under someone mid-read.
     refetchOnWindowFocus: false,
   });
+
+  // A retry only proceeds while the window has focus (query-core gates it on
+  // focusManager as well as the network), so a first attempt that fails just
+  // as the user tabs away leaves the query parked in `paused`: pending, not
+  // fetching, no error, no data. That combination used to satisfy no branch
+  // below at all and the dialog sat blank with nothing to act on. Treat a
+  // paused query as a stall the reader can retry out of.
+  const stalled = isPending && fetchStatus === 'paused';
+  const isLoading = isPending && isFetching;
+
+  // Not refetch(): with no data cached, Query.fetch sees a non-idle
+  // fetchStatus and hands back the parked retryer promise instead of
+  // starting anything, so the button would do nothing in exactly the case
+  // it exists for. Resetting drops the stuck retryer and refetches clean.
+  const retry = useCallback(() => {
+    void queryClient.resetQueries({ queryKey, exact: true });
+  }, [queryClient, queryKey]);
 
   // Esc closes. document, not window, so this stays ahead of the global
   // ESC stream kill switch regardless of registration order.
@@ -157,7 +177,30 @@ export const GitDiffViewer: React.FC<GitDiffViewerProps> = ({ path, onClose }) =
             </div>
           )}
 
-          {!isLoading && error && <div className="git-diff-error">Could not load diff.</div>}
+          {/* The fetch failed, or stalled mid-retry. Show what actually went
+              wrong — a dropped connection and a rejected path are different
+              problems and want different responses from the reader — and
+              offer the retry, since a transport blip succeeds on the next
+              attempt and a paused query needs the nudge to resume at all. */}
+          {!isLoading && (error || stalled) && (
+            <div className="git-diff-error">
+              <span>
+                {stalled && !error
+                  ? 'Lost the connection to the backend before the diff arrived.'
+                  : error instanceof Error
+                    ? error.message
+                    : 'Could not load diff.'}
+              </span>
+              <button
+                type="button"
+                className="git-diff-retry"
+                onClick={retry}
+                disabled={isFetching}
+              >
+                {isFetching ? 'Retrying…' : 'Retry'}
+              </button>
+            </div>
+          )}
 
           {!isLoading && !error && data?.mode === 'error' && (
             <div className="git-diff-error">{data.error ?? 'Could not load diff.'}</div>
