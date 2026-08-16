@@ -66,11 +66,12 @@ jobs:
 
   backend-macos:
     name: Backend (pytest on macOS)
-    # Parts of the suite can only run on a macOS host: create_docx converts
-    # through /usr/bin/textutil, and the open-with / reveal routes shell out to
-    # `open`. Those tests skip on the ubuntu job above, so before this job
-    # existed a break in the textutil invocation reached a release with nothing
-    # red anywhere.
+    # Parts of the suite can only run on a macOS host: the open-with / reveal
+    # routes shell out to `open`, and the sandbox runs under sandbox-exec
+    # rather than bwrap. Those tests skip on the ubuntu job above, so without
+    # this job a break in them reaches a release with nothing red anywhere.
+    # (create_docx used to be the main reason this job existed; it now builds
+    # through python-docx and is covered on every runner.)
     #
     # Scoped to push (main + version tags) and manual dispatch, NOT every PR:
     # macOS runners bill at 10x, and this repo's flow is verify locally then
@@ -97,11 +98,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -c /tmp/constraints-ci.txt -r /tmp/requirements-ci.txt
 
-      # Guard the reason this job exists: if textutil ever leaves the runner
-      # image, the docx tests would skip here too and the job would go green
-      # while covering nothing.
+      # Guard the reason this job exists: if the macOS-only tooling ever
+      # leaves the runner image, those tests would skip here too and the job
+      # would go green while covering nothing.
       - name: Assert the macOS-only tooling is present
-        run: test -x /usr/bin/textutil
+        run: test -x /usr/bin/open && test -x /usr/bin/sandbox-exec
 
       - name: Run tests
         run: python -m pytest tests/

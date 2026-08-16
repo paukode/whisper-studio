@@ -1,6 +1,6 @@
 """create_docx / create_pptx / create_xlsx / create_pdf.
 
-These exercise the REAL converters (macOS textutil, python-pptx, openpyxl,
+These exercise the REAL builders (python-docx, python-pptx, openpyxl,
 reportlab) rather than mocking them — the whole point of these tools is that
 they produce genuine, round-trippable files, so a mocked subprocess/library
 call would not catch a broken invocation.
@@ -21,6 +21,7 @@ import base64
 import io
 import json
 import os
+import re
 import zipfile
 from unittest.mock import patch
 
@@ -34,24 +35,6 @@ from server.documents.executors import (
     _exec_create_xlsx,
 )
 from server.workspace.paths import is_staged_path
-
-# create_docx converts HTML through macOS's textutil (server/documents/
-# executors.py); there is no cross-platform substitute, and this module
-# deliberately drives the REAL converter rather than mocking it, so the tests
-# that actually reach the conversion can only run where the binary exists.
-# The other docx tests assert validation failures that happen BEFORE the
-# conversion, so they stay platform-neutral and keep running everywhere.
-# create_pptx / create_xlsx / create_pdf use pure-Python libraries and are
-# unaffected.
-#
-# NO CI job covers the skipped tests: ci.yml runs on ubuntu, and
-# build-macapp.yml only builds and packages, it never invokes pytest. They are
-# exercised solely by a local run on a macOS host, so a break in the textutil
-# invocation reaches a release unless someone runs the suite before shipping.
-requires_textutil = pytest.mark.skipif(
-    not os.path.exists("/usr/bin/textutil"),
-    reason="create_docx converts via macOS textutil, absent on the Linux CI runner",
-)
 
 
 def _run(coro):
@@ -80,7 +63,6 @@ def _decoded_bytes(payload: dict) -> bytes:
 # ── No workspace connected: default to ~/Documents, stage, never ask ──
 
 
-@requires_textutil
 def test_create_docx_no_workspace_defaults_to_documents_and_stages(monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     out = _exec_create_docx({"path": "report.docx", "html_content": "<p>hi</p>"}, "", {})
@@ -90,7 +72,6 @@ def test_create_docx_no_workspace_defaults_to_documents_and_stages(monkeypatch):
     assert _decoded_bytes(payload)[:2] == b"PK", "staged file must be real OOXML (zip)"
 
 
-@requires_textutil
 def test_create_docx_appends_missing_extension(monkeypatch):
     # Models sometimes pass a bare name like 'document' — the deliverable
     # must still open in Word.
@@ -129,7 +110,6 @@ def test_create_pdf_no_workspace_defaults_and_stages(monkeypatch):
     assert _decoded_bytes(payload)[:5] == b"%PDF-"
 
 
-@requires_textutil
 def test_create_docx_with_destination_path_from_user_words(tmp_path, monkeypatch):
     """When the model resolved a destination from the user's words, the tool
     builds and stages in one call — get_workspace_path() is never consulted,
@@ -176,9 +156,11 @@ def test_create_docx_path_outside_workspace_emits_sentinel(tmp_path, monkeypatch
     ws = tmp_path / "ws"
     ws.mkdir()
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(ws))
-    with patch("subprocess.run") as mock_run:
+    # The destination is resolved BEFORE any rendering work: an unusable path
+    # must come back as the folder-picker sentinel without building anything.
+    with patch("server.documents.executors.render_html") as mock_render:
         out = _exec_create_docx({"path": "../outside.docx", "html_content": "<p>hi</p>"}, "", {})
-    mock_run.assert_not_called()
+    mock_render.assert_not_called()
     payload = _parse_prompt(out)
     assert payload["reason"] == "outside_workspace"
 
@@ -186,7 +168,6 @@ def test_create_docx_path_outside_workspace_emits_sentinel(tmp_path, monkeypatch
 # ── Real conversions: build succeeds, pauses for approval, never touches disk ──
 
 
-@requires_textutil
 def test_create_docx_produces_real_ooxml_and_pauses_for_approval(tmp_path, monkeypatch):
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     out = _exec_create_docx(
@@ -212,24 +193,95 @@ def test_create_docx_produces_real_ooxml_and_pauses_for_approval(tmp_path, monke
         assert "Body text" in doc_xml
 
 
-@requires_textutil
 def test_create_docx_applies_standard_layout(tmp_path, monkeypatch):
-    """The standard: A4 page, 1-inch margins, Calibri 11pt body — regardless
-    of what fonts are installed (the post-processor rewrites the Cocoa
-    converter's fallback fonts to Calibri)."""
+    """The standard: A4 page, 1-inch margins, Calibri 11pt body."""
+    from docx import Document
+    from docx.shared import Inches, Pt
+
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
     out = _exec_create_docx(
         {"path": "std.docx", "html_content": "<h1>Heading</h1><p>Body paragraph.</p>"}, "", {}
     )
-    payload = _parse_approval(out)
-    with zipfile.ZipFile(io.BytesIO(_decoded_bytes(payload))) as z:
+    doc = Document(io.BytesIO(_decoded_bytes(_parse_approval(out))))
+
+    section = doc.sections[0]
+    # A4 is 210x297mm; python-docx rounds to EMU, so compare in millimetres.
+    assert round(section.page_width.mm) == 210
+    assert round(section.page_height.mm) == 297
+    assert section.left_margin == Inches(1) and section.top_margin == Inches(1)
+    assert doc.styles["Normal"].font.name == "Calibri"
+    assert doc.styles["Normal"].font.size == Pt(11)
+
+    body = next(p for p in doc.paragraphs if p.text == "Body paragraph.")
+    assert body.runs[0].font.name == "Calibri"
+    assert body.runs[0].font.size == Pt(11)
+    assert doc.styles["Heading 1"].font.size == Pt(16)
+
+
+def test_create_docx_renders_the_supported_markup(tmp_path, monkeypatch):
+    """The advertised vocabulary must actually land as native Word
+    constructs, not as flattened text."""
+    from docx import Document
+
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
+    html = (
+        "<h1>Title</h1><h2>Sub</h2>"
+        "<p>Plain <b>bold</b> <i>italic</i> <u>under</u> <code>mono</code>.</p>"
+        "<ul><li>One</li><li>Two<ul><li>Nested</li></ul></li></ul>"
+        "<ol><li>Step</li></ol>"
+        "<table><tr><th>H</th></tr><tr><td>C</td></tr></table>"
+    )
+    out = _exec_create_docx({"path": "rich.docx", "html_content": html}, "", {})
+    doc = Document(io.BytesIO(_decoded_bytes(_parse_approval(out))))
+
+    styles = [p.style.name for p in doc.paragraphs if p.text.strip()]
+    assert styles[:2] == ["Heading 1", "Heading 2"]
+    assert "List Bullet" in styles and "List Bullet 2" in styles and "List Number" in styles
+
+    runs = {r.text: r for r in doc.paragraphs[2].runs}
+    assert runs["bold"].bold and runs["italic"].italic and runs["under"].underline
+    assert runs["mono"].font.name == "Consolas"
+
+    table = doc.tables[0]
+    assert (len(table.rows), len(table.columns)) == (2, 1)
+    assert table.rows[0].cells[0].paragraphs[0].runs[0].bold, "th must be bold"
+
+
+@pytest.mark.parametrize(
+    "cell_html, expected",
+    [
+        ('<td bgcolor="#E63946">x</td>', "E63946"),
+        ('<td bgcolor="E63946">x</td>', "E63946"),
+        ('<td style="background-color: rgb(0,128,0)">x</td>', "008000"),
+        ('<td style="background: yellow">x</td>', "FFFF00"),
+        ('<td style="background-color:#abc">x</td>', "AABBCC"),
+    ],
+)
+def test_create_docx_honors_cell_background_colors(cell_html, expected, tmp_path, monkeypatch):
+    """The regression that exposed the whole gap: the previous textutil
+    converter dropped cell shading silently, so a user asking for a colored
+    table got an uncolored one with no error."""
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
+    out = _exec_create_docx(
+        {"path": "c.docx", "html_content": f"<table><tr>{cell_html}</tr></table>"}, "", {}
+    )
+    with zipfile.ZipFile(io.BytesIO(_decoded_bytes(_parse_approval(out)))) as z:
         doc_xml = z.read("word/document.xml").decode("utf-8")
-    assert '<w:pgSz w:w="11906" w:h="16838"/>' in doc_xml, "page size must be A4"
-    assert 'w:top="1440"' in doc_xml and 'w:left="1440"' in doc_xml, "1-inch margins"
-    assert "Calibri" in doc_xml, "body font must be Calibri"
-    for fallback in ("Helvetica", ".AppleSystemUIFont", "Times New Roman"):
-        assert f'w:ascii="{fallback}"' not in doc_xml
-    assert 'w:val="22"' in doc_xml, "11pt body text (22 half-points)"
+    assert re.findall(r'<w:shd[^>]*w:fill="([0-9A-F]{6})"', doc_xml) == [expected]
+
+
+def test_create_docx_survives_malformed_markup(tmp_path, monkeypatch):
+    """Model-written HTML is not guaranteed well-formed. An unclosed tag
+    should cost formatting on the tail, never the document."""
+    from docx import Document
+
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
+    out = _exec_create_docx(
+        {"path": "m.docx", "html_content": "<p>open <b>bold<p>next</p></div>"}, "", {}
+    )
+    doc = Document(io.BytesIO(_decoded_bytes(_parse_approval(out))))
+    text = " ".join(p.text for p in doc.paragraphs)
+    assert "open" in text and "bold" in text and "next" in text
 
 
 def test_create_docx_rejects_empty_html(tmp_path, monkeypatch):

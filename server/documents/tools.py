@@ -8,11 +8,8 @@ Two tiers, and the descriptions below exist mostly to route between them:
 - create_docx / create_pptx / create_xlsx / create_pdf take a fixed schema
   (HTML, title+bullets, rows of values, paragraphs) and apply the house
   layout. Fast and consistent for ordinary prose, decks, and tabular data.
-  Their schemas are also their ceiling: no cell shading, no merges, no
-  shapes, no images, and no way to touch a file that already exists. The
-  docx path is lossier still — macOS textutil silently DROPS table cell
-  background colors on the way through HTML, so asking create_docx for a
-  colored table produces an uncolored one with no error.
+  Their schemas are also their ceiling: no merges, no custom borders, no
+  shapes, no images, and no way to touch a file that already exists.
 - office_script hands the model python-docx / python-pptx / openpyxl
   directly, so anything those libraries can express is reachable, including
   editing an existing document. inspect_document is its read-only companion:
@@ -127,23 +124,25 @@ CREATE_DOCX_TOOL = {
     "name": "create_docx",
     "description": (
         "[Workspace] Create a NEW Word (.docx) file from HTML content — the quick path "
-        "for ordinary prose documents. It pipes your HTML through macOS's native "
-        "textutil converter to produce genuine OOXML. Do NOT shell out to pandoc, "
-        "LibreOffice, or a raw python-docx script via ws_run_command instead; those "
-        "are not installed. Use normal HTML tags for structure — headings (h1-h3), "
-        "paragraphs (p), bold/italic (b/i/strong/em), lists (ul/ol/li), tables "
-        "(table/tr/td) — textutil converts them to native Word formatting. "
+        "for ordinary documents. Your HTML is rendered straight into genuine OOXML with "
+        "python-docx. Do NOT shell out to pandoc or LibreOffice via ws_run_command "
+        "instead; they are not installed. Supported markup, all converted to native "
+        "Word formatting: headings (h1-h6), paragraphs (p, div), line and rule breaks "
+        "(br, hr), bold/italic/underline/strikethrough (b, strong, i, em, u, s), inline "
+        "code (code, tt), preformatted blocks (pre), quotes (blockquote), nested lists "
+        "(ul, ol, li, to three levels), text color (a `color` in a style attribute), and "
+        "tables (table, thead, tbody, tr, th, td, caption) — including per-cell "
+        "background color via `bgcolor` or a `background-color` style, which is honored, "
+        "not dropped. Unknown tags stay transparent: their text still renders. "
         "Output automatically follows the app's standard layout (A4 page, 1-inch "
         "margins, Calibri 11pt body) — do not add fonts or page styling yourself. "
         "\n\n"
-        "LIMITS — call office_script instead when any of these apply. The converter "
-        "carries structure, not decoration: table cell background colors and shading "
-        "are DROPPED SILENTLY (a cell with `bgcolor` or `background-color` arrives "
-        "uncolored, and nothing reports an error), along with merged cells, custom "
-        "border colors, column widths, and text colors. It also only ever creates a "
-        "new file; it cannot modify an existing one. So if the user asked for colored "
-        "cells, a particular table layout, or a change to a document they already "
-        "have, this tool cannot deliver it — use office_script. "
+        "LIMITS — call office_script instead when any of these apply: merged cells, "
+        "custom cell borders, set column widths or row heights, images, charts, headers "
+        "and footers, page breaks, footnotes, or any styling beyond the markup listed "
+        "above. It also only ever creates a NEW file; it cannot modify one that already "
+        "exists, so every edit of a document the user already has belongs in "
+        "office_script. "
         "If a workspace is connected, `path` is workspace-relative (same as "
         "ws_create_file). If none is connected, never ask the user where to "
         "save: pass destination_path resolved from the user's own words "
@@ -289,8 +288,8 @@ CREATE_PDF_TOOL = {
         "paragraphs, one per page-flowing block. This is the standard, correct way to "
         "produce a .pdf in this app — nothing on this machine can render HTML/formatted "
         "content to PDF (no pandoc, no LibreOffice, no HTML-to-PDF filter), so this tool "
-        "(built on reportlab) is the ONLY supported path; do not attempt textutil for PDF "
-        "(it cannot produce one) or shell out to another converter via ws_run_command. "
+        "(built on reportlab) is the ONLY supported path; do not shell out to another "
+        "converter via ws_run_command. "
         "This is deliberately simple — plain paragraphs and a title, not a general layout "
         "engine — so it is not the right tool for complex multi-column or richly "
         "formatted documents. Output automatically follows the app's standard "

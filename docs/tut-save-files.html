@@ -138,10 +138,10 @@
       description &mdash; a document body, a title and bullets, rows of values &mdash; so anything
       outside that vocabulary has nowhere to go: cell shading and fills, merged cells, custom
       borders, per-word fonts and colors, shapes, text boxes, images, charts, number formats,
-      speaker notes. The Word path drops the most: it converts your content through macOS
-      <code>textutil</code>, which discards table cell background colors on the way, so asking for a
-      colored table there produces an uncolored one and reports no error. And none of the four can
-      touch a file that already exists; they only ever create a new one.</p>
+      speaker notes. Word documents come closest &mdash; headings, lists, tables, and even
+      per-cell background colors all work &mdash; but merged cells, set column widths, images, and
+      page breaks are still outside it. And none of the four can touch a file that already exists;
+      they only ever create a new one.</p>
     <p>So when you ask for something specific &mdash; "shade the header row blue", "merge those
       cells", "color these squares to make a shape", "add our logo to slide 1" &mdash; or when you
       point at a document you already have and ask for a change, Claude switches to
