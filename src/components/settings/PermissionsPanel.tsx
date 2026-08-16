@@ -34,6 +34,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   'github-destructive': 'GitHub (destructive)',
   workflow: 'Workflow runs',
   'folder-access': 'Folder access',
+  save: 'Saving files outside the workspace',
+  'office-script': 'Word/Excel/PowerPoint scripts',
 };
 const categoryLabel = (cat: string): string => CATEGORY_LABELS[cat] ?? cat;
 
