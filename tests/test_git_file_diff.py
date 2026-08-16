@@ -207,3 +207,26 @@ def test_parse_unified_diff_ignores_no_newline_marker():
 
     assert added == 1 and removed == 1
     assert [ln.text for ln in hunks[0].lines] == ["old", "new"]
+
+
+def test_numstat_is_read_once_per_diff(client, monkeypatch):
+    """Binary detection and the +/- counts both come from `git diff
+    --numstat`. They used to be two separate invocations of the identical
+    command, doubling the subprocess cost of every diff the viewer opens."""
+    c, work = client
+    (work / "a.txt").write_text("one\nTWO\nthree\n")
+
+    numstat_calls = []
+    real_run_git = file_diff._run_git
+
+    def counting_run_git(args, **kwargs):
+        if "--numstat" in args:
+            numstat_calls.append(args)
+        return real_run_git(args, **kwargs)
+
+    monkeypatch.setattr(file_diff, "_run_git", counting_run_git)
+
+    data = c.get("/api/git/file-diff", params={"path": "a.txt"}).json()
+
+    assert data["added"] == 1 and data["removed"] == 1
+    assert len(numstat_calls) == 1, f"expected one numstat call, got {numstat_calls}"
