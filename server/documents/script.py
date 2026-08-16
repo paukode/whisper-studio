@@ -3,11 +3,10 @@ python-pptx / openpyxl code that produces one Office file.
 
 Why this exists: create_docx/pptx/xlsx take a fixed schema (HTML, or
 title+bullets, or rows of values), and a fixed schema can only express what
-someone anticipated. Table cell shading, merged cells, shapes, images,
+someone anticipated. Merged cells, custom borders, shapes, images,
 conditional number formats, and editing an EXISTING document are all outside
-it — and the docx path is lossier still, since macOS textutil silently drops
-cell shading on its way through HTML. Rather than grow the schemas one
-formatting knob at a time, this hands the model the actual libraries.
+it. Rather than grow the schemas one formatting knob at a time, this hands
+the model the actual libraries.
 
 The contract with the script is deliberately tiny: read INPUT_PATH (an
 existing document, or None when creating from scratch), write OUTPUT_PATH.
