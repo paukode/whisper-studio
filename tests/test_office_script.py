@@ -2,11 +2,10 @@
 
 These drive the REAL libraries and the REAL sandbox runner rather than
 mocking them. The whole reason the tool exists is that the schema-driven
-create_* tools cannot express the formatting users ask for (macOS textutil
-drops table cell shading outright), so a test that mocked the execution
-would assert nothing about whether the formatting actually survives into
-the file. test_shading_survives_the_round_trip is that regression, pinned
-against the OOXML itself.
+create_* tools cannot express everything users ask for, so a test that
+mocked the execution would assert nothing about whether the formatting
+actually survives into the file. test_shading_survives_the_round_trip
+pins that end to end, against the OOXML itself.
 
 Split of responsibilities under test:
 - _exec_office_script validates and packages; it must NEVER run code.
@@ -268,9 +267,9 @@ def test_input_path_is_none_when_creating_from_scratch():
 
 
 def test_shading_survives_the_round_trip(grid_docx):
-    """The regression this whole feature exists for: create_docx's textutil
-    path drops cell shading silently, so a user asking for colored table
-    cells got an uncolored table. Here it must reach the OOXML."""
+    """Shading applied by a script must reach the OOXML. create_docx can
+    color cells too, but only in a table it is building from scratch; this
+    is the path for a document the user already has."""
     code = (
         "from docx import Document\n"
         "from docx.oxml import OxmlElement\n"
