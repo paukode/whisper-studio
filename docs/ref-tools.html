@@ -131,8 +131,8 @@
     </div>
 
     <h2 id="documents">Documents</h2>
-    <p>Four tools that produce real Office and PDF files (genuine OOXML via macOS
-      <code>textutil</code>, python-pptx, and openpyxl; PDF via reportlab). They are always in the
+    <p>Four tools that produce real Office and PDF files (genuine OOXML via python-docx,
+      python-pptx, and openpyxl; PDF via reportlab). They are always in the
       catalogue, with or without a connected workspace. With no workspace connected (or an absolute
       path), they follow the staged <a href="#direct-save">direct-save flow</a>; with a workspace
       connected they instead go through the plain <code>create_document</code> approval, same trust
@@ -152,12 +152,12 @@
     </table></div>
 
     <p>The four <code>create_*</code> tools take a fixed schema, which is also their ceiling. They
-      cannot express cell shading, merges, custom borders, shapes, images, or charts, and they only
-      ever create a new file. The <code>.docx</code> path is lossier still: it converts HTML through
-      macOS <code>textutil</code>, which drops table cell background colors silently, so asking
-      <code>create_docx</code> for a colored table returns an uncolored one with no error. Anything
-      beyond plain prose, plain bullets, or plain rows belongs in <code>office_script</code>, and so
-      does every edit of an existing document.</p>
+      cannot express merged cells, custom borders, set column widths, shapes, images, or charts, and
+      they only ever create a new file. <code>create_docx</code> reaches furthest &mdash; its HTML
+      vocabulary covers headings, nested lists, tables, text color, and per-cell background shading
+      &mdash; while <code>create_pptx</code> is title-plus-bullets and <code>create_xlsx</code> is
+      rows of values. Anything past those belongs in <code>office_script</code>, and so does every
+      edit of a document that already exists.</p>
     <p><code>office_script</code> carries model-written Python rather than data, so it follows
       <code>run_python</code>'s contract instead of the build-then-approve shape above: the approval
       card shows the code, and it runs only after the click, sandboxed, in a throwaway directory
