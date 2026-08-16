@@ -52,6 +52,8 @@ def workspace_prompt(ws_path: str, session_id: str = "default") -> str:
         "\n\nCLEANUP: Before you consider any task finished, check whether it left behind a "
         "temporary or throwaway file — a test file, an intermediate conversion file, a "
         "capability-probe file, anything you created just to get the work done rather than as "
-        "part of the deliverable — and delete it. This applies generally, to every task, not just "
-        "ones a specific skill calls out."
+        "part of the deliverable — and delete it. Superseded drafts of the deliverable itself "
+        "count too: if you saved a newer version under a different name, the stale one is "
+        "litter (and better, write every revision to the same path so no strays exist). This "
+        "applies generally, to every task, not just ones a specific skill calls out."
     )
