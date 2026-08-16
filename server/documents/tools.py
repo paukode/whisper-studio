@@ -1,29 +1,149 @@
-"""Tool schemas for the document-creation tools.
+"""Tool schemas for the document tools.
 
 Pure data — no imports, no side effects (mirrors server/executors/tools.py).
 Implementations live in server/documents/executors.py.
 
-These four are the standard, correct way to produce their respective file
-formats in this app — real .docx/.pptx/.xlsx/.pdf bytes via native macOS
-`textutil` / python-pptx / openpyxl / reportlab. Each tool description
-repeats that so the model doesn't shell out to pandoc, LibreOffice, or a
-raw python-docx one-liner instead (none of which are installed here, and
-`ws_run_command` would just fail).
+Two tiers, and the descriptions below exist mostly to route between them:
+
+- create_docx / create_pptx / create_xlsx / create_pdf take a fixed schema
+  (HTML, title+bullets, rows of values, paragraphs) and apply the house
+  layout. Fast and consistent for ordinary prose, decks, and tabular data.
+  Their schemas are also their ceiling: no cell shading, no merges, no
+  shapes, no images, and no way to touch a file that already exists. The
+  docx path is lossier still — macOS textutil silently DROPS table cell
+  background colors on the way through HTML, so asking create_docx for a
+  colored table produces an uncolored one with no error.
+- office_script hands the model python-docx / python-pptx / openpyxl
+  directly, so anything those libraries can express is reachable, including
+  editing an existing document. inspect_document is its read-only companion:
+  it reports the table/sheet/slide coordinates a script needs to address.
+
+Each description also states that these are the supported paths, so the
+model doesn't shell out to pandoc or LibreOffice via ws_run_command (neither
+is installed here, so that just fails).
 """
+
+_OFFICE_SCRIPT_LIBRARIES = (
+    "Available in the script: python-docx (`from docx import Document`), "
+    "python-pptx (`from pptx import Presentation`), openpyxl "
+    "(`from openpyxl import load_workbook, Workbook`), plus lxml and Pillow. "
+    "The standard library is available; there is no network access to rely on."
+)
+
+OFFICE_SCRIPT_TOOL = {
+    "name": "office_script",
+    "description": (
+        "[Workspace] Build or EDIT a Word/Excel/PowerPoint file by writing real Python "
+        "against python-docx / python-pptx / openpyxl. Use this whenever the user asks "
+        "for anything create_docx/create_pptx/create_xlsx cannot express — table cell "
+        "shading or fills, custom borders, merged cells, per-run fonts and colors, "
+        "shapes, text boxes, images, charts, headers/footers, column widths, number "
+        "formats, conditional formatting, speaker notes — and ALWAYS when the user "
+        "wants to change a document that already exists. Those tools silently drop "
+        "formatting they cannot represent (create_docx loses cell background colors "
+        "entirely), so if the user asked for color, layout, or any specific visual "
+        "detail, use this tool instead of hoping the simple one carries it through. "
+        "\n\n"
+        "Contract: your code runs with two names already defined. INPUT_PATH is the "
+        "absolute path to a COPY of `source_path` (None when you passed no "
+        "source_path); the user's own file is never touched, so open INPUT_PATH, "
+        "modify, and save. OUTPUT_PATH is where the finished document must be written "
+        "— save to it as the last step (e.g. `doc.save(OUTPUT_PATH)`) or the tool "
+        "reports that nothing was produced. Do not write anywhere else and do not "
+        "hardcode paths; the destination is chosen outside your code. "
+        f"{_OFFICE_SCRIPT_LIBRARIES} "
+        "\n\n"
+        "When editing, call inspect_document on the file FIRST — it reports table "
+        "indices and dimensions, sheet ranges and merged cells, and slide shape "
+        "inventories, so you address the right cells instead of guessing. "
+        "print() a short note about what you changed; the output comes back to you. "
+        "\n\n"
+        "The user sees your code on an approval card and it runs only after they "
+        "approve, so write it to be read: no obfuscation, no unrelated side effects. "
+        "If it fails, the error comes back to you — fix it and call the tool again. "
+        "If a workspace is connected, `path` is workspace-relative (same as "
+        "ws_create_file). If none is connected, never ask the user where to save: "
+        "pass destination_path resolved from the user's own words ('in Downloads' -> "
+        "'~/Downloads/report.docx', ~ allowed), or omit it to default to their "
+        "Documents folder — then tell the user the full path in your reply."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Workspace-relative path for the output file, e.g. 'report.docx'. Must end in .docx, .xlsx, or .pptx. Used as the suggested filename when no workspace is connected.",
+            },
+            "code": {
+                "type": "string",
+                "description": "Python that reads INPUT_PATH (when editing) and writes the finished document to OUTPUT_PATH.",
+            },
+            "summary": {
+                "type": "string",
+                "description": "One short line describing what the script does, shown as the header on the user's approval card, e.g. 'shade the header row of table 2 blue'.",
+            },
+            "source_path": {
+                "type": "string",
+                "description": "Only when editing an existing document: the .docx/.xlsx/.pptx to open. Workspace-relative when a workspace is connected, otherwise an absolute path (~ allowed). Omit to build a new file from scratch.",
+            },
+            "destination_path": {
+                "type": "string",
+                "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/report.docx' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
+            },
+        },
+        "required": ["path", "code", "summary"],
+    },
+}
+
+INSPECT_DOCUMENT_TOOL = {
+    "name": "inspect_document",
+    "description": (
+        "[Workspace] Report the STRUCTURE of an existing .docx/.xlsx/.pptx: for Word, "
+        "the page setup, heading outline, and every table with its index, row/column "
+        "counts and a sample of cell text; for Excel, each sheet's used range, frozen "
+        "panes, merged ranges and first rows; for PowerPoint, the slide size and each "
+        "slide's shapes with names, types and positions. Coordinates are reported in "
+        "the form the editing libraries use (doc.tables[i].rows[r].cells[c], "
+        "wb['Sheet']['B2'], prs.slides[i].shapes[j]), so they can be used directly in "
+        "an office_script call. Read-only and immediate — it never modifies the file "
+        "and needs no approval. Call this before editing a document you have not "
+        "already inspected, so you address the right table, cells, or shapes rather "
+        "than guessing. This reports the skeleton, not the prose: to READ a document's "
+        "content, use analyze_document or ws_read_file instead."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "The .docx/.xlsx/.pptx to inspect. Workspace-relative when a workspace is connected, otherwise an absolute path (~ allowed).",
+            },
+        },
+        "required": ["path"],
+    },
+}
 
 CREATE_DOCX_TOOL = {
     "name": "create_docx",
     "description": (
-        "[Workspace] Create a real Word (.docx) file from HTML content. This is the "
-        "standard, correct way to produce a .docx in this app — it pipes your HTML "
-        "through macOS's native textutil converter to produce genuine OOXML. Do NOT "
-        "shell out to pandoc, LibreOffice, or a raw python-docx script via "
-        "ws_run_command instead; those are not installed and this tool is the "
-        "supported path. Use normal HTML tags for structure — headings (h1-h3), "
+        "[Workspace] Create a NEW Word (.docx) file from HTML content — the quick path "
+        "for ordinary prose documents. It pipes your HTML through macOS's native "
+        "textutil converter to produce genuine OOXML. Do NOT shell out to pandoc, "
+        "LibreOffice, or a raw python-docx script via ws_run_command instead; those "
+        "are not installed. Use normal HTML tags for structure — headings (h1-h3), "
         "paragraphs (p), bold/italic (b/i/strong/em), lists (ul/ol/li), tables "
         "(table/tr/td) — textutil converts them to native Word formatting. "
         "Output automatically follows the app's standard layout (A4 page, 1-inch "
         "margins, Calibri 11pt body) — do not add fonts or page styling yourself. "
+        "\n\n"
+        "LIMITS — call office_script instead when any of these apply. The converter "
+        "carries structure, not decoration: table cell background colors and shading "
+        "are DROPPED SILENTLY (a cell with `bgcolor` or `background-color` arrives "
+        "uncolored, and nothing reports an error), along with merged cells, custom "
+        "border colors, column widths, and text colors. It also only ever creates a "
+        "new file; it cannot modify an existing one. So if the user asked for colored "
+        "cells, a particular table layout, or a change to a document they already "
+        "have, this tool cannot deliver it — use office_script. "
         "If a workspace is connected, `path` is workspace-relative (same as "
         "ws_create_file). If none is connected, never ask the user where to "
         "save: pass destination_path resolved from the user's own words "
@@ -55,13 +175,18 @@ CREATE_DOCX_TOOL = {
 CREATE_PPTX_TOOL = {
     "name": "create_pptx",
     "description": (
-        "[Workspace] Create a real PowerPoint (.pptx) file, one slide per entry, each "
-        "with a title and bulleted body text. This is the standard, correct way to "
-        "produce a .pptx in this app — it builds a genuine OOXML presentation via "
-        "python-pptx. Do NOT shell out to pandoc, LibreOffice, or a raw python-pptx "
-        "one-liner via ws_run_command instead; this tool is the supported path. "
-        "Slides automatically use the standard 16:9 widescreen size with the "
-        "Calibri Office theme. "
+        "[Workspace] Create a NEW PowerPoint (.pptx) file, one slide per entry, each "
+        "with a title and bulleted body text — the quick path for a plain "
+        "title-and-bullets deck. It builds genuine OOXML via python-pptx. Do NOT "
+        "shell out to pandoc, LibreOffice, or a raw python-pptx one-liner via "
+        "ws_run_command instead. Slides automatically use the standard 16:9 "
+        "widescreen size with the Calibri Office theme. "
+        "\n\n"
+        "LIMITS — call office_script instead when any of these apply. Title plus "
+        "bullets is the whole vocabulary here: no colors, fonts, shapes, text boxes, "
+        "images, tables, charts, speaker notes, or slide-layout choices, and it "
+        "cannot modify an existing deck. Anything visual beyond the default template "
+        "needs office_script. "
         "If a workspace is connected, `path` is workspace-relative (same as "
         "ws_create_file). If none is connected, never ask the user where to "
         "save: pass destination_path resolved from the user's own words "
@@ -105,13 +230,19 @@ CREATE_PPTX_TOOL = {
 CREATE_XLSX_TOOL = {
     "name": "create_xlsx",
     "description": (
-        "[Workspace] Create a real Excel (.xlsx) workbook, one worksheet per entry. "
-        "This is the standard, correct way to produce a .xlsx in this app — it builds "
-        "a genuine OOXML workbook via openpyxl. Do NOT shell out to pandoc, "
-        "LibreOffice, or a raw openpyxl one-liner via ws_run_command instead; this "
-        "tool is the supported path. Worksheets automatically get the standard "
-        "polish: Calibri 11, bold frozen header row, column widths fitted to "
-        "content. If a workspace is connected, `path` is "
+        "[Workspace] Create a NEW Excel (.xlsx) workbook, one worksheet per entry — "
+        "the quick path for plain tabular data. It builds a genuine OOXML workbook "
+        "via openpyxl. Do NOT shell out to pandoc, LibreOffice, or a raw openpyxl "
+        "one-liner via ws_run_command instead. Worksheets automatically get the "
+        "standard polish: Calibri 11, bold frozen header row, column widths fitted "
+        "to content. "
+        "\n\n"
+        "LIMITS — call office_script instead when any of these apply. Rows of values "
+        "is the whole vocabulary here: no cell fills or fonts, number or date "
+        "formats, formulas as formulas, merged cells, borders, conditional "
+        "formatting, data validation, or charts, and it cannot modify an existing "
+        "workbook. Any of those needs office_script. "
+        "If a workspace is connected, `path` is "
         "workspace-relative (same as ws_create_file). If none is connected, never "
         "ask the user where to save: pass destination_path resolved from the "
         "user's own words ('in Downloads' -> '~/Downloads/data.xlsx', ~ allowed), "
@@ -201,4 +332,6 @@ DOCUMENT_TOOLS: list[dict] = [
     CREATE_PPTX_TOOL,
     CREATE_XLSX_TOOL,
     CREATE_PDF_TOOL,
+    OFFICE_SCRIPT_TOOL,
+    INSPECT_DOCUMENT_TOOL,
 ]

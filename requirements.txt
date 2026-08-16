@@ -14,6 +14,10 @@ ocrmac==1.0.1; sys_platform == 'darwin'
 # python-pptx and openpyxl (create_pptx/create_xlsx) are already pulled in
 # transitively by markitdown[all], so only reportlab needs adding here.
 reportlab==5.0.0
+# office_script / inspect_document: the Word half of the trio. python-pptx and
+# openpyxl arrive with markitdown above, but nothing pulls in python-docx, and
+# without it a .docx is the one format the model cannot edit.
+python-docx==1.2.0
 mcp==1.27.2
 tavily-python==0.7.25
 # OpenAI GPT models on Bedrock (GPT-5.5 / GPT-5.4): the Responses API on the

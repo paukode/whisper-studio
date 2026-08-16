@@ -685,6 +685,13 @@ def register_defaults() -> None:
         ),
     )
 
+    # office_script — runs model-written python-docx/pptx/openpyxl code and
+    # then writes what it produced. Registered from its own module (see
+    # server/documents/approval.py) to keep this file under the size budget.
+    from server.documents.approval import register_office_script_approval
+
+    register_office_script_approval()
+
     # Folder access — its own category so it is never covered by "Yes for all
     # writes"/"all commands". Granting the app reach into a NEW folder outside
     # the connected workspace is a distinct, durable decision (it persists

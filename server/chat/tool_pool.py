@@ -186,10 +186,11 @@ def assemble_full_catalog(
         # answer that with a folder picker and the turn resumes against the
         # folder the user chose. See get_workspace_write_tools.
         builtin_tools += get_workspace_write_tools()
-    # Document-creation tools (create_docx/pptx/xlsx/pdf) follow the same
-    # contract as the write tools above: advertised with or without a
-    # connected workspace, since each executor answers "no workspace" with
-    # its own folder-picker prompt rather than an error.
+    # Document tools (create_docx/pptx/xlsx/pdf, office_script,
+    # inspect_document) follow the same contract as the write tools above:
+    # advertised with or without a connected workspace, since each executor
+    # answers "no workspace" with its own folder-picker prompt rather than
+    # an error.
     builtin_tools += DOCUMENT_TOOLS
     builtin_tools += RESULT_CACHE_TOOLS
     builtin_tools += TASK_TOOLS
