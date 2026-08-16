@@ -52,8 +52,11 @@ async def approval_execute(req: ExecuteRequest):
         return {"ok": False, "error": f"Executor crashed: {e}"}
 
     # Invalidate /api/git/changes cache for write-class categories so the
-    # panel sees the new file state on the next refresh.
-    if outcome.ok and spec.category in ("write", "delete", "cli"):
+    # panel sees the new file state on the next refresh. "office-script"
+    # belongs here and "save" does not: a script's destination can be inside
+    # the connected workspace (dest_kind="workspace"), whereas the save
+    # category exists precisely for files landing outside any workspace.
+    if outcome.ok and spec.category in ("write", "delete", "cli", "office-script"):
         try:
             from server.git.router import invalidate_changes_cache
 
