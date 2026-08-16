@@ -181,6 +181,64 @@ describe('readSSEStream', () => {
     expect(withPrompt!.toolUse![0].toolId).toBe('ws_workspace_prompt');
   });
 
+  it('commits the prose that led up to a card before the card itself', async () => {
+    // Cards are appended the moment their frame arrives; the turn's text used
+    // to be committed only at stream end, so the card jumped ahead of the whole
+    // discussion and its Approve button ended up above everything the model
+    // said about it — off-screen until the user scrolled back up.
+    const res = sseResponse([
+      { skill: 'workflow_run' },
+      { text: "I'll set up a repair workflow. " },
+      { text: 'It runs in six phases.' },
+      {
+        workflow_preview: {
+          script: 'export const meta = {}',
+          name: 'repair-ultracode-regressions-v2',
+          phases: [{ title: 'reproduce' }],
+        },
+      },
+      { text: 'Approve the card above when you are ready.' },
+    ]);
+
+    const sessionId = 'sess-card-order';
+    const result = await readSSEStream(res, sessionId, new AbortController().signal);
+
+    const messages = getChatStore(sessionId).getState().messages;
+    expect(messages).toHaveLength(2);
+    // 1. everything streamed before the card, as its own message…
+    expect(messages[0].content).toBe(
+      "I'll set up a repair workflow. It runs in six phases.",
+    );
+    // …carrying the traces from that stretch, so they aren't lost when the
+    // streaming bubble is cleared.
+    expect(messages[0].toolUse?.map((t) => t.toolName)).toEqual(['workflow_run']);
+    // 2. then the card.
+    expect(messages[1].toolUse?.[0].toolName).toBe('workflow_preview');
+    // 3. text streamed after the card stays with the caller, which commits it
+    //    as the final message — below the card, in the order it was said.
+    expect(result.fullResponse).toBe('Approve the card above when you are ready.');
+    expect(result.flushedSegments).toBe(1);
+    // The prose is committed, not still sitting in the live bubble as well.
+    expect(getChatStore(sessionId).getState().currentStreamContent).toBe(
+      'Approve the card above when you are ready.',
+    );
+  });
+
+  it('adds no empty bubble when a card arrives before the model has said anything', async () => {
+    const res = sseResponse([
+      { workflow_started: { run_id: 'wf_1', name: 'nightly' } },
+      { text: 'Started it.' },
+    ]);
+
+    const sessionId = 'sess-card-first';
+    const result = await readSSEStream(res, sessionId, new AbortController().signal);
+
+    const messages = getChatStore(sessionId).getState().messages;
+    expect(messages).toHaveLength(1);
+    expect(messages[0].toolUse?.[0].toolName).toBe('workflow_started');
+    expect(result.flushedSegments).toBe(0);
+  });
+
   it('surfaces a status frame (mid-turn compaction notice) as an info toast', async () => {
     const res = sseResponse([
       { status: 'Compacting context (prompt too long)...' },
@@ -236,6 +294,25 @@ describe('sendApprovalContinuation', () => {
     expect(messages[0].role).toBe('assistant');
     expect(messages[0].content).toContain('ended the turn without text');
     expect(getChatStore('sess-resume').getState().isStreaming).toBe(false);
+  });
+
+  it('does not call a turn silent when a card already flushed its text', async () => {
+    // The turn DID answer — the text was committed early so the approval card
+    // could follow it. Re-running the empty-answer fallback here printed "No
+    // text response from the model" directly underneath the model's own words.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      sseResponse([
+        { text: 'Here is the workflow I propose.' },
+        { workflow_preview: { script: 'export const meta = {}', name: 'repair' } },
+      ]),
+    );
+
+    await sendApprovalContinuation(approval, 'sess-resume', true, undefined, { ok: true });
+
+    const contents = getChatStore('sess-resume').getState().messages.map((m) => m.content);
+    expect(contents).toContain('Here is the workflow I propose.');
+    expect(contents.some((c) => c.includes('No text response'))).toBe(false);
+    expect(contents.some((c) => c.includes('ended the turn without text'))).toBe(false);
   });
 
   it('carries model, effort and response length so the resumed half matches', async () => {

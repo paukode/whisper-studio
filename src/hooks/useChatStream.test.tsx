@@ -67,6 +67,69 @@ describe('useChatStream', () => {
     expect(() => result.current.abort()).not.toThrow();
   });
 
+  /** A /api/chat response built from raw SSE frames; anything else 200s empty. */
+  function chatStreamOf(frames: unknown[]): void {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (!String(input).includes('/api/chat')) return new Response('{}', { status: 200 });
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const enc = new TextEncoder();
+          for (const f of frames) controller.enqueue(enc.encode(`data: ${JSON.stringify(f)}\n\n`));
+          controller.enqueue(enc.encode('data: [DONE]\n\n'));
+          controller.close();
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    });
+  }
+
+  // The whole point of the mid-turn flush: an approval card is appended the
+  // moment its frame arrives, so unless the text before it is committed first
+  // the card is hoisted above the entire turn and its Approve button scrolls
+  // out of reach.
+  it('renders an approval card between the text before it and the text after it', async () => {
+    chatStreamOf([
+      { text: "I'll set up a repair workflow." },
+      { workflow_preview: { script: 'export const meta = {}', name: 'repair-v2' } },
+      { text: 'Approve the card when you are ready.' },
+    ]);
+
+    const { result } = renderHook(() => useChatStream());
+    await act(async () => {
+      await result.current.send('fix the regressions');
+    });
+
+    const messages = getActiveChatStore().getState().messages;
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant', 'assistant']);
+    expect(messages[1].content).toBe("I'll set up a repair workflow.");
+    expect(messages[2].toolUse?.[0].toolName).toBe('workflow_preview');
+    expect(messages[3].content).toBe('Approve the card when you are ready.');
+  });
+
+  it('keeps the tools a turn ran after a card, and calls no such turn silent', async () => {
+    // No closing text: the turn's words were already committed above the card,
+    // so there is nothing left for a final message — but the work done after it
+    // still has to reach the transcript, and the empty-answer fallback must not
+    // announce "no text response" under a reply the model plainly gave.
+    chatStreamOf([
+      { text: 'Proposing the workflow now.' },
+      { workflow_preview: { script: 'export const meta = {}', name: 'repair-v2' } },
+      { skill: 'cron_create' },
+      { skill_result: 'cron_create', output: 'Scheduled every 10 min' },
+    ]);
+
+    const { result } = renderHook(() => useChatStream());
+    await act(async () => {
+      await result.current.send('fix the regressions');
+    });
+
+    const messages = getActiveChatStore().getState().messages;
+    expect(messages[1].content).toBe('Proposing the workflow now.');
+    expect(messages[2].toolUse?.[0].toolName).toBe('workflow_preview');
+    expect(messages[3].toolUse?.[0].toolName).toBe('cron_create');
+    expect(messages.some((m) => /No text response|without text/.test(m.content))).toBe(false);
+  });
+
   it('continuation send (approvedToolResult) does not append a user message', async () => {
     const { result } = renderHook(() => useChatStream());
     const before = getActiveChatStore().getState().messages.length;
