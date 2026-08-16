@@ -4219,7 +4219,24 @@ button.ws-git-status-badge:hover {
     padding: 10px 14px;
 }
 .git-diff-info { color: var(--text-muted); }
-.git-diff-error { color: var(--error, #f44); }
+.git-diff-error {
+    color: var(--error, #f44);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.git-diff-retry {
+    background: var(--bg-inset);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm, 4px);
+    padding: 3px 10px;
+    font-size: var(--fs-caption);
+    cursor: pointer;
+}
+.git-diff-retry:hover:not(:disabled) { background: var(--bg-hover); }
+.git-diff-retry:disabled { opacity: 0.6; cursor: default; }
 .git-diff-notice {
     color: var(--text-muted);
     background: var(--bg-inset);
