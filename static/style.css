@@ -3319,7 +3319,14 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     display: flex; align-items: center; padding: 4px; border-radius: 6px; flex-shrink: 0;
 }
 .ws-connect-reset:hover { color: var(--text-primary); background: var(--bg-inset); }
-.ws-connect-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0 24px 24px; }
+.ws-connect-body {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 0 24px 24px;
+    display: flex; flex-direction: column;
+}
+/* Everything in the body keeps its natural height; only the two lists below opt
+   into growing, so a taller dialog gives its space to them and the body scrolls
+   (rather than squashing the path row or the actions) when content wins. */
+.ws-connect-body > * { flex-shrink: 0; }
 /* Resize handles (kept inside the dialog since overflow is hidden). */
 .ws-rz { position: absolute; z-index: 5; touch-action: none; }
 .ws-rz-e { top: 10px; bottom: 10px; right: 0; width: 7px; cursor: ew-resize; }
@@ -3457,9 +3464,19 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 
 
 /* Recent workspaces */
-.ws-recent { margin-top: 12px; }
+.ws-recent { margin-top: 12px; display: flex; flex-direction: column; min-height: 0; }
+/* Resized dialog: the browser and the workspace list share the spare height
+   instead of stopping at their 260px caps. The floor lives on the CONTAINERS
+   (their lists then shrink to whatever is left, staying the scrollers) — a floor
+   on the lists themselves makes them overflow the box they sit in and paint over
+   the rows below. Squeeze past the floor and the body scrolls instead. */
+.ws-connect-dialog.is-sized .ws-browser,
+.ws-connect-dialog.is-sized .ws-recent { flex: 1 1 auto; min-height: 136px; }
+.ws-connect-dialog.is-sized .ws-browser { max-height: none; }
+.ws-connect-dialog.is-sized .ws-browser-list,
+.ws-connect-dialog.is-sized .ws-recent-list { flex: 1 1 auto; min-height: 0; max-height: none; }
 .ws-recent-label {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0;
     font-size: var(--fs-caption); color: var(--text-muted);
     text-transform: uppercase; letter-spacing: 0.5px;
     margin-bottom: 6px;
@@ -3473,7 +3490,7 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 }
 .ws-recent-clear:hover { color: var(--text-primary); border-color: var(--accent); }
 .ws-recent-filter {
-    width: 100%; box-sizing: border-box; margin-bottom: 6px;
+    width: 100%; box-sizing: border-box; margin-bottom: 6px; flex-shrink: 0;
     background: var(--bg-primary); border: 1px solid var(--border);
     color: var(--text-primary); font-size: var(--fs-small); font-family: 'Outfit', sans-serif;
     padding: 6px 10px; border-radius: 6px; outline: none;

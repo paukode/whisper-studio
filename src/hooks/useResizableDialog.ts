@@ -127,5 +127,8 @@ export function useResizableDialog(key: string, opts: Options = {}) {
     transform: geo.x || geo.y ? `translate(${geo.x}px, ${geo.y}px)` : undefined,
   };
 
-  return { dialogRef, style, onMoveStart, onResizeStart, reset };
+  // Whether the height is pinned by the user rather than following the content.
+  // Only then is there spare vertical space for a dialog's inner lists to claim
+  // (see the .is-sized rules) — at natural height there is nothing to fill.
+  return { dialogRef, style, onMoveStart, onResizeStart, reset, sized: geo.h != null };
 }
