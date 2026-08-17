@@ -202,10 +202,14 @@ class TestWorkflowLaunchEffort:
 
         monkeypatch.setattr(registry, "STORAGE_DIR", str(storage))
         monkeypatch.setattr(registry, "DB_PATH", str(storage / "sessions.db"))
-        from server.workflows import manager
+        from server.workflows import launch_policy, manager
 
         manager._live.clear()
         manager._task_ids.clear()
+        # Launch-route tests in this class grant their script for the session;
+        # the untrusted-by-name 403 test uses the same script bytes and must
+        # start ungranted.
+        launch_policy._session_grants.clear()
         yield
         manager._live.clear()
         manager._task_ids.clear()

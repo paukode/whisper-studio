@@ -48,13 +48,17 @@ def _isolate(tmp_path, monkeypatch):
 
     monkeypatch.setattr(registry, "STORAGE_DIR", str(storage))
     monkeypatch.setattr(registry, "DB_PATH", str(storage / "sessions.db"))
-    from server.workflows import manager
+    from server.workflows import launch_policy, manager
 
     manager._live.clear()
     manager._task_ids.clear()
+    # Session grants are process-global; a launch in one test (POST /runs
+    # grants its script hash) must not auto-launch a preview-expecting test.
+    launch_policy._session_grants.clear()
     yield
     manager._live.clear()
     manager._task_ids.clear()
+    launch_policy._session_grants.clear()
 
 
 def _client():

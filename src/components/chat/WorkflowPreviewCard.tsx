@@ -175,7 +175,7 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
               checked={alwaysAllow}
               onChange={(e) => setAlwaysAllow(e.target.checked)}
             />
-            Always allow this workflow (saves it as trusted; future runs skip this card)
+            Always allow this workflow (saves it as trusted; approving without this covers this session only)
           </label>
           <div className="workflow-card-actions">
             <button type="button" className="btn btn-primary btn-sm" onClick={() => void approve()} disabled={!sessionId}>

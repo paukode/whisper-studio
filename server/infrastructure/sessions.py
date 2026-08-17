@@ -425,6 +425,7 @@ def _delete_session_sync(session_id: str) -> None:
     from server.memory import extract as memory_extract
     from server.memory import session_memory
     from server.tasks_tracker import clear_session_tasks
+    from server.workflows.launch_policy import drop_session_grants
 
     with _get_conn() as conn:
         conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
@@ -465,6 +466,7 @@ def _delete_session_sync(session_id: str) -> None:
         unlatch_session,  # drops the latched config snapshot
         session_memory.drop_session,  # drops the update-cadence state
         memory_extract.drop_session,  # drops extraction cursor/throttle state
+        drop_session_grants,  # drops per-session workflow approval grants
     ):
         try:
             fn(session_id)
