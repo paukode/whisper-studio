@@ -35,7 +35,8 @@ def split_env(tmp_path, monkeypatch):
     the system-layer cache is cleared so each test sees its own SYSTEM catalog."""
     example = tmp_path / "config.example.json"
     example.write_text(json.dumps(SYSTEM_V1))
-    monkeypatch.setenv("WHISPER_HOME", str(tmp_path))  # config_dir() -> tmp (migration)
+    monkeypatch.setenv("WHISPER_HOME", str(tmp_path))
+    monkeypatch.setenv("WHISPER_USER_DIR", str(tmp_path))  # config_dir() -> tmp (migration)
     monkeypatch.setattr(cfg, "EXAMPLE_CONFIG_PATH", str(example))
     monkeypatch.setattr(cfg, "USER_CONFIG_PATH", str(tmp_path / "config.user.json"))
     monkeypatch.setattr(cfg, "CONFIG_PATH", str(tmp_path / "config.json"))

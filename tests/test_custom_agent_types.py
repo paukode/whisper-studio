@@ -91,10 +91,10 @@ def test_project_custom_type_overrides_user_type_same_name(tmp_path, monkeypatch
     # regular settings.
     user_home = tmp_path / "user_home"
     project = tmp_path / "project"
-    monkeypatch.setattr("server.infrastructure.paths.config_dir", lambda: str(user_home))
+    monkeypatch.setattr("server.infrastructure.paths.user_root", lambda: str(user_home))
 
     _write(
-        user_home / ".whisper" / "agents",
+        user_home / "agents",
         "reviewer",
         "---\nname: reviewer\ndescription: user-level\nmax_turns: 5\n---\nUser body.\n",
     )
@@ -112,9 +112,9 @@ def test_project_custom_type_overrides_user_type_same_name(tmp_path, monkeypatch
 
 def test_user_type_used_when_no_project_override(tmp_path, monkeypatch):
     user_home = tmp_path / "user_home"
-    monkeypatch.setattr("server.infrastructure.paths.config_dir", lambda: str(user_home))
+    monkeypatch.setattr("server.infrastructure.paths.user_root", lambda: str(user_home))
     _write(
-        user_home / ".whisper" / "agents",
+        user_home / "agents",
         "solo",
         "---\nname: solo\ndescription: user only\nmax_turns: 7\n---\nUser-only body.\n",
     )

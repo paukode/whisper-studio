@@ -30,6 +30,9 @@ ignore = ["E501"]
 # router/executor singleton before importing submodules, so imports aren't all at
 # the top of the file.
 "**/__init__.py" = ["F401", "E402"]
+# main.py must run the legacy-home relocation BEFORE importing the server
+# modules, whose path constants freeze at import time.
+"server/main.py" = ["E402"]
 # Test modules keep fixtures/imports that ruff reads as unused.
 "tests/**" = ["F401"]
 

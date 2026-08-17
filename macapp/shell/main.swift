@@ -210,8 +210,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         procEnv["PATH"] = binDir.path + ":" + inheritedPath
         procEnv["PYTHONUNBUFFERED"] = "1"
         // Bytecode caches must never land inside the signed bundle — a single
-        // .pyc write after signing invalidates the whole app seal.
-        procEnv["PYTHONPYCACHEPREFIX"] = whisperHome + "/pycache"
+        // .pyc write after signing invalidates the whole app seal. They are
+        // pure machine noise, so they go to ~/Library/Caches (regenerated on
+        // demand), keeping the app-support folder to storage/ and logs/.
+        let cacheDir = FileManager.default.urls(
+            for: .cachesDirectory, in: .userDomainMask
+        )[0].appendingPathComponent("WhisperStudio/pycache").path
+        procEnv["PYTHONPYCACHEPREFIX"] = cacheDir
 
         let proc = Process()
         proc.executableURL = pythonBin
