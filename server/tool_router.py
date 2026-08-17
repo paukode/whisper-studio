@@ -396,7 +396,12 @@ async def route_tool(
     if tool_name == "workflow_save":
         from server.workflows.tools import execute_workflow_save
 
-        return await execute_workflow_save(tool_input), side_effects
+        return await execute_workflow_save(tool_input, session_id), side_effects
+
+    if tool_name == "workflow_delete":
+        from server.workflows.tools import execute_workflow_delete
+
+        return execute_workflow_delete(tool_input), side_effects
 
     if tool_name == "workflow_list":
         from server.workflows.tools import execute_workflow_list

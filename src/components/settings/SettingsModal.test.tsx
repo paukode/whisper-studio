@@ -21,7 +21,6 @@ vi.mock('./ModelModePanel', () => ({ ModelModePanel: () => <div>ModelModePanel</
 vi.mock('./ModelsPanel', () => ({ ModelsPanel: () => <div>ModelsPanel</div> }));
 vi.mock('./FeatureFlagsPanel', () => ({ FeatureFlagsPanel: () => <div>FeatureFlagsPanel</div> }));
 vi.mock('./PreviewSettings', () => ({ PreviewSettings: () => <div>PreviewSettings</div> }));
-vi.mock('./WorkflowsPanel', () => ({ WorkflowsPanel: () => <div>WorkflowsPanel</div> }));
 
 const isOpen = () => useUIStore.getState().settingsOpen;
 
@@ -107,13 +106,19 @@ describe('SettingsModal — deep-link routing', () => {
     expect(screen.getByRole('tab', { name: 'Costs' })).toHaveAttribute('aria-selected', 'true');
   });
 
-  it('old id "hooks" opens Workflows and tasks → Hooks', () => {
+  it('old id "hooks" opens Tasks and hooks → Hooks', () => {
     openAt('hooks');
     expect(screen.getByText('HooksPanel')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: /Workflows and tasks/i }),
+      screen.getByRole('button', { name: /Tasks and hooks/i }),
     ).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('tab', { name: 'Hooks' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('has no Workflows destination anywhere in Settings', () => {
+    // Removed by user request: workflows are approved and managed from chat.
+    openAt('hooks');
+    expect(screen.queryByText(/^Workflows$/)).not.toBeInTheDocument();
   });
 
   it('old id "apikeys" opens Keys and permissions → API keys', () => {

@@ -101,7 +101,6 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
   );
   const [runId, setRunId] = useState<string | null>(priorRun);
   const [showScript, setShowScript] = useState(false);
-  const [alwaysAllow, setAlwaysAllow] = useState(false);
   const [trustedAs, setTrustedAs] = useState<string | null>(null);
   const phases = (preview.phases ?? []).map(phaseTitle);
 
@@ -124,7 +123,10 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
         // during the approval delay silently become this run's root even
         // though the card never showed the user a folder at all.
         workspace_path: preview.workspace_path ?? undefined,
-        trust: alwaysAllow,
+        // Approving IS trusting: the server trusts the saved workflow this
+        // card previews (matched by name + exact bytes), so it never cards
+        // again. `name` is how the server finds that saved entry.
+        name: preview.name || undefined,
       });
       setTrustedAs(r.trusted_as ?? null);
       setRunId(r.run_id);
@@ -168,28 +170,18 @@ export const WorkflowPreviewCard: React.FC<{ preview: Preview }> = ({ preview })
       )}
 
       {state === 'idle' && (
-        <>
-          <label className="workflow-card-meta" style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={alwaysAllow}
-              onChange={(e) => setAlwaysAllow(e.target.checked)}
-            />
-            Always allow this workflow (saves it as trusted; approving without this covers this session only)
-          </label>
-          <div className="workflow-card-actions">
-            <button type="button" className="btn btn-primary btn-sm" onClick={() => void approve()} disabled={!sessionId}>
-              Approve &amp; run
-            </button>
-            <button type="button" className="btn btn-sm" onClick={() => setState('denied')}>Deny</button>
-          </div>
-        </>
+        <div className="workflow-card-actions">
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => void approve()} disabled={!sessionId}>
+            Approve &amp; run
+          </button>
+          <button type="button" className="btn btn-sm" onClick={() => setState('denied')}>Deny</button>
+        </div>
       )}
       {state === 'launching' && <div className="workflow-card-meta">Launching…</div>}
       {state === 'launched' && runId && (
         <div className="workflow-card-meta workflow-ok">
           Approved &amp; launched.
-          {trustedAs ? ` Saved as trusted workflow '${trustedAs}'.` : ''}
+          {trustedAs ? ` '${trustedAs}' is now trusted and runs without asking.` : ''}
         </div>
       )}
       {state === 'denied' && <div className="workflow-card-meta">Denied — not run.</div>}

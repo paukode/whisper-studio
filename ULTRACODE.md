@@ -81,10 +81,9 @@ find?" and it will know.
 
 ## Reusing a workflow
 
-Ask the assistant to save the script (`workflow_save`). It then appears in
-Settings, Workflows and tasks, under **Saved**. Trust it there (or from the
-approval card) and it runs without a preview from then on, including via the
-slash command:
+Ask the assistant to save the script (`workflow_save`). Approving a workflow's
+preview card is what trusts it: a saved script you have approved runs without
+a preview from then on, including via the slash command:
 
 ```
 /workflow repo-review
@@ -109,7 +108,8 @@ slash command:
   model at all.
 - **A preview card on the first run.** Either the run's budget is above 600k,
   or the `workflow` category is not on `auto`. Approving the card covers the
-  rest of the session for that exact script; trusting it (the card's checkbox
-  or Settings) covers restarts too.
-- **Settings shows nothing under Saved.** That section lists saved scripts,
-  not runs. Runs live on their chat card and in the Background Tasks panel.
+  rest of the session for that exact script, and trusts a saved workflow
+  durably — one approval, no repeat cards.
+- **Nothing about workflows in Settings.** By design: approval and management
+  happen in chat (ask the assistant, or `workflow_list` / `workflow_delete`).
+  Runs live on their chat card and in the Background Tasks panel.

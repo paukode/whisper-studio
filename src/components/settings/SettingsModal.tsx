@@ -15,7 +15,6 @@ import { ModelModePanel } from './ModelModePanel';
 import { ModelsPanel } from './ModelsPanel';
 import { FeatureFlagsPanel } from './FeatureFlagsPanel';
 import { PreviewSettings } from './PreviewSettings';
-import { WorkflowsPanel } from './WorkflowsPanel';
 
 /** The original 14 flat tab ids. They stay valid `settingsTab` values forever:
  *  every `openSettings(<id>)` caller (ChatPanel, MoreMenu, the command palette,
@@ -27,7 +26,6 @@ export type SettingsTabId =
   | 'models'
   | 'feature-flags'
   | 'skills'
-  | 'workflows'
   | 'mcp'
   | 'import'
   | 'permissions'
@@ -52,7 +50,6 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { id: 'models', label: 'Models' },
   { id: 'feature-flags', label: 'Feature flags' },
   { id: 'skills', label: 'Skills' },
-  { id: 'workflows', label: 'Workflows' },
   { id: 'mcp', label: 'MCP servers' },
   { id: 'import', label: 'Import project' },
   { id: 'permissions', label: 'Permissions' },
@@ -166,10 +163,9 @@ const RAIL_GROUPS: RailGroup[] = [
       },
       {
         id: 'workflows-tasks',
-        label: 'Workflows and tasks',
+        label: 'Tasks and hooks',
         icon: icon(<><path d="M4 4h6v6H4zM14 14h6v6h-6z" /><path d="M10 7h4a2 2 0 0 1 2 2v5" /></>),
         subTabs: [
-          { id: 'workflows', label: 'Workflows', render: () => <WorkflowsPanel /> },
           { id: 'cron', label: 'Scheduled tasks', render: () => <CronPanel /> },
           { id: 'hooks', label: 'Hooks', render: () => <HooksPanel /> },
         ],

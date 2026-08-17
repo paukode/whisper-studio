@@ -99,8 +99,9 @@ A NEW script is shown to the user for approval before it runs (you'll get a
 user's workflow permission mode auto-approves it, the result carries
 `auto_approved: true` and a run_id instead. Save a reusable workflow with
 `workflow_save({name, script})`; run a trusted saved one by
-`workflow_run({name, args})` (the user can trust a workflow from the approval
-card itself or in Settings > Workflows).
+`workflow_run({name, args})`. Approving the preview card is what trusts a
+workflow — a saved script the user approved runs by name with no card, and
+`workflow_delete({name})` removes one from the library.
 """
 
 

@@ -412,7 +412,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             addToast({
               type: 'error',
               message: untrusted
-                ? `Workflow '${wfName}' is not trusted yet. Trust it in Settings > Workflows.`
+                ? `Workflow '${wfName}' needs one approval first: run it from chat and approve its preview card.`
                 : `Could not run workflow '${wfName}'. Is it saved?`,
               duration: 4000,
             });
