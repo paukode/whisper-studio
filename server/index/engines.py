@@ -42,23 +42,40 @@ def is_llm_engine(engine: str) -> bool:
     return engine == "haiku" or resolve_local_model(engine) is not None
 
 
-def engine_catalog() -> list[dict]:
-    """Rows for the settings pickers: cloud Haiku plus every on-device model,
-    with download state so the UI can badge first-pick downloads. Deliberately
-    NOT filtered by model_mode — the index engines are a separate choice from
-    the chat model, and a cloud-mode user may still index with local Gemma."""
+def engine_catalog(mode: str | None = None) -> list[dict]:
+    """Rows for the settings pickers, filtered by the active model mode.
+
+    cloud/hybrid: cloud Haiku plus every on-device model from the config, with
+    download state so the UI can badge first-pick downloads — a cloud-mode user
+    may still index with a local model, and picking one downloads it.
+
+    local: on-device models ONLY, and only those already downloaded. In local
+    mode nothing may call Bedrock, so offering Haiku would hand the user an
+    engine that cannot run; offering a not-yet-downloaded model would hide a
+    multi-gigabyte download behind a folder setting. An empty list is a real
+    answer (a fresh install ships no local model) — the UI says to download one.
+    """
+    from server.infrastructure import model_mode as mm
     from server.local import runtime as local_rt
 
-    rows: list[dict] = [
-        {"key": "haiku", "label": "Amazon Bedrock (Haiku)", "local": False, "downloaded": True}
-    ]
+    active = mode or mm.current_mode()
+    local_only = active == "local"
+
+    rows: list[dict] = []
+    if not local_only:
+        rows.append(
+            {"key": "haiku", "label": "Amazon Bedrock (Haiku)", "local": False, "downloaded": True}
+        )
     for key, meta in local_registry.local_models().items():
+        downloaded = bool(local_rt.is_downloaded(key))
+        if local_only and not downloaded:
+            continue
         rows.append(
             {
                 "key": key,
                 "label": meta.get("label") or key,
                 "local": True,
-                "downloaded": bool(local_rt.is_downloaded(key)),
+                "downloaded": downloaded,
             }
         )
     return rows

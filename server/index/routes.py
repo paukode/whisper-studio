@@ -230,11 +230,16 @@ async def index_remove(request: Request):
 @router.get("/engines")
 async def get_index_engines():
     """The engine choices for the LLM index passes (relationship mapping,
-    entity descriptions, chunk headers): cloud Haiku plus every on-device
-    model from the config, with download state for the picker badges."""
+    entity descriptions, chunk headers), filtered by the active model mode:
+    cloud/hybrid list Haiku plus every on-device model from the config (with
+    download state for the picker badges), local lists only downloaded on-device
+    models. The mode ships with the rows so the picker can explain an empty list."""
+    from server.infrastructure import model_mode as mm
+
     from . import engines
 
-    return {"engines": engines.engine_catalog()}
+    mode = mm.current_mode()
+    return {"engines": engines.engine_catalog(mode), "mode": mode}
 
 
 @router.get("/settings")
