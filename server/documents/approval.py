@@ -87,12 +87,14 @@ async def _do_office_script(payload: dict) -> ApprovalOutcome:
         record_save_location(os.path.dirname(dest))
 
     from server.index.citations import created_file_link
+    from server.workspace.state import REVISION_HINT
 
     label = payload.get("path", "") if payload.get("dest_kind") == "workspace" else dest
     link = created_file_link(os.path.basename(dest), dest)
     output = (
         f"Wrote {label} ({len(data)} bytes). "
-        f"To reference this file for the user, copy this link verbatim: {link}"
+        f"To reference this file for the user, copy this link verbatim: {link} "
+        f"{REVISION_HINT}"
     )
     if message:
         output += f"\n\nScript output:\n{message}"

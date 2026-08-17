@@ -27,6 +27,20 @@ _OFFICE_SCRIPT_LIBRARIES = (
     "The standard library is available; there is no network access to rely on."
 )
 
+# Appended to every document-producing tool. Exists because a model iterating
+# on one deliverable (fit the page, fix a table, apply feedback) otherwise
+# invents a fresh filename per attempt and litters the user's folder with
+# 'v2'/'final'/'clean' strays — writes replace an existing destination
+# atomically, so reusing the path is always safe.
+_SAME_PATH_RULE = (
+    "ONE DELIVERABLE, ONE FILE: another attempt or revision of something you "
+    "already saved this conversation is NOT a new document. Pass the SAME path "
+    "(and destination_path) as before — the write replaces that file in place — "
+    "so the user ends up with one file, never a trail of 'v2'/'final'/'clean' "
+    "variants. Pick a new name only when the user explicitly asks for a "
+    "separate copy or version."
+)
+
 OFFICE_SCRIPT_TOOL = {
     "name": "office_script",
     "description": (
@@ -43,11 +57,14 @@ OFFICE_SCRIPT_TOOL = {
         "\n\n"
         "Contract: your code runs with two names already defined. INPUT_PATH is the "
         "absolute path to a COPY of `source_path` (None when you passed no "
-        "source_path); the user's own file is never touched, so open INPUT_PATH, "
-        "modify, and save. OUTPUT_PATH is where the finished document must be written "
+        "source_path); the source file itself is never touched while your code runs, "
+        "so open INPUT_PATH, modify, and save. OUTPUT_PATH is where the finished "
+        "document must be written "
         "— save to it as the last step (e.g. `doc.save(OUTPUT_PATH)`) or the tool "
         "reports that nothing was produced. Do not write anywhere else and do not "
-        "hardcode paths; the destination is chosen outside your code. "
+        "hardcode paths; the destination is chosen outside your code. The destination "
+        "MAY be the same file as source_path: the copy is taken before the run, so "
+        "read-then-replace is the normal way to revise a file in place. "
         f"{_OFFICE_SCRIPT_LIBRARIES} "
         "\n\n"
         "When editing, call inspect_document on the file FIRST — it reports table "
@@ -62,7 +79,8 @@ OFFICE_SCRIPT_TOOL = {
         "ws_create_file). If none is connected, never ask the user where to save: "
         "pass destination_path resolved from the user's own words ('in Downloads' -> "
         "'~/Downloads/report.docx', ~ allowed), or omit it to default to their "
-        "Documents folder — then tell the user the full path in your reply."
+        "Documents folder — then tell the user the full path in your reply. "
+        f"{_SAME_PATH_RULE}"
     ),
     "input_schema": {
         "type": "object",
@@ -81,7 +99,7 @@ OFFICE_SCRIPT_TOOL = {
             },
             "source_path": {
                 "type": "string",
-                "description": "Only when editing an existing document: the .docx/.xlsx/.pptx to open. Workspace-relative when a workspace is connected, otherwise an absolute path (~ allowed). Omit to build a new file from scratch.",
+                "description": "Only when editing an existing document: the .docx/.xlsx/.pptx to open. Workspace-relative when a workspace is connected, otherwise an absolute path (~ allowed). May be the same file as the destination — that is how you revise a document in place. Omit to build a new file from scratch.",
             },
             "destination_path": {
                 "type": "string",
@@ -149,7 +167,8 @@ CREATE_DOCX_TOOL = {
         "('in Downloads' -> '~/Downloads/report.docx', ~ allowed), or omit it "
         "to default to their Documents folder — then tell the user the full "
         "path in your reply. The document is built immediately and the user "
-        "confirms the exact path on the approval card."
+        "confirms the exact path on the approval card. "
+        f"{_SAME_PATH_RULE}"
     ),
     "input_schema": {
         "type": "object",
@@ -192,7 +211,8 @@ CREATE_PPTX_TOOL = {
         "('in Downloads' -> '~/Downloads/deck.pptx', ~ allowed), or omit it "
         "to default to their Documents folder — then tell the user the full "
         "path in your reply. The document is built immediately and the user "
-        "confirms the exact path on the approval card."
+        "confirms the exact path on the approval card. "
+        f"{_SAME_PATH_RULE}"
     ),
     "input_schema": {
         "type": "object",
@@ -247,7 +267,8 @@ CREATE_XLSX_TOOL = {
         "user's own words ('in Downloads' -> '~/Downloads/data.xlsx', ~ allowed), "
         "or omit it to default to their Documents folder — then tell the user the "
         "full path in your reply. The document is built immediately and the user "
-        "confirms the exact path on the approval card."
+        "confirms the exact path on the approval card. "
+        f"{_SAME_PATH_RULE}"
     ),
     "input_schema": {
         "type": "object",
@@ -299,7 +320,8 @@ CREATE_PDF_TOOL = {
         "user's own words ('in Downloads' -> '~/Downloads/report.pdf', ~ allowed), "
         "or omit it to default to their Documents folder — then tell the user the "
         "full path in your reply. The document is built immediately and the user "
-        "confirms the exact path on the approval card."
+        "confirms the exact path on the approval card. "
+        f"{_SAME_PATH_RULE}"
     ),
     "input_schema": {
         "type": "object",

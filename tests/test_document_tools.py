@@ -452,3 +452,30 @@ def test_do_create_document_rejects_path_outside_workspace(tmp_path, monkeypatch
     )
     assert not outcome.ok
     assert not (tmp_path / "outside.docx").exists()
+
+
+def test_save_and_create_outcomes_carry_the_revision_hint(tmp_path, monkeypatch):
+    """Both write paths (staged save with no workspace, direct create in a
+    workspace) must tell the model to send the next revision to the same
+    path instead of minting a new filename."""
+    from server.workspace.paths import stage_file_bytes
+    from server.workspace.state import REVISION_HINT
+
+    staged = stage_file_bytes(b"bytes", "notes.docx")
+    dest = str(tmp_path / "notes.docx")
+    outcome = _run(
+        _do_save_to_path({"path": dest, "filename": "notes.docx", "staged_path": staged})
+    )
+    assert outcome.ok, outcome.error
+    assert REVISION_HINT in outcome.output
+
+    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: str(tmp_path))
+    payload = {
+        "path": "ws.docx",
+        "content_b64": base64.b64encode(b"bytes").decode("ascii"),
+        "format": "docx",
+        "size": 5,
+    }
+    outcome = _run(_do_create_document(payload))
+    assert outcome.ok, outcome.error
+    assert REVISION_HINT in outcome.output
