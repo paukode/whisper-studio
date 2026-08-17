@@ -81,36 +81,15 @@ async def _await_done(run_id, timeout=20):
     raise AssertionError("run did not finish")
 
 
-# ── the runs list ────────────────────────────────────────────────────────────
+# ── no runs listing route ────────────────────────────────────────────────────
+# The GET /api/workflows/runs listing (added with the Settings "Runs" section)
+# was removed with that section: a run's home is the chat card that launched
+# it plus the Background Tasks panel; history stays reachable through the
+# model's workflow_status/workflow_list tools.
 
 
-def test_runs_endpoint_lists_every_run_newest_first():
-    from server.workflows import manager
-
-    older = manager.start_run(_NOOP, session_id="s1", name="older")
-    newer = manager.start_run(_NOOP, session_id="s2", name="newer")
-
-    body = _client().get("/api/workflows/runs").json()
-    ids = [r["run_id"] for r in body["runs"]]
-
-    # Both sessions' runs, not just one — this panel is app-wide.
-    assert older in ids and newer in ids
-    assert ids.index(newer) <= ids.index(older)
-
-
-def test_runs_endpoint_scopes_to_a_session_when_asked():
-    from server.workflows import manager
-
-    mine = manager.start_run(_NOOP, session_id="s1", name="mine")
-    theirs = manager.start_run(_NOOP, session_id="s2", name="theirs")
-
-    ids = [r["run_id"] for r in _client().get("/api/workflows/runs?session_id=s1").json()["runs"]]
-    assert mine in ids
-    assert theirs not in ids
-
-
-def test_runs_endpoint_is_empty_not_an_error_with_no_runs():
-    assert _client().get("/api/workflows/runs").json() == {"runs": []}
+def test_runs_listing_route_is_gone():
+    assert _client().get("/api/workflows/runs").status_code in (404, 405)
 
 
 # ── the background-task mirror ───────────────────────────────────────────────

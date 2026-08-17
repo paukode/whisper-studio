@@ -20,7 +20,7 @@ import os
 
 from server.workflows import manager, store
 from server.workflows.journal import run_dir
-from server.workflows.launch_policy import launch_decision
+from server.workflows.launch_policy import is_session_granted, launch_decision
 from server.workflows.runtime import DEFAULT_WORKFLOW_BUDGET_TOKENS, parse_workflow
 
 log = logging.getLogger("whisper-studio")
@@ -85,7 +85,7 @@ WORKFLOW_TOOLS: list[dict] = [
     },
     {
         "name": "workflow_save",
-        "description": "Save a named, reusable workflow script (invocable later by name via workflow_run). Stored untrusted; each run by name shows an approval preview card until the user trusts it in Settings > Workflows, which also allows nested workflow(name) calls.",
+        "description": "Save a named, reusable workflow script (invocable later by name via workflow_run). Stored untrusted; a run by name shows an approval preview card once per session until the user trusts it in Settings > Workflows, which also allows nested workflow(name) calls.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -187,7 +187,9 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
     resume_from = (tool_input.get("resume_from_run_id") or "").strip()
     model_key = _model_key_for(model_id) or _default_model_key()
 
-    def _launch(src, *, wf_name, phases, resume="", auto=False, workspace_path=None):
+    def _launch(
+        src, *, wf_name, phases, resume="", auto=False, session_grant=False, workspace_path=None
+    ):
         rid = manager.start_run(
             src,
             args=args,
@@ -206,6 +208,10 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
             # Launched with no card because the user's "workflow" category
             # mode auto-approves within the token threshold.
             body["auto_approved"] = True
+        if session_grant:
+            # Launched with no card because the user approved this exact
+            # script from a preview card earlier in this session.
+            body["session_approved"] = True
         return json.dumps(body), [
             {"workflow_started": {"run_id": rid, "name": wf_name, "resumed_from": resume}}
         ]
@@ -275,6 +281,17 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
             return f"No saved workflow named '{name}'.", []
         meta = {"name": name, **(loaded["meta"] or {})}
         if not loaded["trusted"]:
+            # Approving the preview card once covers the rest of the session:
+            # the grant is keyed by script hash, so it holds exactly while the
+            # saved script is byte-identical to what the user approved.
+            if is_session_granted(session_id, loaded["script"]):
+                return _launch(
+                    loaded["script"],
+                    wf_name=name,
+                    phases=meta.get("phases", []),
+                    session_grant=True,
+                    workspace_path=workspace_path,
+                )
             decision = launch_decision(budget_tokens)
             if decision == "deny":
                 return _denied()
@@ -309,6 +326,16 @@ async def execute_workflow_run(tool_input, session_id, model_id, effort_label) -
         meta = await asyncio.to_thread(parse_workflow, script)  # spawns node; keep off the loop
     except ValueError as e:
         return f"Workflow script error: {e}", []
+    # The same inline script approved from a card earlier this session (byte
+    # identical, per hash) launches without a second card.
+    if is_session_granted(session_id, script):
+        return _launch(
+            script,
+            wf_name=meta.get("name", ""),
+            phases=meta.get("phases", []),
+            session_grant=True,
+            workspace_path=workspace_path,
+        )
     decision = launch_decision(budget_tokens)
     if decision == "deny":
         return _denied()
@@ -379,7 +406,7 @@ async def execute_workflow_save(tool_input) -> str:
     store.save_script(name, script, meta, trusted=False)
     return (
         f"Saved workflow '{name}' ({len(meta.get('phases', []))} phases). Running it by name "
-        "re-shows the approval preview card each time until the user trusts it, either in "
+        "shows the approval preview card once per session until the user trusts it, either in "
         "Settings > Workflows or via the card's 'Always allow this workflow' checkbox."
     )
 

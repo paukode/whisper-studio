@@ -14,6 +14,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from server.workflows import manager, store
+from server.workflows.launch_policy import grant_session, is_session_granted
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 
@@ -45,21 +46,6 @@ def _default_model():
         return key or "sonnet", model_id
     except Exception:
         return "sonnet", ""
-
-
-@router.get("/runs")
-async def list_runs(session_id: str = "", limit: int = 50):
-    """Runs, newest first — app-wide by default.
-
-    The module docstring promised this from the start but the route was never
-    written, so a launched run was visible ONLY as the inline card in the chat
-    that started it: nothing listed runs, and the Settings panel (saved scripts)
-    stayed empty no matter how many ran. App-wide rather than session-scoped by
-    default because someone asking "what have my workflows been doing" is not
-    thinking per-session; pass ``session_id`` for the scoped view.
-    """
-    runs = manager.list_runs(session_id or None, limit=max(1, min(limit, 200)))
-    return {"runs": runs}
 
 
 @router.get("/runs/{run_id}")
@@ -149,8 +135,10 @@ async def launch_run(request: Request):
         # Trust is enforced HERE, not only in the model-facing workflow_run
         # tool. This route is what /workflow <name> calls, so gating trust only
         # on the tool path let an untrusted saved script run with no preview at
-        # all — the one thing "untrusted" is supposed to prevent.
-        if not loaded["trusted"]:
+        # all — the one thing "untrusted" is supposed to prevent. A session
+        # grant (the user approved this exact script from a card earlier this
+        # session) passes the same gate the tool path honors.
+        if not loaded["trusted"] and not is_session_granted(session_id, loaded["script"]):
             return JSONResponse(
                 {
                     "error": f"workflow '{name}' is not trusted",
@@ -175,6 +163,13 @@ async def launch_run(request: Request):
         meta = await asyncio.to_thread(parse_workflow, script)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+
+    # Launching from here IS the user's approval (the card's Approve button and
+    # the /workflow command both land on this route), so remember it for the
+    # session: the same script re-proposed later this session skips the card.
+    # Process memory only — restarting the app brings the card back; the trust
+    # checkbox below is the durable form.
+    grant_session(session_id, script)
 
     trusted_as = None
     if trust:

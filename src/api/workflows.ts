@@ -21,12 +21,6 @@ export interface WorkflowRun {
 
 export const getRun = (runId: string) => get<WorkflowRun>(`/api/workflows/runs/${encodeURIComponent(runId)}`);
 
-/** Every run, newest first (app-wide). Pass a session id to scope it. */
-export const listRuns = (sessionId?: string) =>
-  get<{ runs: WorkflowRun[] }>(
-    `/api/workflows/runs${sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''}`,
-  );
-
 /** Launch a run. `model_id` and `effort_label` carry the SESSION's model and
  *  effort so an approved run behaves identically to an auto-approved one;
  *  omitting either falls back to the configured default on the server.

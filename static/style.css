@@ -2581,16 +2581,18 @@ input.segment-speaker {
     font-family: 'IBM Plex Mono', monospace;
 }
 .plugins-template-code {
-    /* Extra bottom padding reserves room for the horizontal scrollbar: on
-       macOS's default overlay scrollbars it floats over the content instead
-       of reserving layout space, so with only 12px all around it visually
-       crowded the border/caption directly below. */
-    margin: 0; padding: 12px 12px 20px; overflow-x: auto;
+    /* The horizontal scrollbar draws at this element's bottom edge, so keep
+       that edge away from the caption below with margin, not padding: with
+       "always show scroll bars" the classic track hugs the border box edge
+       and padding alone still leaves it touching the caption. Overlay
+       scrollbars float inside the bottom padding. */
+    margin: 0 0 8px; padding: 12px; overflow-x: auto;
     font-family: 'IBM Plex Mono', monospace; font-size: var(--fs-caption);
     line-height: 1.5; color: var(--text-primary); white-space: pre;
 }
 .plugins-template-hint {
     margin: 0; padding: 8px 12px; border-top: 1px solid var(--border);
+    background: var(--bg-elevated);
     font-size: var(--fs-caption); line-height: 1.5; color: var(--text-muted);
 }
 .plugins-template-hint code {

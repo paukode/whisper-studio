@@ -1,10 +1,11 @@
 /**
- * The panel has to show RUNS, not just saved scripts.
+ * The panel manages the SAVED library only.
  *
- * It used to query `listSaved` alone, so a user who had run workflows still
- * saw "no saved workflows yet" — the complaint that started this: "I don't see
- * any workflow in the settings". Runs and saved scripts are different stores;
- * launching writes a run row and never touches the saved library.
+ * It once also listed runs (added in #60 after "I don't see any workflow in
+ * the settings", removed later by the same user's request): a run's home is
+ * the inline chat card that launched it, and approval happens there by
+ * permission mode. Settings keeps only the durable bits — the trust tick and
+ * deletion — so these tests pin that the runs endpoint is never fetched.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
@@ -15,19 +16,6 @@ vi.mock('@/api/client', () => ({ get: getMock, put: vi.fn(), post: vi.fn(), del:
 
 import { WorkflowsPanel } from './WorkflowsPanel';
 
-const RUN = {
-  run_id: 'abc123',
-  name: 'nightly-review',
-  status: 'done' as const,
-  agents_spawned: 12,
-  tokens_in: 400,
-  tokens_out: 900,
-  cost_usd: 1.234,
-  cap_reached: false,
-  error: '',
-  started_at: '2026-08-13T10:00:00Z',
-};
-
 function renderPanel() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -37,13 +25,8 @@ function renderPanel() {
   );
 }
 
-/** Route each query by URL: the panel reads two independent endpoints. */
-function mockApi({ runs = [] as unknown[], saved = [] as unknown[] } = {}) {
-  getMock.mockImplementation((url: string) =>
-    url.startsWith('/api/workflows/runs')
-      ? Promise.resolve({ runs })
-      : Promise.resolve({ saved }),
-  );
+function mockApi({ saved = [] as unknown[] } = {}) {
+  getMock.mockImplementation(() => Promise.resolve({ saved }));
 }
 
 describe('WorkflowsPanel', () => {
@@ -51,37 +34,8 @@ describe('WorkflowsPanel', () => {
     getMock.mockReset();
   });
 
-  it('lists runs with their agent count and cost', async () => {
-    mockApi({ runs: [RUN] });
-    renderPanel();
-
-    await waitFor(() => expect(screen.getByText('nightly-review')).toBeTruthy());
-    expect(screen.getByText('done')).toBeTruthy();
-    expect(screen.getByText(/12 agents/)).toBeTruthy();
-    expect(screen.getByText(/\$1\.23/)).toBeTruthy();
-  });
-
-  it('points at Ultracode when nothing has run yet', async () => {
-    mockApi();
-    renderPanel();
-
-    await waitFor(() => expect(screen.getByText(/No workflow runs yet/)).toBeTruthy());
-    expect(screen.getByText('Ultracode')).toBeTruthy();
-  });
-
-  it('shows runs even when no workflow has been saved', async () => {
-    // The exact reported state: runs exist, the saved library is empty. The
-    // panel must not read as "you have no workflows".
-    mockApi({ runs: [RUN], saved: [] });
-    renderPanel();
-
-    await waitFor(() => expect(screen.getByText('nightly-review')).toBeTruthy());
-    expect(screen.getByText(/No saved workflows yet/)).toBeTruthy();
-  });
-
-  it('still lists saved scripts alongside runs', async () => {
+  it('lists saved scripts with their trust state', async () => {
     mockApi({
-      runs: [RUN],
       saved: [{ name: 'my-flow', description: 'does a thing', phases: ['a'], trusted: true }],
     });
     renderPanel();
@@ -90,6 +44,35 @@ describe('WorkflowsPanel', () => {
     expect(screen.getByText(/does a thing/)).toBeTruthy();
     // "trusted" also appears in the explanatory hint, hence getAllByText.
     expect(screen.getAllByText('trusted').length).toBeGreaterThan(0);
-    expect(screen.getByText('nightly-review')).toBeTruthy();
+  });
+
+  it('offers Trust only for untrusted scripts', async () => {
+    mockApi({
+      saved: [
+        { name: 'pinned', description: '', phases: [], trusted: true },
+        { name: 'loose', description: '', phases: [], trusted: false },
+      ],
+    });
+    renderPanel();
+
+    await waitFor(() => expect(screen.getByText('loose')).toBeTruthy());
+    expect(screen.getAllByRole('button', { name: 'Trust' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(2);
+  });
+
+  it('shows the empty state when nothing is saved', async () => {
+    mockApi();
+    renderPanel();
+
+    await waitFor(() => expect(screen.getByText(/No saved workflows yet/)).toBeTruthy());
+  });
+
+  it('never fetches the runs endpoint', async () => {
+    mockApi();
+    renderPanel();
+
+    await waitFor(() => expect(getMock).toHaveBeenCalled());
+    const urls = getMock.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes('/runs'))).toBe(false);
   });
 });
