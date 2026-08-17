@@ -56,3 +56,23 @@ def test_mode_defaults_to_the_configured_model_mode(monkeypatch):
     monkeypatch.setattr(mm, "current_mode", lambda config=None: "local")
     rows = _catalog(monkeypatch, None, downloaded=("local_gemma",))
     assert [r["key"] for r in rows] == ["local_gemma"]
+
+
+def test_endpoint_ships_the_mode_with_the_rows(monkeypatch):
+    """The picker needs the mode to explain an empty list, so it travels with
+    the catalog rather than being read from a second endpoint."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.index import router as index_router
+    from server.infrastructure import model_mode as mm
+
+    monkeypatch.setattr(mm, "current_mode", lambda config=None: "local")
+    monkeypatch.setattr(local_registry, "local_models", lambda: _MODELS)
+    monkeypatch.setattr(local_rt, "is_downloaded", lambda key: key == "local_qwen35_9b")
+
+    app = FastAPI()
+    app.include_router(index_router)
+    body = TestClient(app).get("/api/workspace/index/engines").json()
+    assert body["mode"] == "local"
+    assert [r["key"] for r in body["engines"]] == ["local_qwen35_9b"]
