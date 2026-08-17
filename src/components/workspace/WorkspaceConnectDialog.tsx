@@ -51,6 +51,7 @@ export const WorkspaceConnectDialog: React.FC = () => {
     onMoveStart,
     onResizeStart,
     reset: resetDialogSize,
+    sized: dialogSized,
   } = useResizableDialog(STORAGE_KEYS.WS_DIALOG_GEOMETRY, { defaultW: 480, minW: 320, minH: 260 });
 
   // Browser state
@@ -585,7 +586,14 @@ export const WorkspaceConnectDialog: React.FC = () => {
       onPointerDown={handleOverlayPointerDown}
       onClick={handleOverlayClick}
     >
-      <div className="ws-connect-dialog" ref={dialogRef} style={dialogStyle}>
+      {/* is-sized: the user pinned a height, so the folder browser and the
+          workspace list stretch into the spare space instead of leaving it blank
+          under a 260px-capped list. */}
+      <div
+        className={`ws-connect-dialog${dialogSized ? ' is-sized' : ''}`}
+        ref={dialogRef}
+        style={dialogStyle}
+      >
         <div className="ws-connect-drag" onPointerDown={onMoveStart}>
           <h3>Connect Workspace</h3>
           <button

@@ -20,19 +20,88 @@ const WEEKDAYS = [
   ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday'],
 ] as const;
 
-/** Fallback while /api/workspace/index/engines loads (or if it fails):
- *  the two engines every build ships. */
-const FALLBACK_ENGINES: IndexEngineOption[] = [
-  { key: 'haiku', label: 'Amazon Bedrock (Haiku)', local: false, downloaded: true },
-  { key: 'local_gemma', label: 'Gemma 4 12B (Local)', local: true, downloaded: false },
-];
-
-/** The stored engine value normalized for the select: the legacy 'local'
- *  alias renders as the model it actually runs (local_gemma). */
-const displayEngine = (engine: string): string => (engine === 'local' ? 'local_gemma' : engine);
+/** The stored engine value normalized for the select. The legacy 'local' alias
+ *  means "whichever on-device model is installed", so it renders as the model it
+ *  actually runs: the preferred default when present, else the first local row.
+ *  Anything else (a key that isn't in the catalog) is returned as-is so the
+ *  select can flag it rather than silently showing a different model. */
+const displayEngine = (engine: string, engines: IndexEngineOption[]): string => {
+  if (engine !== 'local') return engine;
+  const locals = engines.filter((o) => o.local);
+  if (locals.some((o) => o.key === 'local_gemma')) return 'local_gemma';
+  return locals[0]?.key ?? 'local';
+};
 
 const engineOptionLabel = (o: IndexEngineOption): string =>
   o.local && !o.downloaded ? `${o.label} - downloads on first pick` : o.label;
+
+/** Placeholder value for a stored engine the catalog no longer offers (a folder
+ *  set to Haiku while in cloud mode, opened again in local mode). */
+const UNAVAILABLE = '__unavailable';
+
+interface EngineSelectProps {
+  value: string;
+  engines: IndexEngineOption[];
+  /** Rendered first with value 'none' — the pass is configured but no engine
+   *  chosen yet. Omitted for passes whose stored value has no 'none' sentinel. */
+  allowNone?: boolean;
+  /** Non-LLM choices appended after the models (relationship mapping's GLiNER2). */
+  extra?: [string, string][];
+  onChange: (engine: string, label: string) => void;
+}
+
+/** One engine picker. The option list is exactly what the backend offers for the
+ *  active model mode — nothing is hardcoded and nothing is pre-picked, so in
+ *  local mode with no installed model the list is empty (the caller renders the
+ *  download note underneath) instead of naming a model that cannot run. */
+const EngineSelect: React.FC<EngineSelectProps> = ({
+  value,
+  engines,
+  allowNone,
+  extra = [],
+  onChange,
+}) => {
+  const resolved = displayEngine(value, engines);
+  const known =
+    (allowNone && resolved === 'none') ||
+    engines.some((o) => o.key === resolved) ||
+    extra.some(([v]) => v === resolved);
+  const label = (key: string) =>
+    engines.find((o) => o.key === key)?.label ??
+    extra.find(([v]) => v === key)?.[1] ??
+    key;
+  return (
+    <select
+      value={known ? resolved : UNAVAILABLE}
+      disabled={engines.length === 0 && extra.length === 0}
+      onChange={(e) => {
+        if (e.target.value === UNAVAILABLE) return;
+        onChange(e.target.value, label(e.target.value));
+      }}
+    >
+      {allowNone && <option value="none">Choose a model…</option>}
+      {!known && (
+        <option value={UNAVAILABLE} disabled>
+          {engines.length === 0 ? 'No model available' : 'Not available in this model mode'}
+        </option>
+      )}
+      {engines.map((o) => (
+        <option key={o.key} value={o.key}>{engineOptionLabel(o)}</option>
+      ))}
+      {extra.map(([v, text]) => (
+        <option key={v} value={v}>{text}</option>
+      ))}
+    </select>
+  );
+};
+
+/** Shown under an empty picker: in local mode the catalog is the user's own
+ *  downloaded on-device models, so an empty list means "go install one". */
+const NoModelsNote: React.FC = () => (
+  <span className="ws-menu-hint" style={{ marginLeft: 22 }}>
+    No on-device chat model yet. Download one in Settings &gt; Models &gt; Chat, then pick it here.
+  </span>
+);
 
 /**
  * The per-folder index settings rows — auto-refresh cadence + time, keep
@@ -42,17 +111,21 @@ const engineOptionLabel = (o: IndexEngineOption): string =>
  * same way before or after it lands in Recent.
  */
 export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings: s, agentSupported, onChange, onEngineChange, onDescriptionsEngineChange }) => {
-  // Engine choices: cloud Haiku + every on-device model from the config, with
-  // download state for the "downloads on first pick" suffix. Shared cache key
-  // across every menu that renders this panel.
+  // Engine choices for the active model mode: cloud/hybrid list Haiku + every
+  // on-device model from the config (with download state for the "downloads on
+  // first pick" suffix), local lists only the models already on disk. No
+  // hardcoded fallback — an empty list is a real state (nothing installed yet)
+  // and naming a model the user doesn't have is what we're fixing. Shared cache
+  // key across every menu that renders this panel.
   const enginesQuery = useQuery({
     queryKey: ['index-engines'],
     queryFn: indexEngines,
     staleTime: 60_000,
   });
-  const engines = enginesQuery.data?.engines ?? FALLBACK_ENGINES;
-  const engineLabel = (key: string) => engines.find((e) => e.key === key)?.label ?? key;
-  const isLocalEngine = (key: string) => engines.find((e) => e.key === displayEngine(key))?.local ?? false;
+  const engines = enginesQuery.data?.engines ?? [];
+  const noModels = engines.length === 0;
+  const isLocalEngine = (key: string) =>
+    engines.find((e) => e.key === displayEngine(key, engines))?.local ?? false;
 
   return (
   <div className="ws-menu-settings">
@@ -127,18 +200,16 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
     {s.typed_relations.enabled && (
       <label className="ws-menu-line" style={{ marginLeft: 22 }}>
         Build it using
-        <select
-          value={displayEngine(s.typed_relations.engine)}
-          onChange={(e) => onEngineChange(e.target.value, engineLabel(e.target.value))}
-        >
-          <option value="none">Choose an engine…</option>
-          {engines.map((o) => (
-            <option key={o.key} value={o.key}>{engineOptionLabel(o)}</option>
-          ))}
-          <option value="gliner2">GLiNER2 native, local and fast (fewer links)</option>
-        </select>
+        <EngineSelect
+          value={s.typed_relations.engine}
+          engines={engines}
+          allowNone
+          extra={[['gliner2', 'GLiNER2 native, local and fast (fewer links)']]}
+          onChange={onEngineChange}
+        />
       </label>
     )}
+    {s.typed_relations.enabled && noModels && <NoModelsNote />}
     {s.typed_relations.enabled && isLocalEngine(s.typed_relations.engine) && (
       <span className="ws-menu-hint">
         Heavy: loads the model on your device, so chatting may slow down and indexing takes much longer.
@@ -160,17 +231,15 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
     {s.entity_descriptions?.enabled && (
       <label className="ws-menu-line" style={{ marginLeft: 22 }}>
         Written by
-        <select
-          value={displayEngine(s.entity_descriptions.engine)}
-          onChange={(e) => onDescriptionsEngineChange(e.target.value, engineLabel(e.target.value))}
-        >
-          <option value="none">Choose an engine…</option>
-          {engines.map((o) => (
-            <option key={o.key} value={o.key}>{engineOptionLabel(o)}</option>
-          ))}
-        </select>
+        <EngineSelect
+          value={s.entity_descriptions.engine}
+          engines={engines}
+          allowNone
+          onChange={onDescriptionsEngineChange}
+        />
       </label>
     )}
+    {s.entity_descriptions?.enabled && noModels && <NoModelsNote />}
     {s.entity_descriptions?.enabled && (
       <span className="ws-menu-hint">
         One-line summaries shown on entities in the knowledge graph, written at
@@ -191,16 +260,14 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
     {s.chunk_context?.mode === 'llm' && (
       <label className="ws-menu-line" style={{ marginLeft: 22 }}>
         Written by
-        <select
-          value={displayEngine(s.chunk_context.engine)}
-          onChange={(e) => onChange({ chunk_context: { engine: e.target.value } })}
-        >
-          {engines.map((o) => (
-            <option key={o.key} value={o.key}>{engineOptionLabel(o)}</option>
-          ))}
-        </select>
+        <EngineSelect
+          value={s.chunk_context.engine}
+          engines={engines}
+          onChange={(engine) => onChange({ chunk_context: { engine } })}
+        />
       </label>
     )}
+    {s.chunk_context?.mode === 'llm' && noModels && <NoModelsNote />}
     <span className="ws-menu-hint">
       Adds the filename (or an AI-written summary) to each chunk before embedding, so filename and topic queries match. Changing the mode re-indexes the whole folder (AI-written also runs the model over every chunk).
     </span>
