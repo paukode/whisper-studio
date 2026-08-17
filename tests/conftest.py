@@ -58,6 +58,18 @@ def _db_template(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_user_root(tmp_path_factory, monkeypatch):
+    """Keep every test away from the REAL ~/.whisper.
+
+    user_root() resolves to ~/.whisper whenever WHISPER_HOME is set, so any
+    test that flips WHISPER_HOME would otherwise read or (worse) bootstrap
+    into the developer's live user data. Pinning WHISPER_USER_DIR to a
+    per-test tmp makes that impossible; tests that assert the derivation
+    itself delete the variable explicitly and fake $HOME instead."""
+    monkeypatch.setenv("WHISPER_USER_DIR", str(tmp_path_factory.mktemp("user-root")))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_app_databases(tmp_path_factory, monkeypatch, _db_template):
     """Give every test its own sessions.db.
 

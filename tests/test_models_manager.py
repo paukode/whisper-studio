@@ -80,6 +80,8 @@ def home(tmp_path, monkeypatch):
     these tests exercise — the tests must not depend on the developer's
     gitignored config.json."""
     monkeypatch.setenv("WHISPER_HOME", str(tmp_path))
+    # models/ is user data now: it lives under user_root(), not WHISPER_HOME.
+    monkeypatch.setenv("WHISPER_USER_DIR", str(tmp_path))
     (tmp_path / "models").mkdir()
     from server.local import registry
 
