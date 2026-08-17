@@ -115,7 +115,7 @@ def _plist_dict(intervals: list[dict]) -> dict:
     # the server that registered it; launchd starts with a bare environment.
     env = {
         k: v
-        for k in ("WHISPER_HOME", "WHISPER_DATA_DIR", "WHISPER_BIN_DIR")
+        for k in ("WHISPER_HOME", "WHISPER_DATA_DIR", "WHISPER_USER_DIR", "WHISPER_BIN_DIR")
         if (v := os.environ.get(k, "").strip())
     }
     if env:

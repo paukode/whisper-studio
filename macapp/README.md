@@ -39,7 +39,7 @@ cwd = `Contents/Resources/backend` and this environment:
 | --- | --- |
 | `HOST` | `127.0.0.1` |
 | `PORT` | free port picked at launch |
-| `WHISPER_HOME` | `~/Library/Application Support/WhisperStudio` (a pre-set `WHISPER_HOME` is respected, for testing) |
+| `WHISPER_HOME` | `~/Library/Application Support/WhisperStudio` (a pre-set `WHISPER_HOME` is respected, for testing). Holds the app-owned state: `storage/` (session history), logs, and the config layer. User-owned state — `models/`, `skills/`, `plugins/`, `data/` (memory, workflows, attachments) — lives at `~/.whisper`, where it is easy to inspect, edit, or delete; the first boot after the split moves any existing Application Support copies there and leaves symlinks behind. |
 | `WHISPER_BIN_DIR` | `Contents/Resources/bin` (backend prepends it to PATH) |
 | `WHISPER_LLAMA_SERVER_PATH` | `Resources/bin/llama-server` |
 | `WHISPER_FFMPEG_PATH` | `Resources/bin/ffmpeg` |

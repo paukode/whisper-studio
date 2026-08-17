@@ -7,19 +7,31 @@ instance evaporates with the worktree. New code should resolve app data
 through :func:`data_root` instead; existing per-module DATA_DIRs migrate here
 over time.
 
-App home (:func:`app_home`): when the ``WHISPER_HOME`` environment variable is
-set (a packaged .app pointing at, e.g., ~/Library/Application Support/Whisper
-Studio), ALL user-mutable state — config.json, pricing.json, PROMPT_RULES.md,
-models/, storage/, data/, skills/, plugins/, logs/ — lives under that
-directory, and the repo/bundle stays read-only code. When it is NOT set, every
-helper resolves to the historical repo-root-relative location, so a dev
-checkout behaves exactly as before.
+Two roots, split by who edits what:
+
+- App home (:func:`app_home`): ``WHISPER_HOME`` when set (a packaged .app
+  pointing at ~/Library/Application Support/WhisperStudio), else the repo
+  root. Holds what the APP owns: storage/ (sessions.db and the workspace
+  indexes — the historical record), logs/, and the config layer
+  (config.user.json, pricing.json, PROMPT_RULES.md).
+- User root (:func:`user_root`): ``~/.whisper`` in a packaged install, so the
+  things a person browses, edits, or deletes by hand — models/, skills/,
+  plugins/, and data/ (memory, global_memory, session_memory, workflows,
+  attachments, …) — sit in one visible, predictable place, the way
+  ~/.claude does for Claude Code. In a dev checkout (WHISPER_HOME unset)
+  it is the repo root, so dev layout is unchanged. ``WHISPER_USER_DIR``
+  overrides it for tests and relocation.
+
+On the first packaged boot after this split, :func:`bootstrap_home` MOVES the
+existing Application Support copies of those four directories into ~/.whisper
+(same-volume rename, instant) and leaves a symlink at each old location, so
+absolute paths recorded in sessions.db keep resolving and an older build that
+runs afterwards finds the same store instead of reseeding a second one.
 
 data_root() resolution order:
   1. ``WHISPER_DATA_DIR`` environment variable
   2. ``data_dir`` key in config.json
-  3. ``<app_home>/data`` (== ``<repo>/data``, the historical default, when
-     WHISPER_HOME is unset)
+  3. ``<user_root>/data`` (== ``<repo>/data`` in a dev checkout)
 """
 
 import logging
@@ -45,24 +57,38 @@ def app_home() -> str:
     return repo_root()
 
 
+def user_root() -> str:
+    """Where user-EDITABLE state lives: ``~/.whisper`` in a packaged install
+    (WHISPER_HOME set), the repo root in a dev checkout. ``WHISPER_USER_DIR``
+    overrides both. Resolved on every call, like app_home()."""
+    env = os.environ.get("WHISPER_USER_DIR", "").strip()
+    if env:
+        return os.path.abspath(os.path.expanduser(env))
+    if os.environ.get("WHISPER_HOME", "").strip():
+        return os.path.expanduser("~/.whisper")
+    return repo_root()
+
+
 def models_root() -> str:
     """Downloaded model weights (GGUF, mlx-whisper, GLiNER, embedders, …)."""
-    return os.path.join(app_home(), "models")
+    return os.path.join(user_root(), "models")
 
 
 def storage_root() -> str:
-    """SQLite stores (sessions.db and friends) and the per-workspace indexes."""
+    """SQLite stores (sessions.db and friends) and the per-workspace indexes.
+    Deliberately under app_home(), not user_root(): the session history is the
+    one thing a hand-edit or rm in ~/.whisper must never be able to destroy."""
     return os.path.join(app_home(), "storage")
 
 
 def skills_root() -> str:
     """User-editable skill definitions (markdown + folder skills)."""
-    return os.path.join(app_home(), "skills")
+    return os.path.join(user_root(), "skills")
 
 
 def plugins_root() -> str:
     """User-installed plugin modules."""
-    return os.path.join(app_home(), "plugins")
+    return os.path.join(user_root(), "plugins")
 
 
 def logs_root() -> str:
@@ -91,7 +117,7 @@ def data_root() -> str:
         configured = ""
     if configured:
         return os.path.abspath(os.path.expanduser(configured))
-    return os.path.join(app_home(), "data")
+    return os.path.join(user_root(), "data")
 
 
 def _seed_file(src: str, dst: str) -> None:
@@ -106,22 +132,62 @@ def _seed_file(src: str, dst: str) -> None:
         log.warning("Could not seed %s from %s: %s", dst, src, e)
 
 
+def _relocate_legacy_dir(old: str, new: str) -> None:
+    """One-shot move of a user-data directory out of Application Support into
+    ~/.whisper. Same-volume rename (instant, atomic, any size); a symlink stays
+    behind at the old location so absolute paths recorded in sessions.db keep
+    resolving and an older build reuses the moved store instead of reseeding a
+    second one. If the rename cannot work (cross-volume), the fallback symlink
+    points new -> old instead — never a multi-gigabyte copy during boot, which
+    would outlive the app shell's health deadline. Idempotent: a prior run
+    leaves a symlink at ``old``, which is skipped."""
+    if os.path.islink(old) or not os.path.isdir(old):
+        return
+    if os.path.exists(new):
+        log.warning("Not relocating %s: %s already exists; using the new location", old, new)
+        return
+    try:
+        os.makedirs(os.path.dirname(new), exist_ok=True)
+        os.rename(old, new)
+        os.symlink(new, old)
+        log.info("Relocated %s -> %s (symlink left behind)", old, new)
+    except OSError as e:
+        log.warning("Could not relocate %s -> %s (%s); linking in place", old, new, e)
+        try:
+            if not os.path.exists(new):
+                os.symlink(old, new)
+        except OSError as e2:
+            log.warning("Could not link %s -> %s: %s", new, old, e2)
+
+
 def bootstrap_home() -> None:
-    """First-run setup for a packaged install: create the WHISPER_HOME tree and
-    seed the user-editable files from the read-only code dir. No-op when
+    """First-run setup for a packaged install: create the WHISPER_HOME and
+    ~/.whisper trees, move any pre-split user data out of Application Support,
+    and seed the user-editable files from the read-only code dir. No-op when
     WHISPER_HOME is unset (dev checkout: everything already lives at the repo
     root). Idempotent — existing files and directories are never overwritten —
     and safe: any single failure logs and moves on rather than blocking boot."""
     if not os.environ.get("WHISPER_HOME", "").strip():
         return
     home = app_home()
+    # Move first, then create: a fresh empty dir at the new location would
+    # defeat the move-only-when-destination-missing rule forever.
+    _relocate_legacy_dir(os.path.join(home, "models"), models_root())
+    _relocate_legacy_dir(os.path.join(home, "skills"), skills_root())
+    _relocate_legacy_dir(os.path.join(home, "plugins"), plugins_root())
+    # data/ moves only while it actually resolves to <user_root>/data — a
+    # WHISPER_DATA_DIR or config data_dir override means the user already
+    # relocated it themselves, and it is theirs to manage.
+    if data_root() == os.path.join(user_root(), "data"):
+        _relocate_legacy_dir(os.path.join(home, "data"), data_root())
     for d in (
         home,
+        user_root(),
         models_root(),
         storage_root(),
         plugins_root(),
         logs_root(),
-        os.path.join(home, "data"),
+        data_root(),
     ):
         try:
             os.makedirs(d, exist_ok=True)

@@ -24,9 +24,10 @@ def test_env_override_wins(monkeypatch, tmp_path):
 
 
 def test_default_is_repo_data(monkeypatch):
-    # This asserts the no-WHISPER_HOME default, so clear any ambient value (the
-    # packaged app sets WHISPER_HOME, which would otherwise win here).
+    # This asserts the dev-checkout default, so clear every ambient root: the
+    # packaged app sets WHISPER_HOME and the conftest pins WHISPER_USER_DIR.
     monkeypatch.delenv("WHISPER_HOME", raising=False)
+    monkeypatch.delenv("WHISPER_USER_DIR", raising=False)
     monkeypatch.delenv("WHISPER_DATA_DIR", raising=False)
     monkeypatch.setattr("server.infrastructure.config.get", lambda key, default=None: default)
     assert data_root() == os.path.join(repo_root(), "data")
