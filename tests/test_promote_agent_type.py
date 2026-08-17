@@ -11,7 +11,7 @@ from server.agents.custom_config import load_custom_agent_types, register_epheme
 
 
 def test_promote_writes_file_project_scope_and_round_trips(tmp_path, monkeypatch):
-    monkeypatch.setattr("server.infrastructure.paths.config_dir", lambda: str(tmp_path / "home"))
+    monkeypatch.setattr("server.infrastructure.paths.user_root", lambda: str(tmp_path / "home"))
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: str(tmp_path / "project"))
 
     session_id = "sess-promote-1"
@@ -46,7 +46,7 @@ def test_promote_writes_file_project_scope_and_round_trips(tmp_path, monkeypatch
 
 
 def test_promote_unknown_name_returns_error(tmp_path, monkeypatch):
-    monkeypatch.setattr("server.infrastructure.paths.config_dir", lambda: str(tmp_path / "home"))
+    monkeypatch.setattr("server.infrastructure.paths.user_root", lambda: str(tmp_path / "home"))
     out = json.loads(execute_promote_agent_type({"name": "does_not_exist"}, "sess-empty"))
     assert "error" in out
 
@@ -57,7 +57,7 @@ def test_promote_missing_name_returns_error():
 
 
 def test_promote_user_scope(tmp_path, monkeypatch):
-    monkeypatch.setattr("server.infrastructure.paths.config_dir", lambda: str(tmp_path / "home"))
+    monkeypatch.setattr("server.infrastructure.paths.user_root", lambda: str(tmp_path / "home"))
     session_id = "sess-promote-2"
     register_ephemeral_type(
         session_id,
@@ -75,7 +75,7 @@ def test_promote_user_scope(tmp_path, monkeypatch):
 
 
 def test_promote_project_scope_without_workspace_errors(tmp_path, monkeypatch):
-    monkeypatch.setattr("server.infrastructure.paths.config_dir", lambda: str(tmp_path / "home"))
+    monkeypatch.setattr("server.infrastructure.paths.user_root", lambda: str(tmp_path / "home"))
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
     session_id = "sess-promote-3"
     register_ephemeral_type(
@@ -93,7 +93,7 @@ def test_promote_re_strips_write_tool_even_if_stored_def_is_tampered(tmp_path, m
     it rebuilds from the RAW recorded fields every time, so even a stored def
     that (somehow) claims read_only=True alongside a write tool gets
     re-sanitized independently at promote time, not just at spawn time."""
-    monkeypatch.setattr("server.infrastructure.paths.config_dir", lambda: str(tmp_path / "home"))
+    monkeypatch.setattr("server.infrastructure.paths.user_root", lambda: str(tmp_path / "home"))
     session_id = "sess-tamper"
     register_ephemeral_type(
         session_id,
@@ -121,7 +121,7 @@ def test_promote_re_strips_write_tool_even_if_stored_def_is_tampered(tmp_path, m
 
 
 def test_promote_rejects_unsafe_name(tmp_path, monkeypatch):
-    monkeypatch.setattr("server.infrastructure.paths.config_dir", lambda: str(tmp_path / "home"))
+    monkeypatch.setattr("server.infrastructure.paths.user_root", lambda: str(tmp_path / "home"))
     session_id = "sess-unsafe"
     # Bypass register_ephemeral_type's own sanitizing to plant an unsafe raw
     # name directly, exercising promote_ephemeral_type's own guard.

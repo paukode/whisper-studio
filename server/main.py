@@ -8,6 +8,13 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+# Move legacy user data out of Application Support BEFORE any server module
+# imports: most modules freeze their path constants at import time, and the
+# constants must freeze onto files that are already in their new home.
+from server.infrastructure.paths import relocate_legacy_home
+
+relocate_legacy_home()
+
 from server.approval.bootstrap import register_defaults as register_approval_defaults
 from server.approval.router import router as approval_router
 from server.attachments import cleanup_loop

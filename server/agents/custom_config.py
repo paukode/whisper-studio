@@ -189,9 +189,15 @@ def _project_agents_dir(workspace_path: str | None) -> str | None:
 
 
 def _user_agents_dir() -> str:
-    from server.infrastructure.paths import config_dir
+    from server.infrastructure.paths import repo_root, user_root
 
-    return os.path.join(config_dir(), AGENTS_SUBDIR)
+    # Packaged install: plain <~/.whisper>/agents — nesting ".whisper/agents"
+    # inside a directory already named .whisper read as an accident. A dev
+    # checkout keeps the historical repo/.whisper/agents (gitignored).
+    root = user_root()
+    if root != repo_root():
+        return os.path.join(root, "agents")
+    return os.path.join(root, AGENTS_SUBDIR)
 
 
 def _parse_agent_md(path: str) -> AgentConfig | None:
