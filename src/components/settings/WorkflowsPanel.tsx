@@ -1,22 +1,18 @@
 import React from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { listSaved, listRuns, approveSaved, deleteSaved } from '@/api/workflows';
-import type { SavedWorkflow, WorkflowRun } from '@/api/workflows';
+import { listSaved, approveSaved, deleteSaved } from '@/api/workflows';
+import type { SavedWorkflow } from '@/api/workflows';
 import { dialogConfirm, useUIStore } from '@/stores/uiStore';
 import { toError } from '@/utils/toError';
 
 /**
- * Workflows: what has RUN, and what is saved to run again.
+ * Workflows: the saved library, nothing else.
  *
- * The runs list exists because a launched workflow used to be visible only as
- * the inline card in the chat that started it — this panel showed saved scripts
- * alone, so a user who had run several workflows still saw "no workflows".
- *
- * Saved workflows land here via the assistant's `workflow_save` tool and are
- * untrusted by default: running one by name shows an approval preview card
- * each time, and nested `workflow(name)` calls from other scripts refuse to
- * load it. Trusting a workflow records its current script hash, so both paths
- * run it without a preview until the script changes.
+ * This panel once also listed every run (added by user request in #60, removed
+ * by user request later): runs live in chat — the inline card that launched one
+ * shows its progress and result, and approval is decided there by permission
+ * mode. Settings only holds what outlives a session: which saved scripts are
+ * trusted to run without a card, and deleting them.
  */
 export const WorkflowsPanel: React.FC = () => {
   const queryClient = useQueryClient();
@@ -24,15 +20,6 @@ export const WorkflowsPanel: React.FC = () => {
     queryKey: ['workflows-saved'],
     queryFn: listSaved,
     staleTime: 15_000,
-  });
-  // Runs refresh faster than saved scripts and keep polling while one is live,
-  // so a swarm launched from chat shows up here without a manual reload.
-  const { data: runsData } = useQuery({
-    queryKey: ['workflows-runs'],
-    queryFn: () => listRuns(),
-    staleTime: 5_000,
-    refetchInterval: (q) =>
-      (q.state.data?.runs ?? []).some((r: WorkflowRun) => r.status === 'running') ? 5_000 : false,
   });
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['workflows-saved'] });
@@ -91,65 +78,18 @@ export const WorkflowsPanel: React.FC = () => {
   }
 
   const saved = data?.saved ?? [];
-  const runs = runsData?.runs ?? [];
 
   return (
     <div className="settings-form" style={{ maxWidth: 720 }}>
-      <h3 style={{ marginBottom: 8 }}>Runs</h3>
-      <p className="settings-hint">
-        Every workflow this app has run, newest first. A run keeps going in the
-        background after the turn that launched it ends — you can carry on
-        chatting, and its result is reported back when it finishes.
-      </p>
-
-      {runs.length === 0 ? (
-        <div className="settings-empty">
-          No workflow runs yet. Switch the composer to <strong>Ultracode</strong> and
-          ask for substantial work — the assistant writes a workflow script and
-          runs it as a background agent swarm.
-        </div>
-      ) : (
-        <div className="settings-list">
-          {runs.map((run: WorkflowRun) => (
-            <div key={run.run_id} className="settings-item">
-              <div className="settings-item-info">
-                <div className="settings-item-name">
-                  {run.name || run.run_id}
-                  <span
-                    style={{
-                      marginLeft: 8,
-                      fontSize: '0.8em',
-                      fontWeight: 500,
-                      padding: '1px 6px',
-                      borderRadius: 3,
-                      background: run.status === 'running' ? 'var(--accent-dim)' : 'var(--bg-secondary)',
-                      color: run.status === 'running' ? 'var(--accent)' : 'var(--text-muted)',
-                    }}
-                  >
-                    {run.status}
-                  </span>
-                </div>
-                <div className="settings-item-desc">
-                  {run.agents_spawned} agent{run.agents_spawned === 1 ? '' : 's'}
-                  {' · '}${run.cost_usd.toFixed(2)}
-                  {run.cap_reached && ' · budget cap reached'}
-                  {run.error && ` · ${run.error}`}
-                  {run.started_at && ` · ${new Date(run.started_at).toLocaleString()}`}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <h3 style={{ marginTop: 24, marginBottom: 8 }}>Saved</h3>
+      <h3 style={{ marginBottom: 8 }}>Saved workflows</h3>
       <p className="settings-hint">
         Reusable multi-agent workflow scripts saved by the assistant
-        (<code>workflow_save</code>). An untrusted workflow shows an approval
-        preview card every time it runs by name; a <strong>trusted</strong> one
-        runs immediately and can also be called from inside other workflows
-        via <code>workflow(name)</code>. Trust pins the current script, so any
-        edit needs re-trusting.
+        (<code>workflow_save</code>). Running one shows an approval card in chat
+        the first time each session, depending on your permission mode; a{' '}
+        <strong>trusted</strong> one always runs immediately and can also be
+        called from inside other workflows via <code>workflow(name)</code>.
+        Trust pins the current script, so any edit needs re-trusting. Running
+        workflows report progress on their card in the chat that launched them.
       </p>
 
       {saved.length === 0 ? (

@@ -64,11 +64,9 @@ expect one click if you ask for something enormous.
    count and running cost.
 3. **The turn ends there.** The assistant does not sit and wait for the swarm.
 
-Watch it from three places:
+Watch it from two places:
 
 - **The chat card**, live, with a Stop button.
-- **Settings, Workflows and tasks, Workflows, Runs.** Every run this app has
-  ever made, newest first.
 - **The Background Tasks panel**, alongside detached agents and shell commands.
 
 ## Keep chatting while it runs
@@ -109,7 +107,9 @@ slash command:
 - **You got one agent instead of a swarm.** Check the effort chip actually says
   Ultracode. Any other level, and the workflow tools are not offered to the
   model at all.
-- **A preview card every time.** Either the run's budget is above 600k, or the
-  `workflow` category is not on `auto`.
-- **Settings shows nothing under Saved.** That section lists saved scripts, not
-  runs. A run that was never saved lives under **Runs** above it.
+- **A preview card on the first run.** Either the run's budget is above 600k,
+  or the `workflow` category is not on `auto`. Approving the card covers the
+  rest of the session for that exact script; trusting it (the card's checkbox
+  or Settings) covers restarts too.
+- **Settings shows nothing under Saved.** That section lists saved scripts,
+  not runs. Runs live on their chat card and in the Background Tasks panel.
