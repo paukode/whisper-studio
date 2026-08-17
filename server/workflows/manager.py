@@ -352,11 +352,22 @@ def _make_nested_runner(session_id, model_key, model_id, effort_label, workspace
     async def nested(name, args, parent):
         loaded = _load_trusted_saved(name)
         if not loaded:
+            # Not durably trusted — but a script the user approved from a card
+            # earlier THIS session is just as approved when a parent workflow
+            # calls it by name.
+            from server.workflows import store as _store
+            from server.workflows.launch_policy import is_session_granted
+
+            candidate = _store.load_script(name)
+            if candidate and is_session_granted(session_id, candidate["script"]):
+                loaded = candidate
+        if not loaded:
             return {
                 "status": "failed",
                 "error": (
                     f"unknown or untrusted workflow: {name} "
-                    "(nested calls need the saved workflow trusted in Settings > Workflows)"
+                    "(the user must approve it from its preview card once before "
+                    "other workflows can call it)"
                 ),
             }
         # Depth-1 child inherits the parent's REMAINING budget so nested spend

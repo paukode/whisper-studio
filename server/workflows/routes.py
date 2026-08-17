@@ -1,8 +1,7 @@
-"""HTTP + SSE API for workflow runs and saved workflows.
+"""HTTP + SSE API for workflow runs.
 
-Runs list/detail/journal/stop, a launch endpoint used by the approval card, a
-per-run SSE stream (event_bus channel ``workflow:{run_id}``), and saved-workflow
-list/approve/delete.
+Run detail/stop, a launch endpoint used by the approval card and the /workflow
+command, and a per-run SSE stream (event_bus channel ``workflow:{run_id}``).
 """
 
 from __future__ import annotations
@@ -60,14 +59,14 @@ async def get_run(run_id: str):
 async def launch_run(request: Request):
     """Launch a run from the approval card (new script) or by saved name.
 
-    ``trust: true`` is the card's "Always allow this workflow" checkbox: the
-    approved script is saved under its (slugified) name with its hash recorded
-    as trusted — the same state Settings > Workflows' trust toggle writes, so
-    future runs by name skip the card until the script changes."""
+    Approving IS trusting: this route is only reached by an explicit user
+    action (the card's Approve button, or the /workflow command), so the
+    approved script is remembered for the session, and when it byte-matches a
+    SAVED workflow that workflow becomes durably trusted — no separate trust
+    step exists anywhere."""
     body = await request.json()
     script = (body.get("script") or "").strip()
     name = (body.get("name") or "").strip()
-    trust = bool(body.get("trust"))
     session_id = body.get("session_id", "")
     args = body.get("args")
     budget_tokens = body.get("budget_tokens")
@@ -144,8 +143,8 @@ async def launch_run(request: Request):
                     "error": f"workflow '{name}' is not trusted",
                     "preview_required": True,
                     "detail": (
-                        "Trust it in Settings > Workflows (or approve it once from the "
-                        "preview card) before launching it by name."
+                        "Approve it once from its preview card in chat; after that it "
+                        "stays trusted."
                     ),
                 },
                 status_code=403,
@@ -167,16 +166,22 @@ async def launch_run(request: Request):
     # Launching from here IS the user's approval (the card's Approve button and
     # the /workflow command both land on this route), so remember it for the
     # session: the same script re-proposed later this session skips the card.
-    # Process memory only — restarting the app brings the card back; the trust
-    # checkbox below is the durable form.
     grant_session(session_id, script)
 
+    # And when the approved bytes ARE a saved workflow, the approval trusts it
+    # durably — there is no separate trust step. The byte-match guard means an
+    # inline script that merely shares a saved workflow's name can never trust
+    # bytes the user did not just approve; editing the saved script later drops
+    # trust via its hash pin, exactly as before.
     trusted_as = None
-    if trust:
-        slug = store.slugify(name or str(meta.get("name") or ""))
-        if slug:
-            store.save_script(slug, script, meta, trusted=True)
+    for slug in dict.fromkeys(
+        s for s in (store.slugify(name), store.slugify(str(meta.get("name") or ""))) if s
+    ):
+        saved = store.load_script(slug)
+        if saved and saved["script"].strip() == script and not saved["trusted"]:
+            store.approve_script(slug)
             trusted_as = slug
+            break
 
     run_id = manager.start_run(
         script,
@@ -234,18 +239,6 @@ async def run_events(run_id: str, request: Request):
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@router.get("/saved")
-async def list_saved():
-    return {"saved": store.list_scripts()}
-
-
-@router.post("/saved/{name}/approve")
-async def approve_saved(name: str):
-    if not store.approve_script(name):
-        return JSONResponse({"error": "not found"}, status_code=404)
-    return {"approved": True}
-
-
-@router.delete("/saved/{name}")
-async def delete_saved(name: str):
-    return {"deleted": store.delete_script(name)}
+# No /saved REST surface: the Settings library UI is gone. The saved-workflow
+# store is managed from chat (workflow_save / workflow_delete / workflow_list)
+# and trust comes from approving the preview card above.

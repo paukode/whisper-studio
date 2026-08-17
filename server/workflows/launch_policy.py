@@ -31,10 +31,11 @@ WORKFLOW_AUTO_MAX_TOKENS = DEFAULT_WORKFLOW_BUDGET_TOKENS
 # ---------------------------------------------------------------------------
 # Session grants: "the user already approved this exact script this session".
 #
-# Approving a preview card grants the script's hash for that session only, so
+# Approving a preview card grants the script's hash for that session, so
 # re-running it (by name or as the same inline script) launches without a
-# second card. Process memory on purpose: a restart clears every grant, which
-# keeps the Settings > Workflows trust tick the only DURABLE trust. Keyed by
+# second card. Process memory on purpose: a restart clears every grant. The
+# DURABLE form is saved-workflow trust, which the same approval sets when the
+# script byte-matches a saved workflow (see routes.launch_run). Keyed by
 # script hash — the same identity durable trust pins — so any edit to the
 # script brings the card back. Same lifetime pattern as the latched session
 # config (server/infrastructure/config.py) and the auto-mode breaker

@@ -85,7 +85,7 @@ WORKFLOW_TOOLS: list[dict] = [
     },
     {
         "name": "workflow_save",
-        "description": "Save a named, reusable workflow script (invocable later by name via workflow_run). Stored untrusted; a run by name shows an approval preview card once per session until the user trusts it in Settings > Workflows, which also allows nested workflow(name) calls.",
+        "description": "Save a named, reusable workflow script (invocable later by name via workflow_run). A script the user already approved this session is saved trusted; otherwise the first run by name shows an approval preview card, and the user approving it trusts it durably (trust also allows nested workflow(name) calls).",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -99,6 +99,15 @@ WORKFLOW_TOOLS: list[dict] = [
         "name": "workflow_list",
         "description": "List saved workflows (name + description + trust) and this session's recent runs.",
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "workflow_delete",
+        "description": "Delete a saved workflow from the library (past runs are kept). The only removal surface — there is no Settings UI for workflows.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "The saved workflow's name."}},
+            "required": ["name"],
+        },
     },
 ]
 
@@ -392,7 +401,7 @@ def _status_view(run: dict) -> dict:
     }
 
 
-async def execute_workflow_save(tool_input) -> str:
+async def execute_workflow_save(tool_input, session_id: str = "") -> str:
     name = (tool_input.get("name") or "").strip()
     script = (tool_input.get("script") or "").strip()
     if not store.valid_name(name):
@@ -403,12 +412,30 @@ async def execute_workflow_save(tool_input) -> str:
         meta = await asyncio.to_thread(parse_workflow, script)  # spawns node; keep off the loop
     except ValueError as e:
         return f"Workflow script error: {e}"
-    store.save_script(name, script, meta, trusted=False)
+    # A script the user already approved this session is saved TRUSTED: the
+    # approval was for these exact bytes, so re-asking after a save would be
+    # the second ask the card-once rule exists to prevent.
+    trusted = is_session_granted(session_id, script)
+    store.save_script(name, script, meta, trusted=trusted)
+    if trusted:
+        return (
+            f"Saved workflow '{name}' ({len(meta.get('phases', []))} phases) as trusted — "
+            "the user approved this script, so runs by name start immediately."
+        )
     return (
-        f"Saved workflow '{name}' ({len(meta.get('phases', []))} phases). Running it by name "
-        "shows the approval preview card once per session until the user trusts it, either in "
-        "Settings > Workflows or via the card's 'Always allow this workflow' checkbox."
+        f"Saved workflow '{name}' ({len(meta.get('phases', []))} phases). The first run by "
+        "name shows the user an approval preview card; approving it trusts the workflow "
+        "from then on."
     )
+
+
+def execute_workflow_delete(tool_input) -> str:
+    name = (tool_input.get("name") or "").strip()
+    if not store.valid_name(name):
+        return "Error: name must be a kebab/snake slug (a-z, 0-9, - or _)."
+    if not store.delete_script(name):
+        return f"No saved workflow named '{name}'."
+    return f"Deleted workflow '{name}'. Past runs and their journals are kept."
 
 
 def execute_workflow_list(tool_input, session_id) -> str:

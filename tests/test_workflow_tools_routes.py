@@ -218,21 +218,36 @@ def test_permissions_endpoint_lists_workflow_category():
     assert "workflow" in cats
 
 
-def test_route_launch_trust_saves_trusted_workflow():
+def test_route_launch_approval_trusts_a_matching_saved_workflow():
+    # Approving IS trusting: when the approved bytes are a saved workflow,
+    # the launch trusts it durably — there is no separate trust step.
     from server.workflows import store
 
+    store.save_script("noop", _NOOP, {"name": "noop", "phases": ["a"]})
     c = _client()
-    r = c.post("/api/workflows/runs", json={"script": _NOOP, "session_id": "s1", "trust": True})
+    r = c.post("/api/workflows/runs", json={"script": _NOOP, "session_id": "s1", "name": "noop"})
     assert r.status_code == 200
     assert r.json()["trusted_as"] == "noop"
-    loaded = store.load_script("noop")
-    assert loaded and loaded["trusted"] is True
+    assert store.load_script("noop")["trusted"] is True
 
-    # Approving without the checkbox must not create trust.
+    # An approved script that is NOT saved anywhere trusts nothing durably
+    # (the session grant covers it) and never invents a library entry.
     other = _NOOP.replace("noop", "other")
     r2 = c.post("/api/workflows/runs", json={"script": other, "session_id": "s1"})
     assert r2.json()["trusted_as"] is None
     assert store.load_script("other") is None
+
+
+def test_route_launch_never_trusts_different_bytes_under_a_shared_name():
+    # An inline script that merely SHARES a saved workflow's name must not
+    # trust bytes the user did not approve for that entry.
+    from server.workflows import store
+
+    store.save_script("noop", _NOOP.replace("{ ok: 1 }", "{ ok: 99 }"), {"name": "noop"})
+    r = _client().post("/api/workflows/runs", json={"script": _NOOP, "session_id": "s1"})
+    assert r.status_code == 200
+    assert r.json()["trusted_as"] is None
+    assert store.load_script("noop")["trusted"] is False
 
 
 def test_slugify_meta_names():
@@ -243,19 +258,20 @@ def test_slugify_meta_names():
     assert store.slugify("???") == ""
 
 
-def test_route_saved_crud_and_trust():
+def test_saved_rest_surface_is_gone_and_delete_tool_replaces_it():
+    # The Settings library UI was removed, and its REST surface with it; the
+    # store is managed from chat via workflow_save/workflow_list/workflow_delete.
     from server.workflows import store
+    from server.workflows.tools import execute_workflow_delete
 
     store.save_script("wf", _NOOP, {"description": "d", "phases": ["a"]})
     c = _client()
-    saved = c.get("/api/workflows/saved").json()["saved"]
-    assert any(s["name"] == "wf" and s["trusted"] is False for s in saved)
+    assert c.get("/api/workflows/saved").status_code in (404, 405)
+    assert c.post("/api/workflows/saved/wf/approve").status_code in (404, 405)
 
-    assert c.post("/api/workflows/saved/wf/approve").json()["approved"] is True
-    assert store.load_script("wf")["trusted"] is True
-
-    assert c.delete("/api/workflows/saved/wf").json()["deleted"] is True
+    assert "Deleted workflow 'wf'" in execute_workflow_delete({"name": "wf"})
     assert store.load_script("wf") is None
+    assert "No saved workflow" in execute_workflow_delete({"name": "wf"})
 
 
 # ── pool + directive wiring ──────────────────────────────────────────────────

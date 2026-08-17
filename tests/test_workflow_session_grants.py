@@ -127,24 +127,52 @@ def test_approving_card_grants_the_inline_script_for_the_session():
     assert side and "workflow_preview" in side[0]
 
 
-def test_grant_covers_the_saved_name_with_the_same_script():
+def test_approving_a_saved_workflows_card_trusts_it_durably():
+    from server.workflows import store
     from server.workflows.tools import execute_workflow_save
 
     asyncio.run(execute_workflow_save({"name": "my-flow", "script": _NOOP}))
 
-    # Untrusted saved name: card first.
+    # Untrusted saved name: card first. The card carries the saved name.
     out, side = _run_tool({"name": "my-flow"}, "s1")
     assert side and "workflow_preview" in side[0]
+    assert side[0]["workflow_preview"]["name"] == "my-flow"
 
-    # Approve from the card (same bytes).
+    # Approve from the card — its POST echoes script AND name, which trusts
+    # the saved workflow durably (approve = trust, no checkbox).
+    r = _client().post(
+        "/api/workflows/runs", json={"script": _NOOP, "session_id": "s1", "name": "my-flow"}
+    )
+    assert r.status_code == 200
+    assert r.json()["trusted_as"] == "my-flow"
+    assert store.load_script("my-flow")["trusted"] is True
+
+    # Run by name now launches immediately through the trusted branch — for
+    # every session, not just this one.
+    out, side = _run_tool({"name": "my-flow"}, "s-completely-different")
+    body = json.loads(out)
+    assert body["run_id"] and "session_approved" not in body
+    assert side and "workflow_started" in side[0]
+
+
+def test_saving_an_approved_script_saves_it_trusted():
+    from server.workflows import store
+    from server.workflows.tools import execute_workflow_save
+
+    # The user approved these bytes this session...
     r = _client().post("/api/workflows/runs", json={"script": _NOOP, "session_id": "s1"})
     assert r.status_code == 200
 
-    # Run by name now launches silently — the grant is keyed by script hash.
-    out, side = _run_tool({"name": "my-flow"}, "s1")
-    body = json.loads(out)
-    assert body["session_approved"] is True
-    assert side and "workflow_started" in side[0]
+    # ...so saving them under a name keeps them trusted (same session).
+    msg = asyncio.run(execute_workflow_save({"name": "kept", "script": _NOOP}, "s1"))
+    assert "as trusted" in msg
+    assert store.load_script("kept")["trusted"] is True
+
+    # Saving unapproved bytes stays untrusted.
+    other = _NOOP.replace("noop", "other")
+    msg = asyncio.run(execute_workflow_save({"name": "fresh", "script": other}, "s1"))
+    assert "as trusted" not in msg
+    assert store.load_script("fresh")["trusted"] is False
 
 
 def test_editing_the_script_brings_the_card_back():
