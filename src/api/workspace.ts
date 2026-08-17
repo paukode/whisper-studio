@@ -95,8 +95,16 @@ export interface IndexEngineOption {
   downloaded: boolean;
 }
 
-export function indexEngines(): Promise<{ engines: IndexEngineOption[] }> {
-  return get<{ engines: IndexEngineOption[] }>('/api/workspace/index/engines');
+/** The catalog plus the model mode it was filtered for: cloud/hybrid list Haiku
+ *  and every on-device model, local lists only downloaded on-device models (and
+ *  is empty until the user installs one). */
+export interface IndexEngineCatalog {
+  engines: IndexEngineOption[];
+  mode?: 'cloud' | 'hybrid' | 'local';
+}
+
+export function indexEngines(): Promise<IndexEngineCatalog> {
+  return get<IndexEngineCatalog>('/api/workspace/index/engines');
 }
 
 /** Per-workspace index settings (each indexed folder has its own). */
