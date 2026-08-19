@@ -306,6 +306,56 @@ def test_file_page_unknown_file_reports_not_found():
     assert store.explore_file(ws, "zzz.md") == {"found": False}
 
 
+# ── HTTP routes ──────────────────────────────────────────────────────────────
+
+
+def test_explore_routes_serve_views_with_root(monkeypatch):
+    """The four /explore routes resolve the workspace, reject unindexed paths
+    with empty shapes, and stamp the absolute root for the UI's reveal/open."""
+    import asyncio
+
+    from server.index import routes
+
+    ws = "/fake/xpl-routes"
+    _add(ws, "a.md", [{"name": "Dana Kim", "label": "person"}])
+    monkeypatch.setattr(routes.paths, "is_indexed", lambda p: True)
+
+    out = asyncio.run(routes.explore_overview(ws))
+    assert out["files"] == 1 and out["root"] == ws
+    out = asyncio.run(routes.explore_entities(ws))
+    assert out["total"] == 1 and out["root"] == ws
+    out = asyncio.run(routes.explore_entity(ws, "dana kim"))
+    assert out["found"] and out["name"] == "Dana Kim" and out["root"] == ws
+    out = asyncio.run(routes.explore_file(ws, "a.md"))
+    assert out["found"] and out["passages"] == 1 and out["root"] == ws
+
+    monkeypatch.setattr(routes.paths, "is_indexed", lambda p: False)
+    assert asyncio.run(routes.explore_overview(ws))["files"] == 0
+    assert asyncio.run(routes.explore_entity(ws, "dana kim")) == {"found": False, "root": ""}
+
+
+# ── frontend verb map stays in sync with the predicate vocabulary ───────────
+
+
+def test_fact_sentence_verb_map_covers_the_predicate_vocabulary():
+    """The explorer renders facts as sentences via a TS verb map; every canonical
+    predicate must have a phrase there, or new predicates silently fall back to
+    underscore-mangled verbs in the UI."""
+    import pathlib
+    import re
+
+    from server.index.relations_vocab import PREDICATES
+
+    ts = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "src/components/workspace/explorer/factSentence.ts"
+    ).read_text(encoding="utf-8")
+    block = ts.split("export const VERB_PHRASES")[1].split("};")[0]
+    ts_keys = set(re.findall(r"^\s*(\w+):", block, flags=re.M))
+    missing = set(PREDICATES) - ts_keys
+    assert not missing, f"factSentence.ts VERB_PHRASES is missing predicates: {sorted(missing)}"
+
+
 # ── relstore addition ────────────────────────────────────────────────────────
 
 

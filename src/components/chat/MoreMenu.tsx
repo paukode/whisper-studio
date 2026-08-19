@@ -214,7 +214,7 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
                       />
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0 }}>
                         <span className="toolbar-dropdown-item-name">{ix.name}</span>
-                        <span className="toolbar-dropdown-item-desc">{ix.files} files · {ix.chunks} chunks</span>
+                        <span className="toolbar-dropdown-item-desc">{ix.files} files · {ix.chunks} passages</span>
                       </div>
                     </div>
                   );

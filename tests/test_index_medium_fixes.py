@@ -2,10 +2,10 @@
 
 (1) The PUT /settings route now includes ``entity_descriptions`` in its patch-key
     allow-list, so the (fully wired, pipeline-consumed) toggle actually persists.
-(2) Read paths (index_list / stats / cross-workspace graphs / the launchd agent)
-    no longer fabricate an empty active-backend index DB for a folder that was
-    indexed under the OTHER embed backend — indexes are per-backend, and opening a
-    missing db path with sqlite3 would silently create an empty file.
+(2) Read paths (index_list / stats / the launchd agent) no longer fabricate an
+    empty active-backend index DB for a folder that was indexed under the OTHER
+    embed backend — indexes are per-backend, and opening a missing db path with
+    sqlite3 would silently create an empty file.
 """
 
 import asyncio
@@ -14,7 +14,7 @@ import os
 import numpy as np
 import pytest
 
-from server.index import agent, graph_views, paths, routes, scheduler, store, wssettings
+from server.index import agent, paths, routes, scheduler, store, wssettings
 from server.index.config import EMBED_DIM
 
 
@@ -123,23 +123,3 @@ def test_index_list_skips_other_backend_without_fabricating(monkeypatch):
     assert not os.path.exists(paths.db_path(ws, "qwen3"))
     # The real (cohere) index is untouched.
     assert os.path.exists(paths.db_path(ws, "cohere"))
-
-
-def test_all_workspaces_graph_skips_other_backend_without_fabricating(monkeypatch):
-    """The cross-workspace graph views iterate list_indexed_workspaces() and open
-    each db; a folder indexed under the other backend must be skipped rather than
-    fabricated into an empty active-backend db."""
-    from server.infrastructure import model_mode
-
-    ws = "/fake/ws-graph-cohere-only"
-    monkeypatch.setattr(model_mode, "resolve_backend", lambda cap, config=None: "cohere")
-    store.set_meta(ws, workspace=ws)
-    assert os.path.exists(paths.db_path(ws, "cohere"))
-
-    monkeypatch.setattr(model_mode, "resolve_backend", lambda cap, config=None: "qwen3")
-    g = graph_views.all_workspaces_graph()
-    assert g["nodes"] == [] and g["workspaces"] == []
-    gu = graph_views.all_workspaces_umap_graph()
-    assert gu["nodes"] == []
-    # Neither read fabricated the active-backend (qwen3) db.
-    assert not os.path.exists(paths.db_path(ws, "qwen3"))

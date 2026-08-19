@@ -165,43 +165,107 @@ export function listIndexes(): Promise<{ indexes: IndexInfo[] }> {
   return get<{ indexes: IndexInfo[] }>('/api/workspace/index/list');
 }
 
-export interface IndexGraphNode { id: string; name: string; chunks?: number; workspace?: string; group?: number; type?: 'file' | 'entity'; label?: string; community?: number; degree?: number; ux?: number; uy?: number; description?: string; }
-export interface IndexGraphEdge { source: string; target: string; weight?: number; weight_norm?: number; entities?: string[]; cross?: boolean; relation?: string; score?: number; }
-export interface IndexGraphWorkspace { path: string; name: string; files: number; group: number; }
-export interface IndexGraph {
-  nodes: IndexGraphNode[];
-  edges: IndexGraphEdge[];
-  root: string;
+/* ── Index explorer (words-first views over the index) ───────────────────── */
+
+export interface ExploreEntityRow {
+  name: string;
+  label: string;
+  salience: number;
+  files: number;
+  mentions: number;
+  description: string;
+}
+export interface ExploreGroup { key: string; title: string; entities: ExploreEntityRow[]; }
+export interface ExploreEntities { groups: ExploreGroup[]; total: number; hidden: number; root: string; }
+
+export interface ExploreCard {
+  id: number;
+  names: string[];
+  files: number;
+  top_files: { path: string; name: string }[];
+}
+export interface ExploreOverview {
+  files: number;
+  passages: number;
+  entities: number;
+  last_indexed_at?: string | null;
+  cards: ExploreCard[];
+  stands_out: { name: string; label: string; files: number }[];
+  most_connected: { path: string; name: string; links: number }[];
   truncated?: boolean;
-  workspaces?: IndexGraphWorkspace[];
+  root: string;
 }
 
-export function getIndexGraph(path: string): Promise<IndexGraph> {
-  return get<IndexGraph>(`/api/workspace/index/graph?path=${encodeURIComponent(path)}`);
+export interface ExploreFactCite {
+  path: string;
+  name?: string;
+  start_line?: number | null;
+  end_line?: number | null;
+  evidence?: string | null;
+}
+export interface ExploreFact {
+  predicate: string;
+  other: string;
+  direction: 'out' | 'in';
+  score: number;
+  sources: number;
+  files: number;
+  cite: ExploreFactCite | null;
+}
+export interface ExploreEntityPage {
+  found: boolean;
+  name?: string;
+  label?: string;
+  description?: string;
+  facts?: ExploreFact[];
+  mentioned_in?: { path: string; name: string; passages: number }[];
+  related?: { name: string; label: string; shared: number }[];
+  truncated?: boolean;
+  root?: string;
 }
 
-/** Unified graph across all indexed workspaces (nodes grouped by workspace). */
-export function getAllIndexesGraph(): Promise<IndexGraph> {
-  return get<IndexGraph>('/api/workspace/index/graph/all');
+export interface ExploreFileFact {
+  source: string;
+  target: string;
+  predicate: string;
+  strength: number;
+  start_line?: number | null;
+  end_line?: number | null;
+  evidence?: string | null;
+}
+export interface ExploreFilePage {
+  found: boolean;
+  path?: string;
+  name?: string;
+  passages?: number;
+  entities?: { name: string; label: string; mentions: number }[];
+  neighbors?: { path: string; name: string; shared: number; entities: string[] }[];
+  facts?: ExploreFileFact[];
+  neighbors_truncated?: boolean;
+  root?: string;
 }
 
-/** Semantic-map layout: same file graph but with a 2D embedding projection
- *  (ux/uy per node) so files close in meaning sit together. Powers "UMAP map". */
-export function getIndexUmapGraph(path: string): Promise<IndexGraph> {
-  return get<IndexGraph>(`/api/workspace/index/graph/umap?path=${encodeURIComponent(path)}`);
+export function getExploreOverview(path: string): Promise<ExploreOverview> {
+  return get<ExploreOverview>(
+    `/api/workspace/index/explore/overview?path=${encodeURIComponent(path)}`,
+  );
 }
 
-/** Cross-workspace semantic map: a single UMAP over every indexed file, so
- *  "All indexed" + "UMAP map" spans all folders instead of one. */
-export function getAllIndexesUmapGraph(): Promise<IndexGraph> {
-  return get<IndexGraph>('/api/workspace/index/graph/umap/all');
+export function getExploreEntities(path: string, q = '', includeLow = false): Promise<ExploreEntities> {
+  return get<ExploreEntities>(
+    `/api/workspace/index/explore/entities?path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}${includeLow ? '&include_low=true' : ''}`,
+  );
 }
 
-/** Entity-centric graph: one entity at the centre linked to every file that
- *  mentions it ("everything about this person"). */
-export function getIndexEntityGraph(path: string, name: string, label = ''): Promise<IndexGraph> {
-  return get<IndexGraph>(
-    `/api/workspace/index/graph/entity?path=${encodeURIComponent(path)}&name=${encodeURIComponent(name)}&label=${encodeURIComponent(label)}`,
+export function getExploreEntity(path: string, name: string, label = ''): Promise<ExploreEntityPage> {
+  return get<ExploreEntityPage>(
+    `/api/workspace/index/explore/entity?path=${encodeURIComponent(path)}&name=${encodeURIComponent(name)}&label=${encodeURIComponent(label)}`,
+  );
+}
+
+export function getExploreFile(path: string, file: string): Promise<ExploreFilePage> {
+  return get<ExploreFilePage>(
+    `/api/workspace/index/explore/file?path=${encodeURIComponent(path)}&file=${encodeURIComponent(file)}`,
   );
 }
 

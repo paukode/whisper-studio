@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Index &amp; semantic search - Whisper Studio Docs</title>
-  <meta name="description" content="Index a connected folder so Claude can search it semantically and ground its answers in the retrieved passages, with an entity graph over what it found.">
+  <meta name="description" content="Index a connected folder so Claude can search it semantically and ground its answers in the retrieved passages, with an explorer over the people, topics, and connections it found.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -32,8 +32,8 @@
     </figure>
 
     <figure class="shot wide">
-      <img src="assets/img/entity-graph.png" alt="The relationship graph, with one file selected and its shared entities listed">
-      <figcaption><strong>The relationship graph over an indexed folder.</strong> Files are linked when they share extracted entities, and edge thickness tracks how many. Selecting a node lists its linked files with the specific entities they have in common.</figcaption>
+      <img src="assets/img/entity-graph.png" alt="The index explorer over an indexed folder, with a selected file's shared entities listed">
+      <figcaption><strong>Exploring an indexed folder.</strong> Files are linked when they share extracted entities; the explorer names those links outright, listing each connected file with the specific people and topics they have in common.</figcaption>
     </figure>
 
     <h2 id="the-goal">The goal</h2>
@@ -130,23 +130,29 @@
         is both indexed and selected for this session.</p></div>
     </div>
 
-    <h2 id="entity-graph">The entity graph</h2>
+    <h2 id="entity-graph">The index explorer</h2>
     <p>Indexing does more than embed text. As it processes files, it extracts <b>named entities</b>
-      (people, organizations, topics, and so on) from each chunk and collapses case, spacing, and
-      punctuation variants into a single canonical node, so you get one bubble per person or topic
+      (people, organizations, topics, and so on) from each passage and collapses case, spacing, and
+      punctuation variants into a single canonical name, so you get one entry per person or topic
       rather than five spellings of the same name. Which entity types it looks for is picked
       automatically per file from its extension, so a CV and a source file get different profiles
       (business vs code). The local extractor is GLiNER by default; a workspace can switch to the
       faster, English-focused GLiNER2 model from the Index settings panel (keep GLiNER for
       multilingual documents), and in cloud mode Claude Haiku does the extraction.</p>
-    <p>Files and entities that co-occur become <b>related</b>, and you can view the result as a graph
-      overlay: nodes for entities, edges for the files and entities that appear together. It is a
-      map of what your folder is actually about and how its pieces connect.</p>
-    <p>The graph is not just for browsing. At query time, after the vector search finds the closest
-      chunks, retrieval takes one hop along shared entities to pull in <b>related passages</b>, so an
-      answer can surface a relevant chunk that never contained your exact search words but is linked
-      to one that did. Those related passages appear under a "Related passages" heading in the
-      grounding block.</p>
+    <p>The <b>index explorer</b> is the browsable result, in plain words instead of a node diagram.
+      It opens from the compass button in the workspace panel header, from a file's right-click
+      "Show connections", from the command palette, or from an indexed folder's menu in the connect
+      dialog. The overview names each detected group of files by the entities they mention together
+      and lists what stands out most; clicking a name opens its page, with everything the documents
+      say about it, each relationship written as a sentence ("Dana works at Northwind Bank,
+      confirmed in 3 files") above the verbatim quote and a citation that opens the file at that
+      line. Clicking a file shows what it mentions and which files mention the same things, with the
+      shared names spelled out and a small labeled diagram of its strongest connections.</p>
+    <p>The explorer is not just for browsing. At query time, after the vector search finds the
+      closest passages, retrieval takes one hop along shared entities to pull in <b>related
+      passages</b>, so an answer can surface a relevant passage that never contained your exact
+      search words but is linked to one that did. Those related passages appear under a "Related
+      passages" heading in the grounding block.</p>
 
     <h2 id="one-index-per-backend">Each backend keeps its own index</h2>
     <p>Where indexing and retrieval run is set by <a href="tut-model-modes.html">model mode</a>

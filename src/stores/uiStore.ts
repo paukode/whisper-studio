@@ -15,6 +15,14 @@ const DEFAULT_TIMEOUTS: Record<ToastPriority, number> = {
 
 const MAX_VISIBLE_TOASTS = 5;
 
+/** Which page the index explorer opens on. Entry points deep-link: the file
+ * tree's "Show connections" lands on that file's page, entity chips land on
+ * an entity page, everything else starts at the overview. */
+export type ExplorerTarget =
+  | { kind: 'overview' }
+  | { kind: 'entity'; name: string; label?: string }
+  | { kind: 'file'; file: string };
+
 export interface ToolPoolStats {
   advertised: number;
   deferred: number;
@@ -98,10 +106,15 @@ export interface UIState {
   /* Workspace connect dialog */
   workspaceConnectOpen: boolean;
 
-  /* Relationship-graph overlay: workspace path to graph, or null when closed */
-  graphWorkspace: string | null;
-  openIndexGraph: (path: string) => void;
-  closeIndexGraph: () => void;
+  /* Index explorer overlay: the workspace being explored plus the page it
+   * opens on (overview, one entity, or one file), or null when closed. Every
+   * entry point deep-links here — the connect dialog and the workspace-panel
+   * button open the overview, the file tree's "Show connections" opens that
+   * file's page. `seq` increments per open call so the dialog remounts (and
+   * re-anchors its navigation stack) even when re-opened on the same page. */
+  indexExplorer: { path: string; target: ExplorerTarget; seq: number } | null;
+  openIndexExplorer: (path: string, target?: ExplorerTarget) => void;
+  closeIndexExplorer: () => void;
 
   /* Workspace connected state */
   wsConnected: boolean;
@@ -247,7 +260,7 @@ export const useUIStore = create<UIState>()((set) => ({
   toastQueue: [],
   transcriptVisible: false,
   workspaceConnectOpen: false,
-  graphWorkspace: null,
+  indexExplorer: null,
   wsConnected: false,
   wsPath: '',
   workspacePanelCollapsed: false,
@@ -387,12 +400,19 @@ export const useUIStore = create<UIState>()((set) => ({
     set({ workspaceConnectOpen: false });
   },
 
-  openIndexGraph: (path: string) => {
-    set({ graphWorkspace: path, workspaceConnectOpen: false });
+  openIndexExplorer: (path: string, target?: ExplorerTarget) => {
+    set((s) => ({
+      indexExplorer: {
+        path,
+        target: target ?? { kind: 'overview' },
+        seq: (s.indexExplorer?.seq ?? 0) + 1,
+      },
+      workspaceConnectOpen: false,
+    }));
   },
 
-  closeIndexGraph: () => {
-    set({ graphWorkspace: null });
+  closeIndexExplorer: () => {
+    set({ indexExplorer: null });
   },
 
   setWsConnected: (connected, path) => {

@@ -14,4 +14,6 @@ export const STORAGE_KEYS = {
   GIT_DIFF_GEOMETRY: 'whisper_git_diff_geometry',
   /** Git diff viewer layout: 'split' or 'unified' */
   GIT_DIFF_LAYOUT: 'whisper_git_diff_layout',
+  /** Index explorer first-run note dismissed */
+  EXPLORER_COACH_DISMISSED: 'whisper_explorer_coach_dismissed',
 } as const;

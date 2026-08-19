@@ -320,6 +320,16 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
     }
   }, [fileName, onClose]);
 
+  /** Show connections — open the index explorer on this file's page (what it
+   *  mentions, which files mention the same things and why). If the folder is
+   *  not indexed yet, the explorer's empty state says how to index it. */
+  const handleShowConnections = useCallback(() => {
+    onClose();
+    const wsRoot = useUIStore.getState().wsPath;
+    if (!wsRoot) return;
+    useUIStore.getState().openIndexExplorer(wsRoot, { kind: 'file', file: path });
+  }, [path, onClose]);
+
   /** Open Timeline — show git file history. */
   const handleOpenTimeline = useCallback(async () => {
     onClose();
@@ -584,6 +594,7 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
       items.push({ label: 'Select for Compare', icon: '↔', onClick: handleSelectForCompare });
     }
     items.push({ label: 'Find references to this file', icon: '🔍', onClick: () => void handleFindFileReferences() });
+    items.push({ label: 'Show connections', icon: '🧭', onClick: handleShowConnections });
     items.push({ label: 'Open Timeline', icon: '⏱', onClick: () => void handleOpenTimeline() });
     items.push({ label: '', separator: true });
 
