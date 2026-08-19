@@ -2,7 +2,7 @@ import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useUIStore } from '@/stores/uiStore';
-import { queryFile, type BinaryFileInfo } from '@/api/workspace';
+import { indexStatus, queryFile, type BinaryFileInfo } from '@/api/workspace';
 import { getLangForPath } from '@/utils/languageDetection';
 import { FileTree } from './FileTree';
 import { EditorTabs } from './EditorTabs';
@@ -128,6 +128,16 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
   // null = no active search (show the tree); array = results (possibly empty).
   // While a search is pending (data still undefined) keep showing the tree.
   const searchResults: Array<{ path: string }> | null = debouncedQuery ? (searchData ?? null) : null;
+
+  // The Explore button only makes sense once this folder has an index.
+  const wsPath = useUIStore((s) => s.wsPath);
+  const { data: wsIndexStatus } = useQuery({
+    queryKey: ['index-status', wsPath],
+    queryFn: () => indexStatus(wsPath),
+    enabled: !!wsPath,
+    staleTime: 60_000,
+  });
+  const wsIndexed = !!wsIndexStatus?.indexed;
 
   /**
    * File open handler matching the original openFileViewer flow:
@@ -402,6 +412,26 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
           Workspace
         </h2>
         <div className="panel-header-actions">
+          {wsIndexed && (
+            <button
+              className="btn btn-sm"
+              id="wsExploreBtn"
+              onClick={() => useUIStore.getState().openIndexExplorer(useUIStore.getState().wsPath)}
+              title="Explore index: the people, topics, and file connections in this folder"
+              aria-label="Explore index"
+              type="button"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <circle cx="5" cy="5" r="2"/>
+                <circle cx="19" cy="5" r="2"/>
+                <circle cx="12" cy="20" r="2"/>
+                <line x1="10" y1="10" x2="6.5" y2="6.5"/>
+                <line x1="14" y1="10" x2="17.5" y2="6.5"/>
+                <line x1="12" y1="15" x2="12" y2="18"/>
+              </svg>
+            </button>
+          )}
           <button
             className="btn btn-sm"
             id="wsRefreshBtn"

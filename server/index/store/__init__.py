@@ -8,7 +8,7 @@ focused submodules that share one connection factory and one in-process cache:
     entities  — description context + node dedup (lexical + semantic)
     meta      — set/get meta, has_index, stats, remove_index, list_indexed_workspaces
     search    — vector search (cached), GraphRAG hop, chunk fetch, FTS keyword
-    graph     — cached file/entity/umap graph-view wrappers over graph_views
+    graph     — cached file-graph + explorer view wrappers over graph_views/explore_views
 
 Every name external code (and graph_views) reads off ``server.index.store`` is
 re-exported here — the full public API plus the private helpers/constants other
@@ -51,15 +51,11 @@ from .files import (  # noqa: F401
 # graph_views<->store cycle; graph_views reads store attributes only at call
 # time, so import order within this __init__ does not matter.
 from .graph import (  # noqa: F401
-    all_workspaces_graph,
-    all_workspaces_umap_graph,
-    entity_graph,
     explore_entities,
     explore_entity,
     explore_file,
     explore_overview,
     file_graph,
-    umap_graph,
 )
 from .meta import (  # noqa: F401
     get_meta,

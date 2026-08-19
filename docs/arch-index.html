@@ -244,7 +244,7 @@
         <tr><td><code>POST /cancel</code></td><td>Ask an in-progress build to stop after the current file.</td></tr>
         <tr><td><code>GET /list</code></td><td>Every workspace that currently has an index on disk.</td></tr>
         <tr><td><code>POST /remove</code></td><td>Delete a workspace's entire on-disk index.</td></tr>
-        <tr><td><code>GET /graph</code>, <code>/graph/entity</code>, <code>/graph/umap</code></td><td>Derived views for the entity-graph and semantic-map UI.</td></tr>
+        <tr><td><code>GET /explore/overview</code>, <code>/explore/entities</code>, <code>/explore/entity</code>, <code>/explore/file</code></td><td>Derived words-first views for the index explorer (topic cards, entity pages, file pages).</td></tr>
         <tr><td><code>GET /graph/all</code>, <code>/graph/umap/all</code></td><td>The all-workspace variants of the graph and semantic-map views.</td></tr>
         <tr><td><code>GET /engines</code></td><td>Engine choices for the index's LLM passes (typed relations, entity descriptions, chunk-context headers): Bedrock Haiku plus every on-device model, with download state for the settings picker.</td></tr>
         <tr><td><code>GET /agent</code></td><td>Status of the background refresh helper (macOS).</td></tr>
