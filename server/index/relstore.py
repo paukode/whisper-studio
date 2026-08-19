@@ -104,10 +104,12 @@ def facts_for_entity(
 ) -> list[dict]:
     """Aggregated typed facts touching an entity (matched by name, any label).
 
-    Returns ``[{predicate, other, direction ('out'|'in'), score, sources, cite}]``
-    where ``score`` is a noisy-OR over up to 5 observations and ``cite`` is the
-    best (most-evidenced) source ``{path, start_line, end_line, evidence}``,
-    ordered by score. ``direction`` 'out' = self→other, 'in' = other→self."""
+    Returns ``[{predicate, other, direction ('out'|'in'), score, sources, files,
+    cite}]`` where ``score`` is a noisy-OR over up to 5 observations, ``files``
+    counts the distinct source files stating the fact (the explorer's
+    confidence-in-words basis), and ``cite`` is the best (most-evidenced) source
+    ``{path, start_line, end_line, evidence}``, ordered by score. ``direction``
+    'out' = self→other, 'in' = other→self."""
     conn = store._connect(ws_path)
     try:
         nids = [
@@ -142,9 +144,17 @@ def facts_for_entity(
         key = (direction, pred, (other or "").lower())
         a = agg.setdefault(
             key,
-            {"predicate": pred, "other": other, "direction": direction, "probs": [], "cite": None},
+            {
+                "predicate": pred,
+                "other": other,
+                "direction": direction,
+                "probs": [],
+                "paths": set(),
+                "cite": None,
+            },
         )
         a["probs"].append(min(max(strength / 5.0, 0.0), 1.0))
+        a["paths"].add(path)
         cur_ev = (a["cite"] or {}).get("evidence") or ""
         if a["cite"] is None or len(ev or "") > len(cur_ev):
             a["cite"] = {"path": path, "start_line": sl, "end_line": el, "evidence": ev}
@@ -160,6 +170,7 @@ def facts_for_entity(
                 "direction": a["direction"],
                 "score": round(1.0 - p, 3),
                 "sources": len(a["probs"]),
+                "files": len(a["paths"]),
                 "cite": a["cite"],
             }
         )
