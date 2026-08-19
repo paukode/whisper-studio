@@ -78,6 +78,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     handleDragOver,
     handleDragLeave,
     handleDrop,
+    handlePaste,
   } = useComposerDragDrop(uploadFilesAsChips);
   useComposerChatEvents(chatStream);
   // Long-lived SSE for out-of-band session notifications (cron firings
@@ -682,6 +683,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
           value={text}
           onChange={handleTextChange}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
         />
 
         {/* Autocomplete popup — uses vanilla skill-autocomplete CSS classes */}
