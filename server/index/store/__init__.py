@@ -54,6 +54,10 @@ from .graph import (  # noqa: F401
     all_workspaces_graph,
     all_workspaces_umap_graph,
     entity_graph,
+    explore_entities,
+    explore_entity,
+    explore_file,
+    explore_overview,
     file_graph,
     umap_graph,
 )

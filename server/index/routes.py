@@ -196,6 +196,67 @@ async def index_graph_umap(path: str = ""):
     return g
 
 
+def _connected_or(path: str) -> str:
+    """The given path, or the connected workspace when blank."""
+    if path:
+        return path
+    from server.workspace import get_workspace_path
+
+    return get_workspace_path() or ""
+
+
+@router.get("/explore/overview")
+async def explore_overview(path: str = ""):
+    """The index explorer's landing view: inventory stats, named topic cards
+    (one per detected file group), the most salient entities, and the most
+    connected files — words and counts, no visual encodings."""
+    path = _connected_or(path)
+    if not path or not paths.is_indexed(path):
+        return {"files": 0, "passages": 0, "entities": 0, "cards": [], "root": ""}
+    out = dict(store.explore_overview(path))
+    out["root"] = _abspath(path)
+    return out
+
+
+@router.get("/explore/entities")
+async def explore_entities(path: str = "", q: str = "", include_low: bool = False):
+    """Browse pane + entity search: entities grouped into People, Organizations,
+    Topics, and Places with per-name file counts. Names under the salience floor
+    are hidden but counted (``hidden``); ``include_low`` shows them."""
+    path = _connected_or(path)
+    if not path or not paths.is_indexed(path):
+        return {"groups": [], "total": 0, "hidden": 0, "root": ""}
+    out = dict(store.explore_entities(path, q, include_low))
+    out["root"] = _abspath(path)
+    return out
+
+
+@router.get("/explore/entity")
+async def explore_entity(path: str = "", name: str = "", label: str = ""):
+    """One entity's page: canonical name + label + description, typed facts as
+    sentence-ready records with verbatim evidence and line-anchored citations,
+    the files that mention it, and its most co-mentioned neighbours."""
+    path = _connected_or(path)
+    if not path or not paths.is_indexed(path) or not name:
+        return {"found": False, "root": ""}
+    out = dict(store.explore_entity(path, name, label))
+    out["root"] = _abspath(path)
+    return out
+
+
+@router.get("/explore/file")
+async def explore_file(path: str = "", file: str = ""):
+    """One file's page: the names and topics it mentions, every file sharing
+    salient entities with it (computed for this file, never clipped by the
+    overview graph's edge cap), and the typed facts stated in it."""
+    path = _connected_or(path)
+    if not path or not paths.is_indexed(path) or not file:
+        return {"found": False, "root": ""}
+    out = dict(store.explore_file(path, file))
+    out["root"] = _abspath(path)
+    return out
+
+
 @router.post("/cancel")
 async def index_cancel(request: Request):
     """Ask an in-progress build to stop after the current file (keeps partial)."""
