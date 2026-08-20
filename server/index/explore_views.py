@@ -18,22 +18,27 @@ import os
 from server.index import relstore, store
 from server.index.config import SALIENCE_GRAPH_FLOOR
 
-# Browse-pane grouping: entity labels folded into four user-words buckets. Any
-# label not listed reads as a topic (metrics, technologies, products, and the
-# whole code-profile label set all belong there).
+# Browse-pane grouping: entity labels folded into user-words buckets. Any label
+# not listed reads as a topic (metrics, technologies, products, and the whole
+# code-profile label set all belong there).
+#
+# "job title" is deliberately NOT people: a title is a role, and mixing the two
+# put rows like "EDITOR" and "CEO" under People, where a reader expects names.
 _LABEL_GROUPS: dict[str, str] = {
     "person": "people",
-    "job title": "people",
+    "job title": "roles",
+    "role": "roles",
     "organization": "organizations",
     "company": "organizations",
     "team": "organizations",
     "location": "places",
     "place": "places",
 }
-GROUP_ORDER = ("people", "organizations", "topics", "places")
+GROUP_ORDER = ("people", "organizations", "roles", "topics", "places")
 GROUP_TITLES = {
     "people": "People",
     "organizations": "Organizations",
+    "roles": "Roles and titles",
     "topics": "Topics",
     "places": "Places",
 }
@@ -41,6 +46,42 @@ GROUP_TITLES = {
 
 def _group_for(label: str) -> str:
     return _LABEL_GROUPS.get((label or "").strip().lower(), "topics")
+
+
+def looks_like_person_name(name: str) -> bool:
+    """Whether a name plausibly names a human.
+
+    Entity extraction is zero-shot: the model is handed a label list and guesses
+    which span fits which label, with no gazetteer of real names. On technical
+    documents it reliably mislabels two shapes as people: template metadata keys
+    ("AUTHOR:" header lines) and ALL-CAPS field identifiers (SAP columns like
+    ERNAM or KUNNR). Both are single tokens with no case variation, whereas a
+    human name written in a document is mixed case ("Dana Kim", "McCarthy").
+
+    Multi-word names pass. Scripts without upper/lower case (CJK, for instance)
+    carry no signal here, so they pass rather than being punished for it.
+    """
+    n = (name or "").strip()
+    if not n:
+        return False
+    if " " in n or "-" in n or "." in n:
+        return True
+    cased = [c for c in n if c.isupper() or c.islower()]
+    if not cased:
+        return True
+    return any(c.isupper() for c in n) and any(c.islower() for c in n)
+
+
+def _is_low_signal(entity: dict) -> bool:
+    """Whether an entity should sit behind the explorer's "show low-signal
+    names" toggle: below the salience floor, or a person-labelled row whose name
+    is not shaped like a human name (see looks_like_person_name). Demoted rather
+    than dropped, so the count stays honest and the rows stay reachable."""
+    if entity["salience"] < SALIENCE_GRAPH_FLOOR:
+        return True
+    if _group_for(entity["label"]) == "people" and not looks_like_person_name(entity["name"]):
+        return True
+    return False
 
 
 def _like_escape(q: str) -> str:
@@ -109,10 +150,11 @@ def _entity_rollup(conn) -> list[dict]:
 
 def entity_list_impl(ws_path: str, q: str = "", include_low: bool = False) -> dict:
     """The browse pane / entity search: entities grouped into People,
-    Organizations, Topics, and Places, ranked by distinct-file count. Names
-    below the salience floor are hidden by default but counted honestly
-    (``hidden``), and ``include_low`` brings them back. A non-empty ``q``
-    filters by substring, case-insensitive."""
+    Organizations, Roles and titles, Topics, and Places, ranked by distinct-file
+    count. Low-signal names (below the salience floor, or person rows not shaped
+    like human names) are hidden by default but counted honestly (``hidden``),
+    and ``include_low`` brings them back. A non-empty ``q`` filters by
+    substring, case-insensitive."""
     conn = store._connect(ws_path)
     try:
         ents = _entity_rollup(conn)
@@ -121,7 +163,7 @@ def entity_list_impl(ws_path: str, q: str = "", include_low: bool = False) -> di
     needle = (q or "").strip().lower()
     if needle:
         ents = [e for e in ents if needle in e["name"].lower()]
-    visible = [e for e in ents if e["salience"] >= SALIENCE_GRAPH_FLOOR]
+    visible = [e for e in ents if not _is_low_signal(e)]
     hidden = len(ents) - len(visible)
     if include_low:
         visible = ents
@@ -215,7 +257,7 @@ def overview_impl(ws_path: str) -> dict:
         ents = _entity_rollup(conn)
     finally:
         conn.close()
-    visible = [e for e in ents if e["salience"] >= SALIENCE_GRAPH_FLOOR]
+    visible = [e for e in ents if not _is_low_signal(e)]
     stands_out = sorted(visible, key=lambda e: (-e["salience"], -e["files"]))[:8]
     connected = sorted(
         (n for n in graph["nodes"] if (n.get("degree") or 0) > 0),
