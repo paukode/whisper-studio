@@ -108,6 +108,8 @@ DEFAULTS = {
     # a stable location; see server/infrastructure/paths.py.
     "data_dir": "",
     "tavily_api_key": "",
+    # Whisper decode language: blank/None = auto-detect, "pl" pins one language,
+    # "pl,en" keeps auto-detection but constrains it to that allowlist.
     "whisper_language": None,
     # Which ASR backend the live recorder uses:
     #   "streaming" — alias for the Parakeet backend, word-by-word interims (default)

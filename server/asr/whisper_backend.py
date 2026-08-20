@@ -266,30 +266,96 @@ def unload() -> None:
     log.info("Whisper model unloaded.")
 
 
-def _transcribe(audio_data: np.ndarray, language: str | None = None) -> str:
+def _parse_languages(raw: str | None) -> list[str]:
+    """``whisper_language`` config values: '' -> auto-detect, 'pl' -> pinned,
+    'pl,en' -> constrain per-utterance detection to that allowlist."""
+    if not raw:
+        return []
+    return [code.strip().lower() for code in str(raw).split(",") if code.strip()]
+
+
+def _configured_languages() -> list[str]:
+    """The validated ``whisper_language`` allowlist (unknown codes dropped)."""
+    langs = _parse_languages(config_get("whisper_language"))
+    if not langs:
+        return []
+    try:
+        from mlx_whisper.tokenizer import LANGUAGES
+
+        known = set(LANGUAGES)
+    except Exception:
+        return langs
+    bad = [code for code in langs if code not in known]
+    if bad:
+        log.warning("whisper_language: ignoring unknown code(s): %s", ", ".join(bad))
+    return [code for code in langs if code in known]
+
+
+def _pick_language(probs: dict, allowed: list[str]) -> str:
+    """Argmax over the allowlist only, ignoring every other language."""
+    return max(allowed, key=lambda code: probs.get(code, 0.0))
+
+
+def _detect_language(audio_data: np.ndarray, allowed: list[str]) -> str:
+    """Constrained language ID for one utterance.
+
+    Whisper's built-in detection argmaxes over all 99 languages, and on
+    short accented utterances it routinely lands on a neighbor language —
+    which either garbles the text or silently *translates* it (a Polish
+    utterance decoded with an ``en`` token comes out as English). Detecting
+    ourselves and argmaxing over the user's allowlist removes both failure
+    modes. Cost-neutral: passing ``language`` to transcribe skips its own
+    internal detection pass.
+    """
+    import mlx.core as mx
+    from mlx_whisper import audio as whisper_audio
+
+    model = _model_holder().get_model(_ensure_model(), mx.float16)
+    mel = whisper_audio.log_mel_spectrogram(
+        audio_data, n_mels=model.dims.n_mels, padding=whisper_audio.N_SAMPLES
+    )
+    mel = whisper_audio.pad_or_trim(mel, whisper_audio.N_FRAMES, axis=-2).astype(mx.float16)
+    _, probs = model.detect_language(mel)
+    if isinstance(probs, list):
+        probs = probs[0]
+    return _pick_language(probs, allowed)
+
+
+def _transcribe(audio_data: np.ndarray, language: str | None = None, relaxed: bool = False) -> str:
     """Decode one utterance with mlx-whisper.
 
-    Decoding params suppress Whisper's well-known hallucination loops on
-    silence/low-energy audio: deterministic greedy decoding, compression
-    ratio and logprob rejection, real silence detection, and no prompt
-    conditioning on previous (possibly hallucinated) text.
+    Strict (default) decoding params suppress Whisper's well-known
+    hallucination loops on silence/low-energy audio: deterministic greedy
+    decoding, compression ratio and logprob rejection, real silence
+    detection, and no prompt conditioning on previous (possibly
+    hallucinated) text.
+
+    ``relaxed=True`` is the rescue pass for utterances the strict pass
+    dropped entirely: a small temperature ladder and no confidence
+    rejection, with the compression-ratio guard and the caller's
+    hallucination filters still standing between it and the transcript.
     """
     import mlx_whisper
 
     kwargs = {
         "path_or_hf_repo": _ensure_model(),
         "fp16": True,
-        "temperature": 0.0,
         "compression_ratio_threshold": 2.4,
-        "logprob_threshold": -1.0,
-        "no_speech_threshold": 0.6,
         "condition_on_previous_text": False,
     }
+    if relaxed:
+        kwargs.update(temperature=(0.0, 0.2, 0.4), logprob_threshold=None, no_speech_threshold=None)
+    else:
+        kwargs.update(temperature=0.0, logprob_threshold=-1.0, no_speech_threshold=0.6)
     if language:
         kwargs["language"] = language
 
     result = mlx_whisper.transcribe(audio_data, **kwargs)
     return result["text"].strip()
+
+
+def _is_junk(text: str) -> bool:
+    return text.strip().lower() in WHISPER_HALLUCINATIONS or is_repetition_hallucination(text)
 
 
 def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray]:
@@ -298,13 +364,34 @@ def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray]:
 
     volume = np.sqrt(np.mean(audio**2))
     if volume < ENERGY_THRESHOLD:
+        log.debug("Whisper: utterance below energy threshold (rms=%.4f), skipped", volume)
         return "", audio
 
     text = ""
     try:
-        text = _transcribe(audio, language=config_get("whisper_language"))
-        if text.strip().lower() in WHISPER_HALLUCINATIONS or is_repetition_hallucination(text):
+        langs = _configured_languages()
+        language = langs[0] if len(langs) == 1 else None
+        if len(langs) > 1:
+            language = _detect_language(audio, langs)
+        text = _transcribe(audio, language=language)
+        if text and _is_junk(text):
+            log.debug("Whisper: hallucination filter dropped %r", text[:80])
             text = ""
+        if not text:
+            # The strict pass drops low-confidence segments wholesale
+            # (no_speech + logprob rejection). On accented or overlapped
+            # speech that silently eats real utterances, so retry once
+            # relaxed — the filters above still guard the result.
+            text = _transcribe(audio, language=language, relaxed=True)
+            if text and _is_junk(text):
+                log.debug("Whisper: hallucination filter dropped rescue %r", text[:80])
+                text = ""
+            if text:
+                log.info(
+                    "Whisper: relaxed retry rescued a suppressed utterance (lang=%s, %d chars)",
+                    language or "auto",
+                    len(text),
+                )
     except Exception as e:
         log.warning("Whisper transcription error: %s", e)
     return text, audio
