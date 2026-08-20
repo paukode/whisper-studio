@@ -39,12 +39,18 @@ export const MiniEgoGraph: React.FC<Props> = ({ centerName, neighbors, totalConn
     const angle = -Math.PI / 2 + (2 * Math.PI * i) / arr.length;
     const x = CX + R * Math.cos(angle);
     const y = CY + R * Math.sin(angle);
-    // Entity caption sits at 58% along the line, nudged off it so the text
-    // never sits on the stroke; file label goes outside the dot.
-    const lx = CX + (x - CX) * 0.58;
-    const ly = CY + (y - CY) * 0.58 - 5;
+    // Entity caption runs ALONG its own spoke (rotated text at the midpoint,
+    // nudged to the upper side of the stroke), so each caption stays in its
+    // own radial corridor and never collides with other spokes' captions or
+    // the file labels. Left-half angles flip 180 degrees to stay readable.
+    let deg = (angle * 180) / Math.PI;
+    const flipped = deg > 90 || deg < -90;
+    if (flipped) deg -= 180;
+    const side = flipped ? -1 : 1;
+    const lx = CX + (x - CX) * 0.52 + Math.sin(angle) * 6 * side;
+    const ly = CY + (y - CY) * 0.52 - Math.cos(angle) * 6 * side;
     const labelY = y > CY + 4 ? y + 18 : y - 12;
-    return { ...nb, x, y, lx, ly, labelY };
+    return { ...nb, x, y, lx, ly, deg, labelY };
   });
 
   return (
@@ -62,7 +68,13 @@ export const MiniEgoGraph: React.FC<Props> = ({ centerName, neighbors, totalConn
         <g className="xpl-ego-captions">
           {spokes.map((s) =>
             s.topEntity ? (
-              <text key={`c-${s.path}`} x={s.lx} y={s.ly} textAnchor="middle">
+              <text
+                key={`c-${s.path}`}
+                x={s.lx}
+                y={s.ly}
+                textAnchor="middle"
+                transform={`rotate(${s.deg.toFixed(1)}, ${s.lx.toFixed(1)}, ${s.ly.toFixed(1)})`}
+              >
                 {trunc(s.topEntity, 20)}
               </text>
             ) : null,

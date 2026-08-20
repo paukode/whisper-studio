@@ -306,6 +306,15 @@ def test_file_page_unknown_file_reports_not_found():
     assert store.explore_file(ws, "zzz.md") == {"found": False}
 
 
+def test_file_page_normalizes_dot_slash_paths():
+    """The file tree hands over './runbook.md'-style paths; the files table
+    stores 'runbook.md' — the page must resolve both spellings."""
+    ws = "/fake/xpl-file-dot"
+    _add(ws, "runbook.md", [{"name": "Dana Kim", "label": "person"}])
+    assert store.explore_file(ws, "./runbook.md")["found"]
+    assert store.explore_file(ws, ".") == {"found": False}
+
+
 def test_non_ascii_names_resolve_everywhere():
     """SQLite's LOWER() folds ASCII only; the views use the Unicode-aware
     ulower() so names like 'Łukasz Kowalski' appear in the browse pane and their

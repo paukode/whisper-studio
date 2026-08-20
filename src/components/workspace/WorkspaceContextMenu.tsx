@@ -327,7 +327,8 @@ export const WorkspaceContextMenu: React.FC<WorkspaceContextMenuProps> = ({
     onClose();
     const wsRoot = useUIStore.getState().wsPath;
     if (!wsRoot) return;
-    useUIStore.getState().openIndexExplorer(wsRoot, { kind: 'file', file: path });
+    // Tree paths may carry a leading "./"; the index stores them without it.
+    useUIStore.getState().openIndexExplorer(wsRoot, { kind: 'file', file: path.replace(/^\.\//, '') });
   }, [path, onClose]);
 
   /** Open Timeline — show git file history. */
