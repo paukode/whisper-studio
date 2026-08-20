@@ -104,6 +104,7 @@ def expand(ws_path: str, chunk_ids: list[int], limit: int = 4) -> list[dict]:
             chunk_ids,
         ).fetchall()
         weights: dict[int, float] = {}
+        names: dict[int, str] = {}
         for nid, name, sal, df in seed:
             if sal < SALIENCE_JUNK_FLOOR:
                 continue
@@ -112,6 +113,7 @@ def expand(ws_path: str, chunk_ids: list[int], limit: int = 4) -> list[dict]:
             if df > _MAX_NODE_FANOUT:  # boilerplate hub — not a relatedness signal
                 continue
             weights[nid] = sal * math.log(1 + n_chunks / max(df, 1))
+            names[nid] = name or ""
         if not weights:
             return []
         good = list(weights)
@@ -125,9 +127,10 @@ def expand(ws_path: str, chunk_ids: list[int], limit: int = 4) -> list[dict]:
         conn.close()
     scored: dict[int, dict] = {}
     for cid, nid in rows:
-        agg = scored.setdefault(cid, {"score": 0.0, "shared": 0})
+        agg = scored.setdefault(cid, {"score": 0.0, "shared": 0, "nodes": []})
         agg["score"] += weights.get(nid, 0.0)
         agg["shared"] += 1
+        agg["nodes"].append(nid)
     ranked = sorted(scored.items(), key=lambda kv: (kv[1]["score"], kv[1]["shared"]), reverse=True)[
         :limit
     ]
@@ -139,6 +142,11 @@ def expand(ws_path: str, chunk_ids: list[int], limit: int = 4) -> list[dict]:
             r = dict(r)
             r["shared_entities"] = agg["shared"]
             r["graph_score"] = round(agg["score"], 4)
+            # The strongest shared entity NAMES, so a consumer can say WHY this
+            # chunk is related ("linked through shared entities: X, Y") instead
+            # of only how strongly. Weight-ordered, capped — chips, not a dump.
+            top_nodes = sorted(set(agg["nodes"]), key=lambda n: weights.get(n, 0.0), reverse=True)
+            r["shared_entity_names"] = [names[n] for n in top_nodes[:4] if names.get(n)]
             out.append(r)
     return out
 

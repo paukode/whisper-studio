@@ -378,6 +378,8 @@ def test_entity_leg_surfaces_entity_chunks():
     hits = salience.entity_leg(ws, "tell me about Acme", k=5)
     assert any(h["path"] == "a.md" for h in hits)
     assert all(h["path"] != "b.md" for h in hits)
+    # Each hit names WHICH query entities anchored it (the answer-sources chips).
+    assert next(h for h in hits if h["path"] == "a.md")["_ent_names"] == ["Acme"]
     # a query naming no known entity yields nothing
     assert salience.entity_leg(ws, "quarterly revenue trends", k=5) == []
 
@@ -1252,6 +1254,85 @@ def test_retrieve_grounding_includes_graph_hop_and_full_chunks(monkeypatch):
     import re as _re
 
     assert _re.search(r"\]\(#wsfile=[^)]+&L=\d+-\d+\)", g)
+
+
+def test_retrieve_grounding_sources_meta(monkeypatch):
+    """return_meta carries per-passage provenance ("Answer sources"): dense
+    matches labeled semantic, keyword-only hits labeled keyword, and graph-hop
+    passages labeled related with the shared entity NAMES for chips — each with
+    the workspace root so entity chips can deep-link into the index explorer."""
+    from server.index import embedder
+
+    ws = "/fake/ws-sources"
+    ent = [{"name": "PaymentService", "label": "service"}]
+    store.replace_file(
+        ws,
+        "a.py",
+        {"hash": "h", "size": 1, "mtime": 1.0},
+        [
+            {
+                "start_line": 1,
+                "end_line": 8,
+                "text": "PaymentService handles authorization for merchants.",
+                "vec": _unit(1),
+                "entities": ent,
+            }
+        ],
+    )
+    store.replace_file(
+        ws,
+        "b.py",
+        {"hash": "h", "size": 1, "mtime": 1.0},
+        [
+            {
+                "start_line": 1,
+                "end_line": 5,
+                "text": "b also mentions PaymentService",
+                "vec": _unit(2),
+                "entities": ent,
+            }
+        ],
+    )
+    store.replace_file(
+        ws,
+        "c.py",
+        {"hash": "h", "size": 1, "mtime": 1.0},
+        [
+            {
+                "start_line": 1,
+                "end_line": 3,
+                "text": "the code is ZZQX-7734",
+                "vec": _unit(3),
+                "entities": [],
+            }
+        ],
+    )
+    monkeypatch.setattr(embedder, "embed_query", lambda q: _unit(1))  # dense → a.py first
+
+    # No lexical overlap with a.py and no entity name in the query, so a.py is a
+    # pure dense match, and ZZQX reaches c.py only through the keyword leg.
+    _, meta = pipeline.retrieve_grounding([ws], "financial flow ZZQX", k=4, return_meta=True)
+    by_path = {s["path"]: s for s in meta["sources"]}
+    assert by_path["a.py"]["kind"] == "semantic"
+    assert by_path["c.py"]["kind"] == "keyword"
+    # Every source carries what the UI needs: open target + explorer scope + lines.
+    for s in meta["sources"]:
+        assert s["abs"].endswith(f"/fake/ws-sources/{s['path']}")
+        assert s["ws"] == ws
+        assert s["start_line"] >= 1 and s["end_line"] >= s["start_line"]
+        assert s["snippet"]
+    # The matches (a + c, not the related hop) are what the passages count says.
+    assert meta["passages"] == 2
+
+    # k=1: only a.py is a vector match, so b.py (sharing the PaymentService
+    # entity) comes in via the graph hop — labeled related, WITH the entity
+    # names for the chips.
+    _, meta1 = pipeline.retrieve_grounding([ws], "financial flow", k=1, return_meta=True)
+    by_path1 = {s["path"]: s for s in meta1["sources"]}
+    assert by_path1["a.py"]["kind"] == "semantic"
+    assert by_path1["b.py"]["kind"] == "related"
+    assert by_path1["b.py"]["entities"] == ["PaymentService"]
+    assert by_path1["b.py"]["ws"] == ws
 
 
 def test_build_context_query_folds_recent_turns():

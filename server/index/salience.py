@@ -322,12 +322,14 @@ def entity_leg(ws_path: str, query_text: str, k: int = 8) -> list[dict]:
     conn = store._connect(ws_path)
     try:
         matched: dict[int, float] = {}
+        names: dict[int, str] = {}
         for nid, name, sal in conn.execute(
             "SELECT id, name, COALESCE(salience, 0.5) FROM nodes WHERE COALESCE(salience, 0.5) >= ?",
             (SALIENCE_GRAPH_FLOOR,),
         ):
             if _link_key(name) in grams:
                 matched[nid] = sal
+                names[nid] = name or ""
         if not matched:
             return []
         node_ids = list(matched)
@@ -338,8 +340,10 @@ def entity_leg(ws_path: str, query_text: str, k: int = 8) -> list[dict]:
     finally:
         conn.close()
     scored: dict[int, float] = {}
+    anchors: dict[int, list[int]] = {}
     for cid, nid in rows:
         scored[cid] = scored.get(cid, 0.0) + matched.get(nid, 0.0)
+        anchors.setdefault(cid, []).append(nid)
     ranked = sorted(scored.items(), key=lambda kv: kv[1], reverse=True)[:k]
     chunks = {r["chunk_id"]: r for r in store._fetch_chunks(ws_path, [c for c, _ in ranked])}
     out = []
@@ -348,5 +352,9 @@ def entity_leg(ws_path: str, query_text: str, k: int = 8) -> list[dict]:
         if r:
             r = dict(r)
             r["_ent"] = round(w, 4)
+            # WHICH query-named entities anchored this chunk, salience-ordered
+            # and capped — lets a consumer show the link as named chips.
+            top = sorted(set(anchors.get(cid, [])), key=lambda n: matched.get(n, 0.0), reverse=True)
+            r["_ent_names"] = [names[n] for n in top[:4] if names.get(n)]
             out.append(r)
     return out
