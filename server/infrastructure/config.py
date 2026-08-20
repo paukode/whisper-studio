@@ -111,6 +111,9 @@ DEFAULTS = {
     # Whisper decode language: blank/None = auto-detect, "pl" pins one language,
     # "pl,en" keeps auto-detection but constrains it to that allowlist.
     "whisper_language": None,
+    # Whisper engine only: also decode each non-English utterance a second
+    # time with task=translate and show the English under the transcript.
+    "whisper_translate": False,
     # Which ASR backend the live recorder uses:
     #   "streaming" — alias for the Parakeet backend, word-by-word interims (default)
     #   "whisper"   — utterance-based mlx-whisper (proven fallback path)

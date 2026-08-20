@@ -47,7 +47,7 @@ def test_whisper_session_emits_final_events(monkeypatch):
     monkeypatch.setattr(
         whisper_backend,
         "_decode_utterance",
-        lambda pcm: ("hello world", np.zeros(16000, dtype=np.float32)),
+        lambda pcm: ("hello world", np.zeros(16000, dtype=np.float32), "en"),
     )
     session = whisper_backend.create_session()
     session._buf = _StubBuffer([b"\x00" * 32000])
@@ -56,6 +56,7 @@ def test_whisper_session_emits_final_events(monkeypatch):
     ev = events[0]
     assert ev["kind"] == "final"
     assert ev["text"] == "hello world"
+    assert ev["language"] == "en"
     assert isinstance(ev["audio"], np.ndarray)
 
 
@@ -63,7 +64,7 @@ def test_whisper_session_drops_empty_decodes(monkeypatch):
     monkeypatch.setattr(
         whisper_backend,
         "_decode_utterance",
-        lambda pcm: ("", np.zeros(16000, dtype=np.float32)),
+        lambda pcm: ("", np.zeros(16000, dtype=np.float32), None),
     )
     session = whisper_backend.create_session()
     session._buf = _StubBuffer([b"\x00" * 32000], tail=b"\x00" * 32000)
@@ -75,7 +76,7 @@ def test_whisper_finish_flushes_tail(monkeypatch):
     monkeypatch.setattr(
         whisper_backend,
         "_decode_utterance",
-        lambda pcm: ("the tail", np.zeros(16000, dtype=np.float32)),
+        lambda pcm: ("the tail", np.zeros(16000, dtype=np.float32), "en"),
     )
     session = whisper_backend.create_session()
     session._buf = _StubBuffer([], tail=b"\x00" * 32000)
@@ -166,13 +167,13 @@ def _speech_pcm() -> bytes:
 def test_decode_retries_relaxed_when_strict_pass_is_empty(monkeypatch):
     calls = []
 
-    def fake_transcribe(audio, language=None, relaxed=False):
+    def fake_transcribe(audio, language=None, relaxed=False, task=None):
         calls.append((language, relaxed))
-        return "prawdziwy tekst" if relaxed else ""
+        return ("prawdziwy tekst" if relaxed else "", language)
 
     monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
     monkeypatch.setattr(whisper_backend, "_configured_languages", lambda: [])
-    text, _ = whisper_backend._decode_utterance(_speech_pcm())
+    text, _, _ = whisper_backend._decode_utterance(_speech_pcm())
     assert text == "prawdziwy tekst"
     assert calls == [(None, False), (None, True)]
 
@@ -181,10 +182,13 @@ def test_decode_rescue_is_still_hallucination_filtered(monkeypatch):
     monkeypatch.setattr(
         whisper_backend,
         "_transcribe",
-        lambda audio, language=None, relaxed=False: "thank you." if relaxed else "",
+        lambda audio, language=None, relaxed=False, task=None: (
+            "thank you." if relaxed else "",
+            language,
+        ),
     )
     monkeypatch.setattr(whisper_backend, "_configured_languages", lambda: [])
-    text, _ = whisper_backend._decode_utterance(_speech_pcm())
+    text, _, _ = whisper_backend._decode_utterance(_speech_pcm())
     assert text == ""
 
 
@@ -193,11 +197,36 @@ def test_decode_uses_constrained_detection_for_allowlist(monkeypatch):
     monkeypatch.setattr(whisper_backend, "_configured_languages", lambda: ["pl", "en"])
     monkeypatch.setattr(whisper_backend, "_detect_language", lambda audio, allowed: "pl")
 
-    def fake_transcribe(audio, language=None, relaxed=False):
+    def fake_transcribe(audio, language=None, relaxed=False, task=None):
         seen["language"] = language
-        return "dzień dobry wszystkim"
+        return "dzień dobry wszystkim", language
 
     monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
-    text, _ = whisper_backend._decode_utterance(_speech_pcm())
+    text, _, _ = whisper_backend._decode_utterance(_speech_pcm())
     assert text == "dzień dobry wszystkim"
     assert seen["language"] == "pl"
+
+
+# ── translate-to-English companion pass ──────────────────────────────────────
+
+
+def test_translate_utterance_uses_translate_task_and_relaxed_fallback(monkeypatch):
+    calls = []
+
+    def fake_transcribe(audio, language=None, relaxed=False, task=None):
+        calls.append((language, relaxed, task))
+        return ("good morning everyone" if relaxed else "", language)
+
+    monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
+    audio = np.zeros(16000, dtype=np.float32)
+    assert whisper_backend.translate_utterance(audio, "pl") == "good morning everyone"
+    assert calls == [("pl", False, "translate"), ("pl", True, "translate")]
+
+
+def test_translate_utterance_filters_hallucinations(monkeypatch):
+    monkeypatch.setattr(
+        whisper_backend,
+        "_transcribe",
+        lambda audio, language=None, relaxed=False, task=None: ("thank you.", language),
+    )
+    assert whisper_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl") == ""

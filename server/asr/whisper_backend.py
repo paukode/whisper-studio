@@ -321,8 +321,13 @@ def _detect_language(audio_data: np.ndarray, allowed: list[str]) -> str:
     return _pick_language(probs, allowed)
 
 
-def _transcribe(audio_data: np.ndarray, language: str | None = None, relaxed: bool = False) -> str:
-    """Decode one utterance with mlx-whisper.
+def _transcribe(
+    audio_data: np.ndarray,
+    language: str | None = None,
+    relaxed: bool = False,
+    task: str | None = None,
+) -> tuple[str, str | None]:
+    """Decode one utterance with mlx-whisper -> (text, decoded language).
 
     Strict (default) decoding params suppress Whisper's well-known
     hallucination loops on silence/low-energy audio: deterministic greedy
@@ -334,6 +339,9 @@ def _transcribe(audio_data: np.ndarray, language: str | None = None, relaxed: bo
     dropped entirely: a small temperature ladder and no confidence
     rejection, with the compression-ratio guard and the caller's
     hallucination filters still standing between it and the transcript.
+
+    ``task="translate"`` decodes into English regardless of the spoken
+    language (Whisper's built-in speech translation; English-only target).
     """
     import mlx_whisper
 
@@ -349,31 +357,58 @@ def _transcribe(audio_data: np.ndarray, language: str | None = None, relaxed: bo
         kwargs.update(temperature=0.0, logprob_threshold=-1.0, no_speech_threshold=0.6)
     if language:
         kwargs["language"] = language
+    if task:
+        kwargs["task"] = task
 
     result = mlx_whisper.transcribe(audio_data, **kwargs)
-    return result["text"].strip()
+    return result["text"].strip(), result.get("language") or language
 
 
 def _is_junk(text: str) -> bool:
     return text.strip().lower() in WHISPER_HALLUCINATIONS or is_repetition_hallucination(text)
 
 
-def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray]:
-    """PCM16 utterance -> (filtered text, float32 audio)."""
+def translate_utterance(audio_data: np.ndarray, language: str | None = None) -> str:
+    """English translation of one already-transcribed utterance window.
+
+    Called by the orchestrator (server/websocket.py) AFTER the transcript
+    final was emitted, on this backend's executor, so translation never
+    delays transcription — it just queues behind it. ``language`` is the
+    language the transcript pass decoded, passed back in so the translate
+    pass skips detection. Same strict-then-relaxed ladder and hallucination
+    filters as transcription; returns "" when nothing survives.
+    """
+    text = ""
+    try:
+        text, _ = _transcribe(audio_data, language=language, task="translate")
+        if text and _is_junk(text):
+            text = ""
+        if not text:
+            text, _ = _transcribe(audio_data, language=language, relaxed=True, task="translate")
+            if text and _is_junk(text):
+                text = ""
+    except Exception as e:
+        log.warning("Whisper translation error: %s", e)
+    return text
+
+
+def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None]:
+    """PCM16 utterance -> (filtered text, float32 audio, decoded language)."""
     audio = np.frombuffer(utterance_pcm, dtype=np.int16).astype(np.float32) / 32768.0
 
     volume = np.sqrt(np.mean(audio**2))
     if volume < ENERGY_THRESHOLD:
         log.debug("Whisper: utterance below energy threshold (rms=%.4f), skipped", volume)
-        return "", audio
+        return "", audio, None
 
     text = ""
+    language = None
     try:
         langs = _configured_languages()
         language = langs[0] if len(langs) == 1 else None
         if len(langs) > 1:
             language = _detect_language(audio, langs)
-        text = _transcribe(audio, language=language)
+        text, language = _transcribe(audio, language=language)
         if text and _is_junk(text):
             log.debug("Whisper: hallucination filter dropped %r", text[:80])
             text = ""
@@ -382,7 +417,7 @@ def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray]:
             # (no_speech + logprob rejection). On accented or overlapped
             # speech that silently eats real utterances, so retry once
             # relaxed — the filters above still guard the result.
-            text = _transcribe(audio, language=language, relaxed=True)
+            text, language = _transcribe(audio, language=language, relaxed=True)
             if text and _is_junk(text):
                 log.debug("Whisper: hallucination filter dropped rescue %r", text[:80])
                 text = ""
@@ -394,7 +429,7 @@ def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray]:
                 )
     except Exception as e:
         log.warning("Whisper transcription error: %s", e)
-    return text, audio
+    return text, audio, language
 
 
 class WhisperSession:
@@ -406,9 +441,9 @@ class WhisperSession:
     def process(self, raw_pcm: bytes) -> list[dict]:
         events: list[dict] = []
         for utterance_pcm in self._buf.feed(raw_pcm):
-            text, audio = _decode_utterance(utterance_pcm)
+            text, audio, language = _decode_utterance(utterance_pcm)
             if text:
-                events.append({"kind": "final", "text": text, "audio": audio})
+                events.append({"kind": "final", "text": text, "audio": audio, "language": language})
         return events
 
     def finish(self) -> list[dict]:
@@ -416,9 +451,11 @@ class WhisperSession:
         try:
             tail = self._buf.flush()
             if tail is not None:
-                text, audio = _decode_utterance(tail)
+                text, audio, language = _decode_utterance(tail)
                 if text:
-                    events.append({"kind": "final", "text": text, "audio": audio})
+                    events.append(
+                        {"kind": "final", "text": text, "audio": audio, "language": language}
+                    )
         except Exception as e:
             log.debug("Whisper finish flush failed: %s", e)
         return events
