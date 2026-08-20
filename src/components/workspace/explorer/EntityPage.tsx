@@ -23,7 +23,13 @@ export const EntityPage: React.FC<Props> = ({ workspace, name, label, go, openCi
 
   if (isLoading) return <div className="xpl-status">Reading the index…</div>;
   if (isError) return <div className="xpl-status">Could not read the index.</div>;
-  if (!data?.found) return <div className="xpl-status">Nothing recorded about “{name}”.</div>;
+  if (!data?.found) {
+    return (
+      <div className="xpl-status">
+        Nothing recorded about “{name}”. If this folder was never indexed, index it from the workspace list first.
+      </div>
+    );
+  }
 
   const facts = data.facts ?? [];
   const mentioned = data.mentioned_in ?? [];

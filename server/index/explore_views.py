@@ -58,15 +58,15 @@ def _entity_rollup(conn) -> list[dict]:
     generic = sorted(store._GENERIC_ENTITY_NAMES)
     gph = ",".join("?" for _ in generic)
     acc = conn.execute(
-        f"""SELECT LOWER(n.name) AS key,
+        f"""SELECT ulower(n.name) AS key,
                    MAX(COALESCE(n.salience, 0.5)) AS sal,
                    COUNT(DISTINCT c.path) AS files,
                    COUNT(DISTINCT nc.chunk_id) AS mentions
             FROM nodes n
             JOIN node_chunks nc ON nc.node_id = n.id
             JOIN chunks c ON c.id = nc.chunk_id
-            WHERE LOWER(n.name) NOT IN ({gph})
-            GROUP BY LOWER(n.name)""",
+            WHERE ulower(n.name) NOT IN ({gph})
+            GROUP BY ulower(n.name)""",
         generic,
     ).fetchall()
     disp_rows = conn.execute(
@@ -74,7 +74,7 @@ def _entity_rollup(conn) -> list[dict]:
                    COUNT(nc.chunk_id) AS mentions
             FROM nodes n
             JOIN node_chunks nc ON nc.node_id = n.id
-            WHERE LOWER(n.name) NOT IN ({gph})
+            WHERE ulower(n.name) NOT IN ({gph})
             GROUP BY n.name, n.label""",
         generic,
     ).fetchall()
@@ -90,6 +90,7 @@ def _entity_rollup(conn) -> list[dict]:
             desc_by_key[key] = description
     out = []
     for key, sal, files, mentions in acc:
+        key = (key or "").strip()
         if not key or key not in disp:
             continue
         name, label, _m = disp[key]
@@ -159,7 +160,7 @@ def _topic_cards(conn, graph: dict) -> list[dict]:
                FROM nodes n
                JOIN node_chunks nc ON nc.node_id = n.id
                JOIN chunks c ON c.id = nc.chunk_id
-               GROUP BY LOWER(n.name)"""
+               GROUP BY ulower(n.name)"""
         ).fetchall()
     }
     cards = []
@@ -175,9 +176,9 @@ def _topic_cards(conn, graph: dict) -> list[dict]:
                 FROM nodes n
                 JOIN node_chunks nc ON nc.node_id = n.id
                 JOIN chunks c ON c.id = nc.chunk_id
-                WHERE c.path IN ({pph}) AND LOWER(n.name) NOT IN ({gph})
+                WHERE c.path IN ({pph}) AND ulower(n.name) NOT IN ({gph})
                   AND COALESCE(n.salience, 0.5) >= ?
-                GROUP BY LOWER(n.name)""",
+                GROUP BY ulower(n.name)""",
             [*paths, *generic, SALIENCE_GRAPH_FLOOR],
         ).fetchall()
         scored = []
@@ -257,7 +258,7 @@ def entity_page_impl(ws_path: str, name: str, label: str = "") -> dict:
             label_clause = " AND label = ?"
             params.append(label)
         nr = conn.execute(
-            f"SELECT name, label, description, COUNT(*) c FROM nodes WHERE LOWER(name)=?"
+            f"SELECT name, label, description, COUNT(*) c FROM nodes WHERE ulower(name)=?"
             f"{label_clause} GROUP BY name, label ORDER BY c DESC LIMIT 1",
             params,
         ).fetchone()
@@ -268,7 +269,7 @@ def entity_page_impl(ws_path: str, name: str, label: str = "") -> dict:
                 FROM nodes n
                 JOIN node_chunks nc ON nc.node_id = n.id
                 JOIN chunks c ON c.id = nc.chunk_id
-                WHERE LOWER(n.name) = ?{label_clause.replace("label", "n.label")}
+                WHERE ulower(n.name) = ?{label_clause.replace("label", "n.label")}
                 GROUP BY c.path ORDER BY w DESC, c.path LIMIT 200""",
             params,
         ).fetchall()
@@ -280,10 +281,10 @@ def entity_page_impl(ws_path: str, name: str, label: str = "") -> dict:
                 JOIN node_chunks nc ON nc.node_id = n.id
                 JOIN node_chunks nc2 ON nc2.chunk_id = nc.chunk_id AND nc2.node_id != n.id
                 JOIN nodes n2 ON n2.id = nc2.node_id
-                WHERE LOWER(n.name) = ? AND LOWER(n2.name) != ?
-                  AND LOWER(n2.name) NOT IN ({gph})
+                WHERE ulower(n.name) = ? AND ulower(n2.name) != ?
+                  AND ulower(n2.name) NOT IN ({gph})
                   AND COALESCE(n2.salience, 0.5) >= ?
-                GROUP BY LOWER(n2.name)
+                GROUP BY ulower(n2.name)
                 ORDER BY shared DESC, sal DESC LIMIT 12""",
             [key, key, *generic, SALIENCE_GRAPH_FLOOR],
         ).fetchall()
@@ -329,8 +330,8 @@ def file_page_impl(ws_path: str, file_path: str, max_neighbors: int = 30) -> dic
                 FROM nodes n
                 JOIN node_chunks nc ON nc.node_id = n.id
                 JOIN chunks c ON c.id = nc.chunk_id
-                WHERE c.path = ? AND LOWER(n.name) NOT IN ({gph})
-                GROUP BY LOWER(n.name)
+                WHERE c.path = ? AND ulower(n.name) NOT IN ({gph})
+                GROUP BY ulower(n.name)
                 HAVING MAX(COALESCE(n.salience, 0.5)) >= ?
                 ORDER BY sal DESC, mentions DESC LIMIT 40""",
             [file_path, *generic, SALIENCE_GRAPH_FLOOR],
@@ -338,7 +339,9 @@ def file_page_impl(ws_path: str, file_path: str, max_neighbors: int = 30) -> dic
         # Shared-entity neighbours, anchored on this file. Same "good entity"
         # filter as file_graph (salience floor, fanout bound, generic stoplist)
         # but with no global edge cap — the page must show this file's whole
-        # neighbourhood even when the overview graph is truncated.
+        # neighbourhood even when the overview graph is truncated. One row per
+        # (neighbour, shared node), aggregated in Python: entity names may
+        # contain commas, so no GROUP_CONCAT.
         nb_rows = conn.execute(
             f"""WITH freq AS (
                    SELECT node_id, COUNT(*) AS cnt FROM node_chunks GROUP BY node_id
@@ -348,28 +351,20 @@ def file_page_impl(ws_path: str, file_path: str, max_neighbors: int = 30) -> dic
                    JOIN freq f ON f.node_id = nc.node_id
                    JOIN nodes nn ON nn.id = nc.node_id
                    WHERE f.cnt <= ? AND COALESCE(nn.salience, 0.5) >= ?
-                     AND LOWER(nn.name) NOT IN ({gph})
+                     AND ulower(nn.name) NOT IN ({gph})
                ),
                mine AS (
                    SELECT DISTINCT g.node_id FROM good g
                    JOIN chunks c ON c.id = g.chunk_id WHERE c.path = ?
                )
-               SELECT c2.path, COUNT(DISTINCT g2.node_id) AS w,
-                      GROUP_CONCAT(DISTINCT nd.name) AS ents
+               SELECT DISTINCT c2.path, g2.node_id, nd.name,
+                      COALESCE(nd.salience, 0.5) AS sal
                FROM mine m
                JOIN good g2 ON g2.node_id = m.node_id
                JOIN chunks c2 ON c2.id = g2.chunk_id
                JOIN nodes nd ON nd.id = g2.node_id
-               WHERE c2.path != ?
-               GROUP BY c2.path ORDER BY w DESC, c2.path LIMIT ?""",
-            [
-                store._MAX_NODE_FANOUT,
-                SALIENCE_GRAPH_FLOOR,
-                *generic,
-                file_path,
-                file_path,
-                max_neighbors + 1,
-            ],
+               WHERE c2.path != ?""",
+            [store._MAX_NODE_FANOUT, SALIENCE_GRAPH_FLOOR, *generic, file_path, file_path],
         ).fetchall()
         fact_rows = conn.execute(
             """SELECT sn.name, tn.name, r.predicate, r.strength,
@@ -382,17 +377,29 @@ def file_page_impl(ws_path: str, file_path: str, max_neighbors: int = 30) -> dic
         ).fetchall()
     finally:
         conn.close()
+    # Group the (neighbour, shared node) rows: weight = distinct shared nodes,
+    # display sample = the most salient shared names.
+    by_path: dict[str, dict] = {}
+    for p, nid, nm, sal in nb_rows:
+        e = by_path.setdefault(p, {"ids": set(), "names": []})
+        if nid not in e["ids"]:
+            e["ids"].add(nid)
+            e["names"].append((-float(sal), nm))
+    ranked = sorted(by_path.items(), key=lambda kv: (-len(kv[1]["ids"]), kv[0]))
     neighbors = []
-    for p, w, ents in nb_rows[:max_neighbors]:
-        names = [s for s in (ents or "").split(",") if s][: store._EDGE_ENTITY_SAMPLE]
-        neighbors.append({"path": p, "name": os.path.basename(p), "shared": w, "entities": names})
-    # One fact per (source, predicate, target): keep the strongest row, prefer
-    # the longest verbatim quote as its evidence.
+    for p, e in ranked[:max_neighbors]:
+        names = [nm for _, nm in sorted(e["names"])][: store._EDGE_ENTITY_SAMPLE]
+        neighbors.append(
+            {"path": p, "name": os.path.basename(p), "shared": len(e["ids"]), "entities": names}
+        )
+    # One fact per (source, predicate, target): strength is the max across its
+    # rows, evidence the longest verbatim quote (accumulated independently, so
+    # a weak row with a long quote can't drag the strength down).
     facts_by_key: dict[tuple, dict] = {}
     for s, t, pred, strength, sl, el, ev in fact_rows:
         fkey = (s.lower(), pred, t.lower())
         cur = facts_by_key.get(fkey)
-        if cur is None or len(ev or "") > len(cur.get("evidence") or ""):
+        if cur is None:
             facts_by_key[fkey] = {
                 "source": s,
                 "target": t,
@@ -402,6 +409,10 @@ def file_page_impl(ws_path: str, file_path: str, max_neighbors: int = 30) -> dic
                 "end_line": el,
                 "evidence": ev,
             }
+            continue
+        cur["strength"] = max(cur["strength"], round(float(strength), 1))
+        if len(ev or "") > len(cur.get("evidence") or ""):
+            cur.update(evidence=ev, start_line=sl, end_line=el)
     facts = sorted(facts_by_key.values(), key=lambda f: -f["strength"])[:30]
     return {
         "found": True,
@@ -413,5 +424,6 @@ def file_page_impl(ws_path: str, file_path: str, max_neighbors: int = 30) -> dic
         ],
         "neighbors": neighbors,
         "facts": facts,
-        "neighbors_truncated": len(nb_rows) > max_neighbors,
+        "neighbors_total": len(ranked),
+        "neighbors_truncated": len(ranked) > max_neighbors,
     }

@@ -60,8 +60,14 @@ export const CommandPalette: React.FC = () => {
         run: run(() => ui.openWorkspaceConnect()) },
       // Lands on the connected folder's overview; without a workspace it opens
       // the connect dialog, whose indexed-folder menu carries the same action.
+      // Reads the store fresh at run time — the memoized `ui` snapshot predates
+      // any workspace connected while the palette list was already built.
       { id: 'explore-index', group: 'Workspace', title: 'Explore index (people, topics, connections)', keywords: 'graph entities search folder',
-        run: run(() => (ui.wsPath ? ui.openIndexExplorer(ui.wsPath) : ui.openWorkspaceConnect())) },
+        run: run(() => {
+          const s = useUIStore.getState();
+          if (s.wsPath) s.openIndexExplorer(s.wsPath);
+          else s.openWorkspaceConnect();
+        }) },
       { id: 'toggle-transcript', group: 'View', title: 'Toggle transcript panel', keywords: 'transcribe record',
         run: run(() => ui.toggleTranscript()) },
       { id: 'toggle-sidebar', group: 'View', title: 'Toggle sessions sidebar', keywords: 'conversations list',

@@ -306,6 +306,53 @@ def test_file_page_unknown_file_reports_not_found():
     assert store.explore_file(ws, "zzz.md") == {"found": False}
 
 
+def test_non_ascii_names_resolve_everywhere():
+    """SQLite's LOWER() folds ASCII only; the views use the Unicode-aware
+    ulower() so names like 'Łukasz Kowalski' appear in the browse pane and their
+    entity page (and facts) resolve from a click carrying any casing."""
+    ws = "/fake/xpl-unicode"
+    luk = {"name": "Łukasz Kowalski", "label": "person"}
+    asa = {"name": "Åsa Østergaard", "label": "person"}
+    _add(ws, "a.md", [luk, asa], seed=1, text="Łukasz Kowalski works with Åsa Østergaard")
+    _add(ws, "b.md", [luk], seed=2)
+    relstore.set_file_relations_v2(
+        ws,
+        "a.md",
+        [
+            {
+                "source": "Łukasz Kowalski",
+                "target": "Åsa Østergaard",
+                "predicate": "collaborated_with",
+                "strength": 3,
+                "evidence": "Łukasz Kowalski works with Åsa Østergaard",
+                "start_line": 1,
+                "end_line": 1,
+            }
+        ],
+    )
+
+    names = [e["name"] for g in store.explore_entities(ws)["groups"] for e in g["entities"]]
+    assert set(names) == {"Łukasz Kowalski", "Åsa Østergaard"}
+
+    page = store.explore_entity(ws, "łukasz kowalski")  # lowercased click
+    assert page["found"] and page["name"] == "Łukasz Kowalski"
+    assert [m["path"] for m in page["mentioned_in"]] == ["a.md", "b.md"]
+    assert page["facts"] and page["facts"][0]["other"] == "Åsa Østergaard"
+    assert {r["name"] for r in page["related"]} == {"Åsa Østergaard"}
+
+
+def test_neighbor_entity_names_with_commas_stay_whole():
+    """The file page's shared-entity sample must not split names on commas
+    (no GROUP_CONCAT): 'Idero, Inc.' stays one clickable name."""
+    ws = "/fake/xpl-comma"
+    inc = {"name": "Idero, Inc.", "label": "organization"}
+    _add(ws, "a.md", [inc], seed=1)
+    _add(ws, "b.md", [inc], seed=2)
+    out = store.explore_file(ws, "a.md")
+    assert out["neighbors"][0]["entities"] == ["Idero, Inc."]
+    assert out["neighbors"][0]["shared"] == 1
+
+
 # ── HTTP routes ──────────────────────────────────────────────────────────────
 
 

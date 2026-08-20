@@ -67,7 +67,7 @@ export const OverviewPage: React.FC<Props> = ({ workspace, go }) => {
             {data.stands_out.map((e) => (
               <button key={e.name} type="button" className="xpl-row" onClick={() => go({ kind: 'entity', name: e.name, label: e.label })}>
                 <span className="xpl-row-name">{e.name}</span>
-                <span className="xpl-row-meta">{e.label || `${e.files} files`}</span>
+                <span className="xpl-row-meta">{e.label || `${e.files} file${e.files === 1 ? '' : 's'}`}</span>
               </button>
             ))}
           </div>

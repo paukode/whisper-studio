@@ -42,7 +42,17 @@ const ExplorerDialog: React.FC<{ workspace: string; initial: ExplorerTarget }> =
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
-    dialogRef.current?.querySelector<HTMLElement>('.xpl-search')?.focus();
+    // Prefer the search box, but it is hidden on narrow screens — fall back to
+    // the first visible focusable, then the dialog itself (it has tabIndex -1).
+    const root = dialogRef.current;
+    const search = root?.querySelector<HTMLElement>('.xpl-search');
+    const target =
+      (search && search.offsetParent !== null && search) ||
+      Array.from(root?.querySelectorAll<HTMLElement>('button, input, [tabindex="0"]') ?? []).find(
+        (el) => !el.hasAttribute('disabled') && el.offsetParent !== null,
+      ) ||
+      root;
+    target?.focus();
     return () => {
       if (opener && opener.isConnected) opener.focus();
     };
@@ -128,7 +138,7 @@ const ExplorerDialog: React.FC<{ workspace: string; initial: ExplorerTarget }> =
         backdropArmed.current = false;
       }}
     >
-      <div ref={dialogRef} className="xpl-dialog" role="dialog" aria-modal="true" aria-label={`Explore index: ${folder}`}>
+      <div ref={dialogRef} tabIndex={-1} className="xpl-dialog" role="dialog" aria-modal="true" aria-label={`Explore index: ${folder}`}>
         <div className="xpl-header">
           {stack.length > 1 ? (
             <button type="button" className="xpl-back" onClick={back} aria-label="Back">&#8592;</button>

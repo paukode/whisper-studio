@@ -17,10 +17,8 @@ export interface EgoNeighbor {
 interface Props {
   centerName: string;
   neighbors: EgoNeighbor[];
+  /** The file's TRUE connection count (may exceed the neighbors provided). */
   totalConnections: number;
-  /** True when totalConnections is itself a capped count (the server returned
-   * its limit), so the caption says "of N+" rather than asserting a total. */
-  totalTruncated?: boolean;
   onSelect: (path: string) => void;
 }
 
@@ -35,7 +33,7 @@ function trunc(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
-export const MiniEgoGraph: React.FC<Props> = ({ centerName, neighbors, totalConnections, totalTruncated, onSelect }) => {
+export const MiniEgoGraph: React.FC<Props> = ({ centerName, neighbors, totalConnections, onSelect }) => {
   const spokes = neighbors.slice(0, MAX_SPOKES).map((nb, i, arr) => {
     // Start at 12 o'clock and walk clockwise, evenly spaced.
     const angle = -Math.PI / 2 + (2 * Math.PI * i) / arr.length;
@@ -78,7 +76,7 @@ export const MiniEgoGraph: React.FC<Props> = ({ centerName, neighbors, totalConn
             tabIndex={0}
             aria-label={`Show connections of ${s.name}`}
             onClick={() => onSelect(s.path)}
-            onKeyDown={(e) => { if (e.key === 'Enter') onSelect(s.path); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(s.path); } }}
           >
             <circle cx={s.x} cy={s.y} r={7} />
             <text x={s.x} y={s.labelY} textAnchor="middle">{trunc(s.name, 22)}</text>
@@ -90,8 +88,8 @@ export const MiniEgoGraph: React.FC<Props> = ({ centerName, neighbors, totalConn
         </g>
       </svg>
       <figcaption>
-        {totalConnections > spokes.length || totalTruncated
-          ? `Top ${spokes.length} of ${totalConnections}${totalTruncated ? '+' : ''} connections. Click a file to re-centre on it.`
+        {totalConnections > spokes.length
+          ? `Top ${spokes.length} of ${totalConnections} connections. Click a file to re-centre on it.`
           : 'Each line is labeled with the strongest shared name. Click a file to re-centre on it.'}
       </figcaption>
     </figure>

@@ -153,6 +153,12 @@ def _connect(ws_path: str) -> sqlite3.Connection:
     # concurrent reader (vector/keyword search) fails instantly with "database is
     # locked" and silently degrades. Retry briefly instead.
     conn.execute("PRAGMA busy_timeout=3000")
+    # SQLite's built-in LOWER() folds ASCII only, but the read-time views match
+    # names against Python str.lower() keys — an entity like "Łukasz" would never
+    # resolve. ulower() is the Unicode-aware fold both sides use.
+    conn.create_function(
+        "ulower", 1, lambda s: s.lower() if isinstance(s, str) else s, deterministic=True
+    )
     conn.executescript(_SCHEMA)
     # Columns added after the original schema. ALTER on an already-present column
     # raises OperationalError, which we ignore — keeps this idempotent and lets

@@ -241,6 +241,8 @@ export interface ExploreFilePage {
   entities?: { name: string; label: string; mentions: number }[];
   neighbors?: { path: string; name: string; shared: number; entities: string[] }[];
   facts?: ExploreFileFact[];
+  /** True connection count; `neighbors` lists only the strongest 30 of them. */
+  neighbors_total?: number;
   neighbors_truncated?: boolean;
   root?: string;
 }
