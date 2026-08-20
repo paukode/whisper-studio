@@ -111,20 +111,18 @@ DEFAULTS = {
     # Whisper decode language: blank/None = auto-detect, "pl" pins one language,
     # "pl,en" keeps auto-detection but constrains it to that allowlist.
     "whisper_language": None,
-    # Whisper/Canary engines: also produce an English line for each
-    # non-English utterance, shown under the transcript.
-    "whisper_translate": False,
     # Which Whisper checkpoint the whisper engine runs: "turbo"
     # (large-v3-turbo: fastest, translation via en-token steering) or
     # "large-v3" (full model: ~2x size, slower finals, best accuracy and a
     # real translate head).
     "whisper_variant": "turbo",
-    # Who produces the English line: "model" = the active ASR engine's own
-    # decode (offline, quality depends on the engine), "apple" = the macOS
-    # on-device Translation framework via the app shell (free, offline,
-    # Mac app only — the frontend performs it, the server just skips its
-    # own pass).
-    "translation_provider": "model",
+    # The transcript panel's Translate dropdown: "off", "auto" (best
+    # translator for the active model — Canary/large-v3 decode natively,
+    # otherwise Apple on-device when the Mac app bridge exists, else turbo's
+    # en-token steering), "model" (force the engine's own decode), or
+    # "apple" (force the on-device translator). Replaced the earlier
+    # whisper_translate/translation_provider pair.
+    "translate_mode": "off",
     # Which ASR backend the live recorder uses:
     #   "streaming" — alias for the Parakeet backend, word-by-word interims (default)
     #   "whisper"   — utterance-based mlx-whisper (proven fallback path)

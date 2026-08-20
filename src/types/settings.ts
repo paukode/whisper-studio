@@ -14,12 +14,9 @@ export interface AppConfig {
   /** Whisper checkpoint: 'turbo' (fast) or 'large-v3' (accuracy + true
    *  translate head, slower). */
   whisperVariant: string;
-  /** Who produces the English line: 'model' (the ASR engine) or 'apple'
-   *  (on-device Translation framework, Mac app only). */
-  translationProvider: string;
-  /** Whisper only: also decode non-English utterances to English and show
-   *  the translation under the transcript line. */
-  whisperTranslate: boolean;
+  /** Translate dropdown: 'off' | 'auto' | 'model' | 'apple'. */
+  translateMode: string;
+
   /** Where indexing/RAG runs: cloud (Bedrock) | hybrid | local (on-device). */
   modelMode: ModelMode;
   /** Per-capability backend overrides, consulted only in hybrid mode. */
