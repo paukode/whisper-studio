@@ -7,6 +7,7 @@ GET /api/sessions/{session_id}/grounding/{grounding_id}. Rows are
 session-scoped, capped per session, and die with the session.
 """
 
+import json
 import uuid
 
 from fastapi import FastAPI
@@ -78,6 +79,36 @@ def test_endpoint_returns_sources_and_404s():
     # Wrong session and unknown id both 404 (the chip degrades to counts-only).
     assert client.get(f"/api/sessions/other/grounding/{gid}").status_code == 404
     assert client.get("/api/sessions/sess-http/grounding/missing").status_code == 404
+
+
+def test_grounding_event_carries_persisted_sources_id(monkeypatch):
+    """The chat route persists a grounded turn's sources and rides the row's id
+    on the grounding SSE event — the id the chip later resolves. Grounding is
+    stubbed (the golden harness runs index-free); the wiring under test is
+    routes.py's mint-persist-emit."""
+    import server.index.pipeline as pipeline_mod
+    from tests.golden_harness import (
+        FakeBedrockClient,
+        msg_end,
+        msg_start,
+        run_chat_turn,
+        text_block,
+    )
+
+    meta = {"folders": 1, "passages": 1, "sources": _sources()}
+    monkeypatch.setattr(pipeline_mod, "retrieve_grounding", lambda *a, **k: ("[ctx]", meta))
+
+    client = FakeBedrockClient([[msg_start(), *text_block("grounded answer"), *msg_end()]])
+    lines = run_chat_turn(
+        monkeypatch,
+        client,
+        {"question": "what are the terms?", "selected_search_indexes": ["/fake/ws"]},
+    )
+
+    frames = [json.loads(ln) for ln in lines if ln != "[DONE]"]
+    grounding = next(f["grounding"] for f in frames if "grounding" in f)
+    assert grounding["searched"] == 1 and grounding["passages"] == 1
+    assert grounding_store.get_grounding("golden-session", grounding["id"]) == _sources()
 
 
 def test_session_delete_cascades_grounding():
