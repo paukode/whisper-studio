@@ -12,7 +12,13 @@ export interface TranscriptionState {
   interimText: string;
   // Actions
   addSegment: (segment: TranscriptSegment) => void;
-  appendSegmentText: (segmentId: string, extraText: string, chunkId?: number) => void;
+  appendSegmentText: (
+    segmentId: string,
+    extraText: string,
+    chunkId?: number,
+    translating?: boolean,
+  ) => void;
+  applyTranslation: (chunkId: number, text: string) => void;
   applySpeakerUpdates: (updates: { chunk_id: number; speaker: string }[]) => void;
   editSegmentText: (segmentId: string, newText: string) => void;
   renameSpeaker: (originalKey: string, newName: string) => void;
@@ -44,7 +50,7 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
   // appended tail starts) and `receivedAt` so the UI can fade in only the new
   // words. The original `timestamp` is preserved (segments are stamped at their
   // start, not on every append).
-  appendSegmentText: (segmentId: string, extraText: string, chunkId?: number) => {
+  appendSegmentText: (segmentId: string, extraText: string, chunkId?: number, translating?: boolean) => {
     set((state) => ({
       segments: state.segments.map((seg) => {
         if (seg.id !== segmentId) return seg;
@@ -59,6 +65,31 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
           chunks: chunkId !== undefined
             ? [...(seg.chunks ?? []), { id: chunkId, start: freshIndex }]
             : seg.chunks,
+          pendingTranslations: translating && chunkId !== undefined
+            ? [...(seg.pendingTranslations ?? []), chunkId]
+            : seg.pendingTranslations,
+        };
+      }),
+    }));
+  },
+
+  // A chunk's English translation arrived (or came back empty — which still
+  // clears the pending placeholder). The chunk may live in any segment, and
+  // segments merge/split, so locate it by membership rather than position.
+  applyTranslation: (chunkId: number, text: string) => {
+    set((state) => ({
+      segments: state.segments.map((seg) => {
+        const pending = seg.pendingTranslations ?? [];
+        const owns = pending.includes(chunkId) || (seg.chunks?.some((c) => c.id === chunkId) ?? false);
+        if (!owns) return seg;
+        const translations = text
+          ? [...(seg.translations ?? []), { chunkId, text }].sort((a, b) => a.chunkId - b.chunkId)
+          : seg.translations;
+        const remaining = pending.filter((id) => id !== chunkId);
+        return {
+          ...seg,
+          translations,
+          pendingTranslations: remaining.length > 0 ? remaining : undefined,
         };
       }),
     }));
@@ -93,12 +124,19 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
           const start = g.chunks[0].start;
           const end = gi + 1 < groups.length ? groups[gi + 1].chunks[0].start : seg.text.length;
           const base = g.chunks[0].start;
+          // Translations (and pending markers) follow their source chunk
+          // into whichever part it landed in.
+          const ids = new Set(g.chunks.map((c) => c.id));
+          const translations = seg.translations?.filter((t) => ids.has(t.chunkId));
+          const pending = seg.pendingTranslations?.filter((id) => ids.has(id));
           return {
             ...seg,
             id: gi === 0 ? seg.id : crypto.randomUUID(),
             speaker: g.speaker,
             text: seg.text.slice(start, end).trim(),
             chunks: g.chunks.map((c) => ({ id: c.id, start: c.start - base })),
+            translations: translations?.length ? translations : undefined,
+            pendingTranslations: pending?.length ? pending : undefined,
             // Reveal animation fields are stale after a split — drop them.
             receivedAt: undefined,
             freshIndex: undefined,
@@ -137,7 +175,11 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
 
   loadSegments: (segments: TranscriptSegment[], speakers: Record<string, string>) => {
     set({
-      segments,
+      // pendingTranslations is live-only: a persisted "Translating…" marker
+      // whose recording is gone would spin forever, so strip it on load.
+      segments: segments.map((seg) =>
+        seg.pendingTranslations ? { ...seg, pendingTranslations: undefined } : seg,
+      ),
       speakerNames: speakers,
     });
   },

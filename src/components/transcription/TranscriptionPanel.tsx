@@ -19,6 +19,10 @@ const SET_BACKEND_EVENT = 'whisper-set-backend';
  *  are in the call; with the hint, speaker clustering cuts at exactly that
  *  count. */
 const SET_SPEAKERS_EVENT = 'whisper-set-speakers';
+/** Custom event src/services/recordingController.ts relays to the recording
+ *  WebSocket as `set_translate` — the Whisper-only translate-to-English
+ *  toggle. Carries { enabled }. */
+const SET_TRANSLATE_EVENT = 'whisper-set-translate';
 // NOTE: this panel only renders/edits transcript segments. Recording is owned
 // entirely by the top-right Record button in Header.tsx, which captures mic +
 // system audio directly. There is deliberately no second "Record" affordance
@@ -212,6 +216,7 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
   const clearSegments = useActiveTranscriptionStore((s) => s.clearSegments);
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
   const transcriptionBackend = useSettingsStore((s) => s.config.transcriptionBackend);
+  const whisperTranslate = useSettingsStore((s) => s.config.whisperTranslate);
 
   // Audio capture and the transcription socket are owned by Header.tsx — wiring
   // a second pipeline here would spawn a duplicate WebSocket and a confusing
@@ -261,7 +266,11 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
   const handleExport = useCallback(() => {
     if (segments.length === 0) return;
     const text = segments
-      .map((s) => `[${getSpeakerDisplayName(s.speaker)}] ${s.text}`)
+      .map((s) => {
+        const line = `[${getSpeakerDisplayName(s.speaker)}] ${s.text}`;
+        const en = (s.translations ?? []).map((t) => t.text).join(' ');
+        return en ? `${line}\n    [EN] ${en}` : line;
+      })
       .join('\n');
     downloadFile(text, `transcript-${currentSessionId ?? 'export'}.txt`, 'text/plain');
   }, [segments, getSpeakerDisplayName, currentSessionId]);
@@ -278,6 +287,15 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
     useSettingsStore.getState().updateConfig({ transcriptionBackend: backend });
     void put('/api/config', { transcription_backend: backend });
     window.dispatchEvent(new CustomEvent(SET_BACKEND_EVENT, { detail: { backend } }));
+  }, []);
+
+  // Whisper-only translate-to-English toggle. Mirrors the engine switch:
+  // reflect in shared config, persist, relay to a live recording socket.
+  const handleTranslateToggle = useCallback(() => {
+    const enabled = !useSettingsStore.getState().config.whisperTranslate;
+    useSettingsStore.getState().updateConfig({ whisperTranslate: enabled });
+    void put('/api/config', { whisper_translate: enabled });
+    window.dispatchEvent(new CustomEvent(SET_TRANSLATE_EVENT, { detail: { enabled } }));
   }, []);
 
   // Diarization participant-count hint. 0 = auto. Header.tsx keeps the
@@ -324,6 +342,18 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
             <option value="whisper">Whisper</option>
             <option value="streaming">Parakeet (live)</option>
           </select>
+          {transcriptionBackend === 'whisper' && (
+            <button
+              type="button"
+              className={`translate-toggle${whisperTranslate ? ' on' : ''}`}
+              id="transcriptTranslateToggle"
+              aria-pressed={whisperTranslate}
+              title="Also translate non-English speech to English. The transcript stays in the spoken language; the English line appears under it when ready."
+              onClick={handleTranslateToggle}
+            >
+              EN {whisperTranslate ? 'on' : 'off'}
+            </button>
+          )}
           <select
             className="transcript-engine-select"
             id="transcriptSpeakersSelect"

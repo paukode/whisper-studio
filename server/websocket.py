@@ -153,6 +153,16 @@ async def websocket_endpoint(
     # speaker-state reset on stop (the client only sends it on change).
     expected_speakers: int | None = None
 
+    # Whisper-only "translate to English" companion pass. Seeded from config
+    # so a pre-armed toggle applies from the first utterance; the panel's
+    # live toggle updates it via a `set_translate` message. Translations run
+    # as fire-and-forget tasks (decode queued on the backend's executor
+    # BEHIND the transcript decodes, so transcription latency is untouched);
+    # the pending set lets `stop` drain them so the last utterance's
+    # translation isn't lost with the socket.
+    translate_enabled = bool(config_get("whisper_translate"))
+    pending_translations: set[asyncio.Task] = set()
+
     async def send_json(payload: dict) -> None:
         async with send_lock:
             try:
@@ -192,14 +202,31 @@ async def websocket_endpoint(
                 else:
                     duration = len(ev["audio"]) / 16000.0
                     speaker = speakers.assign(chunk_id, embedding, duration)
-            await send_json(
-                {
-                    "type": "transcript",
-                    "text": text,
-                    "speaker": speaker,
-                    "chunk_id": chunk_id,
-                }
+            # Whisper's per-utterance language ID rides on the final event;
+            # English (and unknown) utterances skip the translate pass, so
+            # the transcript never carries a redundant English-to-English line.
+            language = ev.get("language")
+            wants_translation = (
+                translate_enabled
+                and hasattr(backend_mod, "translate_utterance")
+                and language is not None
+                and language != "en"
             )
+            payload = {
+                "type": "transcript",
+                "text": text,
+                "speaker": speaker,
+                "chunk_id": chunk_id,
+            }
+            if wants_translation:
+                # Tells the client to render a "Translating…" slot under the
+                # segment until the translation event for this chunk arrives.
+                payload["translating"] = True
+            await send_json(payload)
+            if wants_translation:
+                task = asyncio.create_task(_run_translation(chunk_id, ev.get("audio"), language))
+                pending_translations.add(task)
+                task.add_done_callback(pending_translations.discard)
             if speakers is not None:
                 # Periodic self-heal: re-cluster everything seen so far and
                 # retro-fix the few utterances whose label changed.
@@ -214,6 +241,23 @@ async def websocket_endpoint(
                             ],
                         }
                     )
+
+    async def _run_translation(chunk_id: int, audio, language: str | None) -> None:
+        """Decode the utterance's English translation and deliver it.
+
+        Runs the decode on the backend's own single-worker executor, so it
+        queues behind live transcript decodes (never ahead of them). An empty
+        translation is still sent — the client uses it to clear the pending
+        "Translating…" slot for this chunk.
+        """
+        try:
+            translated = await loop.run_in_executor(
+                backend_mod.executor, backend_mod.translate_utterance, audio, language
+            )
+        except Exception as e:
+            log.warning("Translation task failed for chunk %s: %s", chunk_id, e)
+            translated = ""
+        await send_json({"type": "translation", "chunk_id": chunk_id, "text": translated})
 
     async def load_model_into_memory() -> None:
         """Load the active backend's model into memory, streaming a progress
@@ -349,6 +393,13 @@ async def websocket_endpoint(
                     await switch_backend(msg.get("backend") or "")
                     continue
 
+                if msg.get("type") == "set_translate":
+                    # Live toggle from the transcript panel header. Applies
+                    # from the next final onward; already-scheduled
+                    # translations finish either way.
+                    translate_enabled = bool(msg.get("enabled"))
+                    continue
+
                 if msg.get("type") == "set_speakers":
                     # Participant-count hint from the transcript panel.
                     # 0 / null / absent = back to automatic estimation.
@@ -364,6 +415,12 @@ async def websocket_endpoint(
                     # the client's close (the Header recorder closes the
                     # socket the instant it sends `stop`) — send_json guards.
                     await finish_session()
+                    # Drain in-flight translations before ending the session:
+                    # the client closes the socket after `session_ended`, and
+                    # the last utterance's translation is usually still
+                    # decoding at this point.
+                    if pending_translations:
+                        await asyncio.gather(*tuple(pending_translations), return_exceptions=True)
                     await send_json({"type": "session_ended"})
                     # Explicit user stop — drop speaker state so a later
                     # session under the same id starts fresh at Speaker 1
@@ -420,7 +477,10 @@ async def websocket_endpoint(
         # Connection ended without an explicit ``stop`` (network blip, tab
         # close). Release decoder state; speaker labels stay in the RAM
         # registry so a reconnect under the same session id continues
-        # where it left off.
+        # where it left off. In-flight translations have no socket to land
+        # on — cancel them rather than burn decode time on a dead client.
+        for task in tuple(pending_translations):
+            task.cancel()
         if asr_session is not None:
             try:
                 await loop.run_in_executor(backend_mod.executor, asr_session.close)

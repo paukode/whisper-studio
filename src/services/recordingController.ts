@@ -108,7 +108,12 @@ function flushPcmBuffer(): void {
   ws.send(pcm16.buffer);
 }
 
-function onTranscriptResult(text: string, speaker: string, chunkId?: number): void {
+function onTranscriptResult(
+  text: string,
+  speaker: string,
+  chunkId?: number,
+  translating?: boolean,
+): void {
   if (!text) return;
   const store = ownerStore();
   const segs = store.segments;
@@ -116,7 +121,7 @@ function onTranscriptResult(text: string, speaker: string, chunkId?: number): vo
   if (lastSeg && lastSeg.speaker === speaker) {
     // Same speaker still talking: grow the existing segment. The chunk id
     // is recorded so diarization corrections can split this merge later.
-    store.appendSegmentText(lastSeg.id, text, chunkId);
+    store.appendSegmentText(lastSeg.id, text, chunkId, translating);
   } else {
     const now = Date.now();
     store.addSegment({
@@ -124,6 +129,7 @@ function onTranscriptResult(text: string, speaker: string, chunkId?: number): vo
       text,
       speaker,
       chunks: chunkId !== undefined ? [{ id: chunkId, start: 0 }] : undefined,
+      pendingTranslations: translating && chunkId !== undefined ? [chunkId] : undefined,
       timestamp: now,
       edited: false,
       receivedAt: now,
@@ -277,8 +283,15 @@ function connectWS(): void {
           String(msg.text ?? ''),
           String(msg.speaker ?? 'Speaker 1'),
           typeof msg.chunk_id === 'number' ? msg.chunk_id : undefined,
+          msg.translating === true,
         );
         ownerStore().setInterimText('');
+      } else if (msg.type === 'translation') {
+        // English companion line for an earlier chunk (Whisper translate
+        // toggle). Empty text still clears that chunk's pending marker.
+        if (typeof msg.chunk_id === 'number') {
+          ownerStore().applyTranslation(msg.chunk_id, String(msg.text ?? ''));
+        }
       } else if (msg.type === 'speaker_update') {
         // Diarization re-clustered and corrected some earlier labels.
         const updates = Array.isArray(msg.updates) ? msg.updates : [];
@@ -772,6 +785,16 @@ export function initRecordingControllerEvents(): void {
     // 90%. Gate the download with the same banner + Cancel as record-start,
     // then relay set_backend.
     void switchBackendLive(backend);
+  });
+
+  // Whisper translate-to-English toggle from the transcript panel. Config
+  // persistence is the panel's job; a live socket just needs the relay
+  // (the server seeds from config at connect for sockets opened later).
+  window.addEventListener('whisper-set-translate', (e: Event) => {
+    const enabled = (e as CustomEvent<{ enabled?: boolean }>).detail?.enabled === true;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'set_translate', enabled }));
+    }
   });
 
   // Participant-count hint: kept for sockets opened later, relayed live
