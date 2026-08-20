@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getExploreEntities } from '@/api/workspace';
 import type { ExplorerTarget } from '@/stores/uiStore';
@@ -20,9 +20,18 @@ export const BrowsePane: React.FC<Props> = ({ workspace, query, selected, go }) 
   const [showLow, setShowLow] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
+  // Debounce the shell's live search text so the list doesn't refetch on every
+  // keystroke. setDebounced runs in the timer callback (asynchronous), so this
+  // is not a setState-in-effect violation.
+  const [debounced, setDebounced] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(query.trim()), 250);
+    return () => clearTimeout(t);
+  }, [query]);
+
   const { data, isLoading } = useQuery({
-    queryKey: ['xpl-entities', workspace, query, showLow],
-    queryFn: () => getExploreEntities(workspace, query, showLow),
+    queryKey: ['xpl-entities', workspace, debounced, showLow],
+    queryFn: () => getExploreEntities(workspace, debounced, showLow),
   });
 
   if (isLoading && !data) return <div className="xpl-status">Loading names…</div>;
@@ -32,10 +41,10 @@ export const BrowsePane: React.FC<Props> = ({ workspace, query, selected, go }) 
   return (
     <div className="xpl-browse">
       {groups.length === 0 && (
-        <div className="xpl-empty">{query ? `Nothing matches “${query}”.` : 'No names extracted yet.'}</div>
+        <div className="xpl-empty">{debounced ? `Nothing matches “${debounced}”.` : 'No names extracted yet.'}</div>
       )}
       {groups.map((g) => {
-        const isOpen = !!expanded[g.key] || !!query;
+        const isOpen = !!expanded[g.key] || !!debounced;
         const rows = isOpen ? g.entities : g.entities.slice(0, PREVIEW_ROWS);
         return (
           <div key={g.key} className="xpl-group">

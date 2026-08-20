@@ -18,6 +18,9 @@ interface Props {
   centerName: string;
   neighbors: EgoNeighbor[];
   totalConnections: number;
+  /** True when totalConnections is itself a capped count (the server returned
+   * its limit), so the caption says "of N+" rather than asserting a total. */
+  totalTruncated?: boolean;
   onSelect: (path: string) => void;
 }
 
@@ -32,7 +35,7 @@ function trunc(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
-export const MiniEgoGraph: React.FC<Props> = ({ centerName, neighbors, totalConnections, onSelect }) => {
+export const MiniEgoGraph: React.FC<Props> = ({ centerName, neighbors, totalConnections, totalTruncated, onSelect }) => {
   const spokes = neighbors.slice(0, MAX_SPOKES).map((nb, i, arr) => {
     // Start at 12 o'clock and walk clockwise, evenly spaced.
     const angle = -Math.PI / 2 + (2 * Math.PI * i) / arr.length;
@@ -51,7 +54,7 @@ export const MiniEgoGraph: React.FC<Props> = ({ centerName, neighbors, totalConn
       <svg
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`${centerName} and its ${spokes.length} strongest connections, each labeled with the entity they share`}
+        aria-label={`${centerName} and its ${spokes.length} strongest connection${spokes.length === 1 ? '' : 's'}, each labeled with the entity they share`}
       >
         <g className="xpl-ego-lines">
           {spokes.map((s) => (
@@ -87,8 +90,8 @@ export const MiniEgoGraph: React.FC<Props> = ({ centerName, neighbors, totalConn
         </g>
       </svg>
       <figcaption>
-        {totalConnections > spokes.length
-          ? `Top ${spokes.length} of ${totalConnections} connections. Click a file to re-centre on it.`
+        {totalConnections > spokes.length || totalTruncated
+          ? `Top ${spokes.length} of ${totalConnections}${totalTruncated ? '+' : ''} connections. Click a file to re-centre on it.`
           : 'Each line is labeled with the strongest shared name. Click a file to re-centre on it.'}
       </figcaption>
     </figure>

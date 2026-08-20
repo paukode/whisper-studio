@@ -53,7 +53,7 @@ export const FilePage: React.FC<Props> = ({ workspace, file, go, openFile, revea
                     key={e.name}
                     type="button"
                     className="xpl-chip"
-                    title={`${e.label ? e.label + ' · ' : ''}${e.mentions} mention${e.mentions === 1 ? '' : 's'} here — see everything about it`}
+                    title={`${e.label ? e.label + ' · ' : ''}${e.mentions} mention${e.mentions === 1 ? '' : 's'} here · see everything about it`}
                     onClick={() => go({ kind: 'entity', name: e.name, label: e.label })}
                   >
                     {e.name}
@@ -113,6 +113,7 @@ export const FilePage: React.FC<Props> = ({ workspace, file, go, openFile, revea
               centerName={data.name ?? file}
               neighbors={neighbors.map((n) => ({ path: n.path, name: n.name, topEntity: n.entities[0] }))}
               totalConnections={neighbors.length}
+              totalTruncated={!!data.neighbors_truncated}
               onSelect={(p) => go({ kind: 'file', file: p })}
             />
           </div>

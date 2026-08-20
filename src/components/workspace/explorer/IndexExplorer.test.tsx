@@ -100,9 +100,9 @@ describe('IndexExplorer', () => {
     renderExplorer();
     useUIStore.getState().openIndexExplorer('/fake/ws');
     await waitFor(() => expect(screen.getByText(/5 files/)).toBeInTheDocument());
-    // Topic card claims co-mention, not aboutness.
+    // Topic card claims connection, not aboutness.
     expect(screen.getByText('Northwind Bank · Halloway Ledger')).toBeInTheDocument();
-    expect(screen.getByText(/3 files mention these together/)).toBeInTheDocument();
+    expect(screen.getByText(/3 connected files/)).toBeInTheDocument();
     // Browse pane row with an honest count + the hidden-names toggle.
     expect(screen.getByText('in 3 files')).toBeInTheDocument();
     expect(screen.getByText('Show 2 low-signal names')).toBeInTheDocument();

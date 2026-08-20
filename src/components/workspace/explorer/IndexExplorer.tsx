@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useUIStore, type ExplorerTarget } from '@/stores/uiStore';
 import { useDockStore } from '@/stores/dockStore';
 import { post } from '@/api/client';
@@ -36,9 +36,34 @@ const ExplorerDialog: React.FC<{ workspace: string; initial: ExplorerTarget }> =
     () => localStorage.getItem(STORAGE_KEYS.EXPLORER_COACH_DISMISSED) !== '1',
   );
 
+  // Modal focus contract (aria-modal promises the background is inert): move
+  // focus into the dialog on open, keep Tab cycling inside it, and hand focus
+  // back to the opener on close.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    dialogRef.current?.querySelector<HTMLElement>('.xpl-search')?.focus();
+    return () => {
+      if (opener && opener.isConnected) opener.focus();
+    };
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); close(); }
+      if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      if (e.key !== 'Tab') return;
+      const root = dialogRef.current;
+      if (!root) return;
+      const focusables = Array.from(
+        root.querySelectorAll<HTMLElement>('button, input, [tabindex="0"]'),
+      ).filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null);
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || !root.contains(active)) { e.preventDefault(); first.focus(); return; }
+      if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+      else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -90,9 +115,20 @@ const ExplorerDialog: React.FC<{ workspace: string; initial: ExplorerTarget }> =
   const selectedEntity = current.kind === 'entity' ? { name: current.name } : null;
   const folder = workspace.split('/').filter(Boolean).pop() || workspace;
 
+  // Close on a true backdrop click only: both mousedown AND click must land on
+  // the overlay itself, so selecting text inside the dialog and releasing over
+  // the backdrop does not dismiss it.
+  const backdropArmed = useRef(false);
   return (
-    <div className="xpl-overlay" onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
-      <div className="xpl-dialog" role="dialog" aria-modal="true" aria-label={`Explore index: ${folder}`}>
+    <div
+      className="xpl-overlay"
+      onMouseDown={(e) => { backdropArmed.current = e.target === e.currentTarget; }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && backdropArmed.current) close();
+        backdropArmed.current = false;
+      }}
+    >
+      <div ref={dialogRef} className="xpl-dialog" role="dialog" aria-modal="true" aria-label={`Explore index: ${folder}`}>
         <div className="xpl-header">
           {stack.length > 1 ? (
             <button type="button" className="xpl-back" onClick={back} aria-label="Back">&#8592;</button>
@@ -112,6 +148,7 @@ const ExplorerDialog: React.FC<{ workspace: string; initial: ExplorerTarget }> =
             type="text"
             className="xpl-search"
             placeholder="Find a person, organization, or topic…"
+            aria-label="Find a person, organization, or topic"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
