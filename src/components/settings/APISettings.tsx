@@ -99,10 +99,15 @@ export const APISettings: React.FC = () => {
         type="text"
         className="settings-input"
         id="cfgWhisperLang"
-        placeholder="e.g. en, es, pl"
+        placeholder="e.g. pl — or pl,en for mixed-language sessions"
         value={whisperLang}
         onChange={(e) => setWhisperLang(e.target.value)}
       />
+      <span className="settings-hint">
+        One code pins the language. A comma-separated list (e.g. pl,en) keeps
+        auto-detection but limits it to those languages, so short utterances in
+        a mixed-language meeting are never misdetected or auto-translated.
+      </span>
 
       <label htmlFor="cfgTranscriptionBackend">Transcription Engine</label>
       <select
