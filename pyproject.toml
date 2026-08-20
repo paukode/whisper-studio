@@ -11,7 +11,10 @@ line-length = 100
 # (server/skills_import.py drops third-party folders here) — not first-party
 # app code. venv, data, storage, models, node_modules and static/dist are
 # gitignored and excluded automatically (ruff respects .gitignore).
-extend-exclude = ["skills"]
+# server/asr/canary is VENDORED from mlx-audio (MIT) — excluded so the diff
+# against upstream stays limited to provenance headers and import rewrites,
+# never style rewrites (see server/asr/canary/__init__.py).
+extend-exclude = ["skills", "server/asr/canary"]
 
 [tool.ruff.lint]
 # F  = pyflakes (supersedes the standalone pyflakes dep for project linting)
