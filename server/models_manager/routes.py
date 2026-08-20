@@ -36,6 +36,7 @@ async def get_catalog():
                 "label": entry.label,
                 "group": entry.group,
                 "repo_id": entry.repo_id,
+                "note": entry.note,
                 "installed": state == "installed",
                 "size_bytes_estimate": sizes.estimate(entry),
                 "bytes_on_disk": bytes_on_disk(entry),

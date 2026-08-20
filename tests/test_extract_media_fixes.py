@@ -42,7 +42,11 @@ def test_uppercase_origin_phrases_now_match_the_filter():
 def test_decode_utterance_drops_uppercase_origin_hallucination(monkeypatch):
     # End-to-end through the real match site: a decode that returns the
     # uppercase-origin phrase "Obrigado" is filtered down to empty text.
-    monkeypatch.setattr(whisper_backend, "_transcribe", lambda audio, language=None, relaxed=False: ("Obrigado", language))
+    monkeypatch.setattr(
+        whisper_backend,
+        "_transcribe",
+        lambda audio, language=None, relaxed=False: ("Obrigado", language),
+    )
     # PCM16 loud enough to clear ENERGY_THRESHOLD (RMS / 32768 > 0.01).
     pcm = np.full(16000, 1000, dtype=np.int16).tobytes()
     text, audio, _ = whisper_backend._decode_utterance(pcm)

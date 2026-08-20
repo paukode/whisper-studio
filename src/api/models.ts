@@ -10,6 +10,8 @@ export interface ManagedModel {
   label: string;
   group: ManagedModelGroup;
   repo_id: string;
+  /** One-line "what is this good for" from the catalog. */
+  note?: string;
   installed: boolean;
   size_bytes_estimate: number | null;
   bytes_on_disk: number;

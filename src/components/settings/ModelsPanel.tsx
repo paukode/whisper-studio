@@ -346,6 +346,7 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
                         {m.label}
                         <StatusChip model={m} />
                       </div>
+                      {m.note && <div className="settings-item-desc">{m.note}</div>}
                       <div className="settings-item-desc">
                         {m.repo_id} ·{' '}
                         {m.installed

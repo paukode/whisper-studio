@@ -136,7 +136,7 @@ async def websocket_endpoint(
     is_local = bool(config_get("local_mode"))
 
     def _backend_label(name: str) -> str:
-        return "Parakeet" if resolve_name(name) == "parakeet" else "Whisper"
+        return {"parakeet": "Parakeet", "canary": "Canary"}.get(resolve_name(name), "Whisper")
 
     # ?dictation=1 (the chat mic) skips speaker-ID: dictation is
     # single-user, so diarization is pointless and its compute is wasted.
@@ -202,21 +202,25 @@ async def websocket_endpoint(
                 else:
                     duration = len(ev["audio"]) / 16000.0
                     speaker = speakers.assign(chunk_id, embedding, duration)
-            # Whisper's per-utterance language ID rides on the final event;
-            # English (and unknown) utterances skip the translate pass, so
-            # the transcript never carries a redundant English-to-English line.
+            # The engine's per-utterance language ID rides on the final event
+            # (used here to skip English, and by the client for the Apple
+            # translation provider). With provider "apple" the FRONTEND
+            # translates via the shell's on-device bridge, so the server
+            # neither schedules a decode nor sets the translating flag.
             language = ev.get("language")
             wants_translation = (
                 translate_enabled
                 and hasattr(backend_mod, "translate_utterance")
                 and language is not None
                 and language != "en"
+                and config_get("translation_provider") != "apple"
             )
             payload = {
                 "type": "transcript",
                 "text": text,
                 "speaker": speaker,
                 "chunk_id": chunk_id,
+                "language": language,
             }
             if wants_translation:
                 # Tells the client to render a "Translating…" slot under the

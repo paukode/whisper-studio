@@ -8,6 +8,8 @@ interface ConfigData {
   whisper_language?: string | null;
   bedrock_region?: string;
   transcription_backend?: string;
+  whisper_variant?: string;
+  translation_provider?: string;
 }
 
 /**
@@ -20,6 +22,8 @@ export const APISettings: React.FC = () => {
   const [bedrockRegion, setBedrockRegion] = useState('');
   const [regionError, setRegionError] = useState('');
   const [transcriptionBackend, setTranscriptionBackend] = useState('streaming');
+  const [whisperVariant, setWhisperVariant] = useState('turbo');
+  const [translationProvider, setTranslationProvider] = useState('model');
   const [saveStatus, setSaveStatus] = useState('');
 
   // Load config on mount via TanStack Query
@@ -38,6 +42,8 @@ export const APISettings: React.FC = () => {
     setWhisperLang(configData.whisper_language ?? '');
     setBedrockRegion(configData.bedrock_region || 'us-east-1');
     setTranscriptionBackend(configData.transcription_backend ?? 'streaming');
+    setWhisperVariant(configData.whisper_variant ?? 'turbo');
+    setTranslationProvider(configData.translation_provider ?? 'model');
     if (configData.tavily_api_key_masked) setTavilyHint(configData.tavily_api_key_masked);
   }
 
@@ -58,6 +64,8 @@ export const APISettings: React.FC = () => {
         whisper_language: whisperLang,
         bedrock_region: region,
         transcription_backend: transcriptionBackend,
+        whisper_variant: whisperVariant,
+        translation_provider: translationProvider,
       };
       // Only send tavily key if user typed something new
       if (tavilyKey) {
@@ -79,7 +87,7 @@ export const APISettings: React.FC = () => {
     } catch {
       setSaveStatus('Save failed');
     }
-  }, [tavilyKey, whisperLang, bedrockRegion, transcriptionBackend]);
+  }, [tavilyKey, whisperLang, bedrockRegion, transcriptionBackend, whisperVariant, translationProvider]);
 
   return (
     <div className="settings-form" style={{ maxWidth: 480 }}>
@@ -117,12 +125,59 @@ export const APISettings: React.FC = () => {
         onChange={(e) => setTranscriptionBackend(e.target.value)}
       >
         <option value="whisper">Whisper (sentence-by-sentence)</option>
+        <option value="canary">Canary (25 EU languages + translation)</option>
         <option value="streaming">Parakeet streaming (word-by-word)</option>
       </select>
       <span className="settings-hint">
-        Applies to new recordings. Whisper finalizes whole utterances at pauses;
-        Parakeet streams text live as you speak.
+        Applies to new recordings. Whisper finalizes whole utterances at pauses
+        and detects the language per sentence — best for mixed-language
+        meetings. Canary is the fastest and has the best translation to
+        English, but needs the session language set above (no auto-detect).
+        Parakeet streams words live as you speak; no translation.
       </span>
+
+      {transcriptionBackend === 'whisper' && (
+        <>
+          <label htmlFor="cfgWhisperVariant">Whisper Model</label>
+          <select
+            className="settings-input"
+            id="cfgWhisperVariant"
+            value={whisperVariant}
+            onChange={(e) => setWhisperVariant(e.target.value)}
+          >
+            <option value="turbo">Large v3 Turbo (fast, 1.6 GB)</option>
+            <option value="large-v3">Large v3 full (best accuracy, 3.1 GB)</option>
+          </select>
+          <span className="settings-hint">
+            Turbo shows sentences almost instantly; its English translation
+            uses token steering (decent). The full model is the most accurate,
+            has a true translate mode, and shows sentences 1-2 s later.
+          </span>
+        </>
+      )}
+
+      {transcriptionBackend !== 'streaming' && (
+        <>
+          <label htmlFor="cfgTranslationProvider">Translation Provider</label>
+          <select
+            className="settings-input"
+            id="cfgTranslationProvider"
+            value={translationProvider}
+            onChange={(e) => setTranslationProvider(e.target.value)}
+          >
+            <option value="model">Transcription model (offline)</option>
+            <option value="apple">Apple Translation (on-device, Mac app only)</option>
+          </select>
+          <span className="settings-hint">
+            Used when the EN toggle is on in the transcript header. The model
+            option re-decodes the audio with the active engine. Apple
+            Translation translates the finished sentence with the macOS
+            on-device translator: free, offline, and consistent quality, but
+            only available in the Mac app (first use downloads the language
+            pack).
+          </span>
+        </>
+      )}
 
       <label htmlFor="cfgBedrockRegion">Bedrock Region</label>
       <input

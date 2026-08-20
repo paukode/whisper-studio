@@ -10,6 +10,10 @@ useDefault = true
 description = "Intentional dummy secrets in test fixtures"
 regexes = [
   '''tvly-SECRET-1234567890''',
+  # Model catalog identifier, not a credential: key="whisper_large_v3" in
+  # server/models_manager/catalog.py trips the generic key=... heuristic
+  # (the allowlist regex matches the captured secret, which is bare).
+  '''whisper_large_v3''',
 ]
 paths = [
   '''tests/test_config_no_secret_leak\.py''',
