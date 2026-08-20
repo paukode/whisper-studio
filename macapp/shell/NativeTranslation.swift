@@ -36,9 +36,12 @@ final class TranslationCoordinator: ObservableObject {
     struct Request {
         let id: String
         let text: String
-        let source: String
+        /// nil = let the framework detect the source language (Parakeet
+        /// segments carry no language ID; same-language input then errors
+        /// and the page clears the pending slot).
+        let source: String?
         let target: String
-        var pair: String { "\(source)>\(target)" }
+        var pair: String { "\(source ?? "auto")>\(target)" }
     }
 
     @Published var configuration: TranslationSession.Configuration?
@@ -64,7 +67,7 @@ final class TranslationCoordinator: ObservableObject {
         }
         currentPair = pair
         configuration = TranslationSession.Configuration(
-            source: Locale.Language(identifier: request.source),
+            source: request.source.map { Locale.Language(identifier: $0) },
             target: Locale.Language(identifier: request.target)
         )
     }
@@ -144,7 +147,8 @@ final class NativeTranslationBridge: NSObject, WKScriptMessageHandler {
             return
         }
 
-        let source = (body["source"] as? String) ?? "en"
+        let rawSource = (body["source"] as? String) ?? ""
+        let source = rawSource.isEmpty ? nil : rawSource
         let target = (body["target"] as? String) ?? "en"
         DispatchQueue.main.async { [self] in
             coordinator().submit(
