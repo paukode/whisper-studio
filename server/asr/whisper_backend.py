@@ -28,6 +28,27 @@ MODELS_DIR = models_root()
 WHISPER_MODEL_DIR = os.path.join(MODELS_DIR, "whisper-large-v3-turbo")
 WHISPER_REPO_ID = "mlx-community/whisper-large-v3-turbo"
 
+# The full (non-turbo) model: ~2x the size and a slower decoder, but slightly
+# better multilingual accuracy and — unlike turbo — a real translate head, so
+# the translate pass can use task="translate" instead of en-token steering.
+# Selected via the ``whisper_variant`` config ("turbo" | "large-v3"); each
+# variant entry is (model dir, HF repo, weight sentinel file). large-v3's MLX
+# repo ships weights.npz rather than safetensors.
+WHISPER_VARIANTS = {
+    "turbo": (WHISPER_MODEL_DIR, WHISPER_REPO_ID, "weights.safetensors"),
+    "large-v3": (
+        os.path.join(MODELS_DIR, "whisper-large-v3"),
+        "mlx-community/whisper-large-v3-mlx",
+        "weights.npz",
+    ),
+}
+
+
+def _variant() -> str:
+    name = (config_get("whisper_variant") or "turbo").strip().lower()
+    return name if name in WHISPER_VARIANTS else "turbo"
+
+
 # RMS below this is treated as dead air — don't bother decoding.
 ENERGY_THRESHOLD = 0.01
 
@@ -36,7 +57,6 @@ ENERGY_THRESHOLD = 0.01
 # keeps ordering trivial and avoids interleaving MLX work across threads.
 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="whisper-asr")
 
-_model_ready = False
 _model_lock = threading.Lock()
 # Whether the weights are resident in mlx_whisper's in-memory cache (distinct
 # from _model_ready, which only tracks on-disk presence). Local mode uses this
@@ -178,25 +198,30 @@ def is_repetition_hallucination(text: str) -> bool:
     return False
 
 
-def _ensure_model() -> str:
-    """Download the Whisper model if not already present (idempotent)."""
-    global _model_ready
-    if not _model_ready:
-        with _model_lock:
-            if not _model_ready:
-                weight_file = os.path.join(WHISPER_MODEL_DIR, "weights.safetensors")
-                if not os.path.exists(weight_file):
-                    from huggingface_hub import snapshot_download
+def _ensure_variant(name: str) -> str:
+    """Download one Whisper variant if not already present (idempotent)."""
+    model_dir, repo_id, sentinel = WHISPER_VARIANTS[name]
+    with _model_lock:
+        if not os.path.exists(os.path.join(model_dir, sentinel)):
+            from huggingface_hub import snapshot_download
 
-                    log.info("Downloading Whisper model %s ...", WHISPER_REPO_ID)
-                    snapshot_download(
-                        repo_id=WHISPER_REPO_ID,
-                        local_dir=WHISPER_MODEL_DIR,
-                        local_dir_use_symlinks=False,
-                    )
-                    log.info("Whisper model download complete.")
-                _model_ready = True
-    return os.path.abspath(WHISPER_MODEL_DIR)
+            log.info("Downloading Whisper model %s ...", repo_id)
+            snapshot_download(repo_id=repo_id, local_dir=model_dir, local_dir_use_symlinks=False)
+            log.info("Whisper model download complete.")
+    return os.path.abspath(model_dir)
+
+
+def _ensure_turbo() -> str:
+    return _ensure_variant("turbo")
+
+
+def _ensure_large_v3() -> str:
+    return _ensure_variant("large-v3")
+
+
+def _ensure_model() -> str:
+    """Path of the CONFIGURED variant's model dir, downloading on first use."""
+    return _ensure_variant(_variant())
 
 
 def preload() -> None:
@@ -221,9 +246,16 @@ def _model_holder():
 
 
 def is_loaded() -> bool:
-    """Whether the weights are resident in mlx-whisper's ModelHolder cache."""
+    """Whether the CONFIGURED variant is resident in mlx-whisper's ModelHolder.
+
+    A different variant being resident counts as not loaded — the caller's
+    load() then warms the right one (ModelHolder swaps, freeing the old)."""
     try:
-        return _model_holder().model is not None
+        holder = _model_holder()
+        if holder.model is None:
+            return False
+        model_dir, _, _ = WHISPER_VARIANTS[_variant()]
+        return holder.model_path == os.path.abspath(model_dir)
     except Exception:
         return _in_memory
 
@@ -325,6 +357,7 @@ def _transcribe(
     audio_data: np.ndarray,
     language: str | None = None,
     relaxed: bool = False,
+    task: str | None = None,
 ) -> tuple[str, str | None]:
     """Decode one utterance with mlx-whisper -> (text, decoded language).
 
@@ -353,6 +386,11 @@ def _transcribe(
         kwargs.update(temperature=0.0, logprob_threshold=-1.0, no_speech_threshold=0.6)
     if language:
         kwargs["language"] = language
+    if task:
+        # Only meaningful on the large-v3 variant: turbo was fine-tuned on
+        # transcription only and silently ignores task="translate" (see
+        # translate_utterance) — never pass a task on turbo.
+        kwargs["task"] = task
 
     result = mlx_whisper.transcribe(audio_data, **kwargs)
     return result["text"].strip(), result.get("language") or language
@@ -369,25 +407,28 @@ def translate_utterance(audio_data: np.ndarray, language: str | None = None) -> 
     final was emitted, on this backend's executor, so translation never
     delays transcription — it just queues behind it.
 
-    Deliberately NOT ``task="translate"``: large-v3-turbo was fine-tuned on
-    transcription only and silently ignores the translate task (verified:
-    Polish in, Polish out). Pinning ``language="en"`` instead steers the
-    decoder to emit English for non-English audio (verified: fluent English,
-    healthy logprobs) — the same language-token effect that produced the
-    accidental translations the allowlist fix stamped out. ``language`` (the
-    transcript pass's source language) is unused by the decode but kept in
-    the signature for a future model with a working translate head. Same
-    strict-then-relaxed ladder and hallucination filters as transcription;
-    returns "" when nothing survives.
+    Variant-dependent mechanism:
+    - large-v3 has a real translate head, so it decodes with the source
+      language pinned and ``task="translate"`` — the proper Whisper speech
+      translation, noticeably more faithful than token steering.
+    - turbo was fine-tuned on transcription only and silently ignores the
+      translate task (verified: Polish in, Polish out), so it instead pins
+      ``language="en"``, which steers the decoder to emit English for
+      non-English audio (verified: fluent English, healthy logprobs).
+    Same strict-then-relaxed ladder and hallucination filters as
+    transcription; returns "" when nothing survives.
     """
-    del language
+    if _variant() == "large-v3":
+        decode_language, task = language, "translate"
+    else:
+        decode_language, task = "en", None
     text = ""
     try:
-        text, _ = _transcribe(audio_data, language="en")
+        text, _ = _transcribe(audio_data, language=decode_language, task=task)
         if text and _is_junk(text):
             text = ""
         if not text:
-            text, _ = _transcribe(audio_data, language="en", relaxed=True)
+            text, _ = _transcribe(audio_data, language=decode_language, relaxed=True, task=task)
             if text and _is_junk(text):
                 text = ""
     except Exception as e:
