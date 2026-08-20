@@ -1281,6 +1281,19 @@ async def chat_endpoint(request: Request):
                 # not on a timeout/error (leave meta None → no chip).
                 if _gmeta["folders"] > 0:
                     grounding_meta = {"searched": _gmeta["folders"], "passages": _gmeta["passages"]}
+                    # Persist the passages behind this answer and ride the row's
+                    # id on the grounding event, so the chip can open the actual
+                    # sources later (GET /api/sessions/{id}/grounding/{gid}).
+                    # Best-effort: on failure the chip stays counts-only.
+                    if _gmeta.get("sources"):
+                        from server.infrastructure.grounding_store import save_grounding
+
+                        try:
+                            grounding_meta["id"] = await asyncio.to_thread(
+                                save_grounding, session_id, _gmeta["sources"]
+                            )
+                        except Exception as e:  # noqa: BLE001 — never break the turn
+                            log.warning("Failed to persist grounding sources: %s", e)
                 if grounding:
                     parts.append(grounding)
                     grounding_active = True
