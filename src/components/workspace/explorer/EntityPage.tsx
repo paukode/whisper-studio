@@ -42,7 +42,7 @@ export const EntityPage: React.FC<Props> = ({ workspace, name, label, go, openCi
           <div className="xpl-sec-head">What the documents say</div>
           {facts.length === 0 && (
             <div className="xpl-empty">
-              No confirmed relationships yet. Turn on relationship mapping in this folder's index settings and reindex to collect them.
+              No relationships recorded yet. Relationship mapping collects them while indexing; check it is enabled in this folder's index settings, then reindex.
             </div>
           )}
           {facts.map((f) => (
@@ -87,7 +87,7 @@ export const EntityPage: React.FC<Props> = ({ workspace, name, label, go, openCi
 
         <div className="xpl-col-side">
           <div className="xpl-sec-head">
-            Mentioned in {mentioned.length} file{mentioned.length === 1 ? '' : 's'}
+            Mentioned in {mentioned.length}{data.truncated ? '+' : ''} file{mentioned.length === 1 ? '' : 's'}
             {data.truncated ? ' (strongest shown)' : ''}
           </div>
           {mentioned.map((m) => (

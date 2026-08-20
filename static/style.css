@@ -3771,7 +3771,8 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 .xpl-ego-center text { fill: var(--text-primary); font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600; }
 
 @media (max-width: 900px) {
-    .xpl-browse { display: none; }
+    /* The search box filters the browse pane, so the two hide together. */
+    .xpl-browse, .xpl-search { display: none; }
 }
 
 /* Voice-to-code */

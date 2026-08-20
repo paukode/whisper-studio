@@ -30,7 +30,7 @@ export const OverviewPage: React.FC<Props> = ({ workspace, go }) => {
   return (
     <div className="xpl-page">
       <div className="xpl-stats">
-        {data.files} file{data.files === 1 ? '' : 's'} · {data.passages} passage{data.passages === 1 ? '' : 's'} · {data.entities} name{data.entities === 1 ? '' : 's'} and topics
+        {data.files} file{data.files === 1 ? '' : 's'} · {data.passages} passage{data.passages === 1 ? '' : 's'} · {data.entities === 1 ? '1 name or topic' : `${data.entities} names and topics`}
         {data.last_indexed_at ? ` · indexed ${formatRelative(data.last_indexed_at)}` : ''}
       </div>
 
@@ -43,9 +43,7 @@ export const OverviewPage: React.FC<Props> = ({ workspace, go }) => {
                 <div className="xpl-card-title">
                   {c.names.length > 0 ? c.names.join(' · ') : 'A group of related files'}
                 </div>
-                <div className="xpl-card-count">
-                  {c.names.length > 0 ? `${c.files} files mention these together` : `${c.files} connected files`}
-                </div>
+                <div className="xpl-card-count">{c.files} connected files</div>
                 <div className="xpl-card-files">
                   {c.top_files.map((f) => (
                     <button key={f.path} type="button" className="xpl-filelink" onClick={() => go({ kind: 'file', file: f.path })}>
