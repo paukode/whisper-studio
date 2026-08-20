@@ -195,34 +195,56 @@ export const TranscriptSegment: React.FC<TranscriptSegmentProps> = ({
           {speakerName}
         </div>
       )}
-      {isEditingText ? (
-        <textarea
-          ref={textareaRef}
-          className="segment-text"
-          value={textEditValue}
-          onChange={(e) => setTextEditValue(e.target.value)}
-          onBlur={commitTextEdit}
-          onKeyDown={handleTextKeyDown}
-          aria-label="Edit segment text"
-          style={{ width: '100%', resize: 'vertical' }}
-        />
-      ) : (
-        <div
-          className="segment-text"
-          role="button"
-          tabIndex={0}
-          // Double-click (not single-click) to enter edit mode so drag-to-
-          // select keeps working without the segment turning into a textarea.
-          // Single-click (Enter/Space on keyboard) still works for users
-          // who can't double-click easily.
-          onDoubleClick={handleTextClick}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleTextClick(); } }}
-          style={{ cursor: 'text' }}
-          title="Double-click to edit. Right-click for more options."
-        >
-          {renderSegmentText(segment)}
-        </div>
-      )}
+      <div className="segment-body">
+        {isEditingText ? (
+          <textarea
+            ref={textareaRef}
+            className="segment-text"
+            value={textEditValue}
+            onChange={(e) => setTextEditValue(e.target.value)}
+            onBlur={commitTextEdit}
+            onKeyDown={handleTextKeyDown}
+            aria-label="Edit segment text"
+            style={{ width: '100%', resize: 'vertical' }}
+          />
+        ) : (
+          <div
+            className="segment-text"
+            role="button"
+            tabIndex={0}
+            // Double-click (not single-click) to enter edit mode so drag-to-
+            // select keeps working without the segment turning into a textarea.
+            // Single-click (Enter/Space on keyboard) still works for users
+            // who can't double-click easily.
+            onDoubleClick={handleTextClick}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleTextClick(); } }}
+            style={{ cursor: 'text' }}
+            title="Double-click to edit. Right-click for more options."
+          >
+            {renderSegmentText(segment)}
+          </div>
+        )}
+        <SegmentTranslation segment={segment} />
+      </div>
+    </div>
+  );
+};
+
+/** The Whisper translate-to-English companion line: the English text of the
+ *  segment's chunks (in chunk order) plus a "Translating…" tail while any
+ *  chunk's translation is still decoding. Renders nothing for segments with
+ *  no translation activity, so non-translated transcripts are unchanged. */
+const SegmentTranslation: React.FC<{ segment: TranscriptSegmentType }> = ({ segment }) => {
+  const text = (segment.translations ?? []).map((t) => t.text).join(' ');
+  const pending = (segment.pendingTranslations?.length ?? 0) > 0;
+  if (!text && !pending) return null;
+  return (
+    <div className="segment-translation">
+      <span className="segment-translation-badge" aria-label="English translation">EN</span>
+      <span className="segment-translation-text">
+        {text}
+        {pending && <em className="segment-translation-pending">{text ? ' ' : ''}Translating…</em>}
+      </span>
     </div>
   );
 };

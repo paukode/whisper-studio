@@ -717,6 +717,39 @@ body.ws-embed-drag embed {
     color: var(--text-primary); flex: 1;
     font-weight: 400;
 }
+/* Text column wrapper: holds the transcript line plus its optional
+ * translate-to-English companion line, taking over .segment-text's old
+ * flex slot in the row. */
+.segment-body { flex: 1; min-width: 0; }
+/* Whisper translate-to-English companion line under a segment. Muted and
+ * indented so the spoken-language transcript stays visually primary. */
+.segment-translation {
+    display: flex; gap: 8px; align-items: baseline;
+    margin-top: 4px; padding: 3px 0 3px 10px;
+    border-left: 2px solid var(--accent-dim);
+}
+.segment-translation-badge {
+    flex-shrink: 0; font-size: 10px; font-weight: 600; letter-spacing: 0.6px;
+    color: var(--accent); background: var(--accent-dim);
+    border-radius: 4px; padding: 1px 5px;
+}
+.segment-translation-text {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: var(--fs-small); line-height: 1.55;
+    color: var(--text-secondary); font-style: italic;
+}
+.segment-translation-pending { color: var(--text-muted); }
+/* Whisper-only translate toggle in the transcript panel header. */
+.translate-toggle {
+    font-size: var(--fs-caption); padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--border-strong); background: var(--bg-elevated);
+    color: var(--text-secondary); cursor: pointer; white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.translate-toggle:hover { color: var(--text-primary); }
+.translate-toggle.on {
+    border-color: var(--accent); background: var(--accent-dim); color: var(--accent);
+}
 /* Word-by-word fade-in for freshly transcribed speech. Each word carries a
  * staggered inline animation-delay so a chunk of text "streams" in rather than
  * appearing as one lump. fill-mode backwards keeps words hidden until their
