@@ -167,7 +167,7 @@ def _speech_pcm() -> bytes:
 def test_decode_retries_relaxed_when_strict_pass_is_empty(monkeypatch):
     calls = []
 
-    def fake_transcribe(audio, language=None, relaxed=False, task=None):
+    def fake_transcribe(audio, language=None, relaxed=False):
         calls.append((language, relaxed))
         return ("prawdziwy tekst" if relaxed else "", language)
 
@@ -182,7 +182,7 @@ def test_decode_rescue_is_still_hallucination_filtered(monkeypatch):
     monkeypatch.setattr(
         whisper_backend,
         "_transcribe",
-        lambda audio, language=None, relaxed=False, task=None: (
+        lambda audio, language=None, relaxed=False: (
             "thank you." if relaxed else "",
             language,
         ),
@@ -197,7 +197,7 @@ def test_decode_uses_constrained_detection_for_allowlist(monkeypatch):
     monkeypatch.setattr(whisper_backend, "_configured_languages", lambda: ["pl", "en"])
     monkeypatch.setattr(whisper_backend, "_detect_language", lambda audio, allowed: "pl")
 
-    def fake_transcribe(audio, language=None, relaxed=False, task=None):
+    def fake_transcribe(audio, language=None, relaxed=False):
         seen["language"] = language
         return "dzień dobry wszystkim", language
 
@@ -210,23 +210,24 @@ def test_decode_uses_constrained_detection_for_allowlist(monkeypatch):
 # ── translate-to-English companion pass ──────────────────────────────────────
 
 
-def test_translate_utterance_uses_translate_task_and_relaxed_fallback(monkeypatch):
+def test_translate_utterance_pins_en_token_and_relaxed_fallback(monkeypatch):
     calls = []
 
-    def fake_transcribe(audio, language=None, relaxed=False, task=None):
-        calls.append((language, relaxed, task))
+    def fake_transcribe(audio, language=None, relaxed=False):
+        calls.append((language, relaxed))
         return ("good morning everyone" if relaxed else "", language)
 
     monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
     audio = np.zeros(16000, dtype=np.float32)
     assert whisper_backend.translate_utterance(audio, "pl") == "good morning everyone"
-    assert calls == [("pl", False, "translate"), ("pl", True, "translate")]
+    # turbo has no translate head; English comes from pinning the en token.
+    assert calls == [("en", False), ("en", True)]
 
 
 def test_translate_utterance_filters_hallucinations(monkeypatch):
     monkeypatch.setattr(
         whisper_backend,
         "_transcribe",
-        lambda audio, language=None, relaxed=False, task=None: ("thank you.", language),
+        lambda audio, language=None, relaxed=False: ("thank you.", language),
     )
     assert whisper_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl") == ""

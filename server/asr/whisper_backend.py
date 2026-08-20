@@ -325,7 +325,6 @@ def _transcribe(
     audio_data: np.ndarray,
     language: str | None = None,
     relaxed: bool = False,
-    task: str | None = None,
 ) -> tuple[str, str | None]:
     """Decode one utterance with mlx-whisper -> (text, decoded language).
 
@@ -339,9 +338,6 @@ def _transcribe(
     dropped entirely: a small temperature ladder and no confidence
     rejection, with the compression-ratio guard and the caller's
     hallucination filters still standing between it and the transcript.
-
-    ``task="translate"`` decodes into English regardless of the spoken
-    language (Whisper's built-in speech translation; English-only target).
     """
     import mlx_whisper
 
@@ -357,8 +353,6 @@ def _transcribe(
         kwargs.update(temperature=0.0, logprob_threshold=-1.0, no_speech_threshold=0.6)
     if language:
         kwargs["language"] = language
-    if task:
-        kwargs["task"] = task
 
     result = mlx_whisper.transcribe(audio_data, **kwargs)
     return result["text"].strip(), result.get("language") or language
@@ -373,18 +367,27 @@ def translate_utterance(audio_data: np.ndarray, language: str | None = None) -> 
 
     Called by the orchestrator (server/websocket.py) AFTER the transcript
     final was emitted, on this backend's executor, so translation never
-    delays transcription — it just queues behind it. ``language`` is the
-    language the transcript pass decoded, passed back in so the translate
-    pass skips detection. Same strict-then-relaxed ladder and hallucination
-    filters as transcription; returns "" when nothing survives.
+    delays transcription — it just queues behind it.
+
+    Deliberately NOT ``task="translate"``: large-v3-turbo was fine-tuned on
+    transcription only and silently ignores the translate task (verified:
+    Polish in, Polish out). Pinning ``language="en"`` instead steers the
+    decoder to emit English for non-English audio (verified: fluent English,
+    healthy logprobs) — the same language-token effect that produced the
+    accidental translations the allowlist fix stamped out. ``language`` (the
+    transcript pass's source language) is unused by the decode but kept in
+    the signature for a future model with a working translate head. Same
+    strict-then-relaxed ladder and hallucination filters as transcription;
+    returns "" when nothing survives.
     """
+    del language
     text = ""
     try:
-        text, _ = _transcribe(audio_data, language=language, task="translate")
+        text, _ = _transcribe(audio_data, language="en")
         if text and _is_junk(text):
             text = ""
         if not text:
-            text, _ = _transcribe(audio_data, language=language, relaxed=True, task="translate")
+            text, _ = _transcribe(audio_data, language="en", relaxed=True)
             if text and _is_junk(text):
                 text = ""
     except Exception as e:
