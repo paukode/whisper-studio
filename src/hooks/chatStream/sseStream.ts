@@ -68,8 +68,9 @@ export async function readSSEStream(
    *  model said nothing" and synthesize the empty-answer fallback over it. */
   flushedSegments: number;
   /** Index-grounding summary for this turn (folders searched / passages
-   *  injected), from the `grounding` SSE event. Undefined on resume turns. */
-  grounding?: { searched: number; passages: number };
+   *  injected, plus the persisted answer-sources id when passages exist),
+   *  from the `grounding` SSE event. Undefined on resume turns. */
+  grounding?: { searched: number; passages: number; id?: string };
   /** The most recent program_artifact event from this round, captured but
    *  intentionally NOT added as its own assistant message. The caller
    *  attaches it to the final assistant message so the artifact card
@@ -100,7 +101,7 @@ export async function readSSEStream(
   let firstTextReceived = false;
   let hasPendingApprovals = false;
   let hasUserQuestion = false;
-  let grounding: { searched: number; passages: number } | undefined;
+  let grounding: { searched: number; passages: number; id?: string } | undefined;
   let pendingArtifact: { title: string; html: string; description: string } | null = null;
   const pendingVisuals: VizArtifact[] = [];
   let pendingPlan: { id: string; title: string; summary: string } | null = null;

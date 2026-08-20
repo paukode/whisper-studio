@@ -97,8 +97,11 @@ export interface ChatMessage {
   /** Index-grounding summary for this turn: how many indexed folders were
    *  searched and how many passages were injected. `searched: 0` renders as
    *  "no index searched", so a silent no-grounding can't masquerade as the
-   *  model failing to find data. Set from the `grounding` SSE event. */
-  grounding?: { searched: number; passages: number };
+   *  model failing to find data. Set from the `grounding` SSE event. `id`
+   *  keys the persisted passages behind this answer
+   *  (GET /api/sessions/{sid}/grounding/{id}) — when present, the chip is a
+   *  button that opens them. */
+  grounding?: { searched: number; passages: number; id?: string };
   /** Marker used by useChatStream to know "this message is the question
    *  group for the current streaming round, append to it." Cleared when
    *  the stream finishes (either via [DONE] or finishStream). Never sent
@@ -381,8 +384,9 @@ export interface SSEEventData {
   // Session
   error?: string;
   /** Emitted once at the head of a turn: how many indexed folders were searched
-   *  and how many passages were injected as grounding for this question. */
-  grounding?: { searched: number; passages: number };
+   *  and how many passages were injected as grounding for this question, plus
+   *  the persisted answer-sources id when passages were injected. */
+  grounding?: { searched: number; passages: number; id?: string };
   /** Emitted at the head of a turn that is NOT running what the composer
    *  shows — a budget fallback swapped the model, and/or the resolved model
    *  could not honour the requested effort. */

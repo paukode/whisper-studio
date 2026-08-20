@@ -118,6 +118,37 @@ export async function bulkExportSessions(ids: string[]): Promise<{ blob: Blob; f
   return { blob: await resp.blob(), filename };
 }
 
+/** One passage behind a grounded answer, with its retrieval provenance:
+ *  how it got into the prompt — an exact-term match ('keyword'), a semantic
+ *  match ('semantic'), an entity named in the question ('entity'), or the
+ *  graph hop off the matches ('related'). Entity/related passages carry the
+ *  linking entity names for chips that deep-link into the index explorer. */
+export interface AnswerSource {
+  /** Workspace-relative path (display). */
+  path: string;
+  /** Absolute path (open/link target). */
+  abs: string;
+  /** The indexed workspace root — the index-explorer deep-link scope. */
+  ws?: string | null;
+  start_line?: number | null;
+  end_line?: number | null;
+  kind: 'keyword' | 'semantic' | 'entity' | 'related';
+  entities: string[];
+  snippet: string;
+}
+
+/** The passages behind one grounded answer, keyed by the grounding id the
+ *  `grounding` SSE event carried. 404s (surfaced as a thrown ApiError) when
+ *  the row was trimmed or the database cleared. */
+export function getAnswerSources(
+  sessionId: string,
+  groundingId: string,
+): Promise<{ id: string; sources: AnswerSource[] }> {
+  return get<{ id: string; sources: AnswerSource[] }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/grounding/${encodeURIComponent(groundingId)}`,
+  );
+}
+
 export type WorkspaceApp = 'vscode' | 'kiro' | 'finder';
 
 export function openSessionWorkspace(id: string, app: WorkspaceApp): Promise<{ ok: boolean }> {

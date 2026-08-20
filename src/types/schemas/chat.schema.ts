@@ -204,6 +204,9 @@ export const SSEEventDataSchema = z.object({
   grounding: z.object({
     searched: z.number(),
     passages: z.number(),
+    // Key for GET /api/sessions/{sid}/grounding/{id} — the persisted passages
+    // behind this answer. Absent when nothing was retrieved (or on old turns).
+    id: z.string().optional(),
   }).optional(),
   // This turn is not running what the composer shows: a budget fallback
   // swapped the model, and/or the resolved model could not honour the
