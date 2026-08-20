@@ -68,8 +68,10 @@ export function isNativeTranslationAvailable(): boolean {
   return window.__WHISPER_NATIVE_TRANSLATE?.available === true && !!nativeTranslateHandler();
 }
 
-/** Translate one segment on-device. Resolves to '' on any failure so callers
- *  can always clear the pending placeholder with the result. */
+/** Translate one segment on-device. An empty `source` asks the framework to
+ *  auto-detect the language (used for Parakeet, which does no language ID);
+ *  same-language input then fails and resolves to '' like any other failure,
+ *  so callers can always clear the pending placeholder with the result. */
 export function translateNative(text: string, source: string, target = 'en'): Promise<string> {
   const handler = nativeTranslateHandler();
   if (!handler || !isNativeTranslationAvailable()) return Promise.resolve('');

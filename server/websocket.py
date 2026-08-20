@@ -241,19 +241,23 @@ async def websocket_endpoint(
                     duration = len(ev["audio"]) / 16000.0
                     speaker = speakers.assign(chunk_id, embedding, duration)
             # The engine's per-utterance language ID rides on the final
-            # event. English (and unknown-language) utterances never get a
-            # translation line; for the rest, resolve_translator picks who
-            # produces it: this server (engine decode, scheduled below) or
-            # the client (Apple on-device bridge, signalled by translate_via).
+            # event. English utterances never get a translation line. An
+            # UNKNOWN language (Parakeet does no language ID) still
+            # translates via Apple — its on-device translator auto-detects
+            # the source when none is given (and clears the pending slot on
+            # English input) — but never via a model decode, which would
+            # need a source language. resolve_translator picks who produces
+            # the line: this server (engine decode, scheduled below) or the
+            # client (Apple bridge, signalled by translate_via).
             language = ev.get("language")
             translator = None
-            if language and language != "en":
+            if language != "en":
                 translator = resolve_translator(
                     translate_mode,
                     backend_name,
                     getattr(backend_mod, "_variant", lambda: None)(),
                     apple_available,
-                    hasattr(backend_mod, "translate_utterance"),
+                    language is not None and hasattr(backend_mod, "translate_utterance"),
                 )
             payload = {
                 "type": "transcript",

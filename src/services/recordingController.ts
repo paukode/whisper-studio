@@ -303,9 +303,10 @@ function connectWS(): void {
         );
         // The server resolved this chunk's translator; translate_via 'apple'
         // means this client runs it through the shell's on-device bridge and
-        // fills the same per-chunk pending slot a model decode would.
-        if (msg.translate_via === 'apple' && chunkId !== undefined && language) {
-          void translateNative(String(msg.text ?? ''), language).then((t) =>
+        // fills the same per-chunk pending slot a model decode would. An
+        // empty source language means "auto-detect" (Parakeet segments).
+        if (msg.translate_via === 'apple' && chunkId !== undefined) {
+          void translateNative(String(msg.text ?? ''), language ?? '').then((t) =>
             ownerStore().applyTranslation(chunkId, t),
           );
         }
