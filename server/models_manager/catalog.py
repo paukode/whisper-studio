@@ -46,6 +46,8 @@ class ModelEntry:
     ensure_func: str
     ensure_arg: str | None = None  # single positional arg (registry key for GGUFs)
     gguf_filename: str | None = None  # local-chat: the one target file in the repo
+    # One-line "what is this good for" shown on the model's card in Settings.
+    note: str = ""
 
 
 @lru_cache(maxsize=1)
@@ -58,7 +60,7 @@ def _static_entries() -> tuple[ModelEntry, ...]:
     variables inside the ensure functions, so their basenames are mirrored here
     with a pointer to the source.
     """
-    from server.asr import parakeet_backend, whisper_backend
+    from server.asr import canary_backend, parakeet_backend, whisper_backend
     from server.diarization import speakers
     from server.index import config as ic
 
@@ -75,7 +77,45 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             # Mirrors whisper_backend._ensure_model's weight_file check.
             sentinel_rel="weights.safetensors",
             ensure_module="server.asr.whisper_backend",
+            ensure_func="_ensure_turbo",
+            note=(
+                "Fast, accurate transcription in 99 languages; the default "
+                "engine. Translation to English uses token steering (decent, "
+                "not its strength)."
+            ),
+        ),
+        ModelEntry(
+            key="whisper_large_v3",
+            label="Whisper Large v3 (full)",
+            group=GROUP_TRANSCRIPTION,
+            repo_id="mlx-community/whisper-large-v3-mlx",
+            dir_name="whisper-large-v3",
+            # This MLX repo ships npz weights, not safetensors.
+            sentinel_rel="weights.npz",
+            ensure_module="server.asr.whisper_backend",
+            ensure_func="_ensure_large_v3",
+            note=(
+                "Highest transcription accuracy and a true translate-to-"
+                "English mode. 2x the size of Turbo and sentences appear "
+                "1-2 s later. Pick it in Settings as the Whisper variant."
+            ),
+        ),
+        ModelEntry(
+            key="canary",
+            label="Canary 1B v2",
+            group=GROUP_TRANSCRIPTION,
+            repo_id=canary_backend.CANARY_REPO_ID,
+            dir_name=rel(canary_backend.CANARY_MODEL_DIR, canary_backend.MODELS_DIR),
+            # Mirrors canary_backend._ensure_model's weight_file check.
+            sentinel_rel="model.safetensors",
+            ensure_module="server.asr.canary_backend",
             ensure_func="_ensure_model",
+            note=(
+                "Best speech translation to English plus very fast, accurate "
+                "transcription for 25 European languages. No language "
+                "auto-detect: set your session language in Settings, so it "
+                "suits single-language meetings."
+            ),
         ),
         ModelEntry(
             key="parakeet",
@@ -87,6 +127,10 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             sentinel_rel="model.safetensors",
             ensure_module="server.asr.parakeet_backend",
             ensure_func="_ensure_parakeet_model",
+            note=(
+                "Lowest latency: words appear live as you speak, in 25 "
+                "European languages. No translation support."
+            ),
         ),
         ModelEntry(
             key="ecapa_speaker",
