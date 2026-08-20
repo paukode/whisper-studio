@@ -31,8 +31,8 @@
     </figure>
 
     <figure class="shot wide">
-      <img src="assets/img/entity-graph.png" alt="The relationship graph with a selected file's shared entities">
-      <figcaption><strong>Entity-linked files.</strong> The graph and the detail panel are both built from the extracted-entity tables, which is why the panel can name the exact entities two files share.</figcaption>
+      <img src="assets/img/entity-graph.png" alt="Entity-linked files with a selected file's shared entities listed in the side panel">
+      <figcaption><strong>Entity-linked files.</strong> The index explorer is built from the extracted-entity tables, which is why it can name the exact entities two files share. (Screenshot shows the previous graph view.)</figcaption>
     </figure>
 
     <h2 id="the-build-flow">The build flow</h2>
@@ -244,8 +244,7 @@
         <tr><td><code>POST /cancel</code></td><td>Ask an in-progress build to stop after the current file.</td></tr>
         <tr><td><code>GET /list</code></td><td>Every workspace that currently has an index on disk.</td></tr>
         <tr><td><code>POST /remove</code></td><td>Delete a workspace's entire on-disk index.</td></tr>
-        <tr><td><code>GET /graph</code>, <code>/graph/entity</code>, <code>/graph/umap</code></td><td>Derived views for the entity-graph and semantic-map UI.</td></tr>
-        <tr><td><code>GET /graph/all</code>, <code>/graph/umap/all</code></td><td>The all-workspace variants of the graph and semantic-map views.</td></tr>
+        <tr><td><code>GET /explore/overview</code>, <code>/explore/entities</code>, <code>/explore/entity</code>, <code>/explore/file</code></td><td>Derived words-first views for the index explorer (topic cards, entity pages, file pages).</td></tr>
         <tr><td><code>GET /engines</code></td><td>Engine choices for the index's LLM passes (typed relations, entity descriptions, chunk-context headers): Bedrock Haiku plus every on-device model, with download state for the settings picker.</td></tr>
         <tr><td><code>GET /agent</code></td><td>Status of the background refresh helper (macOS).</td></tr>
         <tr><td><code>GET</code> / <code>PUT /settings</code></td><td>Per-workspace settings: the refresh schedule (daily / every N days / weekly / off), <code>ner_model</code> (<code>gliner</code> or <code>gliner2</code>), typed relations (engine <code>none</code> / <code>haiku</code> / <code>local</code> / <code>gliner2</code>), entity descriptions, and chunk context (mode <code>off</code> / <code>filename</code> / <code>llm</code>, engine <code>haiku</code> or <code>local</code>).</td></tr>

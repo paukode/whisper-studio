@@ -36,7 +36,7 @@ vi.mock('@/components/common/ToastContainer', () => ({ ToastContainer: () => <di
 vi.mock('@/components/common/ModelLoadingBanner', () => ({ ModelLoadingBanner: () => <div data-testid="banner" /> }));
 vi.mock('@/components/settings/SettingsModal', () => ({ SettingsModal: () => <div data-testid="settings" /> }));
 vi.mock('@/components/workspace/WorkspaceConnectDialog', () => ({ WorkspaceConnectDialog: () => <div data-testid="connect" /> }));
-vi.mock('@/components/workspace/WorkspaceGraphOverlay', () => ({ WorkspaceGraphOverlay: () => <div data-testid="graph" /> }));
+vi.mock('@/components/workspace/explorer/IndexExplorer', () => ({ IndexExplorer: () => <div data-testid="graph" /> }));
 vi.mock('@/components/common/BuddyWidget', () => ({ BuddyWidget: () => <div data-testid="buddy" /> }));
 vi.mock('@/components/settings/MemoryEditorModal', () => ({ MemoryEditorModal: () => <div data-testid="mem-edit" /> }));
 vi.mock('@/components/settings/MemoryViewerModal', () => ({ MemoryViewerModal: () => <div data-testid="mem-view" /> }));

@@ -2,7 +2,7 @@
 
 (2) pipeline stamps the ACTUAL embed model per backend in meta (a Cohere-built
     index must not be labelled with the Qwen3 model id).
-(1) entity_graph reads the deduped, node-id-keyed ``relations2`` table (joined
+(1) the explorer entity page reads the deduped, node-id-keyed ``relations2`` table (joined
     to ``nodes`` for display names).
 
 The embedder and GLiNER are stubbed so no model loads (fast, offline).
@@ -86,7 +86,7 @@ def test_qwen3_index_stamps_qwen3_embed_model(tmp_path, monkeypatch):
     assert meta["embed_model"] == config.EMBED_MODEL
 
 
-# ── Fix (1): entity_graph reads relations2 ───────────────────────────────────
+# ── Fix (1): the entity page reads relations2 ────────────────────────────────
 
 
 def _seed_two_entities(ws: str) -> None:
@@ -108,8 +108,8 @@ def _seed_two_entities(ws: str) -> None:
     )
 
 
-def test_entity_graph_reads_relations2_when_present(monkeypatch):
-    """A relation stored ONLY in relations2 surfaces in the entity-pivot view."""
+def test_entity_page_reads_relations2_when_present(monkeypatch):
+    """A relation stored ONLY in relations2 surfaces on the entity page."""
     _pin_backend(monkeypatch, "qwen3")
     ws = "/fake/ws-rel2-graph"
     _seed_two_entities(ws)
@@ -128,9 +128,8 @@ def test_entity_graph_reads_relations2_when_present(monkeypatch):
             }
         ],
     )
-    g = store.entity_graph(ws, "bob")
-    rels = [e for e in g["edges"] if e.get("relation") == "works_at"]
-    assert rels, "relations2 fact should surface as a typed edge"
-    assert rels[0]["score"] == 4.0
-    ent_names = {n["name"] for n in g["nodes"] if n.get("type") == "entity"}
-    assert {"Bob", "Acme"} <= ent_names
+    facts = store.explore_entity(ws, "bob")["facts"]
+    rels = [f for f in facts if f["predicate"] == "works_at"]
+    assert rels, "relations2 fact should surface on the entity page"
+    assert rels[0]["other"] == "Acme" and rels[0]["direction"] == "out"
+    assert rels[0]["cite"]["evidence"] == "Bob works at Acme"

@@ -447,52 +447,6 @@ def test_fts_polish_diacritics_and_inflection():
     assert any(r["path"] == "doc.md" for r in store.fts_search(ws, "faktury", k=5))
 
 
-def test_entity_graph_centres_on_an_entity_and_links_its_files():
-    """entity_graph powers the 'everything about this person' view: one entity
-    node linked to every file that mentions it. Matched case-insensitively and
-    the centre shows the stored spelling; file nodes are tagged type=file."""
-    ws = "/fake/ws-entity"
-    person = [{"name": "Ada Lovelace", "label": "person"}]
-    store.replace_file(
-        ws,
-        "a.md",
-        {"hash": "h", "size": 1, "mtime": 1.0},
-        [
-            {
-                "start_line": 1,
-                "end_line": 1,
-                "text": "about Ada Lovelace",
-                "vec": _unit(1),
-                "entities": person,
-            }
-        ],
-    )
-    store.replace_file(
-        ws,
-        "b.md",
-        {"hash": "h", "size": 1, "mtime": 1.0},
-        [
-            {
-                "start_line": 1,
-                "end_line": 1,
-                "text": "Ada Lovelace again",
-                "vec": _unit(2),
-                "entities": person,
-            }
-        ],
-    )
-    g = store.entity_graph(ws, "ada lovelace")  # click carries lowercased name
-    centre = g["nodes"][0]
-    assert (
-        centre["type"] == "entity"
-        and centre["name"] == "Ada Lovelace"
-        and centre["label"] == "person"
-    )
-    files = {n["name"] for n in g["nodes"] if n.get("type") == "file"}
-    assert files == {"a.md", "b.md"}
-    assert len(g["edges"]) == 2 and all(e["source"] == centre["id"] for e in g["edges"])
-
-
 def test_write_gen_advances_on_index_changes():
     """The write generation bumps on every replace/delete so the sqlite-vec
     index knows when to rebuild (chunk ids are reassigned, so a count alone
@@ -566,9 +520,8 @@ def test_dedupe_entities_merges_textual_variants_not_distinct_spellings(monkeypa
     assert "J. Doe" in after  # distinct spelling NOT merged
     assert sum(1 for n in after if n.lower() == "john doe") == 1
     # the surviving node still links both source files
-    g = store.entity_graph(ws, "john doe")
-    files = {n["name"] for n in g["nodes"] if n.get("type") == "file"}
-    assert {"a.md", "b.md"} <= files
+    page = store.explore_entity(ws, "john doe")
+    assert {"a.md", "b.md"} <= {m["path"] for m in page["mentioned_in"]}
 
 
 def test_dedupe_entities_semantic_merge_catches_spelling_variants(monkeypatch):
@@ -623,9 +576,8 @@ def test_dedupe_entities_semantic_merge_catches_spelling_variants(monkeypatch):
     assert sum(1 for n in after if n.lower() in ("postgres", "postgresql")) == 1
     # the surviving merged node still links both source files
     surviving = next(n for n in after if n.lower() in ("postgres", "postgresql"))
-    g = store.entity_graph(ws, surviving)
-    files = {n["name"] for n in g["nodes"] if n.get("type") == "file"}
-    assert {"a.md", "b.md"} <= files
+    page = store.explore_entity(ws, surviving)
+    assert {"a.md", "b.md"} <= {m["path"] for m in page["mentioned_in"]}
 
 
 def test_file_graph_assigns_communities(monkeypatch):
@@ -661,68 +613,6 @@ def test_file_graph_assigns_communities(monkeypatch):
     assert len(c1) == 1 and len(c2) == 1  # each cluster internally one community
     assert c1 != c2  # the two clusters differ
     assert all("degree" in n for n in g["nodes"])  # degree present for node sizing
-
-
-def test_umap_graph_projects_files_to_2d(monkeypatch):
-    """umap_graph lays files out by an embedding projection: every node gets
-    ux/uy in [0,1] (the semantic-map view) plus the file_graph community. Uses
-    the PCA path here (n<5) so it's fast and deterministic — no UMAP/numba."""
-    monkeypatch.setattr("server.index.store.entities.ENTITY_SEMANTIC_MERGE", False)
-    ws = "/fake/ws-umap"
-    for i in range(4):
-        store.replace_file(
-            ws,
-            f"f{i}.md",
-            {"hash": "h", "size": 1, "mtime": 1.0},
-            [
-                {
-                    "start_line": 1,
-                    "end_line": 1,
-                    "text": "x",
-                    "vec": _unit(i + 1),
-                    "entities": [
-                        {"name": "Shared", "label": "product"},
-                        {"name": f"E{i % 2}", "label": "product"},
-                    ],
-                }
-            ],
-        )
-    g = store.umap_graph(ws)
-    assert g["layout"] == "umap"
-    assert len(g["nodes"]) == 4
-    coords = [(n.get("ux"), n.get("uy")) for n in g["nodes"]]
-    assert all(x is not None and y is not None for x, y in coords)
-    assert all(0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 for x, y in coords)
-
-
-def test_all_workspaces_umap_graph_spans_every_workspace(monkeypatch):
-    """The cross-workspace UMAP projects files from ALL indexed workspaces into one
-    map (the fix for 'All indexed' + 'UMAP map' previously showing one folder)."""
-    monkeypatch.setattr("server.index.store.entities.ENTITY_SEMANTIC_MERGE", False)
-    for ws in ("/fake/ws-uall-a", "/fake/ws-uall-b"):
-        for i in range(3):
-            store.replace_file(
-                ws,
-                f"f{i}.md",
-                {"hash": "h", "size": 1, "mtime": 1.0},
-                [
-                    {
-                        "start_line": 1,
-                        "end_line": 1,
-                        "text": ws + str(i),
-                        "vec": _unit(hash(ws + str(i)) % 9999),
-                        "entities": [],
-                    }
-                ],
-            )
-        store.set_meta(ws, workspace=ws)  # so list_indexed_workspaces discovers it
-    g = store.all_workspaces_umap_graph()
-    assert g["layout"] == "umap"
-    ids = {n["id"] for n in g["nodes"]}
-    assert any("ws-uall-a" in i for i in ids) and any("ws-uall-b" in i for i in ids)
-    placed = [n for n in g["nodes"] if "ux" in n and "uy" in n]
-    assert len(placed) >= 4  # files from both workspaces projected together
-    assert all(0.0 <= n["ux"] <= 1.0 and 0.0 <= n["uy"] <= 1.0 for n in placed)
 
 
 def test_relations_parse_validates_endpoints():
@@ -948,7 +838,7 @@ def test_workspace_graph_query_tool_cites_sources(monkeypatch):
 
 def test_entity_descriptions_persist_and_surface(monkeypatch):
     """set_node_descriptions stores a one-line description on the canonical node;
-    entity_graph surfaces it on the centre node (the entity-pivot view)."""
+    the explorer's entity page surfaces it."""
     monkeypatch.setattr("server.index.store.entities.ENTITY_SEMANTIC_MERGE", False)
     ws = "/fake/ws-desc"
     store.replace_file(
@@ -971,8 +861,8 @@ def test_entity_descriptions_persist_and_surface(monkeypatch):
         )
         == 1
     )
-    centre = store.entity_graph(ws, "ada lovelace")["nodes"][0]
-    assert centre["type"] == "entity" and centre["description"] == "A mathematician."
+    page = store.explore_entity(ws, "ada lovelace")
+    assert page["found"] and page["description"] == "A mathematician."
 
 
 def _set_relation(ws, path, source, target, rel_type, score=3.0):
@@ -986,8 +876,8 @@ def _set_relation(ws, path, source, target, rel_type, score=3.0):
     )
 
 
-def test_scored_relation_surfaces_on_edge():
-    """A relation's score persists and surfaces on the entity-pivot typed edge."""
+def test_scored_relation_surfaces_on_fact():
+    """A relation's strength persists and drives the entity page's fact score."""
     ws = "/fake/ws-relscore"
     for f, nm, lbl in [("a.md", "Acme", "organization"), ("b.md", "Bob", "person")]:
         store.replace_file(
@@ -1005,13 +895,12 @@ def test_scored_relation_surfaces_on_edge():
             ],
         )
     _set_relation(ws, "a.md", "Acme", "Bob", "employs", 4.0)
-    edges = [e for e in store.entity_graph(ws, "acme")["edges"] if e.get("relation") == "employs"]
-    assert edges and edges[0]["score"] == 4.0
+    facts = [f for f in store.explore_entity(ws, "acme")["facts"] if f["predicate"] == "employs"]
+    assert facts and facts[0]["other"] == "Bob" and facts[0]["score"] == 0.8  # strength 4/5
 
 
-def test_entity_graph_includes_typed_relations():
-    """A typed relation surfaces the other endpoint as an entity node plus a
-    labeled entity↔entity edge in the centred graph."""
+def test_entity_page_includes_typed_relations():
+    """A typed relation surfaces as a directed fact on the entity page."""
     ws = "/fake/ws-rel"
     ents = [{"name": "Acme", "label": "organization"}, {"name": "Bob", "label": "person"}]
     store.replace_file(
@@ -1029,10 +918,11 @@ def test_entity_graph_includes_typed_relations():
         ],
     )
     _set_relation(ws, "a.md", "Bob", "Acme", "works_at")
-    g = store.entity_graph(ws, "bob")
-    ent_nodes = {n["name"] for n in g["nodes"] if n.get("type") == "entity"}
-    assert {"Bob", "Acme"} <= ent_nodes
-    assert any(e.get("relation") == "works_at" for e in g["edges"])
+    facts = store.explore_entity(ws, "bob")["facts"]
+    assert any(
+        f["predicate"] == "works_at" and f["other"] == "Acme" and f["direction"] == "out"
+        for f in facts
+    )
 
 
 def test_file_relations_replaced_and_deleted():
@@ -1313,54 +1203,6 @@ def test_file_graph_nodes_tagged_as_files():
     )
     g = store.file_graph(ws)
     assert g["nodes"] and all(n.get("type") == "file" for n in g["nodes"])
-
-
-def test_all_workspaces_graph_links_across_workspaces():
-    """The unified graph merges every indexed workspace, groups nodes by source
-    workspace, and links files that share entities — flagging cross-workspace
-    edges and surfacing the shared entity names."""
-    ent = [{"name": "PaymentService", "label": "service"}]
-    wsA, wsB = "/fake/all-a", "/fake/all-b"
-    store.replace_file(
-        wsA,
-        "a.py",
-        {"hash": "h", "size": 1, "mtime": 1.0},
-        [
-            {
-                "start_line": 1,
-                "end_line": 1,
-                "text": "uses PaymentService",
-                "vec": _unit(1),
-                "entities": ent,
-            }
-        ],
-    )
-    store.set_meta(wsA, workspace=wsA)
-    store.replace_file(
-        wsB,
-        "b.py",
-        {"hash": "h", "size": 1, "mtime": 1.0},
-        [
-            {
-                "start_line": 1,
-                "end_line": 1,
-                "text": "also PaymentService",
-                "vec": _unit(2),
-                "entities": ent,
-            }
-        ],
-    )
-    store.set_meta(wsB, workspace=wsB)
-
-    g = store.all_workspaces_graph()
-    ids = {n["id"] for n in g["nodes"]}
-    assert any(i.endswith("/a.py") for i in ids) and any(i.endswith("/b.py") for i in ids)
-    assert len({n["group"] for n in g["nodes"]}) == 2  # one colour group per workspace
-    cross = [e for e in g["edges"] if e["cross"]]
-    assert (
-        cross and "PaymentService" in cross[0]["entities"]
-    )  # linked across folders by the shared entity
-    assert {w["name"] for w in g["workspaces"]} == {"all-a", "all-b"}
 
 
 def test_retrieve_grounding_includes_graph_hop_and_full_chunks(monkeypatch):

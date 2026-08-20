@@ -140,10 +140,10 @@ export const RecentWorkspaceItem: React.FC<RecentWorkspaceItemProps> = ({
                   className="ws-menu-item"
                   onClick={(e) => {
                     e.stopPropagation();
-                    useUIStore.getState().openIndexGraph(wsPath);
+                    useUIStore.getState().openIndexExplorer(wsPath);
                   }}
                 >
-                  View relationship graph
+                  Explore index
                 </button>
               )}
               {indexed && !building && (

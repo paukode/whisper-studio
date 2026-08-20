@@ -262,19 +262,27 @@ export const WorkspaceConnectDialog: React.FC = () => {
         /* surfaced via polled status */
       }
       void refreshStatuses([wsPath]);
+      // The workspace panel's Explore button watches the same status under
+      // this key; nudge it so a fresh index surfaces the button while it polls.
+      void queryClient.invalidateQueries({ queryKey: ['index-status', wsPath] });
     },
-    [refreshStatuses],
+    [refreshStatuses, queryClient],
   );
 
-  const handleRemoveIndex = useCallback(async (e: React.MouseEvent, wsPath: string) => {
-    e.stopPropagation();
-    try {
-      await removeIndex(wsPath);
-    } catch {
-      /* ignore */
-    }
-    setStatuses((prev) => ({ ...prev, [wsPath]: { indexed: false, building: false } }));
-  }, []);
+  const handleRemoveIndex = useCallback(
+    async (e: React.MouseEvent, wsPath: string) => {
+      e.stopPropagation();
+      try {
+        await removeIndex(wsPath);
+      } catch {
+        /* ignore */
+      }
+      setStatuses((prev) => ({ ...prev, [wsPath]: { indexed: false, building: false } }));
+      // Hide the workspace panel's Explore button for the now-unindexed folder.
+      void queryClient.invalidateQueries({ queryKey: ['index-status', wsPath] });
+    },
+    [queryClient],
+  );
 
   // Forget a not-indexed recent (indexed ones are protected server-side too).
   const handleRemoveRecent = useCallback(

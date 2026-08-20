@@ -269,7 +269,7 @@ export const IndexSettingsPanel: React.FC<IndexSettingsPanelProps> = ({ settings
     )}
     {s.chunk_context?.mode === 'llm' && noModels && <NoModelsNote />}
     <span className="ws-menu-hint">
-      Adds the filename (or an AI-written summary) to each chunk before embedding, so filename and topic queries match. Changing the mode re-indexes the whole folder (AI-written also runs the model over every chunk).
+      Adds the filename (or an AI-written summary) to each passage before embedding, so filename and topic queries match. Changing the mode re-indexes the whole folder (AI-written also runs the model over every passage).
     </span>
     <label className="ws-menu-line">
       Entity extractor

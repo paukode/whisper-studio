@@ -306,6 +306,112 @@ def test_file_page_unknown_file_reports_not_found():
     assert store.explore_file(ws, "zzz.md") == {"found": False}
 
 
+def test_file_page_normalizes_dot_slash_paths():
+    """The file tree hands over './runbook.md'-style paths; the files table
+    stores 'runbook.md' — the page must resolve both spellings."""
+    ws = "/fake/xpl-file-dot"
+    _add(ws, "runbook.md", [{"name": "Dana Kim", "label": "person"}])
+    assert store.explore_file(ws, "./runbook.md")["found"]
+    assert store.explore_file(ws, ".") == {"found": False}
+
+
+def test_non_ascii_names_resolve_everywhere():
+    """SQLite's LOWER() folds ASCII only; the views use the Unicode-aware
+    ulower() so names like 'Łukasz Kowalski' appear in the browse pane and their
+    entity page (and facts) resolve from a click carrying any casing."""
+    ws = "/fake/xpl-unicode"
+    luk = {"name": "Łukasz Kowalski", "label": "person"}
+    asa = {"name": "Åsa Østergaard", "label": "person"}
+    _add(ws, "a.md", [luk, asa], seed=1, text="Łukasz Kowalski works with Åsa Østergaard")
+    _add(ws, "b.md", [luk], seed=2)
+    relstore.set_file_relations_v2(
+        ws,
+        "a.md",
+        [
+            {
+                "source": "Łukasz Kowalski",
+                "target": "Åsa Østergaard",
+                "predicate": "collaborated_with",
+                "strength": 3,
+                "evidence": "Łukasz Kowalski works with Åsa Østergaard",
+                "start_line": 1,
+                "end_line": 1,
+            }
+        ],
+    )
+
+    names = [e["name"] for g in store.explore_entities(ws)["groups"] for e in g["entities"]]
+    assert set(names) == {"Łukasz Kowalski", "Åsa Østergaard"}
+
+    page = store.explore_entity(ws, "łukasz kowalski")  # lowercased click
+    assert page["found"] and page["name"] == "Łukasz Kowalski"
+    assert [m["path"] for m in page["mentioned_in"]] == ["a.md", "b.md"]
+    assert page["facts"] and page["facts"][0]["other"] == "Åsa Østergaard"
+    assert {r["name"] for r in page["related"]} == {"Åsa Østergaard"}
+
+
+def test_neighbor_entity_names_with_commas_stay_whole():
+    """The file page's shared-entity sample must not split names on commas
+    (no GROUP_CONCAT): 'Idero, Inc.' stays one clickable name."""
+    ws = "/fake/xpl-comma"
+    inc = {"name": "Idero, Inc.", "label": "organization"}
+    _add(ws, "a.md", [inc], seed=1)
+    _add(ws, "b.md", [inc], seed=2)
+    out = store.explore_file(ws, "a.md")
+    assert out["neighbors"][0]["entities"] == ["Idero, Inc."]
+    assert out["neighbors"][0]["shared"] == 1
+
+
+# ── HTTP routes ──────────────────────────────────────────────────────────────
+
+
+def test_explore_routes_serve_views_with_root(monkeypatch):
+    """The four /explore routes resolve the workspace, reject unindexed paths
+    with empty shapes, and stamp the absolute root for the UI's reveal/open."""
+    import asyncio
+
+    from server.index import routes
+
+    ws = "/fake/xpl-routes"
+    _add(ws, "a.md", [{"name": "Dana Kim", "label": "person"}])
+    monkeypatch.setattr(routes.paths, "is_indexed", lambda p: True)
+
+    out = asyncio.run(routes.explore_overview(ws))
+    assert out["files"] == 1 and out["root"] == ws
+    out = asyncio.run(routes.explore_entities(ws))
+    assert out["total"] == 1 and out["root"] == ws
+    out = asyncio.run(routes.explore_entity(ws, "dana kim"))
+    assert out["found"] and out["name"] == "Dana Kim" and out["root"] == ws
+    out = asyncio.run(routes.explore_file(ws, "a.md"))
+    assert out["found"] and out["passages"] == 1 and out["root"] == ws
+
+    monkeypatch.setattr(routes.paths, "is_indexed", lambda p: False)
+    assert asyncio.run(routes.explore_overview(ws))["files"] == 0
+    assert asyncio.run(routes.explore_entity(ws, "dana kim")) == {"found": False, "root": ""}
+
+
+# ── frontend verb map stays in sync with the predicate vocabulary ───────────
+
+
+def test_fact_sentence_verb_map_covers_the_predicate_vocabulary():
+    """The explorer renders facts as sentences via a TS verb map; every canonical
+    predicate must have a phrase there, or new predicates silently fall back to
+    underscore-mangled verbs in the UI."""
+    import pathlib
+    import re
+
+    from server.index.relations_vocab import PREDICATES
+
+    ts = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "src/components/workspace/explorer/factSentence.ts"
+    ).read_text(encoding="utf-8")
+    block = ts.split("export const VERB_PHRASES")[1].split("};")[0]
+    ts_keys = set(re.findall(r"^\s*(\w+):", block, flags=re.M))
+    missing = set(PREDICATES) - ts_keys
+    assert not missing, f"factSentence.ts VERB_PHRASES is missing predicates: {sorted(missing)}"
+
+
 # ── relstore addition ────────────────────────────────────────────────────────
 
 

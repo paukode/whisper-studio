@@ -22,7 +22,7 @@ import { SettingsModal } from '@/components/settings/SettingsModal';
 import { TranscriptionPanel } from '@/components/transcription/TranscriptionPanel';
 import { ChatPanel } from '@/components/chat/ChatPanel';
 import { WorkspaceConnectDialog } from '@/components/workspace/WorkspaceConnectDialog';
-import { WorkspaceGraphOverlay } from '@/components/workspace/WorkspaceGraphOverlay';
+import { IndexExplorer } from '@/components/workspace/explorer/IndexExplorer';
 import { WorkspacePanel } from '@/components/workspace/WorkspacePanel';
 import { TerminalPanel } from '@/components/terminal/TerminalPanel';
 import { RightDock } from '@/components/preview/RightDock';
@@ -400,7 +400,7 @@ const AppShell: React.FC = () => {
       <ToastContainer />
       <SettingsModal />
       <WorkspaceConnectDialog />
-      <WorkspaceGraphOverlay />
+      <IndexExplorer />
       <BuddyWidget />
       <MemoryEditorModal isOpen={memoryEditorOpen} onClose={() => useUIStore.getState().closeMemoryEditor()} />
       <MemoryViewerModal isOpen={memoryViewerOpen} onClose={() => useUIStore.getState().closeMemoryViewer()} />
