@@ -213,11 +213,12 @@ def test_decode_uses_constrained_detection_for_allowlist(monkeypatch):
 def test_translate_utterance_pins_en_token_and_relaxed_fallback(monkeypatch):
     calls = []
 
-    def fake_transcribe(audio, language=None, relaxed=False):
+    def fake_transcribe(audio, language=None, relaxed=False, task=None):
         calls.append((language, relaxed))
         return ("good morning everyone" if relaxed else "", language)
 
     monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
+    monkeypatch.setattr(whisper_backend, "_variant", lambda: "turbo")
     audio = np.zeros(16000, dtype=np.float32)
     assert whisper_backend.translate_utterance(audio, "pl") == "good morning everyone"
     # turbo has no translate head; English comes from pinning the en token.
@@ -231,3 +232,76 @@ def test_translate_utterance_filters_hallucinations(monkeypatch):
         lambda audio, language=None, relaxed=False: ("thank you.", language),
     )
     assert whisper_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl") == ""
+
+
+# ── canary backend + whisper variant ─────────────────────────────────────────
+
+
+def test_resolve_name_canary():
+    assert asr.resolve_name("canary") == "canary"
+
+
+def test_canary_session_emits_final_with_language(monkeypatch):
+    from server.asr import canary_backend
+
+    monkeypatch.setattr(
+        canary_backend,
+        "_decode_utterance",
+        lambda pcm: ("dzień dobry", np.zeros(16000, dtype=np.float32), "pl"),
+    )
+    session = canary_backend.create_session()
+    session._buf = _StubBuffer([b"\x00" * 32000])
+    events = session.process(b"\x00" * 960)
+    assert [(e["kind"], e["text"], e["language"]) for e in events] == [
+        ("final", "dzień dobry", "pl")
+    ]
+
+
+def test_canary_session_language_prefers_supported_allowlist(monkeypatch):
+    import server.infrastructure.config as cfg
+    from server.asr import canary_backend
+
+    monkeypatch.setattr(cfg, "get", lambda k, default=None: "xx,pl,en")
+    assert canary_backend._session_language() == "pl"
+    monkeypatch.setattr(cfg, "get", lambda k, default=None: "")
+    assert canary_backend._session_language() == "en"
+
+
+def test_canary_translate_targets_english(monkeypatch):
+    from server.asr import canary_backend
+
+    calls = []
+
+    def fake_generate(audio, source_lang, target_lang):
+        calls.append((source_lang, target_lang))
+        return "good morning"
+
+    monkeypatch.setattr(canary_backend, "_generate", fake_generate)
+    text = canary_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl")
+    assert text == "good morning"
+    assert calls == [("pl", "en")]
+
+
+def test_whisper_variant_fallback(monkeypatch):
+    monkeypatch.setattr(whisper_backend, "config_get", lambda k: "bogus")
+    assert whisper_backend._variant() == "turbo"
+    monkeypatch.setattr(whisper_backend, "config_get", lambda k: "large-v3")
+    assert whisper_backend._variant() == "large-v3"
+
+
+def test_translate_uses_real_task_on_large_v3(monkeypatch):
+    calls = []
+
+    def fake_transcribe(audio, language=None, relaxed=False, task=None):
+        calls.append((language, task))
+        return "good morning", language
+
+    monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
+    monkeypatch.setattr(whisper_backend, "_variant", lambda: "large-v3")
+    assert whisper_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl")
+    assert calls == [("pl", "translate")]
+
+    calls.clear()
+    monkeypatch.setattr(whisper_backend, "_variant", lambda: "turbo")
+    assert whisper_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl")
+    assert calls == [("en", None)]

@@ -26,6 +26,7 @@ import {
   stopNativeCapture,
 } from '@/services/nativeAudioSource';
 import { NativeAudioMixer } from '@/services/nativeAudioMixer';
+import { isNativeTranslationAvailable, translateNative } from '@/services/nativeTranslation';
 import { countActiveSessions, getTranscriptionStore } from '@/stores/sessionRuntimes';
 import { MAX_ACTIVE_SESSIONS } from '@/hooks/useChatStream';
 
@@ -79,8 +80,8 @@ let liveSwitchActive = false;
  *  until the next load starts or finishes. */
 let loadModelBannerDismissed = false;
 
-const engineOf = (backend: string): 'whisper' | 'parakeet' =>
-  backend === 'whisper' ? 'whisper' : 'parakeet';
+const engineOf = (backend: string): 'whisper' | 'parakeet' | 'canary' =>
+  backend === 'whisper' ? 'whisper' : backend === 'canary' ? 'canary' : 'parakeet';
 /** Buffers native (shell-captured) samples between mic worklet frames in
  *  mixed mode. Null in mic-only and native-only modes. */
 let nativeMixer: NativeAudioMixer | null = null;
@@ -279,12 +280,31 @@ function connectWS(): void {
       const msg: Record<string, unknown> = JSON.parse(event.data as string);
       if (msg.type === 'transcript') {
         // A finalized sentence: commit it and clear the live draft.
+        const chunkId = typeof msg.chunk_id === 'number' ? msg.chunk_id : undefined;
+        const language = typeof msg.language === 'string' ? msg.language : undefined;
+        // Apple provider: the server skips its own translate pass
+        // (translating stays unset) and the page translates via the shell's
+        // on-device bridge, filling the same per-chunk pending slot.
+        const cfg = useSettingsStore.getState().config;
+        const appleTranslate =
+          msg.translating !== true &&
+          cfg.whisperTranslate &&
+          cfg.translationProvider === 'apple' &&
+          chunkId !== undefined &&
+          !!language &&
+          language !== 'en' &&
+          isNativeTranslationAvailable();
         onTranscriptResult(
           String(msg.text ?? ''),
           String(msg.speaker ?? 'Speaker 1'),
-          typeof msg.chunk_id === 'number' ? msg.chunk_id : undefined,
-          msg.translating === true,
+          chunkId,
+          msg.translating === true || appleTranslate,
         );
+        if (appleTranslate && chunkId !== undefined && language) {
+          void translateNative(String(msg.text ?? ''), language).then((t) =>
+            ownerStore().applyTranslation(chunkId, t),
+          );
+        }
         ownerStore().setInterimText('');
       } else if (msg.type === 'translation') {
         // English companion line for an earlier chunk (Whisper translate

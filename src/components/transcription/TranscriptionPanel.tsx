@@ -340,9 +340,10 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
             onChange={(e) => handleBackendChange(e.target.value)}
           >
             <option value="whisper">Whisper</option>
+            <option value="canary">Canary (translate)</option>
             <option value="streaming">Parakeet (live)</option>
           </select>
-          {transcriptionBackend === 'whisper' && (
+          {transcriptionBackend !== 'streaming' && (
             <button
               type="button"
               className={`translate-toggle${whisperTranslate ? ' on' : ''}`}
