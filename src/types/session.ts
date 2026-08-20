@@ -29,6 +29,13 @@ export interface TranscriptSegment {
   // retroactively. Meaningless for historic segments — chunk_ids are
   // scoped to one live recording.
   chunks?: { id: number; start: number }[];
+  // Whisper "translate to English" companion lines, one per source chunk,
+  // kept in chunk order (chunk ids are monotonic). Persisted with the
+  // segment so historic transcripts keep their translations.
+  translations?: { chunkId: number; text: string }[];
+  // Live-only: chunk ids whose English translation is still decoding —
+  // drives the "Translating…" placeholder. Stripped on load from history.
+  pendingTranslations?: number[];
 }
 
 export interface Speaker {
