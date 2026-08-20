@@ -135,3 +135,69 @@ def test_startup_warms_nothing_when_engine_is_whisper(monkeypatch):
     """If the record engine is Whisper, startup loads NOTHING (Whisper stays lazy);
     the Parakeet-only rule never eager-loads Whisper at startup."""
     assert _warm_calls(monkeypatch, "whisper") == []
+
+
+# ── language allowlist + relaxed rescue pass ─────────────────────────────────
+
+
+def test_parse_languages():
+    assert whisper_backend._parse_languages(None) == []
+    assert whisper_backend._parse_languages("") == []
+    assert whisper_backend._parse_languages("pl") == ["pl"]
+    assert whisper_backend._parse_languages(" PL , en ,") == ["pl", "en"]
+
+
+def test_configured_languages_drops_unknown_codes(monkeypatch):
+    monkeypatch.setattr(whisper_backend, "config_get", lambda k: "pl,nope,en")
+    assert whisper_backend._configured_languages() == ["pl", "en"]
+
+
+def test_pick_language_ignores_disallowed():
+    probs = {"ru": 0.5, "pl": 0.3, "en": 0.2}
+    assert whisper_backend._pick_language(probs, ["pl", "en"]) == "pl"
+
+
+def _speech_pcm() -> bytes:
+    """1 s of loud sine — comfortably above the RMS energy gate."""
+    t = np.arange(16000, dtype=np.float32) / 16000.0
+    return (np.sin(2 * np.pi * 220 * t) * 0.3 * 32767).astype(np.int16).tobytes()
+
+
+def test_decode_retries_relaxed_when_strict_pass_is_empty(monkeypatch):
+    calls = []
+
+    def fake_transcribe(audio, language=None, relaxed=False):
+        calls.append((language, relaxed))
+        return "prawdziwy tekst" if relaxed else ""
+
+    monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
+    monkeypatch.setattr(whisper_backend, "_configured_languages", lambda: [])
+    text, _ = whisper_backend._decode_utterance(_speech_pcm())
+    assert text == "prawdziwy tekst"
+    assert calls == [(None, False), (None, True)]
+
+
+def test_decode_rescue_is_still_hallucination_filtered(monkeypatch):
+    monkeypatch.setattr(
+        whisper_backend,
+        "_transcribe",
+        lambda audio, language=None, relaxed=False: "thank you." if relaxed else "",
+    )
+    monkeypatch.setattr(whisper_backend, "_configured_languages", lambda: [])
+    text, _ = whisper_backend._decode_utterance(_speech_pcm())
+    assert text == ""
+
+
+def test_decode_uses_constrained_detection_for_allowlist(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(whisper_backend, "_configured_languages", lambda: ["pl", "en"])
+    monkeypatch.setattr(whisper_backend, "_detect_language", lambda audio, allowed: "pl")
+
+    def fake_transcribe(audio, language=None, relaxed=False):
+        seen["language"] = language
+        return "dzień dobry wszystkim"
+
+    monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
+    text, _ = whisper_backend._decode_utterance(_speech_pcm())
+    assert text == "dzień dobry wszystkim"
+    assert seen["language"] == "pl"
