@@ -715,7 +715,12 @@ def retrieve_grounding(
     (chunks linked through shared entities), with near-full-chunk excerpts, and
     instructs the model to answer from these passages rather than re-reading the
     files. Source links use absolute paths so they reveal in Finder regardless
-    of which workspace is connected."""
+    of which workspace is connected.
+
+    With ``return_meta`` the second value is ``{folders, passages, sources}``,
+    where ``sources`` lists every injected passage with its retrieval provenance
+    (``kind``: keyword / semantic / entity / related, plus entity-name chips) —
+    the payload behind the chat's "Answer sources" surface."""
     queries = [question]
     for q in extra_queries or []:
         if q and q.strip() and q not in queries:
@@ -753,6 +758,12 @@ def retrieve_grounding(
 
     related: list[dict] = []
     searched_roots: set[str] = set()
+    # Which retrieval legs surfaced each chunk (by file+line key), and the
+    # query-named entities that anchored it. Feeds the per-passage "sources"
+    # meta so the UI can say HOW each passage got here — matched words
+    # (keyword), similar meaning (dense), or an entity link — not just that it did.
+    legs_by_key: dict[tuple, set] = {}
+    ent_names_by_key: dict[tuple, list] = {}
 
     # Per query, build TWO global lists (across all indexes): the dense list,
     # cosine-sorted (cosine is comparable across indexes, so this is a true
@@ -793,6 +804,7 @@ def retrieve_grounding(
                 for r in res.get("related", []):
                     r = dict(r)
                     r["_abs"] = os.path.join(root, r["path"])
+                    r["_ws"] = p
                     related.append(r)
         # Global dense ranking: cosine-sorted, sub-floor noise dropped. The floor
         # is the max of the absolute per-backend floor and a relative guard
@@ -806,6 +818,14 @@ def retrieve_grounding(
         # cosine floor — surfacing exact-term and entity-anchored hits is their job.
         kw.sort(key=lambda m: m.get("_bm25", 0.0))
         ent.sort(key=lambda m: m.get("_ent", 0.0), reverse=True)
+        # Record leg membership AFTER the dense floor cut, so a chunk that only
+        # survived via keyword/entity is attributed to the leg that carried it.
+        for lst, leg in ((dense, "semantic"), (kw, "keyword"), (ent, "entity")):
+            for m in lst:
+                legs_by_key.setdefault(_key(m), set()).add(leg)
+        for m in ent:
+            hits = ent_names_by_key.setdefault(_key(m), [])
+            hits.extend(n for n in (m.get("_ent_names") or []) if n not in hits)
         legs = [lst for lst in (dense, kw, ent) if lst]
         if len(legs) > 1:
             return _rrf_fuse(legs)
@@ -867,7 +887,9 @@ def retrieve_grounding(
     matches = deduped
 
     if not matches:
-        return ("", {"folders": folders_searched, "passages": 0}) if return_meta else ""
+        if return_meta:
+            return "", {"folders": folders_searched, "passages": 0, "sources": []}
+        return ""
 
     # Auto-merge (parent-document retrieval): when a SMALL, focused document has
     # a chunk among the top matches, splice in its remaining chunks right after
@@ -902,6 +924,9 @@ def retrieve_grounding(
                 continue
             present.add(_key(s))
             seen_text.add(_text_key(s))  # preserve byte-identical-text dedup vs the related section
+            # An auto-merged sibling wasn't retrieved itself; it rode in on the
+            # seed chunk's match, so it inherits the seed's leg attribution.
+            legs_by_key.setdefault(_key(s), legs_by_key.get(_key(m), {"semantic"}))
             merged.append(s)
             per_doc[doc_abs] = per_doc.get(doc_abs, 0) + 1  # keep related from re-adding this doc
             budget -= 1
@@ -962,5 +987,30 @@ def retrieve_grounding(
             out.append(f"- {_fmt(m, _GROUND_RELATED_CHARS)}")
     text = "\n".join(out)
     if return_meta:
-        return text, {"folders": folders_searched, "passages": len(matches)}
+        # Structured per-passage provenance, mirroring the grounding block: one
+        # entry per injected passage with HOW it was retrieved. Persisted per
+        # answer so the chat's grounding chip can show the passages behind it.
+        def _kind(m: dict) -> str:
+            lg = legs_by_key.get(_key(m)) or set()
+            if "keyword" in lg:
+                return "keyword"
+            if "semantic" in lg:
+                return "semantic"
+            return "entity" if "entity" in lg else "semantic"
+
+        def _source(m: dict, kind: str, entities: list | None) -> dict:
+            return {
+                "path": m.get("path"),
+                "abs": m.get("_abs"),
+                "ws": m.get("_ws"),
+                "start_line": m.get("start_line"),
+                "end_line": m.get("end_line"),
+                "kind": kind,
+                "entities": entities or [],
+                "snippet": " ".join((m.get("text") or "").split())[:240],
+            }
+
+        sources = [_source(m, _kind(m), ent_names_by_key.get(_key(m))) for m in matches]
+        sources += [_source(r, "related", r.get("shared_entity_names")) for r in related_uniq]
+        return text, {"folders": folders_searched, "passages": len(matches), "sources": sources}
     return text

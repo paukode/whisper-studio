@@ -19,6 +19,7 @@ if ROOT not in sys.path:
 # They all point at the same ``<storage_root()>/sessions.db``.
 _DB_MODULES = (
     "server.infrastructure.sessions",
+    "server.infrastructure.grounding_store",
     "server.tasks.registry",
     "server.tasks_tracker",
     "server.attachment_store",

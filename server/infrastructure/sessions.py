@@ -442,6 +442,12 @@ def _delete_session_sync(session_id: str) -> None:
             # attachments comes from migration 011 / attachment_store's
             # _ensure_table; a database that predates both has no rows.
             pass
+        try:
+            conn.execute("DELETE FROM grounding WHERE session_id = ?", (session_id,))
+        except sqlite3.OperationalError:
+            # grounding comes from migration 018 / grounding_store's
+            # _ensure_table; a database that predates both has no rows.
+            pass
 
     # Cron jobs owned by this session must not silently die: disable + flag
     # them orphaned (re-homeable) and repoint their run history to the inbox

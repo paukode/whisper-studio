@@ -148,6 +148,21 @@ async def get_session(session_id: str):
     return data
 
 
+@router.get("/api/sessions/{session_id}/grounding/{grounding_id}")
+async def get_answer_grounding(session_id: str, grounding_id: str):
+    """The passages behind one grounded answer ("Answer sources"): the
+    retrieve_grounding output persisted for the turn whose grounding SSE event
+    carried this id. 404 when unknown — an old answer whose row was trimmed, a
+    cleared database, or an id from another session (the lookup is
+    session-scoped) — and the chip degrades to its counts-only form."""
+    from server.infrastructure.grounding_store import get_grounding
+
+    sources = await asyncio.to_thread(get_grounding, session_id, grounding_id)
+    if sources is None:
+        return JSONResponse(status_code=404, content={"error": "not found"})
+    return {"id": grounding_id, "sources": sources}
+
+
 @router.put("/api/sessions/{session_id}")
 async def save_session(session_id: str, request: Request):
     body = await request.json()

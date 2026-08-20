@@ -22,6 +22,7 @@ import { findMatchingTeamReports } from '@/hooks/chatStream/teamProgress';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
 import { formatMessageTimestamp } from '@/utils/formatTimestamp';
 import { UserQuestionCard, UserQuestionGroupCard } from '@/components/chat/UserQuestionCard';
+import { AnswerSources } from '@/components/chat/AnswerSources';
 import { extractFlatCronPayload, exportSingleMessage, copyRichText } from '@/components/chat/messageActions';
 
 export interface ChatMessageProps {
@@ -227,21 +228,11 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
          *  answered from the workspace index (and how much), so a silent
          *  no-grounding can't be mistaken for "the model couldn't find it".
          *  Only present when at least one index was searched (the backend
-         *  omits it otherwise), so users without indexes never see a chip. */}
+         *  omits it otherwise), so users without indexes never see a chip.
+         *  When the turn persisted its sources (grounding.id), the chip is a
+         *  button that opens the passages behind the answer. */}
         {!isUser && message.grounding && message.grounding.searched > 0 && (
-          <div style={{
-            fontSize: '0.8em',
-            color: 'var(--text-muted)',
-            padding: '2px 0 6px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-          }}>
-            <span aria-hidden="true">{'🔎'}</span>
-            {message.grounding.passages > 0
-              ? `Grounded in ${message.grounding.searched} indexed folder${message.grounding.searched === 1 ? '' : 's'} · ${message.grounding.passages} passage${message.grounding.passages === 1 ? '' : 's'}`
-              : `Searched ${message.grounding.searched} indexed folder${message.grounding.searched === 1 ? '' : 's'} · no matches`}
-          </div>
+          <AnswerSources grounding={message.grounding} />
         )}
 
         {/* Render tool/skill traces for assistant messages. Two-pass grouping:
