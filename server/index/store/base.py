@@ -105,6 +105,32 @@ _GENERIC_ENTITY_NAMES = {
     "variable",
     "parameter",
     "value",
+    # Document-template metadata keys. Spec and report templates repeat these as
+    # field labels ("AUTHOR:", "STATUS:"), and the zero-shot extractor tags the
+    # label itself as an entity — often as a person. They connect every file in a
+    # folder that shares a template, which is noise, not a relationship.
+    "author",
+    "authors",
+    "editor",
+    "editors",
+    "contributor",
+    "contributors",
+    "owner",
+    "reviewer",
+    "reviewers",
+    "approver",
+    "approvers",
+    "status",
+    "version",
+    "revision",
+    "template",
+    "draft",
+    "subject",
+    "title",
+    "date",
+    "page",
+    "section",
+    "figure",
 }
 
 # Per-label cap on the semantic-merge cosine (which is O(n²) within a label):

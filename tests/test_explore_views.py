@@ -68,7 +68,7 @@ def test_entity_list_groups_by_label_and_counts_files():
 
     out = store.explore_entities(ws)
     groups = {g["key"]: g for g in out["groups"]}
-    assert set(groups) == {"people", "organizations", "topics", "places"}
+    assert set(groups) == {"people", "organizations", "roles", "topics", "places"}
     people = groups["people"]["entities"]
     assert people[0]["name"] == "Dana Kim" and people[0]["files"] == 3
     assert [e["name"] for e in groups["organizations"]["entities"]] == ["Northwind Bank"]
@@ -434,3 +434,87 @@ def test_facts_for_entity_counts_distinct_files():
     facts = relstore.facts_for_entity(ws, "alice")
     assert len(facts) == 1
     assert facts[0]["sources"] == 2 and facts[0]["files"] == 1
+
+
+# ── entity quality: grouping and person-name shape ──────────────────────────
+
+
+def test_job_titles_group_under_roles_not_people():
+    """A title is not a person. Rows like EDITOR or CEO belong under Roles and
+    titles, so People stays a list of names."""
+    ws = "/fake/xpl-roles"
+    _add(
+        ws,
+        "a.md",
+        [
+            {"name": "Dana Kim", "label": "person"},
+            {"name": "CEO", "label": "job title"},
+            {"name": "Governance", "label": "job title"},
+        ],
+    )
+    groups = {
+        g["key"]: [e["name"] for e in g["entities"]] for g in store.explore_entities(ws)["groups"]
+    }
+    assert groups["people"] == ["Dana Kim"]
+    assert set(groups["roles"]) == {"CEO", "Governance"}
+
+
+def test_person_rows_that_are_not_name_shaped_are_demoted_not_dropped():
+    """Zero-shot extraction mislabels template keys and ALL-CAPS field
+    identifiers as people. They are hidden behind the low-signal toggle, counted
+    honestly, and still reachable."""
+    ws = "/fake/xpl-shape"
+    _add(
+        ws,
+        "a.md",
+        [
+            {"name": "Dana Kim", "label": "person"},
+            {"name": "ERNAM", "label": "person"},
+            {"name": "governance", "label": "person"},
+        ],
+    )
+    out = store.explore_entities(ws)
+    people = [e["name"] for g in out["groups"] if g["key"] == "people" for e in g["entities"]]
+    assert people == ["Dana Kim"]
+    assert out["hidden"] == 2
+
+    full = store.explore_entities(ws, include_low=True)
+    people = [e["name"] for g in full["groups"] if g["key"] == "people" for e in g["entities"]]
+    assert set(people) == {"Dana Kim", "ERNAM", "governance"}
+
+
+def test_overview_entity_count_and_standouts_exclude_non_name_people():
+    ws = "/fake/xpl-shape-ov"
+    _add(
+        ws, "a.md", [{"name": "Dana Kim", "label": "person"}, {"name": "KUNNR", "label": "person"}]
+    )
+    out = store.explore_overview(ws)
+    assert out["entities"] == 1
+    assert [e["name"] for e in out["stands_out"]] == ["Dana Kim"]
+
+
+def test_document_template_keys_are_dropped_entirely():
+    """AUTHOR/EDITOR header labels are template scaffolding: excluded from the
+    explorer and from graph edges, so they stop linking every templated file."""
+    ws = "/fake/xpl-template"
+    tmpl = [{"name": "AUTHOR", "label": "person"}, {"name": "STATUS", "label": "metric"}]
+    _add(ws, "a.md", [*tmpl, {"name": "Dana Kim", "label": "person"}], seed=1)
+    _add(ws, "b.md", [*tmpl, {"name": "Priya Shah", "label": "person"}], seed=2)
+
+    names = [e["name"] for g in store.explore_entities(ws)["groups"] for e in g["entities"]]
+    assert "AUTHOR" not in names and "STATUS" not in names
+    # And they no longer manufacture a connection between the two files.
+    assert store.explore_file(ws, "a.md")["neighbors"] == []
+
+
+def test_looks_like_person_name_shapes():
+    from server.index.explore_views import looks_like_person_name
+
+    assert looks_like_person_name("Dana Kim")
+    assert looks_like_person_name("McCarthy")
+    assert looks_like_person_name("\u0141ukasz")
+    assert looks_like_person_name("Jean-Luc")
+    assert looks_like_person_name("\u5f20\u4f1f")  # no cased chars: no signal, so allowed
+    assert not looks_like_person_name("ERNAM")
+    assert not looks_like_person_name("governance")
+    assert not looks_like_person_name("")
