@@ -129,13 +129,16 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
   // While a search is pending (data still undefined) keep showing the tree.
   const searchResults: Array<{ path: string }> | null = debouncedQuery ? (searchData ?? null) : null;
 
-  // The Explore button only makes sense once this folder has an index.
+  // The Explore button only makes sense once this folder has an index. While a
+  // build is running, poll until it lands so the button appears without a
+  // reload; otherwise refresh on the panel regaining focus (react-query default).
   const wsPath = useUIStore((s) => s.wsPath);
   const { data: wsIndexStatus } = useQuery({
     queryKey: ['index-status', wsPath],
     queryFn: () => indexStatus(wsPath),
     enabled: !!wsPath,
-    staleTime: 60_000,
+    staleTime: 15_000,
+    refetchInterval: (q) => (q.state.data?.building ? 2_000 : false),
   });
   const wsIndexed = !!wsIndexStatus?.indexed;
 

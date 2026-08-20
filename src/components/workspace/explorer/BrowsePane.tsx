@@ -29,13 +29,13 @@ export const BrowsePane: React.FC<Props> = ({ workspace, query, selected, go }) 
     return () => clearTimeout(t);
   }, [query]);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ['xpl-entities', workspace, debounced, showLow],
     queryFn: () => getExploreEntities(workspace, debounced, showLow),
   });
 
   if (isLoading && !data) return <div className="xpl-status">Loading names…</div>;
-  if (!data) return null;
+  if (isError || !data) return <div className="xpl-status">Could not read the index.</div>;
 
   const groups = data.groups.filter((g) => g.entities.length > 0);
   return (

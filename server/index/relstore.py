@@ -115,7 +115,7 @@ def facts_for_entity(
         nids = [
             r[0]
             for r in conn.execute(
-                "SELECT id FROM nodes WHERE LOWER(name)=?", (name.strip().lower(),)
+                "SELECT id FROM nodes WHERE ulower(name)=?", (name.strip().lower(),)
             ).fetchall()
         ]
         if not nids:

@@ -24,18 +24,25 @@ export const FilePage: React.FC<Props> = ({ workspace, file, go, openFile, revea
 
   if (isLoading) return <div className="xpl-status">Reading the index…</div>;
   if (isError) return <div className="xpl-status">Could not read the index.</div>;
-  if (!data?.found) return <div className="xpl-status">This file is not in the index yet.</div>;
+  if (!data?.found) {
+    return (
+      <div className="xpl-status">
+        This file is not in the index yet. Index this folder from the workspace list, then its connections appear here.
+      </div>
+    );
+  }
 
   const entities = data.entities ?? [];
   const neighbors = data.neighbors ?? [];
   const facts = data.facts ?? [];
+  const totalConnections = data.neighbors_total ?? neighbors.length;
 
   return (
     <div className="xpl-page">
       <div className="xpl-file-head">
         <span className="xpl-file-name mono" title={data.path}>{data.name}</span>
         <span className="xpl-file-meta">
-          {data.passages} passage{data.passages === 1 ? '' : 's'} indexed · {neighbors.length}{data.neighbors_truncated ? '+' : ''} connected file{neighbors.length === 1 ? '' : 's'}
+          {data.passages} passage{data.passages === 1 ? '' : 's'} indexed · {totalConnections} connected file{totalConnections === 1 ? '' : 's'}
         </span>
         <span className="xpl-spacer" />
         <button type="button" className="btn btn-sm" onClick={() => openFile(file)}>Open</button>
@@ -53,7 +60,7 @@ export const FilePage: React.FC<Props> = ({ workspace, file, go, openFile, revea
                     key={e.name}
                     type="button"
                     className="xpl-chip"
-                    title={`${e.label ? e.label + ' · ' : ''}${e.mentions} mention${e.mentions === 1 ? '' : 's'} here · see everything about it`}
+                    title={`${e.label ? e.label + ' · ' : ''}mentioned in ${e.mentions} passage${e.mentions === 1 ? '' : 's'} here · see everything about it`}
                     onClick={() => go({ kind: 'entity', name: e.name, label: e.label })}
                   >
                     {e.name}
@@ -63,7 +70,10 @@ export const FilePage: React.FC<Props> = ({ workspace, file, go, openFile, revea
             </>
           )}
 
-          <div className="xpl-sec-head">Files that mention the same things</div>
+          <div className="xpl-sec-head">
+            Files that mention the same things
+            {data.neighbors_truncated ? ` (strongest ${neighbors.length} shown)` : ''}
+          </div>
           {neighbors.length === 0 && (
             <div className="xpl-empty">No other indexed file shares names or topics with this one.</div>
           )}
@@ -112,8 +122,7 @@ export const FilePage: React.FC<Props> = ({ workspace, file, go, openFile, revea
             <MiniEgoGraph
               centerName={data.name ?? file}
               neighbors={neighbors.map((n) => ({ path: n.path, name: n.name, topEntity: n.entities[0] }))}
-              totalConnections={neighbors.length}
-              totalTruncated={!!data.neighbors_truncated}
+              totalConnections={totalConnections}
               onSelect={(p) => go({ kind: 'file', file: p })}
             />
           </div>
