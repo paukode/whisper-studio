@@ -313,8 +313,10 @@ def file_page_impl(ws_path: str, file_path: str, max_neighbors: int = 30) -> dic
     """One file's page: the names and topics it mentions, every file that shares
     salient entities with it (computed directly for THIS file, so it is never
     clipped by the whole-graph edge cap), and the typed facts stated in it."""
-    file_path = (file_path or "").strip()
-    if not file_path:
+    # Callers hand over tree-relative paths in varied spellings ("./runbook.md",
+    # "a//b.md"); the files table stores them normalized ("runbook.md").
+    file_path = os.path.normpath((file_path or "").strip())
+    if not file_path or file_path == ".":
         return {"found": False}
     generic = sorted(store._GENERIC_ENTITY_NAMES)
     gph = ",".join("?" for _ in generic)
