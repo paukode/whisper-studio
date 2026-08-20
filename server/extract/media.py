@@ -119,9 +119,12 @@ def _transcribe_with_speakers(path: str) -> str:
         "no_speech_threshold": 0.6,
         "condition_on_previous_text": False,
     }
-    lang = config_get("whisper_language")
-    if lang:
-        kwargs["language"] = lang
+    # A single pinned language is honored; a multi-language allowlist stays on
+    # auto-detect here. Whole-file detection sees a full 30 s window and is
+    # reliable — the allowlist exists for the short live-utterance windows.
+    lang_codes = whisper_backend._parse_languages(config_get("whisper_language"))
+    if len(lang_codes) == 1:
+        kwargs["language"] = lang_codes[0]
 
     # Decode on the Whisper backend's single-worker executor rather than on
     # whatever thread is doing attachment/index extraction. That executor is
