@@ -739,17 +739,15 @@ body.ws-embed-drag embed {
     color: var(--text-secondary); font-style: italic;
 }
 .segment-translation-pending { color: var(--text-muted); }
-/* Whisper-only translate toggle in the transcript panel header. */
-.translate-toggle {
-    font-size: var(--fs-caption); padding: 3px 10px; border-radius: 999px;
-    border: 1px solid var(--border-strong); background: var(--bg-elevated);
-    color: var(--text-secondary); cursor: pointer; white-space: nowrap;
-    transition: background 0.15s, color 0.15s, border-color 0.15s;
+/* Translate dropdown in the transcript panel header: shares the engine
+ * select's chrome, tinted amber whenever a translate mode is active so the
+ * "translation on" state reads at a glance (mirrors the EN segment badge). */
+.translate-select.on {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+    color: var(--accent);
 }
-.translate-toggle:hover { color: var(--text-primary); }
-.translate-toggle.on {
-    border-color: var(--accent); background: var(--accent-dim); color: var(--accent);
-}
+.translate-select.on:hover { border-color: var(--accent-hover); }
 /* Word-by-word fade-in for freshly transcribed speech. Each word carries a
  * staggered inline animation-delay so a chunk of text "streams" in rather than
  * appearing as one lump. fill-mode backwards keeps words hidden until their

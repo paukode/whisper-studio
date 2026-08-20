@@ -36,6 +36,38 @@ log = logging.getLogger("whisper-studio")
 router = APIRouter(tags=["websocket"])
 
 
+def resolve_translator(
+    mode: str,
+    backend_name: str,
+    whisper_variant: str | None,
+    apple_available: bool,
+    has_model_translate: bool,
+) -> str | None:
+    """Which translator produces the English line: "model", "apple", or None.
+
+    Pure so it is unit-testable. "auto" prefers the engine's own decode when
+    that engine translates WELL (Canary's native head, whisper large-v3's real
+    translate task); otherwise Apple's on-device translator when the client
+    reported the shell bridge, and only then turbo's en-token steering as the
+    last resort. Explicit modes force one path and yield None when it is
+    unavailable rather than silently substituting.
+    """
+    if mode == "off":
+        return None
+    if mode == "model":
+        return "model" if has_model_translate else None
+    if mode == "apple":
+        return "apple" if apple_available else None
+    # auto
+    if backend_name == "canary" and has_model_translate:
+        return "model"
+    if backend_name == "whisper" and whisper_variant == "large-v3" and has_model_translate:
+        return "model"
+    if apple_available:
+        return "apple"
+    return "model" if has_model_translate else None
+
+
 # ── Monotonic chunk-id resume across reconnects ─────────────────────────
 # A finalized transcript chunk's id (the wire `chunk_id`) keys persisted
 # speaker memory — SpeakerSession._embeddings / _assignments in
@@ -129,11 +161,11 @@ async def websocket_endpoint(
     # and warms the backend's model, so an idle connection costs nothing.
     asr_session = None
 
-    # Local mode: the CONFIGURED engine is eager-loaded at startup (see
-    # _warm_transcription_models), so the first record reuses it with no banner.
-    # The OTHER engine loads on demand — switching to it shows the progress
-    # banner and unloads the outgoing one first, so only one is ever resident.
-    is_local = bool(config_get("local_mode"))
+    # Models load on demand with the progress banner (in every mode — a
+    # silent multi-second first-sentence stall reads as broken), and a model
+    # switch unloads the outgoing engine so the 1.6-3.1 GB checkpoints never
+    # stack. Parakeet, warmed at startup when configured, is the exception —
+    # see switch_backend.
 
     def _backend_label(name: str) -> str:
         return {"parakeet": "Parakeet", "canary": "Canary"}.get(resolve_name(name), "Whisper")
@@ -153,14 +185,20 @@ async def websocket_endpoint(
     # speaker-state reset on stop (the client only sends it on change).
     expected_speakers: int | None = None
 
-    # Whisper-only "translate to English" companion pass. Seeded from config
-    # so a pre-armed toggle applies from the first utterance; the panel's
-    # live toggle updates it via a `set_translate` message. Translations run
-    # as fire-and-forget tasks (decode queued on the backend's executor
-    # BEHIND the transcript decodes, so transcription latency is untouched);
-    # the pending set lets `stop` drain them so the last utterance's
-    # translation isn't lost with the socket.
-    translate_enabled = bool(config_get("whisper_translate"))
+    # Translate-to-English companion pass. translate_mode is seeded from
+    # config so a pre-armed choice applies from the first utterance; the
+    # panel's Translate dropdown updates it (and reports whether the Apple
+    # on-device bridge exists on the client) via `set_translate` messages.
+    # Model translations run as fire-and-forget tasks (decode queued on the
+    # backend's executor BEHIND transcript decodes, so transcription latency
+    # is untouched); Apple translations run on the client. The pending set
+    # lets `stop` drain in-flight decodes so the last utterance's translation
+    # isn't lost with the socket.
+    translate_mode = str(config_get("translate_mode") or "off")
+    apple_available = False
+    # The whisper variant this connection's live session was built with;
+    # a Settings change mid-recording arrives as set_model and rebuilds.
+    session_variant: str | None = None
     pending_translations: set[asyncio.Task] = set()
 
     async def send_json(payload: dict) -> None:
@@ -202,19 +240,21 @@ async def websocket_endpoint(
                 else:
                     duration = len(ev["audio"]) / 16000.0
                     speaker = speakers.assign(chunk_id, embedding, duration)
-            # The engine's per-utterance language ID rides on the final event
-            # (used here to skip English, and by the client for the Apple
-            # translation provider). With provider "apple" the FRONTEND
-            # translates via the shell's on-device bridge, so the server
-            # neither schedules a decode nor sets the translating flag.
+            # The engine's per-utterance language ID rides on the final
+            # event. English (and unknown-language) utterances never get a
+            # translation line; for the rest, resolve_translator picks who
+            # produces it: this server (engine decode, scheduled below) or
+            # the client (Apple on-device bridge, signalled by translate_via).
             language = ev.get("language")
-            wants_translation = (
-                translate_enabled
-                and hasattr(backend_mod, "translate_utterance")
-                and language is not None
-                and language != "en"
-                and config_get("translation_provider") != "apple"
-            )
+            translator = None
+            if language and language != "en":
+                translator = resolve_translator(
+                    translate_mode,
+                    backend_name,
+                    getattr(backend_mod, "_variant", lambda: None)(),
+                    apple_available,
+                    hasattr(backend_mod, "translate_utterance"),
+                )
             payload = {
                 "type": "transcript",
                 "text": text,
@@ -222,12 +262,14 @@ async def websocket_endpoint(
                 "chunk_id": chunk_id,
                 "language": language,
             }
-            if wants_translation:
+            if translator is not None:
                 # Tells the client to render a "Translating…" slot under the
-                # segment until the translation event for this chunk arrives.
+                # segment until the translation for this chunk arrives.
                 payload["translating"] = True
+            if translator == "apple":
+                payload["translate_via"] = "apple"
             await send_json(payload)
-            if wants_translation:
+            if translator == "model":
                 task = asyncio.create_task(_run_translation(chunk_id, ev.get("audio"), language))
                 pending_translations.add(task)
                 task.add_done_callback(pending_translations.discard)
@@ -280,7 +322,15 @@ async def websocket_endpoint(
         )
         # Rough cold-load estimates; the bar fills toward 0.9 over this window
         # and snaps to 1.0 when the executor returns.
-        est_s = 2.5 if resolve_name(backend_name) == "parakeet" else 4.0
+        resolved = resolve_name(backend_name)
+        if resolved == "parakeet":
+            est_s = 2.5
+        elif resolved == "canary":
+            est_s = 3.0
+        elif getattr(backend_mod, "_variant", lambda: "turbo")() == "large-v3":
+            est_s = 9.0
+        else:
+            est_s = 4.0
         done = asyncio.Event()
 
         async def ramp() -> None:
@@ -322,12 +372,14 @@ async def websocket_endpoint(
         )
 
     async def ensure_session():
-        nonlocal asr_session
+        nonlocal asr_session, session_variant
         if asr_session is None:
-            # Local mode: commit the model to memory first, with a banner, so
-            # the load is visible rather than a silent stall on the first chunk.
-            if is_local and hasattr(backend_mod, "is_loaded") and not backend_mod.is_loaded():
+            # Commit the model to memory first, with a banner, in EVERY mode —
+            # a silent multi-second stall on the first sentence reads as
+            # "nothing transcribes" (large-v3 and Canary load for seconds).
+            if hasattr(backend_mod, "is_loaded") and not backend_mod.is_loaded():
                 await load_model_into_memory()
+            session_variant = getattr(backend_mod, "_variant", lambda: None)()
             # Construct on the backend's own executor so model load and
             # warmup happen on the thread that will run every decode
             # (MLX streams are thread-local).
@@ -347,13 +399,25 @@ async def websocket_endpoint(
         except Exception as e:
             log.debug("ASR finish failed: %s", e)
 
-    async def switch_backend(requested: str) -> None:
-        """Live A/B switch from the transcript panel header. Flushes the
-        outgoing pipeline first so the seam isn't clipped, then routes
-        subsequent audio to the new backend. No-op when unchanged."""
-        nonlocal backend_mod, backend_name, asr_session
+    async def switch_backend(requested: str, variant: str | None = None) -> None:
+        """Live model switch from the transcript panel header (or Settings).
+        Flushes the outgoing pipeline first so the seam isn't clipped, then
+        routes subsequent audio to the new model. No-op when nothing changed.
+
+        ``variant`` matters only for whisper→whisper switches (Turbo vs
+        Large v3): the config already carries the new value (the client PUTs
+        before messaging), so rebuilding the session is enough — the backend
+        reads the variant on load."""
+        nonlocal backend_mod, backend_name, asr_session, session_variant
         new_name = resolve_name(requested)
-        if new_name == backend_name:
+        variant_changed = (
+            new_name == backend_name
+            and new_name == "whisper"
+            and variant is not None
+            and session_variant is not None
+            and variant != session_variant
+        )
+        if new_name == backend_name and not variant_changed:
             return
         await finish_session()
         if asr_session is not None:
@@ -362,10 +426,18 @@ async def websocket_endpoint(
             except Exception:
                 pass
         asr_session = None
-        # Local mode: free the outgoing engine's weights now (session ref is
-        # dropped above) so only one model is ever resident. The incoming
-        # engine loads on the next audio frame, with its own banner.
-        if is_local and hasattr(backend_mod, "unload") and backend_mod.is_loaded():
+        # Free the outgoing engine's weights in every mode — whisper and
+        # Canary are 1.6-3.1 GB each and stack up fast on small machines.
+        # Parakeet (0.6B) stays resident: it is the dictation mic's always-on
+        # engine and may be serving another connection. A whisper variant
+        # switch skips the explicit unload — mlx-whisper's ModelHolder swaps
+        # (and frees) the old checkpoint when the next load runs.
+        if (
+            not variant_changed
+            and resolve_name(backend_name) != "parakeet"
+            and hasattr(backend_mod, "unload")
+            and backend_mod.is_loaded()
+        ):
             old_label = _backend_label(backend_name)
             try:
                 await loop.run_in_executor(backend_mod.executor, backend_mod.unload)
@@ -376,7 +448,12 @@ async def websocket_endpoint(
                 log.debug("Unload of %s on switch failed: %s", backend_name, e)
         backend_name = new_name
         backend_mod = get_backend(new_name)
-        log.info("Transcription backend switched to %s", new_name)
+        session_variant = None
+        log.info(
+            "Transcription model switched to %s%s",
+            new_name,
+            f" ({variant})" if variant and new_name == "whisper" else "",
+        )
 
     try:
         while True:
@@ -393,15 +470,21 @@ async def websocket_endpoint(
                     await send_json({"type": "pong"})
                     continue
 
+                if msg.get("type") == "set_model":
+                    await switch_backend(msg.get("backend") or "", msg.get("variant"))
+                    continue
+
                 if msg.get("type") == "set_backend":
+                    # Legacy client message (pre unified-model-selector).
                     await switch_backend(msg.get("backend") or "")
                     continue
 
                 if msg.get("type") == "set_translate":
-                    # Live toggle from the transcript panel header. Applies
-                    # from the next final onward; already-scheduled
-                    # translations finish either way.
-                    translate_enabled = bool(msg.get("enabled"))
+                    # Translate dropdown state + whether the client has the
+                    # Apple on-device bridge. Sent at connect and on change;
+                    # applies from the next final onward.
+                    translate_mode = str(msg.get("mode") or "off")
+                    apple_available = bool(msg.get("apple_available"))
                     continue
 
                 if msg.get("type") == "set_speakers":

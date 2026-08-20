@@ -305,3 +305,26 @@ def test_translate_uses_real_task_on_large_v3(monkeypatch):
     monkeypatch.setattr(whisper_backend, "_variant", lambda: "turbo")
     assert whisper_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl")
     assert calls == [("en", None)]
+
+
+# ── translate-mode resolution (server/websocket.py) ─────────────────────────
+
+
+def test_resolve_translator_matrix():
+    from server.websocket import resolve_translator as r
+
+    # off / explicit modes
+    assert r("off", "canary", None, True, True) is None
+    assert r("model", "whisper", "turbo", True, True) == "model"
+    assert r("model", "parakeet", None, True, False) is None
+    assert r("apple", "whisper", "turbo", True, True) == "apple"
+    assert r("apple", "whisper", "turbo", False, True) is None
+    # auto: engines with a strong native head translate themselves
+    assert r("auto", "canary", None, True, True) == "model"
+    assert r("auto", "whisper", "large-v3", True, True) == "model"
+    # auto: turbo prefers Apple, falls back to en-token steering
+    assert r("auto", "whisper", "turbo", True, True) == "apple"
+    assert r("auto", "whisper", "turbo", False, True) == "model"
+    # auto: parakeet can only translate via Apple
+    assert r("auto", "parakeet", None, True, False) == "apple"
+    assert r("auto", "parakeet", None, False, False) is None

@@ -12,7 +12,7 @@ import { downloadFile } from '@/utils/downloadFile';
 /** Custom event src/services/recordingController.ts listens for to
  *  live-switch the ASR engine on the active recording's WebSocket (no
  *  reconnect). Carries { backend }. */
-const SET_BACKEND_EVENT = 'whisper-set-backend';
+const SET_MODEL_EVENT = 'whisper-set-model';
 /** Custom event src/services/recordingController.ts relays to the recording
  *  WebSocket as a participant-count hint for diarization. Carries { count }
  *  where 0 means automatic estimation. The user usually knows how many people
@@ -20,9 +20,20 @@ const SET_BACKEND_EVENT = 'whisper-set-backend';
  *  count. */
 const SET_SPEAKERS_EVENT = 'whisper-set-speakers';
 /** Custom event src/services/recordingController.ts relays to the recording
- *  WebSocket as `set_translate` — the Whisper-only translate-to-English
- *  toggle. Carries { enabled }. */
+ *  WebSocket as `set_translate` — the Translate dropdown. Carries { mode }. */
 const SET_TRANSLATE_EVENT = 'whisper-set-translate';
+
+/** The unified model list: one option per concrete model, shared verbatim by
+ *  Settings (APISettings.tsx). value encodes backend (+ whisper variant). */
+export const MODEL_OPTIONS = [
+  { value: 'whisper-turbo', label: 'Whisper Turbo', backend: 'whisper', variant: 'turbo' },
+  { value: 'whisper-large-v3', label: 'Whisper Large v3', backend: 'whisper', variant: 'large-v3' },
+  { value: 'canary', label: 'Canary', backend: 'canary', variant: 'turbo' },
+  { value: 'streaming', label: 'Parakeet (live)', backend: 'streaming', variant: 'turbo' },
+] as const;
+
+export const modelValueOf = (backend: string, variant: string): string =>
+  backend === 'whisper' ? (variant === 'large-v3' ? 'whisper-large-v3' : 'whisper-turbo') : backend;
 // NOTE: this panel only renders/edits transcript segments. Recording is owned
 // entirely by the top-right Record button in Header.tsx, which captures mic +
 // system audio directly. There is deliberately no second "Record" affordance
@@ -216,7 +227,8 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
   const clearSegments = useActiveTranscriptionStore((s) => s.clearSegments);
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
   const transcriptionBackend = useSettingsStore((s) => s.config.transcriptionBackend);
-  const whisperTranslate = useSettingsStore((s) => s.config.whisperTranslate);
+  const whisperVariant = useSettingsStore((s) => s.config.whisperVariant);
+  const translateMode = useSettingsStore((s) => s.config.translateMode);
 
   // Audio capture and the transcription socket are owned by Header.tsx — wiring
   // a second pipeline here would spawn a duplicate WebSocket and a confusing
@@ -279,23 +291,33 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
     clearSegments();
   }, [clearSegments]);
 
-  const handleBackendChange = useCallback((backend: string) => {
+  const handleModelChange = useCallback((value: string) => {
+    const option = MODEL_OPTIONS.find((o) => o.value === value) ?? MODEL_OPTIONS[0];
     // 1) Reflect immediately in the shared config (so the Settings dropdown
     //    and a later reconnect agree). 2) Persist so the choice sticks for
-    //    the next recording. 3) Live-switch the active stream — Header.tsx
-    //    relays this to the open WebSocket; it's a no-op when not recording.
-    useSettingsStore.getState().updateConfig({ transcriptionBackend: backend });
-    void put('/api/config', { transcription_backend: backend });
-    window.dispatchEvent(new CustomEvent(SET_BACKEND_EVENT, { detail: { backend } }));
+    //    the next recording. 3) Live-switch the active stream — the
+    //    controller relays this to the open WebSocket; it's a no-op when
+    //    not recording.
+    useSettingsStore
+      .getState()
+      .updateConfig({ transcriptionBackend: option.backend, whisperVariant: option.variant });
+    void put('/api/config', {
+      transcription_backend: option.backend,
+      whisper_variant: option.variant,
+    });
+    window.dispatchEvent(
+      new CustomEvent(SET_MODEL_EVENT, {
+        detail: { backend: option.backend, variant: option.variant },
+      }),
+    );
   }, []);
 
-  // Whisper-only translate-to-English toggle. Mirrors the engine switch:
-  // reflect in shared config, persist, relay to a live recording socket.
-  const handleTranslateToggle = useCallback(() => {
-    const enabled = !useSettingsStore.getState().config.whisperTranslate;
-    useSettingsStore.getState().updateConfig({ whisperTranslate: enabled });
-    void put('/api/config', { whisper_translate: enabled });
-    window.dispatchEvent(new CustomEvent(SET_TRANSLATE_EVENT, { detail: { enabled } }));
+  // Translate dropdown. Mirrors the model switch: reflect in shared config,
+  // persist, relay to a live recording socket.
+  const handleTranslateChange = useCallback((mode: string) => {
+    useSettingsStore.getState().updateConfig({ translateMode: mode });
+    void put('/api/config', { translate_mode: mode });
+    window.dispatchEvent(new CustomEvent(SET_TRANSLATE_EVENT, { detail: { mode } }));
   }, []);
 
   // Diarization participant-count hint. 0 = auto. Header.tsx keeps the
@@ -334,27 +356,28 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
           <select
             className="transcript-engine-select"
             id="transcriptEngineSelect"
-            title="Transcription engine, switch live, even mid-recording"
-            aria-label="Transcription engine"
-            value={transcriptionBackend}
-            onChange={(e) => handleBackendChange(e.target.value)}
+            title="Transcription model, switches live, even mid-recording. Whisper Turbo: fast, 99 languages. Whisper Large v3: most accurate, slower. Canary: best translation, set your language in Settings. Parakeet: live words, lowest latency."
+            aria-label="Transcription model"
+            value={modelValueOf(transcriptionBackend, whisperVariant)}
+            onChange={(e) => handleModelChange(e.target.value)}
           >
-            <option value="whisper">Whisper</option>
-            <option value="canary">Canary (translate)</option>
-            <option value="streaming">Parakeet (live)</option>
+            {MODEL_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
           </select>
-          {transcriptionBackend !== 'streaming' && (
-            <button
-              type="button"
-              className={`translate-toggle${whisperTranslate ? ' on' : ''}`}
-              id="transcriptTranslateToggle"
-              aria-pressed={whisperTranslate}
-              title="Also translate non-English speech to English. The transcript stays in the spoken language; the English line appears under it when ready."
-              onClick={handleTranslateToggle}
-            >
-              EN {whisperTranslate ? 'on' : 'off'}
-            </button>
-          )}
+          <select
+            className={`transcript-engine-select translate-select${translateMode !== 'off' ? ' on' : ''}`}
+            id="transcriptTranslateSelect"
+            title="Show an English line under non-English speech. Auto picks the best translator for the chosen model; Apple translates the text on-device (Mac app only) and works with every model."
+            aria-label="Translate to English"
+            value={translateMode}
+            onChange={(e) => handleTranslateChange(e.target.value)}
+          >
+            <option value="off">Translate: off</option>
+            <option value="auto">Translate: auto</option>
+            <option value="model">Translate: this model</option>
+            <option value="apple">Translate: Apple</option>
+          </select>
           <select
             className="transcript-engine-select"
             id="transcriptSpeakersSelect"

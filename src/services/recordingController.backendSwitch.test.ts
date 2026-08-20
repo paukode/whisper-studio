@@ -2,7 +2,7 @@
  * Live ASR-engine switch gating.
  *
  * Switching the transcript-panel engine select mid-recording used to relay
- * `set_backend` straight to the server, which then downloaded the new engine's
+ * `set_model` straight to the server, which then downloaded the new engine's
  * weights SILENTLY (no banner) or showed a memory-load ramp stuck at 90%. The
  * controller now gates the new engine's download with the shared banner + a
  * working Cancel BEFORE relaying, and puts the header select back if the
@@ -10,7 +10,7 @@
  * isn't running.
  *
  * These tests drive a native-only recording (no getUserMedia / worklet) against
- * the jsdom WebSocket mock, then dispatch the `whisper-set-backend` event the
+ * the jsdom WebSocket mock, then dispatch the `whisper-set-model` event the
  * real header select fires.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -57,7 +57,7 @@ const relayedBackends = () =>
         return {};
       }
     })
-    .filter((m) => m.type === 'set_backend')
+    .filter((m) => m.type === 'set_model')
     .map((m) => m.backend);
 
 beforeEach(() => {
@@ -116,14 +116,16 @@ afterEach(async () => {
 });
 
 describe('recordingController — live engine switch gating', () => {
-  it('gates the new engine, then relays set_backend once its weights are ready', async () => {
+  it('gates the new engine, then relays set_model once its weights are ready', async () => {
     await recordingController.start('switch-ready-session');
     await sleep(10); // let the mocked websocket open
     (ensureRecordingModels as ReturnType<typeof vi.fn>).mockClear();
 
     // The header select flips config first, then dispatches the event.
     setBackend('whisper');
-    window.dispatchEvent(new CustomEvent('whisper-set-backend', { detail: { backend: 'whisper' } }));
+    window.dispatchEvent(
+      new CustomEvent('whisper-set-model', { detail: { backend: 'whisper', variant: 'turbo' } }),
+    );
     await sleep(10);
 
     // The gate ran (downloads Whisper + ecapa with the banner if missing) and
@@ -141,7 +143,9 @@ describe('recordingController — live engine switch gating', () => {
     (ensureRecordingModels as ReturnType<typeof vi.fn>).mockResolvedValue('cancelled');
 
     setBackend('whisper');
-    window.dispatchEvent(new CustomEvent('whisper-set-backend', { detail: { backend: 'whisper' } }));
+    window.dispatchEvent(
+      new CustomEvent('whisper-set-model', { detail: { backend: 'whisper', variant: 'turbo' } }),
+    );
     await sleep(10);
 
     // Gate ran but the switch was NOT sent — the recording stays on Parakeet.
@@ -150,7 +154,10 @@ describe('recordingController — live engine switch gating', () => {
     // The header select / config is put back to the engine still running, and
     // the revert is persisted.
     expect(useSettingsStore.getState().config.transcriptionBackend).toBe('streaming');
-    expect(apiClient.put).toHaveBeenCalledWith('/api/config', { transcription_backend: 'streaming' });
+    expect(apiClient.put).toHaveBeenCalledWith('/api/config', {
+      transcription_backend: 'streaming',
+      whisper_variant: 'turbo',
+    });
   });
 
   it('lets the user dismiss the (uncancelable) memory-load banner', async () => {
@@ -187,7 +194,7 @@ describe('recordingController — live engine switch gating', () => {
 
     // Switch to the SAME engine that is already running.
     window.dispatchEvent(
-      new CustomEvent('whisper-set-backend', { detail: { backend: 'streaming' } }),
+      new CustomEvent('whisper-set-model', { detail: { backend: 'streaming', variant: 'turbo' } }),
     );
     await sleep(10);
 
