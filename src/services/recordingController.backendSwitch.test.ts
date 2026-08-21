@@ -124,7 +124,7 @@ describe('recordingController — live engine switch gating', () => {
     // The header select flips config first, then dispatches the event.
     setBackend('whisper');
     window.dispatchEvent(
-      new CustomEvent('whisper-set-model', { detail: { backend: 'whisper', variant: 'turbo' } }),
+      new CustomEvent('whisper-set-model', { detail: { backend: 'whisper' } }),
     );
     await sleep(10);
 
@@ -144,7 +144,7 @@ describe('recordingController — live engine switch gating', () => {
 
     setBackend('whisper');
     window.dispatchEvent(
-      new CustomEvent('whisper-set-model', { detail: { backend: 'whisper', variant: 'turbo' } }),
+      new CustomEvent('whisper-set-model', { detail: { backend: 'whisper' } }),
     );
     await sleep(10);
 
@@ -154,10 +154,7 @@ describe('recordingController — live engine switch gating', () => {
     // The header select / config is put back to the engine still running, and
     // the revert is persisted.
     expect(useSettingsStore.getState().config.transcriptionBackend).toBe('streaming');
-    expect(apiClient.put).toHaveBeenCalledWith('/api/config', {
-      transcription_backend: 'streaming',
-      whisper_variant: 'turbo',
-    });
+    expect(apiClient.put).toHaveBeenCalledWith('/api/config', { transcription_backend: 'streaming' });
   });
 
   it('lets the user dismiss the (uncancelable) memory-load banner', async () => {
@@ -194,7 +191,7 @@ describe('recordingController — live engine switch gating', () => {
 
     // Switch to the SAME engine that is already running.
     window.dispatchEvent(
-      new CustomEvent('whisper-set-model', { detail: { backend: 'streaming', variant: 'turbo' } }),
+      new CustomEvent('whisper-set-model', { detail: { backend: 'streaming' } }),
     );
     await sleep(10);
 

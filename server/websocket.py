@@ -39,33 +39,50 @@ router = APIRouter(tags=["websocket"])
 def resolve_translator(
     mode: str,
     backend_name: str,
-    whisper_variant: str | None,
     apple_available: bool,
     has_model_translate: bool,
+    language: str | None,
+    target: str,
 ) -> str | None:
-    """Which translator produces the English line: "model", "apple", or None.
+    """Who produces this utterance's translation line: "model", "apple", None.
 
-    Pure so it is unit-testable. "auto" prefers the engine's own decode when
-    that engine translates WELL (Canary's native head, whisper large-v3's real
-    translate task); otherwise Apple's on-device translator when the client
-    reported the shell bridge, and only then turbo's en-token steering as the
-    last resort. Explicit modes force one path and yield None when it is
-    unavailable rather than silently substituting.
+    Pure so it is unit-testable, and language-pair aware:
+    - Whisper's translate head targets English only (99 sources -> en).
+    - Canary is bidirectional with English as the hub (25 langs <-> en),
+      never X -> Y with both non-English.
+    - Apple handles any pair among its supported languages and auto-detects
+      an unknown source; an unsupported pair or same-language input errors
+      client-side and just clears the pending slot.
+    "auto" prefers the engine's own decode when it can serve the pair,
+    otherwise Apple. Explicit modes force one path and yield None when it
+    cannot serve rather than silently substituting.
     """
     if mode == "off":
         return None
+    if language is not None and language == target:
+        return None
+
+    from server.asr.canary_backend import CANARY_LANGUAGES
+
+    def model_can() -> bool:
+        if not has_model_translate:
+            return False
+        if backend_name == "whisper":
+            return target == "en" and language is not None
+        if backend_name == "canary":
+            if language is None or target not in CANARY_LANGUAGES:
+                return False
+            return target == "en" or language == "en"
+        return False
+
     if mode == "model":
-        return "model" if has_model_translate else None
+        return "model" if model_can() else None
     if mode == "apple":
         return "apple" if apple_available else None
     # auto
-    if backend_name == "canary" and has_model_translate:
+    if model_can():
         return "model"
-    if backend_name == "whisper" and whisper_variant == "large-v3" and has_model_translate:
-        return "model"
-    if apple_available:
-        return "apple"
-    return "model" if has_model_translate else None
+    return "apple" if apple_available else None
 
 
 # ── Monotonic chunk-id resume across reconnects ─────────────────────────
@@ -195,10 +212,8 @@ async def websocket_endpoint(
     # lets `stop` drain in-flight decodes so the last utterance's translation
     # isn't lost with the socket.
     translate_mode = str(config_get("translate_mode") or "off")
+    translate_target = str(config_get("translate_target") or "en")
     apple_available = False
-    # The whisper variant this connection's live session was built with;
-    # a Settings change mid-recording arrives as set_model and rebuilds.
-    session_variant: str | None = None
     pending_translations: set[asyncio.Task] = set()
 
     async def send_json(payload: dict) -> None:
@@ -241,24 +256,22 @@ async def websocket_endpoint(
                     duration = len(ev["audio"]) / 16000.0
                     speaker = speakers.assign(chunk_id, embedding, duration)
             # The engine's per-utterance language ID rides on the final
-            # event. English utterances never get a translation line. An
-            # UNKNOWN language (Parakeet does no language ID) still
-            # translates via Apple — its on-device translator auto-detects
-            # the source when none is given (and clears the pending slot on
-            # English input) — but never via a model decode, which would
-            # need a source language. resolve_translator picks who produces
-            # the line: this server (engine decode, scheduled below) or the
-            # client (Apple bridge, signalled by translate_via).
+            # event. resolve_translator picks who produces the translation
+            # line for the configured target — this server (engine decode,
+            # scheduled below) or the client (Apple bridge, signalled by
+            # translate_via). An UNKNOWN language (Parakeet does no language
+            # ID) can still translate via Apple, whose on-device translator
+            # auto-detects the source (and clears the pending slot on
+            # same-language input), but never via a model decode.
             language = ev.get("language")
-            translator = None
-            if language != "en":
-                translator = resolve_translator(
-                    translate_mode,
-                    backend_name,
-                    getattr(backend_mod, "_variant", lambda: None)(),
-                    apple_available,
-                    language is not None and hasattr(backend_mod, "translate_utterance"),
-                )
+            translator = resolve_translator(
+                translate_mode,
+                backend_name,
+                apple_available,
+                hasattr(backend_mod, "translate_utterance"),
+                language,
+                translate_target,
+            )
             payload = {
                 "type": "transcript",
                 "text": text,
@@ -272,9 +285,12 @@ async def websocket_endpoint(
                 payload["translating"] = True
             if translator == "apple":
                 payload["translate_via"] = "apple"
+                payload["translate_target"] = translate_target
             await send_json(payload)
             if translator == "model":
-                task = asyncio.create_task(_run_translation(chunk_id, ev.get("audio"), language))
+                task = asyncio.create_task(
+                    _run_translation(chunk_id, ev.get("audio"), language, translate_target)
+                )
                 pending_translations.add(task)
                 task.add_done_callback(pending_translations.discard)
             if speakers is not None:
@@ -292,7 +308,7 @@ async def websocket_endpoint(
                         }
                     )
 
-    async def _run_translation(chunk_id: int, audio, language: str | None) -> None:
+    async def _run_translation(chunk_id: int, audio, language: str | None, target: str) -> None:
         """Decode the utterance's English translation and deliver it.
 
         Runs the decode on the backend's own single-worker executor, so it
@@ -302,12 +318,14 @@ async def websocket_endpoint(
         """
         try:
             translated = await loop.run_in_executor(
-                backend_mod.executor, backend_mod.translate_utterance, audio, language
+                backend_mod.executor, backend_mod.translate_utterance, audio, language, target
             )
         except Exception as e:
             log.warning("Translation task failed for chunk %s: %s", chunk_id, e)
             translated = ""
-        await send_json({"type": "translation", "chunk_id": chunk_id, "text": translated})
+        await send_json(
+            {"type": "translation", "chunk_id": chunk_id, "text": translated, "target": target}
+        )
 
     async def load_model_into_memory() -> None:
         """Load the active backend's model into memory, streaming a progress
@@ -327,14 +345,7 @@ async def websocket_endpoint(
         # Rough cold-load estimates; the bar fills toward 0.9 over this window
         # and snaps to 1.0 when the executor returns.
         resolved = resolve_name(backend_name)
-        if resolved == "parakeet":
-            est_s = 2.5
-        elif resolved == "canary":
-            est_s = 3.0
-        elif getattr(backend_mod, "_variant", lambda: "turbo")() == "large-v3":
-            est_s = 9.0
-        else:
-            est_s = 4.0
+        est_s = {"parakeet": 2.5, "canary": 3.0}.get(resolved, 9.0)
         done = asyncio.Event()
 
         async def ramp() -> None:
@@ -376,14 +387,13 @@ async def websocket_endpoint(
         )
 
     async def ensure_session():
-        nonlocal asr_session, session_variant
+        nonlocal asr_session
         if asr_session is None:
             # Commit the model to memory first, with a banner, in EVERY mode —
             # a silent multi-second stall on the first sentence reads as
             # "nothing transcribes" (large-v3 and Canary load for seconds).
             if hasattr(backend_mod, "is_loaded") and not backend_mod.is_loaded():
                 await load_model_into_memory()
-            session_variant = getattr(backend_mod, "_variant", lambda: None)()
             # Construct on the backend's own executor so model load and
             # warmup happen on the thread that will run every decode
             # (MLX streams are thread-local).
@@ -406,22 +416,14 @@ async def websocket_endpoint(
     async def switch_backend(requested: str, variant: str | None = None) -> None:
         """Live model switch from the transcript panel header (or Settings).
         Flushes the outgoing pipeline first so the seam isn't clipped, then
-        routes subsequent audio to the new model. No-op when nothing changed.
+        routes subsequent audio to the new model. No-op when unchanged.
 
-        ``variant`` matters only for whisper→whisper switches (Turbo vs
-        Large v3): the config already carries the new value (the client PUTs
-        before messaging), so rebuilding the session is enough — the backend
-        reads the variant on load."""
-        nonlocal backend_mod, backend_name, asr_session, session_variant
+        ``variant`` is accepted for wire compatibility with older clients
+        (the whisper turbo/large-v3 variant era) and ignored."""
+        del variant
+        nonlocal backend_mod, backend_name, asr_session
         new_name = resolve_name(requested)
-        variant_changed = (
-            new_name == backend_name
-            and new_name == "whisper"
-            and variant is not None
-            and session_variant is not None
-            and variant != session_variant
-        )
-        if new_name == backend_name and not variant_changed:
+        if new_name == backend_name:
             return
         await finish_session()
         if asr_session is not None:
@@ -431,14 +433,11 @@ async def websocket_endpoint(
                 pass
         asr_session = None
         # Free the outgoing engine's weights in every mode — whisper and
-        # Canary are 1.6-3.1 GB each and stack up fast on small machines.
+        # Canary are 2.4-3.1 GB each and stack up fast on small machines.
         # Parakeet (0.6B) stays resident: it is the dictation mic's always-on
-        # engine and may be serving another connection. A whisper variant
-        # switch skips the explicit unload — mlx-whisper's ModelHolder swaps
-        # (and frees) the old checkpoint when the next load runs.
+        # engine and may be serving another connection.
         if (
-            not variant_changed
-            and resolve_name(backend_name) != "parakeet"
+            resolve_name(backend_name) != "parakeet"
             and hasattr(backend_mod, "unload")
             and backend_mod.is_loaded()
         ):
@@ -452,12 +451,7 @@ async def websocket_endpoint(
                 log.debug("Unload of %s on switch failed: %s", backend_name, e)
         backend_name = new_name
         backend_mod = get_backend(new_name)
-        session_variant = None
-        log.info(
-            "Transcription model switched to %s%s",
-            new_name,
-            f" ({variant})" if variant and new_name == "whisper" else "",
-        )
+        log.info("Transcription model switched to %s", new_name)
 
     try:
         while True:
@@ -488,6 +482,7 @@ async def websocket_endpoint(
                     # Apple on-device bridge. Sent at connect and on change;
                     # applies from the next final onward.
                     translate_mode = str(msg.get("mode") or "off")
+                    translate_target = str(msg.get("target") or "en")
                     apple_available = bool(msg.get("apple_available"))
                     continue
 

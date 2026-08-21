@@ -24,16 +24,67 @@ const SET_SPEAKERS_EVENT = 'whisper-set-speakers';
 const SET_TRANSLATE_EVENT = 'whisper-set-translate';
 
 /** The unified model list: one option per concrete model, shared verbatim by
- *  Settings (APISettings.tsx). value encodes backend (+ whisper variant). */
+ *  Settings (APISettings.tsx). value === the transcription_backend config. */
 export const MODEL_OPTIONS = [
-  { value: 'whisper-turbo', label: 'Whisper Turbo', backend: 'whisper', variant: 'turbo' },
-  { value: 'whisper-large-v3', label: 'Whisper Large v3', backend: 'whisper', variant: 'large-v3' },
-  { value: 'canary', label: 'Canary', backend: 'canary', variant: 'turbo' },
-  { value: 'streaming', label: 'Parakeet (live)', backend: 'streaming', variant: 'turbo' },
+  { value: 'whisper', label: 'Whisper Large v3', backend: 'whisper' },
+  { value: 'canary', label: 'Canary', backend: 'canary' },
+  { value: 'streaming', label: 'Parakeet (live)', backend: 'streaming' },
 ] as const;
 
-export const modelValueOf = (backend: string, variant: string): string =>
-  backend === 'whisper' ? (variant === 'large-v3' ? 'whisper-large-v3' : 'whisper-turbo') : backend;
+/** Translator display names with their language-pair capability, per engine. */
+export const translatorLabelOf = (backend: string): string =>
+  backend === 'canary' ? 'Canary (25 langs ↔ EN)' : 'Whisper (99 langs → EN)';
+
+/** Target languages for translation lines: the union of what Canary and
+ *  Apple's on-device translator support (Whisper always targets English and
+ *  needs no picker). Flags mark which translator can produce each target so
+ *  the pickers can annotate/limit; Apple's set was probed on-device. */
+export const TRANSLATE_TARGETS = [
+  { code: 'en', name: 'English', canary: true, apple: true },
+  { code: 'ar', name: 'Arabic', canary: false, apple: true },
+  { code: 'bg', name: 'Bulgarian', canary: true, apple: false },
+  { code: 'hr', name: 'Croatian', canary: true, apple: false },
+  { code: 'cs', name: 'Czech', canary: true, apple: false },
+  { code: 'da', name: 'Danish', canary: true, apple: true },
+  { code: 'nl', name: 'Dutch', canary: true, apple: true },
+  { code: 'et', name: 'Estonian', canary: true, apple: false },
+  { code: 'fi', name: 'Finnish', canary: true, apple: false },
+  { code: 'fr', name: 'French', canary: true, apple: true },
+  { code: 'de', name: 'German', canary: true, apple: true },
+  { code: 'el', name: 'Greek', canary: true, apple: false },
+  { code: 'hi', name: 'Hindi', canary: false, apple: true },
+  { code: 'hu', name: 'Hungarian', canary: true, apple: false },
+  { code: 'id', name: 'Indonesian', canary: false, apple: true },
+  { code: 'it', name: 'Italian', canary: true, apple: true },
+  { code: 'ja', name: 'Japanese', canary: false, apple: true },
+  { code: 'ko', name: 'Korean', canary: false, apple: true },
+  { code: 'lv', name: 'Latvian', canary: true, apple: false },
+  { code: 'lt', name: 'Lithuanian', canary: true, apple: false },
+  { code: 'mt', name: 'Maltese', canary: true, apple: false },
+  { code: 'nb', name: 'Norwegian', canary: false, apple: true },
+  { code: 'pl', name: 'Polish', canary: true, apple: true },
+  { code: 'pt', name: 'Portuguese', canary: true, apple: true },
+  { code: 'ro', name: 'Romanian', canary: true, apple: false },
+  { code: 'ru', name: 'Russian', canary: true, apple: true },
+  { code: 'sk', name: 'Slovak', canary: true, apple: false },
+  { code: 'sl', name: 'Slovenian', canary: true, apple: false },
+  { code: 'es', name: 'Spanish', canary: true, apple: true },
+  { code: 'sv', name: 'Swedish', canary: true, apple: true },
+  { code: 'th', name: 'Thai', canary: false, apple: true },
+  { code: 'tr', name: 'Turkish', canary: false, apple: true },
+  { code: 'uk', name: 'Ukrainian', canary: true, apple: true },
+  { code: 'vi', name: 'Vietnamese', canary: false, apple: true },
+  { code: 'zh', name: 'Chinese', canary: false, apple: true },
+] as const;
+
+/** Which targets the current translate mode + engine can produce. Auto and
+ *  Apple offer the union (Apple auto-covers unknowns); Canary its own set;
+ *  Whisper only English. */
+export const targetsFor = (mode: string, backend: string) => {
+  if (mode === 'model' && backend === 'canary') return TRANSLATE_TARGETS.filter((t) => t.canary);
+  if (mode === 'apple') return TRANSLATE_TARGETS.filter((t) => t.apple);
+  return TRANSLATE_TARGETS;
+};
 // NOTE: this panel only renders/edits transcript segments. Recording is owned
 // entirely by the top-right Record button in Header.tsx, which captures mic +
 // system audio directly. There is deliberately no second "Record" affordance
@@ -227,8 +278,8 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
   const clearSegments = useActiveTranscriptionStore((s) => s.clearSegments);
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
   const transcriptionBackend = useSettingsStore((s) => s.config.transcriptionBackend);
-  const whisperVariant = useSettingsStore((s) => s.config.whisperVariant);
   const translateMode = useSettingsStore((s) => s.config.translateMode);
+  const translateTarget = useSettingsStore((s) => s.config.translateTarget);
 
   // Audio capture and the transcription socket are owned by Header.tsx — wiring
   // a second pipeline here would spawn a duplicate WebSocket and a confusing
@@ -298,26 +349,19 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
     //    the next recording. 3) Live-switch the active stream — the
     //    controller relays this to the open WebSocket; it's a no-op when
     //    not recording.
-    useSettingsStore
-      .getState()
-      .updateConfig({ transcriptionBackend: option.backend, whisperVariant: option.variant });
-    void put('/api/config', {
-      transcription_backend: option.backend,
-      whisper_variant: option.variant,
-    });
+    useSettingsStore.getState().updateConfig({ transcriptionBackend: option.backend });
+    void put('/api/config', { transcription_backend: option.backend });
     window.dispatchEvent(
-      new CustomEvent(SET_MODEL_EVENT, {
-        detail: { backend: option.backend, variant: option.variant },
-      }),
+      new CustomEvent(SET_MODEL_EVENT, { detail: { backend: option.backend } }),
     );
   }, []);
 
-  // Translate dropdown. Mirrors the model switch: reflect in shared config,
-  // persist, relay to a live recording socket.
-  const handleTranslateChange = useCallback((mode: string) => {
-    useSettingsStore.getState().updateConfig({ translateMode: mode });
-    void put('/api/config', { translate_mode: mode });
-    window.dispatchEvent(new CustomEvent(SET_TRANSLATE_EVENT, { detail: { mode } }));
+  // Translate dropdown + target. Mirrors the model switch: reflect in shared
+  // config, persist, relay to a live recording socket.
+  const handleTranslateChange = useCallback((mode: string, target: string) => {
+    useSettingsStore.getState().updateConfig({ translateMode: mode, translateTarget: target });
+    void put('/api/config', { translate_mode: mode, translate_target: target });
+    window.dispatchEvent(new CustomEvent(SET_TRANSLATE_EVENT, { detail: { mode, target } }));
   }, []);
 
   // Diarization participant-count hint. 0 = auto. Header.tsx keeps the
@@ -358,7 +402,7 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
             id="transcriptEngineSelect"
             title="Transcription model, switches live, even mid-recording. Whisper Turbo: fast, 99 languages. Whisper Large v3: most accurate, slower. Canary: best translation, set your language in Settings. Parakeet: live words, lowest latency."
             aria-label="Transcription model"
-            value={modelValueOf(transcriptionBackend, whisperVariant)}
+            value={transcriptionBackend}
             onChange={(e) => handleModelChange(e.target.value)}
           >
             {MODEL_OPTIONS.map((o) => (
@@ -368,16 +412,32 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
           <select
             className={`transcript-engine-select translate-select${translateMode !== 'off' ? ' on' : ''}`}
             id="transcriptTranslateSelect"
-            title="Show an English line under non-English speech. Auto picks the best translator for the chosen model; Apple translates the text on-device (Mac app only) and works with every model."
-            aria-label="Translate to English"
+            title="Show a translation line under speech in other languages. Auto picks whichever translator can serve the language pair. Whisper translates into English only; Canary between its 25 languages and English; Apple between any of its ~20 languages, on-device (Mac app only)."
+            aria-label="Translation model"
             value={translateMode}
-            onChange={(e) => handleTranslateChange(e.target.value)}
+            onChange={(e) => handleTranslateChange(e.target.value, translateTarget)}
           >
             <option value="off">Translate: off</option>
             <option value="auto">Translate: auto</option>
-            <option value="model">Translate: this model</option>
-            <option value="apple">Translate: Apple</option>
+            {transcriptionBackend !== 'streaming' && (
+              <option value="model">{translatorLabelOf(transcriptionBackend)}</option>
+            )}
+            <option value="apple">Apple (any pair)</option>
           </select>
+          {translateMode !== 'off' && !(translateMode === 'model' && transcriptionBackend === 'whisper') && (
+            <select
+              className="transcript-engine-select translate-select on"
+              id="transcriptTranslateTarget"
+              title="Language of the translation line. Whisper can only produce English; Canary reaches its other languages from English speech; Apple reaches any of its languages from anything."
+              aria-label="Translate to language"
+              value={translateTarget}
+              onChange={(e) => handleTranslateChange(translateMode, e.target.value)}
+            >
+              {targetsFor(translateMode, transcriptionBackend).map((t) => (
+                <option key={t.code} value={t.code}>→ {t.name}</option>
+              ))}
+            </select>
+          )}
           <select
             className="transcript-engine-select"
             id="transcriptSpeakersSelect"

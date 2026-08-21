@@ -18,7 +18,7 @@ export interface TranscriptionState {
     chunkId?: number,
     translating?: boolean,
   ) => void;
-  applyTranslation: (chunkId: number, text: string) => void;
+  applyTranslation: (chunkId: number, text: string, target?: string) => void;
   applySpeakerUpdates: (updates: { chunk_id: number; speaker: string }[]) => void;
   editSegmentText: (segmentId: string, newText: string) => void;
   renameSpeaker: (originalKey: string, newName: string) => void;
@@ -76,14 +76,16 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
   // A chunk's English translation arrived (or came back empty — which still
   // clears the pending placeholder). The chunk may live in any segment, and
   // segments merge/split, so locate it by membership rather than position.
-  applyTranslation: (chunkId: number, text: string) => {
+  applyTranslation: (chunkId: number, text: string, target?: string) => {
     set((state) => ({
       segments: state.segments.map((seg) => {
         const pending = seg.pendingTranslations ?? [];
         const owns = pending.includes(chunkId) || (seg.chunks?.some((c) => c.id === chunkId) ?? false);
         if (!owns) return seg;
         const translations = text
-          ? [...(seg.translations ?? []), { chunkId, text }].sort((a, b) => a.chunkId - b.chunkId)
+          ? [...(seg.translations ?? []), { chunkId, text, target }].sort(
+              (a, b) => a.chunkId - b.chunkId,
+            )
           : seg.translations;
         const remaining = pending.filter((id) => id !== chunkId);
         return {

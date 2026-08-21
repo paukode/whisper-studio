@@ -22,7 +22,8 @@ from server.models_manager.catalog import get_entry
 from server.models_manager.routes import router
 
 STATIC_KEYS = {
-    "whisper",
+    "whisper_large_v3",
+    "canary",
     "parakeet",
     "ecapa_speaker",
     "qwen3_embed",
@@ -142,7 +143,7 @@ def test_catalog_shape_and_groups(client):
     for m in models:
         assert ENTRY_FIELDS <= set(m), f"missing fields on {m['key']}"
         assert m["group"] in {"transcription", "indexing", "local-chat"}
-    assert by_key["whisper"]["group"] == "transcription"
+    assert by_key["whisper_large_v3"]["group"] == "transcription"
     assert by_key["parakeet"]["group"] == "transcription"
     assert by_key["ecapa_speaker"]["group"] == "transcription"
     for key in ("qwen3_embed", "qwen3_rerank", "gliner", "gliner2"):
@@ -151,14 +152,17 @@ def test_catalog_shape_and_groups(client):
         assert by_key[key]["group"] == "local-chat"
         assert by_key[key]["repo_id"]
     # Fallback sizes answer while the HF fetch is stubbed out.
-    assert by_key["whisper"]["size_bytes_estimate"] == sizes.FALLBACK_SIZES["whisper"]
+    assert (
+        by_key["whisper_large_v3"]["size_bytes_estimate"]
+        == sizes.FALLBACK_SIZES["whisper_large_v3"]
+    )
 
 
 def test_catalog_sentinels_match_backend_modules():
     """The catalog must check the same files the ensure functions download."""
     from server.index import config as ic
 
-    assert get_entry("whisper").dir_name == "whisper-large-v3-turbo"
+    assert get_entry("whisper_large_v3").dir_name == "whisper-large-v3"
     assert get_entry("parakeet").dir_name == "parakeet-tdt-0.6b-v3"
     assert get_entry("ecapa_speaker").dir_name == "spkrec-ecapa-voxceleb"
     assert get_entry("qwen3_embed").sentinel_rel == os.path.relpath(
@@ -174,12 +178,12 @@ def test_catalog_sentinels_match_backend_modules():
 
 
 def test_installed_detection_against_fake_home(client, home):
-    install_fake(home, "whisper", nbytes=4096)
+    install_fake(home, "whisper_large_v3", nbytes=4096)
     install_fake(home, "local_gemma", nbytes=1024)
     by_key = {m["key"]: m for m in client.get("/api/models/catalog").json()["models"]}
-    assert by_key["whisper"]["installed"] is True
-    assert by_key["whisper"]["state"] == "installed"
-    assert by_key["whisper"]["bytes_on_disk"] >= 4096
+    assert by_key["whisper_large_v3"]["installed"] is True
+    assert by_key["whisper_large_v3"]["state"] == "installed"
+    assert by_key["whisper_large_v3"]["bytes_on_disk"] >= 4096
     assert by_key["local_gemma"]["installed"] is True
     assert by_key["local_gemma"]["bytes_on_disk"] >= 1024
     assert by_key["parakeet"]["installed"] is False
@@ -191,10 +195,10 @@ def test_installed_detection_against_fake_home(client, home):
 
 
 def test_download_duplicate_start_is_benign(client, fake_spawn):
-    first = client.post("/api/models/whisper/download")
+    first = client.post("/api/models/whisper_large_v3/download")
     assert first.status_code == 200 and first.json()["started"] is True
     # A duplicate start is exactly what the requester wanted — 200, no-op.
-    r = client.post("/api/models/whisper/download")
+    r = client.post("/api/models/whisper_large_v3/download")
     assert r.status_code == 200
     body = r.json()
     assert body["started"] is False
@@ -212,7 +216,7 @@ def test_download_409_when_installed(client, home, fake_spawn):
 
 
 def test_download_beyond_cap_queues(client, fake_spawn):
-    assert client.post("/api/models/whisper/download").json()["started"] is True
+    assert client.post("/api/models/whisper_large_v3/download").json()["started"] is True
     assert client.post("/api/models/parakeet/download").json()["started"] is True
     # Third request: no error — it queues, with a 1-based position.
     r = client.post("/api/models/qwen3_embed/download")
@@ -237,7 +241,7 @@ def test_download_beyond_cap_queues(client, fake_spawn):
 
 def test_queue_is_fifo_and_pumps_on_completion(client, fake_spawn):
     """Three queued keys start in request order as slots free up."""
-    for key in ("whisper", "parakeet"):
+    for key in ("whisper_large_v3", "parakeet"):
         assert client.post(f"/api/models/{key}/download").json()["started"] is True
     order = ["qwen3_embed", "gliner", "ecapa_speaker"]
     for i, key in enumerate(order, start=1):
@@ -245,7 +249,7 @@ def test_queue_is_fifo_and_pumps_on_completion(client, fake_spawn):
         assert body["queued"] is True and body["queue_position"] == i
 
     # First slot frees: the OLDEST queued key starts; the others move up.
-    fake_spawn["whisper"].rc = 0
+    fake_spawn["whisper_large_v3"].rc = 0
     st = client.get("/api/models/status").json()["models"]
     assert st["qwen3_embed"]["state"] == "downloading"
     assert "qwen3_embed" in fake_spawn
@@ -262,10 +266,10 @@ def test_queue_is_fifo_and_pumps_on_completion(client, fake_spawn):
 def test_queue_pumps_on_status_poll(client, fake_spawn):
     """The manager is poll-driven: a queued item must start on the next
     status poll after a worker exits, with no other endpoint involved."""
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     client.post("/api/models/parakeet/download")
     client.post("/api/models/qwen3_embed/download")
-    fake_spawn["whisper"].rc = 0
+    fake_spawn["whisper_large_v3"].rc = 0
     # Nothing but the poll runs; the queued key must still start.
     st = client.get("/api/models/status").json()["models"]
     assert st["qwen3_embed"]["state"] == "downloading"
@@ -273,18 +277,18 @@ def test_queue_pumps_on_status_poll(client, fake_spawn):
 
 
 def test_queue_pumps_when_running_download_is_cancelled(client, fake_spawn):
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     client.post("/api/models/parakeet/download")
     client.post("/api/models/qwen3_embed/download")
     # Cancelling a RUNNING download frees its slot for the queued key at once.
-    assert client.post("/api/models/whisper/cancel").status_code == 200
+    assert client.post("/api/models/whisper_large_v3/cancel").status_code == 200
     assert "qwen3_embed" in fake_spawn
     st = client.get("/api/models/status").json()["models"]
     assert st["qwen3_embed"]["state"] == "downloading"
 
 
 def test_duplicate_download_while_queued_is_benign(client, fake_spawn):
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     client.post("/api/models/parakeet/download")
     client.post("/api/models/qwen3_embed/download")
     r = client.post("/api/models/qwen3_embed/download")
@@ -294,7 +298,7 @@ def test_duplicate_download_while_queued_is_benign(client, fake_spawn):
     assert body["queued"] is True
     assert body["queue_position"] == 1
     # Still exactly one queue slot — the duplicate didn't double-enqueue.
-    fake_spawn["whisper"].rc = 0
+    fake_spawn["whisper_large_v3"].rc = 0
     fake_spawn["parakeet"].rc = 0
     st = client.get("/api/models/status").json()["models"]
     assert st["qwen3_embed"]["state"] == "downloading"
@@ -313,10 +317,10 @@ def test_worker_failure_surfaces_error_state(client, fake_spawn):
 
 
 def test_completed_download_reports_installed(client, home, fake_spawn):
-    client.post("/api/models/whisper/download")
-    install_fake(home, "whisper")  # the worker's on-disk result
-    fake_spawn["whisper"].rc = 0
-    st = client.get("/api/models/status").json()["models"]["whisper"]
+    client.post("/api/models/whisper_large_v3/download")
+    install_fake(home, "whisper_large_v3")  # the worker's on-disk result
+    fake_spawn["whisper_large_v3"].rc = 0
+    st = client.get("/api/models/status").json()["models"]["whisper_large_v3"]
     assert st["state"] == "installed"
     assert st["error"] is None
 
@@ -328,14 +332,14 @@ def test_killed_worker_becomes_error_not_stuck(client, fake_spawn, monkeypatch):
     """The core bug: a worker that dies WITHOUT poll() observing the exit must
     flip to 'error', not sit at 'downloading' forever. The PID liveness backstop
     (os.kill(pid, 0)) catches it even when poll() stays None."""
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     # poll() stays None (blind to the exit); the PID is gone.
     monkeypatch.setattr(manager, "_pid_alive", lambda pid: False)
-    st = client.get("/api/models/status").json()["models"]["whisper"]
+    st = client.get("/api/models/status").json()["models"]["whisper_large_v3"]
     assert st["state"] == "error"
     assert st["error"]
     # The freed slot is usable again — a retry starts cleanly.
-    assert client.post("/api/models/whisper/download").json()["started"] is True
+    assert client.post("/api/models/whisper_large_v3/download").json()["started"] is True
 
 
 def test_worker_raises_surfaces_reason_and_exit_code(client, home, fake_spawn):
@@ -357,14 +361,14 @@ def test_stall_no_progress_and_worker_gone_becomes_error(client, home, fake_spaw
     """No byte progress for the stall window AND the worker gone → error (rather
     than an eternal 0%). Uses a tiny window so the test doesn't wait 2 minutes."""
     monkeypatch.setattr(manager, "STALL_TIMEOUT_SEC", 60.0)
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     # First poll records a zero-byte baseline and arms the stall clock.
     client.get("/api/models/status")
     # No bytes ever land; the worker has vanished (poll blind, PID gone).
     monkeypatch.setattr(manager, "_pid_alive", lambda pid: False)
     with manager._lock:
-        manager._jobs["whisper"].last_progress_at -= 120  # window elapsed
-    st = client.get("/api/models/status").json()["models"]["whisper"]
+        manager._jobs["whisper_large_v3"].last_progress_at -= 120  # window elapsed
+    st = client.get("/api/models/status").json()["models"]["whisper_large_v3"]
     assert st["state"] == "error"
     assert st["error"]
 
@@ -375,14 +379,14 @@ def test_stall_alive_but_wedged_worker_is_terminated(client, home, fake_spawn, m
     left downloading forever. A progressing download resets the clock."""
     monkeypatch.setattr(manager, "STALL_TIMEOUT_SEC", 60.0)
     monkeypatch.setattr(manager, "_pid_alive", lambda pid: True)
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     client.get("/api/models/status")  # baseline, clock armed
     with manager._lock:
-        manager._jobs["whisper"].last_progress_at -= 120  # no growth, window elapsed
-    st = client.get("/api/models/status").json()["models"]["whisper"]
+        manager._jobs["whisper_large_v3"].last_progress_at -= 120  # no growth, window elapsed
+    st = client.get("/api/models/status").json()["models"]["whisper_large_v3"]
     assert st["state"] == "error"
     assert "stall" in st["error"].lower()
-    assert fake_spawn["whisper"].terminated is True
+    assert fake_spawn["whisper_large_v3"].terminated is True
 
 
 def test_progressing_download_is_never_flagged_as_stalled(client, home, fake_spawn, monkeypatch):
@@ -403,12 +407,12 @@ def test_progressing_download_is_never_flagged_as_stalled(client, home, fake_spa
 def test_retry_after_error_restarts_cleanly(client, fake_spawn):
     """Retry (a fresh download POST) clears the dead job's error and starts a
     new worker — the user can recover a model stuck by a failed download."""
-    client.post("/api/models/whisper/download")
-    fake_spawn["whisper"].rc = 1
-    assert client.get("/api/models/status").json()["models"]["whisper"]["state"] == "error"
-    r = client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
+    fake_spawn["whisper_large_v3"].rc = 1
+    assert client.get("/api/models/status").json()["models"]["whisper_large_v3"]["state"] == "error"
+    r = client.post("/api/models/whisper_large_v3/download")
     assert r.status_code == 200 and r.json()["started"] is True
-    st = client.get("/api/models/status").json()["models"]["whisper"]
+    st = client.get("/api/models/status").json()["models"]["whisper_large_v3"]
     assert st["state"] == "downloading"
     assert st["error"] is None
 
@@ -416,12 +420,12 @@ def test_retry_after_error_restarts_cleanly(client, fake_spawn):
 def test_error_does_not_block_queue_pump(client, fake_spawn):
     """A failed running download frees its slot: the queued key must start on the
     same poll, exactly as a clean completion would."""
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     client.post("/api/models/parakeet/download")
     client.post("/api/models/qwen3_embed/download")  # queued (position 1)
-    fake_spawn["whisper"].rc = 1  # running download errors out
+    fake_spawn["whisper_large_v3"].rc = 1  # running download errors out
     st = client.get("/api/models/status").json()["models"]
-    assert st["whisper"]["state"] == "error"
+    assert st["whisper_large_v3"]["state"] == "error"
     assert st["qwen3_embed"]["state"] == "downloading"
     assert "qwen3_embed" in fake_spawn  # the pump ran despite the error
 
@@ -430,25 +434,25 @@ def test_error_does_not_block_queue_pump(client, fake_spawn):
 
 
 def test_cancel_terminates_and_resets_state(client, fake_spawn):
-    client.post("/api/models/whisper/download")
-    r = client.post("/api/models/whisper/cancel")
+    client.post("/api/models/whisper_large_v3/download")
+    r = client.post("/api/models/whisper_large_v3/cancel")
     assert r.status_code == 200 and r.json()["cancelled"] is True
-    assert fake_spawn["whisper"].terminated is True
-    st = client.get("/api/models/status").json()["models"]["whisper"]
+    assert fake_spawn["whisper_large_v3"].terminated is True
+    st = client.get("/api/models/status").json()["models"]["whisper_large_v3"]
     assert st["state"] == "absent"
     # A second cancel has nothing to stop.
-    assert client.post("/api/models/whisper/cancel").status_code == 409
+    assert client.post("/api/models/whisper_large_v3/cancel").status_code == 409
 
 
 def test_cancel_when_not_downloading_409(client):
-    assert client.post("/api/models/whisper/cancel").status_code == 409
+    assert client.post("/api/models/whisper_large_v3/cancel").status_code == 409
 
 
 def test_cancel_queued_dequeues_without_touching_partials(client, home, fake_spawn):
     """Cancel on a QUEUED model removes it from the queue; no worker ever ran,
     so partial files from an earlier attempt stay for hf resume."""
     write_partial(home, "qwen3_embed", 500)
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     client.post("/api/models/parakeet/download")
     client.post("/api/models/qwen3_embed/download")
     r = client.post("/api/models/qwen3_embed/cancel")
@@ -461,12 +465,12 @@ def test_cancel_queued_dequeues_without_touching_partials(client, home, fake_spa
     assert st["queue_position"] is None
     assert st["bytes_on_disk"] >= 500  # partials untouched
     # The running downloads were not disturbed.
-    assert fake_spawn["whisper"].terminated is False
+    assert fake_spawn["whisper_large_v3"].terminated is False
     assert fake_spawn["parakeet"].terminated is False
 
 
 def test_cancel_queued_leaves_the_rest_of_the_queue_in_order(client, fake_spawn):
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     client.post("/api/models/parakeet/download")
     client.post("/api/models/qwen3_embed/download")
     client.post("/api/models/gliner/download")
@@ -502,8 +506,8 @@ def test_failed_worker_drops_early_sentinel(client, home, fake_spawn):
 
 
 def test_delete_refused_while_downloading(client, home, fake_spawn):
-    client.post("/api/models/whisper/download")
-    r = client.delete("/api/models/whisper")
+    client.post("/api/models/whisper_large_v3/download")
+    r = client.delete("/api/models/whisper_large_v3")
     assert r.status_code == 409
     assert "cancel" in r.json()["detail"].lower()
 
@@ -519,13 +523,13 @@ def test_delete_installed_model(client, home):
 
 
 def test_delete_nothing_on_disk_409(client):
-    assert client.delete("/api/models/whisper").status_code == 409
+    assert client.delete("/api/models/whisper_large_v3").status_code == 409
 
 
 def test_delete_queued_model_dequeues_then_deletes(client, home, fake_spawn):
     """Delete on a QUEUED model: out of the queue first, then disk cleanup."""
     write_partial(home, "qwen3_embed", 700)
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     client.post("/api/models/parakeet/download")
     client.post("/api/models/qwen3_embed/download")
     r = client.delete("/api/models/qwen3_embed")
@@ -539,7 +543,7 @@ def test_delete_queued_model_dequeues_then_deletes(client, home, fake_spawn):
 
 
 def test_delete_queued_model_with_nothing_on_disk_is_a_dequeue(client, fake_spawn):
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     client.post("/api/models/parakeet/download")
     client.post("/api/models/qwen3_embed/download")
     r = client.delete("/api/models/qwen3_embed")
@@ -672,7 +676,7 @@ def test_progress_is_none_while_queued(client, home, monkeypatch, fake_spawn):
     on disk from an earlier attempt."""
     monkeypatch.setattr(sizes, "estimate", lambda e: 1000)
     write_partial(home, "qwen3_embed", 400)
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     client.post("/api/models/parakeet/download")
     client.post("/api/models/qwen3_embed/download")
     assert manager.progress_of(get_entry("qwen3_embed")) is None
@@ -691,11 +695,11 @@ def test_progress_highwater_resets_on_dequeue_start(client, home, monkeypatch, f
     # An idle status poll marks the absent row at 900/1000 = 0.9.
     assert manager.progress_of(entry) == 0.9
     # Fill both slots, queue the model, then free a slot so the pump starts it.
-    client.post("/api/models/whisper/download")
+    client.post("/api/models/whisper_large_v3/download")
     client.post("/api/models/parakeet/download")
     client.post("/api/models/qwen3_embed/download")
     est["v"] = 9000  # honest revised estimate lands before the run starts
-    fake_spawn["whisper"].rc = 0
+    fake_spawn["whisper_large_v3"].rc = 0
     st = client.get("/api/models/status").json()["models"]["qwen3_embed"]
     assert st["state"] == "downloading"
     # 900/9000 — derived from real bytes, not the stale 0.9 mark.

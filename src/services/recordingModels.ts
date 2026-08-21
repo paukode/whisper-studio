@@ -49,12 +49,10 @@ const READY_BANNER_MS = 700;
  *  from the settings store — hydrated from /api/config and kept current by
  *  the transcript panel's live engine switch. */
 export function requiredRecordingModelKeys(): string[] {
-  const { transcriptionBackend, whisperVariant } = useSettingsStore.getState().config;
+  const { transcriptionBackend } = useSettingsStore.getState().config;
   const engineKey =
     transcriptionBackend === 'whisper'
-      ? whisperVariant === 'large-v3'
-        ? 'whisper_large_v3'
-        : 'whisper'
+      ? 'whisper_large_v3'
       : transcriptionBackend === 'canary'
         ? 'canary'
         : 'parakeet';

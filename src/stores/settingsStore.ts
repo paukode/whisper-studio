@@ -196,8 +196,8 @@ const defaultConfig: AppConfig = {
   briefMode: false,
   permissionMode: 'default',
   transcriptionBackend: 'streaming',
-  whisperVariant: 'turbo',
   translateMode: 'off',
+  translateTarget: 'en',
   modelMode: 'cloud',
   backends: {},
 };
@@ -246,8 +246,8 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
         briefMode: Boolean(d.brief_mode ?? false),
         permissionMode: String(d.permission_mode ?? 'default'),
         transcriptionBackend: String(d.transcription_backend ?? 'streaming'),
-        whisperVariant: String(d.whisper_variant ?? 'turbo'),
         translateMode: String(d.translate_mode ?? 'off'),
+        translateTarget: String(d.translate_target ?? 'en'),
         modelMode: ((d.model_mode as AppConfig['modelMode']) ?? 'cloud'),
         backends: ((d.backends as AppConfig['backends']) ?? {}),
       };

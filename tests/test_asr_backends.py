@@ -210,19 +210,17 @@ def test_decode_uses_constrained_detection_for_allowlist(monkeypatch):
 # ── translate-to-English companion pass ──────────────────────────────────────
 
 
-def test_translate_utterance_pins_en_token_and_relaxed_fallback(monkeypatch):
+def test_whisper_translate_relaxed_fallback(monkeypatch):
     calls = []
 
     def fake_transcribe(audio, language=None, relaxed=False, task=None):
-        calls.append((language, relaxed))
+        calls.append((language, relaxed, task))
         return ("good morning everyone" if relaxed else "", language)
 
     monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
-    monkeypatch.setattr(whisper_backend, "_variant", lambda: "turbo")
     audio = np.zeros(16000, dtype=np.float32)
     assert whisper_backend.translate_utterance(audio, "pl") == "good morning everyone"
-    # turbo has no translate head; English comes from pinning the en token.
-    assert calls == [("en", False), ("en", True)]
+    assert calls == [("pl", False, "translate"), ("pl", True, "translate")]
 
 
 def test_translate_utterance_filters_hallucinations(monkeypatch):
@@ -267,7 +265,7 @@ def test_canary_session_language_prefers_supported_allowlist(monkeypatch):
     assert canary_backend._session_language() == "en"
 
 
-def test_canary_translate_targets_english(monkeypatch):
+def test_canary_translate_language_pairs(monkeypatch):
     from server.asr import canary_backend
 
     calls = []
@@ -277,19 +275,15 @@ def test_canary_translate_targets_english(monkeypatch):
         return "good morning"
 
     monkeypatch.setattr(canary_backend, "_generate", fake_generate)
-    text = canary_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl")
-    assert text == "good morning"
-    assert calls == [("pl", "en")]
+    audio = np.zeros(16000, dtype=np.float32)
+    assert canary_backend.translate_utterance(audio, "pl") == "good morning"
+    assert canary_backend.translate_utterance(audio, "en", target="pl") == "good morning"
+    # X -> Y with both non-English is unsupported: skipped, no decode.
+    assert canary_backend.translate_utterance(audio, "pl", target="de") == ""
+    assert calls == [("pl", "en"), ("en", "pl")]
 
 
-def test_whisper_variant_fallback(monkeypatch):
-    monkeypatch.setattr(whisper_backend, "config_get", lambda k: "bogus")
-    assert whisper_backend._variant() == "turbo"
-    monkeypatch.setattr(whisper_backend, "config_get", lambda k: "large-v3")
-    assert whisper_backend._variant() == "large-v3"
-
-
-def test_translate_uses_real_task_on_large_v3(monkeypatch):
+def test_whisper_translate_uses_real_task(monkeypatch):
     calls = []
 
     def fake_transcribe(audio, language=None, relaxed=False, task=None):
@@ -297,14 +291,8 @@ def test_translate_uses_real_task_on_large_v3(monkeypatch):
         return "good morning", language
 
     monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
-    monkeypatch.setattr(whisper_backend, "_variant", lambda: "large-v3")
     assert whisper_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl")
     assert calls == [("pl", "translate")]
-
-    calls.clear()
-    monkeypatch.setattr(whisper_backend, "_variant", lambda: "turbo")
-    assert whisper_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl")
-    assert calls == [("en", None)]
 
 
 # ── translate-mode resolution (server/websocket.py) ─────────────────────────
@@ -313,18 +301,25 @@ def test_translate_uses_real_task_on_large_v3(monkeypatch):
 def test_resolve_translator_matrix():
     from server.websocket import resolve_translator as r
 
-    # off / explicit modes
-    assert r("off", "canary", None, True, True) is None
-    assert r("model", "whisper", "turbo", True, True) == "model"
-    assert r("model", "parakeet", None, True, False) is None
-    assert r("apple", "whisper", "turbo", True, True) == "apple"
-    assert r("apple", "whisper", "turbo", False, True) is None
-    # auto: engines with a strong native head translate themselves
-    assert r("auto", "canary", None, True, True) == "model"
-    assert r("auto", "whisper", "large-v3", True, True) == "model"
-    # auto: turbo prefers Apple, falls back to en-token steering
-    assert r("auto", "whisper", "turbo", True, True) == "apple"
-    assert r("auto", "whisper", "turbo", False, True) == "model"
-    # auto: parakeet can only translate via Apple
-    assert r("auto", "parakeet", None, True, False) == "apple"
-    assert r("auto", "parakeet", None, False, False) is None
+    # off, and same-language skips
+    assert r("off", "canary", True, True, "pl", "en") is None
+    assert r("auto", "canary", True, True, "en", "en") is None
+    assert r("auto", "apple", True, False, "pl", "pl") is None
+    # whisper: English target only
+    assert r("model", "whisper", True, True, "pl", "en") == "model"
+    assert r("model", "whisper", True, True, "pl", "de") is None
+    assert r("auto", "whisper", True, True, "pl", "de") == "apple"
+    assert r("auto", "whisper", False, True, "pl", "de") is None
+    # canary: English-hub bidirectional
+    assert r("model", "canary", False, True, "pl", "en") == "model"
+    assert r("model", "canary", False, True, "en", "pl") == "model"
+    assert r("model", "canary", False, True, "pl", "de") is None
+    assert r("auto", "canary", True, True, "pl", "de") == "apple"
+    # unknown language (Parakeet): apple only, any target
+    assert r("auto", "parakeet", True, False, None, "en") == "apple"
+    assert r("auto", "parakeet", True, False, None, "pl") == "apple"
+    assert r("auto", "parakeet", False, False, None, "en") is None
+    assert r("model", "parakeet", True, False, None, "en") is None
+    # explicit apple
+    assert r("apple", "whisper", True, True, "pl", "de") == "apple"
+    assert r("apple", "whisper", False, True, "pl", "en") is None

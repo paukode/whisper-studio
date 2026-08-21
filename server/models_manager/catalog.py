@@ -69,35 +69,20 @@ def _static_entries() -> tuple[ModelEntry, ...]:
 
     return (
         ModelEntry(
-            key="whisper",
-            label="Whisper Large v3 Turbo",
+            key="whisper_large_v3",
+            label="Whisper Large v3",
             group=GROUP_TRANSCRIPTION,
             repo_id=whisper_backend.WHISPER_REPO_ID,
             dir_name=rel(whisper_backend.WHISPER_MODEL_DIR, whisper_backend.MODELS_DIR),
-            # Mirrors whisper_backend._ensure_model's weight_file check.
-            sentinel_rel="weights.safetensors",
-            ensure_module="server.asr.whisper_backend",
-            ensure_func="_ensure_turbo",
-            note=(
-                "Fast, accurate transcription in 99 languages; the default "
-                "engine. Translation to English uses token steering (decent, "
-                "not its strength)."
-            ),
-        ),
-        ModelEntry(
-            key="whisper_large_v3",
-            label="Whisper Large v3 (full)",
-            group=GROUP_TRANSCRIPTION,
-            repo_id="mlx-community/whisper-large-v3-mlx",
-            dir_name="whisper-large-v3",
-            # This MLX repo ships npz weights, not safetensors.
+            # Mirrors whisper_backend._ensure_model's weight_file check
+            # (this MLX repo ships npz weights, not safetensors).
             sentinel_rel="weights.npz",
             ensure_module="server.asr.whisper_backend",
-            ensure_func="_ensure_large_v3",
+            ensure_func="_ensure_model",
             note=(
-                "Highest transcription accuracy and a true translate-to-"
-                "English mode. 2x the size of Turbo and sentences appear "
-                "1-2 s later. Pick it in Settings as the Whisper variant."
+                "Highest transcription accuracy, 99 languages, detects the "
+                "language per sentence — best for mixed-language meetings. "
+                "Translates into English only."
             ),
         ),
         ModelEntry(
