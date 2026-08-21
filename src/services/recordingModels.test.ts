@@ -39,7 +39,7 @@ const entry = (
 const CATALOG = {
   models: [
     { key: 'parakeet', label: 'Parakeet TDT 0.6B v3' },
-    { key: 'whisper', label: 'Whisper Large v3 Turbo' },
+    { key: 'whisper_large_v3', label: 'Whisper Large v3' },
     { key: 'ecapa_speaker', label: 'ECAPA Speaker Encoder' },
   ],
 };
@@ -83,7 +83,7 @@ describe('requiredRecordingModelKeys', () => {
 
   it('maps the whisper backend to Whisper plus the speaker encoder', () => {
     setBackend('whisper');
-    expect(requiredRecordingModelKeys()).toEqual(['whisper', 'ecapa_speaker']);
+    expect(requiredRecordingModelKeys()).toEqual(['whisper_large_v3', 'ecapa_speaker']);
   });
 });
 
@@ -93,17 +93,17 @@ describe('ensureRecordingModels', () => {
     setBackend('whisper');
     mockApi([
       {
-        whisper: entry('absent', 0, 1_600_000_000),
+        whisper_large_v3: entry('absent', 0, 1_600_000_000),
         parakeet: entry('installed', 1, 1),
         ecapa_speaker: entry('absent', 0, 89_000_000),
       },
       {
-        whisper: entry('downloading', 800_000_000, 1_600_000_000, null, 0.5),
+        whisper_large_v3: entry('downloading', 800_000_000, 1_600_000_000, null, 0.5),
         parakeet: entry('installed', 1, 1),
         ecapa_speaker: entry('downloading', 44_000_000, 89_000_000),
       },
       {
-        whisper: entry('installed', 1_600_000_000, 1_600_000_000),
+        whisper_large_v3: entry('installed', 1_600_000_000, 1_600_000_000),
         parakeet: entry('installed', 1, 1),
         ecapa_speaker: entry('installed', 89_000_000, 89_000_000),
       },
@@ -114,12 +114,12 @@ describe('ensureRecordingModels', () => {
 
     // Whisper is gated, not Parakeet — the selected engine drives the keys.
     expect(postedUrls()).toEqual([
-      '/api/models/whisper/download',
+      '/api/models/whisper_large_v3/download',
       '/api/models/ecapa_speaker/download',
     ]);
     const banner = useUIStore.getState().modelLoading;
     expect(banner?.stage).toBe('downloading');
-    expect(banner?.label).toBe('Whisper Large v3 Turbo');
+    expect(banner?.label).toBe('Whisper Large v3');
 
     await vi.advanceTimersByTimeAsync(1000);
     await vi.advanceTimersByTimeAsync(1000);

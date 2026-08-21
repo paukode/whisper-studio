@@ -82,9 +82,6 @@ let loadModelBannerDismissed = false;
 
 const engineOf = (backend: string): 'whisper' | 'parakeet' | 'canary' =>
   backend === 'whisper' ? 'whisper' : backend === 'canary' ? 'canary' : 'parakeet';
-/** The whisper checkpoint the live session runs (mirrors config; only
- *  meaningful while activeBackend === 'whisper'). */
-let activeVariant = 'turbo';
 /** Buffers native (shell-captured) samples between mic worklet frames in
  *  mixed mode. Null in mic-only and native-only modes. */
 let nativeMixer: NativeAudioMixer | null = null;
@@ -280,6 +277,7 @@ function connectWS(): void {
       JSON.stringify({
         type: 'set_translate',
         mode: useSettingsStore.getState().config.translateMode,
+        target: useSettingsStore.getState().config.translateTarget,
         apple_available: isNativeTranslationAvailable(),
       }),
     );
@@ -306,16 +304,21 @@ function connectWS(): void {
         // fills the same per-chunk pending slot a model decode would. An
         // empty source language means "auto-detect" (Parakeet segments).
         if (msg.translate_via === 'apple' && chunkId !== undefined) {
-          void translateNative(String(msg.text ?? ''), language ?? '').then((t) =>
-            ownerStore().applyTranslation(chunkId, t),
+          const target = typeof msg.translate_target === 'string' ? msg.translate_target : 'en';
+          void translateNative(String(msg.text ?? ''), language ?? '', target).then((t) =>
+            ownerStore().applyTranslation(chunkId, t, target),
           );
         }
         ownerStore().setInterimText('');
       } else if (msg.type === 'translation') {
-        // English companion line for an earlier chunk (Whisper translate
-        // toggle). Empty text still clears that chunk's pending marker.
+        // Translation companion line for an earlier chunk (a model decode on
+        // the server). Empty text still clears that chunk's pending marker.
         if (typeof msg.chunk_id === 'number') {
-          ownerStore().applyTranslation(msg.chunk_id, String(msg.text ?? ''));
+          ownerStore().applyTranslation(
+            msg.chunk_id,
+            String(msg.text ?? ''),
+            typeof msg.target === 'string' ? msg.target : 'en',
+          );
         }
       } else if (msg.type === 'speaker_update') {
         // Diarization re-clustered and corrected some earlier labels.
@@ -428,7 +431,6 @@ async function start(sessionId: string): Promise<void> {
   // already ensured this engine's weights are on disk, so it's the engine
   // the server will actually run — record it for live-switch bookkeeping.
   activeBackend = useSettingsStore.getState().config.transcriptionBackend;
-  activeVariant = useSettingsStore.getState().config.whisperVariant;
   chunkSamples = chunkSamplesForBackend(activeBackend);
 
   useUIStore.getState().showTranscript();
@@ -733,12 +735,10 @@ function stop(): void {
  *  On cancel or download failure the recording stays on the current engine
  *  and the header select is put back to match, so the UI never claims an
  *  engine the server isn't actually running. */
-async function switchBackendLive(backend: string, variant: string): Promise<void> {
+async function switchBackendLive(backend: string): Promise<void> {
   if (liveSwitchActive) return; // one switch at a time
   const previous = activeBackend;
-  const sameEngine = engineOf(backend) === engineOf(previous);
-  const variantChange = engineOf(backend) === 'whisper' && variant !== activeVariant;
-  if (sameEngine && !variantChange) return; // no real change
+  if (engineOf(backend) === engineOf(previous)) return; // no real change
   liveSwitchActive = true;
   try {
     // config.transcriptionBackend is already `backend` (the header select set
@@ -756,8 +756,7 @@ async function switchBackendLive(backend: string, variant: string): Promise<void
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     chunkSamples = chunkSamplesForBackend(backend);
     activeBackend = backend;
-    activeVariant = variant;
-    ws.send(JSON.stringify({ type: 'set_model', backend, variant }));
+    ws.send(JSON.stringify({ type: 'set_model', backend }));
   } finally {
     liveSwitchActive = false;
   }
@@ -767,19 +766,13 @@ async function switchBackendLive(backend: string, variant: string): Promise<void
  *  running) after a live switch was cancelled or its download failed. The
  *  in-memory update flips the select back immediately; the PUT persists it. */
 function revertBackend(backend: string): void {
-  const cfg = useSettingsStore.getState().config;
-  if (engineOf(cfg.transcriptionBackend) === engineOf(backend) && cfg.whisperVariant === activeVariant) {
+  if (engineOf(useSettingsStore.getState().config.transcriptionBackend) === engineOf(backend)) {
     return; // already matches — nothing to revert
   }
   activeBackend = backend;
   chunkSamples = chunkSamplesForBackend(backend);
-  useSettingsStore
-    .getState()
-    .updateConfig({ transcriptionBackend: backend, whisperVariant: activeVariant });
-  void put('/api/config', {
-    transcription_backend: backend,
-    whisper_variant: activeVariant,
-  }).catch(() => {
+  useSettingsStore.getState().updateConfig({ transcriptionBackend: backend });
+  void put('/api/config', { transcription_backend: backend }).catch(() => {
     /* best-effort persist; the in-memory revert already corrected the UI */
   });
 }
@@ -805,15 +798,12 @@ export function initRecordingControllerEvents(): void {
 
   // Live model switch from the transcript panel or Settings (same event).
   window.addEventListener('whisper-set-model', (e: Event) => {
-    const detail = (e as CustomEvent<{ backend?: string; variant?: string }>).detail ?? {};
-    const backend = detail.backend ?? 'whisper';
-    const variant = detail.variant ?? 'turbo';
+    const backend = (e as CustomEvent<{ backend?: string }>).detail?.backend ?? 'whisper';
     // Idle (no live socket): the model just changed in config; the next
     // start() gates its weights with the download banner. Keep the chunk
     // cadence and the tracked model in sync for that start.
     if (!(ws && ws.readyState === WebSocket.OPEN)) {
       activeBackend = backend;
-      activeVariant = variant;
       chunkSamples = chunkSamplesForBackend(backend);
       return;
     }
@@ -822,19 +812,20 @@ export function initRecordingControllerEvents(): void {
     // banner, socket appears to stall) or shows a memory-load ramp stuck at
     // 90%. Gate the download with the same banner + Cancel as record-start,
     // then relay set_model.
-    void switchBackendLive(backend, variant);
+    void switchBackendLive(backend);
   });
 
   // Translate dropdown from the transcript panel or Settings. Config
   // persistence is the dispatcher's job; a live socket just needs the relay
   // (the server seeds from config at connect for sockets opened later).
   window.addEventListener('whisper-set-translate', (e: Event) => {
-    const mode = (e as CustomEvent<{ mode?: string }>).detail?.mode ?? 'off';
+    const detail = (e as CustomEvent<{ mode?: string; target?: string }>).detail ?? {};
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(
         JSON.stringify({
           type: 'set_translate',
-          mode,
+          mode: detail.mode ?? 'off',
+          target: detail.target ?? 'en',
           apple_available: isNativeTranslationAvailable(),
         }),
       );

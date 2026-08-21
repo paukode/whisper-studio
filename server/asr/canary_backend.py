@@ -147,18 +147,26 @@ def _generate(audio: np.ndarray, source_lang: str, target_lang: str) -> str:
     return (result.text or "").strip()
 
 
-def translate_utterance(audio_data: np.ndarray, language: str | None = None) -> str:
-    """English translation of one utterance via Canary's native AST head.
+def translate_utterance(
+    audio_data: np.ndarray, language: str | None = None, target: str = "en"
+) -> str:
+    """Translation of one utterance via Canary's native AST head.
 
-    Same orchestration contract as the Whisper backend's translate pass:
-    called on ``executor`` after the transcript final was emitted.
+    Canary translates bidirectionally with ENGLISH AS THE HUB: any of its 25
+    languages → English, and English → any of them — never X → Y with both
+    non-English (the orchestrator's resolver enforces that). Same
+    orchestration contract as the Whisper backend's translate pass: called
+    on ``executor`` after the transcript final was emitted.
     """
     from server.asr.whisper_backend import _is_junk
 
     source = language if language in CANARY_LANGUAGES else _session_language()
+    if target not in CANARY_LANGUAGES or (source != "en" and target != "en"):
+        log.warning("Canary: unsupported translation pair %s->%s, skipped", source, target)
+        return ""
     text = ""
     try:
-        text = _generate(audio_data, source_lang=source, target_lang="en")
+        text = _generate(audio_data, source_lang=source, target_lang=target)
         if text and _is_junk(text):
             text = ""
     except Exception as e:

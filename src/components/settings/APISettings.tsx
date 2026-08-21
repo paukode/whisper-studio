@@ -2,7 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { get, put } from '@/api/client';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { MODEL_OPTIONS, modelValueOf } from '@/components/transcription/TranscriptionPanel';
+import { MODEL_OPTIONS, targetsFor, translatorLabelOf } from '@/components/transcription/TranscriptionPanel';
 
 interface ConfigData {
   tavily_api_key?: string;
@@ -10,8 +10,8 @@ interface ConfigData {
   whisper_language?: string | null;
   bedrock_region?: string;
   transcription_backend?: string;
-  whisper_variant?: string;
   translate_mode?: string;
+  translate_target?: string;
 }
 
 /**
@@ -25,6 +25,7 @@ export const APISettings: React.FC = () => {
   const [regionError, setRegionError] = useState('');
   const [modelValue, setModelValue] = useState('streaming');
   const [translateMode, setTranslateMode] = useState('off');
+  const [translateTarget, setTranslateTarget] = useState('en');
   const [saveStatus, setSaveStatus] = useState('');
 
   // Load config on mount via TanStack Query
@@ -42,13 +43,9 @@ export const APISettings: React.FC = () => {
     setSeededFrom(configData);
     setWhisperLang(configData.whisper_language ?? '');
     setBedrockRegion(configData.bedrock_region || 'us-east-1');
-    setModelValue(
-      modelValueOf(
-        configData.transcription_backend ?? 'streaming',
-        configData.whisper_variant ?? 'turbo',
-      ),
-    );
+    setModelValue(configData.transcription_backend ?? 'streaming');
     setTranslateMode(configData.translate_mode ?? 'off');
+    setTranslateTarget(configData.translate_target ?? 'en');
     if (configData.tavily_api_key_masked) setTavilyHint(configData.tavily_api_key_masked);
   }
 
@@ -70,8 +67,8 @@ export const APISettings: React.FC = () => {
         whisper_language: whisperLang,
         bedrock_region: region,
         transcription_backend: option.backend,
-        whisper_variant: option.variant,
         translate_mode: translateMode,
+        translate_target: translateTarget,
       };
       // Only send tavily key if user typed something new
       if (tavilyKey) {
@@ -82,16 +79,16 @@ export const APISettings: React.FC = () => {
       // apply to a live recording exactly like the header controls do.
       useSettingsStore.getState().updateConfig({
         transcriptionBackend: option.backend,
-        whisperVariant: option.variant,
         translateMode,
+        translateTarget,
       });
       window.dispatchEvent(
-        new CustomEvent('whisper-set-model', {
-          detail: { backend: option.backend, variant: option.variant },
-        }),
+        new CustomEvent('whisper-set-model', { detail: { backend: option.backend } }),
       );
       window.dispatchEvent(
-        new CustomEvent('whisper-set-translate', { detail: { mode: translateMode } }),
+        new CustomEvent('whisper-set-translate', {
+          detail: { mode: translateMode, target: translateTarget },
+        }),
       );
       setSaveStatus('Saved!');
 
@@ -108,7 +105,7 @@ export const APISettings: React.FC = () => {
     } catch {
       setSaveStatus('Save failed');
     }
-  }, [tavilyKey, whisperLang, bedrockRegion, modelValue, translateMode]);
+  }, [tavilyKey, whisperLang, bedrockRegion, modelValue, translateMode, translateTarget]);
 
   return (
     <div className="settings-form" style={{ maxWidth: 480 }}>
@@ -150,15 +147,15 @@ export const APISettings: React.FC = () => {
         ))}
       </select>
       <span className="settings-hint">
-        Same selector as the transcript header; applies live. Whisper Turbo:
-        fast, 99 languages, detects the language per sentence — best for
-        mixed-language meetings. Whisper Large v3: most accurate, sentences
-        appear 1-2 s later. Canary: fastest and the best translation to
-        English, but needs the session language set above (no auto-detect).
-        Parakeet: words appear live as you speak, lowest latency.
+        Same selector as the transcript header; applies live. Whisper Large
+        v3: most accurate, 99 languages, detects the language per sentence —
+        best for mixed-language meetings. Canary: fastest and the best
+        translation, but needs the session language set above (no
+        auto-detect). Parakeet: words appear live as you speak, lowest
+        latency.
       </span>
 
-      <label htmlFor="cfgTranslateMode">Translate to English</label>
+      <label htmlFor="cfgTranslateMode">Translation Model</label>
       <select
         className="settings-input"
         id="cfgTranslateMode"
@@ -166,17 +163,44 @@ export const APISettings: React.FC = () => {
         onChange={(e) => setTranslateMode(e.target.value)}
       >
         <option value="off">Off</option>
-        <option value="auto">Auto (best for the chosen model)</option>
-        <option value="model">This model (re-decode the audio)</option>
-        <option value="apple">Apple on-device (Mac app only)</option>
+        <option value="auto">Auto (whichever model can serve the pair)</option>
+        {modelValue !== 'streaming' && (
+          <option value="model">{translatorLabelOf(modelValue)}</option>
+        )}
+        <option value="apple">Apple on-device (~20 languages, any pair)</option>
       </select>
       <span className="settings-hint">
-        Shows an English line under non-English speech. Auto uses Canary's or
-        Whisper Large v3's own translation, and Apple's on-device translator
-        for the other models when running in the Mac app. Apple translates
-        the finished sentence text, so it works with every model, including
-        Parakeet; first use downloads the language pack once.
+        Shows a translation line under speech in other languages. Whisper
+        translates into English only. Canary translates between its 25
+        European languages and English (either direction, English always on
+        one side). Apple translates between any two of its languages,
+        on-device and free, in the Mac app only.
       </span>
+
+      {translateMode !== 'off' && !(translateMode === 'model' && modelValue === 'whisper') && (
+        <>
+          <label htmlFor="cfgTranslateTarget">Translate To</label>
+          <select
+            className="settings-input"
+            id="cfgTranslateTarget"
+            value={translateTarget}
+            onChange={(e) => setTranslateTarget(e.target.value)}
+          >
+            {targetsFor(translateMode, modelValue).map((t) => (
+              <option key={t.code} value={t.code}>
+                {t.name}
+                {t.canary && t.apple ? '' : t.canary ? ' (Canary only)' : ' (Apple only)'}
+              </option>
+            ))}
+          </select>
+          <span className="settings-hint">
+            Language of the translation line. Canary reaches non-English
+            targets only from English speech; Apple reaches any of its
+            languages from anything. Whisper always produces English, so no
+            choice is needed there.
+          </span>
+        </>
+      )}
 
       <label htmlFor="cfgBedrockRegion">Bedrock Region</label>
       <input

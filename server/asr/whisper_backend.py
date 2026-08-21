@@ -1,9 +1,12 @@
-"""Whisper ASR backend — mlx-whisper large-v3-turbo on utterance windows.
+"""Whisper ASR backend — mlx-whisper large-v3 on utterance windows.
 
 Self-contained: model paths, download, decoding parameters, and the
 hallucination filters all live here. Decodes only settled utterances at
-silence boundaries (no interim drafts), which is what large-v3-turbo is
-good at; the latency-focused alternative is the Parakeet backend.
+silence boundaries (no interim drafts); the latency-focused alternative is
+the Parakeet backend. Runs the FULL large-v3 checkpoint: best multilingual
+accuracy and a real translate head (the turbo variant was removed — it had
+no translate capability and its speed edge stopped mattering once model
+loads got a visible banner).
 
 Model load is lazy (first session), so importing this module is cheap.
 """
@@ -25,28 +28,10 @@ from server.infrastructure.paths import models_root
 log = logging.getLogger("whisper-studio")
 
 MODELS_DIR = models_root()
-WHISPER_MODEL_DIR = os.path.join(MODELS_DIR, "whisper-large-v3-turbo")
-WHISPER_REPO_ID = "mlx-community/whisper-large-v3-turbo"
-
-# The full (non-turbo) model: ~2x the size and a slower decoder, but slightly
-# better multilingual accuracy and — unlike turbo — a real translate head, so
-# the translate pass can use task="translate" instead of en-token steering.
-# Selected via the ``whisper_variant`` config ("turbo" | "large-v3"); each
-# variant entry is (model dir, HF repo, weight sentinel file). large-v3's MLX
-# repo ships weights.npz rather than safetensors.
-WHISPER_VARIANTS = {
-    "turbo": (WHISPER_MODEL_DIR, WHISPER_REPO_ID, "weights.safetensors"),
-    "large-v3": (
-        os.path.join(MODELS_DIR, "whisper-large-v3"),
-        "mlx-community/whisper-large-v3-mlx",
-        "weights.npz",
-    ),
-}
-
-
-def _variant() -> str:
-    name = (config_get("whisper_variant") or "turbo").strip().lower()
-    return name if name in WHISPER_VARIANTS else "turbo"
+WHISPER_MODEL_DIR = os.path.join(MODELS_DIR, "whisper-large-v3")
+WHISPER_REPO_ID = "mlx-community/whisper-large-v3-mlx"
+# This MLX repo ships npz weights, not safetensors.
+WHISPER_SENTINEL = "weights.npz"
 
 
 # RMS below this is treated as dead air — don't bother decoding.
@@ -198,30 +183,18 @@ def is_repetition_hallucination(text: str) -> bool:
     return False
 
 
-def _ensure_variant(name: str) -> str:
-    """Download one Whisper variant if not already present (idempotent)."""
-    model_dir, repo_id, sentinel = WHISPER_VARIANTS[name]
+def _ensure_model() -> str:
+    """Download the Whisper model if not already present (idempotent)."""
     with _model_lock:
-        if not os.path.exists(os.path.join(model_dir, sentinel)):
+        if not os.path.exists(os.path.join(WHISPER_MODEL_DIR, WHISPER_SENTINEL)):
             from huggingface_hub import snapshot_download
 
-            log.info("Downloading Whisper model %s ...", repo_id)
-            snapshot_download(repo_id=repo_id, local_dir=model_dir, local_dir_use_symlinks=False)
+            log.info("Downloading Whisper model %s ...", WHISPER_REPO_ID)
+            snapshot_download(
+                repo_id=WHISPER_REPO_ID, local_dir=WHISPER_MODEL_DIR, local_dir_use_symlinks=False
+            )
             log.info("Whisper model download complete.")
-    return os.path.abspath(model_dir)
-
-
-def _ensure_turbo() -> str:
-    return _ensure_variant("turbo")
-
-
-def _ensure_large_v3() -> str:
-    return _ensure_variant("large-v3")
-
-
-def _ensure_model() -> str:
-    """Path of the CONFIGURED variant's model dir, downloading on first use."""
-    return _ensure_variant(_variant())
+    return os.path.abspath(WHISPER_MODEL_DIR)
 
 
 def preload() -> None:
@@ -246,16 +219,10 @@ def _model_holder():
 
 
 def is_loaded() -> bool:
-    """Whether the CONFIGURED variant is resident in mlx-whisper's ModelHolder.
-
-    A different variant being resident counts as not loaded — the caller's
-    load() then warms the right one (ModelHolder swaps, freeing the old)."""
+    """Whether the weights are resident in mlx-whisper's ModelHolder cache."""
     try:
         holder = _model_holder()
-        if holder.model is None:
-            return False
-        model_dir, _, _ = WHISPER_VARIANTS[_variant()]
-        return holder.model_path == os.path.abspath(model_dir)
+        return holder.model is not None and holder.model_path == os.path.abspath(WHISPER_MODEL_DIR)
     except Exception:
         return _in_memory
 
@@ -387,9 +354,6 @@ def _transcribe(
     if language:
         kwargs["language"] = language
     if task:
-        # Only meaningful on the large-v3 variant: turbo was fine-tuned on
-        # transcription only and silently ignores task="translate" (see
-        # translate_utterance) — never pass a task on turbo.
         kwargs["task"] = task
 
     result = mlx_whisper.transcribe(audio_data, **kwargs)
@@ -400,35 +364,31 @@ def _is_junk(text: str) -> bool:
     return text.strip().lower() in WHISPER_HALLUCINATIONS or is_repetition_hallucination(text)
 
 
-def translate_utterance(audio_data: np.ndarray, language: str | None = None) -> str:
+def translate_utterance(
+    audio_data: np.ndarray, language: str | None = None, target: str = "en"
+) -> str:
     """English translation of one already-transcribed utterance window.
 
     Called by the orchestrator (server/websocket.py) AFTER the transcript
     final was emitted, on this backend's executor, so translation never
     delays transcription — it just queues behind it.
 
-    Variant-dependent mechanism:
-    - large-v3 has a real translate head, so it decodes with the source
-      language pinned and ``task="translate"`` — the proper Whisper speech
-      translation, noticeably more faithful than token steering.
-    - turbo was fine-tuned on transcription only and silently ignores the
-      translate task (verified: Polish in, Polish out), so it instead pins
-      ``language="en"``, which steers the decoder to emit English for
-      non-English audio (verified: fluent English, healthy logprobs).
-    Same strict-then-relaxed ladder and hallucination filters as
-    transcription; returns "" when nothing survives.
+    Whisper's translate head targets ENGLISH ONLY (any of its 99 source
+    languages → en, never en → X); the orchestrator's resolver never routes
+    a non-English target here. ``target`` is accepted for signature parity
+    with the Canary backend. Decodes with the source language pinned and
+    ``task="translate"`` — the same strict-then-relaxed ladder and
+    hallucination filters as transcription; returns "" when nothing
+    survives.
     """
-    if _variant() == "large-v3":
-        decode_language, task = language, "translate"
-    else:
-        decode_language, task = "en", None
+    del target
     text = ""
     try:
-        text, _ = _transcribe(audio_data, language=decode_language, task=task)
+        text, _ = _transcribe(audio_data, language=language, task="translate")
         if text and _is_junk(text):
             text = ""
         if not text:
-            text, _ = _transcribe(audio_data, language=decode_language, relaxed=True, task=task)
+            text, _ = _transcribe(audio_data, language=language, relaxed=True, task="translate")
             if text and _is_junk(text):
                 text = ""
     except Exception as e:

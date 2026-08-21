@@ -235,12 +235,16 @@ export const TranscriptSegment: React.FC<TranscriptSegmentProps> = ({
  *  chunk's translation is still decoding. Renders nothing for segments with
  *  no translation activity, so non-translated transcripts are unchanged. */
 const SegmentTranslation: React.FC<{ segment: TranscriptSegmentType }> = ({ segment }) => {
-  const text = (segment.translations ?? []).map((t) => t.text).join(' ');
+  const entries = segment.translations ?? [];
+  const text = entries.map((t) => t.text).join(' ');
   const pending = (segment.pendingTranslations?.length ?? 0) > 0;
   if (!text && !pending) return null;
+  // Badge shows the translation's language (mixed targets within one segment
+  // are possible after a mid-recording target switch; the first entry wins).
+  const badge = (entries[0]?.target ?? 'en').toUpperCase();
   return (
     <div className="segment-translation">
-      <span className="segment-translation-badge" aria-label="English translation">EN</span>
+      <span className="segment-translation-badge" aria-label={`${badge} translation`}>{badge}</span>
       <span className="segment-translation-text">
         {text}
         {pending && <em className="segment-translation-pending">{text ? ' ' : ''}Translating…</em>}
