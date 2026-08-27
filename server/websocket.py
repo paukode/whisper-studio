@@ -413,7 +413,7 @@ async def websocket_endpoint(
         routes subsequent audio to the new model. No-op when unchanged.
 
         ``variant`` is accepted for wire compatibility with older clients
-        (the whisper turbo/large-v3 variant era) and ignored."""
+        and ignored."""
         del variant
         nonlocal backend_mod, backend_name, asr_session
         new_name = resolve_name(requested)

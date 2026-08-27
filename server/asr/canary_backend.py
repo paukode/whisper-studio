@@ -1,7 +1,7 @@
 """Canary ASR backend — NVIDIA Canary-1B-v2 via vendored MLX code.
 
 Transcribes 25 European languages AND translates any of them to English with
-a real speech-translation head (unlike whisper-large-v3-turbo, whose
+a real speech-translation head (unlike Whisper checkpoints without one, whose
 translate task is silently ignored). Decodes settled utterances at silence
 boundaries like the Whisper backend; steady-state decode is ~0.4 s per
 utterance on Apple Silicon.

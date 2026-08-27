@@ -1,6 +1,6 @@
 """VAD-bounded utterance buffer.
 
-The browser streams ~256 ms PCM16 chunks, but Whisper-large-v3-turbo and
+The browser streams short PCM16 chunks, but Whisper-large-v3 and
 the ECAPA speaker encoder are both trained on much longer windows (30 s
 and ~3 s respectively). Feeding them 256 ms slices is the root cause of
 the "Cheers cheers cheers" / "Ola ola" hallucinations and of the
