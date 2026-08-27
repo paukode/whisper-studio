@@ -31,7 +31,7 @@ GOOD_SPEC = {
 }
 
 
-def _route(name, tool_input):
+def _route(name, tool_input, session_id="s1"):
     async def go():
         with ThreadPoolExecutor(max_workers=1) as pool:
             return await route_tool(
@@ -41,7 +41,7 @@ def _route(name, tool_input):
                 executor=pool,
                 transcript="",
                 attachments=None,
-                session_id="s1",
+                session_id=session_id,
                 model_id="m",
                 tool_use_id="tu_1",
             )
@@ -101,6 +101,86 @@ def test_multi_view_specs_need_no_top_level_mark():
         {"data": {"values": [{"a": 1}]}, "vconcat": [{"mark": "line"}]}
     )
     assert error is None and spec is not None
+
+
+# ------------------------------------------------------------- geometry lint
+# The lint is deliberately conservative: it bounces only what would visibly
+# render broken (content past the viewBox, boxes drawn on each other), it
+# skips anything it cannot measure, and it hands out ONE repair round — the
+# resubmission renders whether or not it is fixed.
+
+
+def _svg(body, h=200):
+    return f'<svg width="100%" viewBox="0 0 680 {h}"><title>t</title>{body}</svg>'
+
+
+def test_content_past_the_viewbox_bottom_bounces_once_then_renders():
+    from server.visuals import check_svg_geometry
+
+    bad = _svg('<rect class="box" x="20" y="180" width="200" height="60"/>')
+
+    output, effects = _route("create_visual", {"title": "F", "svg": bad}, session_id="geo-1")
+    assert effects == []
+    assert output.startswith("Error:") and "viewBox" in output
+
+    # Second attempt renders even if still broken: cap is one repair round.
+    output, effects = _route("create_visual", {"title": "F", "svg": bad}, session_id="geo-1")
+    (effect,) = effects
+    assert effect["viz_artifact"]["kind"] == "svg"
+
+    # The budget resets after the render, so a later diagram gets its own round.
+    assert check_svg_geometry(bad, "geo-1") is not None
+
+
+def test_text_running_past_the_canvas_edge_is_flagged():
+    from server.visuals import check_svg_geometry
+
+    bad = _svg('<text class="t" x="600" y="40">a label of thirty characters!!</text>')
+    error = check_svg_geometry(bad, "geo-2")
+    assert error is not None and "text" in error
+
+
+def test_partially_overlapping_boxes_are_flagged_but_containment_is_not():
+    from server.visuals import check_svg_geometry
+
+    overlapping = _svg(
+        '<rect class="c-1" x="100" y="100" width="200" height="80"/>'
+        '<rect class="c-2" x="150" y="120" width="200" height="80"/>'
+    )
+    assert "overlap" in check_svg_geometry(overlapping, "geo-3")
+
+    # A group border around inner boxes is a normal diagram idiom.
+    contained = _svg(
+        '<rect class="box" x="20" y="20" width="600" height="150"/>'
+        '<rect class="c-1" x="40" y="40" width="100" height="40"/>'
+    )
+    assert check_svg_geometry(contained, "geo-4") is None
+
+
+def test_translate_is_accounted_and_unmeasurable_subtrees_are_skipped():
+    from server.visuals import check_svg_geometry
+
+    translated = _svg(
+        '<g transform="translate(0, 150)">'
+        '<rect class="box" x="20" y="100" width="100" height="100"/></g>'
+    )
+    assert check_svg_geometry(translated, "geo-5") is not None
+
+    rotated = _svg(
+        '<g transform="rotate(45)"><rect class="box" x="20" y="500" width="100" height="100"/></g>'
+    )
+    assert check_svg_geometry(rotated, "geo-6") is None
+
+
+def test_entity_payloads_and_broken_xml_are_skipped_not_crashed():
+    from server.visuals import check_svg_geometry
+
+    entity = (
+        '<!DOCTYPE svg [<!ENTITY a "aaaa">]>'
+        '<svg viewBox="0 0 680 100"><text x="0" y="50">&a;</text></svg>'
+    )
+    assert check_svg_geometry(entity, "geo-7") is None
+    assert check_svg_geometry('<svg viewBox="0 0 680 100"><rect</svg>', "geo-8") is None
 
 
 # -------------------------------------------------------------------- routing
