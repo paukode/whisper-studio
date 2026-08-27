@@ -12,6 +12,11 @@ chart host page, which carries a vendored offline Vega runtime.
 """
 
 import json
+import re
+
+# Model-authored XML: defused parser blocks entity-expansion payloads that
+# stdlib expat would happily inflate.
+import defusedxml.ElementTree as ET
 
 # A chart spec is inlined into the session's chat_history blob, which is
 # rewritten on every message append, so a huge spec taxes every later turn.
@@ -143,6 +148,242 @@ def validate_svg(svg: str) -> str | None:
     if "viewBox" not in stripped:
         return 'Error: the <svg> needs a viewBox="0 0 680 H" attribute.'
     return None
+
+
+# --- geometry lint -----------------------------------------------------------
+# Small models draw structurally fine diagrams with sloppy coordinates:
+# content past the viewBox bottom (clipped by the card), text running off the
+# canvas, boxes drawn on top of each other. The lint catches only those
+# high-confidence cases and hands the model ONE repair round; a second miss
+# renders anyway, so a model that can't fix its geometry never loops.
+
+# Content inside these never draws in canvas coordinates.
+_LINT_SKIP_TAGS = {"defs", "marker", "symbol", "clipPath", "mask", "pattern"}
+
+_TRANSLATE_RE = re.compile(r"^\s*translate\(\s*(-?[0-9.]+)(?:[\s,]+(-?[0-9.]+))?\s*\)\s*$")
+
+# Average glyph width (conservative, below the ~8px/char the contract budgets)
+# so a bounce means the text truly leaves the canvas, not that the estimate
+# was pessimistic. A false positive costs a whole diagram rewrite.
+_CHAR_W_14 = 7.0
+_CHAR_W_12 = 6.0
+_EDGE_TOL = 2.0
+
+# Sessions that were already handed a geometry error and owe us a resubmit.
+_PENDING_GEOMETRY_REPAIR: set[str] = set()
+
+
+def _attr_floats(el, names: tuple[str, ...], defaults: tuple[float, ...]) -> list[float] | None:
+    out = []
+    for name, default in zip(names, defaults, strict=True):
+        raw = el.get(name)
+        if raw is None:
+            out.append(default)
+            continue
+        try:
+            out.append(float(raw))
+        except ValueError:
+            return None  # units/percentages: extent unknown, skip the element
+    return out
+
+
+def _points_extent(el) -> tuple[float, float, float, float] | None:
+    nums = []
+    for token in re.findall(r"-?[0-9.]+", el.get("points", "")):
+        try:
+            nums.append(float(token))
+        except ValueError:
+            return None
+    if len(nums) < 4:
+        return None
+    xs, ys = nums[0::2], nums[1::2]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _text_extent(el) -> tuple[float, float, float, float] | None:
+    pos = _attr_floats(el, ("x", "y"), (0.0, 0.0))
+    if pos is None:
+        return None
+    x, y = pos
+    content = "".join(el.itertext()).strip()
+    if not content:
+        return None
+    classes = (el.get("class") or "").split()
+    char_w = _CHAR_W_12 if "ts" in classes else _CHAR_W_14
+    est = len(content) * char_w
+    anchor = el.get("text-anchor", "start")
+    if anchor == "middle":
+        x0, x1 = x - est / 2, x + est / 2
+    elif anchor == "end":
+        x0, x1 = x - est, x
+    else:
+        x0, x1 = x, x + est
+    # Baseline at y: ~11px of ascender above, ~4px of descender below at 14px.
+    return x0, y - 11.0, x1, y + 4.0
+
+
+def _label(el, extent) -> str:
+    content = "".join(el.itertext()).strip()
+    if content:
+        return f'text "{content[:28]}"'
+    tag = el.tag.rsplit("}", 1)[-1]
+    return f"<{tag}> at ({extent[0]:.0f},{extent[1]:.0f})"
+
+
+def _lint_svg_geometry(svg: str) -> str | None:
+    """Best-effort coordinate check. Returns a short repair prompt or None.
+
+    Never raises and never blocks rendering on uncertainty: anything it cannot
+    measure (paths, rotated groups, unit-suffixed values, unparseable XML) is
+    skipped, because DOMPurify downstream is more forgiving than ElementTree
+    and a wrong bounce costs a full model round.
+    """
+    try:
+        root = ET.fromstring(svg)
+    except Exception:  # ParseError, or defusedxml refusing an entity payload
+        return None
+    parts = (root.get("viewBox") or "").replace(",", " ").split()
+    if len(parts) != 4:
+        return None
+    try:
+        min_x, min_y, vb_w, vb_h = (float(p) for p in parts)
+    except ValueError:
+        return None
+    if vb_w <= 0 or vb_h <= 0:
+        return None
+    x_max, y_max = min_x + vb_w, min_y + vb_h
+
+    issues: list[str] = []
+    boxes: list[tuple[float, float, float, float, str]] = []
+
+    def out_of_bounds(el, extent) -> None:
+        x0, y0, x1, y1 = extent
+        if (
+            x1 > x_max + _EDGE_TOL
+            or x0 < min_x - _EDGE_TOL
+            or y1 > y_max + _EDGE_TOL
+            or y0 < min_y - _EDGE_TOL
+        ):
+            issues.append(
+                f"{_label(el, extent)} spans x {x0:.0f}..{x1:.0f}, y {y0:.0f}..{y1:.0f}, "
+                f"outside the viewBox ({min_x:.0f} {min_y:.0f} {vb_w:.0f} {vb_h:.0f})"
+            )
+
+    def walk(parent, dx: float, dy: float) -> None:
+        for el in parent:
+            tag = el.tag.rsplit("}", 1)[-1]
+            if tag in _LINT_SKIP_TAGS:
+                continue
+            edx, edy = dx, dy
+            transform = el.get("transform")
+            if transform:
+                m = _TRANSLATE_RE.match(transform)
+                if not m:
+                    continue  # rotated/scaled subtree: extents unknown
+                edx += float(m.group(1))
+                edy += float(m.group(2) or 0.0)
+
+            extent = None
+            if tag == "rect":
+                vals = _attr_floats(el, ("x", "y", "width", "height"), (0.0, 0.0, 0.0, 0.0))
+                if vals is not None:
+                    x, y, w, h = vals
+                    extent = (x + edx, y + edy, x + w + edx, y + h + edy)
+                    if w > 0 and h > 0:
+                        boxes.append((*extent, _label(el, extent)))
+            elif tag in ("circle", "ellipse"):
+                names = ("cx", "cy", "r") if tag == "circle" else ("cx", "cy", "rx", "ry")
+                vals = _attr_floats(el, names, (0.0,) * len(names))
+                if vals is not None:
+                    cx, cy = vals[0] + edx, vals[1] + edy
+                    rx, ry = (vals[2], vals[2]) if tag == "circle" else (vals[2], vals[3])
+                    extent = (cx - rx, cy - ry, cx + rx, cy + ry)
+            elif tag == "line":
+                vals = _attr_floats(el, ("x1", "y1", "x2", "y2"), (0.0, 0.0, 0.0, 0.0))
+                if vals is not None:
+                    x1, y1, x2, y2 = vals
+                    extent = (
+                        min(x1, x2) + edx,
+                        min(y1, y2) + edy,
+                        max(x1, x2) + edx,
+                        max(y1, y2) + edy,
+                    )
+            elif tag in ("polyline", "polygon"):
+                pts = _points_extent(el)
+                if pts is not None:
+                    extent = (pts[0] + edx, pts[1] + edy, pts[2] + edx, pts[3] + edy)
+            elif tag == "text":
+                ext = _text_extent(el)
+                if ext is not None:
+                    extent = (ext[0] + edx, ext[1] + edy, ext[2] + edx, ext[3] + edy)
+
+            if extent is not None:
+                out_of_bounds(el, extent)
+            walk(el, edx, edy)
+
+    walk(root, 0.0, 0.0)
+
+    # Boxes that partially overlap read as a drawing mistake; full containment
+    # (a group border around inner boxes) is a normal diagram idiom.
+    for i in range(len(boxes)):
+        for j in range(i + 1, len(boxes)):
+            ax0, ay0, ax1, ay1, alabel = boxes[i]
+            bx0, by0, bx1, by1, blabel = boxes[j]
+            ix = min(ax1, bx1) - max(ax0, bx0)
+            iy = min(ay1, by1) - max(ay0, by0)
+            if ix <= 0 or iy <= 0:
+                continue
+            a_in_b = (
+                ax0 >= bx0 - _EDGE_TOL
+                and ay0 >= by0 - _EDGE_TOL
+                and ax1 <= bx1 + _EDGE_TOL
+                and ay1 <= by1 + _EDGE_TOL
+            )
+            b_in_a = (
+                bx0 >= ax0 - _EDGE_TOL
+                and by0 >= ay0 - _EDGE_TOL
+                and bx1 <= ax1 + _EDGE_TOL
+                and by1 <= ay1 + _EDGE_TOL
+            )
+            if a_in_b or b_in_a:
+                continue
+            smaller = min((ax1 - ax0) * (ay1 - ay0), (bx1 - bx0) * (by1 - by0))
+            if smaller > 0 and (ix * iy) / smaller > 0.3:
+                issues.append(f"boxes {alabel} and {blabel} overlap")
+
+    if not issues:
+        return None
+    listed = "\n".join(f"- {line}" for line in issues[:4])
+    if len(issues) > 4:
+        listed += f"\n- plus {len(issues) - 4} more"
+    return (
+        "Error: the SVG has coordinate problems that would render badly:\n"
+        f"{listed}\n"
+        "Fix the coordinates and call create_visual once more with the full "
+        "corrected SVG: grow the viewBox height if content needs room, keep "
+        "everything inside the canvas with ~20px padding, and separate "
+        "overlapping boxes."
+    )
+
+
+def check_svg_geometry(svg: str, session_id: str) -> str | None:
+    """Geometry lint with a one-bounce budget.
+
+    First miss returns the repair prompt; the resubmission renders whether or
+    not it is fixed, so the extra cost is capped at one model round per
+    diagram and a weak model can never retry-loop.
+    """
+    error = _lint_svg_geometry(svg)
+    if error is None:
+        _PENDING_GEOMETRY_REPAIR.discard(session_id)
+        return None
+    if session_id in _PENDING_GEOMETRY_REPAIR:
+        _PENDING_GEOMETRY_REPAIR.discard(session_id)
+        return None
+    if len(_PENDING_GEOMETRY_REPAIR) > 256:  # backstop for abandoned sessions
+        _PENDING_GEOMETRY_REPAIR.clear()
+    _PENDING_GEOMETRY_REPAIR.add(session_id)
+    return error
 
 
 def validate_chart_spec(spec) -> tuple[dict | None, str | None]:

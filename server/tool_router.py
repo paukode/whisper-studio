@@ -183,14 +183,17 @@ async def route_tool(
     # neither is approval-gated: nothing is written and nothing runs on the
     # host — the chart spec is evaluated in a sandboxed iframe.
     if tool_name in ("create_visual", "create_chart"):
-        from server.visuals import validate_chart_spec, validate_svg
+        from server.visuals import check_svg_geometry, validate_chart_spec, validate_svg
 
         title = tool_input.get("title", "Untitled")
         description = tool_input.get("description", "")
 
         if tool_name == "create_visual":
             svg = tool_input.get("svg", "")
-            error = validate_svg(svg)
+            # Geometry problems bounce at most once per session (the resubmit
+            # renders regardless), so a sloppy model gets one repair round and
+            # can never retry-loop.
+            error = validate_svg(svg) or check_svg_geometry(svg, session_id)
             if error:
                 return error, side_effects
             payload = {"kind": "svg", "source": svg}
