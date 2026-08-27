@@ -97,6 +97,15 @@ export const targetsFor = (mode: string) => {
  * an extra global store. ChatInput listens for `whisper-chat-insert` and
  * inserts the text into its composer (without auto-sending). TranscriptSegment
  * listens for `whisper-segment-edit` to enter edit mode programmatically. */
+/** Whether a scroll container is close enough to its bottom to keep
+ *  auto-following new transcript text. The slack absorbs sub-pixel scroll
+ *  positions and the height of a partially revealed last line. */
+export const isNearBottom = (el: {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+}): boolean => el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+
 export const CHAT_INSERT_EVENT = 'whisper-chat-insert';
 export const SEGMENT_EDIT_EVENT = 'whisper-segment-edit';
 
@@ -302,9 +311,34 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
     try { localStorage.setItem('whisper_transcript_tip_dismissed', 'true'); } catch { /* private mode */ }
   }, []);
 
+  // ── Scroll follow ─────────────────────────────────────────────────────
+  // The transcript follows new text ONLY while the user is at the bottom.
+  // Scrolling up parks the view exactly where the user left it (reading an
+  // earlier part of a live meeting must not fight the recorder); a floating
+  // arrow appears to jump back down and resume following.
+  const followRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
+
+  const handleTranscriptScroll = useCallback(() => {
+    const el = transcriptAreaRef.current;
+    if (!el) return;
+    const atBottom = isNearBottom(el);
+    followRef.current = atBottom;
+    setShowJump(!atBottom);
+  }, []);
+
+  const jumpToBottom = useCallback(() => {
+    const el = transcriptAreaRef.current;
+    if (!el) return;
+    followRef.current = true;
+    setShowJump(false);
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
   useEffect(() => {
-    if (transcriptAreaRef.current) {
-      transcriptAreaRef.current.scrollTop = transcriptAreaRef.current.scrollHeight;
+    const el = transcriptAreaRef.current;
+    if (el && followRef.current) {
+      el.scrollTop = el.scrollHeight;
     }
   }, [segments, interimText]);
 
@@ -498,6 +532,7 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
         ref={transcriptAreaRef}
         className="panel-body transcript-area"
         id="transcriptArea"
+        onScroll={handleTranscriptScroll}
         onContextMenu={(e) => {
           const sel = window.getSelection();
           const selected = sel?.toString().trim();
@@ -568,6 +603,20 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
           )}
         </div>
       </div>
+      {showJump && (
+        <button
+          type="button"
+          className="transcript-jump"
+          aria-label="Scroll to the latest transcript"
+          title="Scroll to the latest transcript"
+          onClick={jumpToBottom}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 5v14" />
+            <path d="M6 13l6 6 6-6" />
+          </svg>
+        </button>
+      )}
       {ctxMenu && <TranscriptContextMenu state={ctxMenu} onClose={() => setCtxMenu(null)} />}
     </div>
   );

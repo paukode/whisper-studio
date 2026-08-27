@@ -544,7 +544,24 @@ body {
 }
 .panel {
     display: flex; flex-direction: column; min-width: 200px; overflow: hidden;
+    /* Anchor for overlays (the transcript's jump-to-bottom arrow). */
+    position: relative;
 }
+/* Jump-to-latest arrow: appears when the user scrolls the transcript away
+ * from the bottom (auto-follow pauses so reading is never interrupted);
+ * clicking it snaps back down and resumes following live text. */
+.transcript-jump {
+    position: absolute; right: 18px; bottom: 16px; z-index: 5;
+    width: 36px; height: 36px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-elevated); color: var(--accent);
+    border: 1px solid var(--accent);
+    cursor: pointer; box-shadow: var(--shadow-md);
+    transition: background 0.15s, transform 0.1s;
+    animation: fadeSlideIn 0.2s ease-out;
+}
+.transcript-jump:hover { background: var(--accent-dim); }
+.transcript-jump:active { transform: scale(0.94); }
 #transcriptPanel { flex: 1; }
 #transcriptPanel.hidden { display: none; }
 #chatPanelWrap { flex: 1; }
