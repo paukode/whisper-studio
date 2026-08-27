@@ -4,9 +4,8 @@ Self-contained: model paths, download, decoding parameters, and the
 hallucination filters all live here. Decodes only settled utterances at
 silence boundaries (no interim drafts); the latency-focused alternative is
 the Parakeet backend. Runs the FULL large-v3 checkpoint: best multilingual
-accuracy and a real translate head (the turbo variant was removed — it had
-no translate capability and its speed edge stopped mattering once model
-loads got a visible banner).
+accuracy (the turbo variant was removed; translation
+is Canary's or Apple's job — see server/asr/canary_backend.py).
 
 Model load is lazy (first session), so importing this module is cheap.
 """
@@ -324,7 +323,6 @@ def _transcribe(
     audio_data: np.ndarray,
     language: str | None = None,
     relaxed: bool = False,
-    task: str | None = None,
 ) -> tuple[str, str | None]:
     """Decode one utterance with mlx-whisper -> (text, decoded language).
 
@@ -353,8 +351,6 @@ def _transcribe(
         kwargs.update(temperature=0.0, logprob_threshold=-1.0, no_speech_threshold=0.6)
     if language:
         kwargs["language"] = language
-    if task:
-        kwargs["task"] = task
 
     result = mlx_whisper.transcribe(audio_data, **kwargs)
     return result["text"].strip(), result.get("language") or language
@@ -362,38 +358,6 @@ def _transcribe(
 
 def _is_junk(text: str) -> bool:
     return text.strip().lower() in WHISPER_HALLUCINATIONS or is_repetition_hallucination(text)
-
-
-def translate_utterance(
-    audio_data: np.ndarray, language: str | None = None, target: str = "en"
-) -> str:
-    """English translation of one already-transcribed utterance window.
-
-    Called by the orchestrator (server/websocket.py) AFTER the transcript
-    final was emitted, on this backend's executor, so translation never
-    delays transcription — it just queues behind it.
-
-    Whisper's translate head targets ENGLISH ONLY (any of its 99 source
-    languages → en, never en → X); the orchestrator's resolver never routes
-    a non-English target here. ``target`` is accepted for signature parity
-    with the Canary backend. Decodes with the source language pinned and
-    ``task="translate"`` — the same strict-then-relaxed ladder and
-    hallucination filters as transcription; returns "" when nothing
-    survives.
-    """
-    del target
-    text = ""
-    try:
-        text, _ = _transcribe(audio_data, language=language, task="translate")
-        if text and _is_junk(text):
-            text = ""
-        if not text:
-            text, _ = _transcribe(audio_data, language=language, relaxed=True, task="translate")
-            if text and _is_junk(text):
-                text = ""
-    except Exception as e:
-        log.warning("Whisper translation error: %s", e)
-    return text
 
 
 def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None]:

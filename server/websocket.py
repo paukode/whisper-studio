@@ -38,51 +38,42 @@ router = APIRouter(tags=["websocket"])
 
 def resolve_translator(
     mode: str,
-    backend_name: str,
     apple_available: bool,
-    has_model_translate: bool,
     language: str | None,
     target: str,
 ) -> str | None:
-    """Who produces this utterance's translation line: "model", "apple", None.
+    """Who produces this utterance's translation line: "canary", "apple", None.
 
-    Pure so it is unit-testable, and language-pair aware:
-    - Whisper's translate head targets English only (99 sources -> en).
-    - Canary is bidirectional with English as the hub (25 langs <-> en),
-      never X -> Y with both non-English.
-    - Apple handles any pair among its supported languages and auto-detects
-      an unknown source; an unsupported pair or same-language input errors
-      client-side and just clears the pending slot.
-    "auto" prefers the engine's own decode when it can serve the pair,
-    otherwise Apple. Explicit modes force one path and yield None when it
-    cannot serve rather than silently substituting.
+    The Translate dropdown offers exactly two translators (plus off) — the
+    user picks one, there is no auto mode:
+    - Canary: bidirectional with English as the hub (25 langs <-> en, never
+      X -> Y with both non-English). Runs server-side on Canary's executor
+      regardless of which engine transcribed; an unknown source language is
+      detected there (LID), so language None is still serviceable.
+    - Apple: any pair among its ~20 languages, on the client via the shell
+      bridge; auto-detects an unknown source.
+    Legacy stored modes from the earlier design ("auto"/"model") map to
+    Canary. Pure so it is unit-testable.
     """
+    mode = {"auto": "canary", "model": "canary"}.get(mode, mode)
     if mode == "off":
         return None
     if language is not None and language == target:
         return None
-
-    from server.asr.canary_backend import CANARY_LANGUAGES
-
-    def model_can() -> bool:
-        if not has_model_translate:
-            return False
-        if backend_name == "whisper":
-            return target == "en" and language is not None
-        if backend_name == "canary":
-            if language is None or target not in CANARY_LANGUAGES:
-                return False
-            return target == "en" or language == "en"
-        return False
-
-    if mode == "model":
-        return "model" if model_can() else None
     if mode == "apple":
         return "apple" if apple_available else None
-    # auto
-    if model_can():
-        return "model"
-    return "apple" if apple_available else None
+    if mode == "canary":
+        from server.asr.canary_backend import CANARY_LANGUAGES
+
+        if target not in CANARY_LANGUAGES:
+            return None
+        # A known non-English source with a non-English target is the one
+        # pair shape Canary can never serve. Unknown sources are attempted —
+        # the backend detects and returns "" when the pair is unsupported.
+        if language is not None and language != "en" and target != "en":
+            return None
+        return "canary"
+    return None
 
 
 # ── Monotonic chunk-id resume across reconnects ─────────────────────────
@@ -265,12 +256,7 @@ async def websocket_endpoint(
             # same-language input), but never via a model decode.
             language = ev.get("language")
             translator = resolve_translator(
-                translate_mode,
-                backend_name,
-                apple_available,
-                hasattr(backend_mod, "translate_utterance"),
-                language,
-                translate_target,
+                translate_mode, apple_available, language, translate_target
             )
             payload = {
                 "type": "transcript",
@@ -287,7 +273,7 @@ async def websocket_endpoint(
                 payload["translate_via"] = "apple"
                 payload["translate_target"] = translate_target
             await send_json(payload)
-            if translator == "model":
+            if translator == "canary":
                 task = asyncio.create_task(
                     _run_translation(chunk_id, ev.get("audio"), language, translate_target)
                 )
@@ -309,16 +295,24 @@ async def websocket_endpoint(
                     )
 
     async def _run_translation(chunk_id: int, audio, language: str | None, target: str) -> None:
-        """Decode the utterance's English translation and deliver it.
+        """Decode the utterance's translation via Canary and deliver it.
 
-        Runs the decode on the backend's own single-worker executor, so it
-        queues behind live transcript decodes (never ahead of them). An empty
-        translation is still sent — the client uses it to clear the pending
-        "Translating…" slot for this chunk.
+        Always Canary, always on CANARY's executor — even when another engine
+        transcribed the audio (Canary is the universal model translator; it
+        loads lazily on the first translation behind the "Translating…"
+        placeholder). Queued decodes never run ahead of Canary's own live
+        transcript decodes. An empty translation is still sent — the client
+        uses it to clear the pending slot for this chunk.
         """
+        from server.asr import canary_backend
+
         try:
             translated = await loop.run_in_executor(
-                backend_mod.executor, backend_mod.translate_utterance, audio, language, target
+                canary_backend.executor,
+                canary_backend.translate_utterance,
+                audio,
+                language,
+                target,
             )
         except Exception as e:
             log.warning("Translation task failed for chunk %s: %s", chunk_id, e)

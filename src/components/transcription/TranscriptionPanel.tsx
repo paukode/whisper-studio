@@ -31,9 +31,14 @@ export const MODEL_OPTIONS = [
   { value: 'streaming', label: 'Parakeet (live)', backend: 'streaming' },
 ] as const;
 
-/** Translator display names with their language-pair capability, per engine. */
-export const translatorLabelOf = (backend: string): string =>
-  backend === 'canary' ? 'Canary (25 langs ↔ EN)' : 'Whisper (99 langs → EN)';
+/** The Translate dropdown, identical for every transcription model: the two
+ *  translators are standalone (Canary re-decodes the audio server-side,
+ *  Apple translates the finished text on-device in the Mac app). */
+export const TRANSLATOR_OPTIONS = [
+  { value: 'off', label: 'Translate: off' },
+  { value: 'canary', label: 'Canary (25 langs ↔ EN)' },
+  { value: 'apple', label: 'Apple (any pair)' },
+] as const;
 
 /** Target languages for translation lines: the union of what Canary and
  *  Apple's on-device translator support (Whisper always targets English and
@@ -77,11 +82,9 @@ export const TRANSLATE_TARGETS = [
   { code: 'zh', name: 'Chinese', canary: false, apple: true },
 ] as const;
 
-/** Which targets the current translate mode + engine can produce. Auto and
- *  Apple offer the union (Apple auto-covers unknowns); Canary its own set;
- *  Whisper only English. */
-export const targetsFor = (mode: string, backend: string) => {
-  if (mode === 'model' && backend === 'canary') return TRANSLATE_TARGETS.filter((t) => t.canary);
+/** Which targets the chosen translator can produce. */
+export const targetsFor = (mode: string) => {
+  if (mode === 'canary') return TRANSLATE_TARGETS.filter((t) => t.canary);
   if (mode === 'apple') return TRANSLATE_TARGETS.filter((t) => t.apple);
   return TRANSLATE_TARGETS;
 };
@@ -412,28 +415,25 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
           <select
             className={`transcript-engine-select translate-select${translateMode !== 'off' ? ' on' : ''}`}
             id="transcriptTranslateSelect"
-            title="Show a translation line under speech in other languages. Auto picks whichever translator can serve the language pair. Whisper translates into English only; Canary between its 25 languages and English; Apple between any of its ~20 languages, on-device (Mac app only)."
+            title="Show a translation line under speech in other languages. Canary translates between its 25 languages and English (best quality, works with every transcription model); Apple translates between any of its ~20 languages, on-device (Mac app only)."
             aria-label="Translation model"
             value={translateMode}
             onChange={(e) => handleTranslateChange(e.target.value, translateTarget)}
           >
-            <option value="off">Translate: off</option>
-            <option value="auto">Translate: auto</option>
-            {transcriptionBackend !== 'streaming' && (
-              <option value="model">{translatorLabelOf(transcriptionBackend)}</option>
-            )}
-            <option value="apple">Apple (any pair)</option>
+            {TRANSLATOR_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
           </select>
-          {translateMode !== 'off' && !(translateMode === 'model' && transcriptionBackend === 'whisper') && (
+          {translateMode !== 'off' && (
             <select
               className="transcript-engine-select translate-select on"
               id="transcriptTranslateTarget"
-              title="Language of the translation line. Whisper can only produce English; Canary reaches its other languages from English speech; Apple reaches any of its languages from anything."
+              title="Language of the translation line. Canary reaches its non-English languages from English speech only (English is always one side of its pair); Apple reaches any of its languages from anything."
               aria-label="Translate to language"
               value={translateTarget}
               onChange={(e) => handleTranslateChange(translateMode, e.target.value)}
             >
-              {targetsFor(translateMode, transcriptionBackend).map((t) => (
+              {targetsFor(translateMode).map((t) => (
                 <option key={t.code} value={t.code}>→ {t.name}</option>
               ))}
             </select>

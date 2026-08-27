@@ -22,6 +22,7 @@ export interface StreamingMessageProps {
  */
 export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isStreaming }) => {
   const thinkingContent = useActiveChatStore((s) => s.currentThinkingContent);
+  const streamStatus = useActiveChatStore((s) => s.streamStatus);
   const thinkingStartTime = useActiveChatStore((s) => s.thinkingStartTime);
   const thinkingElapsedMs = useActiveChatStore((s) => s.thinkingElapsedMs);
   const inputTokens = useActiveChatStore((s) => s.inputTokens);
@@ -83,7 +84,13 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
                 ? 'Thought process'
                 : thinkingContent
                   ? 'Thinking\u2026'
-                  : (isLocalModel ? 'Generating\u2026' : 'Thinking\u2026')}
+                  : streamStatus === 'searching'
+                    ? 'Searching your workspace\u2026'
+                    : streamStatus === 'connecting'
+                      ? 'Waiting for the model\u2026'
+                      : streamStatus === 'preparing'
+                        ? 'Preparing\u2026'
+                        : (isLocalModel ? 'Generating\u2026' : 'Thinking\u2026')}
               {!content && <span className="pulse-dot"></span>}
               {displayElapsed > 0 && (
                 <span style={{ marginLeft: 'auto', fontSize: '0.85em', opacity: 0.7 }}>
