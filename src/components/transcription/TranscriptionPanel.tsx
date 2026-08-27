@@ -467,7 +467,7 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
           <select
             className="transcript-engine-select"
             id="transcriptEngineSelect"
-            title="Transcription model, switches live, even mid-recording. Whisper Turbo: fast, 99 languages. Whisper Large v3: most accurate, slower. Canary: best translation, set your language in Settings. Parakeet: live words, lowest latency."
+            title="Transcription model, switches live, even mid-recording. Whisper Large v3: most accurate, 99 languages. Canary: fastest, best translation, detects the language per sentence. Parakeet: live words, lowest latency."
             aria-label="Transcription model"
             value={transcriptionBackend}
             onChange={(e) => handleModelChange(e.target.value)}

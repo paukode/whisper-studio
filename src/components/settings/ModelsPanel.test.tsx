@@ -18,9 +18,9 @@ const CATALOG = {
   models: [
     {
       key: 'whisper',
-      label: 'Whisper Large v3 Turbo',
+      label: 'Whisper Large v3',
       group: 'transcription',
-      repo_id: 'mlx-community/whisper-large-v3-turbo',
+      repo_id: 'mlx-community/whisper-large-v3-mlx',
       installed: true,
       size_bytes_estimate: 1_613_980_376,
       bytes_on_disk: 1_613_980_376,
@@ -127,7 +127,7 @@ describe('ModelsPanel', () => {
     expect(screen.getByText('Local chat')).toBeInTheDocument();
 
     // Installed row: chip + Delete.
-    expect(screen.getByText('Whisper Large v3 Turbo')).toBeInTheDocument();
+    expect(screen.getByText('Whisper Large v3')).toBeInTheDocument();
     expect(screen.getByText('Installed')).toBeInTheDocument();
 
     // Absent row: human size + Download.

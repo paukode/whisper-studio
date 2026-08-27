@@ -1,6 +1,6 @@
 """Audio and video attachment extraction.
 
-Audio is transcribed locally with mlx-whisper (large-v3-turbo) into a
+Audio is transcribed locally with mlx-whisper (large-v3) into a
 timestamped, speaker-labeled markdown transcript. Speaker labels reuse the
 ECAPA embedding + agglomerative clustering already in server/diarization. Video
 uses ffmpeg (via mlx-whisper's loader) for the audio track, and additionally

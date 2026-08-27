@@ -4,8 +4,8 @@ Self-contained: model paths, download, decoding parameters, and the
 hallucination filters all live here. Decodes only settled utterances at
 silence boundaries (no interim drafts); the latency-focused alternative is
 the Parakeet backend. Runs the FULL large-v3 checkpoint: best multilingual
-accuracy (the turbo variant was removed; translation
-is Canary's or Apple's job — see server/asr/canary_backend.py).
+accuracy (translation is Canary's or Apple's
+job — see server/asr/canary_backend.py).
 
 Model load is lazy (first session), so importing this module is cheap.
 """
