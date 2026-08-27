@@ -33,8 +33,12 @@ WHISPER_REPO_ID = "mlx-community/whisper-large-v3-mlx"
 WHISPER_SENTINEL = "weights.npz"
 
 
-# RMS below this is treated as dead air — don't bother decoding.
-ENERGY_THRESHOLD = 0.01
+# RMS below this is treated as dead air — don't bother decoding. A
+# true-silence floor, NOT a "quiet speech" level: the VAD already guarantees
+# speech-like content, and the old 0.01 gate silently ate every utterance
+# from a quiet mic (low OS input volume) while Parakeet, which has no gate,
+# transcribed the same audio fine.
+ENERGY_THRESHOLD = 0.002
 
 # Decoding is sequential per connection: utterances arrive in real time
 # and decode far faster than real time (RTF well under 1), so one worker
