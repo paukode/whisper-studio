@@ -19,6 +19,11 @@ export interface TranscriptionState {
     translating?: boolean,
   ) => void;
   applyTranslation: (chunkId: number, text: string, target?: string) => void;
+  /** A manual text edit invalidates the machine translation: park a pending
+   *  marker (sentinel chunk -1) so the "Translating…" slot shows while the
+   *  corrected text is re-translated, then commit the single fresh line. */
+  beginSegmentRetranslation: (segmentId: string) => void;
+  completeSegmentRetranslation: (segmentId: string, text: string, target?: string) => void;
   applySpeakerUpdates: (updates: { chunk_id: number; speaker: string }[]) => void;
   editSegmentText: (segmentId: string, newText: string) => void;
   renameSpeaker: (originalKey: string, newName: string) => void;
@@ -80,6 +85,10 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
     set((state) => ({
       segments: state.segments.map((seg) => {
         const pending = seg.pendingTranslations ?? [];
+        // A segment being re-translated after a manual edit (sentinel -1)
+        // must not receive late machine chunk translations — the edit
+        // supersedes them.
+        if (pending.includes(-1)) return seg;
         const owns = pending.includes(chunkId) || (seg.chunks?.some((c) => c.id === chunkId) ?? false);
         if (!owns) return seg;
         const translations = text
@@ -145,6 +154,30 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
           };
         }).filter((s) => s.text.length > 0);
       }),
+    }));
+  },
+
+  beginSegmentRetranslation: (segmentId: string) => {
+    set((state) => ({
+      segments: state.segments.map((seg) =>
+        seg.id === segmentId
+          ? { ...seg, translations: undefined, pendingTranslations: [-1] }
+          : seg,
+      ),
+    }));
+  },
+
+  completeSegmentRetranslation: (segmentId: string, text: string, target?: string) => {
+    set((state) => ({
+      segments: state.segments.map((seg) =>
+        seg.id === segmentId
+          ? {
+              ...seg,
+              translations: text ? [{ chunkId: -1, text, target }] : undefined,
+              pendingTranslations: undefined,
+            }
+          : seg,
+      ),
     }));
   },
 

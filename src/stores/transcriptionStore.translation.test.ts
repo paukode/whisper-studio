@@ -73,3 +73,45 @@ describe('translate-to-English companion lines', () => {
     expect(seg.pendingTranslations).toBeUndefined();
   });
 });
+
+describe('segment re-translation after a manual edit', () => {
+  let testStore: ReturnType<typeof createTranscriptionStore>;
+  beforeEach(() => {
+    testStore = createTranscriptionStore();
+    testStore.getState().addSegment({
+      id: 'seg-1', speaker: 'Speaker 1', text: 'Dzień dobry',
+      timestamp: 1, edited: false,
+      chunks: [{ id: 0, start: 0 }],
+      translations: [{ chunkId: 0, text: 'Good morning', target: 'en' }],
+    });
+  });
+
+  it('begin parks the pending marker and drops the stale lines', () => {
+    testStore.getState().beginSegmentRetranslation('seg-1');
+    const seg = testStore.getState().segments[0];
+    expect(seg.translations).toBeUndefined();
+    expect(seg.pendingTranslations).toEqual([-1]);
+  });
+
+  it('complete commits one fresh line; empty text clears everything', () => {
+    const store = testStore.getState();
+    store.beginSegmentRetranslation('seg-1');
+    store.completeSegmentRetranslation('seg-1', 'Good evening', 'en');
+    let seg = testStore.getState().segments[0];
+    expect(seg.translations).toEqual([{ chunkId: -1, text: 'Good evening', target: 'en' }]);
+    expect(seg.pendingTranslations).toBeUndefined();
+    store.beginSegmentRetranslation('seg-1');
+    store.completeSegmentRetranslation('seg-1', '', 'en');
+    seg = testStore.getState().segments[0];
+    expect(seg.translations).toBeUndefined();
+  });
+
+  it('late machine chunk translations cannot overwrite an in-flight edit', () => {
+    const store = testStore.getState();
+    store.beginSegmentRetranslation('seg-1');
+    store.applyTranslation(0, 'stale machine line', 'en');
+    const seg = testStore.getState().segments[0];
+    expect(seg.translations).toBeUndefined();
+    expect(seg.pendingTranslations).toEqual([-1]);
+  });
+});
