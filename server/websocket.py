@@ -306,6 +306,9 @@ async def websocket_endpoint(
         """
         from server.asr import canary_backend
 
+        # Registers this translation with Canary's draft scheduler so live
+        # drafts yield the decode thread until it has run.
+        canary_backend.note_translation_queued()
         try:
             translated = await loop.run_in_executor(
                 canary_backend.executor,
