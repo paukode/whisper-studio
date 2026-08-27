@@ -96,10 +96,27 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             ensure_module="server.asr.canary_backend",
             ensure_func="_ensure_model",
             note=(
-                "Best speech translation to English plus very fast, accurate "
-                "transcription for 25 European languages. No language "
-                "auto-detect: set your session language in Settings, so it "
-                "suits single-language meetings."
+                "Fastest transcription and the best translation for 25 "
+                "European languages, with per-sentence language detection "
+                "(via the Language ID model). Also the translator behind "
+                "the transcript's Canary translate option, whichever model "
+                "is transcribing."
+            ),
+        ),
+        ModelEntry(
+            key="voxlingua_lid",
+            label="Language ID (VoxLingua107)",
+            group=GROUP_TRANSCRIPTION,
+            repo_id="speechbrain/lang-id-voxlingua107-ecapa",
+            dir_name="lang-id-voxlingua107-ecapa",
+            # Mirrors lid._ensure_model's presence check.
+            sentinel_rel="hyperparams.yaml",
+            ensure_module="server.asr.lid",
+            ensure_func="_ensure_model",
+            note=(
+                "Tiny classifier that detects the spoken language of each "
+                "sentence (107 languages). Gives Canary automatic language "
+                "detection for transcription and translation."
             ),
         ),
         ModelEntry(

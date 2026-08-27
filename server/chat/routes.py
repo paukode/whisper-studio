@@ -944,653 +944,739 @@ async def chat_endpoint(request: Request):
     # rather than a new user message — the LLM resumes where it paused.
     approved_tool_result = body.get("approved_tool_result")
 
-    ws_path = get_workspace_path()
+    # Stream from byte zero: everything below (transcript condensation, index
+    # grounding, hooks, provider dispatch) can take long seconds, and with the
+    # old shape the HTTP response did not even START until it finished — the
+    # client stared at a silent "Thinking…" with zero bytes on the wire.
+    # _build_turn now does that work while the already-open stream carries
+    # coarse `status` frames the UI renders live; when the turn's own SSE
+    # stream exists, the outer stream delegates to it.
+    status_q: asyncio.Queue = asyncio.Queue()
 
-    # Latch config for this session — latched fields are frozen at session start
-    # to prevent mid-session settings changes from disrupting the conversation.
-    session_config = latch_session(session_id, workspace_path=ws_path)
-    chat_models = session_config.get("chat_models", _get_chat_models())
-    default_model = session_config.get("default_chat_model", _get_default_model())
-    if not model_key or model_key not in chat_models:
-        model_key = default_model
+    def _status(stage: str) -> None:
+        status_q.put_nowait(stage)
 
-    # Apply model fallback chain if enabled
-    from server.infrastructure.model_fallback import resolve_model_with_fallback
+    async def _build_turn():
+        # These prelude names are REASSIGNED below (condensation rewrites the
+        # transcript, mention-resolution rewrites the question, fallback
+        # resolution rewrites the model) — without nonlocal each assignment
+        # would shadow the closure variable and the earlier reads would raise
+        # UnboundLocalError.
+        nonlocal question, transcript, model_key
+        _status("preparing")
+        ws_path = get_workspace_path()
 
-    _requested_model_key = model_key
-    model_key, model_id = resolve_model_with_fallback(model_key, chat_models, session_id=session_id)
+        # Latch config for this session — latched fields are frozen at session start
+        # to prevent mid-session settings changes from disrupting the conversation.
+        session_config = latch_session(session_id, workspace_path=ws_path)
+        chat_models = session_config.get("chat_models", _get_chat_models())
+        default_model = session_config.get("default_chat_model", _get_default_model())
+        if not model_key or model_key not in chat_models:
+            model_key = default_model
 
-    # A forced skill may pin its own (often cheaper) model for the turn it owns
-    # via the skill's `model:` frontmatter. This only applies to a forced skill
-    # (the whole turn is that skill) and only when the override names a chat
-    # model that is actually available; otherwise the resolved model stands.
-    if force_skill:
-        from server.skills import get_skill_model
+        # Apply model fallback chain if enabled
+        from server.infrastructure.model_fallback import resolve_model_with_fallback
 
-        _skill_model_key = get_skill_model(force_skill)
-        if _skill_model_key and _skill_model_key in chat_models:
-            model_key, model_id = _skill_model_key, chat_models[_skill_model_key]
-
-    # An oversized transcript cannot fit the model context in one pass. Condense
-    # it to per-chunk extracts here, at the single point it enters the request,
-    # so both the "[Transcript so far]" user block and the transcript handed to
-    # tools see the condensed text (and the turn-1 prompt does not overflow).
-    # Runs after model resolution so a local turn can steer the map step at the
-    # active on-device model instead of evicting it to load a fixed one.
-    # Self-gating: a no-op below the size threshold; only blocks (LLM calls)
-    # when it actually fires, so run it off the event loop.
-    if transcript:
-        from server.local import runtime as _local_rt
-        from server.summarize.mapreduce import maybe_condense_transcript
-
-        _chat_model_key = model_key if _local_rt.is_local_model(model_key) else None
-        transcript = await asyncio.get_running_loop().run_in_executor(
-            None,
-            functools.partial(
-                maybe_condense_transcript, transcript, chat_model_key=_chat_model_key
-            ),
+        _requested_model_key = model_key
+        model_key, model_id = resolve_model_with_fallback(
+            model_key, chat_models, session_id=session_id
         )
 
-    # Plan mode — single source of truth is the permissions mode setting.
-    plan_mode = is_plan_mode()
-    mode = get_mode()
+        # A forced skill may pin its own (often cheaper) model for the turn it owns
+        # via the skill's `model:` frontmatter. This only applies to a forced skill
+        # (the whole turn is that skill) and only when the override names a chat
+        # model that is actually available; otherwise the resolved model stands.
+        if force_skill:
+            from server.skills import get_skill_model
 
-    # Effort level: taken per-turn from the request body (so a slider/slash
-    # change applies immediately), then clamped to what this model supports
-    # using Claude Code's nearest-lower fallback. Adaptive-thinking models
-    # honour it via output_config.effort; effort-less models (Haiku) send
-    # neither thinking nor effort. Ultracode additionally orchestrates — see
-    # build_system_prompt(ultracode=...).
-    from server.infrastructure.effort import (
-        DEFAULT_EFFORT,
-        clamp_effort,
-        effort_levels_for,
-        is_ultracode,
-        normalize_effort,
-    )
+            _skill_model_key = get_skill_model(force_skill)
+            if _skill_model_key and _skill_model_key in chat_models:
+                model_key, model_id = _skill_model_key, chat_models[_skill_model_key]
 
-    # Read the metadata from the LATCHED session config, not the global one:
-    # chat_model_meta is a latched field, so a model defined only in the
-    # workspace's .whisper/settings.json carries its own effort tier and
-    # ultracode capability here. Going back to the global config would resolve
-    # that model against metadata it does not have and silently downgrade it.
-    # Fall back to the global lookup for keys the latch does not know (a local
-    # model downloaded mid-session is folded in there, not in the snapshot).
-    _model_meta = (session_config.get("chat_model_meta") or {}).get(model_key) or (
-        _get_chat_model_meta().get(model_key, {})
-    )
-    _allowed_effort = effort_levels_for(_model_meta, model_key)
-    _requested_effort = normalize_effort(
-        body.get("effort_level") or session_config.get("effort_level") or DEFAULT_EFFORT
-    )
-    effort_label = clamp_effort(_requested_effort, _allowed_effort)  # None ⇒ no effort
-    ultracode_active = is_ultracode(effort_label)
+        # An oversized transcript cannot fit the model context in one pass. Condense
+        # it to per-chunk extracts here, at the single point it enters the request,
+        # so both the "[Transcript so far]" user block and the transcript handed to
+        # tools see the condensed text (and the turn-1 prompt does not overflow).
+        # Runs after model resolution so a local turn can steer the map step at the
+        # active on-device model instead of evicting it to load a fixed one.
+        # Self-gating: a no-op below the size threshold; only blocks (LLM calls)
+        # when it actually fires, so run it off the event loop.
+        if transcript:
+            from server.local import runtime as _local_rt
+            from server.summarize.mapreduce import maybe_condense_transcript
 
-    # A budget fallback swaps the model BEFORE effort is resolved, so the
-    # clamp above can quietly drop the turn's reasoning (ultracode → max, or
-    # away entirely on a model with no effort ladder) while the composer still
-    # shows what the user picked. Surface both halves as one event so the
-    # downgrade is visible rather than inferred from a cheaper-looking bill.
-    _downgrade = None
-    if _requested_model_key != model_key or _requested_effort != (effort_label or ""):
-        _downgrade = {
-            "requested_model": _requested_model_key,
-            "effective_model": model_key,
-            "requested_effort": _requested_effort,
-            "effective_effort": effort_label or "none",
-            "model_changed": _requested_model_key != model_key,
-            "effort_changed": _requested_effort != (effort_label or ""),
-            "reason": (
-                "model fallback"
-                if _requested_model_key != model_key
-                else "model does not support the requested effort"
-            ),
-        }
-
-    # Load WHISPER.md from workspace
-    # `question` selects which directory-scoped WHISPER.md files load this turn.
-    whisper_md_context = get_whisper_md_context(ws_path, question)
-
-    # Memory recall — select relevant memories for this query
-    memory_context = ""
-    session_memory_context = ""
-    from server.infrastructure.feature_flags import is_enabled as _is_ff_enabled
-
-    # Both tiers when a workspace is open; global-only in plain chat.
-    if _is_ff_enabled("auto_memory"):
-        try:
-            from server.memory.extract import publish_memory_event
-            from server.memory.recall import recall_memory_context
-
-            memory_context, _recalled_n = await recall_memory_context(
-                question, ws_path, model_id=model_id
+            _chat_model_key = model_key if _local_rt.is_local_model(model_key) else None
+            transcript = await asyncio.get_running_loop().run_in_executor(
+                None,
+                functools.partial(
+                    maybe_condense_transcript, transcript, chat_model_key=_chat_model_key
+                ),
             )
-            if _recalled_n:
-                # Surface on the session's long-lived event stream (the chat
-                # SSE has not started streaming yet at this point).
-                publish_memory_event(session_id, action="recalled", count=_recalled_n)
-        except Exception as _mem_err:
-            log.warning("Memory recall failed: %s", _mem_err)
-    if _is_ff_enabled("session_memory"):
-        try:
-            from server.memory.session_memory import get_session_memory_context
 
-            session_memory_context = get_session_memory_context(session_id)
-        except Exception as e:
-            log.debug("session memory context unavailable: %s", e)
+        # Plan mode — single source of truth is the permissions mode setting.
+        plan_mode = is_plan_mode()
+        mode = get_mode()
 
-    # Prompt caching (cloud/Bedrock only): when enabled, build the system prompt
-    # as a (static, dynamic) split so the static prefix can be cached alongside
-    # the tool definitions; otherwise a plain joined string. The local Gemma path
-    # builds its own string body in server/local/route.py and is unaffected.
-    from server.chat.caching import resolve_system_prompt
+        # Effort level: taken per-turn from the request body (so a slider/slash
+        # change applies immediately), then clamped to what this model supports
+        # using Claude Code's nearest-lower fallback. Adaptive-thinking models
+        # honour it via output_config.effort; effort-less models (Haiku) send
+        # neither thinking nor effort. Ultracode additionally orchestrates — see
+        # build_system_prompt(ultracode=...).
+        from server.infrastructure.effort import (
+            DEFAULT_EFFORT,
+            clamp_effort,
+            effort_levels_for,
+            is_ultracode,
+            normalize_effort,
+        )
 
-    _caching_on = _is_ff_enabled("prompt_caching")
+        # Read the metadata from the LATCHED session config, not the global one:
+        # chat_model_meta is a latched field, so a model defined only in the
+        # workspace's .whisper/settings.json carries its own effort tier and
+        # ultracode capability here. Going back to the global config would resolve
+        # that model against metadata it does not have and silently downgrade it.
+        # Fall back to the global lookup for keys the latch does not know (a local
+        # model downloaded mid-session is folded in there, not in the snapshot).
+        _model_meta = (session_config.get("chat_model_meta") or {}).get(model_key) or (
+            _get_chat_model_meta().get(model_key, {})
+        )
+        _allowed_effort = effort_levels_for(_model_meta, model_key)
+        _requested_effort = normalize_effort(
+            body.get("effort_level") or session_config.get("effort_level") or DEFAULT_EFFORT
+        )
+        effort_label = clamp_effort(_requested_effort, _allowed_effort)  # None ⇒ no effort
+        ultracode_active = is_ultracode(effort_label)
 
-    # Progressive tool disclosure: re-derive this session's activations from
-    # visible history (self-healing across restarts/pauses), force-activate a
-    # requested skill so @skills: forcing still works when its tool is
-    # deferred, then compute the deferred index for the static system block.
-    # The suppress flag isn't known yet (grounding resolves later); the index
-    # may list a few tools a strict-RAG round hides — harmless, tool_search
-    # activation still intersects with the post-filter catalog per round.
-    from server.chat.tool_activation import activate, activate_from_history
-    from server.chat.tool_index import build_deferred_index, estimate_tool_tokens
-    from server.chat.tool_pool import assemble_partitioned_pool
-    from server.infrastructure.sessions import visible_chat_history
+        # A budget fallback swaps the model BEFORE effort is resolved, so the
+        # clamp above can quietly drop the turn's reasoning (ultracode → max, or
+        # away entirely on a model with no effort ladder) while the composer still
+        # shows what the user picked. Surface both halves as one event so the
+        # downgrade is visible rather than inferred from a cheaper-looking bill.
+        _downgrade = None
+        if _requested_model_key != model_key or _requested_effort != (effort_label or ""):
+            _downgrade = {
+                "requested_model": _requested_model_key,
+                "effective_model": model_key,
+                "requested_effort": _requested_effort,
+                "effective_effort": effort_label or "none",
+                "model_changed": _requested_model_key != model_key,
+                "effort_changed": _requested_effort != (effort_label or ""),
+                "reason": (
+                    "model fallback"
+                    if _requested_model_key != model_key
+                    else "model does not support the requested effort"
+                ),
+            }
 
-    activate_from_history(session_id, visible_chat_history(chat_history))
-    if force_skill:
-        activate(session_id, [force_skill])
-    _advertised0, _deferred0, _core_count0 = assemble_partitioned_pool(
-        plan_mode=plan_mode,
-        ws_connected=bool(ws_path),
-        session_id=session_id,
-        ultracode=ultracode_active,
-    )
-    _deferred_index = build_deferred_index(_deferred0)
-    _deferred_tokens_est = estimate_tool_tokens(_deferred0)
+        # Load WHISPER.md from workspace
+        # `question` selects which directory-scoped WHISPER.md files load this turn.
+        whisper_md_context = get_whisper_md_context(ws_path, question)
 
-    system_prompt, system_static, system_dynamic, _cache_ttl = resolve_system_prompt(
-        model_id,
-        caching_on=_caching_on,
-        ws_path=ws_path,
-        session_id=session_id,
-        brief_mode=brief_mode,
-        plan_mode=plan_mode,
-        whisper_md_context=whisper_md_context,
-        memory_context=memory_context,
-        session_memory_context=session_memory_context,
-        ultracode=ultracode_active,
-        deferred_tool_index=_deferred_index,
-    )
+        # Memory recall — select relevant memories for this query
+        memory_context = ""
+        session_memory_context = ""
+        from server.infrastructure.feature_flags import is_enabled as _is_ff_enabled
 
-    # Filter out UI-only rows (cron_event, etc.) before building the
-    # Bedrock messages array — those are persisted in chat_history for
-    # replay-on-resume but must never enter Claude's context.
-    from server.chat.attachment_context import (
-        collect_history_attachment_ids,
-        ensure_attachments_present,
-        rebuild_history_message,
-        render_attachment_blocks,
-    )
-    from server.infrastructure.sessions import visible_chat_history
-
-    # History rows carry per-message attachmentIds; rebuild re-injects each
-    # attachment's content at its original position, so a file attached on an
-    # earlier turn is still literally in the context now (attachments are
-    # session state, not turn state).
-    _visible_history = visible_chat_history(chat_history)
-    messages = [rebuild_history_message(msg) for msg in _visible_history]
-
-    # Resolve @file:/@file mentions — inline the referenced file so the model
-    # has the content directly instead of hunting for it with tools.
-    if ws_path:
-        question = _resolve_at_file_mentions(question, ws_path)
-
-    # Resolve bare @<session> mentions — inline that session's recent
-    # conversation so the model has it directly, the same one-shot pattern as
-    # @file: above. No workspace needed, so this always runs.
-    from server.agent_tools.cross_session import resolve_at_session_mentions
-
-    question = resolve_at_session_mentions(question, session_id)
-
-    # Resolve this turn's attachments (rendering + per-file caps live in
-    # attachment_context, shared with the history rebuild above). A missing id
-    # yields an explicit unavailability marker, never a silent skip. Binding
-    # writes the session id onto every referenced attachment and slides its
-    # 30-day retention window; it must happen before the local/OpenAI dispatch
-    # below so their tool paths see the files via the durable store.
-    attachment_texts, image_blocks = render_attachment_blocks(
-        attachment_ids, body.get("attachment_names", [])
-    )
-    _referenced_ids = collect_history_attachment_ids(_visible_history) + attachment_ids
-    if _referenced_ids:
-        from server.attachment_store import bind_to_session
-
-        await asyncio.to_thread(bind_to_session, _referenced_ids, session_id)
-
-    # Grounding state for this turn. Set in the fresh-turn branch below; stays
-    # None/False on approval-resume turns (grounding isn't recomputed there).
-    grounding_meta: dict | None = None
-    grounding_active = False
-
-    if approved_tool_result:
-        # Continuation turn. `approved_tool_result` accepts two shapes:
-        #   1. A single dict {tool_use_id, content}     — approval flow,
-        #                                                 single ask_user_question
-        #   2. A list of those dicts                     — multi-question batch
-        #                                                 submit (tabbed card)
-        if isinstance(approved_tool_result, list):
-            answers = approved_tool_result
-        else:
-            answers = [approved_tool_result]
-
-        paused = _paused_sessions.pop(session_id, None)
-        if not paused:
-            log.warning(
-                "Continuation for session %s found no paused state (backend "
-                "restarted?) — replaying %d outcome(s) as text",
-                session_id,
-                len(answers),
-            )
-        messages = _resume_messages(messages, answers, paused)
-    else:
-        parts = []
-        if attachment_texts:
-            parts.extend(attachment_texts)
-        # Index-first grounding (point I): when the user has selected workspace
-        # indexes to search, retrieve relevant passages now and inject them as
-        # cited context, so the answer is grounded in the index without relying
-        # on the model choosing to call the search tool.
-        # An ABSENT field defaults to every indexed folder, so a fresh session
-        # grounds from its very first question (the frontend mints the session
-        # id at send time, so its per-session selection isn't seeded yet). An
-        # explicit EMPTY list means the user deselected all — honour "search
-        # nothing". `body.get(... ) or []` would have conflated the two and
-        # silently disabled grounding on the first turn.
-        _raw_sel = body.get("selected_search_indexes")
-        if _raw_sel is None:
-            # Deprioritize the index when a workspace is connected: with no
-            # explicit selection, ground against every index ONLY if no
-            # workspace is open. When one is, default to searching nothing so
-            # the model answers from the workspace and hits the index only when
-            # it (or the user) explicitly calls workspace_semantic_search.
-            # (get_workspace_path is already imported at the top of this function.)
-            if get_workspace_path():
-                selected_indexes = []
-            else:
-                from server.index.store import list_indexed_workspaces
-
-                selected_indexes = list_indexed_workspaces()
-        elif isinstance(_raw_sel, list):
-            selected_indexes = _raw_sel
-        else:
-            # Malformed (non-list) value from an unexpected client → search
-            # nothing rather than silently grounding against every folder.
-            selected_indexes = []
-        if selected_indexes and question.strip():
+        # Both tiers when a workspace is open; global-only in plain chat.
+        if _is_ff_enabled("auto_memory"):
             try:
-                from server.index.pipeline import build_context_query, retrieve_grounding
-                from server.infrastructure.feature_flags import is_enabled
+                from server.memory.extract import publish_memory_event
+                from server.memory.recall import recall_memory_context
 
-                # Context-aware retrieval query (prior turns are in `messages`).
-                #  - rag_query_rewrite ON  -> Tier 3: a fast LLM rewrites the
-                #    follow-up into a standalone query, used ALONE.
-                #  - OFF (default)         -> Tier 1+2: a heuristic context query
-                #    fused with the raw question via reciprocal-rank fusion.
-                primary_query = question
-                extra_queries: list[str] = []
-                if is_enabled("rag_query_rewrite") and messages:
-                    try:
-                        rewritten = await asyncio.wait_for(
-                            _rewrite_query_for_retrieval(question, messages),
-                            timeout=_QUERY_REWRITE_TIMEOUT_S,
-                        )
-                    except asyncio.TimeoutError:
-                        log.warning("Query rewrite (Tier 3) timed out; using heuristic context")
-                        rewritten = None
-                    if rewritten:
-                        primary_query = rewritten
-                if primary_query == question:  # not rewritten → Tier 1+2
-                    ctx = build_context_query(question, messages)
-                    if ctx and ctx != question:
-                        extra_queries = [ctx]
-
-                def _do_grounding():
-                    return retrieve_grounding(
-                        selected_indexes,
-                        primary_query,
-                        extra_queries=extra_queries or None,
-                        return_meta=True,
-                    )
-
-                # The reranker (if on) cold-loads a ~2.4GB model on the first
-                # grounded turn; give that extra headroom so a cold load can't
-                # blow the budget and silently drop grounding (warm turns are
-                # unaffected — they finish in well under the base timeout).
-                _ground_timeout = _GROUNDING_TIMEOUT_S + (
-                    _RERANK_COLD_BUDGET_S if is_enabled("rag_reranker") else 0
+                memory_context, _recalled_n = await recall_memory_context(
+                    question, ws_path, model_id=model_id
                 )
-                grounding, _gmeta = await asyncio.wait_for(
-                    asyncio.get_event_loop().run_in_executor(_GROUNDING_EXECUTOR, _do_grounding),
-                    timeout=_ground_timeout,
-                )
-                # Surface the grounding chip only when at least one index was
-                # actually searched — never for users who have no indexes, and
-                # not on a timeout/error (leave meta None → no chip).
-                if _gmeta["folders"] > 0:
-                    grounding_meta = {"searched": _gmeta["folders"], "passages": _gmeta["passages"]}
-                    # Persist the passages behind this answer and ride the row's
-                    # id on the grounding event, so the chip can open the actual
-                    # sources later (GET /api/sessions/{id}/grounding/{gid}).
-                    # Best-effort: on failure the chip stays counts-only.
-                    if _gmeta.get("sources"):
-                        from server.infrastructure.grounding_store import save_grounding
+                if _recalled_n:
+                    # Surface on the session's long-lived event stream (the chat
+                    # SSE has not started streaming yet at this point).
+                    publish_memory_event(session_id, action="recalled", count=_recalled_n)
+            except Exception as _mem_err:
+                log.warning("Memory recall failed: %s", _mem_err)
+        if _is_ff_enabled("session_memory"):
+            try:
+                from server.memory.session_memory import get_session_memory_context
 
-                        try:
-                            grounding_meta["id"] = await asyncio.to_thread(
-                                save_grounding, session_id, _gmeta["sources"]
-                            )
-                        except Exception as e:  # noqa: BLE001 — never break the turn
-                            log.warning("Failed to persist grounding sources: %s", e)
-                if grounding:
-                    parts.append(grounding)
-                    grounding_active = True
-            except asyncio.TimeoutError:
-                log.warning(
-                    "Index grounding timed out (%ss); answering without it", _GROUNDING_TIMEOUT_S
-                )
-            except Exception as e:  # noqa: BLE001 — grounding is best-effort
-                log.warning("Index grounding failed: %s", e)
-        if transcript.strip():
-            parts.append(f"[Transcript so far]\n{transcript}")
-        parts.append(question)
-        # When the user explicitly requested a skill via @skills:NAME,
-        # tell the model what arguments to pass. tool_choice (set
-        # below) makes the call mandatory; this hint makes the
-        # arguments correct. For transcript-driven skills the
-        # transcript above is the obvious payload — without the
-        # hint the model sometimes passes the literal question
-        # text instead. Generic on purpose: the app never names
-        # specific skills; whichever the user forced gets the rule.
-        if force_skill and transcript.strip():
-            parts.append(
-                f"Call the `{force_skill}` tool now. If it accepts a `notes`, "
-                f"`text`, or `transcript` argument, pass the [Transcript so far] "
-                f"text above as that argument. If it has no such argument, it "
-                f"receives the transcript automatically, so call it with only "
-                f"its own arguments."
-            )
-        elif force_skill:
-            parts.append(
-                f"Call the `{force_skill}` tool now using the appropriate "
-                f"text from this conversation."
-            )
-        user_text = "\n\n".join(parts)
+                session_memory_context = get_session_memory_context(session_id)
+            except Exception as e:
+                log.debug("session memory context unavailable: %s", e)
 
-        if image_blocks:
-            content_blocks = image_blocks + [{"type": "text", "text": user_text}]
-            messages.append({"role": "user", "content": content_blocks})
-        else:
-            messages.append({"role": "user", "content": user_text})
+        # Prompt caching (cloud/Bedrock only): when enabled, build the system prompt
+        # as a (static, dynamic) split so the static prefix can be cached alongside
+        # the tool definitions; otherwise a plain joined string. The local Gemma path
+        # builds its own string body in server/local/route.py and is unaffected.
+        from server.chat.caching import resolve_system_prompt
 
-        # Detached-task completions since the last turn: injected as a leading
-        # text block inside the user message we just appended, BEFORE the
-        # local/OpenAI/Anthropic dispatch split so every provider sees it.
-        # Fresh turns only — this branch is already inside `if not
-        # approved_tool_result`-equivalent flow (continuations rebuild from
-        # paused state and never reach this append).
-        try:
-            from server.agents.completion_inject import inject_completions
+        _caching_on = _is_ff_enabled("prompt_caching")
 
-            _n_injected = inject_completions(session_id, messages)
-            if _n_injected:
-                log.info("Injected %d background-task completion(s)", _n_injected)
-        except Exception as _e:
-            log.warning("completion injection failed: %s", _e)
+        # Progressive tool disclosure: re-derive this session's activations from
+        # visible history (self-healing across restarts/pauses), force-activate a
+        # requested skill so @skills: forcing still works when its tool is
+        # deferred, then compute the deferred index for the static system block.
+        # The suppress flag isn't known yet (grounding resolves later); the index
+        # may list a few tools a strict-RAG round hides — harmless, tool_search
+        # activation still intersects with the post-filter catalog per round.
+        from server.chat.tool_activation import activate, activate_from_history
+        from server.chat.tool_index import build_deferred_index, estimate_tool_tokens
+        from server.chat.tool_pool import assemble_partitioned_pool
+        from server.infrastructure.sessions import visible_chat_history
 
-        # Safety net for the frontend's history cap: a session attachment whose
-        # attach-turn message fell off the capped history gets re-injected as a
-        # leading message. Fresh turns only — approval resumes restore the
-        # paused message list, which already carries whatever it carried.
-        # Presence detection is by filename marker, so the live message we just
-        # appended (and every rebuilt history row) is never duplicated.
-        messages = ensure_attachments_present(messages, session_id)
-
-    # On-device models bypass Bedrock entirely (isolated local runtime). Branch
-    # BEFORE compaction — compaction itself calls Bedrock, so a local turn must
-    # never reach it. System prompt + messages are already built above. The
-    # local bridge returns a StreamingResponse for local turns (fresh or an
-    # approval resume), or None to let the cloud path proceed.
-    # Strict-RAG (point #1): once this turn is grounded in injected passages,
-    # withhold the workspace file/search tools so the model answers from them
-    # instead of re-crawling files. Gated by the `strict_rag` flag (default on).
-    from server.infrastructure.feature_flags import is_enabled as _ff_enabled
-
-    suppress_ws_search = grounding_active and _ff_enabled("strict_rag")
-
-    from server.local.route import local_chat_response
-
-    _local_resp = local_chat_response(
-        model_key=model_key,
-        body=body,
-        messages=messages,
-        session_id=session_id,
-        approved_tool_result=approved_tool_result,
-        transcript=transcript,
-        whisper_md_context=whisper_md_context,
-        memory_context=memory_context,
-        session_memory_context=session_memory_context,
-        plan_mode=plan_mode,
-        mode=mode,
-        ws_path=ws_path,
-        session_approvals=session_approvals,
-        session_denials=session_denials,
-        session_config=session_config,
-        suppress_ws_search=suppress_ws_search,
-    )
-    if _local_resp is not None:
-        return _prepend_grounding_event(_local_resp, grounding_meta)
-
-    # OpenAI models (GPT-5.x) run on the SAME engine path as Claude below —
-    # the provider split happens at adapter selection. Compaction is safe for
-    # them now: its summarizer routes through one_shot with the session's own
-    # model instead of hard-calling Bedrock Anthropic.
-
-    # Tool access (analyze_document) covers EVERY attachment bound to this
-    # session, not just this turn's ids — the durable store is the source of
-    # truth (text/outline only; image bytes stay out of the tool dict), with
-    # this turn's hot in-memory records overlaid.
-    from server.attachment_store import load_session_attachments
-
-    current_attachments = await asyncio.to_thread(load_session_attachments, session_id)
-    current_attachments.update(
-        {aid: attachments[aid] for aid in attachment_ids if aid in attachments}
-    )
-    loop = asyncio.get_event_loop()
-
-    # Pre-flight proactive compaction (provider-aware summarizer).
-    if estimate_message_size(messages) > COMPACT_TRIGGER_CHARS:
-        messages = await compact_messages_with_claude(
-            messages, model_id, session_id=session_id, model_key=model_key
-        )
-        # Compaction can summarize an attach-turn message away; restore any
-        # session attachment that no longer appears in the context.
-        messages = ensure_attachments_present(messages, session_id)
-
-    # Final safety net: drop any orphaned tool_use/tool_result blocks left by an
-    # interrupted turn or a compaction that split a pair. Bedrock rejects the
-    # whole request non-retryably otherwise, wedging the session. Runs on every
-    # turn (fresh + approval-resume), after compaction, on the exact list sent.
-    messages = sanitize_tool_pairs(messages)
-
-    # Same-session double-stream guard. Two NEW turns streaming for one
-    # session would corrupt _paused_sessions (approval pause/resume state).
-    # Approval continuations are exempt: the auto-allow path fires its
-    # continuation while the original response is still draining, and that
-    # is the normal, intended flow. Different sessions stream in parallel
-    # freely (parallel sessions feature).
-    is_new_turn = approved_tool_result is None
-    stream_token: float | None = None
-    if is_new_turn:
-        started = _active_chat_streams.get(session_id)
-        now = time.monotonic()
-        # Judge staleness by last progress (heartbeat), falling back to the
-        # start time if none recorded yet.
-        last_seen = _stream_heartbeat.get(session_id, started)
-        if started is not None and (now - last_seen) < _STREAM_STALE_AFTER_S:
-            return JSONResponse(
-                {
-                    "error": (
-                        "This session already has a response in progress. If it "
-                        "looks stuck (e.g. after the app was suspended or a tab "
-                        "was closed mid-reply), reset it from the chat ⋯ menu, "
-                        "or wait a moment and try again."
-                    ),
-                    "error_code": "SESSION_BUSY",
-                },
-                status_code=409,
-            )
-        if started is not None:
-            log.warning(
-                "Reclaiming stale stream slot for session %s (age %.0fs)",
-                session_id,
-                now - started,
-            )
-        stream_token = now
-        _active_chat_streams[session_id] = stream_token
-        _stream_heartbeat[session_id] = now
-
-    # Fire SessionStart + UserPromptSubmit hooks. Any additionalContext they
-    # return (or a project's SessionStart hook loading conventions) is injected
-    # into the conversation so the model actually reads it this turn.
-    _session_ctx = await run_hooks(
-        "SessionStart",
-        {"event": "SessionStart", "session_id": session_id, "model_id": model_id},
-        workspace=ws_path,
-    )
-    _prompt_ctx = await run_hooks(
-        "UserPromptSubmit",
-        {
-            "event": "UserPromptSubmit",
-            "session_id": session_id,
-            "model_id": model_id,
-            "tool_input": {"question": question[:500]},
-        },
-        workspace=ws_path,
-    )
-    _injected_contexts = [*_session_ctx.contexts, *_prompt_ctx.contexts]
-    if _injected_contexts and messages and messages[-1].get("role") == "user":
-        _note = "\n\n".join(f"[Hook context] {c}" for c in _injected_contexts)
-        _last = messages[-1]
-        if isinstance(_last["content"], str):
-            _last["content"] = f"{_last['content']}\n\n{_note}"
-        elif isinstance(_last["content"], list):
-            _last["content"].append({"type": "text", "text": _note})
-
-    # ── Unified turn engine ──────────────────────────────────────────────────
-    # The agentic loop lives in server/chat/engine (one loop for every
-    # provider); this route only assembles the turn, picks the provider
-    # adapter, and hands it off.
-    from server.chat.engine.policy import CHAT_POLICY
-    from server.chat.engine.runner import TurnContext, run_turn
-
-    # Same latched, workspace-aware metadata the effort was resolved from
-    # (_model_meta above) — NOT a fresh global lookup. A model defined only in
-    # the workspace's .whisper/settings.json is absent from the global
-    # catalogue, so re-reading it here would default this to "anthropic" and
-    # send an OpenAI model id through the Anthropic adapter.
-    _provider = _model_meta.get("provider", "anthropic")
-    if _provider == "openai_bedrock":
-        from server.chat.engine.openai import OpenAIResponsesAdapter
-
-        adapter = OpenAIResponsesAdapter(
-            model_key=model_key,
-            model_id=model_id,
-            system_prompt=system_prompt,
-            effort_label=effort_label,
+        activate_from_history(session_id, visible_chat_history(chat_history))
+        if force_skill:
+            activate(session_id, [force_skill])
+        _advertised0, _deferred0, _core_count0 = assemble_partitioned_pool(
+            plan_mode=plan_mode,
+            ws_connected=bool(ws_path),
             session_id=session_id,
-            body=body,
+            ultracode=ultracode_active,
         )
-    else:
-        from server.chat.engine.anthropic import AnthropicAdapter
+        _deferred_index = build_deferred_index(_deferred0)
+        _deferred_tokens_est = estimate_tool_tokens(_deferred0)
 
-        adapter = AnthropicAdapter(
+        system_prompt, system_static, system_dynamic, _cache_ttl = resolve_system_prompt(
+            model_id,
+            caching_on=_caching_on,
+            ws_path=ws_path,
+            session_id=session_id,
+            brief_mode=brief_mode,
+            plan_mode=plan_mode,
+            whisper_md_context=whisper_md_context,
+            memory_context=memory_context,
+            session_memory_context=session_memory_context,
+            ultracode=ultracode_active,
+            deferred_tool_index=_deferred_index,
+        )
+
+        # Filter out UI-only rows (cron_event, etc.) before building the
+        # Bedrock messages array — those are persisted in chat_history for
+        # replay-on-resume but must never enter Claude's context.
+        from server.chat.attachment_context import (
+            collect_history_attachment_ids,
+            ensure_attachments_present,
+            rebuild_history_message,
+            render_attachment_blocks,
+        )
+        from server.infrastructure.sessions import visible_chat_history
+
+        # History rows carry per-message attachmentIds; rebuild re-injects each
+        # attachment's content at its original position, so a file attached on an
+        # earlier turn is still literally in the context now (attachments are
+        # session state, not turn state).
+        _visible_history = visible_chat_history(chat_history)
+        messages = [rebuild_history_message(msg) for msg in _visible_history]
+
+        # Resolve @file:/@file mentions — inline the referenced file so the model
+        # has the content directly instead of hunting for it with tools.
+        if ws_path:
+            question = _resolve_at_file_mentions(question, ws_path)
+
+        # Resolve bare @<session> mentions — inline that session's recent
+        # conversation so the model has it directly, the same one-shot pattern as
+        # @file: above. No workspace needed, so this always runs.
+        from server.agent_tools.cross_session import resolve_at_session_mentions
+
+        question = resolve_at_session_mentions(question, session_id)
+
+        # Resolve this turn's attachments (rendering + per-file caps live in
+        # attachment_context, shared with the history rebuild above). A missing id
+        # yields an explicit unavailability marker, never a silent skip. Binding
+        # writes the session id onto every referenced attachment and slides its
+        # 30-day retention window; it must happen before the local/OpenAI dispatch
+        # below so their tool paths see the files via the durable store.
+        attachment_texts, image_blocks = render_attachment_blocks(
+            attachment_ids, body.get("attachment_names", [])
+        )
+        _referenced_ids = collect_history_attachment_ids(_visible_history) + attachment_ids
+        if _referenced_ids:
+            from server.attachment_store import bind_to_session
+
+            await asyncio.to_thread(bind_to_session, _referenced_ids, session_id)
+
+        # Grounding state for this turn. Set in the fresh-turn branch below; stays
+        # None/False on approval-resume turns (grounding isn't recomputed there).
+        grounding_meta: dict | None = None
+        grounding_active = False
+
+        if approved_tool_result:
+            # Continuation turn. `approved_tool_result` accepts two shapes:
+            #   1. A single dict {tool_use_id, content}     — approval flow,
+            #                                                 single ask_user_question
+            #   2. A list of those dicts                     — multi-question batch
+            #                                                 submit (tabbed card)
+            if isinstance(approved_tool_result, list):
+                answers = approved_tool_result
+            else:
+                answers = [approved_tool_result]
+
+            paused = _paused_sessions.pop(session_id, None)
+            if not paused:
+                log.warning(
+                    "Continuation for session %s found no paused state (backend "
+                    "restarted?) — replaying %d outcome(s) as text",
+                    session_id,
+                    len(answers),
+                )
+            messages = _resume_messages(messages, answers, paused)
+        else:
+            parts = []
+            if attachment_texts:
+                parts.extend(attachment_texts)
+            # Index-first grounding (point I): when the user has selected workspace
+            # indexes to search, retrieve relevant passages now and inject them as
+            # cited context, so the answer is grounded in the index without relying
+            # on the model choosing to call the search tool.
+            # An ABSENT field defaults to every indexed folder, so a fresh session
+            # grounds from its very first question (the frontend mints the session
+            # id at send time, so its per-session selection isn't seeded yet). An
+            # explicit EMPTY list means the user deselected all — honour "search
+            # nothing". `body.get(... ) or []` would have conflated the two and
+            # silently disabled grounding on the first turn.
+            _raw_sel = body.get("selected_search_indexes")
+            if _raw_sel is None:
+                # Deprioritize the index when a workspace is connected: with no
+                # explicit selection, ground against every index ONLY if no
+                # workspace is open. When one is, default to searching nothing so
+                # the model answers from the workspace and hits the index only when
+                # it (or the user) explicitly calls workspace_semantic_search.
+                # (get_workspace_path is already imported at the top of this function.)
+                if get_workspace_path():
+                    selected_indexes = []
+                else:
+                    from server.index.store import list_indexed_workspaces
+
+                    selected_indexes = list_indexed_workspaces()
+            elif isinstance(_raw_sel, list):
+                selected_indexes = _raw_sel
+            else:
+                # Malformed (non-list) value from an unexpected client → search
+                # nothing rather than silently grounding against every folder.
+                selected_indexes = []
+            if selected_indexes and question.strip():
+                try:
+                    from server.index.pipeline import build_context_query, retrieve_grounding
+                    from server.infrastructure.feature_flags import is_enabled
+
+                    # Context-aware retrieval query (prior turns are in `messages`).
+                    #  - rag_query_rewrite ON  -> Tier 3: a fast LLM rewrites the
+                    #    follow-up into a standalone query, used ALONE.
+                    #  - OFF (default)         -> Tier 1+2: a heuristic context query
+                    #    fused with the raw question via reciprocal-rank fusion.
+                    primary_query = question
+                    extra_queries: list[str] = []
+                    if is_enabled("rag_query_rewrite") and messages:
+                        try:
+                            rewritten = await asyncio.wait_for(
+                                _rewrite_query_for_retrieval(question, messages),
+                                timeout=_QUERY_REWRITE_TIMEOUT_S,
+                            )
+                        except asyncio.TimeoutError:
+                            log.warning("Query rewrite (Tier 3) timed out; using heuristic context")
+                            rewritten = None
+                        if rewritten:
+                            primary_query = rewritten
+                    if primary_query == question:  # not rewritten → Tier 1+2
+                        ctx = build_context_query(question, messages)
+                        if ctx and ctx != question:
+                            extra_queries = [ctx]
+
+                    def _do_grounding():
+                        return retrieve_grounding(
+                            selected_indexes,
+                            primary_query,
+                            extra_queries=extra_queries or None,
+                            return_meta=True,
+                        )
+
+                    # The reranker (if on) cold-loads a ~2.4GB model on the first
+                    # grounded turn; give that extra headroom so a cold load can't
+                    # blow the budget and silently drop grounding (warm turns are
+                    # unaffected — they finish in well under the base timeout).
+                    _ground_timeout = _GROUNDING_TIMEOUT_S + (
+                        _RERANK_COLD_BUDGET_S if is_enabled("rag_reranker") else 0
+                    )
+                    _status("searching")
+                    grounding, _gmeta = await asyncio.wait_for(
+                        asyncio.get_event_loop().run_in_executor(
+                            _GROUNDING_EXECUTOR, _do_grounding
+                        ),
+                        timeout=_ground_timeout,
+                    )
+                    # Surface the grounding chip only when at least one index was
+                    # actually searched — never for users who have no indexes, and
+                    # not on a timeout/error (leave meta None → no chip).
+                    if _gmeta["folders"] > 0:
+                        grounding_meta = {
+                            "searched": _gmeta["folders"],
+                            "passages": _gmeta["passages"],
+                        }
+                        # Persist the passages behind this answer and ride the row's
+                        # id on the grounding event, so the chip can open the actual
+                        # sources later (GET /api/sessions/{id}/grounding/{gid}).
+                        # Best-effort: on failure the chip stays counts-only.
+                        if _gmeta.get("sources"):
+                            from server.infrastructure.grounding_store import save_grounding
+
+                            try:
+                                grounding_meta["id"] = await asyncio.to_thread(
+                                    save_grounding, session_id, _gmeta["sources"]
+                                )
+                            except Exception as e:  # noqa: BLE001 — never break the turn
+                                log.warning("Failed to persist grounding sources: %s", e)
+                    if grounding:
+                        parts.append(grounding)
+                        grounding_active = True
+                except asyncio.TimeoutError:
+                    log.warning(
+                        "Index grounding timed out (%ss); answering without it",
+                        _GROUNDING_TIMEOUT_S,
+                    )
+                except Exception as e:  # noqa: BLE001 — grounding is best-effort
+                    log.warning("Index grounding failed: %s", e)
+            if transcript.strip():
+                parts.append(f"[Transcript so far]\n{transcript}")
+            parts.append(question)
+            # When the user explicitly requested a skill via @skills:NAME,
+            # tell the model what arguments to pass. tool_choice (set
+            # below) makes the call mandatory; this hint makes the
+            # arguments correct. For transcript-driven skills the
+            # transcript above is the obvious payload — without the
+            # hint the model sometimes passes the literal question
+            # text instead. Generic on purpose: the app never names
+            # specific skills; whichever the user forced gets the rule.
+            if force_skill and transcript.strip():
+                parts.append(
+                    f"Call the `{force_skill}` tool now. If it accepts a `notes`, "
+                    f"`text`, or `transcript` argument, pass the [Transcript so far] "
+                    f"text above as that argument. If it has no such argument, it "
+                    f"receives the transcript automatically, so call it with only "
+                    f"its own arguments."
+                )
+            elif force_skill:
+                parts.append(
+                    f"Call the `{force_skill}` tool now using the appropriate "
+                    f"text from this conversation."
+                )
+            user_text = "\n\n".join(parts)
+
+            if image_blocks:
+                content_blocks = image_blocks + [{"type": "text", "text": user_text}]
+                messages.append({"role": "user", "content": content_blocks})
+            else:
+                messages.append({"role": "user", "content": user_text})
+
+            # Detached-task completions since the last turn: injected as a leading
+            # text block inside the user message we just appended, BEFORE the
+            # local/OpenAI/Anthropic dispatch split so every provider sees it.
+            # Fresh turns only — this branch is already inside `if not
+            # approved_tool_result`-equivalent flow (continuations rebuild from
+            # paused state and never reach this append).
+            try:
+                from server.agents.completion_inject import inject_completions
+
+                _n_injected = inject_completions(session_id, messages)
+                if _n_injected:
+                    log.info("Injected %d background-task completion(s)", _n_injected)
+            except Exception as _e:
+                log.warning("completion injection failed: %s", _e)
+
+            # Safety net for the frontend's history cap: a session attachment whose
+            # attach-turn message fell off the capped history gets re-injected as a
+            # leading message. Fresh turns only — approval resumes restore the
+            # paused message list, which already carries whatever it carried.
+            # Presence detection is by filename marker, so the live message we just
+            # appended (and every rebuilt history row) is never duplicated.
+            messages = ensure_attachments_present(messages, session_id)
+
+        # On-device models bypass Bedrock entirely (isolated local runtime). Branch
+        # BEFORE compaction — compaction itself calls Bedrock, so a local turn must
+        # never reach it. System prompt + messages are already built above. The
+        # local bridge returns a StreamingResponse for local turns (fresh or an
+        # approval resume), or None to let the cloud path proceed.
+        # Strict-RAG (point #1): once this turn is grounded in injected passages,
+        # withhold the workspace file/search tools so the model answers from them
+        # instead of re-crawling files. Gated by the `strict_rag` flag (default on).
+        from server.infrastructure.feature_flags import is_enabled as _ff_enabled
+
+        suppress_ws_search = grounding_active and _ff_enabled("strict_rag")
+
+        from server.local.route import local_chat_response
+
+        _local_resp = local_chat_response(
+            model_key=model_key,
+            body=body,
+            messages=messages,
+            session_id=session_id,
+            approved_tool_result=approved_tool_result,
+            transcript=transcript,
+            whisper_md_context=whisper_md_context,
+            memory_context=memory_context,
+            session_memory_context=session_memory_context,
+            plan_mode=plan_mode,
+            mode=mode,
+            ws_path=ws_path,
+            session_approvals=session_approvals,
+            session_denials=session_denials,
+            session_config=session_config,
+            suppress_ws_search=suppress_ws_search,
+        )
+        if _local_resp is not None:
+            _status("connecting")
+            return _prepend_grounding_event(_local_resp, grounding_meta)
+
+        # OpenAI models (GPT-5.x) run on the SAME engine path as Claude below —
+        # the provider split happens at adapter selection. Compaction is safe for
+        # them now: its summarizer routes through one_shot with the session's own
+        # model instead of hard-calling Bedrock Anthropic.
+
+        # Tool access (analyze_document) covers EVERY attachment bound to this
+        # session, not just this turn's ids — the durable store is the source of
+        # truth (text/outline only; image bytes stay out of the tool dict), with
+        # this turn's hot in-memory records overlaid.
+        from server.attachment_store import load_session_attachments
+
+        current_attachments = await asyncio.to_thread(load_session_attachments, session_id)
+        current_attachments.update(
+            {aid: attachments[aid] for aid in attachment_ids if aid in attachments}
+        )
+        loop = asyncio.get_event_loop()
+
+        # Pre-flight proactive compaction (provider-aware summarizer).
+        if estimate_message_size(messages) > COMPACT_TRIGGER_CHARS:
+            messages = await compact_messages_with_claude(
+                messages, model_id, session_id=session_id, model_key=model_key
+            )
+            # Compaction can summarize an attach-turn message away; restore any
+            # session attachment that no longer appears in the context.
+            messages = ensure_attachments_present(messages, session_id)
+
+        # Final safety net: drop any orphaned tool_use/tool_result blocks left by an
+        # interrupted turn or a compaction that split a pair. Bedrock rejects the
+        # whole request non-retryably otherwise, wedging the session. Runs on every
+        # turn (fresh + approval-resume), after compaction, on the exact list sent.
+        messages = sanitize_tool_pairs(messages)
+
+        # Same-session double-stream guard. Two NEW turns streaming for one
+        # session would corrupt _paused_sessions (approval pause/resume state).
+        # Approval continuations are exempt: the auto-allow path fires its
+        # continuation while the original response is still draining, and that
+        # is the normal, intended flow. Different sessions stream in parallel
+        # freely (parallel sessions feature).
+        is_new_turn = approved_tool_result is None
+        stream_token: float | None = None
+        if is_new_turn:
+            started = _active_chat_streams.get(session_id)
+            now = time.monotonic()
+            # Judge staleness by last progress (heartbeat), falling back to the
+            # start time if none recorded yet.
+            last_seen = _stream_heartbeat.get(session_id, started)
+            if started is not None and (now - last_seen) < _STREAM_STALE_AFTER_S:
+                return JSONResponse(
+                    {
+                        "error": (
+                            "This session already has a response in progress. If it "
+                            "looks stuck (e.g. after the app was suspended or a tab "
+                            "was closed mid-reply), reset it from the chat ⋯ menu, "
+                            "or wait a moment and try again."
+                        ),
+                        "error_code": "SESSION_BUSY",
+                    },
+                    status_code=409,
+                )
+            if started is not None:
+                log.warning(
+                    "Reclaiming stale stream slot for session %s (age %.0fs)",
+                    session_id,
+                    now - started,
+                )
+            stream_token = now
+            _active_chat_streams[session_id] = stream_token
+            _stream_heartbeat[session_id] = now
+
+        # Fire SessionStart + UserPromptSubmit hooks. Any additionalContext they
+        # return (or a project's SessionStart hook loading conventions) is injected
+        # into the conversation so the model actually reads it this turn.
+        _status("preparing")
+        _session_ctx = await run_hooks(
+            "SessionStart",
+            {"event": "SessionStart", "session_id": session_id, "model_id": model_id},
+            workspace=ws_path,
+        )
+        _prompt_ctx = await run_hooks(
+            "UserPromptSubmit",
+            {
+                "event": "UserPromptSubmit",
+                "session_id": session_id,
+                "model_id": model_id,
+                "tool_input": {"question": question[:500]},
+            },
+            workspace=ws_path,
+        )
+        _injected_contexts = [*_session_ctx.contexts, *_prompt_ctx.contexts]
+        if _injected_contexts and messages and messages[-1].get("role") == "user":
+            _note = "\n\n".join(f"[Hook context] {c}" for c in _injected_contexts)
+            _last = messages[-1]
+            if isinstance(_last["content"], str):
+                _last["content"] = f"{_last['content']}\n\n{_note}"
+            elif isinstance(_last["content"], list):
+                _last["content"].append({"type": "text", "text": _note})
+
+        # ── Unified turn engine ──────────────────────────────────────────────────
+        # The agentic loop lives in server/chat/engine (one loop for every
+        # provider); this route only assembles the turn, picks the provider
+        # adapter, and hands it off.
+        from server.chat.engine.policy import CHAT_POLICY
+        from server.chat.engine.runner import TurnContext, run_turn
+
+        # Same latched, workspace-aware metadata the effort was resolved from
+        # (_model_meta above) — NOT a fresh global lookup. A model defined only in
+        # the workspace's .whisper/settings.json is absent from the global
+        # catalogue, so re-reading it here would default this to "anthropic" and
+        # send an OpenAI model id through the Anthropic adapter.
+        _provider = _model_meta.get("provider", "anthropic")
+        if _provider == "openai_bedrock":
+            from server.chat.engine.openai import OpenAIResponsesAdapter
+
+            adapter = OpenAIResponsesAdapter(
+                model_key=model_key,
+                model_id=model_id,
+                system_prompt=system_prompt,
+                effort_label=effort_label,
+                session_id=session_id,
+                body=body,
+            )
+        else:
+            from server.chat.engine.anthropic import AnthropicAdapter
+
+            adapter = AnthropicAdapter(
+                model_key=model_key,
+                model_id=model_id,
+                system_prompt=system_prompt,
+                system_static=system_static,
+                system_dynamic=system_dynamic,
+                caching_on=_caching_on,
+                cache_ttl=_cache_ttl,
+                effort_label=effort_label,
+                force_skill=force_skill,
+                loop=loop,
+                executor=executor,
+                # The SAME metadata the effort was resolved from, so the label and the
+                # wire value cannot come from two different config snapshots.
+                meta=_model_meta,
+            )
+
+        def _heartbeat():
+            _stream_heartbeat[session_id] = time.monotonic()
+
+        turn_ctx = TurnContext(
+            session_id=session_id,
             model_key=model_key,
             model_id=model_id,
-            system_prompt=system_prompt,
-            system_static=system_static,
-            system_dynamic=system_dynamic,
-            caching_on=_caching_on,
-            cache_ttl=_cache_ttl,
-            effort_label=effort_label,
-            force_skill=force_skill,
+            messages=messages,
+            adapter=adapter,
+            policy=CHAT_POLICY,
             loop=loop,
             executor=executor,
-            # The SAME metadata the effort was resolved from, so the label and the
-            # wire value cannot come from two different config snapshots.
-            meta=_model_meta,
+            plan_mode=plan_mode,
+            mode=mode,
+            ws_path=ws_path,
+            suppress_ws_search=suppress_ws_search,
+            effort_label=effort_label,
+            transcript=transcript,
+            current_attachments=current_attachments,
+            session_denials=session_denials,
+            session_approvals=session_approvals,
+            session_config=session_config,
+            advertised_count=len(_advertised0),
+            deferred_count=len(_deferred0),
+            deferred_tokens_est=_deferred_tokens_est,
+            is_new_turn=is_new_turn,
+            heartbeat=_heartbeat if is_new_turn else None,
+            is_disconnected=request.is_disconnected,
         )
 
-    def _heartbeat():
-        _stream_heartbeat[session_id] = time.monotonic()
+        async def guarded_stream():
+            # The discard must survive every exit path (normal [DONE], client
+            # disconnect via generator aclose, and exceptions) or the session would
+            # be stuck "streaming" until restart. Only pop our OWN slot: if a later
+            # turn already reclaimed this session as stale, its token differs and we
+            # must not evict the newer stream.
+            try:
+                # Emit the grounding frame from INSIDE the guard so the slot-cleanup
+                # finally wraps the whole stream (a client disconnect after this
+                # first frame still frees the slot). Only the LOCAL path uses the
+                # _prepend_grounding_event wrapper instead — it returns its own
+                # StreamingResponse above and never takes an _active_chat_streams
+                # slot. GPT is not in that group: since the engine cutover it runs
+                # this very path (the provider split is adapter selection above), so
+                # it holds and frees a slot exactly like Anthropic.
+                if grounding_meta:
+                    yield f"data: {ndjson_dumps({'grounding': grounding_meta})}\n\n"
+                # Tell the UI when this turn is NOT running what the composer
+                # shows — a budget fallback swapped the model, or the resolved
+                # model could not honour the requested effort. Emitted before the
+                # first token so the notice is visible while the turn runs.
+                if _downgrade:
+                    yield f"data: {ndjson_dumps({'turn_downgrade': _downgrade})}\n\n"
+                async for chunk in run_turn(turn_ctx):
+                    yield chunk
+            finally:
+                if is_new_turn and _active_chat_streams.get(session_id) == stream_token:
+                    _active_chat_streams.pop(session_id, None)
+                    _stream_heartbeat.pop(session_id, None)
 
-    turn_ctx = TurnContext(
-        session_id=session_id,
-        model_key=model_key,
-        model_id=model_id,
-        messages=messages,
-        adapter=adapter,
-        policy=CHAT_POLICY,
-        loop=loop,
-        executor=executor,
-        plan_mode=plan_mode,
-        mode=mode,
-        ws_path=ws_path,
-        suppress_ws_search=suppress_ws_search,
-        effort_label=effort_label,
-        transcript=transcript,
-        current_attachments=current_attachments,
-        session_denials=session_denials,
-        session_approvals=session_approvals,
-        session_config=session_config,
-        advertised_count=len(_advertised0),
-        deferred_count=len(_deferred0),
-        deferred_tokens_est=_deferred_tokens_est,
-        is_new_turn=is_new_turn,
-        heartbeat=_heartbeat if is_new_turn else None,
-        is_disconnected=request.is_disconnected,
-    )
+        _status("connecting")
+        return StreamingResponse(guarded_stream(), media_type="text/event-stream")
 
-    async def guarded_stream():
-        # The discard must survive every exit path (normal [DONE], client
-        # disconnect via generator aclose, and exceptions) or the session would
-        # be stuck "streaming" until restart. Only pop our OWN slot: if a later
-        # turn already reclaimed this session as stale, its token differs and we
-        # must not evict the newer stream.
+    build_task = asyncio.create_task(_build_turn())
+
+    async def staged_stream():
+        delegated = False
         try:
-            # Emit the grounding frame from INSIDE the guard so the slot-cleanup
-            # finally wraps the whole stream (a client disconnect after this
-            # first frame still frees the slot). Only the LOCAL path uses the
-            # _prepend_grounding_event wrapper instead — it returns its own
-            # StreamingResponse above and never takes an _active_chat_streams
-            # slot. GPT is not in that group: since the engine cutover it runs
-            # this very path (the provider split is adapter selection above), so
-            # it holds and frees a slot exactly like Anthropic.
-            if grounding_meta:
-                yield f"data: {ndjson_dumps({'grounding': grounding_meta})}\n\n"
-            # Tell the UI when this turn is NOT running what the composer
-            # shows — a budget fallback swapped the model, or the resolved
-            # model could not honour the requested effort. Emitted before the
-            # first token so the notice is visible while the turn runs.
-            if _downgrade:
-                yield f"data: {ndjson_dumps({'turn_downgrade': _downgrade})}\n\n"
-            async for chunk in run_turn(turn_ctx):
-                yield chunk
+            while True:
+                getter = asyncio.create_task(status_q.get())
+                done, _ = await asyncio.wait(
+                    {getter, build_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if getter in done and build_task not in done:
+                    yield f"data: {ndjson_dumps({'status': getter.result()})}\n\n"
+                    continue
+                getter.cancel()
+                break
+            try:
+                resp = build_task.result()
+            except Exception as e:  # noqa: BLE001 — surface as an SSE error frame
+                log.error("Turn setup failed: %s", e, exc_info=True)
+                yield f"data: {ndjson_dumps({'error': f'Failed to start the turn: {e}'})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            while not status_q.empty():
+                yield f"data: {ndjson_dumps({'status': status_q.get_nowait()})}\n\n"
+            if isinstance(resp, StreamingResponse):
+                delegated = True
+                async for chunk in resp.body_iterator:
+                    yield chunk
+            else:
+                # Non-stream refusal (e.g. SESSION_BUSY): forward as an SSE
+                # error frame — the client is already reading this stream, so
+                # an HTTP status could never reach it.
+                payload = json.loads(bytes(resp.body).decode("utf-8"))
+                frame = {"error": payload.get("error", "Request failed")}
+                if payload.get("error_code"):
+                    frame["error_code"] = payload["error_code"]
+                yield f"data: {ndjson_dumps(frame)}\n\n"
+                yield "data: [DONE]\n\n"
         finally:
-            if is_new_turn and _active_chat_streams.get(session_id) == stream_token:
-                _active_chat_streams.pop(session_id, None)
-                _stream_heartbeat.pop(session_id, None)
+            # Client gone during setup: stop the build. Setup finished but the
+            # inner stream was not (fully) consumed: close it explicitly so
+            # its slot-cleanup finally always runs.
+            if not build_task.done():
+                build_task.cancel()
+            elif build_task.exception() is None:
+                _resp = build_task.result()
+                if isinstance(_resp, StreamingResponse) and (not delegated or True):
+                    try:
+                        await _resp.body_iterator.aclose()
+                    except Exception:  # noqa: BLE001 — already closed/exhausted
+                        pass
 
-    return StreamingResponse(guarded_stream(), media_type="text/event-stream")
+    return StreamingResponse(staged_stream(), media_type="text/event-stream")

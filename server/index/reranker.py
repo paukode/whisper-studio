@@ -168,6 +168,13 @@ def _middle_ids(query: str, doc: str, budget: int) -> list[int]:
     )
 
 
+# Sticky kill switch: one MPS out-of-memory during rerank disables the local
+# reranker for the rest of the process (grounding falls back to fused dense
+# order). On memory-pressured machines the failed allocation alone costs
+# seconds on EVERY chat turn, for zero benefit.
+_mps_oom_disabled = False
+
+
 def rerank(query: str, passages: list[str], backend: str | None = None) -> list[float]:
     """Relevance score for each passage given the query, aligned to input order.
     Routes to the active rerank backend (on-device Qwen3-Reranker, or Cohere
@@ -177,6 +184,11 @@ def rerank(query: str, passages: list[str], backend: str | None = None) -> list[
         return []
     if (backend or _rerank_backend()) == "cohere":
         return _rerank_cohere(query, passages)
+    global _mps_oom_disabled
+    if _mps_oom_disabled:
+        # A previous turn hit MPS OOM; retrying burns seconds per turn on a
+        # doomed multi-GB allocation. Stay disabled until restart.
+        return []
     try:
         import torch
 
@@ -199,5 +211,11 @@ def rerank(query: str, passages: list[str], backend: str | None = None) -> list[
                 scores.extend(p_yes.cpu().to(torch.float32).tolist())
             return scores
     except Exception as e:  # noqa: BLE001 — reranking is best-effort
-        log.warning("Rerank failed: %s", e)
+        if "out of memory" in str(e).lower():
+            _mps_oom_disabled = True
+            log.warning(
+                "Rerank failed with MPS OOM — local reranking disabled until restart: %s", e
+            )
+        else:
+            log.warning("Rerank failed: %s", e)
         return []

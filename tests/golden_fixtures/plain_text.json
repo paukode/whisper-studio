@@ -1,5 +1,11 @@
 [
   {
+    "status": "preparing"
+  },
+  {
+    "status": "connecting"
+  },
+  {
     "tool_pool": {
       "advertised": 0,
       "deferred": 0,

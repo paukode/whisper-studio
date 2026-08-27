@@ -2,7 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { get, put } from '@/api/client';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { MODEL_OPTIONS, targetsFor, translatorLabelOf } from '@/components/transcription/TranscriptionPanel';
+import { MODEL_OPTIONS, TRANSLATOR_OPTIONS, targetsFor } from '@/components/transcription/TranscriptionPanel';
 
 interface ConfigData {
   tavily_api_key?: string;
@@ -148,11 +148,10 @@ export const APISettings: React.FC = () => {
       </select>
       <span className="settings-hint">
         Same selector as the transcript header; applies live. Whisper Large
-        v3: most accurate, 99 languages, detects the language per sentence —
-        best for mixed-language meetings. Canary: fastest and the best
-        translation, but needs the session language set above (no
-        auto-detect). Parakeet: words appear live as you speak, lowest
-        latency.
+        v3: most accurate, 99 languages. Canary: fastest, best translation,
+        25 European languages, detects the language per sentence (limited to
+        the list above when one is set). Parakeet: words appear live as you
+        speak, lowest latency.
       </span>
 
       <label htmlFor="cfgTranslateMode">Translation Model</label>
@@ -162,22 +161,22 @@ export const APISettings: React.FC = () => {
         value={translateMode}
         onChange={(e) => setTranslateMode(e.target.value)}
       >
-        <option value="off">Off</option>
-        <option value="auto">Auto (whichever model can serve the pair)</option>
-        {modelValue !== 'streaming' && (
-          <option value="model">{translatorLabelOf(modelValue)}</option>
-        )}
-        <option value="apple">Apple on-device (~20 languages, any pair)</option>
+        {TRANSLATOR_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.value === 'off' ? 'Off' : o.label}
+          </option>
+        ))}
       </select>
       <span className="settings-hint">
-        Shows a translation line under speech in other languages. Whisper
-        translates into English only. Canary translates between its 25
-        European languages and English (either direction, English always on
-        one side). Apple translates between any two of its languages,
-        on-device and free, in the Mac app only.
+        Shows a translation line under speech in other languages, whichever
+        model is transcribing. Canary translates between its 25 European
+        languages and English (either direction, English always on one side)
+        and detects the spoken language per sentence. Apple translates
+        between any two of its ~20 languages, on-device and free, in the Mac
+        app only.
       </span>
 
-      {translateMode !== 'off' && !(translateMode === 'model' && modelValue === 'whisper') && (
+      {translateMode !== 'off' && (
         <>
           <label htmlFor="cfgTranslateTarget">Translate To</label>
           <select
@@ -186,18 +185,14 @@ export const APISettings: React.FC = () => {
             value={translateTarget}
             onChange={(e) => setTranslateTarget(e.target.value)}
           >
-            {targetsFor(translateMode, modelValue).map((t) => (
-              <option key={t.code} value={t.code}>
-                {t.name}
-                {t.canary && t.apple ? '' : t.canary ? ' (Canary only)' : ' (Apple only)'}
-              </option>
+            {targetsFor(translateMode).map((t) => (
+              <option key={t.code} value={t.code}>{t.name}</option>
             ))}
           </select>
           <span className="settings-hint">
             Language of the translation line. Canary reaches non-English
-            targets only from English speech; Apple reaches any of its
-            languages from anything. Whisper always produces English, so no
-            choice is needed there.
+            targets from English speech only (English is always one side of
+            its pair); Apple reaches any of its languages from anything.
           </span>
         </>
       )}

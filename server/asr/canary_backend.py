@@ -7,10 +7,11 @@ boundaries like the Whisper backend; steady-state decode is ~0.4 s per
 utterance on Apple Silicon.
 
 One Canary limitation shapes this module: the model has NO language
-auto-detection — every decode needs an explicit ``source_lang``. The session
-language comes from the ``whisper_language`` allowlist (first entry), so
-Canary suits single-language sessions; mixed-language meetings are Whisper's
-territory.
+head — every decode needs an explicit ``source_lang``. A small on-CPU
+language-ID classifier (server/asr/lid.py) supplies it per utterance,
+constrained to the ``whisper_language`` allowlist when one is set, so Canary
+handles mixed-language meetings like Whisper does. A single-entry allowlist
+skips detection entirely (pinned language, zero overhead).
 
 Model load is lazy (first session); importing this module is cheap.
 """
@@ -124,21 +125,37 @@ def unload() -> None:
     log.info("Canary model unloaded.")
 
 
-def _session_language() -> str:
-    """The session's source language.
-
-    Canary cannot auto-detect, so this is the first Canary-supported code in
-    the ``whisper_language`` allowlist, falling back to English. Unsupported
-    codes are logged once per decode batch rather than crashing the stream.
-    """
+def _allowed_languages() -> list[str]:
+    """Canary-supported codes from the ``whisper_language`` allowlist."""
     from server.asr.whisper_backend import _parse_languages
     from server.infrastructure.config import get as config_get
 
+    allowed = []
     for code in _parse_languages(config_get("whisper_language")):
         if code in CANARY_LANGUAGES:
-            return code
-        log.warning("Canary: unsupported language %r in whisper_language, skipping", code)
-    return "en"
+            allowed.append(code)
+        else:
+            log.warning("Canary: unsupported language %r in whisper_language, skipping", code)
+    return allowed
+
+
+def _utterance_language(audio: np.ndarray) -> str:
+    """Source language for one utterance.
+
+    A single-entry allowlist pins the language (no detection cost). Otherwise
+    the LID classifier detects it, constrained to the allowlist when one is
+    set or to Canary's 25 languages when not. English is the last-resort
+    fallback when detection fails outright.
+    """
+    allowed = _allowed_languages()
+    if len(allowed) == 1:
+        return allowed[0]
+    from server.asr import lid
+
+    detected = lid.detect(audio, allowed or CANARY_LANGUAGES)
+    if detected in CANARY_LANGUAGES:
+        return detected
+    return allowed[0] if allowed else "en"
 
 
 def _generate(audio: np.ndarray, source_lang: str, target_lang: str) -> str:
@@ -152,15 +169,22 @@ def translate_utterance(
 ) -> str:
     """Translation of one utterance via Canary's native AST head.
 
+    Canary is the app's universal model translator — this runs on Canary's
+    own executor regardless of which engine transcribed the audio, so
+    Whisper and Parakeet sessions can translate through it too. ``language``
+    is the transcribing engine's language ID when it has one; utterances
+    from engines without language ID (Parakeet) are detected here.
+
     Canary translates bidirectionally with ENGLISH AS THE HUB: any of its 25
     languages → English, and English → any of them — never X → Y with both
-    non-English (the orchestrator's resolver enforces that). Same
-    orchestration contract as the Whisper backend's translate pass: called
-    on ``executor`` after the transcript final was emitted.
+    non-English. An unsupported pair (or same-language input) returns "" so
+    the client's pending slot clears without a bogus line.
     """
     from server.asr.whisper_backend import _is_junk
 
-    source = language if language in CANARY_LANGUAGES else _session_language()
+    source = language if language in CANARY_LANGUAGES else _utterance_language(audio_data)
+    if source == target:
+        return ""
     if target not in CANARY_LANGUAGES or (source != "en" and target != "en"):
         log.warning("Canary: unsupported translation pair %s->%s, skipped", source, target)
         return ""
@@ -185,7 +209,7 @@ def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None
         log.debug("Canary: utterance below energy threshold (rms=%.4f), skipped", volume)
         return "", audio, None
 
-    language = _session_language()
+    language = _utterance_language(audio)
     text = ""
     try:
         text = _generate(audio, source_lang=language, target_lang=language)

@@ -210,26 +210,13 @@ def test_decode_uses_constrained_detection_for_allowlist(monkeypatch):
 # ── translate-to-English companion pass ──────────────────────────────────────
 
 
-def test_whisper_translate_relaxed_fallback(monkeypatch):
-    calls = []
-
-    def fake_transcribe(audio, language=None, relaxed=False, task=None):
-        calls.append((language, relaxed, task))
-        return ("good morning everyone" if relaxed else "", language)
-
-    monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
-    audio = np.zeros(16000, dtype=np.float32)
-    assert whisper_backend.translate_utterance(audio, "pl") == "good morning everyone"
-    assert calls == [("pl", False, "translate"), ("pl", True, "translate")]
-
-
 def test_translate_utterance_filters_hallucinations(monkeypatch):
+    from server.asr import canary_backend
+
     monkeypatch.setattr(
-        whisper_backend,
-        "_transcribe",
-        lambda audio, language=None, relaxed=False: ("thank you.", language),
+        canary_backend, "_generate", lambda a, source_lang, target_lang: "thank you."
     )
-    assert whisper_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl") == ""
+    assert canary_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl") == ""
 
 
 # ── canary backend + whisper variant ─────────────────────────────────────────
@@ -255,14 +242,32 @@ def test_canary_session_emits_final_with_language(monkeypatch):
     ]
 
 
-def test_canary_session_language_prefers_supported_allowlist(monkeypatch):
+def test_canary_utterance_language_pins_and_detects(monkeypatch):
     import server.infrastructure.config as cfg
-    from server.asr import canary_backend
+    from server.asr import canary_backend, lid
 
-    monkeypatch.setattr(cfg, "get", lambda k, default=None: "xx,pl,en")
-    assert canary_backend._session_language() == "pl"
+    audio = np.zeros(16000, dtype=np.float32)
+    # Single supported allowlist entry: pinned, no detection call.
+    monkeypatch.setattr(cfg, "get", lambda k, default=None: "xx,pl")
+    monkeypatch.setattr(
+        lid, "detect", lambda a, allowed=None: (_ for _ in ()).throw(AssertionError)
+    )
+    assert canary_backend._utterance_language(audio) == "pl"
+    # Multi-entry allowlist: detection constrained to it.
+    seen = {}
+
+    def fake_detect(a, allowed=None):
+        seen["allowed"] = set(allowed)
+        return "en"
+
+    monkeypatch.setattr(cfg, "get", lambda k, default=None: "pl,en")
+    monkeypatch.setattr(lid, "detect", fake_detect)
+    assert canary_backend._utterance_language(audio) == "en"
+    assert seen["allowed"] == {"pl", "en"}
+    # No allowlist: detection over all Canary languages; failure falls to en.
     monkeypatch.setattr(cfg, "get", lambda k, default=None: "")
-    assert canary_backend._session_language() == "en"
+    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: None)
+    assert canary_backend._utterance_language(audio) == "en"
 
 
 def test_canary_translate_language_pairs(monkeypatch):
@@ -278,21 +283,27 @@ def test_canary_translate_language_pairs(monkeypatch):
     audio = np.zeros(16000, dtype=np.float32)
     assert canary_backend.translate_utterance(audio, "pl") == "good morning"
     assert canary_backend.translate_utterance(audio, "en", target="pl") == "good morning"
+    # Same language: skipped (clears the pending slot without a bogus line).
+    assert canary_backend.translate_utterance(audio, "en", target="en") == ""
     # X -> Y with both non-English is unsupported: skipped, no decode.
     assert canary_backend.translate_utterance(audio, "pl", target="de") == ""
     assert calls == [("pl", "en"), ("en", "pl")]
 
 
-def test_whisper_translate_uses_real_task(monkeypatch):
-    calls = []
+def test_canary_translate_detects_unknown_source(monkeypatch):
+    from server.asr import canary_backend, lid
 
-    def fake_transcribe(audio, language=None, relaxed=False, task=None):
-        calls.append((language, task))
-        return "good morning", language
+    monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: "hi")
+    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: "pl")
+    import server.infrastructure.config as cfg
 
-    monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
-    assert whisper_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl")
-    assert calls == [("pl", "translate")]
+    monkeypatch.setattr(cfg, "get", lambda k, default=None: "")
+    audio = np.zeros(16000, dtype=np.float32)
+    # Parakeet finals carry no language: detected here, then translated.
+    assert canary_backend.translate_utterance(audio, None, target="en") == "hi"
+    # Detected language equals the target: skipped.
+    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: "en")
+    assert canary_backend.translate_utterance(audio, None, target="en") == ""
 
 
 # ── translate-mode resolution (server/websocket.py) ─────────────────────────
@@ -302,24 +313,31 @@ def test_resolve_translator_matrix():
     from server.websocket import resolve_translator as r
 
     # off, and same-language skips
-    assert r("off", "canary", True, True, "pl", "en") is None
-    assert r("auto", "canary", True, True, "en", "en") is None
-    assert r("auto", "apple", True, False, "pl", "pl") is None
-    # whisper: English target only
-    assert r("model", "whisper", True, True, "pl", "en") == "model"
-    assert r("model", "whisper", True, True, "pl", "de") is None
-    assert r("auto", "whisper", True, True, "pl", "de") == "apple"
-    assert r("auto", "whisper", False, True, "pl", "de") is None
-    # canary: English-hub bidirectional
-    assert r("model", "canary", False, True, "pl", "en") == "model"
-    assert r("model", "canary", False, True, "en", "pl") == "model"
-    assert r("model", "canary", False, True, "pl", "de") is None
-    assert r("auto", "canary", True, True, "pl", "de") == "apple"
-    # unknown language (Parakeet): apple only, any target
-    assert r("auto", "parakeet", True, False, None, "en") == "apple"
-    assert r("auto", "parakeet", True, False, None, "pl") == "apple"
-    assert r("auto", "parakeet", False, False, None, "en") is None
-    assert r("model", "parakeet", True, False, None, "en") is None
-    # explicit apple
-    assert r("apple", "whisper", True, True, "pl", "de") == "apple"
-    assert r("apple", "whisper", False, True, "pl", "en") is None
+    assert r("off", True, "pl", "en") is None
+    assert r("canary", True, "en", "en") is None
+    assert r("apple", True, "pl", "pl") is None
+    # canary: English-hub bidirectional, unknown source attempted
+    assert r("canary", False, "pl", "en") == "canary"
+    assert r("canary", False, "en", "pl") == "canary"
+    assert r("canary", False, "pl", "de") is None
+    assert r("canary", False, None, "de") == "canary"
+    assert r("canary", False, None, "en") == "canary"
+    assert r("canary", False, "pl", "ja") is None  # ja not a Canary language
+    # apple: needs the bridge, any pair
+    assert r("apple", True, "pl", "de") == "apple"
+    assert r("apple", False, "pl", "en") is None
+    assert r("apple", True, None, "pl") == "apple"
+    # legacy stored modes map to canary
+    assert r("auto", False, "pl", "en") == "canary"
+    assert r("model", False, "en", "pl") == "canary"
+
+
+def test_lid_pick_language_constrained():
+    from server.asr.lid import pick_language
+
+    codes = ("en", "pl", "de", "ru")
+    probs = [0.1, 0.2, 0.6, 0.9]
+    assert pick_language(probs, codes, None) == "ru"
+    assert pick_language(probs, codes, {"en", "pl"}) == "pl"
+    # Empty intersection falls back to the global argmax.
+    assert pick_language(probs, codes, {"xx"}) == "ru"

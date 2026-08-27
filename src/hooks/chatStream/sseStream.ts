@@ -788,13 +788,20 @@ export async function readSSEStream(
             });
           }
 
+          // ── status (turn setup phase, before any model output) ──
+          if (parsed.status) {
+            store().setStreamStatus(parsed.status);
+          }
+
           // ── thinking_start ──
           if (parsed.thinking_start) {
+            store().setStreamStatus(null);
             store().setThinkingStart();
           }
 
           // ── thinking (content) ──
           if (parsed.thinking) {
+            store().setStreamStatus(null);
             thinkingText += parsed.thinking;
             store().appendThinkingToken(parsed.thinking);
           }
@@ -838,6 +845,7 @@ export async function readSSEStream(
           if (parsed.text) {
             if (!firstTextReceived) {
               firstTextReceived = true;
+              store().setStreamStatus(null);
               thinkingMs = thinkingBlockStart ? performance.now() - thinkingBlockStart : thinkingMs;
               store().setThinkingElapsed(thinkingMs);
             }

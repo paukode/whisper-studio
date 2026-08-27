@@ -139,6 +139,11 @@ export interface ChatState {
 
   // Thinking/usage
   setThinkingStart: () => void;
+  /** Turn-setup phase streamed by the server before the model produces
+   *  anything ('preparing' | 'searching' | 'connecting'); null once real
+   *  output (thinking/text) arrives or the stream ends. */
+  streamStatus: string | null;
+  setStreamStatus: (status: string | null) => void;
   setThinkingStop: () => void;
   setUsage: (input: number, output: number, cost?: number, contextUsed?: number, contextMax?: number) => void;
   /** Seed the session-cumulative totals from the server's recorded spend
@@ -178,6 +183,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   isStreaming: false,
   currentStreamContent: '',
   currentThinkingContent: '',
+  streamStatus: null,
   currentStreamToolUse: [],
   liveTeamReports: {},
   approvalQueue: [],
@@ -270,6 +276,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         isStreaming: true,
         currentStreamContent: '',
         currentThinkingContent: '',
+        streamStatus: null,
         currentStreamToolUse: [],
         // A fresh turn starts with a clean live report — a prior turn that
         // errored before its commit site could take them must not leak here.
@@ -289,6 +296,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
     } else {
       set({
         isStreaming: false,
+        streamStatus: null,
         currentStreamContent: '',
         currentThinkingContent: '',
         currentStreamToolUse: [],
@@ -309,6 +317,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       );
       return {
         isStreaming: false,
+        streamStatus: null,
         currentStreamContent: '',
         currentThinkingContent: '',
         currentStreamToolUse: [],
@@ -422,6 +431,10 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   },
 
   // ── Thinking/usage ──
+
+  setStreamStatus: (status: string | null) => {
+    set({ streamStatus: status });
+  },
 
   setThinkingStart: () => {
     set({ thinkingStartTime: performance.now() });
