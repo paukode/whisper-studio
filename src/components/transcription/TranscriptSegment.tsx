@@ -122,13 +122,23 @@ export const TranscriptSegment: React.FC<TranscriptSegmentProps> = ({
   );
 
   // Text editing handlers
+  // Grow the edit textarea to fit ALL of its text — a fixed two-line box
+  // hides most of a long utterance while editing it.
+  const autosizeTextarea = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight + 2}px`;
+  }, []);
+
   const handleTextClick = useCallback(() => {
     setTextEditValue(segment.text);
     setIsEditingText(true);
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
+      autosizeTextarea();
     });
-  }, [segment.text]);
+  }, [segment.text, autosizeTextarea]);
 
   // Listen for the right-click menu's "Edit segment text" action so it can
   // open this segment's textarea remotely. The detail.segmentId must match
@@ -201,7 +211,10 @@ export const TranscriptSegment: React.FC<TranscriptSegmentProps> = ({
             ref={textareaRef}
             className="segment-text"
             value={textEditValue}
-            onChange={(e) => setTextEditValue(e.target.value)}
+            onChange={(e) => {
+              setTextEditValue(e.target.value);
+              autosizeTextarea();
+            }}
             onBlur={commitTextEdit}
             onKeyDown={handleTextKeyDown}
             aria-label="Edit segment text"

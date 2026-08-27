@@ -8,6 +8,7 @@ import { useChatStream } from '@/hooks/useChatStream';
 import { put } from '@/api/client';
 import { TranscriptSegment, getSpeakerClass } from './TranscriptSegment';
 import { downloadFile } from '@/utils/downloadFile';
+import { isNativeTranslationAvailable, translateNative } from '@/services/nativeTranslation';
 
 /** Custom event src/services/recordingController.ts listens for to
  *  live-switch the ASR engine on the active recording's WebSocket (no
@@ -286,6 +287,10 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
   const interimText = useActiveTranscriptionStore((s) => s.interimText);
   const speakerNames = useActiveTranscriptionStore((s) => s.speakerNames);
   const editSegmentText = useActiveTranscriptionStore((s) => s.editSegmentText);
+  const beginSegmentRetranslation = useActiveTranscriptionStore((s) => s.beginSegmentRetranslation);
+  const completeSegmentRetranslation = useActiveTranscriptionStore(
+    (s) => s.completeSegmentRetranslation,
+  );
   const renameSpeaker = useActiveTranscriptionStore((s) => s.renameSpeaker);
   const clearSegments = useActiveTranscriptionStore((s) => s.clearSegments);
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
@@ -344,9 +349,34 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
 
   const handleTextEdit = useCallback(
     (segmentId: string, newText: string) => {
+      const seg = segments.find((sg) => sg.id === segmentId);
       editSegmentText(segmentId, newText);
+      // Re-translate the CORRECTED text. Canary translates audio, and the
+      // audio still contains the misheard word — so edits re-translate
+      // through Apple's on-device TEXT translator (auto-detected source),
+      // whichever translator produced the original line. Outside the Mac
+      // app the stale line is dropped rather than left silently wrong.
+      const hadTranslation = (seg?.translations?.length ?? 0) > 0;
+      const wantsTranslation = hadTranslation || translateMode !== 'off';
+      if (!seg || !wantsTranslation) return;
+      const target = seg.translations?.[0]?.target ?? translateTarget ?? 'en';
+      if (!isNativeTranslationAvailable()) {
+        if (hadTranslation) completeSegmentRetranslation(segmentId, '', target);
+        return;
+      }
+      beginSegmentRetranslation(segmentId);
+      void translateNative(newText, '', target).then((t) =>
+        completeSegmentRetranslation(segmentId, t, target),
+      );
     },
-    [editSegmentText],
+    [
+      editSegmentText,
+      segments,
+      translateMode,
+      translateTarget,
+      beginSegmentRetranslation,
+      completeSegmentRetranslation,
+    ],
   );
 
   const handleSpeakerRename = useCallback(
