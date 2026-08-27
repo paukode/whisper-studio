@@ -56,6 +56,8 @@ export function requiredRecordingModelKeys(): string[] {
       : transcriptionBackend === 'canary'
         ? 'canary'
         : 'parakeet';
+  // Canary needs its language-ID companion (per-sentence source detection).
+  if (engineKey === 'canary') return ['canary', 'voxlingua_lid', 'ecapa_speaker'];
   return [engineKey, 'ecapa_speaker'];
 }
 

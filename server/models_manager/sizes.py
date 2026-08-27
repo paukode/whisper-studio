@@ -25,6 +25,7 @@ log = logging.getLogger("whisper-studio")
 FALLBACK_SIZES: dict[str, int] = {
     "whisper_large_v3": 3_086_000_000,
     "canary": 2_460_000_000,
+    "voxlingua_lid": 86_000_000,
     "parakeet": 2_509_045_082,
     "ecapa_speaker": 89_134_981,
     "qwen3_embed": 1_207_490_483,

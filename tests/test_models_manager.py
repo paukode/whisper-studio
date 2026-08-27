@@ -24,6 +24,7 @@ from server.models_manager.routes import router
 STATIC_KEYS = {
     "whisper_large_v3",
     "canary",
+    "voxlingua_lid",
     "parakeet",
     "ecapa_speaker",
     "qwen3_embed",
