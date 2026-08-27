@@ -232,7 +232,7 @@ def test_canary_session_emits_final_with_language(monkeypatch):
     monkeypatch.setattr(
         canary_backend,
         "_decode_utterance",
-        lambda pcm: ("dzień dobry", np.zeros(16000, dtype=np.float32), "pl"),
+        lambda pcm, previous=None: ("dzień dobry", np.zeros(16000, dtype=np.float32), "pl"),
     )
     session = canary_backend.create_session()
     session._buf = _StubBuffer([b"\x00" * 32000])
@@ -246,28 +246,67 @@ def test_canary_utterance_language_pins_and_detects(monkeypatch):
     import server.infrastructure.config as cfg
     from server.asr import canary_backend, lid
 
-    audio = np.zeros(16000, dtype=np.float32)
+    long_audio = np.zeros(32000, dtype=np.float32)  # 2 s: clears the duration gate
     # Single supported allowlist entry: pinned, no detection call.
     monkeypatch.setattr(cfg, "get", lambda k, default=None: "xx,pl")
     monkeypatch.setattr(
         lid, "detect", lambda a, allowed=None: (_ for _ in ()).throw(AssertionError)
     )
-    assert canary_backend._utterance_language(audio) == "pl"
-    # Multi-entry allowlist: detection constrained to it.
+    assert canary_backend._utterance_language(long_audio) == "pl"
+    # Multi-entry allowlist: confident detection constrained to it wins.
     seen = {}
 
     def fake_detect(a, allowed=None):
         seen["allowed"] = set(allowed)
-        return "en"
+        return "en", 0.9
 
     monkeypatch.setattr(cfg, "get", lambda k, default=None: "pl,en")
     monkeypatch.setattr(lid, "detect", fake_detect)
-    assert canary_backend._utterance_language(audio) == "en"
+    assert canary_backend._utterance_language(long_audio) == "en"
     assert seen["allowed"] == {"pl", "en"}
     # No allowlist: detection over all Canary languages; failure falls to en.
     monkeypatch.setattr(cfg, "get", lambda k, default=None: "")
-    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: None)
-    assert canary_backend._utterance_language(audio) == "en"
+    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: (None, 0.0))
+    assert canary_backend._utterance_language(long_audio) == "en"
+
+
+def test_canary_language_is_sticky_for_weak_detections(monkeypatch):
+    import server.infrastructure.config as cfg
+    from server.asr import canary_backend, lid
+
+    monkeypatch.setattr(cfg, "get", lambda k, default=None: "")
+    long_audio = np.zeros(32000, dtype=np.float32)  # 2 s
+    short_audio = np.zeros(8000, dtype=np.float32)  # 0.5 s: under the gate
+    # A weak (low-confidence) detection must not displace the session language.
+    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: ("sl", 0.4))
+    assert canary_backend._utterance_language(long_audio, previous="pl") == "pl"
+    # Nor may a short clip, however confident it claims to be.
+    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: ("nl", 0.95))
+    assert canary_backend._utterance_language(short_audio, previous="pl") == "pl"
+    # A confident detection on a long clip DOES switch.
+    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: ("en", 0.85))
+    assert canary_backend._utterance_language(long_audio, previous="pl") == "en"
+    # With no previous, even a weak detection beats guessing English.
+    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: ("pl", 0.4))
+    assert canary_backend._utterance_language(long_audio, previous=None) == "pl"
+
+
+def test_canary_session_remembers_language(monkeypatch):
+    from server.asr import canary_backend
+
+    calls = []
+
+    def fake_decode(pcm, previous=None):
+        calls.append(previous)
+        return "tekst", np.zeros(16000, dtype=np.float32), "pl"
+
+    monkeypatch.setattr(canary_backend, "_decode_utterance", fake_decode)
+    session = canary_backend.create_session()
+    session._buf = _StubBuffer([b"\x00" * 32000, b"\x00" * 32000])
+    session.process(b"\x00" * 960)
+    session._buf = _StubBuffer([b"\x00" * 32000])
+    session.process(b"\x00" * 960)
+    assert calls == [None, "pl", "pl"]
 
 
 def test_canary_translate_language_pairs(monkeypatch):
@@ -294,7 +333,7 @@ def test_canary_translate_detects_unknown_source(monkeypatch):
     from server.asr import canary_backend, lid
 
     monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: "hi")
-    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: "pl")
+    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: ("pl", 0.9))
     import server.infrastructure.config as cfg
 
     monkeypatch.setattr(cfg, "get", lambda k, default=None: "")
@@ -302,7 +341,7 @@ def test_canary_translate_detects_unknown_source(monkeypatch):
     # Parakeet finals carry no language: detected here, then translated.
     assert canary_backend.translate_utterance(audio, None, target="en") == "hi"
     # Detected language equals the target: skipped.
-    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: "en")
+    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: ("en", 0.9))
     assert canary_backend.translate_utterance(audio, None, target="en") == ""
 
 
@@ -333,11 +372,17 @@ def test_resolve_translator_matrix():
 
 
 def test_lid_pick_language_constrained():
+    import math
+
     from server.asr.lid import pick_language
 
     codes = ("en", "pl", "de", "ru")
-    probs = [0.1, 0.2, 0.6, 0.9]
-    assert pick_language(probs, codes, None) == "ru"
-    assert pick_language(probs, codes, {"en", "pl"}) == "pl"
+    probs = [math.log(p) for p in (0.1, 0.2, 0.6, 0.9)]
+    code, conf = pick_language(probs, codes, None)
+    assert code == "ru" and conf > 0.4
+    code, conf = pick_language(probs, codes, {"en", "pl"})
+    # Confidence is RELATIVE to the candidate set: 0.2 / (0.1 + 0.2).
+    assert code == "pl" and abs(conf - 2 / 3) < 0.01
     # Empty intersection falls back to the global argmax.
-    assert pick_language(probs, codes, {"xx"}) == "ru"
+    code, _ = pick_language(probs, codes, {"xx"})
+    assert code == "ru"

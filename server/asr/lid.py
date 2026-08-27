@@ -76,18 +76,29 @@ def _codes() -> tuple[str, ...]:
     return tuple(ind2lab[i].split(":")[0].strip() for i in range(len(ind2lab)))
 
 
-def pick_language(probs, codes: tuple[str, ...], allowed: Collection[str] | None) -> str:
-    """Argmax over ``codes``, restricted to ``allowed`` when given (pure,
-    unit-testable). ``probs`` is indexable per class."""
+def pick_language(
+    probs, codes: tuple[str, ...], allowed: Collection[str] | None
+) -> tuple[str, float]:
+    """(code, relative confidence): argmax over ``codes`` restricted to
+    ``allowed`` when given, pure and unit-testable.
+
+    The confidence is the winner's share of the probability mass WITHIN the
+    candidate set (classifier probs are log-space over all 107 classes; a
+    correct pick from a small allowlist can carry a small absolute
+    probability, so absolute thresholds would misjudge constrained picks).
+    """
     candidates = [i for i, c in enumerate(codes) if not allowed or c in allowed]
     if not candidates:
-        candidates = range(len(codes))
-    best = max(candidates, key=lambda i: float(probs[i]))
-    return codes[best]
+        candidates = list(range(len(codes)))
+    weights = [float(np.exp(float(probs[i]))) for i in candidates]
+    total = sum(weights) or 1.0
+    best = max(range(len(candidates)), key=lambda j: weights[j])
+    return codes[candidates[best]], weights[best] / total
 
 
-def detect(audio: np.ndarray, allowed: Collection[str] | None = None) -> str | None:
-    """Language code for one float32 mono 16 kHz utterance, or None on failure.
+def detect(audio: np.ndarray, allowed: Collection[str] | None = None) -> tuple[str | None, float]:
+    """(language code, relative confidence) for one float32 mono 16 kHz
+    utterance; (None, 0.0) on failure.
 
     Serialized on ``_lock``: callers are per-utterance backend threads and the
     classification is tens of milliseconds, so contention is negligible.
@@ -103,4 +114,4 @@ def detect(audio: np.ndarray, allowed: Collection[str] | None = None) -> str | N
         return pick_language(out_prob[0], codes, allowed)
     except Exception as e:  # noqa: BLE001 — detection is best-effort
         log.warning("Language detection failed: %s", e)
-        return None
+        return None, 0.0

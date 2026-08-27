@@ -34,6 +34,7 @@ log = logging.getLogger("whisper-studio")
 
 MODELS_DIR = models_root()
 CANARY_MODEL_DIR = os.path.join(MODELS_DIR, "canary-1b-v2")
+SAMPLE_RATE = 16000
 CANARY_REPO_ID = "qfuxa/canary-mlx"
 
 # Languages Canary-1B-v2 transcribes (and translates to/from English).
@@ -43,8 +44,11 @@ CANARY_LANGUAGES = {
     "uk",
 }  # fmt: skip
 
-# Same rationale as the Whisper backend: RMS below this is dead air.
-ENERGY_THRESHOLD = 0.01
+# Same rationale as the Whisper backend: RMS below this is dead air. Set at a
+# true-silence floor, NOT a "quiet speech" level — the VAD already guarantees
+# speech-like content, and a 0.01 gate silently ate every utterance from a
+# quiet mic (proven live: RMS 0.006 speech transcribed perfectly once past it).
+ENERGY_THRESHOLD = 0.002
 
 # Single worker: MLX evaluation streams are thread-local, so the model must
 # load and decode on one thread (same constraint as the Parakeet backend).
@@ -139,20 +143,40 @@ def _allowed_languages() -> list[str]:
     return allowed
 
 
-def _utterance_language(audio: np.ndarray) -> str:
+# Sticky-detection tuning. VoxLingua on SHORT, noisy mic utterances misroutes
+# hard (observed live: Polish speech tagged sl/nl/mt/ru), so a detection only
+# gets to SET or SWITCH the session language when the clip is long enough to
+# carry a real language signature and the winner clearly beats the other
+# candidates; anything weaker inherits the previous utterance's language.
+_LID_MIN_SECONDS = 1.5
+_LID_MIN_CONFIDENCE = 0.6
+
+
+def _utterance_language(audio: np.ndarray, previous: str | None = None) -> str:
     """Source language for one utterance.
 
     A single-entry allowlist pins the language (no detection cost). Otherwise
     the LID classifier detects it, constrained to the allowlist when one is
-    set or to Canary's 25 languages when not. English is the last-resort
-    fallback when detection fails outright.
+    set or to Canary's 25 languages when not — but only a CONFIDENT detection
+    on a long-enough clip is believed outright; weak ones fall back to
+    ``previous`` (the session's sticky language), then the allowlist head,
+    then English.
     """
     allowed = _allowed_languages()
     if len(allowed) == 1:
         return allowed[0]
     from server.asr import lid
 
-    detected = lid.detect(audio, allowed or CANARY_LANGUAGES)
+    detected, confidence = lid.detect(audio, allowed or CANARY_LANGUAGES)
+    duration = len(audio) / SAMPLE_RATE
+    if (
+        detected in CANARY_LANGUAGES
+        and confidence >= _LID_MIN_CONFIDENCE
+        and duration >= _LID_MIN_SECONDS
+    ):
+        return detected
+    if previous in CANARY_LANGUAGES:
+        return previous
     if detected in CANARY_LANGUAGES:
         return detected
     return allowed[0] if allowed else "en"
@@ -183,6 +207,8 @@ def translate_utterance(
     from server.asr.whisper_backend import _is_junk
 
     source = language if language in CANARY_LANGUAGES else _utterance_language(audio_data)
+    # (translation keeps stateless detection: the transcribing engine's own
+    # language ID rides on the event for every engine that has one)
     if source == target:
         return ""
     if target not in CANARY_LANGUAGES or (source != "en" and target != "en"):
@@ -198,7 +224,9 @@ def translate_utterance(
     return text
 
 
-def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None]:
+def _decode_utterance(
+    utterance_pcm: bytes, previous: str | None = None
+) -> tuple[str, np.ndarray, str | None]:
     """PCM16 utterance -> (filtered text, float32 audio, source language)."""
     from server.asr.whisper_backend import _is_junk
 
@@ -209,7 +237,7 @@ def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None
         log.debug("Canary: utterance below energy threshold (rms=%.4f), skipped", volume)
         return "", audio, None
 
-    language = _utterance_language(audio)
+    language = _utterance_language(audio, previous)
     text = ""
     try:
         text = _generate(audio, source_lang=language, target_lang=language)
@@ -222,15 +250,26 @@ def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None
 
 
 class CanarySession:
-    """One per-connection decoder: VAD-gated utterances, final events only."""
+    """One per-connection decoder: VAD-gated utterances, final events only.
+
+    Tracks the session's sticky language: short or ambiguous utterances
+    inherit it instead of trusting a shaky per-clip detection (a meeting
+    rarely changes language mid-sentence)."""
 
     def __init__(self) -> None:
         self._buf = UtteranceBuffer()
+        self._language: str | None = None
+
+    def _decode(self, utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None]:
+        text, audio, language = _decode_utterance(utterance_pcm, self._language)
+        if language:
+            self._language = language
+        return text, audio, language
 
     def process(self, raw_pcm: bytes) -> list[dict]:
         events: list[dict] = []
         for utterance_pcm in self._buf.feed(raw_pcm):
-            text, audio, language = _decode_utterance(utterance_pcm)
+            text, audio, language = self._decode(utterance_pcm)
             if text:
                 events.append({"kind": "final", "text": text, "audio": audio, "language": language})
         return events
@@ -240,7 +279,7 @@ class CanarySession:
         try:
             tail = self._buf.flush()
             if tail is not None:
-                text, audio, language = _decode_utterance(tail)
+                text, audio, language = self._decode(tail)
                 if text:
                     events.append(
                         {"kind": "final", "text": text, "audio": audio, "language": language}
