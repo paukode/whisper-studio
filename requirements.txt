@@ -18,6 +18,10 @@ reportlab==5.0.0
 # openpyxl arrive with markitdown above, but nothing pulls in python-docx, and
 # without it a .docx is the one format the model cannot edit.
 python-docx==1.2.0
+# SVG geometry lint (create_visual) parses model-authored XML; defusedxml
+# blocks entity-expansion payloads. Already transitive via markitdown, but
+# the lint must not silently lose its parser if that dep tree changes.
+defusedxml==0.7.1
 mcp==1.27.2
 tavily-python==0.7.25
 # OpenAI GPT models on Bedrock (GPT-5.5 / GPT-5.4): the Responses API on the
