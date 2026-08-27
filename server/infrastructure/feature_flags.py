@@ -164,8 +164,8 @@ register_flag(
 
 register_flag(
     "rag_reranker",
-    description="Cross-encoder reranking: reorder the fused retrieval candidates by judging each (question, passage) pair directly, before grounding's top-k. Cloud mode uses Cohere Rerank 3.5 (Bedrock); local mode uses Qwen3-Reranker-0.6B (~2.4GB, first grounded turn cold-loads it). Default on; toggle in the Feature Flags settings.",
-    default=True,
+    description="Cross-encoder reranking: reorder the fused retrieval candidates by judging each (question, passage) pair directly, before grounding's top-k. Cloud mode uses Cohere Rerank 3.5 (Bedrock); local mode uses Qwen3-Reranker-0.6B (~2.4GB, first grounded turn cold-loads it). Default OFF: the local model adds seconds of latency to every grounded chat turn and OOMs outright on memory-pressured machines, for a modest ranking gain on top of hybrid retrieval. Turn on here if grounding quality matters more than turn latency.",
+    default=False,
     category="chat",
 )
 
