@@ -3,6 +3,7 @@ is already streaming gets 409; the slot is timestamped so an abandoned stream
 goes stale and is reclaimed; the /reset endpoint clears a wedged session; the
 slot clears on every stream exit path."""
 
+import json
 import time
 
 from server.chat import routes
@@ -40,7 +41,7 @@ def test_fresh_slot_is_busy_stale_slot_is_reclaimable():
     assert (now - stale) >= routes._STREAM_STALE_AFTER_S  # reclaimable
 
 
-def test_second_new_turn_409s_while_streaming(monkeypatch):
+def test_second_new_turn_refused_while_streaming(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -69,8 +70,16 @@ def test_second_new_turn_409s_while_streaming(monkeypatch):
                 "history": [],
             },
         )
-        assert r.status_code == 409
-        assert r.json()["error_code"] == "SESSION_BUSY"
+        # The endpoint streams from byte zero now, so the refusal arrives as
+        # an SSE error frame on a 200 stream instead of an HTTP 409 (an HTTP
+        # status can't be changed once the stream has started).
+        assert r.status_code == 200
+        frames = [
+            json.loads(line[6:])
+            for line in r.text.splitlines()
+            if line.startswith("data: ") and line != "data: [DONE]"
+        ]
+        assert any(f.get("error_code") == "SESSION_BUSY" for f in frames)
     finally:
         routes._active_chat_streams.clear()
 

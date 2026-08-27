@@ -7,6 +7,10 @@ export const SSEEventDataSchema = z.object({
   thinking: z.string().optional(),
   thinking_start: z.boolean().optional(),
   thinking_stop: z.boolean().optional(),
+  /** Coarse turn-setup phase before the model streams: 'preparing' |
+   *  'searching' | 'connecting'. */
+  status: z.string().optional(),
+  error_code: z.string().optional(),
 
   // Skill/tool traces. `skill_input` carries the tool name as a string
   // (truthy-checked by useChatStream); the older boolean form was wrong.

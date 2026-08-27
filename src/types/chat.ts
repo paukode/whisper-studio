@@ -296,6 +296,9 @@ export interface SSEEventData {
   thinking?: string;
   thinking_start?: boolean;
   thinking_stop?: boolean;
+  /** Turn-setup phase before model output: 'preparing' | 'searching' | 'connecting'. */
+  status?: string;
+  error_code?: string;
 
   // Skill/tool traces
   skill?: string;
