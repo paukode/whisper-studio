@@ -386,3 +386,25 @@ def test_lid_pick_language_constrained():
     # Empty intersection falls back to the global argmax.
     code, _ = pick_language(probs, codes, {"xx"})
     assert code == "ru"
+
+
+def test_canary_session_emits_interim_drafts(monkeypatch):
+    from server.asr import canary_backend
+
+    monkeypatch.setattr(
+        canary_backend, "_generate", lambda a, source_lang, target_lang: "dzień dob"
+    )
+    monkeypatch.setattr(canary_backend, "_utterance_language", lambda a, previous=None: "pl")
+    session = canary_backend.create_session()
+    # No completed utterance, 1 s of pending audio: a draft is emitted once.
+    session._buf = _StubBuffer([], tail=None)
+    session._buf.pending = lambda: b"\x00" * 32000
+    events = session.process(b"\x00" * 960)
+    assert events == [{"kind": "interim", "text": "dzień dob"}]
+    # The same draft again is suppressed (no flicker).
+    assert session.process(b"\x00" * 960) == []
+    # Below the minimum window, no draft.
+    session2 = canary_backend.create_session()
+    session2._buf = _StubBuffer([], tail=None)
+    session2._buf.pending = lambda: b"\x00" * 8000
+    assert session2.process(b"\x00" * 960) == []

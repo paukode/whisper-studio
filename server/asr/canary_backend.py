@@ -2,9 +2,10 @@
 
 Transcribes 25 European languages AND translates any of them to English with
 a real speech-translation head (unlike Whisper checkpoints without one, whose
-translate task is silently ignored). Decodes settled utterances at silence
-boundaries like the Whisper backend; steady-state decode is ~0.4 s per
-utterance on Apple Silicon.
+translate task is silently ignored). Emits a live word-by-word draft like
+the Parakeet backend — the in-flight utterance is re-decoded on every audio
+chunk (steady-state decode ~0.4 s, under the ~1 s chunk cadence) — with the
+clean, settled final at each silence boundary.
 
 One Canary limitation shapes this module: the model has NO language
 head — every decode needs an explicit ``source_lang``. A small on-CPU
@@ -35,6 +36,13 @@ log = logging.getLogger("whisper-studio")
 MODELS_DIR = models_root()
 CANARY_MODEL_DIR = os.path.join(MODELS_DIR, "canary-1b-v2")
 SAMPLE_RATE = 16000
+
+# Don't run an interim decode until the in-flight utterance carries at least
+# this much audio — below ~0.5 s the draft is empty or one unreliable
+# fragment, not worth the decode or the UI flicker (same idea as the
+# Parakeet backend).
+_MIN_INTERIM_SECONDS = 0.5
+_MIN_INTERIM_BYTES = int(_MIN_INTERIM_SECONDS * SAMPLE_RATE) * 2  # PCM16
 CANARY_REPO_ID = "qfuxa/canary-mlx"
 
 # Languages Canary-1B-v2 transcribes (and translates to/from English).
@@ -250,7 +258,7 @@ def _decode_utterance(
 
 
 class CanarySession:
-    """One per-connection decoder: VAD-gated utterances, final events only.
+    """One per-connection decoder: live interim drafts plus settled finals.
 
     Tracks the session's sticky language: short or ambiguous utterances
     inherit it instead of trusting a shaky per-clip detection (a meeting
@@ -259,6 +267,7 @@ class CanarySession:
     def __init__(self) -> None:
         self._buf = UtteranceBuffer()
         self._language: str | None = None
+        self._last_interim = ""
 
     def _decode(self, utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None]:
         text, audio, language = _decode_utterance(utterance_pcm, self._language)
@@ -268,10 +277,35 @@ class CanarySession:
 
     def process(self, raw_pcm: bytes) -> list[dict]:
         events: list[dict] = []
-        for utterance_pcm in self._buf.feed(raw_pcm):
-            text, audio, language = self._decode(utterance_pcm)
-            if text:
-                events.append({"kind": "final", "text": text, "audio": audio, "language": language})
+        completed = self._buf.feed(raw_pcm)
+        if completed:
+            for utterance_pcm in completed:
+                text, audio, language = self._decode(utterance_pcm)
+                if text:
+                    events.append(
+                        {"kind": "final", "text": text, "audio": audio, "language": language}
+                    )
+            # An utterance just closed; the next interim starts a fresh window.
+            self._last_interim = ""
+            return events
+
+        # No boundary this chunk — re-decode the growing in-flight utterance
+        # as a volatile draft (mirrors the Parakeet backend). The draft reuses
+        # the session's sticky language when one is settled; language
+        # detection itself still only updates on finals, so a half-word
+        # fragment can't flip it.
+        pending = self._buf.pending()
+        if len(pending) >= _MIN_INTERIM_BYTES:
+            audio = np.frombuffer(pending, dtype=np.int16).astype(np.float32) / 32768.0
+            language = self._language or _utterance_language(audio)
+            try:
+                text = _generate(audio, source_lang=language, target_lang=language)
+            except Exception as e:
+                log.debug("Canary interim decode failed: %s", e)
+                text = ""
+            if text and text != self._last_interim:
+                self._last_interim = text
+                events.append({"kind": "interim", "text": text})
         return events
 
     def finish(self) -> list[dict]:
