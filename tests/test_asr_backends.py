@@ -408,3 +408,41 @@ def test_canary_session_emits_interim_drafts(monkeypatch):
     session2._buf = _StubBuffer([], tail=None)
     session2._buf.pending = lambda: b"\x00" * 8000
     assert session2.process(b"\x00" * 960) == []
+
+
+def test_canary_drafts_yield_to_translations(monkeypatch):
+    from server.asr import canary_backend
+
+    monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: "draft")
+    monkeypatch.setattr(canary_backend, "_utterance_language", lambda a, previous=None: "pl")
+    monkeypatch.setattr(canary_backend, "_pending_translations", 0)
+    session = canary_backend.create_session()
+    session._buf = _StubBuffer([], tail=None)
+    session._buf.pending = lambda: b"\x00" * 32000
+    # A queued translation suppresses the draft entirely.
+    canary_backend.note_translation_queued()
+    assert session.process(b"\x00" * 960) == []
+    # Once the translation runs (decrements on entry), drafts resume.
+    monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: "text")
+    canary_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl")
+    monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: "draft")
+    assert session.process(b"\x00" * 960) == [{"kind": "interim", "text": "draft"}]
+
+
+def test_canary_draft_cadence_backs_off(monkeypatch):
+    from server.asr import canary_backend
+
+    monkeypatch.setattr(canary_backend, "_pending_translations", 0)
+    session = canary_backend.create_session()
+    # Immediately after a draft, another is NOT due; after the base interval
+    # it is; long windows require the relaxed interval.
+    import time as _time
+
+    session._last_interim_at = _time.monotonic()
+    assert not session._draft_due(32000)  # 1 s window, 0 s since last
+    session._last_interim_at = _time.monotonic() - 1.0
+    assert session._draft_due(32000)  # 1 s window, 1 s since last
+    session._last_interim_at = _time.monotonic() - 1.0
+    assert not session._draft_due(2 * 16000 * 6)  # 6 s window needs 2 s gap
+    session._last_interim_at = _time.monotonic() - 2.1
+    assert session._draft_due(2 * 16000 * 6)

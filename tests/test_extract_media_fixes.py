@@ -47,7 +47,6 @@ def test_decode_utterance_drops_uppercase_origin_hallucination(monkeypatch):
         "_transcribe",
         lambda audio, language=None, relaxed=False: ("Obrigado", language),
     )
-    # PCM16 loud enough to clear ENERGY_THRESHOLD (RMS / 32768 > 0.01).
     pcm = np.full(16000, 1000, dtype=np.int16).tobytes()
     text, audio, _ = whisper_backend._decode_utterance(pcm)
     assert text == ""

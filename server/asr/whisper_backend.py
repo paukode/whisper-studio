@@ -33,13 +33,6 @@ WHISPER_REPO_ID = "mlx-community/whisper-large-v3-mlx"
 WHISPER_SENTINEL = "weights.npz"
 
 
-# RMS below this is treated as dead air — don't bother decoding. A
-# true-silence floor, NOT a "quiet speech" level: the VAD already guarantees
-# speech-like content, and the old 0.01 gate silently ate every utterance
-# from a quiet mic (low OS input volume) while Parakeet, which has no gate,
-# transcribed the same audio fine.
-ENERGY_THRESHOLD = 0.002
-
 # Decoding is sequential per connection: utterances arrive in real time
 # and decode far faster than real time (RTF well under 1), so one worker
 # keeps ordering trivial and avoids interleaving MLX work across threads.
@@ -366,12 +359,9 @@ def _is_junk(text: str) -> bool:
 
 def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None]:
     """PCM16 utterance -> (filtered text, float32 audio, decoded language)."""
+    # No energy gate — the VAD is the only speech filter (matching Parakeet;
+    # RMS gates silently ate quiet mics, proven live).
     audio = np.frombuffer(utterance_pcm, dtype=np.int16).astype(np.float32) / 32768.0
-
-    volume = np.sqrt(np.mean(audio**2))
-    if volume < ENERGY_THRESHOLD:
-        log.debug("Whisper: utterance below energy threshold (rms=%.4f), skipped", volume)
-        return "", audio, None
 
     text = ""
     language = None

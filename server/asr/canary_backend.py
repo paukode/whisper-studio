@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -43,6 +44,40 @@ SAMPLE_RATE = 16000
 # Parakeet backend).
 _MIN_INTERIM_SECONDS = 0.5
 _MIN_INTERIM_BYTES = int(_MIN_INTERIM_SECONDS * SAMPLE_RATE) * 2  # PCM16
+
+# ── Draft scheduling ─────────────────────────────────────────────────────────
+# Drafts, finals, and translations share this module's single decode thread,
+# and a full-context draft re-decode costs ~0.4 s. Drafts are cosmetic, so
+# they yield: a draft is skipped outright while any translation is queued
+# (the orchestrator counts them in via note_translation_queued), and the
+# draft cadence stretches as the in-flight window grows (each re-decode gets
+# more expensive with window length).
+_pending_translations = 0
+_pending_lock = threading.Lock()
+# Seconds between drafts: base cadence, and the relaxed cadence once the
+# in-flight window passes _INTERIM_SLOW_AFTER_S of audio.
+_INTERIM_INTERVAL_S = 0.9
+_INTERIM_SLOW_INTERVAL_S = 2.0
+_INTERIM_SLOW_AFTER_S = 4.0
+
+
+def note_translation_queued() -> None:
+    """The orchestrator queued a translate_utterance on this executor."""
+    global _pending_translations
+    with _pending_lock:
+        _pending_translations += 1
+
+
+def _note_translation_done() -> None:
+    global _pending_translations
+    with _pending_lock:
+        _pending_translations = max(0, _pending_translations - 1)
+
+
+def _translations_waiting() -> bool:
+    return _pending_translations > 0
+
+
 CANARY_REPO_ID = "qfuxa/canary-mlx"
 
 # Languages Canary-1B-v2 transcribes (and translates to/from English).
@@ -51,12 +86,6 @@ CANARY_LANGUAGES = {
     "it", "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru",
     "uk",
 }  # fmt: skip
-
-# Same rationale as the Whisper backend: RMS below this is dead air. Set at a
-# true-silence floor, NOT a "quiet speech" level — the VAD already guarantees
-# speech-like content, and a 0.01 gate silently ate every utterance from a
-# quiet mic (proven live: RMS 0.006 speech transcribed perfectly once past it).
-ENERGY_THRESHOLD = 0.002
 
 # Single worker: MLX evaluation streams are thread-local, so the model must
 # load and decode on one thread (same constraint as the Parakeet backend).
@@ -211,7 +240,12 @@ def translate_utterance(
     languages → English, and English → any of them — never X → Y with both
     non-English. An unsupported pair (or same-language input) returns "" so
     the client's pending slot clears without a bogus line.
+
+    Pairs with note_translation_queued(): the queued-translation count is
+    what makes live drafts yield this thread, so it decrements on entry
+    (every exit path counts as done).
     """
+    _note_translation_done()
     from server.asr.whisper_backend import _is_junk
 
     source = language if language in CANARY_LANGUAGES else _utterance_language(audio_data)
@@ -238,12 +272,9 @@ def _decode_utterance(
     """PCM16 utterance -> (filtered text, float32 audio, source language)."""
     from server.asr.whisper_backend import _is_junk
 
+    # No energy gate — the VAD is the only speech filter (matching Parakeet;
+    # RMS gates silently ate quiet mics, proven live).
     audio = np.frombuffer(utterance_pcm, dtype=np.int16).astype(np.float32) / 32768.0
-
-    volume = np.sqrt(np.mean(audio**2))
-    if volume < ENERGY_THRESHOLD:
-        log.debug("Canary: utterance below energy threshold (rms=%.4f), skipped", volume)
-        return "", audio, None
 
     language = _utterance_language(audio, previous)
     text = ""
@@ -268,6 +299,7 @@ class CanarySession:
         self._buf = UtteranceBuffer()
         self._language: str | None = None
         self._last_interim = ""
+        self._last_interim_at = 0.0
 
     def _decode(self, utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None]:
         text, audio, language = _decode_utterance(utterance_pcm, self._language)
@@ -295,7 +327,7 @@ class CanarySession:
         # detection itself still only updates on finals, so a half-word
         # fragment can't flip it.
         pending = self._buf.pending()
-        if len(pending) >= _MIN_INTERIM_BYTES:
+        if len(pending) >= _MIN_INTERIM_BYTES and self._draft_due(len(pending)):
             audio = np.frombuffer(pending, dtype=np.int16).astype(np.float32) / 32768.0
             language = self._language or _utterance_language(audio)
             try:
@@ -303,10 +335,21 @@ class CanarySession:
             except Exception as e:
                 log.debug("Canary interim decode failed: %s", e)
                 text = ""
+            self._last_interim_at = time.monotonic()
             if text and text != self._last_interim:
                 self._last_interim = text
                 events.append({"kind": "interim", "text": text})
         return events
+
+    def _draft_due(self, pending_bytes: int) -> bool:
+        """Whether to spend this thread on a cosmetic draft right now."""
+        if _translations_waiting():
+            return False
+        window_s = pending_bytes / 2 / SAMPLE_RATE
+        interval = (
+            _INTERIM_SLOW_INTERVAL_S if window_s > _INTERIM_SLOW_AFTER_S else _INTERIM_INTERVAL_S
+        )
+        return (time.monotonic() - self._last_interim_at) >= interval
 
     def finish(self) -> list[dict]:
         events: list[dict] = []
