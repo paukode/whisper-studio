@@ -278,7 +278,7 @@ def test_search_filters_unsupported_archs_and_dedups(monkeypatch):
 def test_search_trusted_scope_queries_each_author(monkeypatch):
     calls: list[str | None] = []
 
-    def fake_search(query, author, sort_key, limit):
+    def fake_search(query, author, sort_key, limit, fmt="gguf"):
         calls.append(author)
         return [SearchHit(f"{author}/Model-GGUF", 1, 1, 1, "llama", 4096, False)]
 

@@ -94,6 +94,56 @@ const OVERSIZED_REPO_DETAIL = {
   ],
 };
 
+
+// One MLX search row: a whole-repo install unit — no quant picker, format
+// carried on the row so the install call and detail fetch use the MLX lane.
+const MLX_SEARCH = {
+  count: 1,
+  results: [
+    {
+      repo_id: 'mlx-community/Qwen3-14B-4bit',
+      author: 'mlx-community',
+      name: 'Qwen3-14B-4bit',
+      label: 'Qwen3-14B-4bit',
+      format: 'mlx',
+      downloads: 12000,
+      likes: 7,
+      trending_score: 3,
+      arch: 'qwen3',
+      param_size: '14B',
+      tool_capable: true,
+      context_length: null,
+      gated: false,
+      supported: true,
+    },
+  ],
+};
+
+const MLX_REPO_DETAIL = {
+  repo_id: 'mlx-community/Qwen3-14B-4bit',
+  format: 'mlx',
+  arch: 'qwen3',
+  supported: true,
+  context_length: null,
+  has_chat_template: true,
+  gated: false,
+  recommended_filename: '',
+  mem_total_bytes: 18_000_000_000,
+  mem_budget_bytes: 9_500_000_000,
+  mem_reserved_bytes: 4_000_000_000,
+  quants: [
+    {
+      quant: '4bit',
+      filename: '',
+      size_bytes: 8_200_000_000,
+      is_sharded: false,
+      shard_count: 1,
+      recommended: true,
+      fit: 'ok',
+    },
+  ],
+};
+
 import { ModelBrowser } from './ModelBrowser';
 import { useUIStore } from '@/stores/uiStore';
 
@@ -387,5 +437,61 @@ describe('ModelBrowser (Discover)', () => {
       expect(toast?.message).toBeDefined();
       expect(toast?.message).not.toMatch(/Tool calling is off/i);
     });
+  });
+
+  it('switching format to MLX refetches with fmt=mlx and renders whole-repo rows', async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) {
+        return Promise.resolve(url.includes('fmt=mlx') ? MLX_SEARCH : SEARCH);
+      }
+      if (url.startsWith('/api/models/browse/repo/')) return Promise.resolve(MLX_REPO_DETAIL);
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    renderBrowser();
+    await screen.findByText('Qwen3-0.6B-GGUF');
+
+    fireEvent.change(screen.getByRole('combobox', { name: /weight format/i }), {
+      target: { value: 'mlx' },
+    });
+    await screen.findByText('Qwen3-14B-4bit');
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(expect.stringContaining('fmt=mlx')),
+    );
+    // No quant dropdown for an MLX row — the repo IS the quant.
+    expect(
+      screen.queryByRole('combobox', { name: /choose a quant/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('installs an MLX repo whole (no filename) through the MLX lane', async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(MLX_SEARCH);
+      if (url.startsWith('/api/models/browse/repo/')) return Promise.resolve(MLX_REPO_DETAIL);
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    renderBrowser();
+    fireEvent.change(screen.getByRole('combobox', { name: /weight format/i }), {
+      target: { value: 'mlx' },
+    });
+    await screen.findByText('Qwen3-14B-4bit');
+
+    const button = screen.getByRole('button', { name: 'Download' });
+    // Hovering the button triggers the lazy detail fetch (size + fit preview).
+    fireEvent.mouseEnter(button);
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(
+        expect.stringContaining('/api/models/browse/repo/mlx-community/Qwen3-14B-4bit?fmt=mlx'),
+      ),
+    );
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/api/models/browse/install', {
+        repo_id: 'mlx-community/Qwen3-14B-4bit',
+        filename: '',
+        format: 'mlx',
+      }),
+    );
   });
 });
