@@ -97,14 +97,15 @@ def local_chat_response(
         from server.chat.engine.local import LocalAdapter
         from server.chat.engine.policy import LOCAL_POLICY
         from server.chat.engine.runner import TurnContext, run_turn
-        from server.local import llama_server
+        from server.local import serving
         from server.local.server_stream import _spawn_memory_hooks
         from server.utils import ndjson_dumps
 
-        # Cold start loads gigabytes; keep it off the event loop.
+        # Cold start loads gigabytes; keep it off the event loop. serving
+        # dispatches to the model's engine (llama-server or mlx_lm).
         try:
             base_url = await asyncio.get_running_loop().run_in_executor(
-                None, llama_server.ensure_serving, model_key, n_ctx
+                None, serving.ensure_serving, model_key, n_ctx
             )
         except Exception as e:
             yield f"data: {ndjson_dumps({'error': str(e)})}\n\n"
@@ -117,6 +118,8 @@ def local_chat_response(
             system_prompt=local_system,
             thinking=thinking_on,
             tools_enabled=local_tools_on,
+            wire_model=serving.wire_model(model_key),
+            supports_tool_choice=serving.supports_tool_choice(model_key),
         )
         current_attachments = await asyncio.to_thread(load_session_attachments, session_id)
         turn_ctx = TurnContext(

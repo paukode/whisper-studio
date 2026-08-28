@@ -236,9 +236,9 @@ def _start_parent_watchdog() -> None:
             time.sleep(5)
         log.info("Parent shell (pid %d) is gone; shutting down", parent_pid)
         try:
-            from server.local import llama_server
+            from server.local import serving
 
-            llama_server.stop()
+            serving.stop()
         except Exception:
             pass
         os._exit(0)
@@ -284,11 +284,11 @@ async def lifespan(app):
     # shutdown hook below, leaving its on-device model server alive and holding
     # gigabytes. Reap those before anything else needs the memory.
     try:
-        from server.local import llama_server
+        from server.local import serving
 
-        await asyncio.to_thread(llama_server.reap_orphans)
+        await asyncio.to_thread(serving.reap_orphans)
     except Exception as e:
-        logging.getLogger("whisper-studio").debug("llama-server orphan reap failed: %s", e)
+        logging.getLogger("whisper-studio").debug("model server orphan reap failed: %s", e)
     cleanup_task = asyncio.create_task(cleanup_loop())
     mcp_task = asyncio.create_task(mcp_manager.start_all())
     # Warm the transcription stack in the background so the first
@@ -333,13 +333,13 @@ async def lifespan(app):
     index_agent.mark_app_stopped()
     git_watcher.stop()
     # Stop the on-device model server before the loop tears down; an orphaned
-    # llama-server would keep holding its port and gigabytes of weights.
+    # one would keep holding its port and gigabytes of weights.
     try:
-        from server.local import llama_server
+        from server.local import serving
 
-        llama_server.stop()
+        serving.stop()
     except Exception as e:  # never block shutdown on this
-        logging.getLogger("whisper-studio").debug("llama-server stop failed: %s", e)
+        logging.getLogger("whisper-studio").debug("model server stop failed: %s", e)
     await mcp_manager.stop_all()
     await preview_manager.stop_all()
     cleanup_task.cancel()

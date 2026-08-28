@@ -1,10 +1,13 @@
-"""llama-server protocol helpers for on-device turns.
+"""Model-server protocol helpers for on-device turns (llama-server and mlx_lm).
 
 The agentic loop itself lives in the unified turn engine
 (server/chat/engine/runner.py + engine/local.py — the LocalAdapter); this
-module keeps the llama-server specifics the adapter builds on: the
+module keeps the wire specifics the adapter builds on: the
 ``/v1/chat/completions`` SSE parser, the tool-call accumulator, argument
 coercion, tool-result message rendering, and the local post-turn memory hooks.
+Both engines speak the same OpenAI-compatible SSE, so one parser serves both
+(the only dialect difference — the reasoning delta field name — is folded in
+below).
 
 Speaking llama-server's OpenAI-compatible endpoint means upstream llama.cpp
 does the jobs a hand-rolled in-process path had to solve per model family:
@@ -334,7 +337,7 @@ async def _stream_round(base_url: str, payload: dict):
         ) as resp:
             if resp.status_code != 200:
                 body = (await resp.aread()).decode(errors="replace")
-                raise RuntimeError(f"llama-server returned {resp.status_code}: {body[:500]}")
+                raise RuntimeError(f"model server returned {resp.status_code}: {body[:500]}")
             async for line in resp.aiter_lines():
                 if not line or not line.startswith("data:"):
                     continue
@@ -346,7 +349,7 @@ async def _stream_round(base_url: str, payload: dict):
                 except json.JSONDecodeError:
                     continue
                 if obj.get("error"):
-                    raise RuntimeError(f"llama-server error: {str(obj['error'])[:400]}")
+                    raise RuntimeError(f"model server error: {str(obj['error'])[:400]}")
                 # The usage chunk arrives last and carries an EMPTY choices list,
                 # so it must be read before the delta handling below.
                 if isinstance(obj.get("usage"), dict):
@@ -354,8 +357,11 @@ async def _stream_round(base_url: str, payload: dict):
                 choices = obj.get("choices") or [{}]
                 choice = choices[0] if choices else {}
                 delta = choice.get("delta") or {}
-                if delta.get("reasoning_content"):
-                    yield ("thinking", delta["reasoning_content"])
+                # llama-server puts reasoning on `reasoning_content`; mlx_lm
+                # server puts it on `reasoning`. Same channel either way.
+                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                if reasoning:
+                    yield ("thinking", reasoning)
                 if delta.get("content"):
                     yield ("text", delta["content"])
                 if delta.get("tool_calls"):

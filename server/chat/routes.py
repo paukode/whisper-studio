@@ -379,14 +379,14 @@ async def local_model_load(model: str, n_ctx: int | None = None):
     async def gen():
         loop = asyncio.get_event_loop()
         yield f"data: {ndjson_dumps({'stage': busy_stage, 'progress': 0.0, 'label': label})}\n\n"
-        from server.local import llama_server
+        from server.local import serving
         from server.models_manager import manager as models_manager
         from server.models_manager.catalog import get_entry as catalog_entry
 
         entry = catalog_entry(model)  # local-chat keys are catalog keys
         # Starts (or restarts at the new context size) the model server. Runs on a
         # plain I/O thread — it is a subprocess wait, not model work.
-        load_future = loop.run_in_executor(None, llama_server.ensure_serving, model, n_ctx)
+        load_future = loop.run_in_executor(None, serving.ensure_serving, model, n_ctx)
         ramp = 0.0
         while not load_future.done():
             await asyncio.sleep(0.4)
@@ -469,9 +469,9 @@ async def local_model_download(model: str):
 @router.post("/api/local-model/unload")
 async def local_model_unload():
     """Free the resident on-device model (called when switching away from it)."""
-    from server.local import llama_server
+    from server.local import serving
 
-    await asyncio.get_event_loop().run_in_executor(None, llama_server.stop)
+    await asyncio.get_event_loop().run_in_executor(None, serving.stop)
     return {"unloaded": True}
 
 
