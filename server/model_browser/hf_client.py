@@ -22,8 +22,10 @@ from dataclasses import dataclass
 log = logging.getLogger("whisper-studio")
 
 # What the search asks the Hub to hydrate on each hit — enough for the result
-# card and the arch gate without a follow-up call.
+# card and the arch gate without a follow-up call. The MLX variant swaps the
+# GGUF header for the transformers config (model_type lives there).
 _SEARCH_EXPAND = ["downloads", "likes", "trendingScore", "gguf", "lastModified"]
+_SEARCH_EXPAND_MLX = ["downloads", "likes", "trendingScore", "config", "lastModified"]
 
 
 @dataclass
@@ -67,22 +69,27 @@ def search(
     author: str | None,
     sort: str,
     limit: int,
+    fmt: str = "gguf",
 ) -> list[SearchHit]:
-    """One ``list_models`` call, GGUF text-generation repos only.
+    """One ``list_models`` call, text-generation repos of one weight format.
 
-    ``sort`` is "trendingScore" or "downloads"; the Hub sorts descending. Any
-    failure (offline, bad author) returns an empty list — the caller merges
-    across authors and a single failing author must not sink the whole search.
+    ``fmt`` picks the lane: "gguf" filters on the GGUF tag and reads arch/ctx
+    from the GGUF header; "mlx" filters on the MLX library tag and reads the
+    arch (``model_type``) from the transformers config. ``sort`` is
+    "trendingScore" or "downloads"; the Hub sorts descending. Any failure
+    (offline, bad author) returns an empty list — the caller merges across
+    authors and a single failing author must not sink the whole search.
     """
+    mlx = fmt == "mlx"
     try:
         models = _api().list_models(
-            filter="gguf",
+            filter="mlx" if mlx else "gguf",
             pipeline_tag="text-generation",
             search=query or None,
             author=author or None,
             sort=sort,
             limit=limit,
-            expand=_SEARCH_EXPAND,
+            expand=_SEARCH_EXPAND_MLX if mlx else _SEARCH_EXPAND,
         )
     except Exception as e:
         log.debug("HF model search failed (author=%s, q=%r): %s", author, query, e)
@@ -90,15 +97,22 @@ def search(
 
     hits: list[SearchHit] = []
     for m in models:
-        gguf = getattr(m, "gguf", None)
+        if mlx:
+            config = getattr(m, "config", None) or {}
+            arch = config.get("model_type") if isinstance(config, dict) else None
+            context_length = None
+        else:
+            gguf = getattr(m, "gguf", None)
+            arch = _gguf_field(gguf, "architecture")
+            context_length = _gguf_field(gguf, "context_length")
         hits.append(
             SearchHit(
                 repo_id=m.id,
                 downloads=getattr(m, "downloads", None),
                 likes=getattr(m, "likes", None),
                 trending_score=getattr(m, "trending_score", None),
-                arch=_gguf_field(gguf, "architecture"),
-                context_length=_gguf_field(gguf, "context_length"),
+                arch=arch,
+                context_length=context_length,
                 gated=bool(getattr(m, "gated", False)),
             )
         )
@@ -119,6 +133,18 @@ def repo_gguf_meta(repo_id: str) -> RepoGguf:
         context_length=_gguf_field(gguf, "context_length"),
         has_chat_template=bool(_gguf_field(gguf, "chat_template")),
     )
+
+
+def repo_model_type(repo_id: str) -> str | None:
+    """The transformers-config ``model_type`` for a repo (the MLX arch gate),
+    from ``expand=["config"]``. None on any failure."""
+    try:
+        info = _api().model_info(repo_id, expand=["config"])
+    except Exception as e:
+        log.debug("HF config fetch failed for %s: %s", repo_id, e)
+        return None
+    config = getattr(info, "config", None) or {}
+    return config.get("model_type") if isinstance(config, dict) else None
 
 
 def repo_files(repo_id: str) -> list[tuple[str, int]]:

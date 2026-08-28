@@ -127,30 +127,39 @@ def _sort_key(sort: str) -> str:
     return _SORTS.get(sort, "trendingScore")
 
 
+def _norm_fmt(fmt: str | None) -> str:
+    return "mlx" if fmt == "mlx" else "gguf"
+
+
 def search(
     query: str | None = None,
     author: str | None = None,
     sort: str = "trending",
     all_of_hf: bool = False,
+    fmt: str = "gguf",
 ) -> list[dict]:
-    """Search GGUF chat repos, keeping only architectures the engine can run.
+    """Search chat repos of one weight format, keeping only architectures the
+    matching engine can run (GGUF → llama-server, MLX → mlx_lm).
 
     Scope (design §8):
       * explicit ``author`` → just that author;
-      * default (``all_of_hf`` false) → the trusted-author allowlist, queried in
-        parallel and merged;
+      * default (``all_of_hf`` false) → the format's trusted-author allowlist,
+        queried in parallel and merged;
       * ``all_of_hf`` true → one unscoped search across all of HF.
-    Results are de-duped by repo, filtered to SUPPORTED_ARCHS, and ranked by the
-    chosen sort metric (descending).
+    Results are de-duped by repo, filtered to the format's supported archs, and
+    ranked by the chosen sort metric (descending).
     """
+    fmt = _norm_fmt(fmt)
     sort_key = _sort_key(sort)
 
     if author:
-        hits = hf_client.search(query, author, sort_key, _SEARCH_LIMIT)
+        hits = hf_client.search(query, author, sort_key, _SEARCH_LIMIT, fmt)
     elif all_of_hf:
-        hits = hf_client.search(query, None, sort_key, _SEARCH_LIMIT)
+        hits = hf_client.search(query, None, sort_key, _SEARCH_LIMIT, fmt)
     else:
-        hits = _search_trusted(query, sort_key)
+        hits = _search_trusted(query, sort_key, fmt)
+
+    arch_ok = compat.mlx_arch_supported if fmt == "mlx" else compat.arch_supported
 
     # De-dupe by repo id, keeping the first (highest-ranked) occurrence.
     seen: set[str] = set()
@@ -161,7 +170,7 @@ def search(
         seen.add(h.repo_id)
         # Arch gate: the whole point of the browser is to not offer a model that
         # fails at load. An arch we don't recognize as supported is dropped.
-        if not compat.arch_supported(h.arch):
+        if not arch_ok(h.arch):
             continue
         author_name, _, name = h.repo_id.partition("/")
         out.append(
@@ -170,6 +179,7 @@ def search(
                 "author": author_name,
                 "name": name or h.repo_id,
                 "label": name or h.repo_id,
+                "format": fmt,
                 "downloads": h.downloads,
                 "likes": h.likes,
                 "trending_score": h.trending_score,
@@ -190,13 +200,16 @@ def search(
     return out[:_SEARCH_LIMIT]
 
 
-def _search_trusted(query: str | None, sort_key: str) -> list[hf_client.SearchHit]:
+def _search_trusted(
+    query: str | None, sort_key: str, fmt: str = "gguf"
+) -> list[hf_client.SearchHit]:
     """Query each trusted author in parallel and flatten the results."""
-    authors = compat.TRUSTED_AUTHORS
+    authors = compat.MLX_TRUSTED_AUTHORS if fmt == "mlx" else compat.TRUSTED_AUTHORS
     results: list[hf_client.SearchHit] = []
     with ThreadPoolExecutor(max_workers=len(authors)) as pool:
         futures = [
-            pool.submit(hf_client.search, query, a, sort_key, _PER_AUTHOR_LIMIT) for a in authors
+            pool.submit(hf_client.search, query, a, sort_key, _PER_AUTHOR_LIMIT, fmt)
+            for a in authors
         ]
         for f in futures:
             try:
@@ -206,10 +219,16 @@ def _search_trusted(query: str | None, sort_key: str) -> list[hf_client.SearchHi
     return results
 
 
-def repo_detail(repo_id: str) -> dict:
+def repo_detail(repo_id: str, fmt: str = "gguf") -> dict:
     """The quant picker for one repo: supported flag, arch, context length, and
     one row per quant (shards folded, mmproj hidden, recommended pre-selected,
-    each carrying a fit verdict for the machine this server runs on)."""
+    each carrying a fit verdict for the machine this server runs on).
+
+    An MLX repo IS one quant (the tag is in the repo name), so its detail
+    carries a single pseudo-option whose size is the whole snapshot.
+    """
+    if _norm_fmt(fmt) == "mlx":
+        return _mlx_repo_detail(repo_id)
     meta = hf_client.repo_gguf_meta(repo_id)
     files = hf_client.repo_files(repo_id)
     options = compat.group_gguf_files(files)
@@ -219,6 +238,7 @@ def repo_detail(repo_id: str) -> dict:
     reserved = mem["mem_reserved_bytes"]
     return {
         "repo_id": repo_id,
+        "format": "gguf",
         "arch": meta.arch,
         "supported": compat.arch_supported(meta.arch),
         "context_length": meta.context_length,
@@ -245,15 +265,55 @@ def repo_detail(repo_id: str) -> dict:
     }
 
 
+def _mlx_repo_detail(repo_id: str) -> dict:
+    model_type = hf_client.repo_model_type(repo_id)
+    files = hf_client.repo_files(repo_id)
+    total_size = sum(size for _name, size in files)
+    quant = compat.parse_mlx_quant(repo_id) or "MLX"
+    mem = _memory_fields()
+    fit = compat.fit_verdict(total_size or None, mem["mem_total_bytes"], mem["mem_reserved_bytes"])
+    return {
+        "repo_id": repo_id,
+        "format": "mlx",
+        "arch": model_type,
+        "supported": compat.mlx_arch_supported(model_type),
+        "context_length": None,
+        "has_chat_template": True,  # converted MLX chat repos carry the template
+        "gated": hf_client.repo_is_gated(repo_id),
+        # The whole snapshot is the one installable option; filename "" tells
+        # the UI there is no per-file choice to make.
+        "recommended_filename": "",
+        "param_size": compat.param_size_label(repo_id),
+        "tool_capable": compat.is_agentic_capable(repo_id),
+        "agentic_min_params_b": compat.AGENTIC_MIN_PARAMS_B,
+        **mem,
+        "quants": [
+            {
+                "quant": quant,
+                "filename": "",
+                "size_bytes": total_size,
+                "is_sharded": False,
+                "shard_count": 1,
+                "recommended": True,
+                "fit": fit,
+                "needed_bytes": compat.needed_bytes(total_size or None),
+            }
+        ],
+    }
+
+
 def install_model(
     repo_id: str,
     filename: str,
     label: str | None = None,
     n_ctx: int | None = None,
+    fmt: str = "gguf",
 ) -> dict:
     """Write the config entry and enqueue the download. Returns the new key +
     the download start result. Raises InstallError on an unsupported/invalid
     request so the route can answer 400/409 with a clear reason."""
+    if _norm_fmt(fmt) == "mlx":
+        return _install_mlx_model(repo_id, label=label, n_ctx=n_ctx)
     if not repo_id or not filename:
         raise InstallError("repo_id and filename are required.")
     if not filename.lower().endswith(".gguf"):
@@ -277,6 +337,28 @@ def install_model(
         label=label,
         n_ctx=n_ctx,
         header_ctx=meta.context_length,
+    )
+    return _finalize_install(key, entry)
+
+
+def _install_mlx_model(repo_id: str, label: str | None = None, n_ctx: int | None = None) -> dict:
+    """The MLX fork of install_model: whole-repo snapshot, arch re-verified from
+    the transformers config instead of a GGUF header."""
+    if not repo_id:
+        raise InstallError("repo_id is required.")
+
+    model_type = hf_client.repo_model_type(repo_id)
+    if not compat.mlx_arch_supported(model_type):
+        raise InstallError(
+            f"{repo_id} reports model_type {model_type!r}, which the bundled "
+            "mlx-lm engine cannot run. It was not installed."
+        )
+
+    key, entry = install.build_mlx_entry(
+        repo_id=repo_id,
+        arch=model_type,
+        label=label,
+        n_ctx=n_ctx,
     )
     return _finalize_install(key, entry)
 

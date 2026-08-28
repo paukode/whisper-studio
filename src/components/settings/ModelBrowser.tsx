@@ -6,6 +6,7 @@ import {
   installModel,
   installRecommendedModel,
   searchModels,
+  type BrowseFormat,
   type BrowseResult,
   type BrowseSort,
   type InstallResult,
@@ -137,10 +138,14 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   const [installing, setInstalling] = useState(false);
   const queryClient = useQueryClient();
   const addToast = useUIStore((s) => s.addToast);
+  // An MLX repo IS one quant (the tag is in the repo name): no per-file picker,
+  // and the install unit is the whole snapshot. Detail still fetches lazily —
+  // on hover/focus of the Download button — to show size + fit before download.
+  const isMlx = result.format === 'mlx';
 
   const detailQuery = useQuery({
-    queryKey: ['model-browse-repo', result.repo_id],
-    queryFn: () => fetchRepoDetail(result.repo_id),
+    queryKey: ['model-browse-repo', result.repo_id, result.format ?? 'gguf'],
+    queryFn: () => fetchRepoDetail(result.repo_id, result.format ?? 'gguf'),
     enabled: activated,
   });
 
@@ -150,7 +155,7 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   const quants = detail?.quants ?? [];
   const effectiveSelected =
     selected ?? detail?.recommended_filename ?? quants[0]?.filename ?? null;
-  const selectedQuant = quants.find((q) => q.filename === effectiveSelected);
+  const selectedQuant = isMlx ? quants[0] : quants.find((q) => q.filename === effectiveSelected);
   const selectedFit = selectedQuant?.fit;
   // Known from the search row alone, so the chip and note render before the
   // quant detail is ever fetched; the detail refines it once it lands.
@@ -158,10 +163,14 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   const activate = () => setActivated(true);
 
   const onInstall = async () => {
-    if (!effectiveSelected) return;
+    if (!isMlx && !effectiveSelected) return;
     setInstalling(true);
     try {
-      const res = await installModel({ repo_id: result.repo_id, filename: effectiveSelected });
+      const res = await installModel({
+        repo_id: result.repo_id,
+        filename: isMlx ? '' : (effectiveSelected as string),
+        format: result.format,
+      });
       addToast(installToast(res));
       await refreshAfterInstall(queryClient);
     } catch (e) {
@@ -211,32 +220,47 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
           </div>
         </div>
         <div className="settings-item-actions" style={{ gap: 8 }}>
-          <label htmlFor={selectId} className="sr-only">
-            Choose a quant for {result.name}
-          </label>
-          <select
-            id={selectId}
-            className="settings-input model-quant-select"
-            value={effectiveSelected ?? ''}
-            disabled={installing}
-            onFocus={activate}
-            onMouseDown={activate}
-            onChange={(e) => setSelected(e.target.value)}
-          >
-            {!hasQuants && <option value="">{placeholder}</option>}
-            {quants.map((qopt) => (
-              <option key={qopt.filename} value={qopt.filename}>
-                {qopt.quant} · {humanSize(qopt.size_bytes)}
-                {qopt.is_sharded ? ` · ${qopt.shard_count} shards` : ''}
-                {qopt.recommended ? ' (recommended)' : ''}
-                {fitSuffix(qopt.fit)}
-              </option>
-            ))}
-          </select>
+          {isMlx ? (
+            // One repo = one quant: show size + fit as text once the lazy
+            // detail lands (hovering the button triggers it), no picker.
+            selectedQuant && (
+              <span style={{ fontSize: 12, color: 'var(--text-secondary, #888)' }}>
+                {selectedQuant.quant} · {humanSize(selectedQuant.size_bytes)}
+                {fitSuffix(selectedQuant.fit)}
+              </span>
+            )
+          ) : (
+            <>
+              <label htmlFor={selectId} className="sr-only">
+                Choose a quant for {result.name}
+              </label>
+              <select
+                id={selectId}
+                className="settings-input model-quant-select"
+                value={effectiveSelected ?? ''}
+                disabled={installing}
+                onFocus={activate}
+                onMouseDown={activate}
+                onChange={(e) => setSelected(e.target.value)}
+              >
+                {!hasQuants && <option value="">{placeholder}</option>}
+                {quants.map((qopt) => (
+                  <option key={qopt.filename} value={qopt.filename}>
+                    {qopt.quant} · {humanSize(qopt.size_bytes)}
+                    {qopt.is_sharded ? ` · ${qopt.shard_count} shards` : ''}
+                    {qopt.recommended ? ' (recommended)' : ''}
+                    {fitSuffix(qopt.fit)}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
           <button
             className="btn btn-primary btn-sm"
             type="button"
-            disabled={installing || !hasQuants || !effectiveSelected}
+            disabled={installing || (!isMlx && (!hasQuants || !effectiveSelected))}
+            onFocus={activate}
+            onMouseEnter={activate}
             onClick={() => void onInstall()}
           >
             {installing ? 'Adding…' : selectedFit === 'too_big' ? 'Download anyway' : 'Download'}
@@ -371,14 +395,15 @@ export const ModelBrowser: React.FC = () => {
   const [term, setTerm] = useState('');
   const [submitted, setSubmitted] = useState('');
   const [sort, setSort] = useState<BrowseSort>('trending');
+  const [format, setFormat] = useState<BrowseFormat>('gguf');
   const [allOfHf, setAllOfHf] = useState(false);
 
   const searchQuery = useQuery({
-    queryKey: ['model-browse-search', submitted, sort, allOfHf],
-    queryFn: () => searchModels({ q: submitted, sort, all: allOfHf }),
+    queryKey: ['model-browse-search', submitted, sort, allOfHf, format],
+    queryFn: () => searchModels({ q: submitted, sort, all: allOfHf, format }),
     // Always run — an empty-term browse is a useful default top list for BOTH
-    // sorts (trending and most-downloaded). The sort/scope live in the query
-    // key, so switching either refetches without touching the search term.
+    // sorts (trending and most-downloaded). The sort/scope/format live in the
+    // query key, so switching any refetches without touching the search term.
   });
 
   const results = searchQuery.data?.results ?? [];
@@ -393,7 +418,7 @@ export const ModelBrowser: React.FC = () => {
       <h4 className="models-section-title">Discover models</h4>
       <p className="models-section-desc">
         Download an on-device model. Start with a Recommended pick, or search Hugging
-        Face for any GGUF chat model the local engine can run.
+        Face for any GGUF or MLX chat model the local engines can run.
       </p>
 
       <RecommendedSection />
@@ -419,6 +444,16 @@ export const ModelBrowser: React.FC = () => {
         >
           <option value="trending">Trending</option>
           <option value="downloads">Most downloaded</option>
+        </select>
+        <select
+          value={format}
+          onChange={(e) => setFormat(e.target.value as BrowseFormat)}
+          aria-label="Weight format"
+          className="settings-input"
+          title="GGUF runs on llama.cpp; MLX runs on Apple's MLX engine."
+        >
+          <option value="gguf">GGUF</option>
+          <option value="mlx">MLX</option>
         </select>
         <button className="btn btn-primary btn-sm" type="submit">
           Search

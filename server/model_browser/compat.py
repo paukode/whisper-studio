@@ -154,6 +154,88 @@ def arch_supported(arch: str | None) -> bool:
     return bool(arch) and arch.strip().lower() in SUPPORTED_ARCHS
 
 
+# ── MLX lane ─────────────────────────────────────────────────────────────────
+
+# Architectures (HF config.json ``model_type``) the pinned mlx-lm serves. Kept
+# as a curated constant for the same reason as SUPPORTED_ARCHS — this module is
+# pure and unit-tested on Linux CI, where mlx-lm cannot be imported to ask.
+# mlx-lm tracks new families fast, so this mirrors its models/ directory for
+# the mainstream chat families (vision-only and exotic entries omitted on
+# purpose). Bump alongside the mlx-lm pin in requirements.txt.
+MLX_SUPPORTED_ARCHS: frozenset[str] = frozenset(
+    {
+        "llama",
+        "llama4",
+        "llama4_text",
+        "mistral",  # remapped to llama by mlx-lm
+        "mistral3",
+        "ministral3",
+        "mixtral",
+        "qwen2",
+        "qwen2_moe",
+        "qwen3",
+        "qwen3_moe",
+        "qwen3_next",
+        "qwen3_5",
+        "qwen3_5_moe",
+        "gemma",
+        "gemma2",
+        "gemma3",
+        "gemma3_text",
+        "gemma3n",
+        "gemma4",
+        "gemma4_text",
+        "phi",
+        "phi3",
+        "phimoe",
+        "glm4",
+        "glm4_moe",
+        "gpt_oss",
+        "granite",
+        "granitemoe",
+        "cohere",
+        "cohere2",
+        "stablelm",
+        "starcoder2",
+        "smollm3",
+        "olmo2",
+        "olmo3",
+        "deepseek_v3",
+        "internlm3",
+        "exaone4",
+        "nemotron",
+        "minicpm",
+        "helium",
+    }
+)
+
+# The default publishers of ready-converted MLX weights, used as the trusted
+# scope for MLX searches (most GGUF trusted authors publish no MLX repos).
+MLX_TRUSTED_AUTHORS: tuple[str, ...] = ("mlx-community", "lmstudio-community")
+
+# MLX repo names end in a quant tag ("-4bit", "-8bit", "-bf16",
+# "-4bit-DWQ", ...). One repo IS one quant — there is no per-file picker.
+_MLX_QUANT_RE = re.compile(
+    r"(?:^|[-_.])(?P<quant>\d+(?:\.\d+)?bit(?:-DWQ|-AWQ)?|bf16|fp16|f16|fp32)(?=$|[-_.])",
+    re.IGNORECASE,
+)
+
+
+def mlx_arch_supported(model_type: str | None) -> bool:
+    """True when a repo's config ``model_type`` is one mlx-lm can serve."""
+    return bool(model_type) and model_type.strip().lower() in MLX_SUPPORTED_ARCHS
+
+
+def parse_mlx_quant(repo_id: str) -> str | None:
+    """The quant tag in an MLX repo name ("4bit", "8bit", "bf16", ...), or None.
+    Takes the LAST match, mirroring parse_quant."""
+    name = repo_id.rsplit("/", 1)[-1]
+    matches = list(_MLX_QUANT_RE.finditer(name))
+    if not matches:
+        return None
+    return matches[-1].group("quant").lower()
+
+
 def is_thinking_model(arch: str | None, repo_id: str, filename: str = "") -> bool:
     """Best-effort guess at whether the model exposes a thinking/reasoning mode.
 

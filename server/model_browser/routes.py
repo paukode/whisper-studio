@@ -29,9 +29,11 @@ async def browse_search(
     author: str | None = None,
     sort: str = "trending",
     all: str | None = None,
+    fmt: str = "gguf",
 ):
-    """Search GGUF chat models. Trusted authors by default; ``all=1`` widens to
-    all of HF. Only engine-runnable architectures are returned."""
+    """Search chat models of one weight format (``fmt``: gguf | mlx). Trusted
+    authors by default; ``all=1`` widens to all of HF. Only engine-runnable
+    architectures are returned."""
     import asyncio
 
     results = await asyncio.to_thread(
@@ -40,6 +42,7 @@ async def browse_search(
         author,
         sort,
         _truthy(all),
+        fmt,
     )
     return {"results": results, "count": len(results)}
 
@@ -71,11 +74,12 @@ async def browse_install_recommended(request: Request):
 
 
 @router.get("/repo/{repo_id:path}")
-async def browse_repo(repo_id: str):
-    """The quant picker for one repo (shards folded, mmproj hidden)."""
+async def browse_repo(repo_id: str, fmt: str = "gguf"):
+    """The quant picker for one repo (shards folded, mmproj hidden). An MLX
+    repo has exactly one option: the whole snapshot."""
     import asyncio
 
-    detail = await asyncio.to_thread(service.repo_detail, repo_id)
+    detail = await asyncio.to_thread(service.repo_detail, repo_id, fmt)
     return detail
 
 
@@ -91,6 +95,9 @@ async def browse_install(request: Request):
     filename = body.get("filename")
     label = body.get("label")
     n_ctx = body.get("n_ctx")
+    fmt = body.get("format") or "gguf"
+    if fmt == "mlx":
+        filename = ""  # whole-repo snapshot: there is no file to pick
     if not isinstance(repo_id, str) or not isinstance(filename, str):
         raise HTTPException(status_code=400, detail="repo_id and filename are required strings.")
     if n_ctx is not None:
@@ -99,7 +106,9 @@ async def browse_install(request: Request):
         except (TypeError, ValueError) as e:
             raise HTTPException(status_code=400, detail="n_ctx must be an integer.") from e
     try:
-        result = await asyncio.to_thread(service.install_model, repo_id, filename, label, n_ctx)
+        result = await asyncio.to_thread(
+            service.install_model, repo_id, filename, label, n_ctx, fmt
+        )
     except service.InstallError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return result

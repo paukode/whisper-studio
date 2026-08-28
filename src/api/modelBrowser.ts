@@ -1,15 +1,20 @@
 import { del, get, post } from '@/api/client';
 
 /** In-app model browser (/api/models/browse/*) — Settings > Models > Discover.
- *  Search Hugging Face for GGUF chat models, pick a quant, install it as a
- *  config-driven local model that then appears in the Models list and the
- *  composer picker. */
+ *  Search Hugging Face for GGUF or MLX chat models, pick a quant (GGUF; an MLX
+ *  repo IS one quant), install it as a config-driven local model that then
+ *  appears in the Models list and the composer picker. */
+
+/** The two on-device weight formats: GGUF runs on llama-server, MLX on mlx_lm. */
+export type BrowseFormat = 'gguf' | 'mlx';
 
 export interface BrowseResult {
   repo_id: string;
   author: string;
   name: string;
   label: string;
+  /** Which lane this row came from; MLX rows install whole-repo, no quant picker. */
+  format?: BrowseFormat;
   downloads: number | null;
   likes: number | null;
   trending_score: number | null;
@@ -50,6 +55,7 @@ export interface BrowseQuant {
 
 export interface BrowseRepoDetail {
   repo_id: string;
+  format?: BrowseFormat;
   arch: string | null;
   supported: boolean;
   context_length: number | null;
@@ -119,25 +125,31 @@ export const searchModels = (params: {
   author?: string;
   sort?: BrowseSort;
   all?: boolean;
+  format?: BrowseFormat;
 }) => {
   const qs = new URLSearchParams();
   if (params.q) qs.set('q', params.q);
   if (params.author) qs.set('author', params.author);
   if (params.sort) qs.set('sort', params.sort);
   if (params.all) qs.set('all', '1');
+  if (params.format && params.format !== 'gguf') qs.set('fmt', params.format);
   return get<{ results: BrowseResult[]; count: number }>(
     `/api/models/browse/search?${qs.toString()}`,
   );
 };
 
-export const fetchRepoDetail = (repoId: string) =>
-  get<BrowseRepoDetail>(`/api/models/browse/repo/${repoId}`);
+export const fetchRepoDetail = (repoId: string, format: BrowseFormat = 'gguf') =>
+  get<BrowseRepoDetail>(
+    `/api/models/browse/repo/${repoId}${format !== 'gguf' ? `?fmt=${format}` : ''}`,
+  );
 
 export const installModel = (body: {
   repo_id: string;
+  /** Empty for an MLX install — the whole snapshot is the unit. */
   filename: string;
   label?: string;
   n_ctx?: number;
+  format?: BrowseFormat;
 }) => post<InstallResult>('/api/models/browse/install', body);
 
 /** The curated Recommended catalog (Settings > Models > Discover). */
