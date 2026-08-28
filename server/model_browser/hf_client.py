@@ -135,16 +135,44 @@ def repo_gguf_meta(repo_id: str) -> RepoGguf:
     )
 
 
-def repo_model_type(repo_id: str) -> str | None:
-    """The transformers-config ``model_type`` for a repo (the MLX arch gate),
-    from ``expand=["config"]``. None on any failure."""
+def repo_mlx_meta(repo_id: str) -> tuple[str | None, bool]:
+    """``(model_type, is_mlx_tagged)`` for a repo, from one model_info call.
+
+    ``model_type`` (transformers config) is the MLX arch gate; the ``mlx``
+    library tag proves the repo actually carries MLX-format weights — a GGUF
+    repo often has a config.json too, and installing it through the MLX lane
+    would snapshot gigabytes mlx_lm cannot load. ``(None, False)`` on failure.
+    """
     try:
-        info = _api().model_info(repo_id, expand=["config"])
+        info = _api().model_info(repo_id, expand=["config", "tags"])
     except Exception as e:
         log.debug("HF config fetch failed for %s: %s", repo_id, e)
-        return None
+        return None, False
     config = getattr(info, "config", None) or {}
-    return config.get("model_type") if isinstance(config, dict) else None
+    model_type = config.get("model_type") if isinstance(config, dict) else None
+    tags = getattr(info, "tags", None) or []
+    return model_type, "mlx" in tags
+
+
+def repo_config_context_length(repo_id: str) -> int | None:
+    """``max_position_embeddings`` from the repo's config.json — the real
+    context window an MLX model was configured with. The file is a few KB, so
+    fetching it at install time is cheap. None on any failure."""
+    try:
+        import json
+
+        from huggingface_hub import hf_hub_download
+
+        path = hf_hub_download(repo_id=repo_id, filename="config.json")
+        with open(path) as f:
+            cfg = json.load(f)
+        value = cfg.get("max_position_embeddings")
+        if not value and isinstance(cfg.get("text_config"), dict):
+            value = cfg["text_config"].get("max_position_embeddings")
+        return int(value) if value else None
+    except Exception as e:
+        log.debug("HF config.json fetch failed for %s: %s", repo_id, e)
+        return None
 
 
 def repo_files(repo_id: str) -> list[tuple[str, int]]:

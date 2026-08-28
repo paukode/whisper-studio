@@ -266,7 +266,7 @@ def repo_detail(repo_id: str, fmt: str = "gguf") -> dict:
 
 
 def _mlx_repo_detail(repo_id: str) -> dict:
-    model_type = hf_client.repo_model_type(repo_id)
+    model_type, mlx_tagged = hf_client.repo_mlx_meta(repo_id)
     files = hf_client.repo_files(repo_id)
     total_size = sum(size for _name, size in files)
     quant = compat.parse_mlx_quant(repo_id) or "MLX"
@@ -276,7 +276,7 @@ def _mlx_repo_detail(repo_id: str) -> dict:
         "repo_id": repo_id,
         "format": "mlx",
         "arch": model_type,
-        "supported": compat.mlx_arch_supported(model_type),
+        "supported": compat.mlx_arch_supported(model_type) and mlx_tagged,
         "context_length": None,
         "has_chat_template": True,  # converted MLX chat repos carry the template
         "gated": hf_client.repo_is_gated(repo_id),
@@ -347,7 +347,14 @@ def _install_mlx_model(repo_id: str, label: str | None = None, n_ctx: int | None
     if not repo_id:
         raise InstallError("repo_id is required.")
 
-    model_type = hf_client.repo_model_type(repo_id)
+    model_type, mlx_tagged = hf_client.repo_mlx_meta(repo_id)
+    if not mlx_tagged:
+        # A GGUF repo usually carries a config.json too, so the arch gate alone
+        # would happily accept it — and snapshot gigabytes mlx_lm cannot load.
+        raise InstallError(
+            f"{repo_id} does not carry MLX-format weights (no mlx tag on the "
+            "repo). It was not installed."
+        )
     if not compat.mlx_arch_supported(model_type):
         raise InstallError(
             f"{repo_id} reports model_type {model_type!r}, which the bundled "
@@ -359,6 +366,10 @@ def _install_mlx_model(repo_id: str, label: str | None = None, n_ctx: int | None
         arch=model_type,
         label=label,
         n_ctx=n_ctx,
+        # The real trained window from the repo's config.json, so the context
+        # meter and prompt budgeting see the model's true size (capped by
+        # resolve_ctx the same way a GGUF header ctx is).
+        header_ctx=hf_client.repo_config_context_length(repo_id),
     )
     return _finalize_install(key, entry)
 

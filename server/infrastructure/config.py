@@ -334,6 +334,11 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
                 "filename": val.get("filename"),
                 "dir": val.get("dir"),
                 "ctx": val.get("ctx"),
+                # Which on-device engine serves the weights: absent/None ⇒ GGUF
+                # via llama-server; "mlx" ⇒ a whole-repo snapshot via mlx_lm
+                # (no filename). Dropping this here would silently reject every
+                # MLX entry downstream (the registry would demand a filename).
+                "engine": val.get("engine"),
                 # Context accounting (turn engine): the model's total input
                 # window and max output tokens. Absent ⇒ per-family defaults
                 # (see server/chat/engine/windows.py); local models resolve

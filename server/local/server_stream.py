@@ -325,6 +325,7 @@ async def _stream_round(base_url: str, payload: dict):
     acc = _CallAccumulator()
     finish_reason = None
     usage: dict = {}
+    completed = False
     async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
         async with client.stream(
             "POST",
@@ -343,6 +344,7 @@ async def _stream_round(base_url: str, payload: dict):
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
+                    completed = True
                     break
                 try:
                     obj = json.loads(data)
@@ -368,4 +370,14 @@ async def _stream_round(base_url: str, payload: dict):
                     acc.feed(delta["tool_calls"])
                 if choice.get("finish_reason"):
                     finish_reason = choice["finish_reason"]
+    if not completed and finish_reason is None:
+        # Both engines end a successful stream with a finish_reason chunk and
+        # then [DONE]. mlx_lm's HTTP/1.0 body is close-delimited, so a
+        # mid-generation death (e.g. Metal OOM) reads as a CLEAN EOF here —
+        # without this guard a truncated answer would commit as a complete
+        # round. (llama-server streams chunked HTTP/1.1, where an abrupt close
+        # already raises inside aiter_lines.)
+        raise RuntimeError(
+            "model server closed the stream mid-generation (no finish_reason/[DONE])"
+        )
     yield ("done", {"calls": acc.finish(), "finish_reason": finish_reason, "usage": usage})

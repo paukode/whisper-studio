@@ -497,6 +497,15 @@ def delete(entry: ModelEntry) -> dict:
             target = os.path.join(root, entry.gguf_filename)
             if os.path.exists(target):
                 os.remove(target)
+        elif shared:
+            # A whole-directory model (MLX snapshot) sharing its dir with
+            # another entry: rmtree here would silently destroy the other
+            # model's weights. Browser installs namespace MLX dirs so this
+            # only fires for hand-written config collisions — refuse loudly.
+            raise Conflict(
+                "This model shares its folder with another entry; delete the "
+                "other entry first or separate their `dir` values in config."
+            )
         else:
             shutil.rmtree(root)
     else:

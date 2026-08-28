@@ -83,20 +83,35 @@ def test_engine_dispatch_helpers(monkeypatch):
     assert serving.supports_tool_choice("local_mlx") is False
 
 
-def test_ensure_serving_stops_the_other_engine(monkeypatch):
+def test_ensure_serving_validates_and_downloads_before_evicting_the_other_engine(
+    monkeypatch,
+):
+    """The other engine's resident model is evicted only AFTER the target
+    engine is available and the weights are on disk — a doomed or slow request
+    must never leave the machine with nothing resident."""
     _seed_registry(monkeypatch, {"local_mlx": dict(MLX_ENTRY), "local_gguf": dict(GGUF_ENTRY)})
     calls: list[str] = []
+    monkeypatch.setattr(
+        serving.mlx_server, "ensure_available", lambda: calls.append("mlx.available")
+    )
+    monkeypatch.setattr(runtime, "ensure_downloaded", lambda key: calls.append(f"download:{key}"))
+    monkeypatch.setattr(serving.llama_server, "resident_key", lambda: "local_gguf")
     monkeypatch.setattr(serving.llama_server, "is_running", lambda: True)
     monkeypatch.setattr(serving.llama_server, "stop", lambda: calls.append("llama.stop"))
+    monkeypatch.setattr(serving.mlx_server, "resident_key", lambda: None)
     monkeypatch.setattr(
         serving.mlx_server,
         "ensure_serving",
         lambda key, n_ctx=None: calls.append(f"mlx.serve:{key}") or "http://mlx",
     )
     assert serving.ensure_serving("local_mlx") == "http://mlx"
-    assert calls == ["llama.stop", "mlx.serve:local_mlx"]
+    assert calls == ["mlx.available", "download:local_mlx", "llama.stop", "mlx.serve:local_mlx"]
 
     calls.clear()
+    monkeypatch.setattr(
+        serving.llama_server, "ensure_available", lambda: calls.append("llama.available")
+    )
+    monkeypatch.setattr(serving.llama_server, "resident_key", lambda: None)
     monkeypatch.setattr(serving.mlx_server, "is_running", lambda: True)
     monkeypatch.setattr(serving.mlx_server, "stop", lambda: calls.append("mlx.stop"))
     monkeypatch.setattr(
@@ -105,7 +120,48 @@ def test_ensure_serving_stops_the_other_engine(monkeypatch):
         lambda key, n_ctx=None: calls.append(f"llama.serve:{key}") or "http://llama",
     )
     assert serving.ensure_serving("local_gguf") == "http://llama"
-    assert calls == ["mlx.stop", "llama.serve:local_gguf"]
+    assert calls == [
+        "llama.available",
+        "download:local_gguf",
+        "mlx.stop",
+        "llama.serve:local_gguf",
+    ]
+
+
+def test_ensure_serving_refuses_before_evicting_on_doomed_requests(monkeypatch):
+    """mlx-lm missing or an unknown key must fail WITHOUT stopping whatever is
+    currently resident (the request could never have succeeded)."""
+    _seed_registry(monkeypatch, {"local_mlx": dict(MLX_ENTRY), "local_gguf": dict(GGUF_ENTRY)})
+    stops: list[str] = []
+    monkeypatch.setattr(serving.llama_server, "stop", lambda: stops.append("llama"))
+    monkeypatch.setattr(serving.mlx_server, "stop", lambda: stops.append("mlx"))
+    monkeypatch.setattr(serving.llama_server, "resident_key", lambda: "local_gguf")
+    monkeypatch.setattr(serving.mlx_server, "resident_key", lambda: None)
+    monkeypatch.setattr(serving.llama_server, "is_running", lambda: True)
+
+    def unavailable():
+        raise mlx_server.MlxServerUnavailable("mlx-lm is not installed")
+
+    monkeypatch.setattr(serving.mlx_server, "ensure_available", unavailable)
+    with pytest.raises(mlx_server.MlxServerUnavailable):
+        serving.ensure_serving("local_mlx")
+    assert stops == []
+
+    monkeypatch.setattr(serving.llama_server, "ensure_available", lambda: None)
+    with pytest.raises(RuntimeError, match="Unknown local model"):
+        serving.ensure_serving("removed_key")
+    assert stops == []
+
+
+def test_ensure_serving_fast_path_skips_the_transition_lock(monkeypatch):
+    """A turn on the already-resident model must not queue behind another
+    model's download holding the transition lock."""
+    _seed_registry(monkeypatch, {"local_mlx": dict(MLX_ENTRY)})
+    monkeypatch.setattr(serving.mlx_server, "resident_key", lambda: "local_mlx")
+    monkeypatch.setattr(serving.mlx_server, "base_url", lambda: "http://mlx-fast")
+    monkeypatch.setattr(serving.mlx_server, "resident_n_ctx", lambda: 32768)
+    with serving._transition_lock:  # a download in flight elsewhere
+        assert serving.ensure_serving("local_mlx", 32768) == "http://mlx-fast"
 
 
 def test_resident_key_covers_both_engines(monkeypatch):
@@ -429,7 +485,7 @@ def test_mlx_search_uses_mlx_authors_and_arch_gate(monkeypatch):
 
 
 def test_mlx_repo_detail_is_one_whole_repo_option(monkeypatch):
-    monkeypatch.setattr(service.hf_client, "repo_model_type", lambda repo_id: "qwen3")
+    monkeypatch.setattr(service.hf_client, "repo_mlx_meta", lambda repo_id: ("qwen3", True))
     monkeypatch.setattr(
         service.hf_client,
         "repo_files",
@@ -447,9 +503,18 @@ def test_mlx_repo_detail_is_one_whole_repo_option(monkeypatch):
 
 
 def test_mlx_install_refuses_unsupported_model_type(monkeypatch):
-    monkeypatch.setattr(service.hf_client, "repo_model_type", lambda repo_id: "t5")
+    monkeypatch.setattr(service.hf_client, "repo_mlx_meta", lambda repo_id: ("t5", True))
     with pytest.raises(service.InstallError, match="model_type"):
         service.install_model("mlx-community/T5-4bit", "", fmt="mlx")
+
+
+def test_mlx_install_refuses_repos_without_mlx_weights(monkeypatch):
+    """A GGUF repo carries a config.json too — the arch gate alone would accept
+    it and snapshot gigabytes mlx_lm cannot load. The mlx tag is the proof of
+    format."""
+    monkeypatch.setattr(service.hf_client, "repo_mlx_meta", lambda repo_id: ("qwen3", False))
+    with pytest.raises(service.InstallError, match="MLX-format weights"):
+        service.install_model("unsloth/Qwen3-8B-GGUF", "", fmt="mlx")
 
 
 def test_build_mlx_entry_shape():
@@ -460,8 +525,87 @@ def test_build_mlx_entry_shape():
     assert entry["engine"] == "mlx"
     assert entry["is_local"] is True
     assert "filename" not in entry
-    assert entry["dir"] == "mlx-community__Qwen3-30B-4bit"
+    # Namespaced away from the GGUF lane's dir for the same repo: MLX deletes
+    # remove the whole directory, so the dirs must never collide.
+    assert entry["dir"] == "mlx-community__Qwen3-30B-4bit__mlx"
     assert entry["id"].startswith("local:")
     assert entry["ctx"] == 32768
     assert entry["supports_tools"] is True  # 30B clears the agentic gate
     assert entry["supports_thinking"] is True  # qwen3 family
+
+
+def test_build_mlx_entry_uses_the_real_window_from_config_json():
+    _, small = install.build_mlx_entry(
+        repo_id="mlx-community/Tiny-8k-4bit", arch="llama", label=None, n_ctx=None, header_ctx=8192
+    )
+    assert small["ctx"] == 8192  # an 8K model must not claim 32K
+    _, big = install.build_mlx_entry(
+        repo_id="mlx-community/Big-4bit", arch="llama", label=None, n_ctx=None, header_ctx=131072
+    )
+    assert big["ctx"] == 32768  # capped like a GGUF header ctx
+
+
+def test_engine_field_survives_the_real_config_normalizer(monkeypatch, tmp_path):
+    """Regression: _normalize_chat_models used to drop `engine`, so every real
+    MLX entry was rejected for a missing filename. Route an entry through the
+    REAL normalizer instead of stubbing _config_local_models."""
+    from server.infrastructure.config import _normalize_chat_models
+
+    ids, meta = _normalize_chat_models({"local_mlx": {**MLX_ENTRY, "is_local": True}})
+    assert meta["local_mlx"]["engine"] == "mlx"
+
+    monkeypatch.setattr("server.infrastructure.config.unfiltered_chat_models", lambda: (ids, meta))
+    monkeypatch.setattr(R, "_recommended_downloaded_on_disk", lambda entry: False)
+    models = R.local_models()
+    assert "local_mlx" in models, "normalizer must carry engine or mlx entries vanish"
+    assert models["local_mlx"]["engine"] == "mlx"
+
+
+def test_stream_round_raises_when_the_stream_dies_mid_generation(monkeypatch):
+    """mlx_lm's HTTP/1.0 body is close-delimited: a mid-generation death reads
+    as clean EOF. Without a finish_reason/[DONE] the round must ERROR, not
+    commit a truncated answer."""
+    from server.local import server_stream as SS
+
+    frames = [{"choices": [{"delta": {"content": "half an ans"}}]}]
+    lines = [f"data: {json.dumps(f)}" for f in frames]  # no finish_reason, no [DONE]
+
+    class _Resp:
+        status_code = 200
+
+        async def aiter_lines(self):
+            for line in lines:
+                yield line
+
+        async def aread(self):
+            return b""
+
+    class _StreamCM:
+        async def __aenter__(self):
+            return _Resp()
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Client:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def stream(self, *a, **kw):
+            return _StreamCM()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+
+    async def go():
+        return [item async for item in SS._stream_round("http://x", {"model": "m"})]
+
+    with pytest.raises(RuntimeError, match="mid-generation"):
+        asyncio.run(go())

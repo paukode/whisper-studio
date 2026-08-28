@@ -17,12 +17,24 @@ so adding a third engine stays a one-module change.
 from __future__ import annotations
 
 import logging
+import threading
 
 from server.local import llama_server, mlx_server
 
 log = logging.getLogger("whisper-studio")
 
 _ONESHOT_TIMEOUT = llama_server._ONESHOT_TIMEOUT
+
+# Serializes every cross-engine transition. Each engine's own _load_lock only
+# protects loads WITHIN that engine; without this facade-level lock, two
+# concurrent ensure_serving calls for different engines interleave their
+# is_running checks and spawns, so either both engines end up resident (two
+# multi-GB servers + the ASR stack in unified memory) or one call's stop()
+# SIGTERMs the other call's freshly spawned, still-warming server. Held across
+# validate → download → evict-other → delegated start, so the whole transition
+# is atomic with respect to both engines. Read-only helpers and stop() stay
+# lock-free, matching the per-engine modules.
+_transition_lock = threading.Lock()
 
 
 def engine_of(key: str | None) -> str:
@@ -56,17 +68,42 @@ def supports_tool_choice(key: str) -> bool:
 def ensure_serving(key: str, n_ctx: int | None = None) -> str:
     """Guarantee ``key`` is being served by its engine and return the base URL.
 
-    Stops the OTHER engine's resident model first — one local model at a time
-    is a cross-engine invariant, not a per-engine one. Blocking (a cold start
-    loads gigabytes), so call it off the event loop.
+    One local model resident at a time is a CROSS-engine invariant, so the
+    whole transition runs under the facade lock. Ordering mirrors what each
+    engine already does internally: validate the engine and fetch the weights
+    FIRST, and only then evict the other engine's resident model — a doomed
+    request (mlx-lm missing, unknown key) or a minutes-long first download must
+    never leave the machine with nothing resident. Blocking (a cold start loads
+    gigabytes), so call it off the event loop.
     """
-    if engine_of(key) == "mlx":
-        if llama_server.is_running():
-            llama_server.stop()
-        return mlx_server.ensure_serving(key, n_ctx)
-    if mlx_server.is_running():
-        mlx_server.stop()
-    return llama_server.ensure_serving(key, n_ctx)
+    from server.local import runtime
+
+    # Fast path, lock-free: the key is already being served at the requested
+    # size, which is every chat turn after the first. Without this, a live
+    # turn on the resident model would queue behind another model's
+    # minutes-long download holding the transition lock. Same exposure to a
+    # concurrent stop as the engines' own lock-free fast paths.
+    fast_target = mlx_server if engine_of(key) == "mlx" else llama_server
+    if fast_target.resident_key() == key:
+        base = fast_target.base_url()
+        if base is not None and (n_ctx is None or fast_target.resident_n_ctx() == int(n_ctx)):
+            return base
+
+    with _transition_lock:
+        if engine_of(key) == "mlx":
+            target, other = mlx_server, llama_server
+            mlx_server.ensure_available()
+        else:
+            target, other = llama_server, mlx_server
+            llama_server.ensure_available()
+        if key not in runtime.LOCAL_MODELS:
+            raise RuntimeError(f"Unknown local model: {key}")
+        # Idempotent (marker/file check), so the engine re-running it inside
+        # its own ensure_serving is a cheap no-op.
+        runtime.ensure_downloaded(key)
+        if other.is_running():
+            other.stop()
+        return target.ensure_serving(key, n_ctx)
 
 
 def stop() -> None:
