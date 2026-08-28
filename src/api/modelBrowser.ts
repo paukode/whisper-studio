@@ -30,6 +30,14 @@ export interface BrowseResult {
   gated: boolean;
   /** Always true in returned rows — the backend hides unsupported archs. */
   supported: boolean;
+  /** Whether some quant of this repo is already installed or downloading, so
+   *  the row can say so instead of letting the user queue the same multi-GB
+   *  download twice. Same source of truth as the Chat tab's download list. */
+  install_state?: 'installed' | 'downloading' | null;
+  /** The exact installed / in-flight quant filenames (GGUF; empty for MLX,
+   *  where the repo itself is the unit), so the picker can mark per quant. */
+  installed_filenames?: string[];
+  downloading_filenames?: string[];
 }
 
 /** Whether a quant can run alongside this machine's other resident models:
@@ -111,6 +119,8 @@ export interface RecommendedModel {
   supports_tools: boolean;
   /** Already present on disk (from a prior install or release). */
   downloaded: boolean;
+  /** Download currently running or queued for this model. */
+  downloading?: boolean;
   size_bytes?: number | null;
   fit?: MemFit | null;
   /** Free memory this model needs to run: its own size plus llama.cpp's

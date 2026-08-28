@@ -79,6 +79,28 @@ const ChatOnlyChip: React.FC = () => (
   </span>
 );
 
+/** Green chip for a repo the user already has (some quant installed). */
+const InstalledChip: React.FC = () => (
+  <span
+    className="model-local-badge model-installed-badge"
+    style={{ color: 'var(--accent-live, #34c77b)' }}
+    title="Already in your models — no need to download it again."
+  >
+    installed
+  </span>
+);
+
+/** Amber chip for a repo whose download is running or queued right now. */
+const DownloadingChip: React.FC = () => (
+  <span
+    className="model-local-badge"
+    style={{ color: 'var(--accent-warn, #b8860b)' }}
+    title="Download in progress — track it under Models > Chat."
+  >
+    downloading…
+  </span>
+);
+
 /** The note shown under a row for a model below the agentic size threshold.
  *  Informational rather than an error: the download is allowed and the model
  *  works fine as a chat model, it just won't be given the tool pool. */
@@ -98,6 +120,10 @@ async function refreshAfterInstall(queryClient: QueryClient): Promise<void> {
   await queryClient.invalidateQueries({ queryKey: ['models-manager-catalog'] });
   await queryClient.invalidateQueries({ queryKey: ['models-manager-status'] });
   await queryClient.invalidateQueries({ queryKey: ['models-disabled'] });
+  // The browse lists carry install/download state per row now — refetch them
+  // so the row just clicked flips to "downloading" instead of staying clickable.
+  await queryClient.invalidateQueries({ queryKey: ['model-browse-search'] });
+  await queryClient.invalidateQueries({ queryKey: ['model-browse-recommended'] });
   await useSettingsStore.getState().loadModels();
 }
 
@@ -160,6 +186,16 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   // Known from the search row alone, so the chip and note render before the
   // quant detail is ever fetched; the detail refines it once it lands.
   const toolCapable = detail?.tool_capable ?? result.tool_capable;
+  // What the button should say for the CURRENT selection: an MLX repo is one
+  // unit so the row state applies directly; a GGUF repo matches per quant, so
+  // another quant of an installed repo stays downloadable.
+  const selectionState: 'installed' | 'downloading' | null = isMlx
+    ? (result.install_state ?? null)
+    : effectiveSelected && (result.installed_filenames ?? []).includes(effectiveSelected)
+      ? 'installed'
+      : effectiveSelected && (result.downloading_filenames ?? []).includes(effectiveSelected)
+        ? 'downloading'
+        : null;
   const activate = () => setActivated(true);
 
   const onInstall = async () => {
@@ -211,6 +247,8 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
                 {result.param_size}
               </span>
             )}
+            {result.install_state === 'installed' && <InstalledChip />}
+            {result.install_state === 'downloading' && <DownloadingChip />}
             {toolCapable === false && <ChatOnlyChip />}
           </div>
           <div className="settings-item-desc">
@@ -258,12 +296,24 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
           <button
             className="btn btn-primary btn-sm"
             type="button"
-            disabled={installing || (!isMlx && (!hasQuants || !effectiveSelected))}
+            disabled={
+              installing ||
+              selectionState !== null ||
+              (!isMlx && (!hasQuants || !effectiveSelected))
+            }
             onFocus={activate}
             onMouseEnter={activate}
             onClick={() => void onInstall()}
           >
-            {installing ? 'Adding…' : selectedFit === 'too_big' ? 'Download anyway' : 'Download'}
+            {selectionState === 'installed'
+              ? 'Installed'
+              : selectionState === 'downloading'
+                ? 'Downloading…'
+                : installing
+                  ? 'Adding…'
+                  : selectedFit === 'too_big'
+                    ? 'Download anyway'
+                    : 'Download'}
           </button>
         </div>
       </div>
@@ -346,10 +396,16 @@ const RecommendedRow: React.FC<{ model: RecommendedModel }> = ({ model }) => {
           <button
             className="btn btn-primary btn-sm"
             type="button"
-            disabled={installing}
+            disabled={installing || model.downloading}
             onClick={() => void onInstall()}
           >
-            {installing ? 'Adding…' : model.fit === 'too_big' ? 'Download anyway' : 'Download'}
+            {model.downloading
+              ? 'Downloading…'
+              : installing
+                ? 'Adding…'
+                : model.fit === 'too_big'
+                  ? 'Download anyway'
+                  : 'Download'}
           </button>
         )}
       </div>
@@ -363,6 +419,10 @@ const RecommendedSection: React.FC = () => {
   const query = useQuery({
     queryKey: ['model-browse-recommended'],
     queryFn: fetchRecommendedModels,
+    // While a recommendation is downloading, poll so the badge flips to
+    // "Installed" without a manual refresh.
+    refetchInterval: (query) =>
+      query.state.data?.recommended?.some((m) => m.downloading) ? 4000 : false,
   });
   const models = query.data?.recommended ?? [];
   if (query.isLoading || models.length === 0) return null;
@@ -404,6 +464,9 @@ export const ModelBrowser: React.FC = () => {
     // Always run — an empty-term browse is a useful default top list for BOTH
     // sorts (trending and most-downloaded). The sort/scope/format live in the
     // query key, so switching any refetches without touching the search term.
+    // While a row is downloading, poll so it flips to "installed" by itself.
+    refetchInterval: (query) =>
+      query.state.data?.results?.some((r) => r.install_state === 'downloading') ? 4000 : false,
   });
 
   const results = searchQuery.data?.results ?? [];

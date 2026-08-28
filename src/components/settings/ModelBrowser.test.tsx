@@ -494,4 +494,96 @@ describe('ModelBrowser (Discover)', () => {
       }),
     );
   });
+
+  it('marks a downloading MLX row and disables its button so it cannot be queued twice', async () => {
+    const downloading = {
+      count: 1,
+      results: [{ ...MLX_SEARCH.results[0], install_state: 'downloading' }],
+    };
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(downloading);
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    renderBrowser();
+    fireEvent.change(screen.getByRole('combobox', { name: /weight format/i }), {
+      target: { value: 'mlx' },
+    });
+    await screen.findByText('Qwen3-14B-4bit');
+    expect(screen.getByText('downloading…')).toBeInTheDocument();
+    const button = screen.getByRole('button', { name: 'Downloading…' });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('marks an installed GGUF quant on the row and per selected quant', async () => {
+    const installed = {
+      count: 1,
+      results: [
+        {
+          ...SEARCH.results[0],
+          install_state: 'installed',
+          installed_filenames: ['Qwen3-0.6B-Q4_K_M.gguf'],
+        },
+      ],
+    };
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(installed);
+      if (url.startsWith('/api/models/browse/repo/')) return Promise.resolve(REPO_DETAIL);
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    renderBrowser();
+    await screen.findByText('Qwen3-0.6B-GGUF');
+    expect(screen.getByText('installed')).toBeInTheDocument();
+
+    // The recommended (installed) quant pre-selects: button reads Installed
+    // and refuses; the OTHER quant of the same repo stays downloadable.
+    const select = screen.getByRole('combobox', {
+      name: /choose a quant for Qwen3-0\.6B-GGUF/i,
+    }) as HTMLSelectElement;
+    fireEvent.focus(select);
+    await waitFor(() => expect(select.value).toBe('Qwen3-0.6B-Q4_K_M.gguf'));
+    expect(screen.getByRole('button', { name: 'Installed' })).toBeDisabled();
+
+    fireEvent.change(select, { target: { value: 'Qwen3-0.6B-Q2_K.gguf' } });
+    expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+  });
+
+  it('disables a recommended row while its download is in flight', async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === '/api/models/browse/recommended') {
+        return Promise.resolve({
+          count: 1,
+          recommended: [
+            {
+              key: 'local_gemma',
+              repo_id: 'google/gemma-4-12B-it-qat-q4_0-gguf',
+              author: 'google',
+              name: 'gemma-4-12B-it-qat-q4_0-gguf',
+              label: 'Gemma 4 12B (Local)',
+              filename: 'gemma-4-12b-it-qat-q4_0.gguf',
+              quant: 'Q4_0',
+              param_size: '12B',
+              ctx: 32768,
+              supports_thinking: true,
+              supports_tools: true,
+              downloaded: false,
+              downloading: true,
+              size_bytes: 6_975_879_296,
+            },
+          ],
+        });
+      }
+      if (url.startsWith('/api/models/browse/search'))
+        return Promise.resolve({ count: 0, results: [] });
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    renderBrowser();
+    await screen.findByText('Gemma 4 12B (Local)');
+    const button = screen.getByRole('button', { name: 'Downloading…' });
+    expect(button).toBeDisabled();
+  });
 });

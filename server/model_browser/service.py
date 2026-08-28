@@ -131,6 +131,58 @@ def _norm_fmt(fmt: str | None) -> str:
     return "mlx" if fmt == "mlx" else "gguf"
 
 
+def _install_annotations(fmt: str) -> dict[str, dict]:
+    """``repo_id -> {"installed": [filenames], "downloading": [filenames]}`` for
+    every registry model of this format, so search rows can say "you already
+    have this" instead of letting the user queue the same multi-GB download
+    twice. Download state comes from the models-manager queue (the SAME source
+    the Chat tab renders). Filenames let the GGUF quant picker mark the exact
+    quant; MLX entries have none (the repo is the unit). Never raises — an
+    annotation failure must not sink the search."""
+    try:
+        from server.local.registry import local_models
+        from server.models_manager import catalog, manager
+
+        by_key = {e.key: e for e in catalog.entries() if e.group == catalog.GROUP_LOCAL_CHAT}
+        out: dict[str, dict] = {}
+        for key, m in local_models().items():
+            if (m.get("engine") == "mlx") != (fmt == "mlx"):
+                continue
+            entry = by_key.get(key)
+            if entry is None:
+                continue
+            state, _err = manager.state_of(entry)
+            slot = out.setdefault(m["repo_id"], {"installed": [], "downloading": []})
+            if state == "installed":
+                slot["installed"].append(m.get("filename") or "")
+            elif state in ("downloading", "queued"):
+                slot["downloading"].append(m.get("filename") or "")
+        return out
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug("Could not annotate install states: %s", e)
+        return {}
+
+
+def _downloading_keys() -> set[str]:
+    """Registry keys whose download is running or queued right now. Lets the
+    Recommended section disable its button mid-download instead of only after
+    the weights land. Never raises."""
+    try:
+        from server.models_manager import catalog, manager
+
+        keys: set[str] = set()
+        for e in catalog.entries():
+            if e.group != catalog.GROUP_LOCAL_CHAT:
+                continue
+            state, _err = manager.state_of(e)
+            if state in ("downloading", "queued"):
+                keys.add(e.key)
+        return keys
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug("Could not read downloading keys: %s", e)
+        return set()
+
+
 def search(
     query: str | None = None,
     author: str | None = None,
@@ -194,6 +246,15 @@ def search(
                 "supported": True,
             }
         )
+
+    annotations = _install_annotations(fmt)
+    for row in out:
+        ann = annotations.get(row["repo_id"], {})
+        installed = ann.get("installed") or []
+        downloading = ann.get("downloading") or []
+        row["installed_filenames"] = installed
+        row["downloading_filenames"] = downloading
+        row["install_state"] = "installed" if installed else "downloading" if downloading else None
 
     rank = "trending_score" if sort_key == "trendingScore" else "downloads"
     out.sort(key=lambda r: (r.get(rank) or 0), reverse=True)
@@ -438,6 +499,7 @@ def recommended() -> list[dict]:
     mem = _memory_fields()
     total_mem = mem["mem_total_bytes"]
     reserved = mem["mem_reserved_bytes"]
+    downloading_keys = _downloading_keys()
 
     rows: list[dict] = []
     for key, meta in registry.recommended_models().items():
@@ -458,6 +520,7 @@ def recommended() -> list[dict]:
                 "supports_thinking": bool(meta.get("supports_thinking")),
                 "supports_tools": bool(meta.get("supports_tools")),
                 "downloaded": bool(meta.get("downloaded")),
+                "downloading": key in downloading_keys,
                 "size_bytes": size_bytes,
                 "fit": compat.fit_verdict(size_bytes, total_mem, reserved),
                 "needed_bytes": compat.needed_bytes(size_bytes),

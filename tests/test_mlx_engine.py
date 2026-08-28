@@ -534,6 +534,68 @@ def test_build_mlx_entry_shape():
     assert entry["supports_thinking"] is True  # qwen3 family
 
 
+class _CatEntry:
+    def __init__(self, key, group):
+        self.key = key
+        self.group = group
+
+
+def _seed_install_states(monkeypatch, states: dict[str, str]):
+    """Fake the models-manager view: catalog rows for the given keys, each in
+    the given state ("installed" / "downloading" / "queued" / "absent")."""
+    from server.models_manager import catalog as cat
+    from server.models_manager import manager as mgr
+
+    monkeypatch.setattr(
+        cat, "entries", lambda: [_CatEntry(k, cat.GROUP_LOCAL_CHAT) for k in states]
+    )
+    monkeypatch.setattr(mgr, "state_of", lambda e: (states[e.key], None))
+
+
+def test_search_rows_carry_install_state(monkeypatch):
+    """A repo the user already has (or is downloading) must say so in the
+    search results, so the same multi-GB download is never queued twice."""
+    from server.model_browser.hf_client import SearchHit
+
+    _seed_registry(monkeypatch, {"local_mlx": dict(MLX_ENTRY), "local_gguf": dict(GGUF_ENTRY)})
+    _seed_install_states(monkeypatch, {"local_mlx": "downloading", "local_gguf": "installed"})
+
+    def fake_search(query, author, sort, limit, fmt="gguf"):
+        if fmt == "mlx":
+            return [SearchHit(MLX_ENTRY["repo_id"], 10, 1, 5, "qwen3", None, False)]
+        return [
+            SearchHit(GGUF_ENTRY["repo_id"], 10, 1, 5, "llama", 4096, False),
+            SearchHit("unsloth/Fresh-GGUF", 3, 1, 2, "llama", 4096, False),
+        ]
+
+    monkeypatch.setattr(service.hf_client, "search", fake_search)
+
+    (mlx_row,) = service.search(query="q", fmt="mlx")
+    assert mlx_row["install_state"] == "downloading"
+
+    gguf_rows = {r["repo_id"]: r for r in service.search(query="q", fmt="gguf")}
+    installed = gguf_rows[GGUF_ENTRY["repo_id"]]
+    assert installed["install_state"] == "installed"
+    # Per-quant filenames, so the picker can mark the exact quant while other
+    # quants of the same repo stay downloadable.
+    assert installed["installed_filenames"] == [GGUF_ENTRY["filename"]]
+    assert gguf_rows["unsloth/Fresh-GGUF"]["install_state"] is None
+
+
+def test_recommended_rows_carry_a_live_downloading_flag(monkeypatch):
+    from server.local import registry as reg
+
+    monkeypatch.setattr(reg, "_recommended_downloaded_on_disk", lambda entry: False)
+    monkeypatch.setattr(reg, "_config_local_models", lambda: {})
+    some_key = next(iter(reg.RECOMMENDED_LOCAL_MODELS))
+    _seed_install_states(monkeypatch, {some_key: "downloading"})
+
+    rows = {r["key"]: r for r in service.recommended()}
+    assert rows[some_key]["downloading"] is True
+    others = [r for k, r in rows.items() if k != some_key]
+    assert all(r["downloading"] is False for r in others)
+
+
 def test_build_mlx_entry_uses_the_real_window_from_config_json():
     _, small = install.build_mlx_entry(
         repo_id="mlx-community/Tiny-8k-4bit", arch="llama", label=None, n_ctx=None, header_ctx=8192
