@@ -50,6 +50,17 @@ _log_path: str | None = None
 # loaded as a new repo/path.
 WIRE_MODEL = "default_model"
 
+# Must render to MORE than 11 prompt tokens under ANY chat template: mlx_lm
+# 0.31.3's prompt segmentation calls rfind_think_start(prompt, start=len-11),
+# and a shorter prompt makes that start negative and raises IndexError ("list
+# index out of range" as a 404) on every thinking-capable model. A one-word
+# "hi" under DeepSeek-R1's compact template is 4 tokens. Real chat turns are
+# never that short (the system prompt alone is hundreds of tokens).
+WARMUP_MESSAGE = (
+    "This is a one-token warmup request that only forces the model "
+    "weights to load into memory. Reply with a single word."
+)
+
 
 class MlxServerUnavailable(RuntimeError):
     """mlx-lm is not importable — carries the actionable fix."""
@@ -168,7 +179,7 @@ def _warmup(port: int, deadline: float) -> str | None:
             f"http://{_HOST}:{port}/v1/chat/completions",
             json={
                 "model": WIRE_MODEL,
-                "messages": [{"role": "user", "content": "hi"}],
+                "messages": [{"role": "user", "content": WARMUP_MESSAGE}],
                 "max_tokens": 1,
                 "stream": False,
             },

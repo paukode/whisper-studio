@@ -283,6 +283,15 @@ def test_mlx_server_spawns_the_module_server_and_warms_up(monkeypatch, tmp_path)
     assert mlx_server.resident_key() is None
 
 
+def test_warmup_message_stays_longer_than_mlx_lm_segmentation_window():
+    """mlx_lm 0.31.3 segments prompts with rfind_think_start(start=len-11) and
+    IndexErrors on prompts shorter than 11 tokens (observed as a 404 "list
+    index out of range" loading DeepSeek-R1, whose compact template rendered a
+    one-word warmup to 4 tokens). Words tokenize to at least one token each,
+    so this word count keeps every template safely past the window."""
+    assert len(mlx_server.WARMUP_MESSAGE.split()) >= 15
+
+
 def test_mlx_server_warmup_failure_stops_and_raises(monkeypatch, tmp_path):
     _seed_registry(monkeypatch, {"local_mlx": dict(MLX_ENTRY)})
     monkeypatch.setattr(runtime, "MODELS_DIR", str(tmp_path))
