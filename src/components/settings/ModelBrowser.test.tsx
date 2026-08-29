@@ -244,29 +244,19 @@ describe('ModelBrowser (Discover)', () => {
     );
   });
 
-  it('browses an empty-term default list for BOTH sorts and refetches on sort change', async () => {
+  it('browses an empty-term default list up front, with no sort or format params', async () => {
     renderBrowser();
-    // Mount runs the default trending browse with NO search term.
+    // Mount runs the default browse with NO search term (the backend ranks it
+    // by trending; a typed query ranks by relevance server-side).
     await screen.findByText('Qwen3-0.6B-GGUF');
     await waitFor(() =>
-      expect(api.get).toHaveBeenCalledWith(
-        expect.stringMatching(/\/api\/models\/browse\/search\?.*sort=trending/),
-      ),
+      expect(api.get).toHaveBeenCalledWith(expect.stringContaining('/api/models/browse/search')),
     );
-    // The empty-term browse must NOT include a q param.
+    // The empty-term browse must NOT include a q param, and the removed
+    // sort/format controls must never reach the wire.
     expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining('q='));
-
-    // Switching to Most downloaded refetches with the new sort, still empty term.
-    fireEvent.change(screen.getByRole('combobox', { name: /sort order/i }), {
-      target: { value: 'downloads' },
-    });
-    await waitFor(() =>
-      expect(api.get).toHaveBeenCalledWith(
-        expect.stringMatching(/\/api\/models\/browse\/search\?.*sort=downloads/),
-      ),
-    );
-    // Results still render (the query is no longer gated behind a search term).
-    expect(await screen.findByText('Qwen3-0.6B-GGUF')).toBeInTheDocument();
+    expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining('sort='));
+    expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining('fmt='));
   });
 
   it("warns and offers 'Download anyway' when the selected quant is too big for this machine", async () => {
@@ -439,28 +429,26 @@ describe('ModelBrowser (Discover)', () => {
     });
   });
 
-  it('switching format to MLX refetches with fmt=mlx and renders whole-repo rows', async () => {
+  it('renders merged GGUF and MLX rows: quant picker for GGUF, whole-repo for MLX', async () => {
+    const MERGED = { count: 2, results: [...SEARCH.results, ...MLX_SEARCH.results] };
     api.get.mockImplementation((url: string) => {
-      if (url.startsWith('/api/models/browse/search')) {
-        return Promise.resolve(url.includes('fmt=mlx') ? MLX_SEARCH : SEARCH);
-      }
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(MERGED);
       if (url.startsWith('/api/models/browse/repo/')) return Promise.resolve(MLX_REPO_DETAIL);
       if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
       return Promise.resolve({});
     });
     renderBrowser();
+    // Both formats arrive in ONE result list — no format picker anywhere.
     await screen.findByText('Qwen3-0.6B-GGUF');
-
-    fireEvent.change(screen.getByRole('combobox', { name: /weight format/i }), {
-      target: { value: 'mlx' },
-    });
     await screen.findByText('Qwen3-14B-4bit');
-    await waitFor(() =>
-      expect(api.get).toHaveBeenCalledWith(expect.stringContaining('fmt=mlx')),
-    );
-    // No quant dropdown for an MLX row — the repo IS the quant.
+    expect(screen.queryByRole('combobox', { name: /weight format/i })).not.toBeInTheDocument();
+    // The GGUF row keeps its quant dropdown; the MLX row has none — the repo
+    // IS the quant.
     expect(
-      screen.queryByRole('combobox', { name: /choose a quant/i }),
+      screen.getByRole('combobox', { name: /choose a quant for Qwen3-0.6B-GGUF/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('combobox', { name: /choose a quant for Qwen3-14B-4bit/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -472,9 +460,6 @@ describe('ModelBrowser (Discover)', () => {
       return Promise.resolve({});
     });
     renderBrowser();
-    fireEvent.change(screen.getByRole('combobox', { name: /weight format/i }), {
-      target: { value: 'mlx' },
-    });
     await screen.findByText('Qwen3-14B-4bit');
 
     const button = screen.getByRole('button', { name: 'Download' });
@@ -506,9 +491,6 @@ describe('ModelBrowser (Discover)', () => {
       return Promise.resolve({});
     });
     renderBrowser();
-    fireEvent.change(screen.getByRole('combobox', { name: /weight format/i }), {
-      target: { value: 'mlx' },
-    });
     await screen.findByText('Qwen3-14B-4bit');
     expect(screen.getByText('downloading…')).toBeInTheDocument();
     const button = screen.getByRole('button', { name: 'Downloading…' });

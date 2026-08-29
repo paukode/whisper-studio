@@ -128,21 +128,13 @@ export interface RecommendedModel {
   needed_bytes?: number | null;
 }
 
-export type BrowseSort = 'trending' | 'downloads';
-
-export const searchModels = (params: {
-  q?: string;
-  author?: string;
-  sort?: BrowseSort;
-  all?: boolean;
-  format?: BrowseFormat;
-}) => {
+/** Search both weight formats at once; the backend ranks by relevance to the
+ *  query (trending when the query is empty). */
+export const searchModels = (params: { q?: string; author?: string; all?: boolean }) => {
   const qs = new URLSearchParams();
   if (params.q) qs.set('q', params.q);
   if (params.author) qs.set('author', params.author);
-  if (params.sort) qs.set('sort', params.sort);
   if (params.all) qs.set('all', '1');
-  if (params.format && params.format !== 'gguf') qs.set('fmt', params.format);
   return get<{ results: BrowseResult[]; count: number }>(
     `/api/models/browse/search?${qs.toString()}`,
   );

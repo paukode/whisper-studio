@@ -6,9 +6,7 @@ import {
   installModel,
   installRecommendedModel,
   searchModels,
-  type BrowseFormat,
   type BrowseResult,
-  type BrowseSort,
   type InstallResult,
   type MemFit,
   type RecommendedModel,
@@ -252,6 +250,7 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
             {toolCapable === false && <ChatOnlyChip />}
           </div>
           <div className="settings-item-desc">
+            {(result.format ?? 'gguf').toUpperCase()} ·{' '}
             {result.arch ? `${result.arch} · ` : ''}
             {humanCount(result.downloads)} downloads
             {result.gated ? ' · gated (needs license acceptance)' : ''}
@@ -444,9 +443,10 @@ const RecommendedSection: React.FC = () => {
 };
 
 /**
- * Settings > Models > Discover: search Hugging Face for GGUF chat models and
- * install one with a click. Only models the bundled engine can run are shown
- * (the backend gates on architecture). Downloads reuse the manager queue, so
+ * Settings > Models > Discover: search Hugging Face for GGUF and MLX chat
+ * models in one merged, relevance-ranked list and install one with a click.
+ * Only models the local engines can run are shown (the backend gates on
+ * architecture per format). Downloads reuse the manager queue, so
  * progress/cancel appear under Models > Chat and the model shows in the composer
  * picker once installed. Server state lives in react-query (no
  * zustand-fresh-object selectors).
@@ -454,16 +454,15 @@ const RecommendedSection: React.FC = () => {
 export const ModelBrowser: React.FC = () => {
   const [term, setTerm] = useState('');
   const [submitted, setSubmitted] = useState('');
-  const [sort, setSort] = useState<BrowseSort>('trending');
-  const [format, setFormat] = useState<BrowseFormat>('gguf');
   const [allOfHf, setAllOfHf] = useState(false);
 
   const searchQuery = useQuery({
-    queryKey: ['model-browse-search', submitted, sort, allOfHf, format],
-    queryFn: () => searchModels({ q: submitted, sort, all: allOfHf, format }),
-    // Always run — an empty-term browse is a useful default top list for BOTH
-    // sorts (trending and most-downloaded). The sort/scope/format live in the
-    // query key, so switching any refetches without touching the search term.
+    queryKey: ['model-browse-search', submitted, allOfHf],
+    queryFn: () => searchModels({ q: submitted, all: allOfHf }),
+    // Always run — an empty-term browse is a useful default top list (the
+    // backend ranks it by trending; a typed query ranks by relevance). The
+    // scope lives in the query key, so toggling it refetches without touching
+    // the search term.
     // While a row is downloading, poll so it flips to "installed" by itself.
     refetchInterval: (query) =>
       query.state.data?.results?.some((r) => r.install_state === 'downloading') ? 4000 : false,
@@ -499,25 +498,6 @@ export const ModelBrowser: React.FC = () => {
           style={{ flex: 1, minWidth: 180 }}
           className="settings-input"
         />
-        <select
-          value={sort}
-          onChange={(e) => setSort(e.target.value as BrowseSort)}
-          aria-label="Sort order"
-          className="settings-input"
-        >
-          <option value="trending">Trending</option>
-          <option value="downloads">Most downloaded</option>
-        </select>
-        <select
-          value={format}
-          onChange={(e) => setFormat(e.target.value as BrowseFormat)}
-          aria-label="Weight format"
-          className="settings-input"
-          title="GGUF runs on llama.cpp; MLX runs on Apple's MLX engine."
-        >
-          <option value="gguf">GGUF</option>
-          <option value="mlx">MLX</option>
-        </select>
         <button className="btn btn-primary btn-sm" type="submit">
           Search
         </button>
