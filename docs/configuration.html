@@ -51,7 +51,7 @@
       <tbody>
         <tr><td>Environment</td><td><code>TAVILY_API_KEY</code>, <code>HOST</code>, <code>PORT</code></td><td>Highest</td><td>Secrets and deployment overrides</td></tr>
         <tr><td>Project</td><td><code class="path">&lt;workspace&gt;/.whisper/settings.json</code></td><td>High</td><td>Per-project model, region, permission mode</td></tr>
-        <tr><td>User</td><td><code class="path">config.user.json</code> in the app home; in a dev checkout (or before migration), the legacy <code class="path">config.json</code> at the repo root is the user layer</td><td>Middle</td><td>Your deltas: keys, region, added models, per-field overrides, a hide-list</td></tr>
+        <tr><td>User</td><td><code class="path">config.user.json</code> in the app home (repo root for a source install); an older checkout that still has a legacy <code class="path">config.json</code> keeps that as its user layer until migrated</td><td>Middle</td><td>Your deltas: keys, region, added models, per-field overrides, a hide-list</td></tr>
         <tr><td>System</td><td><code class="path">config.example.json</code> (read-only, ships with the app, read live)</td><td>Low</td><td>The app-owned model catalog and shipped defaults</td></tr>
         <tr><td>Code defaults</td><td><code>DEFAULTS</code> in <code class="path">server/infrastructure/config.py</code></td><td>Lowest</td><td>Built-in fallbacks you never edit</td></tr>
       </tbody>
@@ -77,14 +77,16 @@
         orchestration</a>.</p></div>
     </div>
 
-    <h2 id="first-run-config">First-run config.json</h2>
-    <p><code class="path">config.json</code> lives at the repo root and is gitignored, because it holds
-      your Tavily key and any other per-machine settings. It has to be created locally. On the first
-      run, <code>setup.sh</code> copies the tracked template
-      <code class="path">config.example.json</code> to <code class="path">config.json</code> for you.
-      After that, change values either through the Settings UI (gear icon) or by editing the file
-      directly.</p>
-    <p>The seeded file leaves <code>tavily_api_key</code> empty. Without a key,
+    <h2 id="first-run-config">First-run user config</h2>
+    <p>Your user config (<code class="path">config.user.json</code>, or a legacy
+      <code class="path">config.json</code> on older installs) lives at the repo root and is
+      gitignored, because it holds your Tavily key and any other per-machine settings. It is never a
+      copy of the template: <code class="path">config.example.json</code> is the read-only SYSTEM
+      layer, and the user file holds only your deltas. On a fresh install, <code>setup.sh</code> and
+      the packaged app both seed a <code class="path">config.user.json</code> with the same first-run
+      defaults (hybrid mode with the on-device index capabilities). After that, change values either
+      through the Settings UI (gear icon) or by editing the file directly.</p>
+    <p>A fresh install has no <code>tavily_api_key</code>. Without a key,
       <code>web_search</code> falls back to an Amazon Bedrock AgentCore browser MCP server if you
       have enabled one; <code>web_fetch</code> and everything else (chat, transcription, and the
       workspace tools) work with no further setup.</p>

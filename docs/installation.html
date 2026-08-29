@@ -187,16 +187,16 @@ bash setup.sh</code></pre></div>
         to stop.</p></li>
     </ol>
 
-    <p>On the first run the script also seeds <code class="path">config.json</code> from
-      <code class="path">config.example.json</code> and downloads model weights into
-      <code class="path">models/</code>. Core transcription weights (Whisper, Parakeet, and the speaker
-      encoder) are always pulled. For hybrid and local modes it additionally pulls the on-device
-      index weights (Qwen3 embed and rerank, GLiNER, GLiNER2, about 5 GB) and installs the llama.cpp
-      <code>llama-server</code> runtime via Homebrew. No chat model is pulled on a fresh install:
-      on-device chat models are downloaded from <b>Settings &rarr; Models &rarr; Discover</b>, and any
-      already-registered local models are refreshed on later setup runs (see
-      <a href="#model-modes">Model modes</a>). Every download is idempotent and non-fatal: a pull
-      that cannot finish now retries automatically on first use.</p>
+    <p>On the first run the script also seeds your config with the same first-run defaults a fresh
+      Mac-app install gets (a <code class="path">config.user.json</code> holding hybrid mode with the
+      on-device index capabilities - your <code class="path">config.example.json</code> is the
+      read-only catalog layer and is never copied), and installs the llama.cpp
+      <code>llama-server</code> runtime via Homebrew so on-device chat models can serve. <b>No model
+      weights are downloaded by setup.</b> Exactly like the Mac app's first launch, every model
+      arrives on demand with an in-app progress banner: the transcription engines on your first
+      recording, the on-device index weights (Qwen3 embed and rerank, GLiNER, about 5 GB) on your
+      first index build in hybrid or local mode, and chat models when you install them from
+      <b>Settings &rarr; Models &rarr; Discover</b> (a fresh install ships none).</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
@@ -223,21 +223,21 @@ bash setup.sh</code></pre></div>
         <tr><td><code>--prod</code></td><td>Production mode (<b>the default</b>): build the frontend and
           serve it from FastAPI on port 8000. No Vite, no HMR. Mutually exclusive with
           <code>--dev</code>.</td></tr>
-        <tr><td><code>--cloud</code></td><td>Cloud mode (<b>the default</b> for a fresh install): all
-          indexing and RAG on Amazon Bedrock. Skips the on-device index weights and the llama.cpp
-          runtime install.</td></tr>
-        <tr><td><code>--hybrid</code></td><td>Hybrid mode: pick a backend per capability. Pulls the
-          ~5 GB on-device index stack and installs the llama.cpp runtime so you can choose them.</td></tr>
-        <tr><td><code>--local</code></td><td>Local mode: everything on-device. Pulls the same index
-          stack and runtime; chat models are installed separately from Settings &rarr; Models &rarr;
-          Discover.</td></tr>
+        <tr><td><code>--cloud</code></td><td>Start in cloud mode: all indexing and RAG on Amazon
+          Bedrock. Nothing on-device beyond transcription.</td></tr>
+        <tr><td><code>--hybrid</code></td><td>Start in hybrid mode: pick a backend per capability.
+          The on-device index weights download on your first index build.</td></tr>
+        <tr><td><code>--local</code></td><td>Start in local mode: everything on-device. Index weights
+          download on first index build; chat models are installed separately from Settings &rarr;
+          Models &rarr; Discover.</td></tr>
         <tr><td><code>--no-open</code></td><td>Do not auto-open the browser (also honored via the
           <code>NO_OPEN=1</code> env var). Useful for SSH or headless sessions.</td></tr>
         <tr><td><code>--help</code></td><td>Show all options and exit.</td></tr>
       </tbody>
     </table></div>
-    <p>Without a mode flag, an existing <code class="path">config.json</code> is honored; a fresh install
-      defaults to cloud. The <code>--dev</code>/<code>--prod</code> and mode flags can be combined, for
+    <p>Without a mode flag, an existing config is honored; a fresh install starts in <b>hybrid</b>
+      mode - the same first-run default as the Mac app. The
+      <code>--dev</code>/<code>--prod</code> and mode flags can be combined, for
       example <code>bash setup.sh --dev --local</code>.</p>
 
     <h2 id="model-modes">Model modes</h2>
@@ -248,9 +248,9 @@ bash setup.sh</code></pre></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Mode</th><th>Embeddings</th><th>Reranker</th><th>Entity extraction</th><th>On-device weights</th></tr></thead>
       <tbody>
-        <tr><td><b>Cloud</b> (default)</td><td>Cohere Embed v4 (Bedrock)</td><td>Cohere Rerank 3.5</td><td>Claude Haiku</td><td>none - lean install</td></tr>
-        <tr><td><b>Hybrid</b></td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td><td>pulled</td></tr>
-        <tr><td><b>Local</b></td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER</td><td>~5 GB index stack; chat models installed from Discover</td></tr>
+        <tr><td><b>Cloud</b></td><td>Cohere Embed v4 (Bedrock)</td><td>Cohere Rerank 3.5</td><td>Claude Haiku</td><td>none - lean install</td></tr>
+        <tr><td><b>Hybrid</b> (first-run default)</td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td><td>downloaded on first index build</td></tr>
+        <tr><td><b>Local</b></td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER</td><td>~5 GB index stack on first index build; chat models installed from Discover</td></tr>
       </tbody>
     </table></div>
 
@@ -284,7 +284,7 @@ bash setup.sh</code></pre></div>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
       <div class="callout__body"><p><b>Transcription needs no setup.</b> The speech model
-        auto-downloads on your first recording (or was pulled during setup) and runs entirely on your
+        auto-downloads on your first recording and runs entirely on your
         machine. There is nothing to configure to record; the Canary engine and its language-ID
         companion download the same way the first time you pick them.</p></div>
     </div>
