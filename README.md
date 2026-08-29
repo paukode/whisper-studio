@@ -123,8 +123,8 @@ bash setup.sh          # rebuild the bundle and install any new deps
 ```
 
 Your settings, chat history, and downloaded models live in gitignored folders
-(`config.json`, `storage/`, `data/`, `models/`), so this updates only the code
-and leaves them untouched.
+(`config.user.json` / legacy `config.json`, `storage/`, `data/`, `models/`),
+so this updates only the code and leaves them untouched.
 
 > **Heads up:** `git reset --hard` discards any local changes to *project files*
 > (not your config or data), so commit or `git stash` them first if you've
@@ -167,9 +167,9 @@ the weights:
 ```
 
 `repo_id`, `filename` and `dir` are required (an entry missing them is
-skipped with a warning); `ctx` defaults to 16384. On the next `setup.sh`
-run the weights are downloaded automatically, and the model appears in the
-picker.
+skipped with a warning); `ctx` defaults to 16384. The model appears in the
+picker right away, and its weights download automatically the first time you
+select it (no setup.sh run needed).
 
 Tool calling and the thinking channel come from `llama-server`, which uses
 each model's own chat template and upstream's per-family parsers — so a new

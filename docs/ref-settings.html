@@ -63,10 +63,11 @@
           <td>Where indexing and retrieval run: <code>cloud</code> (all on Amazon Bedrock),
             <code>local</code> (all on-device), or <code>hybrid</code> (pick a backend per
             capability). This also drives which chat models the picker shows. Changing it prompts a
-            reload so the app re-initializes in the new mode. A dev checkout inherits <code>cloud</code>
-            from <code class="path">config.example.json</code>; a fresh packaged install is seeded to
-            <code>hybrid</code> with on-device embed/rerank (Qwen3) and GLiNER entity extraction, but
-            cloud Haiku as the indexing writer until you install a local chat model. See
+            reload so the app re-initializes in the new mode. Every fresh install (setup.sh or the
+            Mac app) is seeded to <code>hybrid</code> with on-device embed/rerank (Qwen3) and GLiNER
+            entity extraction, but cloud Haiku as the indexing writer until you install a local chat
+            model; the shipped SYSTEM default in <code class="path">config.example.json</code> is
+            <code>cloud</code> and applies only when no user layer exists. See
             <a href="tut-model-modes.html">Model modes</a>.</td>
         </tr>
         <tr>

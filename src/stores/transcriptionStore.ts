@@ -4,11 +4,11 @@ import type { TranscriptSegment } from '@/types/session';
 export interface TranscriptionState {
   segments: TranscriptSegment[];
   speakerNames: Record<string, string>;
-  // The Parakeet (streaming) backend's volatile in-progress draft: the live,
-  // word-by-word transcript of the utterance currently being spoken, before it
-  // settles into a committed segment at the next pause. Empty when there's no
-  // draft (e.g. the Whisper backend, between utterances, or right after a
-  // sentence finalizes). Never persisted — purely a live-display value.
+  // The streaming backends' (Parakeet and Canary) volatile in-progress draft:
+  // the live, word-by-word transcript of the utterance currently being spoken,
+  // before it settles into a committed segment at the next pause. Empty when
+  // there's no draft (e.g. the Whisper backend, between utterances, or right
+  // after a sentence finalizes). Never persisted — purely a live-display value.
   interimText: string;
   // Actions
   addSegment: (segment: TranscriptSegment) => void;

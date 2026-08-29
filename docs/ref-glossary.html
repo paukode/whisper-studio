@@ -246,9 +246,10 @@
         </tr>
         <tr>
           <td>hybrid mode</td>
-          <td>One of three model modes. In hybrid mode you pick a backend per capability (embeddings,
-            reranker, entity extraction), mixing cloud and on-device. It pulls the on-device weights so
-            those options are available. Compare cloud (the default) and local. See
+          <td>One of three model modes, and the first-run default on a fresh install. In hybrid mode
+            you pick a backend per capability (embeddings,
+            reranker, entity extraction), mixing cloud and on-device; the on-device weights download
+            on first use. Compare cloud and local. See
             <a href="tut-model-modes.html">Model modes</a> and
             <a href="arch-backends.html">Model backends &amp; modes</a>.</td>
         </tr>
@@ -296,9 +297,9 @@
         </tr>
         <tr>
           <td>model mode</td>
-          <td>Where indexing and retrieval run: <code>cloud</code> (the code-level default and what a dev
-            checkout inherits), <code>hybrid</code>, or <code>local</code>. A fresh packaged install is
-            actually seeded to <code>hybrid</code> with on-device embed/rerank and entity extraction. This
+          <td>Where indexing and retrieval run: <code>cloud</code> (the shipped SYSTEM default),
+            <code>hybrid</code>, or <code>local</code>. Every fresh install (setup.sh or the Mac app)
+            is seeded to <code>hybrid</code> with on-device embed/rerank and entity extraction. This
             is separate from the chat-model choice in the toolbar. Cohere embed/rerank are pinned to
             <code>us-east-1</code>; chat can run in any region. See
             <a href="tut-model-modes.html">Model modes</a>.</td>

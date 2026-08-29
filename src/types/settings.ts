@@ -11,7 +11,8 @@ export interface AppConfig {
   /** Live ASR engine: 'whisper' (utterance), 'streaming' (Parakeet), or
    *  'canary' (25 EU languages + native translation). */
   transcriptionBackend: string;
-  /** Translate dropdown: 'off' | 'auto' | 'model' | 'apple'. */
+  /** Translate dropdown: 'off' | 'canary' | 'apple' (legacy stored
+   *  'auto'/'model' values are normalized to 'canary' on load). */
   translateMode: string;
   /** Target language for translation lines (ISO 639-1, default 'en'). */
   translateTarget: string;
