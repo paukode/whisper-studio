@@ -4,6 +4,7 @@ import { suppressEmbeddedPointerEvents } from '@/utils/dragGuards';
 import { LiveBrowserPanel } from './LiveBrowserPanel';
 import { PlanPanel } from './PlanPanel';
 import { FilePanel } from './FilePanel';
+import { DocsPanel } from './DocsPanel';
 import { TasksPanel } from '@/components/tasks/TasksPanel';
 
 const MIN_FRAC = 0.12;
@@ -13,6 +14,7 @@ const KIND_COLOR: Record<DockKind, string> = {
   plan: 'var(--text-warning, #d08b00)',
   tasks: 'var(--text-success, #2a9d5c)',
   file: 'var(--text-secondary, #888)',
+  docs: 'var(--accent, #2563eb)',
 };
 
 function CloseIcon() {
@@ -124,6 +126,13 @@ export const RightDock: React.FC = () => {
             )}
             {p.kind === 'tasks' && <TasksPanel />}
             {p.kind === 'plan' && <PlanPanel planId={String(p.meta?.planId ?? p.id)} />}
+            {p.kind === 'docs' && (
+              <DocsPanel
+                page={String(p.meta?.page ?? 'index.html')}
+                anchor={(p.meta?.anchor as string | undefined) || undefined}
+                navRev={p.meta?.navRev as number | undefined}
+              />
+            )}
             {p.kind === 'file' && (
               <FilePanel
                 path={String(p.meta?.path ?? p.id)}

@@ -13,7 +13,7 @@ import { create } from 'zustand';
  * useDockLiveWatcher) and a persisted "dismissed" flag so closing the live
  * panel stays closed across a page reload (until a new session or a reopen).
  */
-export type DockKind = 'live' | 'plan' | 'file' | 'tasks';
+export type DockKind = 'live' | 'plan' | 'file' | 'tasks' | 'docs';
 
 export interface DockPanel {
   id: string;
@@ -47,6 +47,10 @@ interface DockState {
    *  re-click on an already-open file updates its line target and bumps lineRev
    *  so the viewer re-reveals and the panel flashes. */
   openFile: (t: { path: string; title: string; startLine?: number; endLine?: number }) => void;
+  /** Open the bundled documentation in the dock. No args = the docs home; a
+   *  page (and optional heading anchor) navigates there — set by the header's
+   *  ? button and by #docspage= reference links in chat answers. */
+  openDocs: (page?: string, anchor?: string) => void;
   closePanel: (id: string) => void;
   setSizes: (sizes: number[]) => void;
   setLiveSession: (s: LiveSession | null) => void;
@@ -107,6 +111,22 @@ export const useDockStore = create<DockState>((set, get) => ({
       return;
     }
     const next = [...panels, { id, kind: 'file' as const, title: t.title, meta }];
+    set({ panels: next, sizes: equalize(next.length), open: true });
+  },
+
+  openDocs: (page, anchor) => {
+    const id = 'docs';
+    const { panels } = get();
+    const existing = panels.find((p) => p.id === id);
+    // navRev is monotonic per panel: it bumps even on a repeat click of the
+    // same reference, so the viewer re-navigates to the cited section.
+    const navRev = ((existing?.meta?.navRev as number) ?? 0) + 1;
+    const meta = { page: page ?? 'index.html', anchor: anchor ?? '', navRev };
+    if (existing) {
+      set({ panels: panels.map((p) => (p.id === id ? { ...p, meta } : p)), open: true });
+      return;
+    }
+    const next = [...panels, { id, kind: 'docs' as const, title: 'Documentation', meta }];
     set({ panels: next, sizes: equalize(next.length), open: true });
   },
 

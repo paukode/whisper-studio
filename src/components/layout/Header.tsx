@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useRecordingStore, NATIVE_LEVEL_ACTIVE_THRESHOLD } from '@/stores/recordingStore';
+import { useDockStore } from '@/stores/dockStore';
 import { useActiveTranscriptionStore } from '@/stores/sessionRuntimes';
 import { useBackgroundTaskStore } from '@/stores/backgroundTaskStore';
 import { recordingController } from '@/services/recordingController';
@@ -100,6 +101,10 @@ export const Header: React.FC = () => {
     if (sid) void switchSession(sid);
   }, [switchSession]);
 
+  const handleOpenDocs = useCallback(() => {
+    useDockStore.getState().openDocs();
+  }, []);
+
   return (
     <header className="header">
       <div className="header-left">
@@ -173,6 +178,23 @@ export const Header: React.FC = () => {
             <span className="recording-jump-title">{recordingTitle}</span>
           </button>
         )}
+
+        {/* Documentation: the bundled manual in the right dock — the same
+          * pane that @docs answer references open. */}
+        <button
+          className="btn-icon docs-toggle-btn"
+          id="docsBtn"
+          type="button"
+          title="Documentation"
+          aria-label="Open documentation"
+          onClick={handleOpenDocs}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+        </button>
 
         {/* Audio-source picker: mic (always) + optional Chrome tab audio.
           * Sits beside Record so sources are armed just before starting. */}

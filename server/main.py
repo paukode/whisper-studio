@@ -428,6 +428,15 @@ class _CachedStatic(StaticFiles):
 
 app.mount("/static", _CachedStatic(directory=os.path.join(BASE_DIR, "static")), name="static")
 
+# The bundled documentation site (docs/ in the repo, staged next to server/ in
+# the packaged app). Served for the in-app docs panel and the @docs references;
+# absent in stripped builds, then the panel simply has nothing to mount.
+from server.docs_qa import docs_dir as _docs_dir  # noqa: E402
+
+_docs = _docs_dir()
+if _docs:
+    app.mount("/docs-site", StaticFiles(directory=_docs, html=True), name="docs-site")
+
 
 def _spa_index_response() -> Response:
     react_index = os.path.join(BASE_DIR, "static", "dist", "index.html")
