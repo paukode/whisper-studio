@@ -55,7 +55,7 @@ window.WS_NAV = [
       { t: "Goal loop & completion gate", h: "arch-goals.html", d: "Set a goal; an end-of-turn gate runs Stop hooks + a cheap evaluator until it's met." },
       { t: "Approval & permissions", h: "arch-approval.html", d: "Nonce flow, permission modes, auto-mode classifier." },
       { t: "Sandbox & security", h: "arch-sandbox.html", d: "sandbox-exec/bwrap, validator, deny lists, boundaries." },
-      { t: "Transcription & diarization", h: "arch-transcription.html", d: "WebSocket audio, Whisper/Parakeet, speaker ID." },
+      { t: "Transcription & diarization", h: "arch-transcription.html", d: "WebSocket audio, Whisper/Parakeet/Canary, translation, speaker ID." },
       { t: "Transcript summarization", h: "arch-summarization.html", d: "Map-reduce condensation of huge transcripts; the summary skills." },
       { t: "Attachment extraction", h: "arch-extraction.html", d: "Type-aware file to Markdown, OCR, vision sizing." },
       { t: "Index / GraphRAG & search", h: "arch-index.html", d: "Embeddings, reranker, entities, sqlite-vec, grounding." },

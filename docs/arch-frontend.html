@@ -184,7 +184,8 @@
         <tr><td><code>user_question</code></td><td>Collapses parallel <code>ask_user_question</code> calls into one tabbed card.</td></tr>
         <tr><td><code>team_progress</code> / <code>team_results</code></td><td>Folds live <a href="arch-agents.html">sub-agent</a> activity into a turn-local team report.</td></tr>
         <tr><td><code>usage</code></td><td>Updates token counters and the cost estimate; also carries <code>context_used</code>/<code>context_max</code> for the status-bar context meter.</td></tr>
-        <tr><td><code>grounding</code></td><td>Records how many folders were searched and passages injected this turn.</td></tr>
+        <tr><td><code>grounding</code></td><td>Records how many folders were searched and passages injected this turn, plus the persisted-sources id that lets the chip expand into the answer-sources panel.</td></tr>
+        <tr><td><code>status</code></td><td>Turn-setup stage before the first token; renders "Preparing…", "Searching your workspace…", or "Waiting for the model…" in the streaming header, cleared on the first real output.</td></tr>
         <tr><td><code>cron_event</code></td><td>Appends a live cron card that renders identically to the persisted, resumed one.</td></tr>
         <tr><td><code>session_message</code></td><td>Appends a live <code>SessionMessageCard</code> for a message pushed in from another session while this one is streaming; renders identically to the persisted, resumed row.</td></tr>
         <tr><td><code>notify_user</code></td><td>Surfaces the tool's declared status (success / warning / error) as a toast, alongside the durable row it also writes to the notification log.</td></tr>

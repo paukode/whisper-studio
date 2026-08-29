@@ -287,9 +287,9 @@ FRESH=0
 # Vite dev server with HMR.
 PROD=1
 ENV_FLAG=""   # tracks an explicit --dev/--prod so passing both is rejected
-# Model mode: where indexing/RAG runs. cloud = all Bedrock (lean install, no
-# on-device weights); hybrid/local pull the ~16 GB of on-device models. Empty
-# until a flag is given, so a plain re-run honors the existing config.json.
+# Model mode: where indexing/RAG runs (cloud / hybrid / local). Only persisted
+# when a flag is given, so a plain re-run honors the existing config; a fresh
+# install gets the server-seeded first-run default (hybrid), same as the Mac app.
 MODE_FLAG=""
 # Auto-open the app in the default browser once everything is ready.
 # Can also be disabled via NO_OPEN=1 env var (useful for SSH sessions
@@ -331,19 +331,23 @@ for arg in "$@"; do
         -h|--help)
             echo "Usage: bash setup.sh [--new] [--dev|--prod] [--cloud|--hybrid|--local] [--no-open]"
             echo "  --new       Delete venv/, node_modules/, and static/dist/ and reinstall from scratch."
-            echo "              Also backs up config.json and pricing.json (timestamped) and reseeds them from their .example.json templates."
+            echo "              Also backs up your config (timestamped) and resets it to the same"
+            echo "              first-run defaults a fresh Mac-app install gets."
             echo "  --dev       Development mode: run the backend + Vite dev server with HMR."
             echo "  --prod      Production mode: build the frontend and serve it from the backend"
             echo "              only (no Vite dev server). This is the default."
-            echo "  --cloud     Cloud mode: all indexing/RAG on Amazon Bedrock. Skips the ~16 GB of"
-            echo "              on-device weights (Gemma, Qwen3 embed/rerank, GLiNER). The default."
-            echo "  --hybrid    Hybrid mode: pick a backend per capability. Pulls on-device weights too."
-            echo "  --local     Local mode: everything on-device. Pulls all on-device weights."
+            echo "  --cloud     Start in cloud mode: all indexing/RAG on Amazon Bedrock."
+            echo "  --hybrid    Start in hybrid mode: pick a backend per capability."
+            echo "  --local     Start in local mode: everything on-device."
             echo "  --no-open   Don't auto-open the app in the default browser."
             echo "              Also honored via NO_OPEN=1 env var."
             echo ""
-            echo "Transcription is always on-device (Whisper/Parakeet are pulled in every mode)."
-            echo "Without a mode flag, an existing config.json is honored; a fresh install defaults to cloud."
+            echo "No model weights are downloaded by this script. Exactly like the Mac app's"
+            echo "first launch: transcription models download on your first recording, index"
+            echo "models on your first index build, and chat models are installed on demand"
+            echo "from Settings > Models > Discover."
+            echo "Without a mode flag, an existing config is honored; a fresh install starts in"
+            echo "hybrid mode (on-device index, cloud chat) — the Mac app's first-run default."
             echo ""
             echo "Default: production — builds the frontend and serves it from the backend,"
             echo "then opens the app in your default browser. Use --dev for the Vite HMR server."
@@ -365,20 +369,22 @@ if [ "$PROD" -eq 1 ]; then
 fi
 
 if [ "$FRESH" -eq 1 ]; then
-    # A fresh install resets config.json too: archive any existing one as a
-    # timestamped backup (it holds the user's Tavily key + per-machine settings),
-    # then write a clean config.json from the current template. config.json is
-    # gitignored, so this is the only copy — never delete it, always back it up.
-    if [ -f config.json ]; then
-        config_backup="config.json.bak.$(date +%Y%m%d%H%M%S)"
-        cp config.json "$config_backup"
-        echo "Backed up existing config.json to $config_backup."
-    fi
-    if [ -f config.example.json ]; then
-        cp config.example.json config.json
-        echo "Wrote a fresh config.json from config.example.json."
-        echo "  Re-add your Tavily API key and any custom settings in Settings (gear icon)."
-    fi
+    # A fresh install resets the user config too: archive any existing layer as
+    # a timestamped backup (it holds the user's Tavily key + per-machine
+    # settings), then REMOVE it so the first-run seeding below recreates
+    # config.user.json with the same defaults a fresh Mac-app install gets.
+    # Both files are gitignored, so the backup is the only copy — never delete
+    # without backing up first.
+    for cfg_file in config.json config.user.json; do
+        if [ -f "$cfg_file" ]; then
+            config_backup="$cfg_file.bak.$(date +%Y%m%d%H%M%S)"
+            cp "$cfg_file" "$config_backup"
+            rm -f "$cfg_file"
+            echo "Backed up $cfg_file to $config_backup and reset it."
+        fi
+    done
+    echo "  Config will be re-seeded with first-run defaults (hybrid mode)."
+    echo "  Re-add your Tavily API key and any custom settings in Settings (gear icon)."
     # pricing.json gets the same treatment (gitignored per-key rate overrides;
     # defaults live in pricing.example.json). Back up any existing one and reseed
     # so a fresh install starts from the current rate table.
@@ -411,15 +417,13 @@ if [ "$FRESH" -eq 1 ]; then
     fi
 fi
 
-# Seed config.json from the template on first run (a fresh clone has no config,
-# and the backend would crash on startup without it). config.json is gitignored.
-# An existing config.json is left untouched here; --new resets it above.
-if [ ! -f config.json ] && [ -f config.example.json ]; then
-    cp config.example.json config.json
-    echo "Created config.json from config.example.json."
-    echo "  Open the app and add your Tavily API key in Settings (gear icon)"
-    echo "  to enable the web-search skill. Everything else works without it."
-fi
+# The user config is NOT copied from config.example.json any more: that file is
+# the read-only SYSTEM layer (catalog + defaults), and a full copy of it is
+# exactly what used to shadow shipped model/pricing updates after first run.
+# Instead, once the venv exists, the first-run seeding below calls the same
+# migrate_user_config() the packaged Mac app runs on boot, which creates a
+# config.user.json holding only the first-run defaults (hybrid mode with the
+# on-device index capabilities; weights download on demand).
 
 # NOTE: new template models need no sync step. load_config merges
 # DEFAULTS -> config.example.json -> the user layer additively, so a model
@@ -513,20 +517,34 @@ if [ "$PROD" -eq 1 ]; then
     run_quiet "Building frontend" npm run build
 fi
 
-# ── Resolve the effective model mode (flag > existing user config > cloud) ───
-# It decides which model WEIGHTS to pull: cloud needs none on-device (Bedrock
-# provides embed/rerank/NER/chat), hybrid/local pull the ~16 GB on-device stack.
-# Transcription models are pulled in EVERY mode (always on-device).
+# ── First-run config seeding (Mac-app parity) ────────────────────────────────
+# A fresh checkout has no user config layer. The packaged app's boot creates one
+# via migrate_user_config() (bootstrap_home only runs when WHISPER_HOME is set),
+# seeding the first-run defaults: hybrid mode with the on-device index
+# capabilities, every weight downloading on demand. Run the exact same code path
+# here so a setup.sh install starts identically to the Mac app's first launch.
+# An existing config (either layer) is left alone — the user's settings win.
+if [ ! -f config.json ] && [ ! -f config.user.json ]; then
+    if python -c "from server.infrastructure.config import migrate_user_config; migrate_user_config()" >>"$SETUP_LOG" 2>&1 && [ -f config.user.json ]; then
+        echo "Seeded config.user.json with first-run defaults (hybrid mode, on-device index) — the Mac app's first-launch config."
+    else
+        echo "WARNING: could not seed the first-run config; the backend will run on shipped defaults (see $SETUP_LOG)."
+    fi
+fi
+
+# ── Persist an explicit model-mode flag ──────────────────────────────────────
+# Only when a flag was passed: write it into the ACTIVE user layer
+# (config.user.json once it exists — including the one just seeded — else the
+# legacy config.json; mirrors config._active_user_config_path). Without a flag
+# the existing config, or the seeded first-run default, decides the mode.
 if [ -n "$MODE_FLAG" ]; then
-    MODE="$MODE_FLAG"
-    # Persist the chosen mode so the app starts in it. Write the ACTIVE user
-    # layer: config.user.json once the split-config migration has produced
-    # one, else the legacy config.json (both gitignored). Mirrors
-    # server/infrastructure/config._active_user_config_path.
-    python - "$MODE" <<'PYEOF' || true
+    python - "$MODE_FLAG" <<'PYEOF' || true
 import json, os, sys
 mode = sys.argv[1]
-target = "config.user.json" if os.path.exists("config.user.json") else "config.json"
+if os.path.exists("config.user.json") or not os.path.exists("config.json"):
+    target = "config.user.json"
+else:
+    target = "config.json"
 cfg = {}
 if os.path.exists(target):
     try:
@@ -537,29 +555,16 @@ cfg["local_mode"] = (mode != "cloud")
 with open(target, "w") as f: json.dump(cfg, f, indent=2)
 print(f"Set model_mode={mode} in {target}")
 PYEOF
-else
-    MODE="$(python - <<'PYEOF' 2>/dev/null || echo cloud
-import json, os
-mode = "cloud"
-# Read the ACTIVE user layer: config.user.json when present, else the
-# legacy config.json (matches _active_user_config_path).
-target = "config.user.json" if os.path.exists("config.user.json") else "config.json"
-if os.path.exists(target):
-    try:
-        with open(target) as f: c = json.load(f)
-        mode = c.get("model_mode") or ("local" if c.get("local_mode") else "cloud")
-    except Exception: pass
-print(mode)
-PYEOF
-)"
 fi
-if [ "$MODE" = "cloud" ]; then WANT_LOCAL=0; else WANT_LOCAL=1; fi
-echo "Model mode: $MODE — $([ "$WANT_LOCAL" -eq 1 ] && echo 'pulling on-device models' || echo 'cloud, skipping on-device weights')."
 
 # ── On-device serving runtime: llama.cpp (llama-server) ─────────────────────
-# The ONLY on-device backend. llama-server owns upstream's per-model-family
+# The ONLY on-device chat backend. llama-server owns upstream's per-model-family
 # tool-call and reasoning parsers, so a GGUF added to config.json gets tools and
 # a thinking channel with no code change.
+#
+# Installed in EVERY mode, matching the Mac app (which bundles the binary): a
+# model installed later from Settings > Models > Discover must serve without the
+# user re-running setup. It is a small runtime — no model weights come with it.
 #
 # Build matters: gemma4 (and newer architectures) need >= LLAMA_MIN_BUILD. Older
 # builds load fine and then fail with "unknown model architecture", so we upgrade
@@ -574,138 +579,49 @@ llama_server_build() {
     llama-server --version 2>&1 | sed -n 's/^[[:space:]]*version:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' | head -1
 }
 
-if [ "$WANT_LOCAL" -eq 1 ]; then
-    LLAMA_BUILD="$(llama_server_build || true)"
-    if [ -z "$LLAMA_BUILD" ]; then
-        if command -v brew >/dev/null 2>&1; then
-            echo "Installing llama.cpp via Homebrew — provides the llama-server binary (logs → $SETUP_LOG)..."
-            if brew install llama.cpp >>"$SETUP_LOG" 2>&1; then
-                LLAMA_BUILD="$(llama_server_build || true)"
-                echo "  ✓ llama-server installed (build ${LLAMA_BUILD:-unknown}) at $(command -v llama-server)."
-            else
-                echo "  ✗ llama.cpp install FAILED (see $SETUP_LOG)."
-                echo "    On-device chat will not work until this succeeds — there is no"
-                echo "    fallback runtime. Retry with: brew install llama.cpp"
-            fi
+LLAMA_BUILD="$(llama_server_build || true)"
+if [ -z "$LLAMA_BUILD" ]; then
+    if command -v brew >/dev/null 2>&1; then
+        echo "Installing llama.cpp via Homebrew — provides the llama-server binary (logs → $SETUP_LOG)..."
+        if brew install llama.cpp >>"$SETUP_LOG" 2>&1; then
+            LLAMA_BUILD="$(llama_server_build || true)"
+            echo "  ✓ llama-server installed (build ${LLAMA_BUILD:-unknown}) at $(command -v llama-server)."
         else
-            echo "  ✗ Homebrew not found, so llama.cpp cannot be installed automatically."
-            echo "    On-device chat REQUIRES llama-server and has no fallback. Install it"
-            echo "    manually: https://github.com/ggml-org/llama.cpp"
-        fi
-    elif [ "$LLAMA_BUILD" -lt "$LLAMA_MIN_BUILD" ] 2>/dev/null; then
-        echo "llama.cpp build $LLAMA_BUILD is older than $LLAMA_MIN_BUILD (needed for current"
-        echo "model architectures). Upgrading (logs → $SETUP_LOG)..."
-        if command -v brew >/dev/null 2>&1 && brew upgrade llama.cpp >>"$SETUP_LOG" 2>&1; then
-            echo "  ✓ llama.cpp upgraded to build $(llama_server_build || echo unknown)."
-        else
-            echo "  ✗ Could not upgrade llama.cpp. On-device models may fail with 'unknown"
-            echo "    model architecture'; run 'brew upgrade llama.cpp' manually."
+            echo "  ✗ llama.cpp install FAILED (see $SETUP_LOG)."
+            echo "    On-device chat will not work until this succeeds — there is no"
+            echo "    fallback runtime. Retry with: brew install llama.cpp"
         fi
     else
-        echo "  ✓ llama-server present (build $LLAMA_BUILD) at $(command -v llama-server)."
+        echo "  ✗ Homebrew not found, so llama.cpp cannot be installed automatically."
+        echo "    On-device chat REQUIRES llama-server and has no fallback. Install it"
+        echo "    manually: https://github.com/ggml-org/llama.cpp"
     fi
-fi
-
-# ── Model downloads ─────────────────────────────────────────────────────────
-# Every model weight is pulled into ./models HERE: after all prerequisites are
-# in place and before the server starts. The backend warms models in a
-# background thread, so without this the app would come up (and the browser
-# would open) while gigabytes are still downloading and transcription wouldn't
-# work yet. Each pull is download-only (nothing is loaded into RAM), idempotent
-# (skips if already on disk), and non-fatal: if one cannot complete now (e.g.
-# offline) it falls back to downloading on first use.
-# Pulls one model into ./models. All the noisy detail (Hugging Face progress
-# bars, warnings, httpx lines) is redirected to $SETUP_LOG; the terminal shows
-# a single status line per model. A model counts as present when its sentinel
-# weight file already exists, which keeps re-runs idempotent. A failed pull is
-# non-fatal — the backend retries it on first use.
-#   Args: <friendly name> <sentinel file> <python snippet that downloads it>
-download_model() {
-    local name="$1" sentinel="$2" snippet="$3"
-    if [ -f "$sentinel" ]; then
-        echo "  ✓ ${name} — already present"
-        return 0
-    fi
-    echo "  → ${name} — downloading..."
-    if python -c "import logging; logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s'); ${snippet}" >>"$SETUP_LOG" 2>&1 && [ -f "$sentinel" ]; then
-        echo "  ✓ ${name} — completed successfully"
+elif [ "$LLAMA_BUILD" -lt "$LLAMA_MIN_BUILD" ] 2>/dev/null; then
+    echo "llama.cpp build $LLAMA_BUILD is older than $LLAMA_MIN_BUILD (needed for current"
+    echo "model architectures). Upgrading (logs → $SETUP_LOG)..."
+    if command -v brew >/dev/null 2>&1 && brew upgrade llama.cpp >>"$SETUP_LOG" 2>&1; then
+        echo "  ✓ llama.cpp upgraded to build $(llama_server_build || echo unknown)."
     else
-        echo "  ✗ ${name} — failed; will download on first use (see $SETUP_LOG)"
-    fi
-}
-
-echo ""
-echo "════════════════════════════════════════════════════════════"
-echo "  DOWNLOADING MODELS"
-echo "════════════════════════════════════════════════════════════"
-echo "Pulling model weights into ./models. Detailed progress → $SETUP_LOG."
-echo "Anything that cannot finish now retries automatically on first use."
-echo ""
-
-download_model "Whisper large-v3-turbo (~1.5 GB)" \
-    "models/whisper-large-v3-turbo/weights.safetensors" \
-    "from server.asr.whisper_backend import _ensure_model; _ensure_model()"
-
-download_model "Parakeet streaming (~2.3 GB)" \
-    "models/parakeet-tdt-0.6b-v3/model.safetensors" \
-    "from server.asr.parakeet_backend import _ensure_parakeet_model; _ensure_parakeet_model()"
-
-download_model "Speaker ID / ECAPA (~85 MB)" \
-    "models/spkrec-ecapa-voxceleb/hyperparams.yaml" \
-    "from server.diarization.speakers import _ensure_speaker_model; _ensure_speaker_model()"
-
-# On-device index + LLM weights (~16 GB) — only for hybrid/local. In cloud mode
-# the index uses Cohere (embed/rerank) + Haiku (NER) and chat uses Bedrock, so
-# none of these are needed. Transcription models above are always pulled.
-if [ "$WANT_LOCAL" -eq 1 ]; then
-    # Workspace semantic index + GraphRAG models (used by the on-device index).
-    download_model "Qwen3 embedding (~1.2 GB)" \
-        "models/qwen3-embedding-0.6b/model.safetensors" \
-        "from server.index.embedder import ensure_embed_model; ensure_embed_model()"
-
-    download_model "GLiNER entity extractor (~0.8 GB)" \
-        "models/gliner-large-v2.5/gliner_config.json" \
-        "from server.index.extractor import ensure_gliner_model; ensure_gliner_model()"
-
-    download_model "GLiNER2 entity extractor (~0.8 GB, optional NER model)" \
-        "models/gliner2-large-v1/config.json" \
-        "from server.index.extractor import ensure_gliner2_model; ensure_gliner2_model()"
-
-    download_model "Qwen3 reranker (~2.4 GB)" \
-        "models/qwen3-reranker-0.6b/model.safetensors" \
-        "from server.index.reranker import ensure_rerank_model; ensure_rerank_model()"
-
-    # On-device chat LLMs (GGUF, typically several GB each). Driven by the model
-    # REGISTRY rather than a hardcoded list, so a local model added to
-    # config.json's chat_models is downloaded here automatically — no edit to
-    # this script. Only the download needs huggingface_hub; the runtime that
-    # serves them is installed above.
-    # Emits one "key<TAB>label<TAB>sentinel-path" line per registered model.
-    LOCAL_MODEL_ROWS="$(python - <<'PYEOF' 2>/dev/null
-try:
-    from server.local.registry import local_models
-    from server.local.runtime import gguf_path
-    for key, m in local_models().items():
-        print(f"{key}\t{m.get('label') or key}\t{gguf_path(key)}")
-except Exception:
-    pass
-PYEOF
-)"
-    if [ -z "$LOCAL_MODEL_ROWS" ]; then
-        echo "  • Could not read the on-device model registry — skipping LLM weights."
-    else
-        printf '%s\n' "$LOCAL_MODEL_ROWS" | while IFS="$(printf '\t')" read -r key label path; do
-            [ -n "$key" ] || continue
-            download_model "$label (on-device LLM)" "$path" \
-                "import server.local.runtime as L; L.ensure_downloaded('$key')"
-        done
+        echo "  ✗ Could not upgrade llama.cpp. On-device models may fail with 'unknown"
+        echo "    model architecture'; run 'brew upgrade llama.cpp' manually."
     fi
 else
-    echo "  • Cloud mode — skipping on-device index/LLM weights (Bedrock provides embed/rerank/NER/chat)."
+    echo "  ✓ llama-server present (build $LLAMA_BUILD) at $(command -v llama-server)."
 fi
 
+# ── Model weights: nothing is downloaded here ────────────────────────────────
+# Exactly like the Mac app's first launch, every model downloads ON DEMAND with
+# an in-app progress banner, into ./models (idempotent, resumable):
+#   * transcription engines + the speaker encoder — on your first recording (or
+#     pre-pull them from Settings > Models > Transcription),
+#   * on-device index weights (Qwen3 embed/rerank, GLiNER) — on your first index
+#     build in hybrid/local mode,
+#   * on-device chat models — installed from Settings > Models > Discover
+#     (the app ships with none).
 echo ""
-echo "════════════════════════════════════════════════════════════"
+echo "No model weights are downloaded by setup. Models download on demand:"
+echo "  transcription on your first recording, index models on your first index"
+echo "  build, and chat models from Settings > Models > Discover."
 
 echo ""
 echo "Setup complete. Starting server..."
@@ -726,10 +642,10 @@ unset WHISPER_PARENT_PID
 python -m server.main &
 SERVER_PID=$!
 
-# Wait for the backend to be ready before starting Vite. ML model cold-start
-# (whisper-large-v3-turbo + speaker encoder) can take 60+ seconds the first
-# time, so we wait up to 90s rather than 30s.
-echo "Waiting for backend (up to 90s for first-time model load)..."
+# Wait for the backend to be ready before starting Vite. Startup no longer
+# loads any model (weights download and load on demand), but a cold first boot
+# still compiles bytecode and opens the databases, so keep a generous ceiling.
+echo "Waiting for backend (up to 90s on a cold first boot)..."
 for i in $(seq 1 90); do
     if curl -sf "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
         echo "Backend ready after ${i}s."

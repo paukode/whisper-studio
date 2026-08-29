@@ -142,7 +142,7 @@
     "preview_tools": true,
     "rag_hybrid_search": true,
     "rag_query_rewrite": false,
-    "rag_reranker": true
+    "rag_reranker": false
   },
   "cron_timezone": "",
   "cron_max_runs_per_job": 200,

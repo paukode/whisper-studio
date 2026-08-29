@@ -32,7 +32,8 @@
     <h2 id="the-goal">The goal</h2>
     <p>Decide where the indexing and RAG stack runs. When you index a folder for
       <a href="tut-index-search.html">semantic search</a>, three capabilities do the work: an
-      <b>embedder</b> that turns text into vectors, a <b>reranker</b> that reorders the top hits, and
+      <b>embedder</b> that turns text into vectors, an optional <b>reranker</b> that reorders the top
+      hits (off by default via the <code>rag_reranker</code> flag), and
       an <b>entity extractor</b> that pulls names and relationships for the entity graph. Model mode
       is the one setting that says whether those run in the cloud, on-device, or a mix.</p>
     <div class="callout">
@@ -51,8 +52,8 @@
       <thead><tr><th>Mode</th><th>Embeddings</th><th>Reranker</th><th>Entity extraction</th><th>On-device weights</th></tr></thead>
       <tbody>
         <tr><td><b>Cloud</b></td><td>Cohere Embed v4 (Bedrock)</td><td>Cohere Rerank 3.5</td><td>Claude Haiku</td><td>none - lean install</td></tr>
-        <tr><td><b>Hybrid</b></td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td><td>index/RAG weights pulled, so you can pick them</td></tr>
-        <tr><td><b>Local</b></td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER</td><td>index/RAG weights, all on-device</td></tr>
+        <tr><td><b>Hybrid</b> (first-run default)</td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td><td>index/RAG weights download on first index build</td></tr>
+        <tr><td><b>Local</b></td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER</td><td>index/RAG weights on-device, downloaded on first index build</td></tr>
       </tbody>
     </table></div>
     <p>Whisper Studio ships with <b>no local chat model</b>. "On-device weights" above means only the
@@ -64,9 +65,7 @@
     <p>Embeddings and reranking go to Cohere on Amazon Bedrock, and entity extraction uses Claude
       Haiku. Because nothing runs on-device, the install skips the index/RAG weights entirely, so it
       is the leanest setup and the fastest to get running. Pick this when you are happy for indexing to
-      use Bedrock (and to be billed for it) and you want the smallest footprint. It is the default for
-      a source install via <code>setup.sh</code>; see the note on first run below for the packaged
-      app.</p>
+      use Bedrock (and to be billed for it) and you want the smallest footprint.</p>
 
     <h3 id="hybrid">Hybrid (per capability)</h3>
     <p>Hybrid lets you choose a backend for each capability independently, stored under the
@@ -75,8 +74,9 @@
       <code>qwen3</code>), <code>ner</code> (<code>haiku</code>, <code>gliner</code>, or an on-device
       chat model key for LLM-based NER), and <code>index_llm</code> (<code>haiku</code>, an on-device
       chat model key, <code>local</code> to follow whichever on-device model is active, or
-      <code>none</code>). Any capability you leave unset falls back to the cloud backend. This install
-      pulls the on-device index/RAG weights too, so both sides are available to mix. Pick this when you
+      <code>none</code>). Any capability you leave unset falls back to the cloud backend. The
+      on-device index/RAG weights download the first time an on-device pick is exercised, so both
+      sides are available to mix. Pick this when you
       want, say, local embeddings for privacy but the cloud reranker for quality.</p>
     <p>The named entity extractor for the <a href="tut-index-search.html">entity graph</a> is a related
       but separate setting: a per-workspace <code>ner_model</code> choice (GLiNER or the heavier
@@ -109,8 +109,8 @@
     <h2 id="what-stays-local-always">What stays local in every mode</h2>
     <p>Two things do not depend on the mode you choose:</p>
     <ul>
-      <li><b>Transcription is always on-device.</b> Whisper and Parakeet run on your machine in every
-        mode, including cloud. Audio never leaves the laptop regardless of the model mode. See
+      <li><b>Transcription is always on-device.</b> Whisper, Parakeet, and Canary run on your machine
+        in every mode, including cloud. Audio never leaves the laptop regardless of the model mode. See
         <a href="tut-voice.html">Voice &amp; meetings</a>.</li>
       <li><b>Each embedder keeps its own index.</b> The cloud and local embedders produce different
         vectors, so they store separate indexes. Switching mode never rebuilds or invalidates the
@@ -135,14 +135,14 @@
     <ol class="steps">
       <li>
         <h4>At install (optional)</h4>
-        <p>Pass a flag to the setup script to choose up front. Cloud is the default and skips the
-          on-device index/RAG download; hybrid and local pull those weights (roughly 5 GB: Qwen3
-          embedding, GLiNER, GLiNER2, and the Qwen3 reranker) so they are ready to use. None of the
-          three flags download a local chat model; that is always a separate, later choice in
-          Discover.</p>
-        <div class="code-block"><pre><code>bash setup.sh --cloud    # default: indexing on Bedrock, lean install
-bash setup.sh --hybrid   # per-capability; pulls on-device index/RAG weights too
-bash setup.sh --local    # index/RAG on-device; pulls those weights</code></pre></div>
+        <p>Pass a flag to the setup script to choose up front; without one, a fresh install starts
+          in hybrid (the same first-run default as the Mac app). No flag downloads any weights: the
+          on-device index stack (roughly 5 GB: Qwen3 embedding, GLiNER, and the Qwen3 reranker)
+          arrives on your first index build, and a local chat model is always a separate, later
+          choice in Discover.</p>
+        <div class="code-block"><pre><code>bash setup.sh --cloud    # indexing on Bedrock, leanest footprint
+bash setup.sh --hybrid   # per-capability (the first-run default)
+bash setup.sh --local    # index/RAG on-device</code></pre></div>
       </li>
       <li>
         <h4>In the app</h4>
@@ -159,19 +159,19 @@ bash setup.sh --local    # index/RAG on-device; pulls those weights</code></pre>
     </ol>
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 20h20L12 2Z"/><path d="M12 9v5M12 17h.01"/></svg></span>
-      <div class="callout__body"><p>If you installed with <code>--cloud</code> (the default), the
-        on-device index/RAG weights were never downloaded, so switching to hybrid or local will fetch
-        them on first use. Expect a one-time delay of a minute or two and a few gigabytes of disk while
+      <div class="callout__body"><p>The on-device index/RAG weights are never downloaded up front, in
+        any mode: the first index build (or on-device retrieval) in hybrid or local fetches them.
+        Expect a one-time delay of a minute or two and a few gigabytes of disk while
         that happens. A local chat model, if you want one, is a further download from Discover and is
         not fetched by this switch.</p></div>
     </div>
 
     <h2 id="first-run">A note on first launch</h2>
-    <p>If you installed from source with <code>setup.sh</code>, cloud is genuinely the default: it is
-      what <code class="path">config.example.json</code> ships. But a brand-new home directory with no
-      config file at all (for example, a packaged app on its very first launch) is instead seeded with
+    <p>Every fresh install - <code>setup.sh</code> and the packaged Mac app alike - is seeded with
       <b>hybrid</b> mode and the on-device index/RAG backends already selected, weights downloading on
-      demand rather than up front. Either way you can change the mode from Settings at any time.</p>
+      demand rather than up front. (<code class="path">config.example.json</code> ships
+      <code>cloud</code> as the SYSTEM-layer value, but the first-run seeding writes hybrid into your
+      user config before it ever applies.) You can change the mode from Settings at any time.</p>
 
     <h2 id="which-mode">Which mode should you pick?</h2>
     <div class="card-grid">

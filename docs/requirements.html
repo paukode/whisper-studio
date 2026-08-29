@@ -136,14 +136,15 @@ source ~/.zshrc</code></pre></div>
       config layers stack.</p>
 
     <h2 id="hardware">Hardware, by model mode</h2>
-    <p>The disk and memory you need depend on which <b>model mode</b> you install in. The mode decides
-      where indexing and retrieval run and, crucially, which model <b>weights</b> get pulled onto your
-      machine. It is separate from the chat-model choice in the toolbar. You pick a mode with a flag at
+    <p>The disk and memory you need depend on which <b>model mode</b> you run in. The mode decides
+      where indexing and retrieval run and, with that, which model <b>weights</b> end up on your
+      machine as you use the app (nothing is downloaded at install time). It is separate from the
+      chat-model choice in the toolbar. You pick a mode with a flag at
       install time (<code>--cloud</code>, <code>--hybrid</code>, <code>--local</code>) or change it any
       time under Settings, so this is not a permanent commitment.</p>
 
     <div class="table-wrap"><table>
-      <thead><tr><th>Mode</th><th>What runs on-device</th><th>On-device weights pulled</th><th>Footprint</th></tr></thead>
+      <thead><tr><th>Mode</th><th>What runs on-device</th><th>On-device weights (downloaded on demand)</th><th>Footprint</th></tr></thead>
       <tbody>
         <tr>
           <td><b>Cloud</b> <span class="badge badge--muted">default</span></td>
@@ -154,8 +155,8 @@ source ~/.zshrc</code></pre></div>
         <tr>
           <td><b>Hybrid</b></td>
           <td>Whatever you choose per capability. You pick a backend (cloud or on-device) for each of embeddings, reranking, and entity extraction.</td>
-          <td>The on-device index stack (Qwen3 embed and rerank, GLiNER, GLiNER2), plus the llama.cpp serving runtime.</td>
-          <td>About 5 GB of index weights; you decide at runtime what actually runs.</td>
+          <td>The on-device index stack (Qwen3 embed and rerank, GLiNER), downloaded on your first index build, plus the llama.cpp serving runtime.</td>
+          <td>About 5 GB of index weights once you index a folder; you decide at runtime what actually runs.</td>
         </tr>
         <tr>
           <td><b>Local</b></td>
@@ -166,34 +167,36 @@ source ~/.zshrc</code></pre></div>
       </tbody>
     </table></div>
 
-    <p>The rule of thumb: <b>Cloud is the cheap install</b> (nothing but the transcription models lands
-      on disk), while <b>Hybrid and Local both pull the same ~5 GB index stack</b> (Qwen3 embed and
-      rerank, GLiNER, GLiNER2) and install the llama.cpp serving runtime. Neither pulls a chat model:
-      a fresh install ships none, and on-device chat models are chosen and downloaded per model
-      (several GB each) from <b>Settings &rarr; Models &rarr; Discover</b>, so the total depends on
-      which you install. Once installed, a model is registered in your config and later
-      <code>setup.sh</code> runs will refresh it. The difference between Hybrid and Local is what you
-      let run: Hybrid mixes per capability; Local commits to running everything locally.</p>
+    <p>The rule of thumb: <b>nothing lands on disk at install time</b>. Every model downloads on
+      demand, exactly like the Mac app's first launch: the transcription engines on your first
+      recording, and in Hybrid and Local the same ~5 GB index stack (Qwen3 embed and rerank, GLiNER)
+      on your first index build. No mode pulls a chat model: a fresh install ships none, and
+      on-device chat models are chosen and downloaded per model (several GB each) from
+      <b>Settings &rarr; Models &rarr; Discover</b>, so the total depends on which you install. The
+      difference between Hybrid and Local is what you let run: Hybrid mixes per capability; Local
+      commits to running everything locally.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM5 11a7 7 0 0 0 14 0M12 18v4"/></svg></span>
       <div class="callout__body"><p><b>Transcription is always on-device.</b> In every mode, the
-        Whisper and Parakeet speech models run locally and audio never leaves the laptop. They are
-        pulled on install (or on first record) regardless of which mode you chose, so even a Cloud
-        install downloads them. See <a href="arch-transcription.html">Transcription &amp;
+        Whisper, Parakeet, and Canary speech models run locally and audio never leaves the laptop.
+        Whichever mode you chose, the engine you record with downloads on your first recording (with
+        a progress banner), or you can pre-pull it from <b>Settings &rarr; Models &rarr;
+        Transcription</b>. See <a href="arch-transcription.html">Transcription &amp;
         diarization</a>.</p></div>
     </div>
 
     <p>A few practical notes on the on-device weights:</p>
     <dl class="spec">
-      <dt><code class="path">models/</code></dt><dd>Where every weight lands. Downloads are idempotent, so re-running setup skips anything already present.</dd>
+      <dt><code class="path">models/</code></dt><dd>Where every weight lands when it is downloaded on demand. Downloads are idempotent and resume on first use if interrupted.</dd>
       <dt>Memory</dt><dd>The ~5 GB figure is disk for the index stack. On-device chat with whichever model you install additionally needs enough free RAM to hold it while it runs. You do not have to guess: Discover grades every model against your machine's memory before you download, so you see whether it fits (and how much free RAM it needs) before committing. The smaller index models (Qwen3, GLiNER) are lighter.</dd>
       <dt>Apple Silicon</dt><dd>The on-device runtimes (MLX for transcription, llama.cpp with Metal for chat models) are built for Apple Silicon. On-device chat is a macOS-arm64 feature.</dd>
     </dl>
 
     <h2 id="pick-a-mode">Not sure which mode?</h2>
-    <p>If you are just getting started, or you want current answers via Bedrock and a small install,
-      start with <b>Cloud</b> (the default). Reach for <b>Local</b> only when you want everything to
+    <p>If you are just getting started, the first-run default <b>Hybrid</b> is a fine place to stay
+      (chat on Bedrock, index on-device once you build one). Pick <b>Cloud</b> for the leanest
+      footprint with everything on Bedrock. Reach for <b>Local</b> only when you want everything to
       run offline and you have the disk and memory to spare, and for <b>Hybrid</b> when you want to
       keep chat on Bedrock but run some of the index stack on-device. The full trade-offs, including
       which backend handles what, are on the <a href="tut-model-modes.html">Model modes</a> page.</p>

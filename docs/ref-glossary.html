@@ -44,8 +44,8 @@
         <tr>
           <td><code>ASR</code></td>
           <td>Automatic Speech Recognition. The task of turning audio into text. Whisper Studio runs ASR
-            entirely on-device (Whisper or Parakeet) in every model mode, so audio never leaves your
-            machine. See <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+            entirely on-device (Whisper, Parakeet, or Canary) in every model mode, so audio never leaves
+            your machine. See <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
         <tr>
           <td><code>Bedrock</code></td>
@@ -72,6 +72,15 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Term</th><th>Definition</th></tr></thead>
       <tbody>
+        <tr>
+          <td>Canary</td>
+          <td>One of the three on-device speech-recognition engines (Canary 1B v2, a vendored MLX
+            port). The fastest of the accurate engines and the app's universal model translator:
+            transcribes 25 European languages with live word-by-word drafts, and translates between
+            any of them and English whichever engine is transcribing. Having no language head of its
+            own, it pairs with the VoxLingua107 language classifier. See
+            <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+        </tr>
         <tr>
           <td>chat turn</td>
           <td>One request/response cycle: your message plus everything the assistant does to answer it
@@ -237,9 +246,10 @@
         </tr>
         <tr>
           <td>hybrid mode</td>
-          <td>One of three model modes. In hybrid mode you pick a backend per capability (embeddings,
-            reranker, entity extraction), mixing cloud and on-device. It pulls the on-device weights so
-            those options are available. Compare cloud (the default) and local. See
+          <td>One of three model modes, and the first-run default on a fresh install. In hybrid mode
+            you pick a backend per capability (embeddings,
+            reranker, entity extraction), mixing cloud and on-device; the on-device weights download
+            on first use. Compare cloud and local. See
             <a href="tut-model-modes.html">Model modes</a> and
             <a href="arch-backends.html">Model backends &amp; modes</a>.</td>
         </tr>
@@ -287,9 +297,9 @@
         </tr>
         <tr>
           <td>model mode</td>
-          <td>Where indexing and retrieval run: <code>cloud</code> (the code-level default and what a dev
-            checkout inherits), <code>hybrid</code>, or <code>local</code>. A fresh packaged install is
-            actually seeded to <code>hybrid</code> with on-device embed/rerank and entity extraction. This
+          <td>Where indexing and retrieval run: <code>cloud</code> (the shipped SYSTEM default),
+            <code>hybrid</code>, or <code>local</code>. Every fresh install (setup.sh or the Mac app)
+            is seeded to <code>hybrid</code> with on-device embed/rerank and entity extraction. This
             is separate from the chat-model choice in the toolbar. Cohere embed/rerank are pinned to
             <code>us-east-1</code>; chat can run in any region. See
             <a href="tut-model-modes.html">Model modes</a>.</td>
@@ -327,8 +337,9 @@
       <tbody>
         <tr>
           <td>Parakeet</td>
-          <td>One of the on-device speech-recognition models Whisper Studio can use for transcription
-            (the other is Whisper). Which one runs depends on your setup; both keep audio local. See
+          <td>One of the three on-device speech-recognition engines (the others are Whisper and
+            Canary), and the default. Lowest latency: words appear live as you speak, in 25 European
+            languages, with no translation support. All three keep audio local. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
         <tr>
@@ -374,6 +385,7 @@
           <td>reranker</td>
           <td>A second-pass model that reorders retrieved passages by relevance to the query, sharpening
             what actually reaches the prompt. Cohere Rerank 3.5 in cloud mode, Qwen3 Reranker on-device.
+            Off by default (the <code>rag_reranker</code> feature flag turns it on).
             See <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</td>
         </tr>
         <tr>
@@ -495,9 +507,10 @@
         </tr>
         <tr>
           <td>Whisper</td>
-          <td>The on-device speech-recognition model that gives the app its name (Whisper Studio runs the
-            mlx-whisper build). It loads into memory on first record and runs locally; Parakeet is the
-            alternative. See <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+          <td>The on-device speech-recognition model that gives the app its name (Whisper Studio runs
+            the full large-v3 checkpoint via mlx-whisper). The most accurate engine, with 99 languages
+            and per-utterance language detection; Parakeet and Canary are the alternatives. See
+            <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
         <tr>
           <td>workflow runtime</td>
