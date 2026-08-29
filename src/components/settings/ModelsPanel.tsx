@@ -32,7 +32,7 @@ const GROUPS: { id: ManagedModelGroup; label: string; hint: string }[] = [
   {
     id: 'local-chat',
     label: 'Local chat',
-    hint: 'On-device chat weights (GGUF).',
+    hint: 'On-device chat weights (GGUF or MLX).',
   },
 ];
 
