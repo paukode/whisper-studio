@@ -188,10 +188,25 @@
         one).</li>
     </ul>
 
+    <h3 id="intent-gate">The intent gate</h3>
+    <p>Before any of that runs, <code class="path">server/index/query_gate.py</code> decides whether
+      the message deserves a search at all. <code>should_ground</code> is purely lexical: the message
+      is tokenized and retrieval is skipped only when <em>every</em> token is on a stoplist of
+      function words, greetings, thanks, acknowledgments, and fillers, so "hey", "ok thanks", or
+      "good morning" no longer burn an embedder call (and, in local mode, no longer force an
+      embedding model load). Any token outside the list - jargon, an identifier, a name, another
+      language - counts as content, so when in doubt retrieval runs. Typing <code>@index</code>
+      anywhere in a message forces a search past both this gate and the connected-workspace
+      deprioritization (falling back to every indexed folder when none is selected); the marker is
+      stripped from the message before the model sees it. The same
+      <code>has_content_word</code> check also gates the keyword leg per query: BM25 hits are exempt
+      from the cosine floor by design, so a contentless query is not allowed to ride a literal
+      stopword match into grounding.</p>
+
     <h3 id="grounding">Retrieval grounding</h3>
-    <p><code>retrieve_grounding</code> is what chat calls when the user has selected indexes to search.
-      It runs the query across every selected index, fuses the rankings, and returns a cited Markdown
-      block. The fusion and filtering steps are careful about precision:</p>
+    <p><code>retrieve_grounding</code> is what chat calls when a turn passes the gate with indexes
+      selected. It runs the query across every selected index, fuses the rankings, and returns a
+      cited Markdown block. The fusion and filtering steps are careful about precision:</p>
     <ol class="steps">
       <li><h4>Global dense ranking</h4><p>Cosine is comparable across indexes, so dense matches from
         every index are ranked together in one list rather than by per-index rank.</p></li>
@@ -200,10 +215,12 @@
         fusion then runs across the original and a conversation-contextualized query. This is how a
         keyword or filename hit with near-zero cosine is promoted in instead of being lost under the
         score floor.</p></li>
-      <li><h4>Optional rerank</h4><p>Behind the <code>rag_reranker</code> flag, a cross-encoder
-        rescores the top candidates by judging each (question, passage) pair directly. On device this
-        is <b>Qwen3-Reranker</b> (P("yes") from the final-token logits); in cloud mode it is Cohere
-        Rerank on Bedrock. Best-effort: failure keeps the fused order.</p></li>
+      <li><h4>Optional rerank</h4><p>Behind the <code>rag_reranker</code> flag (<b>off by
+        default</b>: seconds per grounded turn and possible OOM on memory-pressured machines, for a
+        modest gain on top of hybrid retrieval), a cross-encoder rescores the top candidates by
+        judging each (question, passage) pair directly. On device this is <b>Qwen3-Reranker</b>
+        (P("yes") from the final-token logits); in cloud mode it is Cohere Rerank on Bedrock.
+        Best-effort: failure keeps the fused order.</p></li>
       <li><h4>Dedup, cap, floor</h4><p>Byte-identical passages collapse, each document contributes at
         most 3 chunks, and low-cosine matches are dropped as noise. The floor is per embed backend
         (<code>GROUND_SCORE_FLOORS</code>: 0.15 for Qwen3, 0.10 for Cohere), and the effective floor
@@ -222,10 +239,20 @@
     <h3 id="chat-integration">How chat uses it</h3>
     <p>Grounding is injected during <a href="arch-chat-pipeline.html">turn assembly</a>: relevant
       passages are prepended to the user message, and a <code>grounding</code> SSE frame surfaces a
-      chip ("grounded in N folders / M passages") in the UI. When a turn is grounded and the
-      <code>strict_rag</code> flag is on (the default), the workspace file and search tools are
-      <b>suppressed</b> for that turn, so the model answers from the injected passages instead of
-      re-crawling files it has already indexed.</p>
+      chip ("grounded in N folders / M passages") in the UI. The injected block also instructs the
+      model to <b>ignore the passages entirely</b> (and cite nothing) when they turn out to be
+      irrelevant to the message, so an off-topic retrieval degrades to a normal answer instead of a
+      forced citation. When a turn is grounded and the <code>strict_rag</code> flag is on (the
+      default), the workspace file and search tools are <b>suppressed</b> for that turn, so the model
+      answers from the injected passages instead of re-crawling files it has already indexed.</p>
+    <p>The exact passages behind an answer are also persisted: each grounded turn saves its sources
+      (path, line range, retrieval kind, matched entities, and a snippet per passage) to a
+      session-scoped <code>grounding</code> table in <code class="path">sessions.db</code>
+      (<code class="path">server/infrastructure/grounding_store.py</code>, capped at 500 rows per
+      session), and the SSE frame carries the row's id. Clicking the chip fetches
+      <code>GET /api/sessions/{id}/grounding/{grounding_id}</code> and expands into the
+      answer-sources panel; see <a href="tut-index-search.html#grounding-chip">the tutorial</a> for
+      what it shows.</p>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM5 11a7 7 0 0 0 14 0M12 18v4"/></svg></span>
       <div class="callout__body"><p>Grounding runs on a dedicated single-thread executor with a
@@ -254,6 +281,8 @@
     <h2 id="key-files">Key files</h2>
     <div class="spec">
       <dt><code class="path">server/index/pipeline.py</code></dt><dd>Build orchestration, query, and grounding assembly.</dd>
+      <dt><code class="path">server/index/query_gate.py</code></dt><dd>The intent gate: the content-word stoplist and the <code>@index</code> trigger.</dd>
+      <dt><code class="path">server/infrastructure/grounding_store.py</code></dt><dd>Per-session persistence of each grounded turn's sources for the answer-sources panel.</dd>
       <dt><code class="path">server/index/embedder.py</code></dt><dd>Qwen3 / Cohere embeddings, batching, NaN guard.</dd>
       <dt><code class="path">server/index/extractor.py</code></dt><dd>GLiNER / Haiku entity extraction.</dd>
       <dt><code class="path">server/index/relations.py</code></dt><dd>Typed relation extraction (Haiku / local Gemma).</dd>

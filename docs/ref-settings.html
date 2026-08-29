@@ -111,6 +111,26 @@
             both). See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td>
         </tr>
         <tr>
+          <td><b>Transcription Model</b></td>
+          <td>The meeting-recorder engine: <b>Whisper Large v3</b>, <b>Canary</b>, or
+            <b>Parakeet (live)</b> (the default). Mirrors the dropdown in the transcript panel header;
+            saving here updates a live recording immediately. See
+            <a href="tut-voice.html#engine-and-speakers">Voice &amp; meetings</a>.</td>
+        </tr>
+        <tr>
+          <td><b>Translation Model</b></td>
+          <td>Live translation of the transcript: <b>Off</b> (default), <b>Canary</b> (25 languages
+            &harr; English, any platform), or <b>Apple</b> (any pair, Mac app only). A
+            <b>Translate To</b> target-language picker appears when translation is on.</td>
+        </tr>
+        <tr>
+          <td><b>Whisper Language</b></td>
+          <td>Language allowlist for the Whisper engine: blank auto-detects, one code
+            (<code>pl</code>) pins the language, a comma list (<code>pl,en</code>) keeps detection but
+            constrains it to those candidates - the fix for short accented utterances landing on a
+            neighbor language.</td>
+        </tr>
+        <tr>
           <td><b>Models &gt; Discover</b></td>
           <td>The model browser for on-device models. The app ships with <b>no local model installed by
             default</b>; Discover lists recommended models you can install, each graded by whether it
@@ -157,6 +177,10 @@
         <tr><td><code>tavily_api_key</code></td><td>string</td><td><code>""</code></td><td>Tavily API Key</td></tr>
         <tr><td><code>max_session_cost_usd</code></td><td>number</td><td><code>0.0</code></td><td>Cost Limits (per-session)</td></tr>
         <tr><td><code>max_daily_cost_usd</code></td><td>number</td><td><code>0.0</code></td><td>Cost Limits (per-day)</td></tr>
+        <tr><td><code>transcription_backend</code></td><td>string</td><td><code>"streaming"</code> (Parakeet)</td><td>Transcription Model (<code>whisper</code> / <code>canary</code> / <code>streaming</code>)</td></tr>
+        <tr><td><code>whisper_language</code></td><td>string</td><td>blank (auto-detect)</td><td>Whisper Language (one code pins, a comma list constrains detection)</td></tr>
+        <tr><td><code>translate_mode</code></td><td>string</td><td><code>"off"</code></td><td>Translation Model (<code>off</code> / <code>canary</code> / <code>apple</code>; legacy <code>auto</code>/<code>model</code> read as <code>canary</code>)</td></tr>
+        <tr><td><code>translate_target</code></td><td>string</td><td><code>"en"</code></td><td>Translate To</td></tr>
         <tr><td><code>map_reduce_summary</code></td><td>object</td><td>from <code class="path">config.example.json</code></td><td>(no UI field - see <a href="#map-reduce">Transcript condensation keys</a>)</td></tr>
       </tbody>
     </table></div>
@@ -203,7 +227,7 @@
         <tr><td><code>progressive_tools</code></td><td><code>true</code></td><td>Progressive tool disclosure: advertise a core tool set plus session-activated tools, with everything else discoverable via <code>tool_search</code> from a compact index. Cuts roughly 60-75% of tool-schema tokens per turn.</td></tr>
         <tr><td><code>strict_rag</code></td><td><code>true</code></td><td>When index grounding is injected, withhold the workspace file/search tools so the model answers from the retrieved passages instead of re-crawling files.</td></tr>
         <tr><td><code>rag_hybrid_search</code></td><td><code>true</code></td><td>Fuse keyword/BM25 (SQLite FTS5) results with dense vector search via reciprocal-rank fusion.</td></tr>
-        <tr><td><code>rag_reranker</code></td><td><code>true</code></td><td>Cross-encoder reranking of fused retrieval candidates before grounding's top-k (Cohere Rerank 3.5 in cloud mode, Qwen3-Reranker-0.6B in local mode).</td></tr>
+        <tr><td><code>rag_reranker</code></td><td><code>false</code></td><td>Cross-encoder reranking of fused retrieval candidates before grounding's top-k (Cohere Rerank 3.5 in cloud mode, Qwen3-Reranker-0.6B in local mode). Off by default: the local model adds seconds per grounded turn and can OOM on memory-pressured machines, for a modest gain on top of hybrid retrieval.</td></tr>
         <tr><td><code>rag_query_rewrite</code></td><td><code>false</code></td><td>Use a fast LLM (Haiku) to rewrite a follow-up question into a standalone search query before grounding. Adds one model call per grounded turn.</td></tr>
         <tr><td><code>auto_memory</code></td><td><code>true</code></td><td>Two-tier auto memory with extraction and recall: global (cross-workspace) plus project (workspace-scoped). Also gates whether the <code>memory_*</code> tools appear in the catalog.</td></tr>
         <tr><td><code>session_memory</code></td><td><code>true</code></td><td>Per-session structured summaries injected into the prompt.</td></tr>

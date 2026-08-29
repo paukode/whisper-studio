@@ -56,8 +56,10 @@
       <li><b>Resolve <code>@file</code> mentions</b> inline into the user message.</li>
       <li><b>Expand attachments</b> - documents are capped (around 150K characters) and images become
         vision blocks. See <a href="arch-extraction.html">attachment extraction</a>.</li>
-      <li><b>Index grounding.</b> If the user selected workspace indexes, relevant passages are
-        retrieved and injected, and a "grounding" chip is surfaced over SSE. See
+      <li><b>Index grounding.</b> If the turn passes the grounding intent gate (contentless
+        smalltalk skips retrieval; <code>@index</code> forces it) with workspace indexes selected,
+        relevant passages are retrieved and injected, the sources are persisted per session, and a
+        "grounding" chip is surfaced over SSE - clicking it opens the passages behind the answer. See
         <a href="arch-index.html">Index / GraphRAG</a>.</li>
       <li><b>Condense an oversized transcript.</b> A transcript above a size threshold is condensed
         to per-chunk extracts before it enters the prompt - both the transcript block and the
@@ -141,7 +143,8 @@
         <tr><td><code>skill</code> / <code>skill_input</code></td><td>A tool call started, with its parsed input.</td></tr>
         <tr><td><code>usage</code></td><td>Token counters, cost estimate, and remaining context (<code>context_used</code>/<code>context_max</code>).</td></tr>
         <tr><td><code>team_progress</code></td><td>Sub-agent and team events (spawn, progress, completion).</td></tr>
-        <tr><td><code>grounding</code></td><td>Index-search metadata (folders searched, passages retrieved).</td></tr>
+        <tr><td><code>grounding</code></td><td>Index-search metadata (folders searched, passages retrieved, and the id of the persisted sources behind the expandable chip).</td></tr>
+        <tr><td><code>status</code></td><td>Coarse turn-setup stage (<code>preparing</code> / <code>searching</code> / <code>connecting</code>). The stream opens from byte zero, so these frames replace the old silent wait while condensation, grounding, and dispatch run.</td></tr>
         <tr><td><code>user_question</code></td><td>The turn paused on an approval or an <code>ask_user_question</code>.</td></tr>
         <tr><td><code>[DONE]</code></td><td>The stream is complete.</td></tr>
       </tbody>

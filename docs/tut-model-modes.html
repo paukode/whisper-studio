@@ -32,7 +32,8 @@
     <h2 id="the-goal">The goal</h2>
     <p>Decide where the indexing and RAG stack runs. When you index a folder for
       <a href="tut-index-search.html">semantic search</a>, three capabilities do the work: an
-      <b>embedder</b> that turns text into vectors, a <b>reranker</b> that reorders the top hits, and
+      <b>embedder</b> that turns text into vectors, an optional <b>reranker</b> that reorders the top
+      hits (off by default via the <code>rag_reranker</code> flag), and
       an <b>entity extractor</b> that pulls names and relationships for the entity graph. Model mode
       is the one setting that says whether those run in the cloud, on-device, or a mix.</p>
     <div class="callout">
@@ -109,8 +110,8 @@
     <h2 id="what-stays-local-always">What stays local in every mode</h2>
     <p>Two things do not depend on the mode you choose:</p>
     <ul>
-      <li><b>Transcription is always on-device.</b> Whisper and Parakeet run on your machine in every
-        mode, including cloud. Audio never leaves the laptop regardless of the model mode. See
+      <li><b>Transcription is always on-device.</b> Whisper, Parakeet, and Canary run on your machine
+        in every mode, including cloud. Audio never leaves the laptop regardless of the model mode. See
         <a href="tut-voice.html">Voice &amp; meetings</a>.</li>
       <li><b>Each embedder keeps its own index.</b> The cloud and local embedders produce different
         vectors, so they store separate indexes. Switching mode never rebuilds or invalidates the

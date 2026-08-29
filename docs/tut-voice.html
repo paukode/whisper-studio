@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Voice &amp; meetings - Whisper Studio Docs</title>
-  <meta name="description" content="Dictate chat messages hands-free, record meetings with live speaker labels, rename speakers, capture a Chrome tab or system audio for Zoom or Meet, and turn a call into a summary.">
+  <meta name="description" content="Dictate chat messages hands-free, record meetings with live speaker labels, translate speech as it lands, rename speakers, capture a Chrome tab or system audio for Zoom or Meet, and turn a call into a summary.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -53,8 +53,8 @@
     </div>
 
     <p>Dictation is tuned for low latency rather than long recordings. It always uses the streaming
-      Parakeet engine and short half-second audio chunks, so trailing words (and your spoken submit
-      command) reach the server quickly. It also runs without speaker identification, which is what
+      Parakeet engine and short (roughly a third of a second) audio chunks, so trailing words (and
+      your spoken submit command) reach the server quickly. It also runs without speaker identification, which is what
       lets it operate alongside a meeting recording without the two fighting over the same speaker
       profiles.</p>
 
@@ -73,8 +73,9 @@
       <li>
         <h4>Watch it transcribe live</h4>
         <p>Finalized sentences stack up as segments; a lighter "live" row shows the sentence currently
-          being spoken and is replaced the instant it settles. The panel auto-scrolls to the newest
-          line.</p>
+          being spoken and is replaced the instant it settles. The panel follows new text only while
+          you are at the bottom: scroll up to read something earlier and the view stays put, with a
+          floating arrow to jump back to the latest line.</p>
       </li>
       <li>
         <h4>Stop when the call ends</h4>
@@ -97,20 +98,45 @@
         button next to Record. See <a href="#system-audio">Capturing system audio</a> below.</p></div>
     </div>
 
-    <h3 id="engine-and-speakers">Choosing an engine and speaker count</h3>
-    <p>The transcript panel header has two dropdowns that change how transcription behaves, and both
-      can be changed live, even mid-recording:</p>
+    <h3 id="engine-and-speakers">Choosing a model, translator, and speaker count</h3>
+    <p>The transcript panel header has a row of dropdowns that change how transcription behaves, and
+      all of them can be changed live, even mid-recording (switching to a model that is not
+      downloaded yet shows a progress banner with a Cancel that reverts to the running engine):</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Control</th><th>Options</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td>Engine</td><td><b>Whisper</b> / <b>Parakeet (live)</b></td><td>Whisper transcribes whole
-          utterances at pauses (accurate, slightly delayed). Parakeet streams a growing draft word by
-          word (lower latency).</td></tr>
+        <tr><td>Model</td><td><b>Whisper Large v3</b> / <b>Canary</b> / <b>Parakeet (live)</b></td><td>Whisper
+          is the most accurate and understands 99 languages, transcribing whole utterances at pauses.
+          Canary is the fastest of the accurate engines, covers 25 European languages, and streams a
+          live draft while you speak. Parakeet has the lowest latency, streaming words in real time.</td></tr>
+        <tr><td>Translate</td><td><b>Off</b> / <b>Canary (25 langs &harr; EN)</b> / <b>Apple (any pair)</b>,
+          plus a target-language picker</td><td>Translates every settled line under the original.
+          Canary translates between its 25 languages and English (either direction), whichever model
+          is transcribing. Apple uses macOS's on-device translator (Mac app only) and handles any
+          language pair; language packs download once on first use.</td></tr>
         <tr><td>Speakers</td><td><b>auto</b> or <b>1</b>&ndash;<b>8</b></td><td>A hint for diarization.
           Auto estimates the count from the audio; telling it the real number makes speaker labels far
           more accurate, because clustering cuts at exactly that many speakers.</td></tr>
       </tbody>
     </table></div>
+
+    <h2 id="translation">Translate as you record</h2>
+    <p>With a translator selected, each finalized segment grows a second line: the translation, tagged
+      with an uppercase language badge, with a brief "Translating…" tail while the decode is in
+      flight. Translation never touches the original transcript - both lines are kept, and the
+      transcript Export includes them.</p>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p><b>Which translator?</b> Pick <b>Canary</b> when English is one
+        side of the pair - it is the best quality for its 25 European languages and works on any
+        platform. Pick <b>Apple</b> in the Mac app for pairs that do not involve English, or for
+        languages Canary does not cover. Everything runs on-device either way; no audio or text
+        leaves the machine.</p></div>
+    </div>
+    <p>Fixing a mishearing fixes the translation too: double-click a segment to edit it (the editor
+      grows to fit the whole utterance), press <kbd>Enter</kbd>, and the corrected text is
+      re-translated on the spot in the Mac app. Outside the Mac app the stale translation is removed
+      rather than left silently wrong.</p>
 
     <h2 id="speaker-labels">Speaker labels and renaming</h2>
     <p>Speaker identification happens locally. Each segment is tagged <code>Speaker 1</code>,

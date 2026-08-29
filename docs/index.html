@@ -38,7 +38,7 @@
           <span class="badge badge--muted">macOS</span>
           <span class="badge badge--muted">FastAPI + React 19</span>
           <span class="badge badge--muted">Bedrock (Claude · GPT) or local</span>
-          <span class="badge badge--muted">On-device Whisper + Parakeet</span>
+          <span class="badge badge--muted">On-device Whisper + Parakeet + Canary</span>
           <span class="badge badge--muted">No telemetry</span>
         </div>
         <div class="hero__cta">
@@ -83,7 +83,7 @@ cd whisper-studio</code></pre></div>
       <li>
         <h4>Say hello</h4>
         <p>Type <code>hello</code> in chat. If Claude responds, you are done. Transcription needs no
-          setup - the speech model (Whisper/Parakeet) auto-downloads on your first recording.</p>
+          setup - the speech model auto-downloads on your first recording.</p>
       </li>
     </ol>
     <div class="callout callout--tip">
@@ -107,9 +107,10 @@ cd whisper-studio</code></pre></div>
       <div class="card">
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM5 11a7 7 0 0 0 14 0M12 18v4"/></svg></div>
         <h3>Local transcription</h3>
-        <p>Two on-device engines: Parakeet streams words in real time (low latency); Whisper transcribes
-          each settled utterance in a batch. Both run locally with speaker diarization, and audio never
-          leaves the laptop.</p>
+        <p>Three on-device engines: Parakeet streams words in real time (lowest latency), Canary adds
+          live drafts plus translation for 25 languages, and Whisper large-v3 is the most accurate
+          across 99. All run locally with speaker diarization and optional live translation, and
+          audio never leaves the laptop.</p>
       </div>
       <div class="card">
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg></div>

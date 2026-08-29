@@ -156,7 +156,9 @@
       which is why audio and video get the higher <a href="#size-gates">size cap</a>.</p>
     <ul>
       <li><b>Transcription.</b> ffmpeg decodes the audio track to 16&nbsp;kHz mono and <b>mlx-whisper</b>
-        (<code>large-v3-turbo</code>) transcribes it into timestamped lines. Video reuses the same loader on
+        (<code>large-v3</code>) transcribes it into timestamped lines. A single pinned
+        <code>whisper_language</code> is honored; a multi-language allowlist stays on auto-detect here,
+        since whole-file detection sees a full 30&nbsp;s window. Video reuses the same loader on
         its audio track, so one code path covers both.</li>
       <li><b>Speaker labels.</b> Each segment is embedded with <b>ECAPA-VoxCeleb</b> and clustered by the same
         agglomerative clusterer that powers live diarization (<code class="path">server/diarization/</code>), so

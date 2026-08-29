@@ -91,7 +91,8 @@
         <a href="arch-memory.html">memories</a>, and per-session memory, split into cache-aligned
         static and dynamic parts when prompt caching is on.</li>
       <li><b>Resolve <code>@file</code> mentions and attachments</b> inline into the user message, and
-        add <a href="arch-index.html">index grounding</a> if the session selected workspace indexes.</li>
+        add <a href="arch-index.html">index grounding</a> if the turn passes the grounding intent gate
+        with indexes selected (an <code>@index</code> mention forces it).</li>
       <li><b>Build the tool catalogue.</b> <code>activate_from_history</code> replays the session's
         tool activations, <code>assemble_partitioned_pool</code> splits the pool into an advertised
         core plus a deferred index, and the index is placed in the cached system block. See

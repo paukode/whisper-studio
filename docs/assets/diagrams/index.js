@@ -20,9 +20,9 @@ WSDiagram.mount("index-diagram", {
 
     { id: "q", group: "browser", col: 0, row: 1, label: "Query", sub: "the question", desc: "The user's question (optionally folded with recent turns) becomes the retrieval query." },
     { id: "knn", group: "index", col: 1, row: 1, label: "Vector KNN", sub: "sqlite-vec", desc: "The question is embedded with an instruction prefix, then top-k cosine neighbours are fetched via sqlite-vec (numpy fallback). An FTS5/BM25 keyword leg catches exact terms." },
-    { id: "rerank", group: "index", col: 2, row: 1, label: "Rerank", sub: "cross-encoder (opt)", desc: "Optional Qwen3-Reranker cross-encoder (or Cohere Rerank on Bedrock) rescored each (question, passage) pair. Best-effort behind the rag_reranker flag." },
+    { id: "rerank", group: "index", col: 2, row: 1, label: "Rerank", sub: "cross-encoder (opt)", desc: "Optional Qwen3-Reranker cross-encoder (or Cohere Rerank on Bedrock) rescored each (question, passage) pair. Best-effort behind the rag_reranker flag, which is off by default." },
     { id: "hop", group: "index", col: 3, row: 1, label: "GraphRAG hop", sub: "shared entities", desc: "One hop along the entity graph: chunks that share entity nodes with the top matches, ranked by salience- and IDF-weighted shared-entity mass (not raw count, so a rare entity outranks a common one), come in as supporting context." },
-    { id: "ground", group: "server", col: 4, row: 1, label: "Passages / grounding", sub: "cited context block", desc: "Deduped, per-document-capped, score-floored passages become a cited Markdown block injected into the chat prompt, surfaced as a grounding chip." }
+    { id: "ground", group: "server", col: 4, row: 1, label: "Passages / grounding", sub: "cited context block", desc: "Deduped, per-document-capped, score-floored passages become a cited Markdown block injected into the chat prompt, surfaced as a grounding chip that expands into the answer-sources panel." }
   ],
   edges: [
     { from: "walk", to: "chunk" },

@@ -172,7 +172,10 @@
     <p>The same file reference is also available as an <code>@file:</code> mention from anywhere in the
       message, alongside <code>@skills:</code> and <code>@mcp:</code>. A bare
       <code>@&lt;session-slug&gt;</code> mention pulls another chat session in as context for the turn,
-      resolved server-side from the session's title. Documents are extracted to text
+      resolved server-side from the session's title. <code>@index</code> forces a search of your
+      indexed folders for this message (see
+      <a href="tut-index-search.html#ask-with-grounding">Index &amp; semantic search</a>); the marker
+      is stripped before the model sees the text. Documents are extracted to text
       (large ones are capped) and images become vision blocks; see
       <a href="arch-extraction.html">Attachment extraction</a> for the type-aware pipeline. Supported
       inputs include images, PDF, Office docs, audio, video, code, and text.</p>
