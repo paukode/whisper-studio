@@ -194,7 +194,7 @@
         <tr><td><code>skill_invoke</code></td><td>Runs a general agent</td><td>Delegates the named skill to a full sub-agent tool loop.</td></tr>
         <tr><td>Memory</td><td>Registry executor</td><td>Looked up in <code>EXECUTORS</code>. See <a href="arch-memory.html">Memory</a>.</td></tr>
         <tr><td>Config &amp; interaction</td><td><code>config_get</code>/<code>config_set</code>, <code>ask_user_question</code>, <code>notify_user</code></td><td><code>ask_user_question</code> emits <code>_pause</code>.</td></tr>
-        <tr><td>SSE side-effects</td><td><code>create_artifact</code>, <code>create_plan</code></td><td>Persist or emit a card; the chat sees only a compact confirmation.</td></tr>
+        <tr><td>SSE side-effects</td><td><code>create_artifact</code>, <code>create_plan</code>, <code>create_visual</code>, <code>create_chart</code></td><td>Persist or emit a card; the chat sees only a compact confirmation. <code>create_visual</code> submissions pass a geometry check first (one repair round per session for out-of-bounds or overlapping content).</td></tr>
         <tr><td><b>Default</b></td><td><code>execute_tool</code> (the skill system)</td><td>Files, git, web, and code executors registered under <code class="path">server/executors/</code>.</td></tr>
       </tbody>
     </table></div>
