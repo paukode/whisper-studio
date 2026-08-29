@@ -189,7 +189,7 @@ bash setup.sh</code></pre></div>
 
     <p>On the first run the script also seeds <code class="path">config.json</code> from
       <code class="path">config.example.json</code> and downloads model weights into
-      <code class="path">models/</code>. Transcription weights (Whisper, Parakeet, and the speaker
+      <code class="path">models/</code>. Core transcription weights (Whisper, Parakeet, and the speaker
       encoder) are always pulled. For hybrid and local modes it additionally pulls the on-device
       index weights (Qwen3 embed and rerank, GLiNER, GLiNER2, about 5 GB) and installs the llama.cpp
       <code>llama-server</code> runtime via Homebrew. No chat model is pulled on a fresh install:
@@ -263,7 +263,7 @@ bash setup.sh</code></pre></div>
       <div class="callout__body"><p><b>Each embedder keeps its own index.</b> Switching modes never
         rebuilds the other backend's index, so you re-index a folder once under a given backend to search
         it there. Cohere embed and rerank are pinned to <code>us-east-1</code>; chat can run in any
-        region. Transcription is always on-device (Whisper/Parakeet) in every mode.</p></div>
+        region. Transcription is always on-device (Whisper, Parakeet, or Canary) in every mode.</p></div>
     </div>
     <p>For the full picture of how each backend is wired, see
       <a href="tut-model-modes.html">Model modes</a> and the architecture page
@@ -283,9 +283,10 @@ bash setup.sh</code></pre></div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p><b>Transcription needs no setup.</b> The speech model (Whisper/Parakeet)
+      <div class="callout__body"><p><b>Transcription needs no setup.</b> The speech model
         auto-downloads on your first recording (or was pulled during setup) and runs entirely on your
-        machine. There is nothing to configure to record.</p></div>
+        machine. There is nothing to configure to record; the Canary engine and its language-ID
+        companion download the same way the first time you pick them.</p></div>
     </div>
 
     <h2 id="config-json">Where settings live</h2>

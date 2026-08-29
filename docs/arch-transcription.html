@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Transcription &amp; diarization - Whisper Studio Docs</title>
-  <meta name="description" content="How Whisper Studio streams audio over one WebSocket, transcribes on-device with Parakeet or Whisper, gates utterances with VAD, and clusters speakers with ECAPA - all without audio leaving the machine.">
+  <meta name="description" content="How Whisper Studio streams audio over one WebSocket, transcribes on-device with Parakeet, Whisper, or Canary, detects languages, translates live, gates utterances with VAD, and clusters speakers with ECAPA - all without audio leaving the machine.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,7 +15,8 @@
 <body>
   <main class="doc" data-page="arch-transcription">
     <h1>Transcription &amp; diarization</h1>
-    <p class="subtitle">Streaming audio over a single WebSocket, on-device speech recognition,
+    <p class="subtitle">Streaming audio over a single WebSocket, three on-device speech engines,
+      per-utterance language identification, live translation,
       voice-activity gating, and speaker clustering that self-heals - and no byte of audio ever
       leaves your machine.</p>
 
@@ -51,8 +52,10 @@
       <li><b>Binary frames</b> carry raw <code>PCM16</code> mono audio at <b>16 kHz</b>. They are
         processed strictly in order: the VAD buffer and the decoder are stateful, and decode is faster
         than real time, so awaiting each frame inline keeps ordering trivial without dropping audio.</li>
-      <li><b>Text frames</b> are JSON control messages: <code>ping</code>, <code>set_backend</code>
-        (a live A/B switch), <code>set_speakers</code> (a participant-count hint), and <code>stop</code>.</li>
+      <li><b>Text frames</b> are JSON control messages: <code>ping</code>, <code>set_model</code> /
+        <code>set_backend</code> (a live engine switch), <code>set_translate</code> (translator and
+        target changes mid-recording), <code>set_speakers</code> (a participant-count hint), and
+        <code>stop</code>.</li>
     </ul>
 
     <h2 id="backend-selection">Choosing a backend at connect</h2>
@@ -64,15 +67,19 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Backend</th><th>Model</th><th>Character</th></tr></thead>
       <tbody>
-        <tr><td><code>parakeet</code> (alias <code>streaming</code>; the default)</td><td><code>mlx-community/parakeet-tdt-0.6b-v3</code></td><td>Low-latency. Re-decodes the growing utterance every chunk for word-by-word interims. The shipped config default is <code>transcription_backend: "streaming"</code>, so this is the out-of-the-box recorder backend.</td></tr>
-        <tr><td><code>whisper</code></td><td><code>mlx-community/whisper-large-v3-turbo</code></td><td>Batch. Decodes each settled utterance in one shot; no interims. Also the fallback an unrecognized backend name resolves to.</td></tr>
+        <tr><td><code>parakeet</code> (alias <code>streaming</code>; the default)</td><td><code>mlx-community/parakeet-tdt-0.6b-v3</code></td><td>Lowest latency. Re-decodes the growing utterance every chunk for word-by-word interims. 25 European languages, no language ID, no translation head. The shipped config default is <code>transcription_backend: "streaming"</code>, so this is the out-of-the-box recorder backend.</td></tr>
+        <tr><td><code>whisper</code></td><td><code>mlx-community/whisper-large-v3-mlx</code></td><td>Batch. The full large-v3 checkpoint: highest accuracy, 99 languages, per-utterance language detection, a real translate-to-English head. Decodes each settled utterance in one shot; no interims. Also the fallback an unrecognized backend name resolves to.</td></tr>
+        <tr><td><code>canary</code></td><td><code>qfuxa/canary-mlx</code> (a vendored MLX port under <code class="path">server/asr/canary/</code>)</td><td>Fast batch decodes plus live word-by-word drafts. 25 European languages, translation between any of them and English. No built-in language head, so it leans on the VoxLingua107 classifier (below). Also the translator behind the transcript's Canary translate option, whichever engine is transcribing.</td></tr>
       </tbody>
     </table></div>
-    <p>Both run through MLX on a dedicated single-worker thread pool
+    <p>All three run through MLX on a dedicated single-worker thread pool
       (<code>max_workers=1</code>): MLX evaluation streams are thread-local, so the model must be loaded
-      and every utterance decoded on the <em>same</em> thread. The chat-input microphone always passes
-      <code>backend=streaming</code>, so dictation uses Parakeet even when the meeting recorder is on
-      Whisper. See <a href="arch-backends.html">Model backends &amp; modes</a> for how local mode warms
+      and every utterance decoded on the <em>same</em> thread. On a live engine switch the outgoing
+      Whisper or Canary weights are unloaded (they are 2.4-3.1&nbsp;GB each and stack up fast), while
+      Parakeet stays resident because it is the dictation mic's always-on engine. The chat-input
+      microphone always passes <code>backend=streaming</code>, so dictation uses Parakeet even when
+      the meeting recorder is on Whisper or Canary. See
+      <a href="arch-backends.html">Model backends &amp; modes</a> for how local mode warms
       and unloads these weights.</p>
 
     <div class="callout">
@@ -84,32 +91,93 @@
     </div>
 
     <h2 id="vad-utterances">VAD and utterance gating</h2>
-    <p>Audio is never sent to the model continuously. Both backends push frames through the same
+    <p>Audio is never sent to the model continuously. All backends push frames through the same
       <code>UtteranceBuffer</code> in <code class="path">server/audio_buffer.py</code>, which uses
-      <code>webrtcvad</code> to find natural speech boundaries. An utterance settles into a
-      <em>final</em> when two conditions hold:</p>
+      <code>webrtcvad</code> to find natural speech boundaries. The VAD is the <em>only</em> speech
+      filter: energy (RMS) gates were tried and removed, because they silently ate quiet microphones.
+      An utterance settles into a <em>final</em> when two conditions hold:</p>
     <ol class="steps">
       <li><h4>Enough speech</h4><p>At least <b>400 ms</b> of voiced audio
         (<code>MIN_UTTERANCE_MS</code>). Shorter fragments (a cough, a stray syllable) are dropped
         rather than transcribed.</p></li>
-      <li><h4>Trailing silence</h4><p>A run of silence after speech marks the end. Whisper waits the
-        default <b>400 ms</b>; Parakeet sits slightly under, at <b>350 ms</b>, because its interims
-        already show the text live, so settling a touch sooner costs nothing visible and trims label
-        latency.</p></li>
+      <li><h4>Trailing silence</h4><p>A run of silence after speech marks the end. Whisper and Canary
+        wait the default <b>400 ms</b>; Parakeet sits slightly under, at <b>350 ms</b>, because its
+        interims already show the text live, so settling a touch sooner costs nothing visible and
+        trims label latency.</p></li>
     </ol>
     <p>Silence inside an utterance is kept (the model uses pause structure to infer sentence
       boundaries), while dead silence between utterances is discarded so no model time is wasted on it.
       A hard cap flushes a very long utterance even without a silence boundary.</p>
 
     <h3 id="interims">Interims vs finals</h3>
-    <p>Parakeet's <code>process()</code> emits two kinds of events. While an utterance is still in
-      flight and no boundary has landed, it re-decodes the growing window and emits a volatile
-      <code>interim</code> - a word-by-word draft whose tail self-corrects as more speech arrives. A
-      full-context <code>generate()</code> is cheap enough (well under the chunk cadence) to keep up in
-      real time. An interim is only decoded once the pending window has at least <b>~300 ms</b> of
-      audio, and an unchanged draft is never re-sent. When silence closes the utterance, the clean,
-      authoritative <code>final</code> is emitted with its audio attached, and the interim window
-      resets. Whisper, being batch, emits only finals.</p>
+    <p>Parakeet and Canary both stream live drafts. While an utterance is still in
+      flight and no boundary has landed, the backend re-decodes the growing window and emits a volatile
+      <code>interim</code> - a word-by-word draft whose tail self-corrects as more speech arrives.
+      Parakeet decodes a draft on every chunk once the pending window has at least <b>~300 ms</b> of
+      audio (a full-context <code>generate()</code> is cheap enough to keep up in real time); Canary,
+      whose decodes are heavier, starts drafting at <b>0.5 s</b> and paces itself on a <b>0.9 s</b>
+      cadence that stretches to <b>2 s</b> once the in-flight window passes 4 s, and its drafts reuse
+      the session's sticky language rather than re-detecting per draft. An unchanged draft is never
+      re-sent. When silence closes the utterance, the clean, authoritative <code>final</code> is
+      emitted with its audio attached, and the interim window resets. Whisper, being batch, emits
+      only finals.</p>
+
+    <h2 id="language-id">Language identification</h2>
+    <p>Multilingual audio is where short-window ASR goes wrong quietly: unconstrained detection on a
+      brief, accented utterance lands on a neighbor language, which garbles the text or - worse -
+      silently <em>translates</em> it. Each engine handles this differently:</p>
+    <ul>
+      <li><b>Whisper</b> detects the language per utterance with its own head. The
+        <code>whisper_language</code> config is an <b>allowlist</b>: blank means full auto-detect,
+        one code (<code>pl</code>) pins the language outright, and a comma list (<code>pl,en</code>)
+        keeps detection but constrains the argmax to those candidates. When the strict decode pass
+        returns nothing (the no-speech and log-prob gates sometimes eat real utterances), a
+        <b>rescue retry</b> runs once with relaxed thresholds and a temperature ladder, keeping the
+        hallucination filters on.</li>
+      <li><b>Canary</b> has no language head at all - every decode needs an explicit source language
+        - so it leans on a separate on-device classifier: <b>VoxLingua107</b> (an ECAPA language-ID
+        model, ~86&nbsp;MB, ~40-60&nbsp;ms per utterance on CPU). Detection is <b>sticky and
+        confidence-gated</b>: a result only sets or switches the session language when the clip is at
+        least 1.5&nbsp;s long and wins with at least 0.6 relative confidence; weaker detections
+        inherit the previous utterance's language. A single-entry allowlist pins the language and
+        skips detection entirely.</li>
+      <li><b>Parakeet</b> does no language identification; its multilingual decoder just transcribes.
+        When translation needs a source language for a Parakeet utterance, detection happens
+        downstream (Canary's classifier, or Apple's auto-detect).</li>
+    </ul>
+    <p>Both Whisper and Canary share the same hallucination defenses: a phrase blocklist of
+      known Whisper artifacts and a repetition detector, applied before a final is emitted.</p>
+
+    <h2 id="translation">Live translation</h2>
+    <p>The transcript panel can translate every settled utterance as it lands. The translator is a
+      separate choice from the transcription engine (<code>translate_mode</code>:
+      <code>off</code> / <code>canary</code> / <code>apple</code>, with
+      <code>translate_target</code> naming the target language), and <b>either translator works with
+      every engine</b>:</p>
+    <ul>
+      <li><b>Canary</b> is the app's universal model translator. Translation decodes run on Canary's
+        own executor server-side, queued behind transcript decodes, whichever engine produced the
+        text - so Whisper and Parakeet sessions translate through it too. The constraint is that it
+        translates <b>with English as the hub</b>: any of its 25 languages to English, or English to
+        any of them, never between two non-English languages. Live drafts yield to translations on
+        the shared decode thread: a cosmetic draft is skipped outright while a translation is
+        queued, so the translation line never lags behind the next sentence.</li>
+      <li><b>Apple</b> uses the macOS Translation framework, on-device, in the Mac app only, and
+        handles <b>any pair</b> of its roughly 20 languages, auto-detecting an unknown source (which
+        is what serves Parakeet). <code>TranslationSession</code> can only be obtained through
+        SwiftUI's <code>.translationTask</code> modifier, so the shell parks an invisible
+        <code>NSHostingView</code> on the WKWebView and drives it with a published configuration.
+        The OS downloads language packs on first use behind a one-time consent sheet; everything
+        after is offline.</li>
+    </ul>
+    <p>The <code>transcript</code> payload for a translating utterance carries
+      <code>translating: true</code> (the UI shows a pending "Translating…" tail) and the settled
+      line arrives as a separate <code>translation</code> message keyed by <code>chunk_id</code>. A
+      <code>stop</code> drains in-flight translations before <code>session_ended</code>, so the last
+      line is never lost. When you <b>edit</b> a segment, the corrected text is re-translated through
+      Apple's on-device <em>text</em> translator regardless of which translator produced the original
+      line - Canary translates audio, and the audio still contains the misheard word; outside the Mac
+      app the stale translation is dropped rather than left silently wrong.</p>
 
     <h2 id="diarization">Diarization: assign fast, refine later</h2>
     <p>Speaker identification lives in <code class="path">server/diarization/speakers.py</code>,
@@ -202,8 +270,9 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Type</th><th>Fields</th><th>Meaning</th></tr></thead>
       <tbody>
-        <tr><td><code>interim</code></td><td><code>text</code></td><td>A volatile word-by-word draft of the in-flight utterance (Parakeet only).</td></tr>
-        <tr><td><code>transcript</code></td><td><code>text</code>, <code>speaker</code>, <code>chunk_id</code></td><td>A settled final, labeled with its speaker and a monotonic chunk id.</td></tr>
+        <tr><td><code>interim</code></td><td><code>text</code></td><td>A volatile word-by-word draft of the in-flight utterance (Parakeet and Canary).</td></tr>
+        <tr><td><code>transcript</code></td><td><code>text</code>, <code>speaker</code>, <code>chunk_id</code>; when translating, <code>translating</code> plus <code>translate_via</code>/<code>translate_target</code> for the Apple path</td><td>A settled final, labeled with its speaker and a monotonic chunk id. <code>translating: true</code> tells the client to show a pending translation slot for this chunk.</td></tr>
+        <tr><td><code>translation</code></td><td><code>chunk_id</code>, <code>text</code>, <code>target</code></td><td>The settled translation line for an earlier final, delivered when Canary's queued decode lands.</td></tr>
         <tr><td><code>speaker_update</code></td><td><code>updates</code> (list of <code>chunk_id</code> to <code>speaker</code>)</td><td>Re-clustering corrections that retroactively re-label earlier segments.</td></tr>
         <tr><td><code>model_loading</code></td><td><code>backend</code>, <code>label</code>, <code>stage</code>, <code>progress</code></td><td>Local-mode load banner, <code>stage</code> one of <code>start</code>/<code>loading</code>/<code>ready</code>.</td></tr>
         <tr><td><code>model_unloaded</code></td><td><code>backend</code>, <code>label</code></td><td>The paired unload notice on an engine switch.</td></tr>
@@ -217,6 +286,10 @@
       <dt><code class="path">server/websocket.py</code></dt><dd>The <code>/ws</code> endpoint: origin check, backend selection, frame loop, and event relay with diarization applied.</dd>
       <dt><code class="path">server/asr/__init__.py</code></dt><dd>The backend registry: name resolution (including the <code>streaming</code> alias) and lazy module import.</dd>
       <dt><code class="path">server/asr/parakeet_backend.py</code></dt><dd>Parakeet TDT via MLX, growing-window interims, and the settled final decode.</dd>
+      <dt><code class="path">server/asr/whisper_backend.py</code></dt><dd>Whisper large-v3: allowlist-constrained language detection, the rescue retry, and the shared hallucination filters.</dd>
+      <dt><code class="path">server/asr/canary_backend.py</code> + <code class="path">server/asr/canary/</code></dt><dd>Canary 1B v2 (a vendored MLX port): paced live drafts, sticky language selection, and the universal translation decodes.</dd>
+      <dt><code class="path">server/asr/lid.py</code></dt><dd>The VoxLingua107 language classifier Canary leans on.</dd>
+      <dt><code class="path">macapp/shell/NativeTranslation.swift</code></dt><dd>The Apple Translation bridge: the hidden SwiftUI host that owns the <code>TranslationSession</code>.</dd>
       <dt><code class="path">server/audio_buffer.py</code></dt><dd>The <code>UtteranceBuffer</code>: webrtcvad gating, trailing-silence settling, and the in-flight pending window.</dd>
       <dt><code class="path">server/diarization/speakers.py</code></dt><dd>ECAPA embedding, immediate assignment, and periodic re-clustering with label re-mapping.</dd>
     </div>
