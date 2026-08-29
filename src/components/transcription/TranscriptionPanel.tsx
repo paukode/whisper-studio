@@ -608,7 +608,7 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
               onSpeakerRename={handleSpeakerRename}
             />
           ))}
-          {/* Live, word-by-word draft from the Parakeet streaming backend.
+          {/* Live, word-by-word draft from a streaming backend (Parakeet or Canary).
               Rendered as a real transcript row so it lines up under the speaker
               boxes exactly like committed segments — same timestamp/speaker/text
               grid. It updates in place as more speech arrives and is removed the
