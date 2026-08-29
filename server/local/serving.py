@@ -17,13 +17,58 @@ so adding a third engine stays a one-module change.
 from __future__ import annotations
 
 import logging
+import os
 import threading
+import time
 
 from server.local import llama_server, mlx_server
 
 log = logging.getLogger("whisper-studio")
 
 _ONESHOT_TIMEOUT = llama_server._ONESHOT_TIMEOUT
+
+# How long a displacing load may wait for the busy turn(s) to finish before
+# giving up with a clear error (a local turn can stream for minutes).
+_BUSY_WAIT_TIMEOUT_S = int(os.environ.get("WHISPER_LOCAL_BUSY_WAIT_S", "600"))
+
+# Live chat turns currently streaming from the resident server. A transition
+# that would displace that server (different key, or a context-size change)
+# WAITS for this to drain instead of stopping the server mid-stream — the bug
+# where switching models in the composer killed the in-flight answer
+# ("round 0 failed" with an empty error and a turn with no text).
+_busy_lock = threading.Lock()
+_busy_turns = 0
+
+
+def begin_turn() -> None:
+    """Mark a chat turn as streaming from the resident server. Callers must
+    pair with ``end_turn`` in a finally. ``ensure_serving(mark_busy=True)``
+    does this atomically with the residency check — prefer that."""
+    global _busy_turns
+    with _busy_lock:
+        _busy_turns += 1
+
+
+def end_turn() -> None:
+    global _busy_turns
+    with _busy_lock:
+        _busy_turns = max(0, _busy_turns - 1)
+
+
+def busy_turns() -> int:
+    with _busy_lock:
+        return _busy_turns
+
+
+def _would_displace(key: str, n_ctx: int | None) -> bool:
+    """Would serving ``key`` at ``n_ctx`` stop or restart what is resident?"""
+    rk = resident_key()
+    if rk is None:
+        return False
+    if rk != key:
+        return True
+    return n_ctx is not None and resident_n_ctx() != int(n_ctx)
+
 
 # Serializes every cross-engine transition. Each engine's own _load_lock only
 # protects loads WITHIN that engine; without this facade-level lock, two
@@ -65,7 +110,13 @@ def supports_tool_choice(key: str) -> bool:
     return engine_of(key) != "mlx"
 
 
-def ensure_serving(key: str, n_ctx: int | None = None) -> str:
+def ensure_serving(
+    key: str,
+    n_ctx: int | None = None,
+    *,
+    should_abort=None,
+    mark_busy: bool = False,
+) -> str:
     """Guarantee ``key`` is being served by its engine and return the base URL.
 
     One local model resident at a time is a CROSS-engine invariant, so the
@@ -75,6 +126,15 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
     request (mlx-lm missing, unknown key) or a minutes-long first download must
     never leave the machine with nothing resident. Blocking (a cold start loads
     gigabytes), so call it off the event loop.
+
+    A transition that would displace the resident server (different key, or a
+    context-size change) waits for live chat turns to finish first — stopping
+    a server mid-stream kills the answer being written. ``should_abort`` lets
+    a waiting caller bail out (the model-load endpoint passes its cancel
+    flag); the wait gives up with a clear error after ``_BUSY_WAIT_TIMEOUT_S``.
+    ``mark_busy=True`` atomically registers a chat turn on the returned server
+    (pair with ``end_turn()`` in a finally), closing the gap where a load
+    could sneak in between "URL returned" and "turn started".
     """
     from server.local import runtime
 
@@ -87,23 +147,45 @@ def ensure_serving(key: str, n_ctx: int | None = None) -> str:
     if fast_target.resident_key() == key:
         base = fast_target.base_url()
         if base is not None and (n_ctx is None or fast_target.resident_n_ctx() == int(n_ctx)):
+            if mark_busy:
+                begin_turn()
             return base
 
-    with _transition_lock:
-        if engine_of(key) == "mlx":
-            target, other = mlx_server, llama_server
-            mlx_server.ensure_available()
-        else:
-            target, other = llama_server, mlx_server
-            llama_server.ensure_available()
-        if key not in runtime.LOCAL_MODELS:
-            raise RuntimeError(f"Unknown local model: {key}")
-        # Idempotent (marker/file check), so the engine re-running it inside
-        # its own ensure_serving is a cheap no-op.
-        runtime.ensure_downloaded(key)
-        if other.is_running():
-            other.stop()
-        return target.ensure_serving(key, n_ctx)
+    deadline = time.monotonic() + _BUSY_WAIT_TIMEOUT_S
+    while True:
+        # Wait (outside the lock) while live turns stream from a server this
+        # transition would stop. Re-checked under the lock below, because a
+        # new turn can start between the wait and the acquisition.
+        while busy_turns() > 0 and _would_displace(key, n_ctx):
+            if should_abort is not None and should_abort():
+                raise RuntimeError("Model load cancelled.")
+            if time.monotonic() > deadline:
+                raise RuntimeError(
+                    f"The resident model ({resident_key()}) is still answering; "
+                    "try again when the current turn finishes."
+                )
+            time.sleep(0.25)
+
+        with _transition_lock:
+            if busy_turns() > 0 and _would_displace(key, n_ctx):
+                continue  # a turn started while we waited — wait again
+            if engine_of(key) == "mlx":
+                target, other = mlx_server, llama_server
+                mlx_server.ensure_available()
+            else:
+                target, other = llama_server, mlx_server
+                llama_server.ensure_available()
+            if key not in runtime.LOCAL_MODELS:
+                raise RuntimeError(f"Unknown local model: {key}")
+            # Idempotent (marker/file check), so the engine re-running it inside
+            # its own ensure_serving is a cheap no-op.
+            runtime.ensure_downloaded(key)
+            if other.is_running():
+                other.stop()
+            url = target.ensure_serving(key, n_ctx)
+            if mark_busy:
+                begin_turn()
+            return url
 
 
 def stop() -> None:

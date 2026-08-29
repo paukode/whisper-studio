@@ -449,8 +449,18 @@ async def local_model_load(model: str, n_ctx: int | None = None):
             # Memory-load phase: starts (or restarts at the new context size)
             # the model server. Runs on a plain I/O thread — it is a subprocess
             # wait, not model work. The internal ensure_downloaded is now a
-            # marker/file no-op for the manager-downloaded case.
-            load_future = loop.run_in_executor(None, serving.ensure_serving, model, n_ctx)
+            # marker/file no-op for the manager-downloaded case. should_abort
+            # lets a cancel break the wait-for-busy-turn phase too (serving
+            # waits for a live chat turn instead of evicting it mid-answer).
+            load_future = loop.run_in_executor(
+                None,
+                functools.partial(
+                    serving.ensure_serving,
+                    model,
+                    n_ctx,
+                    should_abort=lambda: _load_cancel_requested(model),
+                ),
+            )
             ramp = 0.0
             cancelled = False
             while not load_future.done():

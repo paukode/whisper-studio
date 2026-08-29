@@ -85,7 +85,7 @@ def test_load_download_phase_reports_cancelled(monkeypatch):
     # forcing the check true avoids sleeping through real poll ticks.
     monkeypatch.setattr(routes_mod, "_load_cancel_requested", lambda m: True)
     ensure_calls: list[str] = []
-    monkeypatch.setattr(serving, "ensure_serving", lambda k, n=None: ensure_calls.append(k))
+    monkeypatch.setattr(serving, "ensure_serving", lambda k, n=None, **kw: ensure_calls.append(k))
 
     resp = _client().get("/api/local-model/load?model=local_test")
     frames = _frames(resp.text)
@@ -117,7 +117,9 @@ def test_load_memory_phase_cancel_stops_this_models_server(monkeypatch):
     _stub_model(monkeypatch, downloaded=True)
     monkeypatch.setattr(catalog, "get_entry", lambda k: _Entry())
     stops: list[str] = []
-    monkeypatch.setattr(serving, "ensure_serving", lambda k, n=None: _time.sleep(0.9) or "http://x")
+    monkeypatch.setattr(
+        serving, "ensure_serving", lambda k, n=None, **kw: _time.sleep(0.9) or "http://x"
+    )
     monkeypatch.setattr(serving, "resident_key", lambda: "local_test")
     monkeypatch.setattr(serving, "stop", lambda: stops.append("stop"))
     monkeypatch.setattr(routes_mod, "_load_cancel_requested", lambda m: True)
@@ -136,7 +138,9 @@ def test_load_memory_phase_cancel_spares_a_superseding_model(monkeypatch):
     _stub_model(monkeypatch, downloaded=True)
     monkeypatch.setattr(catalog, "get_entry", lambda k: _Entry())
     stops: list[str] = []
-    monkeypatch.setattr(serving, "ensure_serving", lambda k, n=None: _time.sleep(0.9) or "http://x")
+    monkeypatch.setattr(
+        serving, "ensure_serving", lambda k, n=None, **kw: _time.sleep(0.9) or "http://x"
+    )
     monkeypatch.setattr(serving, "resident_key", lambda: "some_other_model")
     monkeypatch.setattr(serving, "stop", lambda: stops.append("stop"))
     monkeypatch.setattr(routes_mod, "_load_cancel_requested", lambda m: True)
@@ -163,7 +167,7 @@ def test_load_happy_path_downloads_via_manager_then_ready(monkeypatch):
 
     monkeypatch.setattr(manager, "start_download", _start)
     monkeypatch.setattr(manager, "reap", lambda: None)
-    monkeypatch.setattr(serving, "ensure_serving", lambda k, n=None: "http://x")
+    monkeypatch.setattr(serving, "ensure_serving", lambda k, n=None, **kw: "http://x")
 
     resp = _client().get("/api/local-model/load?model=local_test")
     frames = _frames(resp.text)

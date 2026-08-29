@@ -231,7 +231,11 @@ class LocalAdapter:
                 msg = str(e)
                 if any(marker in msg.lower() for marker in _CTX_OVERFLOW_MARKERS):
                     raise PromptTooLongError(msg) from e
-                log.warning("llama-server round %d failed: %s", round_num, e)
+                # Connection-drop exceptions often stringify to '' — surface
+                # the type so neither the log nor the user gets a blank error.
+                if not msg.strip():
+                    msg = f"connection to the local model server was lost ({e.__class__.__name__})"
+                log.warning("Local model round %d failed: %r", round_num, e)
                 yield RoundError(message=msg)
                 return
             if thinking_open:  # reasoned but produced no answer text this round
