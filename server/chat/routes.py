@@ -52,6 +52,7 @@ _QUERY_REWRITE_TIMEOUT_S = (
     6  # Tier 3 rewrite cap so a slow/offline Bedrock connect can't stall a turn
 )
 _RERANK_COLD_BUDGET_S = 40  # extra grounding headroom for the reranker's first-turn cold model load
+_DOCS_COLD_BUDGET_S = 160  # first @docs use builds the manual index (cold embedder + ~300 sections)
 
 
 from .compaction import (  # noqa: E402
@@ -1292,9 +1293,16 @@ async def chat_endpoint(request: Request):
         # An explicit @index mention forces index grounding for this turn — past
         # the smalltalk gate and past the connected-workspace deprioritization
         # below — and is stripped so the marker never reaches the model prompt.
-        from server.index.query_gate import extract_index_trigger, should_ground
+        from server.index.query_gate import (
+            extract_docs_trigger,
+            extract_index_trigger,
+            should_ground,
+        )
 
         force_index, question = extract_index_trigger(question)
+        # @docs: this turn answers from the app's own manual. Takes the place
+        # of workspace-index grounding for the turn.
+        force_docs, question = extract_docs_trigger(question)
 
         # Resolve this turn's attachments (rendering + per-file caps live in
         # attachment_context, shared with the history rebuild above). A missing id
@@ -1340,6 +1348,28 @@ async def chat_endpoint(request: Request):
             parts = []
             if attachment_texts:
                 parts.extend(attachment_texts)
+            # @docs: answer from the app's own manual under a strict contract
+            # (answer only from the passages, cite pages, decline when the
+            # manual has nothing). Replaces workspace-index grounding for the
+            # turn. First use builds the small docs index (cold embedder load),
+            # hence the generous timeout.
+            if force_docs and question.strip():
+                try:
+                    from server import docs_qa
+
+                    _status("searching")
+                    docs_block, _docs_n = await asyncio.wait_for(
+                        asyncio.get_event_loop().run_in_executor(
+                            _GROUNDING_EXECUTOR, docs_qa.grounding_block, question
+                        ),
+                        timeout=_GROUNDING_TIMEOUT_S + _DOCS_COLD_BUDGET_S,
+                    )
+                    if docs_block:
+                        parts.append(docs_block)
+                except asyncio.TimeoutError:
+                    log.warning("@docs lookup timed out; answering without it")
+                except Exception as e:  # noqa: BLE001 — docs lookup is best-effort
+                    log.warning("@docs lookup failed: %s", e)
             # Index-first grounding (point I): when the user has selected workspace
             # indexes to search, retrieve relevant passages now and inject them as
             # cited context, so the answer is grounded in the index without relying
@@ -1381,8 +1411,14 @@ async def chat_endpoint(request: Request):
             # nothing but noise, and the injected passages then read as the task
             # itself — small local models especially will invent an analysis out
             # of them. Skip retrieval entirely (no embedder call, no latency)
-            # unless the user forced it with @index.
-            if selected_indexes and question.strip() and (force_index or should_ground(question)):
+            # unless the user forced it with @index. A @docs turn already has
+            # its manual context above; the workspace indexes sit this one out.
+            if (
+                not force_docs
+                and selected_indexes
+                and question.strip()
+                and (force_index or should_ground(question))
+            ):
                 try:
                     from server.index.pipeline import build_context_query, retrieve_grounding
                     from server.infrastructure.feature_flags import is_enabled

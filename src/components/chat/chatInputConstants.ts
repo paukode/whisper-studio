@@ -215,6 +215,7 @@ export const AT_ROOT_ENTRIES: ACItem[] = [
   { icon: '⚡', name: '@skills:', desc: 'Browse skills', insert: '@skills:' },
   { icon: '🔌', name: '@mcp:', desc: 'Browse MCP tools', insert: '@mcp:' },
   { icon: '🔎', name: '@index', desc: 'Search your indexed folders for this message', insert: '@index' },
+  { icon: '📖', name: '@docs', desc: 'Ask the app documentation (answers cite pages)', insert: '@docs' },
 ];
 
 /* Structural shapes the autocomplete hook reads off the settings store.
