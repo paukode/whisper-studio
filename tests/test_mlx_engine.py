@@ -462,8 +462,10 @@ def test_mlx_search_uses_mlx_authors_and_arch_gate(monkeypatch):
 
     seen: list[tuple] = []
 
-    def fake_search(query, author, sort, limit, fmt="gguf"):
+    def fake_search(query, author, limit, fmt="gguf"):
         seen.append((author, fmt))
+        if fmt != "mlx":
+            return []
         return [
             SearchHit(
                 repo_id=f"{author}/Qwen3-4B-4bit",
@@ -486,9 +488,10 @@ def test_mlx_search_uses_mlx_authors_and_arch_gate(monkeypatch):
         ]
 
     monkeypatch.setattr(service.hf_client, "search", fake_search)
-    rows = service.search(query="qwen", fmt="mlx")
-    assert {a for a, _ in seen} == set(compat.MLX_TRUSTED_AUTHORS)
-    assert all(f == "mlx" for _, f in seen)
+    rows = service.search(query="qwen")
+    # The single merged search fans out over BOTH lanes' trusted authors.
+    assert {a for a, f in seen if f == "mlx"} == set(compat.MLX_TRUSTED_AUTHORS)
+    assert {a for a, f in seen if f == "gguf"} == set(compat.TRUSTED_AUTHORS)
     assert rows and all(r["format"] == "mlx" for r in rows)
     assert all("T5" not in r["repo_id"] for r in rows), "unsupported arch must drop"
 
@@ -569,7 +572,7 @@ def test_search_rows_carry_install_state(monkeypatch):
     _seed_registry(monkeypatch, {"local_mlx": dict(MLX_ENTRY), "local_gguf": dict(GGUF_ENTRY)})
     _seed_install_states(monkeypatch, {"local_mlx": "downloading", "local_gguf": "installed"})
 
-    def fake_search(query, author, sort, limit, fmt="gguf"):
+    def fake_search(query, author, limit, fmt="gguf"):
         if fmt == "mlx":
             return [SearchHit(MLX_ENTRY["repo_id"], 10, 1, 5, "qwen3", None, False)]
         return [
@@ -579,16 +582,18 @@ def test_search_rows_carry_install_state(monkeypatch):
 
     monkeypatch.setattr(service.hf_client, "search", fake_search)
 
-    (mlx_row,) = service.search(query="q", fmt="mlx")
+    rows = {r["repo_id"]: r for r in service.search(query="q", all_of_hf=True)}
+    mlx_row = rows[MLX_ENTRY["repo_id"]]
+    assert mlx_row["format"] == "mlx"
     assert mlx_row["install_state"] == "downloading"
 
-    gguf_rows = {r["repo_id"]: r for r in service.search(query="q", fmt="gguf")}
-    installed = gguf_rows[GGUF_ENTRY["repo_id"]]
+    installed = rows[GGUF_ENTRY["repo_id"]]
+    assert installed["format"] == "gguf"
     assert installed["install_state"] == "installed"
     # Per-quant filenames, so the picker can mark the exact quant while other
     # quants of the same repo stay downloadable.
     assert installed["installed_filenames"] == [GGUF_ENTRY["filename"]]
-    assert gguf_rows["unsloth/Fresh-GGUF"]["install_state"] is None
+    assert rows["unsloth/Fresh-GGUF"]["install_state"] is None
 
 
 def test_recommended_rows_carry_a_live_downloading_flag(monkeypatch):

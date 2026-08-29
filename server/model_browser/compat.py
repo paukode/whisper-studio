@@ -33,6 +33,8 @@ SUPPORTED_ARCHS: frozenset[str] = frozenset(
         "qwen2",
         "qwen3",
         "qwen3moe",
+        "qwen35",
+        "qwen35moe",
         "gemma",
         "gemma2",
         "gemma3",

@@ -27,22 +27,18 @@ def _truthy(v: str | None) -> bool:
 async def browse_search(
     q: str | None = None,
     author: str | None = None,
-    sort: str = "trending",
     all: str | None = None,
-    fmt: str = "gguf",
 ):
-    """Search chat models of one weight format (``fmt``: gguf | mlx). Trusted
-    authors by default; ``all=1`` widens to all of HF. Only engine-runnable
-    architectures are returned."""
+    """Search chat models across both weight formats (GGUF + MLX) at once,
+    ranked by relevance to the query. Trusted authors by default; ``all=1``
+    widens to all of HF. Only engine-runnable architectures are returned."""
     import asyncio
 
     results = await asyncio.to_thread(
         service.search,
         q,
         author,
-        sort,
         _truthy(all),
-        fmt,
     )
     return {"results": results, "count": len(results)}
 

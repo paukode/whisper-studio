@@ -67,7 +67,6 @@ def _api():
 def search(
     query: str | None,
     author: str | None,
-    sort: str,
     limit: int,
     fmt: str = "gguf",
 ) -> list[SearchHit]:
@@ -75,10 +74,11 @@ def search(
 
     ``fmt`` picks the lane: "gguf" filters on the GGUF tag and reads arch/ctx
     from the GGUF header; "mlx" filters on the MLX library tag and reads the
-    arch (``model_type``) from the transformers config. ``sort`` is
-    "trendingScore" or "downloads"; the Hub sorts descending. Any failure
-    (offline, bad author) returns an empty list — the caller merges across
-    authors and a single failing author must not sink the whole search.
+    arch (``model_type``) from the transformers config. The Hub is asked to
+    sort by trending only so the ``limit`` window keeps the most notable
+    matches — final ordering is the service layer's relevance ranking. Any
+    failure (offline, bad author) returns an empty list — the caller merges
+    across authors and a single failing author must not sink the whole search.
     """
     mlx = fmt == "mlx"
     try:
@@ -87,7 +87,7 @@ def search(
             pipeline_tag="text-generation",
             search=query or None,
             author=author or None,
-            sort=sort,
+            sort="trendingScore",
             limit=limit,
             expand=_SEARCH_EXPAND_MLX if mlx else _SEARCH_EXPAND,
         )

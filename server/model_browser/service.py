@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -17,7 +18,6 @@ from server.model_browser import compat, hf_client, install
 
 log = logging.getLogger("whisper-studio")
 
-_SORTS = {"trending": "trendingScore", "downloads": "downloads"}
 _SEARCH_LIMIT = 30
 _PER_AUTHOR_LIMIT = 12
 
@@ -123,12 +123,34 @@ def _memory_fields() -> dict:
     }
 
 
-def _sort_key(sort: str) -> str:
-    return _SORTS.get(sort, "trendingScore")
-
-
 def _norm_fmt(fmt: str | None) -> str:
     return "mlx" if fmt == "mlx" else "gguf"
+
+
+def _squash(text: str) -> str:
+    """Lowercase with every non-alphanumeric run removed, so "qwen 3.8",
+    "qwen-3.8" and "Qwen3.8" all compare equal."""
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def _relevance_tier(query: str, name: str, repo_id: str) -> int:
+    """How directly a repo matches the typed query, spelling variants folded:
+    3 = the repo name IS the query (or starts with it), 2 = the query appears
+    inside the name, 1 = every query token appears somewhere in the full repo
+    id, 0 = only a loose match (the Hub matched a field we don't score)."""
+    q = _squash(query)
+    if not q:
+        return 0
+    name_sq = _squash(name)
+    if name_sq == q or name_sq.startswith(q):
+        return 3
+    if q in name_sq:
+        return 2
+    tokens = re.findall(r"[a-z0-9]+", query.lower())
+    repo_sq = _squash(repo_id)
+    if tokens and all(t in repo_sq for t in tokens):
+        return 1
+    return 0
 
 
 def _install_annotations(fmt: str) -> dict[str, dict]:
@@ -186,42 +208,55 @@ def _downloading_keys() -> set[str]:
 def search(
     query: str | None = None,
     author: str | None = None,
-    sort: str = "trending",
     all_of_hf: bool = False,
-    fmt: str = "gguf",
 ) -> list[dict]:
-    """Search chat repos of one weight format, keeping only architectures the
-    matching engine can run (GGUF → llama-server, MLX → mlx_lm).
+    """Search chat repos across BOTH weight formats at once, keeping only
+    architectures the matching engine can run (GGUF → llama-server,
+    MLX → mlx_lm).
 
     Scope (design §8):
-      * explicit ``author`` → just that author;
-      * default (``all_of_hf`` false) → the format's trusted-author allowlist,
-        queried in parallel and merged;
-      * ``all_of_hf`` true → one unscoped search across all of HF.
-    Results are de-duped by repo, filtered to the format's supported archs, and
-    ranked by the chosen sort metric (descending).
+      * explicit ``author`` → just that author, both formats;
+      * default (``all_of_hf`` false) → each format's trusted-author allowlist;
+      * ``all_of_hf`` true → one unscoped search per format across all of HF.
+    All shards are queried in parallel and merged. Results are de-duped by
+    repo (GGUF lane first — its per-quant picker is the more flexible
+    install), filtered to each format's supported archs, and ranked by
+    relevance to the typed query with downloads as the tie-break; an empty
+    query ranks by trending instead.
     """
-    fmt = _norm_fmt(fmt)
-    sort_key = _sort_key(sort)
-
     if author:
-        hits = hf_client.search(query, author, sort_key, _SEARCH_LIMIT, fmt)
+        shards = [("gguf", author), ("mlx", author)]
     elif all_of_hf:
-        hits = hf_client.search(query, None, sort_key, _SEARCH_LIMIT, fmt)
+        shards = [("gguf", None), ("mlx", None)]
     else:
-        hits = _search_trusted(query, sort_key, fmt)
+        shards = [("gguf", a) for a in compat.TRUSTED_AUTHORS] + [
+            ("mlx", a) for a in compat.MLX_TRUSTED_AUTHORS
+        ]
+    limit = _SEARCH_LIMIT if len(shards) <= 2 else _PER_AUTHOR_LIMIT
 
-    arch_ok = compat.mlx_arch_supported if fmt == "mlx" else compat.arch_supported
+    hits: list[tuple[str, hf_client.SearchHit]] = []
+    with ThreadPoolExecutor(max_workers=len(shards)) as pool:
+        futures = {pool.submit(hf_client.search, query, a, limit, f): f for f, a in shards}
+        for future, f in futures.items():
+            try:
+                hits.extend((f, h) for h in future.result())
+            except Exception as e:  # pragma: no cover - defensive
+                log.debug("Search shard failed (fmt=%s): %s", f, e)
 
-    # De-dupe by repo id, keeping the first (highest-ranked) occurrence.
+    # GGUF hits ahead of MLX so a repo publishing both formats de-dupes into
+    # the lane with the per-quant picker (stable sort keeps shard order).
+    hits.sort(key=lambda pair: pair[0] != "gguf")
+
+    # De-dupe by repo id, keeping the first occurrence.
     seen: set[str] = set()
     out: list[dict] = []
-    for h in hits:
+    for fmt, h in hits:
         if h.repo_id in seen:
             continue
         seen.add(h.repo_id)
         # Arch gate: the whole point of the browser is to not offer a model that
         # fails at load. An arch we don't recognize as supported is dropped.
+        arch_ok = compat.mlx_arch_supported if fmt == "mlx" else compat.arch_supported
         if not arch_ok(h.arch):
             continue
         author_name, _, name = h.repo_id.partition("/")
@@ -247,37 +282,25 @@ def search(
             }
         )
 
-    annotations = _install_annotations(fmt)
+    annotations = {f: _install_annotations(f) for f in ("gguf", "mlx")}
     for row in out:
-        ann = annotations.get(row["repo_id"], {})
+        ann = annotations[row["format"]].get(row["repo_id"], {})
         installed = ann.get("installed") or []
         downloading = ann.get("downloading") or []
         row["installed_filenames"] = installed
         row["downloading_filenames"] = downloading
         row["install_state"] = "installed" if installed else "downloading" if downloading else None
 
-    rank = "trending_score" if sort_key == "trendingScore" else "downloads"
-    out.sort(key=lambda r: (r.get(rank) or 0), reverse=True)
+    if query and query.strip():
+        out.sort(
+            key=lambda r: (
+                -_relevance_tier(query, r["name"], r["repo_id"]),
+                -(r.get("downloads") or 0),
+            )
+        )
+    else:
+        out.sort(key=lambda r: (r.get("trending_score") or 0), reverse=True)
     return out[:_SEARCH_LIMIT]
-
-
-def _search_trusted(
-    query: str | None, sort_key: str, fmt: str = "gguf"
-) -> list[hf_client.SearchHit]:
-    """Query each trusted author in parallel and flatten the results."""
-    authors = compat.MLX_TRUSTED_AUTHORS if fmt == "mlx" else compat.TRUSTED_AUTHORS
-    results: list[hf_client.SearchHit] = []
-    with ThreadPoolExecutor(max_workers=len(authors)) as pool:
-        futures = [
-            pool.submit(hf_client.search, query, a, sort_key, _PER_AUTHOR_LIMIT, fmt)
-            for a in authors
-        ]
-        for f in futures:
-            try:
-                results.extend(f.result())
-            except Exception as e:  # pragma: no cover - defensive
-                log.debug("Trusted-author search shard failed: %s", e)
-    return results
 
 
 def repo_detail(repo_id: str, fmt: str = "gguf") -> dict:
