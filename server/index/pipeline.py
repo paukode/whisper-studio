@@ -50,6 +50,7 @@ from .config import (
     labels_for_profile,
     profile_for_ext,
 )
+from .query_gate import has_content_word
 
 log = logging.getLogger("whisper-studio")
 
@@ -775,6 +776,11 @@ def retrieve_grounding(
         dense: list[dict] = []
         kw: list[dict] = []
         ent: list[dict] = []
+        # The keyword/BM25 leg is exempt from the cosine floor by design, so a
+        # stopword-ish query ("hey") that literally appears in some old document
+        # would always ride it into grounding. Only let the leg contribute when
+        # the query carries at least one content-bearing word.
+        kw_ok = has_content_word(q)
         for p, root in valid_roots:
             try:
                 res = query(p, q, k=k)
@@ -787,11 +793,12 @@ def retrieve_grounding(
                 m["_abs"] = os.path.join(root, m["path"])
                 m["_ws"] = p
                 dense.append(m)
-            for m in res.get("keyword", []):
-                m = dict(m)
-                m["_abs"] = os.path.join(root, m["path"])
-                m["_ws"] = p
-                kw.append(m)
+            if kw_ok:
+                for m in res.get("keyword", []):
+                    m = dict(m)
+                    m["_abs"] = os.path.join(root, m["path"])
+                    m["_ws"] = p
+                    kw.append(m)
             try:  # entity-linking leg: chunks anchored to salient entities named in q
                 for m in salience.entity_leg(p, q, k=k):
                     m = dict(m)
@@ -968,11 +975,14 @@ def retrieve_grounding(
 
     out = [
         "[Workspace index context for this question. These passages were "
-        "retrieved from a semantic index of the user's files. Treat them as the "
+        "retrieved automatically from a semantic index of the user's files and "
+        "may be irrelevant. If they do not relate to the user's message, ignore "
+        "them entirely, respond to the message normally, and do not cite them "
+        "or add a Sources section. When they are relevant, treat them as the "
         "source of truth and answer directly from them, citing the source links "
         "you rely on by copying them exactly as given (including the "
         "#wsfile=...&L=start-end fragment, which opens the file at the cited "
-        "lines). Always end your answer with a 'Sources' section: a short list "
+        "lines), and end your answer with a 'Sources' section: a short list "
         "with one such link per line for every file you drew on. Only fall back "
         "to other tools if these passages are genuinely insufficient to answer; "
         "do not re-read files the index already covers.]",
