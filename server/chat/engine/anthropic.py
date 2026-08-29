@@ -98,10 +98,16 @@ class AnthropicAdapter:
 
             meta = (load_config().get("chat_model_meta") or {}).get(model_key) or {}
         self._meta = meta
+        # Bedrock rejects max_tokens above the model's output ceiling. Every
+        # current Claude tier accepts 128K output EXCEPT Haiku, whose ceiling
+        # is 64K ("max_tokens: 128000 > 64000" invalid-request errors killed
+        # whole turns). A configured chat_model_meta.max_output wins below the
+        # ceiling; at or above it we clamp instead of letting the API error.
+        ceiling = 64_000 if "haiku" in (model_id or "").lower() else 128_000
         try:
-            self.max_tokens = int(meta.get("max_output") or 128000)
+            self.max_tokens = min(int(meta.get("max_output") or ceiling), ceiling)
         except (TypeError, ValueError):
-            self.max_tokens = 128000
+            self.max_tokens = ceiling
 
     # ── Request building (port of call_bedrock_stream) ───────────────────────
 
