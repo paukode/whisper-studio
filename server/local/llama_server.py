@@ -363,47 +363,6 @@ def _strip_reasoning_markers(text: str) -> str:
     return text.strip()
 
 
-def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) -> str:
-    """One-shot, NON-streaming generation; returns the assistant text ('' on
-    failure). Blocking — starts the model server if it isn't already serving
-    ``key``, so call it off the event loop.
-
-    This is the non-chat entry point (workspace-index extraction, the on-device
-    session summariser). It deliberately sends no tools: these callers want prose
-    or JSON back, not a tool call.
-    """
-    import httpx
-
-    try:
-        url = ensure_serving(key)
-    except Exception as e:
-        log.warning("complete(%s): model server unavailable: %s", key, e)
-        return ""
-    try:
-        r = httpx.post(
-            f"{url}/v1/chat/completions",
-            json={
-                "model": key,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user},
-                ],
-                "max_tokens": max_tokens,
-                "stream": False,
-            },
-            timeout=_ONESHOT_TIMEOUT,
-        )
-        r.raise_for_status()
-        choices = (r.json() or {}).get("choices") or []
-        if not choices:
-            return ""
-        msg = choices[0].get("message") or {}
-        return _strip_reasoning_markers(msg.get("content") or "")
-    except Exception as e:
-        log.warning("complete(%s) failed: %s", key, e)
-        return ""
-
-
 def reap_orphans() -> int:
     """Kill leftover llama-server processes serving OUR models. Returns the count.
 

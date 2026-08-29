@@ -16,6 +16,21 @@ loadable and selectable with no code change::
       "ctx": 32768
     }
 
+MLX-format models work the same way with ``"engine": "mlx"`` — the weights are
+a whole-repo snapshot, so there is no ``filename``::
+
+    "local_qwen_mlx": {
+      "id": "local:qwen3-4b-mlx",
+      "label": "Qwen3 4B (Local MLX)",
+      "is_local": true,
+      "engine": "mlx",
+      "supports_thinking": true,
+      "supports_tools": true,
+      "repo_id": "mlx-community/Qwen3-4B-4bit",
+      "dir": "mlx-community__Qwen3-4B-4bit",
+      "ctx": 32768
+    }
+
 Why the same entry as the picker metadata rather than a separate ``local_models``
 section: the picker fields (``is_local``, ``supports_tools``, ``label``) and the
 loader fields (``repo_id``, ``filename``, ``dir``) describe one model, and
@@ -40,8 +55,15 @@ log = logging.getLogger("whisper-studio")
 
 # Fields a config entry must carry to be loadable on its own. An is_local entry
 # missing any of them is only usable if a recommended entry of the same key
-# fills the gap.
+# fills the gap. MLX weights are a whole-repo snapshot, so mlx entries have no
+# per-file ``filename`` (see _required_fields).
 _REQUIRED = ("repo_id", "filename", "dir")
+_REQUIRED_MLX = ("repo_id", "dir")
+
+
+def _required_fields(entry: dict) -> tuple[str, ...]:
+    return _REQUIRED_MLX if entry.get("engine") == "mlx" else _REQUIRED
+
 
 # Curated on-device models the Discover tab offers for one-click install. These
 # are NOT shipped into the catalog — a recommended model only appears (and only
@@ -138,7 +160,7 @@ def _config_local_models() -> dict[str, dict]:
         }
         # Only carry weight fields the config actually set, so a built-in of the
         # same key keeps supplying the rest instead of being blanked out.
-        for field in (*_REQUIRED, "ctx"):
+        for field in (*_REQUIRED, "ctx", "engine"):
             if m.get(field):
                 entry[field] = m[field]
         out[key] = entry
@@ -194,11 +216,12 @@ def local_models() -> dict[str, dict]:
 
     usable: dict[str, dict] = {}
     for key, entry in merged.items():
-        missing = [f for f in _REQUIRED if not entry.get(f)]
+        missing = [f for f in _required_fields(entry) if not entry.get(f)]
         if missing:
             log.warning(
                 "Local model %r ignored: missing %s in its chat_models entry. "
-                "An is_local model needs repo_id, filename and dir to be loadable.",
+                "A gguf model needs repo_id, filename and dir; an engine=mlx "
+                "model needs repo_id and dir.",
                 key,
                 ", ".join(missing),
             )

@@ -55,12 +55,21 @@ class LocalAdapter:
         system_prompt: str,
         thinking: bool,
         tools_enabled: bool,
+        wire_model: str | None = None,
+        supports_tool_choice: bool = True,
     ):
         self.model_key = model_key
         self.base_url = base_url
         self.system_prompt = system_prompt
         self.thinking = thinking
         self.tools_enabled = tools_enabled
+        # What the `model` field on the wire says. llama-server just echoes it;
+        # mlx_lm maps "default_model" to its --model path and treats any OTHER
+        # name as a new repo to load, so the registry key must not leak there.
+        self.wire_model = wire_model or model_key
+        # mlx_lm ignores OpenAI `tool_choice`, so the final-round "no more
+        # tools" contract is enforced by omitting the tools list instead.
+        self.supports_tool_choice = supports_tool_choice
         # Per-model output cap: chat_model_meta.max_output when configured,
         # else a conservative local default.
         from server.infrastructure.config import load_config
@@ -162,6 +171,11 @@ class LocalAdapter:
         from server.local.tools import _to_openai_fn
 
         schemas = [_to_openai_fn(t) for t in tools] if (tools and self.tools_enabled) else []
+        if is_last_round and not self.supports_tool_choice:
+            # tool_choice:"none" would be ignored (mlx_lm) — undeclare the tools
+            # so the final round genuinely cannot call one. Costs this round's
+            # prompt-cache prefix, but the final round is the last one anyway.
+            schemas = []
         props_by_tool = _schema_props(schemas)
 
         # Some fine-tunes decode a handful of tokens and stop without ever
@@ -174,7 +188,7 @@ class LocalAdapter:
         retry_messages = messages
         for attempt in range(2):
             payload: dict = {
-                "model": self.model_key,
+                "model": self.wire_model,
                 "messages": self.to_openai_messages(retry_messages),
                 "max_tokens": self.max_tokens,
             }
@@ -217,7 +231,11 @@ class LocalAdapter:
                 msg = str(e)
                 if any(marker in msg.lower() for marker in _CTX_OVERFLOW_MARKERS):
                     raise PromptTooLongError(msg) from e
-                log.warning("llama-server round %d failed: %s", round_num, e)
+                # Connection-drop exceptions often stringify to '' — surface
+                # the type so neither the log nor the user gets a blank error.
+                if not msg.strip():
+                    msg = f"connection to the local model server was lost ({e.__class__.__name__})"
+                log.warning("Local model round %d failed: %r", round_num, e)
                 yield RoundError(message=msg)
                 return
             if thinking_open:  # reasoned but produced no answer text this round

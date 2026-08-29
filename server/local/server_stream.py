@@ -1,10 +1,13 @@
-"""llama-server protocol helpers for on-device turns.
+"""Model-server protocol helpers for on-device turns (llama-server and mlx_lm).
 
 The agentic loop itself lives in the unified turn engine
 (server/chat/engine/runner.py + engine/local.py — the LocalAdapter); this
-module keeps the llama-server specifics the adapter builds on: the
+module keeps the wire specifics the adapter builds on: the
 ``/v1/chat/completions`` SSE parser, the tool-call accumulator, argument
 coercion, tool-result message rendering, and the local post-turn memory hooks.
+Both engines speak the same OpenAI-compatible SSE, so one parser serves both
+(the only dialect difference — the reasoning delta field name — is folded in
+below).
 
 Speaking llama-server's OpenAI-compatible endpoint means upstream llama.cpp
 does the jobs a hand-rolled in-process path had to solve per model family:
@@ -322,6 +325,7 @@ async def _stream_round(base_url: str, payload: dict):
     acc = _CallAccumulator()
     finish_reason = None
     usage: dict = {}
+    completed = False
     async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT) as client:
         async with client.stream(
             "POST",
@@ -334,19 +338,20 @@ async def _stream_round(base_url: str, payload: dict):
         ) as resp:
             if resp.status_code != 200:
                 body = (await resp.aread()).decode(errors="replace")
-                raise RuntimeError(f"llama-server returned {resp.status_code}: {body[:500]}")
+                raise RuntimeError(f"model server returned {resp.status_code}: {body[:500]}")
             async for line in resp.aiter_lines():
                 if not line or not line.startswith("data:"):
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
+                    completed = True
                     break
                 try:
                     obj = json.loads(data)
                 except json.JSONDecodeError:
                     continue
                 if obj.get("error"):
-                    raise RuntimeError(f"llama-server error: {str(obj['error'])[:400]}")
+                    raise RuntimeError(f"model server error: {str(obj['error'])[:400]}")
                 # The usage chunk arrives last and carries an EMPTY choices list,
                 # so it must be read before the delta handling below.
                 if isinstance(obj.get("usage"), dict):
@@ -354,12 +359,25 @@ async def _stream_round(base_url: str, payload: dict):
                 choices = obj.get("choices") or [{}]
                 choice = choices[0] if choices else {}
                 delta = choice.get("delta") or {}
-                if delta.get("reasoning_content"):
-                    yield ("thinking", delta["reasoning_content"])
+                # llama-server puts reasoning on `reasoning_content`; mlx_lm
+                # server puts it on `reasoning`. Same channel either way.
+                reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                if reasoning:
+                    yield ("thinking", reasoning)
                 if delta.get("content"):
                     yield ("text", delta["content"])
                 if delta.get("tool_calls"):
                     acc.feed(delta["tool_calls"])
                 if choice.get("finish_reason"):
                     finish_reason = choice["finish_reason"]
+    if not completed and finish_reason is None:
+        # Both engines end a successful stream with a finish_reason chunk and
+        # then [DONE]. mlx_lm's HTTP/1.0 body is close-delimited, so a
+        # mid-generation death (e.g. Metal OOM) reads as a CLEAN EOF here —
+        # without this guard a truncated answer would commit as a complete
+        # round. (llama-server streams chunked HTTP/1.1, where an abrupt close
+        # already raises inside aiter_lines.)
+        raise RuntimeError(
+            "model server closed the stream mid-generation (no finish_reason/[DONE])"
+        )
     yield ("done", {"calls": acc.finish(), "finish_reason": finish_reason, "usage": usage})

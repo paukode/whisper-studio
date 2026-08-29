@@ -43,6 +43,10 @@ tzdata==2025.2
 mlx-whisper==0.4.3
 mlx==0.31.2
 parakeet-mlx==0.5.2
+# MLX-format chat models (server/local/mlx_server.py). Darwin-only marker: the
+# Linux test CI strips Apple-only ML packages by exact-name grep and would not
+# catch "mlx-lm", so the marker keeps ubuntu runners installable.
+mlx-lm==0.31.3; sys_platform == 'darwin'
 speechbrain==1.1.0
 huggingface_hub==1.18.0
 

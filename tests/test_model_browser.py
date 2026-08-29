@@ -23,6 +23,7 @@ from server.model_browser.hf_client import RepoGguf, SearchHit
 def test_arch_allowlist_accepts_supported_and_rejects_new():
     assert compat.arch_supported("qwen3")
     assert compat.arch_supported("qwen3moe")
+    assert compat.arch_supported("qwen35")  # Qwen3.5/3.8 family, llama.cpp b10090+
     assert compat.arch_supported("gemma3")
     assert compat.arch_supported("llama")
     assert compat.arch_supported("PHI3")  # case-insensitive
@@ -260,14 +261,20 @@ def test_search_filters_unsupported_archs_and_dedups(monkeypatch):
         SearchHit("someone/Mystery-GGUF", 999, 1, 9, None, None, False),  # unknown arch
         SearchHit("unsloth/Qwen3-8B-GGUF", 300, 5, 3, "qwen3", 40960, False),  # duplicate
     ]
-    monkeypatch.setattr(service.hf_client, "search", lambda *a, **k: list(hits))
+    monkeypatch.setattr(
+        service.hf_client,
+        "search",
+        lambda query, author, limit, fmt="gguf": list(hits) if fmt == "gguf" else [],
+    )
 
-    results = service.search(query="qwen3", sort="downloads", all_of_hf=True)
+    results = service.search(query="qwen3", all_of_hf=True)
     ids = [r["repo_id"] for r in results]
     # qwen3 + qwen3moe kept; qwen3next + unknown dropped; duplicate collapsed.
+    # Both are equally direct name matches, so downloads break the tie.
     assert ids == ["unsloth/Qwen3-Coder-30B-GGUF", "unsloth/Qwen3-8B-GGUF"]
     assert all(r["supported"] for r in results)
-    assert results[0]["downloads"] == 500  # ranked by downloads desc
+    assert all(r["format"] == "gguf" for r in results)
+    assert results[0]["downloads"] == 500
     assert results[0]["param_size"] == "30B"
     assert results[0]["author"] == "unsloth"
     # Rows carry the agentic verdict so Discover can badge a chat-only model
@@ -275,18 +282,45 @@ def test_search_filters_unsupported_archs_and_dedups(monkeypatch):
     assert all(r["tool_capable"] for r in results)
 
 
-def test_search_trusted_scope_queries_each_author(monkeypatch):
-    calls: list[str | None] = []
+def test_search_trusted_scope_queries_each_author_of_both_formats(monkeypatch):
+    calls: list[tuple[str | None, str]] = []
 
-    def fake_search(query, author, sort_key, limit):
-        calls.append(author)
+    def fake_search(query, author, limit, fmt="gguf"):
+        calls.append((author, fmt))
         return [SearchHit(f"{author}/Model-GGUF", 1, 1, 1, "llama", 4096, False)]
 
     monkeypatch.setattr(service.hf_client, "search", fake_search)
     results = service.search(query="mistral")  # default scope, no author
-    # One call per trusted author, and every trusted author was queried.
-    assert set(calls) == set(compat.TRUSTED_AUTHORS)
-    assert len(results) == len(compat.TRUSTED_AUTHORS)
+    # Every trusted author of each format's lane was queried.
+    assert set(calls) == {(a, "gguf") for a in compat.TRUSTED_AUTHORS} | {
+        (a, "mlx") for a in compat.MLX_TRUSTED_AUTHORS
+    }
+    # One row per distinct author: an author listed in both lanes returns the
+    # same repo id twice, and the duplicate collapses into the GGUF row.
+    assert len(results) == len(set(compat.TRUSTED_AUTHORS) | set(compat.MLX_TRUSTED_AUTHORS))
+
+
+def test_search_ranks_by_relevance_not_popularity(monkeypatch):
+    """ "qwen3.8", "qwen 3.8" and "qwen-3.8" must all surface Qwen3.8 repos
+    first — a hugely-downloaded repo that merely co-matched never outranks a
+    direct name match."""
+    hits = [
+        SearchHit("someone/Totally-Other-Model-GGUF", 999_999, 1, 99, "llama", None, False),
+        SearchHit("finetuner/Distill-of-Qwen3.8-GGUF", 50, 1, 1, "qwen35", None, False),
+        SearchHit("unsloth/Qwen3.8-27B-GGUF", 100, 1, 9, "qwen35", None, False),
+    ]
+    monkeypatch.setattr(
+        service.hf_client,
+        "search",
+        lambda query, author, limit, fmt="gguf": list(hits) if fmt == "gguf" else [],
+    )
+    for q in ("qwen3.8", "qwen 3.8", "qwen-3.8", "Qwen3.8"):
+        ids = [r["repo_id"] for r in service.search(query=q, all_of_hf=True)]
+        assert ids == [
+            "unsloth/Qwen3.8-27B-GGUF",  # name starts with the query
+            "finetuner/Distill-of-Qwen3.8-GGUF",  # query inside the name
+            "someone/Totally-Other-Model-GGUF",  # loose match ranks last
+        ], f"wrong order for query {q!r}"
 
 
 # ── service.repo_detail ──────────────────────────────────────────────────────

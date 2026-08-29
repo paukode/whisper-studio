@@ -393,7 +393,7 @@ substep "copying playwright browsers (pw-browsers)"
 rsync -a --delete "$PW_BROWSERS_DIR/" "$RES_DIR/pw-browsers/"
 
 # f.5: backend tree.
-substep "copying backend (server/, static/, skills/, plugins/, configs)"
+substep "copying backend (server/, static/, skills/, plugins/, docs/, configs)"
 mkdir -p "$RES_DIR/backend"
 rsync -a --delete \
     --exclude '__pycache__/' \
@@ -409,6 +409,7 @@ rsync -a --delete \
     "$REPO_ROOT/static" \
     "$REPO_ROOT/skills" \
     "$REPO_ROOT/plugins" \
+    "$REPO_ROOT/docs" \
     "$RES_DIR/backend/"
 cp "$REPO_ROOT/config.example.json" \
    "$REPO_ROOT/pricing.example.json" \

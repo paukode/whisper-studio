@@ -161,11 +161,11 @@ async def run_turn(ctx: TurnContext):
     from server.chat.attachment_context import ensure_attachments_present
     from server.chat.budget import make_budget_tool_result
     from server.chat.compaction import (
-        COMPACT_TRIGGER_CHARS,
         compact_messages_with_claude,
         ensure_valid_start,
         estimate_message_size,
         sanitize_tool_pairs,
+        thresholds_for,
     )
     from server.chat.infra import _estimate_cost
     from server.chat.tool_pool import _is_tool_concurrent_safe
@@ -448,7 +448,7 @@ async def run_turn(ctx: TurnContext):
                         ),
                     }
                 )
-                if estimate_message_size(messages) > COMPACT_TRIGGER_CHARS:
+                if estimate_message_size(messages) > thresholds_for(ctx.model_key)[0]:
                     messages = await compact_messages_with_claude(
                         messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
                     )
@@ -654,9 +654,9 @@ async def run_turn(ctx: TurnContext):
             # truth (the per-round usage crossed 80% of the window).
             from server.chat.loop_hints import should_nudge_compaction
 
-            if estimate_message_size(messages) > COMPACT_TRIGGER_CHARS or should_nudge_compaction(
-                _scope_id
-            ):
+            if estimate_message_size(messages) > thresholds_for(ctx.model_key)[
+                0
+            ] or should_nudge_compaction(_scope_id):
                 messages = await compact_messages_with_claude(
                     messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
                 )

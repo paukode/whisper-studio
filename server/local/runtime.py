@@ -123,8 +123,35 @@ def gguf_path(key: str) -> str:
     return os.path.join(MODELS_DIR, m["dir"], m["filename"])
 
 
+def is_mlx_model(key: str | None) -> bool:
+    """Whether a registry key is an MLX-format model (engine=mlx)."""
+    return is_local_model(key) and LOCAL_MODELS[key].get("engine") == "mlx"
+
+
+# Written into an MLX model's snapshot dir once the download is COMPLETE.
+# A snapshot is a directory of many files with no natural "last file", and
+# config.json lands long before the safetensors — so presence of any repo file
+# cannot be the installed-sentinel the way the GGUF file itself is. The models
+# manager uses the same marker (catalog sentinel_rel).
+MLX_COMPLETE_MARKER = ".download_complete"
+
+
+def mlx_dir(key: str) -> str:
+    m = LOCAL_MODELS[key]
+    return os.path.join(MODELS_DIR, m["dir"])
+
+
+def model_path(key: str) -> str:
+    """The path the engine loads: the GGUF file, or the MLX snapshot dir."""
+    return mlx_dir(key) if is_mlx_model(key) else gguf_path(key)
+
+
 def is_downloaded(key: str) -> bool:
-    return is_local_model(key) and os.path.exists(gguf_path(key))
+    if not is_local_model(key):
+        return False
+    if is_mlx_model(key):
+        return os.path.exists(os.path.join(mlx_dir(key), MLX_COMPLETE_MARKER))
+    return os.path.exists(gguf_path(key))
 
 
 def _shard_filenames(filename: str) -> list[str]:
@@ -144,9 +171,15 @@ def _shard_filenames(filename: str) -> list[str]:
 
 
 def ensure_downloaded(key: str) -> str:
-    """Fetch the GGUF into models/ if absent. Returns the local path (first shard
-    for a sharded model). Downloads every shard of a sharded model, since
-    llama-server needs them all present."""
+    """Fetch the weights into models/ if absent, returning the load path.
+
+    GGUF: the file (first shard for a sharded model; every shard is fetched,
+    since llama-server needs them all present). MLX: the snapshot directory —
+    the whole repo is fetched and a completion marker written last, so a
+    half-downloaded snapshot never reads as installed.
+    """
+    if is_mlx_model(key):
+        return _ensure_mlx_downloaded(key)
     path = gguf_path(key)
     if os.path.exists(path):
         # Positive confirmation so "did it download or just load?" is obvious.
@@ -170,15 +203,32 @@ def ensure_downloaded(key: str) -> str:
     return path
 
 
+def _ensure_mlx_downloaded(key: str) -> str:
+    local_dir = mlx_dir(key)
+    marker = os.path.join(local_dir, MLX_COMPLETE_MARKER)
+    if os.path.exists(marker):
+        log.info("Local model %s already present at %s — loading from disk.", key, local_dir)
+        return local_dir
+    from huggingface_hub import snapshot_download
+
+    m = LOCAL_MODELS[key]
+    log.info("Downloading MLX model %s (%s) into %s ...", key, m["repo_id"], local_dir)
+    snapshot_download(repo_id=m["repo_id"], local_dir=local_dir)
+    with open(marker, "w") as f:
+        f.write("")
+    log.info("Local model %s download complete.", key)
+    return local_dir
+
+
 def is_loaded(key: str | None = None) -> bool:
     """Whether a local model (or ``key`` specifically) is currently resident.
 
     Residency is a property of the model server, not this process — the weights
     were never in here.
     """
-    from server.local import llama_server
+    from server.local import serving
 
-    resident = llama_server.resident_key()
+    resident = serving.resident_key()
     if resident is None:
         return False
     return True if key is None else resident == key
@@ -188,9 +238,9 @@ def loaded_key() -> str | None:
     """The key of the currently resident local model, or None.
     Lets callers follow the active model (e.g. the one-shot map step) instead of
     pinning a fixed key and evicting the resident one to load it."""
-    from server.local import llama_server
+    from server.local import serving
 
-    return llama_server.resident_key()
+    return serving.resident_key()
 
 
 def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) -> str:
@@ -204,9 +254,9 @@ def complete(key: str, system_prompt: str, user: str, max_tokens: int = 1500) ->
     """
     if not is_local_model(key):
         return ""
-    from server.local import llama_server
+    from server.local import serving
 
-    return llama_server.complete(key, system_prompt, user, max_tokens)
+    return serving.complete(key, system_prompt, user, max_tokens)
 
 
 _LOCAL_SYSTEM_BASE = (

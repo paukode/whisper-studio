@@ -7,7 +7,6 @@ import {
   installRecommendedModel,
   searchModels,
   type BrowseResult,
-  type BrowseSort,
   type InstallResult,
   type MemFit,
   type RecommendedModel,
@@ -78,6 +77,28 @@ const ChatOnlyChip: React.FC = () => (
   </span>
 );
 
+/** Green chip for a repo the user already has (some quant installed). */
+const InstalledChip: React.FC = () => (
+  <span
+    className="model-local-badge model-installed-badge"
+    style={{ color: 'var(--accent-live, #34c77b)' }}
+    title="Already in your models — no need to download it again."
+  >
+    installed
+  </span>
+);
+
+/** Amber chip for a repo whose download is running or queued right now. */
+const DownloadingChip: React.FC = () => (
+  <span
+    className="model-local-badge"
+    style={{ color: 'var(--accent-warn, #b8860b)' }}
+    title="Download in progress — track it under Models > Chat."
+  >
+    downloading…
+  </span>
+);
+
 /** The note shown under a row for a model below the agentic size threshold.
  *  Informational rather than an error: the download is allowed and the model
  *  works fine as a chat model, it just won't be given the tool pool. */
@@ -97,6 +118,10 @@ async function refreshAfterInstall(queryClient: QueryClient): Promise<void> {
   await queryClient.invalidateQueries({ queryKey: ['models-manager-catalog'] });
   await queryClient.invalidateQueries({ queryKey: ['models-manager-status'] });
   await queryClient.invalidateQueries({ queryKey: ['models-disabled'] });
+  // The browse lists carry install/download state per row now — refetch them
+  // so the row just clicked flips to "downloading" instead of staying clickable.
+  await queryClient.invalidateQueries({ queryKey: ['model-browse-search'] });
+  await queryClient.invalidateQueries({ queryKey: ['model-browse-recommended'] });
   await useSettingsStore.getState().loadModels();
 }
 
@@ -137,10 +162,14 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   const [installing, setInstalling] = useState(false);
   const queryClient = useQueryClient();
   const addToast = useUIStore((s) => s.addToast);
+  // An MLX repo IS one quant (the tag is in the repo name): no per-file picker,
+  // and the install unit is the whole snapshot. Detail still fetches lazily —
+  // on hover/focus of the Download button — to show size + fit before download.
+  const isMlx = result.format === 'mlx';
 
   const detailQuery = useQuery({
-    queryKey: ['model-browse-repo', result.repo_id],
-    queryFn: () => fetchRepoDetail(result.repo_id),
+    queryKey: ['model-browse-repo', result.repo_id, result.format ?? 'gguf'],
+    queryFn: () => fetchRepoDetail(result.repo_id, result.format ?? 'gguf'),
     enabled: activated,
   });
 
@@ -150,18 +179,32 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
   const quants = detail?.quants ?? [];
   const effectiveSelected =
     selected ?? detail?.recommended_filename ?? quants[0]?.filename ?? null;
-  const selectedQuant = quants.find((q) => q.filename === effectiveSelected);
+  const selectedQuant = isMlx ? quants[0] : quants.find((q) => q.filename === effectiveSelected);
   const selectedFit = selectedQuant?.fit;
   // Known from the search row alone, so the chip and note render before the
   // quant detail is ever fetched; the detail refines it once it lands.
   const toolCapable = detail?.tool_capable ?? result.tool_capable;
+  // What the button should say for the CURRENT selection: an MLX repo is one
+  // unit so the row state applies directly; a GGUF repo matches per quant, so
+  // another quant of an installed repo stays downloadable.
+  const selectionState: 'installed' | 'downloading' | null = isMlx
+    ? (result.install_state ?? null)
+    : effectiveSelected && (result.installed_filenames ?? []).includes(effectiveSelected)
+      ? 'installed'
+      : effectiveSelected && (result.downloading_filenames ?? []).includes(effectiveSelected)
+        ? 'downloading'
+        : null;
   const activate = () => setActivated(true);
 
   const onInstall = async () => {
-    if (!effectiveSelected) return;
+    if (!isMlx && !effectiveSelected) return;
     setInstalling(true);
     try {
-      const res = await installModel({ repo_id: result.repo_id, filename: effectiveSelected });
+      const res = await installModel({
+        repo_id: result.repo_id,
+        filename: isMlx ? '' : (effectiveSelected as string),
+        format: result.format,
+      });
       addToast(installToast(res));
       await refreshAfterInstall(queryClient);
     } catch (e) {
@@ -202,44 +245,74 @@ const RepoRow: React.FC<{ result: BrowseResult }> = ({ result }) => {
                 {result.param_size}
               </span>
             )}
+            {result.install_state === 'installed' && <InstalledChip />}
+            {result.install_state === 'downloading' && <DownloadingChip />}
             {toolCapable === false && <ChatOnlyChip />}
           </div>
           <div className="settings-item-desc">
+            {(result.format ?? 'gguf').toUpperCase()} ·{' '}
             {result.arch ? `${result.arch} · ` : ''}
             {humanCount(result.downloads)} downloads
             {result.gated ? ' · gated (needs license acceptance)' : ''}
           </div>
         </div>
         <div className="settings-item-actions" style={{ gap: 8 }}>
-          <label htmlFor={selectId} className="sr-only">
-            Choose a quant for {result.name}
-          </label>
-          <select
-            id={selectId}
-            className="settings-input model-quant-select"
-            value={effectiveSelected ?? ''}
-            disabled={installing}
-            onFocus={activate}
-            onMouseDown={activate}
-            onChange={(e) => setSelected(e.target.value)}
-          >
-            {!hasQuants && <option value="">{placeholder}</option>}
-            {quants.map((qopt) => (
-              <option key={qopt.filename} value={qopt.filename}>
-                {qopt.quant} · {humanSize(qopt.size_bytes)}
-                {qopt.is_sharded ? ` · ${qopt.shard_count} shards` : ''}
-                {qopt.recommended ? ' (recommended)' : ''}
-                {fitSuffix(qopt.fit)}
-              </option>
-            ))}
-          </select>
+          {isMlx ? (
+            // One repo = one quant: show size + fit as text once the lazy
+            // detail lands (hovering the button triggers it), no picker.
+            selectedQuant && (
+              <span style={{ fontSize: 12, color: 'var(--text-secondary, #888)' }}>
+                {selectedQuant.quant} · {humanSize(selectedQuant.size_bytes)}
+                {fitSuffix(selectedQuant.fit)}
+              </span>
+            )
+          ) : (
+            <>
+              <label htmlFor={selectId} className="sr-only">
+                Choose a quant for {result.name}
+              </label>
+              <select
+                id={selectId}
+                className="settings-input model-quant-select"
+                value={effectiveSelected ?? ''}
+                disabled={installing}
+                onFocus={activate}
+                onMouseDown={activate}
+                onChange={(e) => setSelected(e.target.value)}
+              >
+                {!hasQuants && <option value="">{placeholder}</option>}
+                {quants.map((qopt) => (
+                  <option key={qopt.filename} value={qopt.filename}>
+                    {qopt.quant} · {humanSize(qopt.size_bytes)}
+                    {qopt.is_sharded ? ` · ${qopt.shard_count} shards` : ''}
+                    {qopt.recommended ? ' (recommended)' : ''}
+                    {fitSuffix(qopt.fit)}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
           <button
             className="btn btn-primary btn-sm"
             type="button"
-            disabled={installing || !hasQuants || !effectiveSelected}
+            disabled={
+              installing ||
+              selectionState !== null ||
+              (!isMlx && (!hasQuants || !effectiveSelected))
+            }
+            onFocus={activate}
+            onMouseEnter={activate}
             onClick={() => void onInstall()}
           >
-            {installing ? 'Adding…' : selectedFit === 'too_big' ? 'Download anyway' : 'Download'}
+            {selectionState === 'installed'
+              ? 'Installed'
+              : selectionState === 'downloading'
+                ? 'Downloading…'
+                : installing
+                  ? 'Adding…'
+                  : selectedFit === 'too_big'
+                    ? 'Download anyway'
+                    : 'Download'}
           </button>
         </div>
       </div>
@@ -322,10 +395,16 @@ const RecommendedRow: React.FC<{ model: RecommendedModel }> = ({ model }) => {
           <button
             className="btn btn-primary btn-sm"
             type="button"
-            disabled={installing}
+            disabled={installing || model.downloading}
             onClick={() => void onInstall()}
           >
-            {installing ? 'Adding…' : model.fit === 'too_big' ? 'Download anyway' : 'Download'}
+            {model.downloading
+              ? 'Downloading…'
+              : installing
+                ? 'Adding…'
+                : model.fit === 'too_big'
+                  ? 'Download anyway'
+                  : 'Download'}
           </button>
         )}
       </div>
@@ -339,6 +418,10 @@ const RecommendedSection: React.FC = () => {
   const query = useQuery({
     queryKey: ['model-browse-recommended'],
     queryFn: fetchRecommendedModels,
+    // While a recommendation is downloading, poll so the badge flips to
+    // "Installed" without a manual refresh.
+    refetchInterval: (query) =>
+      query.state.data?.recommended?.some((m) => m.downloading) ? 4000 : false,
   });
   const models = query.data?.recommended ?? [];
   if (query.isLoading || models.length === 0) return null;
@@ -360,9 +443,10 @@ const RecommendedSection: React.FC = () => {
 };
 
 /**
- * Settings > Models > Discover: search Hugging Face for GGUF chat models and
- * install one with a click. Only models the bundled engine can run are shown
- * (the backend gates on architecture). Downloads reuse the manager queue, so
+ * Settings > Models > Discover: search Hugging Face for GGUF and MLX chat
+ * models in one merged, relevance-ranked list and install one with a click.
+ * Only models the local engines can run are shown (the backend gates on
+ * architecture per format). Downloads reuse the manager queue, so
  * progress/cancel appear under Models > Chat and the model shows in the composer
  * picker once installed. Server state lives in react-query (no
  * zustand-fresh-object selectors).
@@ -370,15 +454,18 @@ const RecommendedSection: React.FC = () => {
 export const ModelBrowser: React.FC = () => {
   const [term, setTerm] = useState('');
   const [submitted, setSubmitted] = useState('');
-  const [sort, setSort] = useState<BrowseSort>('trending');
   const [allOfHf, setAllOfHf] = useState(false);
 
   const searchQuery = useQuery({
-    queryKey: ['model-browse-search', submitted, sort, allOfHf],
-    queryFn: () => searchModels({ q: submitted, sort, all: allOfHf }),
-    // Always run — an empty-term browse is a useful default top list for BOTH
-    // sorts (trending and most-downloaded). The sort/scope live in the query
-    // key, so switching either refetches without touching the search term.
+    queryKey: ['model-browse-search', submitted, allOfHf],
+    queryFn: () => searchModels({ q: submitted, all: allOfHf }),
+    // Always run — an empty-term browse is a useful default top list (the
+    // backend ranks it by trending; a typed query ranks by relevance). The
+    // scope lives in the query key, so toggling it refetches without touching
+    // the search term.
+    // While a row is downloading, poll so it flips to "installed" by itself.
+    refetchInterval: (query) =>
+      query.state.data?.results?.some((r) => r.install_state === 'downloading') ? 4000 : false,
   });
 
   const results = searchQuery.data?.results ?? [];
@@ -393,7 +480,7 @@ export const ModelBrowser: React.FC = () => {
       <h4 className="models-section-title">Discover models</h4>
       <p className="models-section-desc">
         Download an on-device model. Start with a Recommended pick, or search Hugging
-        Face for any GGUF chat model the local engine can run.
+        Face for any GGUF or MLX chat model the local engines can run.
       </p>
 
       <RecommendedSection />
@@ -411,15 +498,6 @@ export const ModelBrowser: React.FC = () => {
           style={{ flex: 1, minWidth: 180 }}
           className="settings-input"
         />
-        <select
-          value={sort}
-          onChange={(e) => setSort(e.target.value as BrowseSort)}
-          aria-label="Sort order"
-          className="settings-input"
-        >
-          <option value="trending">Trending</option>
-          <option value="downloads">Most downloaded</option>
-        </select>
         <button className="btn btn-primary btn-sm" type="submit">
           Search
         </button>

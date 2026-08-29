@@ -1,15 +1,20 @@
 import { del, get, post } from '@/api/client';
 
 /** In-app model browser (/api/models/browse/*) — Settings > Models > Discover.
- *  Search Hugging Face for GGUF chat models, pick a quant, install it as a
- *  config-driven local model that then appears in the Models list and the
- *  composer picker. */
+ *  Search Hugging Face for GGUF or MLX chat models, pick a quant (GGUF; an MLX
+ *  repo IS one quant), install it as a config-driven local model that then
+ *  appears in the Models list and the composer picker. */
+
+/** The two on-device weight formats: GGUF runs on llama-server, MLX on mlx_lm. */
+export type BrowseFormat = 'gguf' | 'mlx';
 
 export interface BrowseResult {
   repo_id: string;
   author: string;
   name: string;
   label: string;
+  /** Which lane this row came from; MLX rows install whole-repo, no quant picker. */
+  format?: BrowseFormat;
   downloads: number | null;
   likes: number | null;
   trending_score: number | null;
@@ -25,6 +30,14 @@ export interface BrowseResult {
   gated: boolean;
   /** Always true in returned rows — the backend hides unsupported archs. */
   supported: boolean;
+  /** Whether some quant of this repo is already installed or downloading, so
+   *  the row can say so instead of letting the user queue the same multi-GB
+   *  download twice. Same source of truth as the Chat tab's download list. */
+  install_state?: 'installed' | 'downloading' | null;
+  /** The exact installed / in-flight quant filenames (GGUF; empty for MLX,
+   *  where the repo itself is the unit), so the picker can mark per quant. */
+  installed_filenames?: string[];
+  downloading_filenames?: string[];
 }
 
 /** Whether a quant can run alongside this machine's other resident models:
@@ -50,6 +63,7 @@ export interface BrowseQuant {
 
 export interface BrowseRepoDetail {
   repo_id: string;
+  format?: BrowseFormat;
   arch: string | null;
   supported: boolean;
   context_length: number | null;
@@ -105,6 +119,8 @@ export interface RecommendedModel {
   supports_tools: boolean;
   /** Already present on disk (from a prior install or release). */
   downloaded: boolean;
+  /** Download currently running or queued for this model. */
+  downloading?: boolean;
   size_bytes?: number | null;
   fit?: MemFit | null;
   /** Free memory this model needs to run: its own size plus llama.cpp's
@@ -112,32 +128,30 @@ export interface RecommendedModel {
   needed_bytes?: number | null;
 }
 
-export type BrowseSort = 'trending' | 'downloads';
-
-export const searchModels = (params: {
-  q?: string;
-  author?: string;
-  sort?: BrowseSort;
-  all?: boolean;
-}) => {
+/** Search both weight formats at once; the backend ranks by relevance to the
+ *  query (trending when the query is empty). */
+export const searchModels = (params: { q?: string; author?: string; all?: boolean }) => {
   const qs = new URLSearchParams();
   if (params.q) qs.set('q', params.q);
   if (params.author) qs.set('author', params.author);
-  if (params.sort) qs.set('sort', params.sort);
   if (params.all) qs.set('all', '1');
   return get<{ results: BrowseResult[]; count: number }>(
     `/api/models/browse/search?${qs.toString()}`,
   );
 };
 
-export const fetchRepoDetail = (repoId: string) =>
-  get<BrowseRepoDetail>(`/api/models/browse/repo/${repoId}`);
+export const fetchRepoDetail = (repoId: string, format: BrowseFormat = 'gguf') =>
+  get<BrowseRepoDetail>(
+    `/api/models/browse/repo/${repoId}${format !== 'gguf' ? `?fmt=${format}` : ''}`,
+  );
 
 export const installModel = (body: {
   repo_id: string;
+  /** Empty for an MLX install — the whole snapshot is the unit. */
   filename: string;
   label?: string;
   n_ctx?: number;
+  format?: BrowseFormat;
 }) => post<InstallResult>('/api/models/browse/install', body);
 
 /** The curated Recommended catalog (Settings > Models > Discover). */

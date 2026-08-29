@@ -195,10 +195,14 @@ def _local_chat_entries() -> list[ModelEntry]:
     """One entry per on-device chat model in the config-driven registry.
 
     Re-read on every call (the registry is a live built-ins + config merge).
-    The GGUF file itself is the sentinel — the same check as
-    ``server.local.runtime.is_downloaded``.
+    The sentinel matches ``server.local.runtime.is_downloaded``: for GGUF the
+    weight file itself, for MLX the completion marker ensure_downloaded writes
+    after the whole snapshot lands (config.json arrives long before the
+    safetensors, so no repo file can be the sentinel). MLX entries carry no
+    ``gguf_filename``, which also makes the size estimate sum the whole repo.
     """
     from server.local.registry import local_models
+    from server.local.runtime import MLX_COMPLETE_MARKER
 
     static_keys = {e.key for e in _static_entries()}
     out: list[ModelEntry] = []
@@ -206,6 +210,7 @@ def _local_chat_entries() -> list[ModelEntry]:
         if key in static_keys:  # defensive: a config key must not shadow a built-in entry
             log.warning("Local model key %r collides with a catalog entry; skipping.", key)
             continue
+        is_mlx = m.get("engine") == "mlx"
         out.append(
             ModelEntry(
                 key=key,
@@ -213,11 +218,11 @@ def _local_chat_entries() -> list[ModelEntry]:
                 group=GROUP_LOCAL_CHAT,
                 repo_id=m["repo_id"],
                 dir_name=m["dir"],
-                sentinel_rel=m["filename"],
+                sentinel_rel=MLX_COMPLETE_MARKER if is_mlx else m["filename"],
                 ensure_module="server.local.runtime",
                 ensure_func="ensure_downloaded",
                 ensure_arg=key,
-                gguf_filename=m["filename"],
+                gguf_filename=None if is_mlx else m["filename"],
             )
         )
     return out

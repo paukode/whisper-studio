@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseWsFileHref } from './wsFileLinks';
+import { parseDocsPageHref, parseWsFileHref } from './wsFileLinks';
 import { renderMarkdownSafe } from './sanitizeHtml';
 
 describe('parseWsFileHref', () => {
@@ -70,5 +70,32 @@ describe('citation link survives marked + DOMPurify', () => {
     div.innerHTML = html;
     const href = div.querySelector('a')?.getAttribute('href') ?? '';
     expect(parseWsFileHref(href)).toEqual({ path: '/w/report.md', openMode: 'os' });
+  });
+});
+
+describe('parseDocsPageHref', () => {
+  it('parses a page with a heading anchor', () => {
+    expect(parseDocsPageHref('#docspage=tut-cron.html&h=create-a-job')).toEqual({
+      page: 'tut-cron.html',
+      anchor: 'create-a-job',
+    });
+  });
+
+  it('parses a bare page and url-decodes it', () => {
+    expect(parseDocsPageHref('#docspage=ref-slash-commands.html')).toEqual({
+      page: 'ref-slash-commands.html',
+    });
+    expect(parseDocsPageHref('#docspage=tut-cron.html')).toEqual({ page: 'tut-cron.html' });
+  });
+
+  it('rejects traversal, nested paths, and non-html targets', () => {
+    expect(parseDocsPageHref('#docspage=..%2F..%2Fetc%2Fpasswd')).toBeNull();
+    expect(parseDocsPageHref('#docspage=assets%2Fsite.js')).toBeNull();
+    expect(parseDocsPageHref('#docspage=%2Fabs.html')).toBeNull();
+  });
+
+  it('returns null for non-docs hrefs', () => {
+    expect(parseDocsPageHref('#wsfile=a.md')).toBeNull();
+    expect(parseDocsPageHref('https://example.com')).toBeNull();
   });
 });

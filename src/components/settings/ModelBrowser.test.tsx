@@ -94,6 +94,56 @@ const OVERSIZED_REPO_DETAIL = {
   ],
 };
 
+
+// One MLX search row: a whole-repo install unit — no quant picker, format
+// carried on the row so the install call and detail fetch use the MLX lane.
+const MLX_SEARCH = {
+  count: 1,
+  results: [
+    {
+      repo_id: 'mlx-community/Qwen3-14B-4bit',
+      author: 'mlx-community',
+      name: 'Qwen3-14B-4bit',
+      label: 'Qwen3-14B-4bit',
+      format: 'mlx',
+      downloads: 12000,
+      likes: 7,
+      trending_score: 3,
+      arch: 'qwen3',
+      param_size: '14B',
+      tool_capable: true,
+      context_length: null,
+      gated: false,
+      supported: true,
+    },
+  ],
+};
+
+const MLX_REPO_DETAIL = {
+  repo_id: 'mlx-community/Qwen3-14B-4bit',
+  format: 'mlx',
+  arch: 'qwen3',
+  supported: true,
+  context_length: null,
+  has_chat_template: true,
+  gated: false,
+  recommended_filename: '',
+  mem_total_bytes: 18_000_000_000,
+  mem_budget_bytes: 9_500_000_000,
+  mem_reserved_bytes: 4_000_000_000,
+  quants: [
+    {
+      quant: '4bit',
+      filename: '',
+      size_bytes: 8_200_000_000,
+      is_sharded: false,
+      shard_count: 1,
+      recommended: true,
+      fit: 'ok',
+    },
+  ],
+};
+
 import { ModelBrowser } from './ModelBrowser';
 import { useUIStore } from '@/stores/uiStore';
 
@@ -194,29 +244,19 @@ describe('ModelBrowser (Discover)', () => {
     );
   });
 
-  it('browses an empty-term default list for BOTH sorts and refetches on sort change', async () => {
+  it('browses an empty-term default list up front, with no sort or format params', async () => {
     renderBrowser();
-    // Mount runs the default trending browse with NO search term.
+    // Mount runs the default browse with NO search term (the backend ranks it
+    // by trending; a typed query ranks by relevance server-side).
     await screen.findByText('Qwen3-0.6B-GGUF');
     await waitFor(() =>
-      expect(api.get).toHaveBeenCalledWith(
-        expect.stringMatching(/\/api\/models\/browse\/search\?.*sort=trending/),
-      ),
+      expect(api.get).toHaveBeenCalledWith(expect.stringContaining('/api/models/browse/search')),
     );
-    // The empty-term browse must NOT include a q param.
+    // The empty-term browse must NOT include a q param, and the removed
+    // sort/format controls must never reach the wire.
     expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining('q='));
-
-    // Switching to Most downloaded refetches with the new sort, still empty term.
-    fireEvent.change(screen.getByRole('combobox', { name: /sort order/i }), {
-      target: { value: 'downloads' },
-    });
-    await waitFor(() =>
-      expect(api.get).toHaveBeenCalledWith(
-        expect.stringMatching(/\/api\/models\/browse\/search\?.*sort=downloads/),
-      ),
-    );
-    // Results still render (the query is no longer gated behind a search term).
-    expect(await screen.findByText('Qwen3-0.6B-GGUF')).toBeInTheDocument();
+    expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining('sort='));
+    expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining('fmt='));
   });
 
   it("warns and offers 'Download anyway' when the selected quant is too big for this machine", async () => {
@@ -387,5 +427,145 @@ describe('ModelBrowser (Discover)', () => {
       expect(toast?.message).toBeDefined();
       expect(toast?.message).not.toMatch(/Tool calling is off/i);
     });
+  });
+
+  it('renders merged GGUF and MLX rows: quant picker for GGUF, whole-repo for MLX', async () => {
+    const MERGED = { count: 2, results: [...SEARCH.results, ...MLX_SEARCH.results] };
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(MERGED);
+      if (url.startsWith('/api/models/browse/repo/')) return Promise.resolve(MLX_REPO_DETAIL);
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    renderBrowser();
+    // Both formats arrive in ONE result list — no format picker anywhere.
+    await screen.findByText('Qwen3-0.6B-GGUF');
+    await screen.findByText('Qwen3-14B-4bit');
+    expect(screen.queryByRole('combobox', { name: /weight format/i })).not.toBeInTheDocument();
+    // The GGUF row keeps its quant dropdown; the MLX row has none — the repo
+    // IS the quant.
+    expect(
+      screen.getByRole('combobox', { name: /choose a quant for Qwen3-0.6B-GGUF/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('combobox', { name: /choose a quant for Qwen3-14B-4bit/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('installs an MLX repo whole (no filename) through the MLX lane', async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(MLX_SEARCH);
+      if (url.startsWith('/api/models/browse/repo/')) return Promise.resolve(MLX_REPO_DETAIL);
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    renderBrowser();
+    await screen.findByText('Qwen3-14B-4bit');
+
+    const button = screen.getByRole('button', { name: 'Download' });
+    // Hovering the button triggers the lazy detail fetch (size + fit preview).
+    fireEvent.mouseEnter(button);
+    await waitFor(() =>
+      expect(api.get).toHaveBeenCalledWith(
+        expect.stringContaining('/api/models/browse/repo/mlx-community/Qwen3-14B-4bit?fmt=mlx'),
+      ),
+    );
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/api/models/browse/install', {
+        repo_id: 'mlx-community/Qwen3-14B-4bit',
+        filename: '',
+        format: 'mlx',
+      }),
+    );
+  });
+
+  it('marks a downloading MLX row and disables its button so it cannot be queued twice', async () => {
+    const downloading = {
+      count: 1,
+      results: [{ ...MLX_SEARCH.results[0], install_state: 'downloading' }],
+    };
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(downloading);
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    renderBrowser();
+    await screen.findByText('Qwen3-14B-4bit');
+    expect(screen.getByText('downloading…')).toBeInTheDocument();
+    const button = screen.getByRole('button', { name: 'Downloading…' });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('marks an installed GGUF quant on the row and per selected quant', async () => {
+    const installed = {
+      count: 1,
+      results: [
+        {
+          ...SEARCH.results[0],
+          install_state: 'installed',
+          installed_filenames: ['Qwen3-0.6B-Q4_K_M.gguf'],
+        },
+      ],
+    };
+    api.get.mockImplementation((url: string) => {
+      if (url.startsWith('/api/models/browse/search')) return Promise.resolve(installed);
+      if (url.startsWith('/api/models/browse/repo/')) return Promise.resolve(REPO_DETAIL);
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    renderBrowser();
+    await screen.findByText('Qwen3-0.6B-GGUF');
+    expect(screen.getByText('installed')).toBeInTheDocument();
+
+    // The recommended (installed) quant pre-selects: button reads Installed
+    // and refuses; the OTHER quant of the same repo stays downloadable.
+    const select = screen.getByRole('combobox', {
+      name: /choose a quant for Qwen3-0\.6B-GGUF/i,
+    }) as HTMLSelectElement;
+    fireEvent.focus(select);
+    await waitFor(() => expect(select.value).toBe('Qwen3-0.6B-Q4_K_M.gguf'));
+    expect(screen.getByRole('button', { name: 'Installed' })).toBeDisabled();
+
+    fireEvent.change(select, { target: { value: 'Qwen3-0.6B-Q2_K.gguf' } });
+    expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+  });
+
+  it('disables a recommended row while its download is in flight', async () => {
+    api.get.mockImplementation((url: string) => {
+      if (url === '/api/models/browse/recommended') {
+        return Promise.resolve({
+          count: 1,
+          recommended: [
+            {
+              key: 'local_gemma',
+              repo_id: 'google/gemma-4-12B-it-qat-q4_0-gguf',
+              author: 'google',
+              name: 'gemma-4-12B-it-qat-q4_0-gguf',
+              label: 'Gemma 4 12B (Local)',
+              filename: 'gemma-4-12b-it-qat-q4_0.gguf',
+              quant: 'Q4_0',
+              param_size: '12B',
+              ctx: 32768,
+              supports_thinking: true,
+              supports_tools: true,
+              downloaded: false,
+              downloading: true,
+              size_bytes: 6_975_879_296,
+            },
+          ],
+        });
+      }
+      if (url.startsWith('/api/models/browse/search'))
+        return Promise.resolve({ count: 0, results: [] });
+      if (url === '/api/models') return Promise.resolve({ models: [], default: '' });
+      return Promise.resolve({});
+    });
+    renderBrowser();
+    await screen.findByText('Gemma 4 12B (Local)');
+    const button = screen.getByRole('button', { name: 'Downloading…' });
+    expect(button).toBeDisabled();
   });
 });

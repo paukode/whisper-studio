@@ -111,6 +111,43 @@ def build_entry(
     return key, entry
 
 
+def build_mlx_entry(
+    repo_id: str,
+    arch: str | None,
+    label: str | None,
+    n_ctx: int | None,
+    header_ctx: int | None = None,
+) -> tuple[str, dict]:
+    """(key, chat_models entry) for a browsed MLX model.
+
+    Mirrors build_entry with the format differences: ``engine: "mlx"``, no
+    ``filename`` (the weights are a whole-repo snapshot), and the quant tag
+    comes from the repo name (an MLX repo IS one quant). Same capability
+    defaults, all overridable in the config editor afterwards. ``header_ctx``
+    is the model's real window from its config.json (max_position_embeddings),
+    fed through the same resolve_ctx policy as a GGUF header.
+
+    The dir gets an ``__mlx`` suffix so it can never collide with the GGUF
+    lane's dir for the same repo — MLX deletes remove the WHOLE directory (no
+    per-file guard is possible for a snapshot), so a shared dir would put the
+    other entry's weights at risk.
+    """
+    quant = compat.parse_mlx_quant(repo_id) or "mlx"
+    key = registry_key(repo_id, quant)
+    entry = {
+        "id": _model_id(repo_id, quant),
+        "label": label or f"{repo_id.split('/')[-1]} (Local MLX)",
+        "is_local": True,
+        "engine": "mlx",
+        "supports_thinking": compat.is_thinking_model(arch, repo_id),
+        "supports_tools": compat.is_agentic_capable(repo_id),
+        "repo_id": repo_id,
+        "dir": f"{_dir_name(repo_id)}__mlx",
+        "ctx": resolve_ctx(n_ctx, header_ctx),
+    }
+    return key, entry
+
+
 def write_entry(key: str, entry: dict) -> None:
     """Merge ONE entry into the USER layer's ``chat_models`` and persist.
 

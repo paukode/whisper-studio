@@ -48,6 +48,11 @@ _TOKEN_RE = re.compile(r"[^\W_]+")
 # untouched. An optional colon tolerates the "@index: question" spelling.
 _INDEX_TRIGGER_RE = re.compile(r"(?:^|(?<=\s))@index\b:?", re.IGNORECASE)
 
+# Explicit "@docs" mention: this turn answers from the app's own manual (the
+# bundled documentation site) instead of the workspace indexes. Same matching
+# rules as @index.
+_DOCS_TRIGGER_RE = re.compile(r"(?:^|(?<=\s))@docs\b:?", re.IGNORECASE)
+
 
 def _tokens(text: str) -> list[str]:
     return _TOKEN_RE.findall(text.replace("'", "").replace("’", "").lower())
@@ -68,6 +73,13 @@ def should_ground(question: str) -> bool:
     return has_content_word(question)
 
 
+def _extract_trigger(pattern: re.Pattern, question: str) -> tuple[bool, str]:
+    if not pattern.search(question):
+        return False, question
+    stripped = pattern.sub("", question)
+    return True, re.sub(r"[ \t]{2,}", " ", stripped).strip()
+
+
 def extract_index_trigger(question: str) -> tuple[bool, str]:
     """Detect and strip an explicit ``@index`` mention.
 
@@ -75,7 +87,10 @@ def extract_index_trigger(question: str) -> tuple[bool, str]:
     verbatim when no marker is present; when one is, every occurrence is
     removed and the leftover double spaces collapsed (newlines preserved).
     """
-    if not _INDEX_TRIGGER_RE.search(question):
-        return False, question
-    stripped = _INDEX_TRIGGER_RE.sub("", question)
-    return True, re.sub(r"[ \t]{2,}", " ", stripped).strip()
+    return _extract_trigger(_INDEX_TRIGGER_RE, question)
+
+
+def extract_docs_trigger(question: str) -> tuple[bool, str]:
+    """Detect and strip an explicit ``@docs`` mention (ask the app manual).
+    Same contract as ``extract_index_trigger``."""
+    return _extract_trigger(_DOCS_TRIGGER_RE, question)

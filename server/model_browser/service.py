@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -17,7 +18,6 @@ from server.model_browser import compat, hf_client, install
 
 log = logging.getLogger("whisper-studio")
 
-_SORTS = {"trending": "trendingScore", "downloads": "downloads"}
 _SEARCH_LIMIT = 30
 _PER_AUTHOR_LIMIT = 12
 
@@ -123,45 +123,141 @@ def _memory_fields() -> dict:
     }
 
 
-def _sort_key(sort: str) -> str:
-    return _SORTS.get(sort, "trendingScore")
+def _norm_fmt(fmt: str | None) -> str:
+    return "mlx" if fmt == "mlx" else "gguf"
+
+
+def _squash(text: str) -> str:
+    """Lowercase with every non-alphanumeric run removed, so "qwen 3.8",
+    "qwen-3.8" and "Qwen3.8" all compare equal."""
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def _relevance_tier(query: str, name: str, repo_id: str) -> int:
+    """How directly a repo matches the typed query, spelling variants folded:
+    3 = the repo name IS the query (or starts with it), 2 = the query appears
+    inside the name, 1 = every query token appears somewhere in the full repo
+    id, 0 = only a loose match (the Hub matched a field we don't score)."""
+    q = _squash(query)
+    if not q:
+        return 0
+    name_sq = _squash(name)
+    if name_sq == q or name_sq.startswith(q):
+        return 3
+    if q in name_sq:
+        return 2
+    tokens = re.findall(r"[a-z0-9]+", query.lower())
+    repo_sq = _squash(repo_id)
+    if tokens and all(t in repo_sq for t in tokens):
+        return 1
+    return 0
+
+
+def _install_annotations(fmt: str) -> dict[str, dict]:
+    """``repo_id -> {"installed": [filenames], "downloading": [filenames]}`` for
+    every registry model of this format, so search rows can say "you already
+    have this" instead of letting the user queue the same multi-GB download
+    twice. Download state comes from the models-manager queue (the SAME source
+    the Chat tab renders). Filenames let the GGUF quant picker mark the exact
+    quant; MLX entries have none (the repo is the unit). Never raises — an
+    annotation failure must not sink the search."""
+    try:
+        from server.local.registry import local_models
+        from server.models_manager import catalog, manager
+
+        by_key = {e.key: e for e in catalog.entries() if e.group == catalog.GROUP_LOCAL_CHAT}
+        out: dict[str, dict] = {}
+        for key, m in local_models().items():
+            if (m.get("engine") == "mlx") != (fmt == "mlx"):
+                continue
+            entry = by_key.get(key)
+            if entry is None:
+                continue
+            state, _err = manager.state_of(entry)
+            slot = out.setdefault(m["repo_id"], {"installed": [], "downloading": []})
+            if state == "installed":
+                slot["installed"].append(m.get("filename") or "")
+            elif state in ("downloading", "queued"):
+                slot["downloading"].append(m.get("filename") or "")
+        return out
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug("Could not annotate install states: %s", e)
+        return {}
+
+
+def _downloading_keys() -> set[str]:
+    """Registry keys whose download is running or queued right now. Lets the
+    Recommended section disable its button mid-download instead of only after
+    the weights land. Never raises."""
+    try:
+        from server.models_manager import catalog, manager
+
+        keys: set[str] = set()
+        for e in catalog.entries():
+            if e.group != catalog.GROUP_LOCAL_CHAT:
+                continue
+            state, _err = manager.state_of(e)
+            if state in ("downloading", "queued"):
+                keys.add(e.key)
+        return keys
+    except Exception as e:  # pragma: no cover - defensive
+        log.debug("Could not read downloading keys: %s", e)
+        return set()
 
 
 def search(
     query: str | None = None,
     author: str | None = None,
-    sort: str = "trending",
     all_of_hf: bool = False,
 ) -> list[dict]:
-    """Search GGUF chat repos, keeping only architectures the engine can run.
+    """Search chat repos across BOTH weight formats at once, keeping only
+    architectures the matching engine can run (GGUF → llama-server,
+    MLX → mlx_lm).
 
     Scope (design §8):
-      * explicit ``author`` → just that author;
-      * default (``all_of_hf`` false) → the trusted-author allowlist, queried in
-        parallel and merged;
-      * ``all_of_hf`` true → one unscoped search across all of HF.
-    Results are de-duped by repo, filtered to SUPPORTED_ARCHS, and ranked by the
-    chosen sort metric (descending).
+      * explicit ``author`` → just that author, both formats;
+      * default (``all_of_hf`` false) → each format's trusted-author allowlist;
+      * ``all_of_hf`` true → one unscoped search per format across all of HF.
+    All shards are queried in parallel and merged. Results are de-duped by
+    repo (GGUF lane first — its per-quant picker is the more flexible
+    install), filtered to each format's supported archs, and ranked by
+    relevance to the typed query with downloads as the tie-break; an empty
+    query ranks by trending instead.
     """
-    sort_key = _sort_key(sort)
-
     if author:
-        hits = hf_client.search(query, author, sort_key, _SEARCH_LIMIT)
+        shards = [("gguf", author), ("mlx", author)]
     elif all_of_hf:
-        hits = hf_client.search(query, None, sort_key, _SEARCH_LIMIT)
+        shards = [("gguf", None), ("mlx", None)]
     else:
-        hits = _search_trusted(query, sort_key)
+        shards = [("gguf", a) for a in compat.TRUSTED_AUTHORS] + [
+            ("mlx", a) for a in compat.MLX_TRUSTED_AUTHORS
+        ]
+    limit = _SEARCH_LIMIT if len(shards) <= 2 else _PER_AUTHOR_LIMIT
 
-    # De-dupe by repo id, keeping the first (highest-ranked) occurrence.
+    hits: list[tuple[str, hf_client.SearchHit]] = []
+    with ThreadPoolExecutor(max_workers=len(shards)) as pool:
+        futures = {pool.submit(hf_client.search, query, a, limit, f): f for f, a in shards}
+        for future, f in futures.items():
+            try:
+                hits.extend((f, h) for h in future.result())
+            except Exception as e:  # pragma: no cover - defensive
+                log.debug("Search shard failed (fmt=%s): %s", f, e)
+
+    # GGUF hits ahead of MLX so a repo publishing both formats de-dupes into
+    # the lane with the per-quant picker (stable sort keeps shard order).
+    hits.sort(key=lambda pair: pair[0] != "gguf")
+
+    # De-dupe by repo id, keeping the first occurrence.
     seen: set[str] = set()
     out: list[dict] = []
-    for h in hits:
+    for fmt, h in hits:
         if h.repo_id in seen:
             continue
         seen.add(h.repo_id)
         # Arch gate: the whole point of the browser is to not offer a model that
         # fails at load. An arch we don't recognize as supported is dropped.
-        if not compat.arch_supported(h.arch):
+        arch_ok = compat.mlx_arch_supported if fmt == "mlx" else compat.arch_supported
+        if not arch_ok(h.arch):
             continue
         author_name, _, name = h.repo_id.partition("/")
         out.append(
@@ -170,6 +266,7 @@ def search(
                 "author": author_name,
                 "name": name or h.repo_id,
                 "label": name or h.repo_id,
+                "format": fmt,
                 "downloads": h.downloads,
                 "likes": h.likes,
                 "trending_score": h.trending_score,
@@ -185,31 +282,37 @@ def search(
             }
         )
 
-    rank = "trending_score" if sort_key == "trendingScore" else "downloads"
-    out.sort(key=lambda r: (r.get(rank) or 0), reverse=True)
+    annotations = {f: _install_annotations(f) for f in ("gguf", "mlx")}
+    for row in out:
+        ann = annotations[row["format"]].get(row["repo_id"], {})
+        installed = ann.get("installed") or []
+        downloading = ann.get("downloading") or []
+        row["installed_filenames"] = installed
+        row["downloading_filenames"] = downloading
+        row["install_state"] = "installed" if installed else "downloading" if downloading else None
+
+    if query and query.strip():
+        out.sort(
+            key=lambda r: (
+                -_relevance_tier(query, r["name"], r["repo_id"]),
+                -(r.get("downloads") or 0),
+            )
+        )
+    else:
+        out.sort(key=lambda r: (r.get("trending_score") or 0), reverse=True)
     return out[:_SEARCH_LIMIT]
 
 
-def _search_trusted(query: str | None, sort_key: str) -> list[hf_client.SearchHit]:
-    """Query each trusted author in parallel and flatten the results."""
-    authors = compat.TRUSTED_AUTHORS
-    results: list[hf_client.SearchHit] = []
-    with ThreadPoolExecutor(max_workers=len(authors)) as pool:
-        futures = [
-            pool.submit(hf_client.search, query, a, sort_key, _PER_AUTHOR_LIMIT) for a in authors
-        ]
-        for f in futures:
-            try:
-                results.extend(f.result())
-            except Exception as e:  # pragma: no cover - defensive
-                log.debug("Trusted-author search shard failed: %s", e)
-    return results
-
-
-def repo_detail(repo_id: str) -> dict:
+def repo_detail(repo_id: str, fmt: str = "gguf") -> dict:
     """The quant picker for one repo: supported flag, arch, context length, and
     one row per quant (shards folded, mmproj hidden, recommended pre-selected,
-    each carrying a fit verdict for the machine this server runs on)."""
+    each carrying a fit verdict for the machine this server runs on).
+
+    An MLX repo IS one quant (the tag is in the repo name), so its detail
+    carries a single pseudo-option whose size is the whole snapshot.
+    """
+    if _norm_fmt(fmt) == "mlx":
+        return _mlx_repo_detail(repo_id)
     meta = hf_client.repo_gguf_meta(repo_id)
     files = hf_client.repo_files(repo_id)
     options = compat.group_gguf_files(files)
@@ -219,6 +322,7 @@ def repo_detail(repo_id: str) -> dict:
     reserved = mem["mem_reserved_bytes"]
     return {
         "repo_id": repo_id,
+        "format": "gguf",
         "arch": meta.arch,
         "supported": compat.arch_supported(meta.arch),
         "context_length": meta.context_length,
@@ -245,15 +349,55 @@ def repo_detail(repo_id: str) -> dict:
     }
 
 
+def _mlx_repo_detail(repo_id: str) -> dict:
+    model_type, mlx_tagged = hf_client.repo_mlx_meta(repo_id)
+    files = hf_client.repo_files(repo_id)
+    total_size = sum(size for _name, size in files)
+    quant = compat.parse_mlx_quant(repo_id) or "MLX"
+    mem = _memory_fields()
+    fit = compat.fit_verdict(total_size or None, mem["mem_total_bytes"], mem["mem_reserved_bytes"])
+    return {
+        "repo_id": repo_id,
+        "format": "mlx",
+        "arch": model_type,
+        "supported": compat.mlx_arch_supported(model_type) and mlx_tagged,
+        "context_length": None,
+        "has_chat_template": True,  # converted MLX chat repos carry the template
+        "gated": hf_client.repo_is_gated(repo_id),
+        # The whole snapshot is the one installable option; filename "" tells
+        # the UI there is no per-file choice to make.
+        "recommended_filename": "",
+        "param_size": compat.param_size_label(repo_id),
+        "tool_capable": compat.is_agentic_capable(repo_id),
+        "agentic_min_params_b": compat.AGENTIC_MIN_PARAMS_B,
+        **mem,
+        "quants": [
+            {
+                "quant": quant,
+                "filename": "",
+                "size_bytes": total_size,
+                "is_sharded": False,
+                "shard_count": 1,
+                "recommended": True,
+                "fit": fit,
+                "needed_bytes": compat.needed_bytes(total_size or None),
+            }
+        ],
+    }
+
+
 def install_model(
     repo_id: str,
     filename: str,
     label: str | None = None,
     n_ctx: int | None = None,
+    fmt: str = "gguf",
 ) -> dict:
     """Write the config entry and enqueue the download. Returns the new key +
     the download start result. Raises InstallError on an unsupported/invalid
     request so the route can answer 400/409 with a clear reason."""
+    if _norm_fmt(fmt) == "mlx":
+        return _install_mlx_model(repo_id, label=label, n_ctx=n_ctx)
     if not repo_id or not filename:
         raise InstallError("repo_id and filename are required.")
     if not filename.lower().endswith(".gguf"):
@@ -277,6 +421,39 @@ def install_model(
         label=label,
         n_ctx=n_ctx,
         header_ctx=meta.context_length,
+    )
+    return _finalize_install(key, entry)
+
+
+def _install_mlx_model(repo_id: str, label: str | None = None, n_ctx: int | None = None) -> dict:
+    """The MLX fork of install_model: whole-repo snapshot, arch re-verified from
+    the transformers config instead of a GGUF header."""
+    if not repo_id:
+        raise InstallError("repo_id is required.")
+
+    model_type, mlx_tagged = hf_client.repo_mlx_meta(repo_id)
+    if not mlx_tagged:
+        # A GGUF repo usually carries a config.json too, so the arch gate alone
+        # would happily accept it — and snapshot gigabytes mlx_lm cannot load.
+        raise InstallError(
+            f"{repo_id} does not carry MLX-format weights (no mlx tag on the "
+            "repo). It was not installed."
+        )
+    if not compat.mlx_arch_supported(model_type):
+        raise InstallError(
+            f"{repo_id} reports model_type {model_type!r}, which the bundled "
+            "mlx-lm engine cannot run. It was not installed."
+        )
+
+    key, entry = install.build_mlx_entry(
+        repo_id=repo_id,
+        arch=model_type,
+        label=label,
+        n_ctx=n_ctx,
+        # The real trained window from the repo's config.json, so the context
+        # meter and prompt budgeting see the model's true size (capped by
+        # resolve_ctx the same way a GGUF header ctx is).
+        header_ctx=hf_client.repo_config_context_length(repo_id),
     )
     return _finalize_install(key, entry)
 
@@ -345,6 +522,7 @@ def recommended() -> list[dict]:
     mem = _memory_fields()
     total_mem = mem["mem_total_bytes"]
     reserved = mem["mem_reserved_bytes"]
+    downloading_keys = _downloading_keys()
 
     rows: list[dict] = []
     for key, meta in registry.recommended_models().items():
@@ -365,6 +543,7 @@ def recommended() -> list[dict]:
                 "supports_thinking": bool(meta.get("supports_thinking")),
                 "supports_tools": bool(meta.get("supports_tools")),
                 "downloaded": bool(meta.get("downloaded")),
+                "downloading": key in downloading_keys,
                 "size_bytes": size_bytes,
                 "fit": compat.fit_verdict(size_bytes, total_mem, reserved),
                 "needed_bytes": compat.needed_bytes(size_bytes),

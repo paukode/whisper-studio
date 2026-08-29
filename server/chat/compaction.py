@@ -29,15 +29,31 @@ from .infra import _get_bedrock_client
 
 log = logging.getLogger("whisper-studio")
 
-# Feature 2: Compact when messages exceed this token estimate.
-# Bedrock's input cap is 200K tokens (~800K chars at the codebase's
-# 4-chars/token estimate). Keep both thresholds
-# below that cap so compaction fires proactively instead of every long
-# conversation hitting a billed PromptTooLongError. COMPACT_TRIGGER_CHARS is the
-# proactive trigger; MAX_CONTEXT_CHARS is the last-resort ceiling the
-# simple-truncation fallback trims down to, so it stays at or above the trigger.
+# LEGACY fallback thresholds, kept for models whose window cannot be resolved
+# (an unsized local entry). Sized for a 200K-token window (~800K chars at the
+# codebase's 4-chars/token estimate). Every resolvable model instead budgets
+# per-model via thresholds_for below: 95% (trigger) / 98% (truncation ceiling)
+# of its real input budget — 1M-window Claude models compact around ~3.3M
+# chars, Haiku around ~520K, GPT-mantle against its 278,528 prompt cap, local
+# models against the live n_ctx.
 MAX_CONTEXT_CHARS = 750_000
 COMPACT_TRIGGER_CHARS = 650_000  # Compact pre-emptively at this size
+
+
+def thresholds_for(model_key: str | None, meta: dict | None = None) -> tuple[int, int]:
+    """Per-model (trigger_chars, hard_ceiling_chars) for compaction: 95% and
+    98% of the model's input budget (context window minus the reserved
+    answer). Falls back to the legacy constants when the model is unknown."""
+    if model_key:
+        try:
+            from server.chat.engine.windows import compact_thresholds_chars
+
+            t = compact_thresholds_chars(model_key)
+            if t:
+                return t
+        except Exception as e:  # noqa: BLE001 — budgeting must never break a turn
+            log.debug("thresholds_for(%s) fell back to legacy constants: %s", model_key, e)
+    return COMPACT_TRIGGER_CHARS, MAX_CONTEXT_CHARS
 
 
 def _content_size(content) -> int:
@@ -392,10 +408,10 @@ async def compact_messages_with_claude(
         log.warning("Claude compaction failed, falling back to truncation: %s", e)
 
     # Strategy 3: Simple truncation fallback
-    return _compact_messages_simple(messages, model_id)
+    return _compact_messages_simple(messages, model_id, model_key=model_key)
 
 
-def _compact_messages_simple(messages: list, model_id: str) -> list:
+def _compact_messages_simple(messages: list, model_id: str, model_key: str = "") -> list:
     """Simple truncation-based compaction (fallback)."""
     if len(messages) < 4:
         return messages
@@ -431,7 +447,8 @@ def _compact_messages_simple(messages: list, model_id: str) -> list:
         else:
             trimmed.append(msg)
 
-    while len(trimmed) > 4 and estimate_message_size(trimmed) > MAX_CONTEXT_CHARS:
+    _, hard_ceiling = thresholds_for(model_key)
+    while len(trimmed) > 4 and estimate_message_size(trimmed) > hard_ceiling:
         trimmed = trimmed[2:]
 
     # Front-trimming can leave a dangling tool_result at the head; never start

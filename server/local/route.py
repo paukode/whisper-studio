@@ -92,61 +92,74 @@ def local_chat_response(
     async def _engine_turn():
         import asyncio
 
+        # Cold start loads gigabytes; keep it off the event loop. serving
+        # dispatches to the model's engine (llama-server or mlx_lm).
+        # mark_busy registers this turn on the returned server atomically, so
+        # a model switch (composer select, context slider) WAITS for the turn
+        # instead of stopping the server mid-answer; end_turn in the finally
+        # below releases it even when the client disconnects mid-stream.
+        import functools
+
         from server.attachment_store import load_session_attachments
         from server.chat import executor as tool_thread_pool
         from server.chat.engine.local import LocalAdapter
         from server.chat.engine.policy import LOCAL_POLICY
         from server.chat.engine.runner import TurnContext, run_turn
-        from server.local import llama_server
+        from server.local import serving
         from server.local.server_stream import _spawn_memory_hooks
         from server.utils import ndjson_dumps
 
-        # Cold start loads gigabytes; keep it off the event loop.
         try:
             base_url = await asyncio.get_running_loop().run_in_executor(
-                None, llama_server.ensure_serving, model_key, n_ctx
+                None,
+                functools.partial(serving.ensure_serving, model_key, n_ctx, mark_busy=True),
             )
         except Exception as e:
-            yield f"data: {ndjson_dumps({'error': str(e)})}\n\n"
+            yield f"data: {ndjson_dumps({'error': str(e) or e.__class__.__name__})}\n\n"
             yield "data: [DONE]\n\n"
             return
 
-        adapter = LocalAdapter(
-            model_key=model_key,
-            base_url=base_url,
-            system_prompt=local_system,
-            thinking=thinking_on,
-            tools_enabled=local_tools_on,
-        )
-        current_attachments = await asyncio.to_thread(load_session_attachments, session_id)
-        turn_ctx = TurnContext(
-            session_id=session_id,
-            model_key=model_key,
-            # The local memory/cost plumbing keys on the model KEY, and the
-            # engine's generic hooks are overridden below anyway.
-            model_id=model_key,
-            messages=messages,
-            adapter=adapter,
-            policy=LOCAL_POLICY,
-            loop=asyncio.get_running_loop(),
-            executor=tool_thread_pool,
-            plan_mode=plan_mode,
-            mode=mode,
-            ws_path=ws_path,
-            suppress_ws_search=suppress_ws_search,
-            transcript=transcript,
-            current_attachments=current_attachments,
-            session_denials=session_denials,
-            session_approvals=session_approvals,
-            session_config=session_config,
-            is_new_turn=approved_tool_result is None,
-            # Offline invariants: no permission-explainer model, and the
-            # local-aware memory hooks (model_mode gating) instead of the
-            # generic cloud ones.
-            tool_exec_model_id="",
-            memory_hooks=lambda msgs: _spawn_memory_hooks(model_key, msgs, session_id, ws_path),
-        )
-        async for chunk in run_turn(turn_ctx):
-            yield chunk
+        try:
+            adapter = LocalAdapter(
+                model_key=model_key,
+                base_url=base_url,
+                system_prompt=local_system,
+                thinking=thinking_on,
+                tools_enabled=local_tools_on,
+                wire_model=serving.wire_model(model_key),
+                supports_tool_choice=serving.supports_tool_choice(model_key),
+            )
+            current_attachments = await asyncio.to_thread(load_session_attachments, session_id)
+            turn_ctx = TurnContext(
+                session_id=session_id,
+                model_key=model_key,
+                # The local memory/cost plumbing keys on the model KEY, and the
+                # engine's generic hooks are overridden below anyway.
+                model_id=model_key,
+                messages=messages,
+                adapter=adapter,
+                policy=LOCAL_POLICY,
+                loop=asyncio.get_running_loop(),
+                executor=tool_thread_pool,
+                plan_mode=plan_mode,
+                mode=mode,
+                ws_path=ws_path,
+                suppress_ws_search=suppress_ws_search,
+                transcript=transcript,
+                current_attachments=current_attachments,
+                session_denials=session_denials,
+                session_approvals=session_approvals,
+                session_config=session_config,
+                is_new_turn=approved_tool_result is None,
+                # Offline invariants: no permission-explainer model, and the
+                # local-aware memory hooks (model_mode gating) instead of the
+                # generic cloud ones.
+                tool_exec_model_id="",
+                memory_hooks=lambda msgs: _spawn_memory_hooks(model_key, msgs, session_id, ws_path),
+            )
+            async for chunk in run_turn(turn_ctx):
+                yield chunk
+        finally:
+            serving.end_turn()
 
     return StreamingResponse(_engine_turn(), media_type="text/event-stream")

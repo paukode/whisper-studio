@@ -16,6 +16,46 @@ import { useDockStore } from '@/stores/dockStore';
  * Returns a cleanup function.
  */
 const PREFIX = '#wsfile=';
+// Documentation references from @docs answers: `#docspage=<url-encoded page>`
+// with an optional `&h=<heading id>`. Opens the bundled docs site in the dock.
+const DOCS_PREFIX = '#docspage=';
+// Pages are flat filenames inside docs/; anything else (path separators,
+// traversal) is rejected and the click falls through as a no-op link.
+const DOCS_PAGE_RE = /^[\w][\w.-]*\.html$/;
+
+export interface DocsPageTarget {
+  page: string;
+  anchor?: string;
+}
+
+/** Parse a `#docspage=<url-encoded page>&h=<anchor>` reference href.
+ * Returns null for non-docs hrefs or an invalid page name. */
+export function parseDocsPageHref(href: string): DocsPageTarget | null {
+  if (!href.startsWith(DOCS_PREFIX)) return null;
+  const frag = href.slice(DOCS_PREFIX.length);
+  const amp = frag.indexOf('&');
+  const rawPage = amp === -1 ? frag : frag.slice(0, amp);
+  let page: string;
+  try {
+    page = decodeURIComponent(rawPage);
+  } catch {
+    page = rawPage;
+  }
+  if (!DOCS_PAGE_RE.test(page)) return null;
+  const t: DocsPageTarget = { page };
+  if (amp !== -1) {
+    for (const param of frag.slice(amp + 1).split('&')) {
+      if (param.startsWith('h=')) {
+        try {
+          t.anchor = decodeURIComponent(param.slice(2));
+        } catch {
+          t.anchor = param.slice(2);
+        }
+      }
+    }
+  }
+  return t;
+}
 // Matches http(s) URLs whose host is loopback, so a dev-server link routes to
 // the Live pane rather than hijacking the app tab.
 const LOCALHOST_RE = /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?([/?#]|$)/i;
@@ -133,6 +173,15 @@ export function attachWsFileHandlers(container: HTMLElement): () => void {
       return;
     }
 
+    // Documentation references open the docs pane at the cited page/heading,
+    // the same pane the header's ? button opens.
+    const docsTarget = parseDocsPageHref(href);
+    if (docsTarget) {
+      e.preventDefault();
+      useDockStore.getState().openDocs(docsTarget.page, docsTarget.anchor);
+      return;
+    }
+
     const target = parseWsFileHref(href);
     if (!target) return;
     e.preventDefault();
@@ -171,6 +220,10 @@ export function attachWsFileHandlers(container: HTMLElement): () => void {
     const href = anchor.getAttribute('href') || '';
     if (LOCALHOST_RE.test(href)) {
       anchor.title = 'Opens in the Live preview pane';
+      return;
+    }
+    if (href.startsWith(DOCS_PREFIX)) {
+      anchor.title = 'Opens this documentation page in the side panel';
       return;
     }
     if (!href.startsWith(PREFIX)) return;

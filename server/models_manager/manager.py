@@ -451,18 +451,19 @@ def cancel(entry: ModelEntry) -> str:
 
 
 def _stop_llama_if_serving(key: str) -> bool:
-    """Stop llama-server when it is serving exactly this model. Best-effort:
-    a failure here must not block the delete (the file unlink still works —
-    the running server keeps its mapped copy until it exits)."""
+    """Stop the model server when it is serving exactly this model (either
+    engine). Best-effort: a failure here must not block the delete (the file
+    unlink still works — the running server keeps its mapped copy until it
+    exits)."""
     try:
-        from server.local import llama_server
+        from server.local import serving
 
-        if llama_server.resident_key() == key:
-            log.info("Stopping llama-server before deleting %s.", key)
-            llama_server.stop()
+        if serving.resident_key() == key:
+            log.info("Stopping the model server before deleting %s.", key)
+            serving.stop()
             return True
     except Exception as e:
-        log.warning("Could not stop llama-server before deleting %s: %s", key, e)
+        log.warning("Could not stop the model server before deleting %s: %s", key, e)
     return False
 
 
@@ -496,6 +497,15 @@ def delete(entry: ModelEntry) -> dict:
             target = os.path.join(root, entry.gguf_filename)
             if os.path.exists(target):
                 os.remove(target)
+        elif shared:
+            # A whole-directory model (MLX snapshot) sharing its dir with
+            # another entry: rmtree here would silently destroy the other
+            # model's weights. Browser installs namespace MLX dirs so this
+            # only fires for hand-written config collisions — refuse loudly.
+            raise Conflict(
+                "This model shares its folder with another entry; delete the "
+                "other entry first or separate their `dir` values in config."
+            )
         else:
             shutil.rmtree(root)
     else:

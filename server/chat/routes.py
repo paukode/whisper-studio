@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re as _re
+import threading as _threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -51,13 +52,14 @@ _QUERY_REWRITE_TIMEOUT_S = (
     6  # Tier 3 rewrite cap so a slow/offline Bedrock connect can't stall a turn
 )
 _RERANK_COLD_BUDGET_S = 40  # extra grounding headroom for the reranker's first-turn cold model load
+_DOCS_COLD_BUDGET_S = 160  # first @docs use builds the manual index (cold embedder + ~300 sections)
 
 
 from .compaction import (  # noqa: E402
-    COMPACT_TRIGGER_CHARS,
     compact_messages_with_claude,
     estimate_message_size,
     sanitize_tool_pairs,
+    thresholds_for,
 )
 from .infra import (  # noqa: E402
     _estimate_cost,
@@ -347,6 +349,18 @@ async def models_endpoint():
     return {"models": rows, "default": default}
 
 
+# Models with a load cancel requested (banner Cancel, or a superseding load).
+# Checked by the /api/local-model/load SSE loop each tick; flag-based because
+# the blocking work runs on executor threads that can't be interrupted directly.
+_load_cancels: set[str] = set()
+_load_cancels_lock = _threading.Lock()
+
+
+def _load_cancel_requested(model: str) -> bool:
+    with _load_cancels_lock:
+        return model in _load_cancels
+
+
 @router.get("/api/local-model/load")
 async def local_model_load(model: str, n_ctx: int | None = None):
     """Stream load progress for an on-device model as SSE. The frontend opens
@@ -354,11 +368,14 @@ async def local_model_load(model: str, n_ctx: int | None = None):
     changes), to drive the loading banner. ``n_ctx`` optionally sets the context
     window — a changed value reloads the model at that size.
 
-    Progress semantics: while the GGUF is still downloading, the streamed
-    fraction is ``models_manager.progress_of`` — the SAME computation Settings >
-    Models polls — so the banner and the Models tab agree by construction. The
-    load-into-memory phase that follows is opaque (llama.cpp reports nothing),
-    so only that short phase is a time ramp, capped below done."""
+    A missing download runs as a models-manager job (the same worker process
+    Settings > Models drives), so the banner's Cancel, the Settings Cancel, and
+    delete-after-cancel all act on ONE cancellable job — never an in-thread
+    fetch that survives them. Progress is ``models_manager.progress_of``, the
+    SAME computation Settings polls, so the two surfaces agree by construction.
+    The load-into-memory phase that follows is opaque (the engines report
+    nothing), so only that short phase is a time ramp, capped below done.
+    Cancelling emits stage ``cancelled`` and leaves nothing resident."""
     from server.local import runtime as local_llm
 
     if not local_llm.is_local_model(model):
@@ -378,41 +395,147 @@ async def local_model_load(model: str, n_ctx: int | None = None):
 
     async def gen():
         loop = asyncio.get_event_loop()
+        with _load_cancels_lock:
+            _load_cancels.discard(model)  # stale flag from a previous run
         yield f"data: {ndjson_dumps({'stage': busy_stage, 'progress': 0.0, 'label': label})}\n\n"
-        from server.local import llama_server
+        from server.local import serving
         from server.models_manager import manager as models_manager
         from server.models_manager.catalog import get_entry as catalog_entry
 
         entry = catalog_entry(model)  # local-chat keys are catalog keys
-        # Starts (or restarts at the new context size) the model server. Runs on a
-        # plain I/O thread — it is a subprocess wait, not model work.
-        load_future = loop.run_in_executor(None, llama_server.ensure_serving, model, n_ctx)
-        ramp = 0.0
-        while not load_future.done():
-            await asyncio.sleep(0.4)
-            if load_future.done():
-                break
-            if not local_llm.is_downloaded(model):
-                # Download phase: the shared manager number, never a ramp.
-                frac = (models_manager.progress_of(entry) if entry is not None else None) or 0.0
-                yield f"data: {ndjson_dumps({'stage': 'downloading', 'progress': frac, 'label': label})}\n\n"
-            else:
-                # Memory-load phase: opaque, short — a capped time ramp.
-                ramp = min(0.9, ramp + 0.05)
-                yield f"data: {ndjson_dumps({'stage': 'loading', 'progress': round(ramp, 2), 'label': label})}\n\n"
+
+        def _stop_if_ours():
+            # Only kill the server when it is (or is warming up as) THIS model;
+            # a superseding load's fresh spawn must never be collateral.
+            if serving.resident_key() == model:
+                serving.stop()
+
         try:
-            await load_future
+            # Download phase, via the manager so the job is a real, killable
+            # worker process. Skipped when the weights are on disk or the key
+            # has no catalog entry (then ensure_serving fetches in-thread, the
+            # pre-manager behavior).
+            if not local_llm.is_downloaded(model) and entry is not None:
+                try:
+                    await loop.run_in_executor(None, models_manager.start_download, entry)
+                except models_manager.Conflict:
+                    pass  # already installed (benign race) — fall through
+                while not local_llm.is_downloaded(model):
+                    await asyncio.sleep(0.5)
+                    if _load_cancel_requested(model):
+                        # The cancel endpoint already killed the manager job.
+                        yield f"data: {ndjson_dumps({'stage': 'cancelled', 'label': label})}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+                    # Reap so a dead worker surfaces as error/absent here even
+                    # when no Settings poll is running.
+                    await loop.run_in_executor(None, models_manager.reap)
+                    state, err = models_manager.state_of(entry)
+                    if state == "installed":
+                        break
+                    if state in ("downloading", "queued"):
+                        frac = models_manager.progress_of(entry, state) or 0.0
+                        yield f"data: {ndjson_dumps({'stage': 'downloading', 'progress': frac, 'label': label})}\n\n"
+                    elif state == "error":
+                        yield f"data: {ndjson_dumps({'stage': 'error', 'error': err or 'download failed', 'label': label})}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+                    else:
+                        # absent: cancelled from Settings (or the job vanished).
+                        yield f"data: {ndjson_dumps({'stage': 'cancelled', 'label': label})}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+
+            # Memory-load phase: starts (or restarts at the new context size)
+            # the model server. Runs on a plain I/O thread — it is a subprocess
+            # wait, not model work. The internal ensure_downloaded is now a
+            # marker/file no-op for the manager-downloaded case. should_abort
+            # lets a cancel break the wait-for-busy-turn phase too (serving
+            # waits for a live chat turn instead of evicting it mid-answer).
+            load_future = loop.run_in_executor(
+                None,
+                functools.partial(
+                    serving.ensure_serving,
+                    model,
+                    n_ctx,
+                    should_abort=lambda: _load_cancel_requested(model),
+                ),
+            )
+            ramp = 0.0
+            cancelled = False
+            while not load_future.done():
+                await asyncio.sleep(0.4)
+                if load_future.done():
+                    break
+                if _load_cancel_requested(model):
+                    cancelled = True
+                    # Kill the warming server; the load future then raises and
+                    # is reported as cancelled below.
+                    await loop.run_in_executor(None, _stop_if_ours)
+                    break
+                if not local_llm.is_downloaded(model):
+                    # In-thread download fallback (no catalog entry): no byte
+                    # progress to show, keep the stage honest at least.
+                    yield f"data: {ndjson_dumps({'stage': 'downloading', 'progress': 0.0, 'label': label})}\n\n"
+                else:
+                    # Memory-load phase: opaque, short — a capped time ramp.
+                    ramp = min(0.9, ramp + 0.05)
+                    yield f"data: {ndjson_dumps({'stage': 'loading', 'progress': round(ramp, 2), 'label': label})}\n\n"
+            try:
+                await load_future
+            except Exception as e:
+                if cancelled or _load_cancel_requested(model):
+                    yield f"data: {ndjson_dumps({'stage': 'cancelled', 'label': label})}\n\n"
+                else:
+                    yield f"data: {ndjson_dumps({'stage': 'error', 'error': str(e), 'label': label})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            if cancelled or _load_cancel_requested(model):
+                # The load won the race against the stop: unload so a cancel
+                # never leaves the cancelled model resident.
+                await loop.run_in_executor(None, _stop_if_ours)
+                yield f"data: {ndjson_dumps({'stage': 'cancelled', 'label': label})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
             yield f"data: {ndjson_dumps({'stage': 'ready', 'progress': 1.0, 'label': label})}\n\n"
-        except Exception as e:
-            yield f"data: {ndjson_dumps({'stage': 'error', 'error': str(e), 'label': label})}\n\n"
-        yield "data: [DONE]\n\n"
+            yield "data: [DONE]\n\n"
+        finally:
+            # No yield here: on client disconnect this runs under GeneratorExit,
+            # where emitting would raise. Cleanup only.
+            with _load_cancels_lock:
+                _load_cancels.discard(model)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+@router.post("/api/local-model/cancel-load")
+async def local_model_cancel_load(model: str):
+    """Cancel an in-flight /api/local-model/load for ``model``: kills its
+    manager download job (same effect as Settings > Models Cancel) and flags
+    the load stream, which stops a warming server and reports ``cancelled``."""
+    from server.local import runtime as local_llm
+
+    if not local_llm.is_local_model(model):
+        return JSONResponse({"error": "not a local model"}, status_code=400)
+    with _load_cancels_lock:
+        _load_cancels.add(model)
+    from server.models_manager import manager as models_manager
+    from server.models_manager.catalog import get_entry as catalog_entry
+
+    entry = catalog_entry(model)
+    if entry is not None:
+        try:
+            await asyncio.get_event_loop().run_in_executor(None, models_manager.cancel, entry)
+        except models_manager.Conflict:
+            pass  # not downloading or queued — the flag alone covers the load phase
+        except Exception as e:
+            log.warning("cancel-load: could not cancel download for %s: %s", model, e)
+    return {"cancelling": True}
+
+
 @router.get("/api/local-model/status")
 async def local_model_status(model: str):
-    """Is an on-device model's GGUF already on disk? Drives the workspace
+    """Are an on-device model's weights already on disk? Drives the workspace
     dialog's decision to download before enabling the on-device relation engine."""
     from server.local import runtime as local_llm
 
@@ -425,7 +548,7 @@ async def local_model_status(model: str):
 async def local_model_download(model: str):
     """Stream DOWNLOAD-ONLY progress (no load into memory) as SSE. The workspace
     dialog opens this when the user picks the on-device typed-relation engine and
-    the GGUF isn't on disk. The fetch runs on a plain I/O thread (NOT the single
+    the weights aren't on disk. The fetch runs on a plain I/O thread (NOT the single
     model thread), so it never blocks chat. Cancelling is client-side: closing
     the stream stops the banner; the download may finish in the background and
     cache the file, which is harmless."""
@@ -469,9 +592,9 @@ async def local_model_download(model: str):
 @router.post("/api/local-model/unload")
 async def local_model_unload():
     """Free the resident on-device model (called when switching away from it)."""
-    from server.local import llama_server
+    from server.local import serving
 
-    await asyncio.get_event_loop().run_in_executor(None, llama_server.stop)
+    await asyncio.get_event_loop().run_in_executor(None, serving.stop)
     return {"unloaded": True}
 
 
@@ -1180,9 +1303,16 @@ async def chat_endpoint(request: Request):
         # An explicit @index mention forces index grounding for this turn — past
         # the smalltalk gate and past the connected-workspace deprioritization
         # below — and is stripped so the marker never reaches the model prompt.
-        from server.index.query_gate import extract_index_trigger, should_ground
+        from server.index.query_gate import (
+            extract_docs_trigger,
+            extract_index_trigger,
+            should_ground,
+        )
 
         force_index, question = extract_index_trigger(question)
+        # @docs: this turn answers from the app's own manual. Takes the place
+        # of workspace-index grounding for the turn.
+        force_docs, question = extract_docs_trigger(question)
 
         # Resolve this turn's attachments (rendering + per-file caps live in
         # attachment_context, shared with the history rebuild above). A missing id
@@ -1228,6 +1358,28 @@ async def chat_endpoint(request: Request):
             parts = []
             if attachment_texts:
                 parts.extend(attachment_texts)
+            # @docs: answer from the app's own manual under a strict contract
+            # (answer only from the passages, cite pages, decline when the
+            # manual has nothing). Replaces workspace-index grounding for the
+            # turn. First use builds the small docs index (cold embedder load),
+            # hence the generous timeout.
+            if force_docs and question.strip():
+                try:
+                    from server import docs_qa
+
+                    _status("searching")
+                    docs_block, _docs_n = await asyncio.wait_for(
+                        asyncio.get_event_loop().run_in_executor(
+                            _GROUNDING_EXECUTOR, docs_qa.grounding_block, question
+                        ),
+                        timeout=_GROUNDING_TIMEOUT_S + _DOCS_COLD_BUDGET_S,
+                    )
+                    if docs_block:
+                        parts.append(docs_block)
+                except asyncio.TimeoutError:
+                    log.warning("@docs lookup timed out; answering without it")
+                except Exception as e:  # noqa: BLE001 — docs lookup is best-effort
+                    log.warning("@docs lookup failed: %s", e)
             # Index-first grounding (point I): when the user has selected workspace
             # indexes to search, retrieve relevant passages now and inject them as
             # cited context, so the answer is grounded in the index without relying
@@ -1269,8 +1421,14 @@ async def chat_endpoint(request: Request):
             # nothing but noise, and the injected passages then read as the task
             # itself — small local models especially will invent an analysis out
             # of them. Skip retrieval entirely (no embedder call, no latency)
-            # unless the user forced it with @index.
-            if selected_indexes and question.strip() and (force_index or should_ground(question)):
+            # unless the user forced it with @index. A @docs turn already has
+            # its manual context above; the workspace indexes sit this one out.
+            if (
+                not force_docs
+                and selected_indexes
+                and question.strip()
+                and (force_index or should_ground(question))
+            ):
                 try:
                     from server.index.pipeline import build_context_query, retrieve_grounding
                     from server.infrastructure.feature_flags import is_enabled
@@ -1459,8 +1617,9 @@ async def chat_endpoint(request: Request):
         )
         loop = asyncio.get_event_loop()
 
-        # Pre-flight proactive compaction (provider-aware summarizer).
-        if estimate_message_size(messages) > COMPACT_TRIGGER_CHARS:
+        # Pre-flight proactive compaction (provider-aware summarizer), against
+        # the ACTIVE model's own input budget (95% trigger).
+        if estimate_message_size(messages) > thresholds_for(model_key)[0]:
             messages = await compact_messages_with_claude(
                 messages, model_id, session_id=session_id, model_key=model_key
             )

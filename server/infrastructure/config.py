@@ -249,6 +249,26 @@ def _as_int(v) -> int | None:
         return None
 
 
+def _lift_stale_context_window(value: int | None, model_id: str) -> int | None:
+    """Upgrade-on-read for a stale template default.
+
+    The example config shipped ``context_window: 200000`` on every Claude
+    entry from the era when Bedrock was assumed to cap prompts at 200K.
+    Verified 2026-08-29 (live probe: a 312K-token prompt accepted on
+    claude-sonnet-5; 1M context is GA on Bedrock): the current 1M-family
+    Claude models take the full window, so a configured 200000 on those ids
+    reads as 1,000,000. Any OTHER explicit value is a deliberate per-model
+    choice and stands, as does 200000 on non-1M models (Haiku)."""
+    if value != 200_000:
+        return value
+    from server.chat.engine.windows import ANTHROPIC_1M_MARKERS
+
+    mid = (model_id or "").lower()
+    if any(marker in mid for marker in ANTHROPIC_1M_MARKERS):
+        return 1_000_000
+    return value
+
+
 def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
     """Split a chat_models map into (ids, meta).
 
@@ -334,11 +354,18 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
                 "filename": val.get("filename"),
                 "dir": val.get("dir"),
                 "ctx": val.get("ctx"),
+                # Which on-device engine serves the weights: absent/None ⇒ GGUF
+                # via llama-server; "mlx" ⇒ a whole-repo snapshot via mlx_lm
+                # (no filename). Dropping this here would silently reject every
+                # MLX entry downstream (the registry would demand a filename).
+                "engine": val.get("engine"),
                 # Context accounting (turn engine): the model's total input
                 # window and max output tokens. Absent ⇒ per-family defaults
                 # (see server/chat/engine/windows.py); local models resolve
                 # from the live n_ctx instead.
-                "context_window": _as_int(val.get("context_window")),
+                "context_window": _lift_stale_context_window(
+                    _as_int(val.get("context_window")), model_id
+                ),
                 "max_output": _as_int(val.get("max_output")),
             }
         # Silently skip malformed entries — a typo in config.json shouldn't
