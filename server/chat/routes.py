@@ -56,10 +56,10 @@ _DOCS_COLD_BUDGET_S = 160  # first @docs use builds the manual index (cold embed
 
 
 from .compaction import (  # noqa: E402
-    COMPACT_TRIGGER_CHARS,
     compact_messages_with_claude,
     estimate_message_size,
     sanitize_tool_pairs,
+    thresholds_for,
 )
 from .infra import (  # noqa: E402
     _estimate_cost,
@@ -1617,8 +1617,9 @@ async def chat_endpoint(request: Request):
         )
         loop = asyncio.get_event_loop()
 
-        # Pre-flight proactive compaction (provider-aware summarizer).
-        if estimate_message_size(messages) > COMPACT_TRIGGER_CHARS:
+        # Pre-flight proactive compaction (provider-aware summarizer), against
+        # the ACTIVE model's own input budget (95% trigger).
+        if estimate_message_size(messages) > thresholds_for(model_key)[0]:
             messages = await compact_messages_with_claude(
                 messages, model_id, session_id=session_id, model_key=model_key
             )

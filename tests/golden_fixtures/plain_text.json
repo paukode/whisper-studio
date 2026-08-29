@@ -30,7 +30,7 @@
       "estimated_cost_usd": 0,
       "model": "opus5.0",
       "context_used": 100,
-      "context_max": 200000
+      "context_max": 872000
     }
   },
   "[DONE]"

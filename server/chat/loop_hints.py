@@ -25,7 +25,9 @@ import threading
 log = logging.getLogger("whisper-studio")
 
 DEFAULT_CONTEXT_MAX = 200_000
-COMPACT_NUDGE_FRACTION = 0.8
+# Nudge when the TRUE prompt size crosses this fraction of the usable input
+# budget — aligned with the char-estimate trigger (95%), the ceiling is 98%.
+COMPACT_NUDGE_FRACTION = 0.95
 
 WIND_DOWN_AT = 5
 FINAL_ROUND_AT = 1
@@ -37,15 +39,15 @@ _MAX_SESSIONS = 512
 
 
 def context_window_for(model_key: str) -> int:
-    """Context window for a model key.
-
-    Resolution: the per-model ``context_window`` metadata / family default
-    via the engine's window accounting (so GPT-on-mantle budgets against its
-    real 278,528-token cap instead of the Claude default)."""
+    """USABLE input budget for a model key (context window minus the tokens
+    reserved for the answer), via the engine's window accounting — so a
+    1M-window Claude model budgets against ~872K, GPT-on-mantle against its
+    real 278,528-token prompt cap, and a local model against its live n_ctx.
+    Feeds both the Stats context meter and the compaction nudge."""
     try:
-        from server.chat.engine.windows import context_window
+        from server.chat.engine.windows import input_budget
 
-        v = context_window(model_key)
+        v = input_budget(model_key)
         if isinstance(v, int) and v > 0:
             return v
     except Exception:
