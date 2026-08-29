@@ -1177,6 +1177,13 @@ async def chat_endpoint(request: Request):
 
         question = resolve_at_session_mentions(question, session_id)
 
+        # An explicit @index mention forces index grounding for this turn — past
+        # the smalltalk gate and past the connected-workspace deprioritization
+        # below — and is stripped so the marker never reaches the model prompt.
+        from server.index.query_gate import extract_index_trigger, should_ground
+
+        force_index, question = extract_index_trigger(question)
+
         # Resolve this turn's attachments (rendering + per-file caps live in
         # attachment_context, shared with the history rebuild above). A missing id
         # yields an explicit unavailability marker, never a silent skip. Binding
@@ -1251,7 +1258,19 @@ async def chat_endpoint(request: Request):
                 # Malformed (non-list) value from an unexpected client → search
                 # nothing rather than silently grounding against every folder.
                 selected_indexes = []
-            if selected_indexes and question.strip():
+            if force_index and not selected_indexes:
+                # @index explicitly asks for a search this turn: fall back to
+                # every indexed folder when the session has none selected (e.g.
+                # a connected workspace deprioritized the index by default).
+                from server.index.store import list_indexed_workspaces
+
+                selected_indexes = list_indexed_workspaces()
+            # Smalltalk gate: a contentless message ("hey", "thanks") retrieves
+            # nothing but noise, and the injected passages then read as the task
+            # itself — small local models especially will invent an analysis out
+            # of them. Skip retrieval entirely (no embedder call, no latency)
+            # unless the user forced it with @index.
+            if selected_indexes and question.strip() and (force_index or should_ground(question)):
                 try:
                     from server.index.pipeline import build_context_query, retrieve_grounding
                     from server.infrastructure.feature_flags import is_enabled
