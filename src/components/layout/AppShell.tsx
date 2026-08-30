@@ -32,6 +32,7 @@ import { MemoryViewerModal } from '@/components/settings/MemoryViewerModal';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { BtwPopup } from '@/components/chat/BtwPopup';
 import { DialogHost } from '@/components/common/Dialog';
+import { ModelModeNotice } from '@/components/common/ModelModeNotice';
 import { CommandPalette } from '@/components/common/CommandPalette';
 
 /**
@@ -405,6 +406,7 @@ const AppShell: React.FC = () => {
       <MemoryEditorModal isOpen={memoryEditorOpen} onClose={() => useUIStore.getState().closeMemoryEditor()} />
       <MemoryViewerModal isOpen={memoryViewerOpen} onClose={() => useUIStore.getState().closeMemoryViewer()} />
       <DialogHost />
+      <ModelModeNotice />
       <CommandPalette />
 
       {/* Reopen chip — a preview server is running but its live panel is closed. */}
