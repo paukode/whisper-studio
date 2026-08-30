@@ -55,9 +55,12 @@ def test_context_store_roundtrip_and_estimate():
 
 
 def test_compaction_nudge_fires_once_at_threshold():
-    loop_hints.note_prompt_tokens("s2", 100_000, 200_000)
+    # Derive both probes from the constant so tuning the fraction (0.8 -> 0.95
+    # in the per-model context-budget work) can never silently strand this test.
+    threshold = int(200_000 * loop_hints.COMPACT_NUDGE_FRACTION)
+    loop_hints.note_prompt_tokens("s2", threshold - 1_000, 200_000)
     assert loop_hints.should_nudge_compaction("s2") is False
-    loop_hints.note_prompt_tokens("s2", 165_000, 200_000)  # >80%
+    loop_hints.note_prompt_tokens("s2", threshold, 200_000)
     assert loop_hints.should_nudge_compaction("s2") is True
     assert loop_hints.should_nudge_compaction("s2") is False  # one-shot
 
