@@ -361,13 +361,16 @@ def test_start_failure_is_reported_to_the_client(monkeypatch):
     """A llama-server that cannot start must surface a clean SSE error."""
     import asyncio
 
-    from server.local import llama_server
     from server.local import route as R
+    from server.local import serving
 
-    def boom(model_key, n_ctx=None):
+    # Stub the facade seam the route consumes: the engine-level function sits
+    # behind availability/registry/download preambles that need a real
+    # llama-server binary and installed weights (absent on CI runners).
+    def boom(model_key, n_ctx=None, **kw):
         raise RuntimeError("binary too old: need b10090")
 
-    monkeypatch.setattr(llama_server, "ensure_serving", boom)
+    monkeypatch.setattr(serving, "ensure_serving", boom)
     resp = R.local_chat_response(
         model_key="local_gemma",
         body={},

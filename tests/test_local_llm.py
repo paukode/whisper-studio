@@ -206,16 +206,19 @@ def _run_local_chat(monkeypatch, body):
     the fake server start — n_ctx threading is what these tests pin)."""
     import asyncio
 
-    from server.local import llama_server
     from server.local import route as R
+    from server.local import serving
 
     captured = {}
 
-    def fake_ensure_serving(model_key, n_ctx=None):
+    # Facade seam (not llama_server.ensure_serving): the engine-level function
+    # sits behind availability/registry/download preambles that need a real
+    # binary and installed weights, absent on CI runners.
+    def fake_ensure_serving(model_key, n_ctx=None, **kw):
         captured.update(n_ctx=n_ctx, model_key=model_key)
         raise RuntimeError("stop here: n_ctx captured")
 
-    monkeypatch.setattr(llama_server, "ensure_serving", fake_ensure_serving)
+    monkeypatch.setattr(serving, "ensure_serving", fake_ensure_serving)
     resp = R.local_chat_response(
         model_key="local_gemma",
         body=body,
