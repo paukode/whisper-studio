@@ -269,17 +269,25 @@ def _parse_languages(raw: str | None) -> list[str]:
     return [code.strip().lower() for code in str(raw).split(",") if code.strip()]
 
 
+# Whisper's language inventory (mlx_whisper.tokenizer.LANGUAGES, the
+# openai/whisper large-v3 set, 100 codes). Vendored so allowlist validation is
+# deterministic everywhere: mlx_whisper is a Darwin-only dependency, and the
+# old import-or-skip fallback silently accepted junk codes on Linux.
+_KNOWN_WHISPER_LANGUAGES = frozenset(
+    """af am ar as az ba be bg bn bo br bs ca cs cy da de el en es et eu fa fi
+    fo fr gl gu ha haw he hi hr ht hu hy id is it ja jw ka kk km kn ko la lb
+    ln lo lt lv mg mi mk ml mn mr ms mt my ne nl nn no oc pa pl ps pt ro ru
+    sa sd si sk sl sn so sq sr su sv sw ta te tg th tk tl tr tt uk ur uz vi
+    yi yo yue zh""".split()
+)
+
+
 def _configured_languages() -> list[str]:
     """The validated ``whisper_language`` allowlist (unknown codes dropped)."""
     langs = _parse_languages(config_get("whisper_language"))
     if not langs:
         return []
-    try:
-        from mlx_whisper.tokenizer import LANGUAGES
-
-        known = set(LANGUAGES)
-    except Exception:
-        return langs
+    known = _KNOWN_WHISPER_LANGUAGES
     bad = [code for code in langs if code not in known]
     if bad:
         log.warning("whisper_language: ignoring unknown code(s): %s", ", ".join(bad))

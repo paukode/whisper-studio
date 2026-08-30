@@ -59,9 +59,11 @@ def _serve(monkeypatch, rounds=(([], []),)):
     ``rounds`` is a sequence of (pieces, calls) per round, where pieces are
     ("text"|"thinking", str) — the shape _stream_round yields.
     """
-    from server.local import llama_server
+    from server.local import serving
 
-    monkeypatch.setattr(llama_server, "ensure_serving", lambda *a, **k: "http://stub")
+    # Facade seam — see the route; the engine-level function needs a real
+    # binary and installed weights on the machine, absent on CI runners.
+    monkeypatch.setattr(serving, "ensure_serving", lambda *a, **k: "http://stub")
     box = {"i": 0}
 
     async def fake_round(base_url, payload):
@@ -162,12 +164,12 @@ def test_plain_turn_fires_memory_hooks_with_ws_path(monkeypatch):
 def test_turn_skips_memory_hooks_on_error(monkeypatch):
     """A failed turn must not record memory. With no fallback runtime, an
     unavailable model server is exactly this case."""
-    from server.local import llama_server
+    from server.local import serving
 
     def boom(*a, **k):
         raise RuntimeError("llama-server unavailable")
 
-    monkeypatch.setattr(llama_server, "ensure_serving", boom)
+    monkeypatch.setattr(serving, "ensure_serving", boom)
     calls = []
     monkeypatch.setattr(STREAM, "_spawn_memory_hooks", lambda *a: calls.append(a))
 
