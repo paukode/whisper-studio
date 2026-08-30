@@ -416,6 +416,36 @@ cp "$REPO_ROOT/config.example.json" \
    "$REPO_ROOT/PROMPT_RULES.md" \
    "$RES_DIR/backend/"
 
+# Always-on speech models (language ID + speaker encoder, ~170MB): shipped
+# inside the bundle and seeded into the user's models dir on first launch
+# (server/main.py::_seed_bundled_models), so transcription needs no download.
+# Cached in build-app/downloads like every other stage; the repo venv provides
+# huggingface_hub (run setup.sh once on the build machine if it is missing).
+substep "bundled speech models (language ID + speaker encoder)"
+BUNDLED_MODELS_CACHE="$BUILD_DIR/downloads/bundled-models"
+mkdir -p "$BUNDLED_MODELS_CACHE"
+[[ -x "$REPO_ROOT/venv/bin/python" ]] \
+    || die "repo venv not found ($REPO_ROOT/venv) — run setup.sh once before building"
+"$REPO_ROOT/venv/bin/python" - "$BUNDLED_MODELS_CACHE" <<'PYEOF'
+import os
+import sys
+
+from huggingface_hub import snapshot_download
+
+cache = sys.argv[1]
+for repo, dirname in (
+    ("speechbrain/lang-id-voxlingua107-ecapa", "lang-id-voxlingua107-ecapa"),
+    ("speechbrain/spkrec-ecapa-voxceleb", "spkrec-ecapa-voxceleb"),
+):
+    dest = os.path.join(cache, dirname)
+    if not os.path.exists(os.path.join(dest, "hyperparams.yaml")):
+        print(f"    downloading {repo} ...")
+        snapshot_download(repo_id=repo, local_dir=dest, local_dir_use_symlinks=False)
+print("    bundled speech models cached")
+PYEOF
+mkdir -p "$RES_DIR/backend/models-bundled"
+rsync -a --delete "$BUNDLED_MODELS_CACHE/" "$RES_DIR/backend/models-bundled/"
+
 # f.6: helper binaries.
 substep "copying bin/ (llama-server + dylibs/metallib, ffmpeg, ffprobe, node)"
 cp "$LLAMA_BIN_DIR"/* "$RES_DIR/bin/"

@@ -247,6 +247,40 @@ def _start_parent_watchdog() -> None:
 
 
 @asynccontextmanager
+def _seed_bundled_models() -> None:
+    """First-launch copy of the always-on speech models shipped in the app.
+
+    build_app.sh stages the language-ID and speaker-encoder snapshots into
+    ``<backend>/models-bundled/``; on boot, any bundled model directory that
+    is missing from the live models root is copied over, so those models are
+    present before the first recording without a download. A dir that already
+    exists is left alone (the per-model ensure functions heal partial copies).
+    Source checkouts have no models-bundled dir — setup.sh downloads the same
+    two models instead — so this is a silent no-op there."""
+    import shutil
+
+    from server.infrastructure.paths import models_root
+
+    src_root = os.path.join(BASE_DIR, "models-bundled")
+    if not os.path.isdir(src_root):
+        return
+    dst_root = models_root()
+    os.makedirs(dst_root, exist_ok=True)
+    for name in sorted(os.listdir(src_root)):
+        src = os.path.join(src_root, name)
+        dst = os.path.join(dst_root, name)
+        if not os.path.isdir(src) or os.path.exists(dst):
+            continue
+        try:
+            shutil.copytree(src, dst)
+            logging.getLogger("whisper-studio").info("Seeded bundled model %s", name)
+        except Exception as e:  # noqa: BLE001 — the ensure funcs can still download
+            logging.getLogger("whisper-studio").warning(
+                "Could not seed bundled model %s: %s", name, e
+            )
+            shutil.rmtree(dst, ignore_errors=True)  # never leave a half copy
+
+
 async def lifespan(app):
     # Installed here (not at import) so it survives uvicorn's own logging
     # dictConfig, which runs before the lifespan and would otherwise reset the
@@ -257,6 +291,7 @@ async def lifespan(app):
     # scanned/older PDFs during folder indexing. Harmless; keep ERROR+ only.
     logging.getLogger("pdfminer").setLevel(logging.ERROR)
     run_migrations()
+    _seed_bundled_models()
     # Config-side one-shot: on-device models installed before the agentic-size
     # gate existed all carry supports_tools True, which is what makes a 1-3B
     # model answer "hey" with a raw JSON tool call. Correct those entries once,

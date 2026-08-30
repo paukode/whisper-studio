@@ -48,6 +48,10 @@ class ModelEntry:
     gguf_filename: str | None = None  # local-chat: the one target file in the repo
     # One-line "what is this good for" shown on the model's card in Settings.
     note: str = ""
+    # Always-installed infrastructure model: bundled into the Mac app, fetched
+    # by setup.sh, hidden from the Settings model lists (the recording gate
+    # still sees it in the catalog by key and can heal a missing copy).
+    bundled: bool = False
 
 
 @lru_cache(maxsize=1)
@@ -107,6 +111,7 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             key="voxlingua_lid",
             label="Language ID (VoxLingua107)",
             group=GROUP_TRANSCRIPTION,
+            bundled=True,
             repo_id="speechbrain/lang-id-voxlingua107-ecapa",
             dir_name="lang-id-voxlingua107-ecapa",
             # Mirrors lid._ensure_model's presence check.
@@ -138,6 +143,7 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             key="ecapa_speaker",
             label="ECAPA Speaker Encoder",
             group=GROUP_TRANSCRIPTION,
+            bundled=True,
             repo_id=speakers.SPEAKER_REPO_ID,
             dir_name=rel(speakers.SPEAKER_MODEL_DIR, speakers.MODELS_DIR),
             # Mirrors speakers._ensure_speaker_model's hyperparams check.

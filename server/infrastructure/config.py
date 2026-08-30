@@ -628,16 +628,20 @@ def _write_config_text(text: str) -> None:
 
 # Written into a brand-new config.user.json on first launch (packaged app, or
 # any fresh home). After the file exists it is never overwritten, so the user's
-# saved settings win from the second launch on. Defaults: hybrid mode with the
-# index/RAG capabilities on-device where the weights download on demand —
-# on-device embeddings + reranker (qwen3) and GLiNER entity extraction. The
-# one-shot writer / relationship mapping (``index_llm``) defaults to cloud Haiku
-# because the app ships NO local chat model: a fresh install has none on disk, so
-# defaulting index_llm to a local key would point at a missing model. Once the
-# user installs a local chat model from Discover, the install flips index_llm to
-# it (server/model_browser/service.py). Chat model choice is the system default.
+# saved settings win from the second launch on. Defaults: LOCAL mode — nothing
+# leaves the machine until the user opts into hybrid or cloud (the first-run
+# notice in the UI explains the three modes). Transcription works out of the
+# box (engines download on demand; the language-ID and speaker models ship
+# bundled); chat needs a local model from Settings > Models > Discover, which
+# the notice points at. The ``backends`` map below is dormant in local mode
+# and takes effect when the user switches to hybrid: on-device embeddings +
+# reranker (qwen3) and GLiNER entity extraction, with the one-shot writer /
+# relationship mapping (``index_llm``) on cloud Haiku — the app ships NO local
+# chat model, so a local index_llm key would point at a missing model. Once
+# the user installs a local chat model from Discover, the install flips
+# index_llm to it (server/model_browser/service.py).
 FIRST_RUN_USER_CONFIG = {
-    "model_mode": "hybrid",
+    "model_mode": "local",
     "backends": {
         "embed": "qwen3",
         "rerank": "qwen3",
