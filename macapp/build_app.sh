@@ -156,7 +156,21 @@ if [[ "$FE_DONE" == "1" ]]; then
         kill -9 "$FE_PID" 2>/dev/null || true
     fi
 else
-    wait "$FE_PID" || true         # let it report; the check below is the gate
+    # No completion line within the window. The observed second flake mode is
+    # vite hanging at 0% CPU with NOTHING in the log (not even the tsc step's
+    # errors), where an unbounded wait stalled packaging for hours. Reap and
+    # fail loudly instead — the log tail below says what (if anything) ran.
+    if kill -0 "$FE_PID" 2>/dev/null; then
+        substep "frontend build produced no completion within 10 min; reaping"
+        pkill -P "$FE_PID" 2>/dev/null || true
+        kill "$FE_PID" 2>/dev/null || true
+        sleep 1
+        pkill -9 -P "$FE_PID" 2>/dev/null || true
+        kill -9 "$FE_PID" 2>/dev/null || true
+        tail -5 "$FE_LOG" 2>/dev/null || true
+        die "frontend build hung (no output for 10 min) — see $FE_LOG"
+    fi
+    wait "$FE_PID" || true         # exited on its own; the check below is the gate
 fi
 tail -3 "$FE_LOG" 2>/dev/null || true
 [[ -f "$REPO_ROOT/static/dist/index.html" ]] \
