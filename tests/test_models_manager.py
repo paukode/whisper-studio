@@ -705,3 +705,16 @@ def test_progress_highwater_resets_on_dequeue_start(client, home, monkeypatch, f
     assert st["state"] == "downloading"
     # 900/9000 — derived from real bytes, not the stale 0.9 mark.
     assert manager.progress_of(entry) == 0.1
+
+
+def test_bundled_infrastructure_models_flagged(client):
+    """Language ID and the speaker encoder are always-installed infrastructure:
+    bundled into the Mac app / fetched by setup.sh, hidden from the Settings
+    lists (the frontend filters on this flag), still addressable by key for
+    the recording gate."""
+    models = client.get("/api/models/catalog").json()["models"]
+    by_key = {m["key"]: m for m in models}
+    assert by_key["voxlingua_lid"]["bundled"] is True
+    assert by_key["ecapa_speaker"]["bundled"] is True
+    assert by_key["whisper_large_v3"]["bundled"] is False
+    assert by_key["parakeet"]["bundled"] is False

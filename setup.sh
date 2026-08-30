@@ -609,19 +609,35 @@ else
     echo "  ✓ llama-server present (build $LLAMA_BUILD) at $(command -v llama-server)."
 fi
 
-# ── Model weights: nothing is downloaded here ────────────────────────────────
-# Exactly like the Mac app's first launch, every model downloads ON DEMAND with
-# an in-app progress banner, into ./models (idempotent, resumable):
-#   * transcription engines + the speaker encoder — on your first recording (or
-#     pre-pull them from Settings > Models > Transcription),
+# ── Model weights: only the two always-on speech models are fetched ─────────
+# Language ID (VoxLingua107) and the ECAPA speaker encoder are bundled
+# infrastructure (~170MB total): every transcription path needs them, they are
+# hidden from the Settings model lists, and the Mac app ships them inside the
+# bundle. Fetch them here so a source install matches the app. Idempotent —
+# the ensure functions check their sentinel files and return instantly when
+# the models are already on disk.
+echo ""
+echo "Fetching the always-on speech models (language ID + speaker encoder, ~170MB)..."
+"$VENV_DIR/bin/python" - <<'PYEOF'
+from server.asr.lid import _ensure_model
+from server.diarization.speakers import _ensure_speaker_model
+
+_ensure_model()
+_ensure_speaker_model()
+print("Speech models present.")
+PYEOF
+# Everything else downloads ON DEMAND with an in-app progress banner, into
+# ./models (idempotent, resumable):
+#   * transcription engines — on your first recording (or pre-pull them from
+#     Settings > Models > Transcription),
 #   * on-device index weights (Qwen3 embed/rerank, GLiNER) — on your first index
 #     build in hybrid/local mode,
 #   * on-device chat models — installed from Settings > Models > Discover
 #     (the app ships with none).
 echo ""
-echo "No model weights are downloaded by setup. Models download on demand:"
-echo "  transcription on your first recording, index models on your first index"
-echo "  build, and chat models from Settings > Models > Discover."
+echo "Other model weights download on demand: transcription engines on your"
+echo "  first recording, index models on your first index build, and chat"
+echo "  models from Settings > Models > Discover."
 
 echo ""
 echo "Setup complete. Starting server..."

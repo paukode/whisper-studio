@@ -37,6 +37,9 @@ async def get_catalog():
                 "group": entry.group,
                 "repo_id": entry.repo_id,
                 "note": entry.note,
+                # Settings hides bundled entries; the recording gate keys on
+                # them regardless, so they stay in the payload.
+                "bundled": entry.bundled,
                 "installed": state == "installed",
                 "size_bytes_estimate": sizes.estimate(entry),
                 "bytes_on_disk": bytes_on_disk(entry),

@@ -318,7 +318,9 @@ export const ModelsPanel: React.FC<{ section?: ModelSection }> = ({ section }) =
         // Local models are deleted outright when removed (not hidden via the
         // Bedrock-only chat_models_disabled list), so the catalog is already the
         // truth — no extra hide-list filtering here.
-        const rows = models.filter((m) => m.group === group.id);
+        // Bundled infrastructure models (language ID, speaker encoder) are
+        // always installed via the app bundle / setup.sh and never user-managed.
+        const rows = models.filter((m) => m.group === group.id && !m.bundled);
         if (rows.length === 0) return null;
         return (
           <div key={group.id} className="models-section">

@@ -23,6 +23,8 @@ export interface ManagedModel {
   /** 1-based position in the download queue while state === 'queued'. */
   queue_position: number | null;
   error: string | null;
+  /** Always-installed infrastructure model; hidden from Settings lists. */
+  bundled?: boolean;
 }
 
 export interface ManagedModelStatus {
