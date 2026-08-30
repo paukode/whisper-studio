@@ -2,6 +2,7 @@ import React, { useCallback, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, put, post } from '@/api/client';
 import { downloadUrl } from '@/utils/downloadFile';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 interface CostSummary {
   total_cost_usd?: number;
@@ -30,6 +31,15 @@ interface BudgetConfig {
 
 export const CostsPanel: React.FC = () => {
   const queryClient = useQueryClient();
+  // Friendly names for the breakdown: cost rows carry the internal model KEY
+  // (local_lmstudio_community_...); show the picker label when the key is a
+  // known chat model, with the raw key on hover. Unknown keys (subagents,
+  // removed models) fall back to the key itself.
+  const pickerModels = useSettingsStore((sel) => sel.models);
+  const modelLabel = useCallback(
+    (key: string) => pickerModels.find((pm) => pm.key === key)?.name ?? key,
+    [pickerModels],
+  );
 
   // Cost data loads via react-query (no setState-in-effect). Three independent
   // queries mirror the three endpoints the old loadData() hit.
@@ -166,7 +176,9 @@ export const CostsPanel: React.FC = () => {
             {models.map((m) => (
               <div key={m.model} className="settings-item">
                 <div className="settings-item-info">
-                  <div className="settings-item-name">{m.model}</div>
+                  <div className="settings-item-name" title={m.model}>
+                    {modelLabel(m.model)}
+                  </div>
                   <div className="settings-item-desc">
                     In: {m.input_tokens.toLocaleString()} · Out: {m.output_tokens.toLocaleString()} · {fmtCost(m.cost_usd)}
                   </div>

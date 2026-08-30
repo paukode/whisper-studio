@@ -424,9 +424,19 @@ cp "$REPO_ROOT/config.example.json" \
 substep "bundled speech models (language ID + speaker encoder)"
 BUNDLED_MODELS_CACHE="$BUILD_DIR/downloads/bundled-models"
 mkdir -p "$BUNDLED_MODELS_CACHE"
-[[ -x "$REPO_ROOT/venv/bin/python" ]] \
-    || die "repo venv not found ($REPO_ROOT/venv) — run setup.sh once before building"
-"$REPO_ROOT/venv/bin/python" - "$BUNDLED_MODELS_CACHE" <<'PYEOF'
+# Prefer the repo venv; on a bare builder (CI) make a tiny throwaway venv with
+# just huggingface_hub, cached in build-app/ like every other stage.
+if [[ -x "$REPO_ROOT/venv/bin/python" ]]; then
+    HF_PY="$REPO_ROOT/venv/bin/python"
+else
+    HF_VENV="$BUILD_DIR/hf-venv"
+    if [[ ! -x "$HF_VENV/bin/python" ]]; then
+        python3 -m venv "$HF_VENV"
+        "$HF_VENV/bin/pip" install --quiet "huggingface_hub>=0.24"
+    fi
+    HF_PY="$HF_VENV/bin/python"
+fi
+"$HF_PY" - "$BUNDLED_MODELS_CACHE" <<'PYEOF'
 import os
 import sys
 
