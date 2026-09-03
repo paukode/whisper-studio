@@ -68,9 +68,11 @@ export function isNativeTranslationAvailable(): boolean {
   return window.__WHISPER_NATIVE_TRANSLATE?.available === true && !!nativeTranslateHandler();
 }
 
-/** Translate one segment on-device. An empty `source` asks the framework to
- *  auto-detect the language (used for Parakeet, which does no language ID);
- *  same-language input then fails and resolves to '' like any other failure,
+/** Translate one segment on-device. An empty `source` means the language is
+ *  unknown (e.g. Parakeet does no language ID): the shell then resolves it
+ *  itself (on-device detection, falling back to the recording's last
+ *  language) and quietly fails the one request when neither works — the OS
+ *  "can't determine language" sheet is never shown. Failures resolve to ''
  *  so callers can always clear the pending placeholder with the result. */
 export function translateNative(text: string, source: string, target = 'en'): Promise<string> {
   const handler = nativeTranslateHandler();
