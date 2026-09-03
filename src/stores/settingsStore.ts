@@ -188,6 +188,9 @@ export interface SettingsState {
   /** Set a hybrid-mode per-capability backend override, persisting to config. */
   setBackend: (capability: IndexCapability, backend: string) => void;
   setLocalContextWindow: (size: number) => void;
+  /** Dismiss the first-run model-mode notice, persisting to config so it
+   *  never re-shows on later launches (any install, any origin). */
+  markModeNoticeSeen: () => void;
 }
 
 const defaultConfig: AppConfig = {
@@ -200,6 +203,9 @@ const defaultConfig: AppConfig = {
   translateTarget: 'en',
   modelMode: 'cloud',
   backends: {},
+  // Default TRUE pre-load: the first-run notice may only appear after the
+  // server config explicitly reports it unseen, never as a pre-fetch flash.
+  modeNoticeSeen: true,
 };
 
 /** Decide which chat model is active after loading the model list, in priority
@@ -254,6 +260,7 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
         translateTarget: String(d.translate_target ?? 'en'),
         modelMode: ((d.model_mode as AppConfig['modelMode']) ?? 'cloud'),
         backends: ((d.backends as AppConfig['backends']) ?? {}),
+        modeNoticeSeen: Boolean(d.mode_notice_seen ?? false),
       };
       set({
         config,
@@ -462,6 +469,13 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
       set((s) => ({ config: { ...s.config, modelMode: prev } }));
       useUIStore.getState().addToast({ type: 'error', message: 'Could not update model mode', duration: 3000 });
     });
+  },
+
+  markModeNoticeSeen: () => {
+    set((s) => ({ config: { ...s.config, modeNoticeSeen: true } }));
+    // Best effort: on failure the notice shows once more next launch rather
+    // than surfacing an error for a purely informational dialog.
+    void put('/api/config', { mode_notice_seen: true }).catch(() => {});
   },
 
   setBackend: (capability, backend) => {
