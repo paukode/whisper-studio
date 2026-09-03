@@ -168,3 +168,6 @@ def _drop_cached_bedrock_clients():
     infra = sys.modules.get("server.chat.infra")
     if infra is not None:
         infra._reset_bedrock_client_cache()
+    recall = sys.modules.get("server.memory.recall")
+    if recall is not None:
+        recall._reset_recall_client_cache()
