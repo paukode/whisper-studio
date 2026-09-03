@@ -139,9 +139,10 @@ export interface ChatState {
 
   // Thinking/usage
   setThinkingStart: () => void;
-  /** Turn-setup phase streamed by the server before the model produces
-   *  anything ('preparing' | 'searching' | 'connecting'); null once real
-   *  output (thinking/text) arrives or the stream ends. */
+  /** Turn phase streamed by the server: 'preparing' | 'searching' |
+   *  'connecting' during setup, or a free-text mid-turn phase (compaction,
+   *  continuation after an output-limit cut); null once real output
+   *  (thinking/text) arrives or the stream ends. */
   streamStatus: string | null;
   setStreamStatus: (status: string | null) => void;
   setThinkingStop: () => void;

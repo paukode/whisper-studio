@@ -848,6 +848,10 @@ export async function readSSEStream(
               store().setStreamStatus(null);
               thinkingMs = thinkingBlockStart ? performance.now() - thinkingBlockStart : thinkingMs;
               store().setThinkingElapsed(thinkingMs);
+            } else if (store().streamStatus) {
+              // A mid-turn status (continuation round, compaction) is stale
+              // the moment text resumes streaming.
+              store().setStreamStatus(null);
             }
             fullResponse += parsed.text;
             store().appendStreamToken(parsed.text);

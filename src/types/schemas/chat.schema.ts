@@ -7,8 +7,9 @@ export const SSEEventDataSchema = z.object({
   thinking: z.string().optional(),
   thinking_start: z.boolean().optional(),
   thinking_stop: z.boolean().optional(),
-  /** Coarse turn-setup phase before the model streams: 'preparing' |
-   *  'searching' | 'connecting'. */
+  /** Turn phase: 'preparing' | 'searching' | 'connecting' during setup, or a
+   *  free-text mid-turn phase (compaction, continuation after an
+   *  output-limit cut). */
   status: z.string().optional(),
   error_code: z.string().optional(),
 
