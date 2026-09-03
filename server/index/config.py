@@ -242,6 +242,18 @@ BOILERPLATE_DF_FRAC = float(os.environ.get("WHISPER_INDEX_BOILERPLATE_DF_FRAC", 
 # (drop hits below GROUND_REL_FLOOR × the top score) adapts to per-query spread.
 GROUND_SCORE_FLOORS = {"qwen3": 0.15, "cohere": 0.10}
 GROUND_REL_FLOOR = float(os.environ.get("WHISPER_INDEX_GROUND_REL_FLOOR", 0.55))
+# Auto-grounding mute floor (per embed backend): unless the BEST dense cosine
+# of the turn clears this, an UNforced turn treats the corpus as off-topic for
+# the question — the dense leg and its graph-hop expansion contribute nothing
+# (top-k nearest always returns SOMETHING, however unrelated), and with no
+# keyword/entity hits either, nothing is injected at all. @index-forced turns
+# ignore this floor. Calibrated against the docs_qa measurements (qwen3:
+# on-topic sections score 0.56-0.72, unrelated ones <= 0.34 — see
+# server/docs_qa.py): 0.40 sits above the unrelated band with margin under the
+# on-topic band, slightly looser than docs_qa's 0.45 because workspace corpora
+# are messier than the manual. Cohere Embed v4 scores run about two thirds of
+# qwen3's scale (see GROUND_SCORE_FLOORS), hence 0.28.
+GROUND_ON_TOPIC_FLOORS = {"qwen3": 0.40, "cohere": 0.28}
 
 # ── FTS5 keyword index ───────────────────────────────────────────────────────
 # Bumped when the fts_chunks tokenizer changes so the derived table is dropped
