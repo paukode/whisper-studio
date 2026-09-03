@@ -267,6 +267,14 @@ function connectWS(): void {
     : `${protocol}//${window.location.host}/ws`;
   const newWs = new WebSocket(wsUrl);
   ws = newWs;
+  // Sticky source language for Apple translation: talk is overwhelmingly
+  // mono-language, so a chunk that arrives without a language ID (Parakeet
+  // never has one; low-confidence LID omits it) reuses the last identified
+  // one instead of asking the OS to auto-detect. Auto-detect on a short
+  // utterance is what made macOS pop its "can't determine language" /
+  // download sheet mid-recording. Scoped per connection: a new recording
+  // starts fresh.
+  let lastLanguage = '';
   newWs.onopen = () => {
     useRecordingStore.getState().setConnected(true);
     startPing();
@@ -301,12 +309,16 @@ function connectWS(): void {
         );
         // The server resolved this chunk's translator; translate_via 'apple'
         // means this client runs it through the shell's on-device bridge and
-        // fills the same per-chunk pending slot a model decode would. An
-        // empty source language means "auto-detect" (Parakeet segments).
+        // fills the same per-chunk pending slot a model decode would. A chunk
+        // without a language ID reuses the recording's last identified one
+        // (sticky, see above); an empty source only reaches the shell before
+        // any language was ever identified, and the shell then detects it
+        // on-device rather than letting the OS prompt.
+        if (language) lastLanguage = language;
         if (msg.translate_via === 'apple' && chunkId !== undefined) {
           const target = typeof msg.translate_target === 'string' ? msg.translate_target : 'en';
-          void translateNative(String(msg.text ?? ''), language ?? '', target).then((t) =>
-            ownerStore().applyTranslation(chunkId, t, target),
+          void translateNative(String(msg.text ?? ''), language ?? lastLanguage, target).then(
+            (t) => ownerStore().applyTranslation(chunkId, t, target),
           );
         }
         ownerStore().setInterimText('');

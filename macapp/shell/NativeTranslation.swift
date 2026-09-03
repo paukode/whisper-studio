@@ -19,6 +19,7 @@
 
 import AppKit
 import Foundation
+import NaturalLanguage
 import SwiftUI
 import WebKit
 
@@ -36,9 +37,11 @@ final class TranslationCoordinator: ObservableObject {
     struct Request {
         let id: String
         let text: String
-        /// nil = let the framework detect the source language (Parakeet
-        /// segments carry no language ID; same-language input then errors
-        /// and the page clears the pending slot).
+        /// nil = source unknown (Parakeet segments carry no language ID).
+        /// submit() resolves it on-device (NLLanguageRecognizer, then the
+        /// recording's last language) BEFORE the framework sees the request —
+        /// framework auto-detect is never used, because its failure mode is a
+        /// blocking OS "can't determine language" sheet mid-recording.
         let source: String?
         let target: String
         var pair: String { "\(source ?? "auto")>\(target)" }
@@ -50,10 +53,48 @@ final class TranslationCoordinator: ObservableObject {
 
     private var queue: [Request] = []
     private var currentPair: String?
+    /// Last source language this recording resolved (page-supplied or detected
+    /// here). Talk is overwhelmingly mono-language, so an utterance too short
+    /// to detect reuses it instead of falling back to framework auto-detect.
+    private var lastSource: String?
 
     func submit(_ request: Request) {
+        var request = request
+        if request.source == nil {
+            // A nil source hands language detection to the Translation
+            // framework, and when a short utterance defeats it macOS pops a
+            // "can't determine language" sheet with a download picker — mid
+            // recording, over and over. Resolve the source HERE instead:
+            // NLLanguageRecognizer on the text, else the recording's last
+            // known language, else fail this one request quietly.
+            if let detected = Self.detectLanguage(of: request.text) {
+                request = Request(
+                    id: request.id, text: request.text, source: detected,
+                    target: request.target)
+            } else if let last = lastSource {
+                request = Request(
+                    id: request.id, text: request.text, source: last, target: request.target)
+            } else {
+                nativeTranslateLog(
+                    "source language undetermined for a short segment; skipping translation")
+                reply?(request.id, nil, "source language undetermined")
+                return
+            }
+        }
+        lastSource = request.source
         queue.append(request)
         arm(for: request.pair)
+    }
+
+    /// On-device source-language guess for one segment. Confidence-gated so a
+    /// contentless fragment ("mhm, ok") returns nil (caller falls back to the
+    /// recording's last language) rather than a coin flip.
+    static func detectLanguage(of text: String) -> String? {
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(text)
+        guard let (language, confidence) = recognizer.languageHypotheses(withMaximum: 1).first
+        else { return nil }
+        return confidence >= 0.5 ? language.rawValue : nil
     }
 
     /// Point the configuration at `pair`, re-triggering the translationTask.
