@@ -433,6 +433,11 @@ async def run_turn(ctx: TurnContext):
 
             if stop_reason == "max_tokens":
                 # Cut off mid-answer: strip partial tool_use and continue.
+                # The continuation is a fresh provider request (full prompt
+                # reprocessing, possible throttle backoff), so tell the UI why
+                # the text stopped mid-sentence instead of leaving a silent
+                # stall that reads as a hang.
+                yield f"data: {ndjson_dumps({'status': 'Output limit reached; continuing the response...'})}\n\n"
                 messages.append(
                     {"role": "assistant", "content": strip_partial_tool_use(result_content)}
                 )
@@ -469,6 +474,7 @@ async def run_turn(ctx: TurnContext):
                     "stop_reason=pause_turn (round %d) — resubmitting to continue the turn",
                     round_num,
                 )
+                yield f"data: {ndjson_dumps({'status': 'Model paused mid-turn; resuming...'})}\n\n"
                 messages.append({"role": "assistant", "content": result_content})
                 continue
 
@@ -657,6 +663,9 @@ async def run_turn(ctx: TurnContext):
             if estimate_message_size(messages) > thresholds_for(ctx.model_key)[
                 0
             ] or should_nudge_compaction(_scope_id):
+                # An LLM summarization call sits between rounds here; without a
+                # frame the wait reads as a mid-turn hang.
+                yield f"data: {ndjson_dumps({'status': 'Compacting conversation context...'})}\n\n"
                 messages = await compact_messages_with_claude(
                     messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
                 )

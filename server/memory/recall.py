@@ -13,6 +13,7 @@ selection, and formatting in one call.
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 
 import boto3
@@ -32,6 +33,33 @@ log = logging.getLogger("whisper-studio")
 
 MAX_SELECTIONS = 5
 MAX_RECALL_TOKENS = 256
+
+# Cached per-region client for the recall side-query (mirrors
+# server/chat/infra's pattern). A fresh boto3 client per turn meant a new TLS
+# handshake on every message — a visible slice of time-to-first-token. The
+# recall-specific short timeouts are why this doesn't reuse the chat client.
+_RECALL_CLIENTS: dict[str, object] = {}
+_RECALL_CLIENT_LOCK = threading.Lock()
+
+
+def _get_recall_client(region: str):
+    with _RECALL_CLIENT_LOCK:
+        client = _RECALL_CLIENTS.get(region)
+        if client is None:
+            client = boto3.client(
+                "bedrock-runtime",
+                region_name=region,
+                config=BotoConfig(read_timeout=30, connect_timeout=5, retries={"max_attempts": 1}),
+            )
+            _RECALL_CLIENTS[region] = client
+        return client
+
+
+def _reset_recall_client_cache() -> None:
+    """Test hook — drops cached clients so monkeypatched boto3 takes effect
+    (tests/conftest.py resets between tests, same as the chat client cache)."""
+    with _RECALL_CLIENT_LOCK:
+        _RECALL_CLIENTS.clear()
 
 
 def _resolve_tiers(ws_path: str | None) -> list[tuple[str, str]]:
@@ -156,7 +184,6 @@ async def _select_entries(
 async def _query_selector(query: str, manifest: str, model_id: str) -> list[str]:
     """Call Haiku to select relevant memory files."""
     import asyncio
-    from concurrent.futures import ThreadPoolExecutor
 
     from server.infrastructure.config import load_config
 
@@ -166,11 +193,7 @@ async def _query_selector(query: str, manifest: str, model_id: str) -> list[str]
     # Use haiku for recall (cheapest model)
     haiku_model = chat_models.get("haiku", model_id)
 
-    client = boto3.client(
-        "bedrock-runtime",
-        region_name=region,
-        config=BotoConfig(read_timeout=30, connect_timeout=5, retries={"max_attempts": 1}),
-    )
+    client = _get_recall_client(region)
 
     user_msg = (
         f"User query: {query}\n\n"
@@ -198,9 +221,7 @@ async def _query_selector(query: str, manifest: str, model_id: str) -> list[str]
         parsed = json.loads(text)
         return parsed.get("selected", [])
 
-    loop = asyncio.get_running_loop()
-    executor = ThreadPoolExecutor(max_workers=1)
-    return await loop.run_in_executor(executor, _invoke)
+    return await asyncio.to_thread(_invoke)
 
 
 def _build_context(

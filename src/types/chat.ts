@@ -296,7 +296,9 @@ export interface SSEEventData {
   thinking?: string;
   thinking_start?: boolean;
   thinking_stop?: boolean;
-  /** Turn-setup phase before model output: 'preparing' | 'searching' | 'connecting'. */
+  /** Turn phase: 'preparing' | 'searching' | 'connecting' during setup, or a
+   *  free-text mid-turn phase ("Compacting conversation context...",
+   *  continuation after an output-limit cut). */
   status?: string;
   error_code?: string;
 

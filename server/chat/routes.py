@@ -47,7 +47,8 @@ from . import executor, router
 # one) so a single timed-out/hung grounding call can't poison the pool and
 # silently disable retrieval for every later turn in the session.
 _GROUNDING_EXECUTOR = ThreadPoolExecutor(max_workers=3, thread_name_prefix="index-grounding")
-_GROUNDING_TIMEOUT_S = 20  # generous enough for a cold embedder load; best-effort
+_GROUNDING_TIMEOUT_S = 20  # cold budget: covers the embedder's first in-process load; best-effort
+_GROUNDING_WARM_TIMEOUT_S = 8  # warm budget: embedder resident (or remote) — retrieval is seconds
 _QUERY_REWRITE_TIMEOUT_S = (
     6  # Tier 3 rewrite cap so a slow/offline Bedrock connect can't stall a turn
 )
@@ -134,6 +135,81 @@ async def _rewrite_query_for_retrieval(question: str, history: list[dict]) -> st
     except Exception as e:  # noqa: BLE001 — best effort; fall back to heuristics
         log.warning("Query rewrite (Tier 3) failed: %s", e)
         return None
+
+
+def _grounding_budget_s() -> float:
+    """Per-turn grounding budget: tight when the query embedder is already
+    resident (or remote), generous only when a cold in-process model load is
+    ahead of the query, plus the reranker's own first-turn cold load when that
+    flag is on. Retrieval runs in parallel with the rest of turn setup, so the
+    budget bounds the worst-case wait at the injection point, not the typical
+    one (a warm parallel retrieval usually finishes before setup does)."""
+    budget = float(_GROUNDING_WARM_TIMEOUT_S)
+    try:
+        from server.infrastructure.model_mode import resolve_backend
+
+        if resolve_backend("embed") != "cohere":
+            from server.index import embedder
+
+            if not embedder.is_loaded():
+                budget = float(_GROUNDING_TIMEOUT_S)
+    except Exception:  # noqa: BLE001 — resolver unavailable: assume cold
+        budget = float(_GROUNDING_TIMEOUT_S)
+    try:
+        from server.index import reranker
+        from server.infrastructure.feature_flags import is_enabled
+
+        if is_enabled("rag_reranker") and not reranker.is_loaded():
+            budget += _RERANK_COLD_BUDGET_S
+    except Exception:  # noqa: BLE001 — reranker probe is best-effort
+        pass
+    return budget
+
+
+async def _run_grounding(selected_indexes: list[str], question: str, history: list[dict]):
+    """One turn's index retrieval, run as a background task so it overlaps the
+    rest of turn setup. Returns ``retrieve_grounding``'s ``(block, meta)``.
+
+    ``question`` is the user's message with @-triggers stripped but BEFORE
+    @file/@session mention inlining — the raw question is the retrieval
+    signal; an inlined file body would drown it.
+    """
+    from server.index.pipeline import build_context_query, retrieve_grounding
+    from server.infrastructure.feature_flags import is_enabled
+
+    # Context-aware retrieval query (prior turns are in ``history``).
+    #  - rag_query_rewrite ON  -> Tier 3: a fast LLM rewrites the follow-up
+    #    into a standalone query, used ALONE.
+    #  - OFF (default)         -> Tier 1+2: a heuristic context query fused
+    #    with the raw question via reciprocal-rank fusion.
+    primary_query = question
+    extra_queries: list[str] = []
+    if is_enabled("rag_query_rewrite") and history:
+        try:
+            rewritten = await asyncio.wait_for(
+                _rewrite_query_for_retrieval(question, history),
+                timeout=_QUERY_REWRITE_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            log.warning("Query rewrite (Tier 3) timed out; using heuristic context")
+            rewritten = None
+        if rewritten:
+            primary_query = rewritten
+    if primary_query == question:  # not rewritten -> Tier 1+2
+        ctx = build_context_query(question, history)
+        if ctx and ctx != question:
+            extra_queries = [ctx]
+
+    return await asyncio.get_running_loop().run_in_executor(
+        _GROUNDING_EXECUTOR,
+        functools.partial(
+            retrieve_grounding,
+            selected_indexes,
+            primary_query,
+            extra_queries=extra_queries or None,
+            return_meta=True,
+        ),
+    )
 
 
 # Paused-session store: when a turn stops on a ws_approval pause, the engine
@@ -1087,7 +1163,57 @@ async def chat_endpoint(request: Request):
         # UnboundLocalError.
         nonlocal question, transcript, model_key
         _status("preparing")
+        _setup_t0 = time.monotonic()
         ws_path = get_workspace_path()
+
+        # ── Grounding router + parallel retrieval kickoff ─────────────────────
+        # Route index-vs-LLM instantly (regex plus one index listing; no model
+        # calls, no embedder), then start retrieval NOW so it runs concurrently
+        # with the rest of turn setup (condensation, memory recall, prompt
+        # build) instead of serializing in front of the provider invoke. The
+        # task is awaited at the injection point below with whatever budget
+        # remains. @index/@docs markers are extracted here so the router sees
+        # them and they never reach the model prompt.
+        from server.index.query_gate import (
+            extract_docs_trigger,
+            extract_index_trigger,
+            route_grounding,
+        )
+
+        force_index, question = extract_index_trigger(question)
+        force_docs, question = extract_docs_trigger(question)
+        grounding_task: asyncio.Task | None = None
+        grounding_note = "off (continuation)"
+        _ground_t0 = 0.0
+        if not approved_tool_result:
+            _ground_sel, _route_reason = route_grounding(
+                body.get("selected_search_indexes"),
+                bool(ws_path),
+                question,
+                force_index=force_index,
+                force_docs=force_docs,
+            )
+            grounding_note = f"off ({_route_reason})"
+            if _ground_sel:
+                _ground_t0 = time.monotonic()
+                grounding_task = asyncio.create_task(
+                    _run_grounding(_ground_sel, question, chat_history)
+                )
+                # Mark a pre-await failure observed, so a setup error between
+                # kickoff and the await below can't add "exception was never
+                # retrieved" noise on top of the real error.
+                grounding_task.add_done_callback(lambda t: None if t.cancelled() else t.exception())
+                grounding_note = _route_reason
+
+        def _log_setup() -> None:
+            # The one greppable line for "why was this turn slow before the
+            # model": total setup wall time plus the grounding route/outcome.
+            log.info(
+                "Turn setup %.2fs (model=%s, grounding=%s)",
+                time.monotonic() - _setup_t0,
+                model_key,
+                grounding_note,
+            )
 
         # Latch config for this session — latched fields are frozen at session start
         # to prevent mid-session settings changes from disrupting the conversation.
@@ -1300,19 +1426,8 @@ async def chat_endpoint(request: Request):
 
         question = resolve_at_session_mentions(question, session_id)
 
-        # An explicit @index mention forces index grounding for this turn — past
-        # the smalltalk gate and past the connected-workspace deprioritization
-        # below — and is stripped so the marker never reaches the model prompt.
-        from server.index.query_gate import (
-            extract_docs_trigger,
-            extract_index_trigger,
-            should_ground,
-        )
-
-        force_index, question = extract_index_trigger(question)
-        # @docs: this turn answers from the app's own manual. Takes the place
-        # of workspace-index grounding for the turn.
-        force_docs, question = extract_docs_trigger(question)
+        # (@index/@docs extraction and the grounding kickoff happened at the
+        # top of turn setup — see the grounding router block above.)
 
         # Resolve this turn's attachments (rendering + per-file caps live in
         # attachment_context, shared with the history rebuild above). A missing id
@@ -1380,103 +1495,22 @@ async def chat_endpoint(request: Request):
                     log.warning("@docs lookup timed out; answering without it")
                 except Exception as e:  # noqa: BLE001 — docs lookup is best-effort
                     log.warning("@docs lookup failed: %s", e)
-            # Index-first grounding (point I): when the user has selected workspace
-            # indexes to search, retrieve relevant passages now and inject them as
-            # cited context, so the answer is grounded in the index without relying
-            # on the model choosing to call the search tool.
-            # An ABSENT field defaults to every indexed folder, so a fresh session
-            # grounds from its very first question (the frontend mints the session
-            # id at send time, so its per-session selection isn't seeded yet). An
-            # explicit EMPTY list means the user deselected all — honour "search
-            # nothing". `body.get(... ) or []` would have conflated the two and
-            # silently disabled grounding on the first turn.
-            _raw_sel = body.get("selected_search_indexes")
-            if _raw_sel is None:
-                # Deprioritize the index when a workspace is connected: with no
-                # explicit selection, ground against every index ONLY if no
-                # workspace is open. When one is, default to searching nothing so
-                # the model answers from the workspace and hits the index only when
-                # it (or the user) explicitly calls workspace_semantic_search.
-                # (get_workspace_path is already imported at the top of this function.)
-                if get_workspace_path():
-                    selected_indexes = []
-                else:
-                    from server.index.store import list_indexed_workspaces
-
-                    selected_indexes = list_indexed_workspaces()
-            elif isinstance(_raw_sel, list):
-                selected_indexes = _raw_sel
-            else:
-                # Malformed (non-list) value from an unexpected client → search
-                # nothing rather than silently grounding against every folder.
-                selected_indexes = []
-            if force_index and not selected_indexes:
-                # @index explicitly asks for a search this turn: fall back to
-                # every indexed folder when the session has none selected (e.g.
-                # a connected workspace deprioritized the index by default).
-                from server.index.store import list_indexed_workspaces
-
-                selected_indexes = list_indexed_workspaces()
-            # Smalltalk gate: a contentless message ("hey", "thanks") retrieves
-            # nothing but noise, and the injected passages then read as the task
-            # itself — small local models especially will invent an analysis out
-            # of them. Skip retrieval entirely (no embedder call, no latency)
-            # unless the user forced it with @index. A @docs turn already has
-            # its manual context above; the workspace indexes sit this one out.
-            if (
-                not force_docs
-                and selected_indexes
-                and question.strip()
-                and (force_index or should_ground(question))
-            ):
+            # Index-first grounding (point I): the router at the top of turn
+            # setup decided whether this turn retrieves and kicked the search
+            # off in parallel with everything above. Collect it here with
+            # whatever remains of its budget and inject the passages as cited
+            # context. A hung retrieval drops grounding, never the turn — and
+            # since executor threads outlive the wait, a timed-out cold
+            # embedder load still completes and leaves the next turn warm.
+            if grounding_task is not None:
+                _budget = _grounding_budget_s()
+                _remaining = max(1.0, _budget - (time.monotonic() - _ground_t0))
                 try:
-                    from server.index.pipeline import build_context_query, retrieve_grounding
-                    from server.infrastructure.feature_flags import is_enabled
-
-                    # Context-aware retrieval query (prior turns are in `messages`).
-                    #  - rag_query_rewrite ON  -> Tier 3: a fast LLM rewrites the
-                    #    follow-up into a standalone query, used ALONE.
-                    #  - OFF (default)         -> Tier 1+2: a heuristic context query
-                    #    fused with the raw question via reciprocal-rank fusion.
-                    primary_query = question
-                    extra_queries: list[str] = []
-                    if is_enabled("rag_query_rewrite") and messages:
-                        try:
-                            rewritten = await asyncio.wait_for(
-                                _rewrite_query_for_retrieval(question, messages),
-                                timeout=_QUERY_REWRITE_TIMEOUT_S,
-                            )
-                        except asyncio.TimeoutError:
-                            log.warning("Query rewrite (Tier 3) timed out; using heuristic context")
-                            rewritten = None
-                        if rewritten:
-                            primary_query = rewritten
-                    if primary_query == question:  # not rewritten → Tier 1+2
-                        ctx = build_context_query(question, messages)
-                        if ctx and ctx != question:
-                            extra_queries = [ctx]
-
-                    def _do_grounding():
-                        return retrieve_grounding(
-                            selected_indexes,
-                            primary_query,
-                            extra_queries=extra_queries or None,
-                            return_meta=True,
-                        )
-
-                    # The reranker (if on) cold-loads a ~2.4GB model on the first
-                    # grounded turn; give that extra headroom so a cold load can't
-                    # blow the budget and silently drop grounding (warm turns are
-                    # unaffected — they finish in well under the base timeout).
-                    _ground_timeout = _GROUNDING_TIMEOUT_S + (
-                        _RERANK_COLD_BUDGET_S if is_enabled("rag_reranker") else 0
-                    )
-                    _status("searching")
-                    grounding, _gmeta = await asyncio.wait_for(
-                        asyncio.get_event_loop().run_in_executor(
-                            _GROUNDING_EXECUTOR, _do_grounding
-                        ),
-                        timeout=_ground_timeout,
+                    if not grounding_task.done():
+                        _status("searching")
+                    grounding, _gmeta = await asyncio.wait_for(grounding_task, timeout=_remaining)
+                    grounding_note = (
+                        f"{time.monotonic() - _ground_t0:.2f}s, {_gmeta['passages']} passages"
                     )
                     # Surface the grounding chip only when at least one index was
                     # actually searched — never for users who have no indexes, and
@@ -1503,11 +1537,13 @@ async def chat_endpoint(request: Request):
                         parts.append(grounding)
                         grounding_active = True
                 except asyncio.TimeoutError:
+                    grounding_note = f"timed out ({_budget:.0f}s budget)"
                     log.warning(
-                        "Index grounding timed out (%ss); answering without it",
-                        _GROUNDING_TIMEOUT_S,
+                        "Index grounding timed out (%.0fs); answering without it",
+                        _budget,
                     )
                 except Exception as e:  # noqa: BLE001 — grounding is best-effort
+                    grounding_note = "failed"
                     log.warning("Index grounding failed: %s", e)
             if transcript.strip():
                 parts.append(f"[Transcript so far]\n{transcript}")
@@ -1597,6 +1633,7 @@ async def chat_endpoint(request: Request):
             suppress_ws_search=suppress_ws_search,
         )
         if _local_resp is not None:
+            _log_setup()
             _status("connecting")
             return _prepend_grounding_event(_local_resp, grounding_meta)
 
@@ -1618,8 +1655,10 @@ async def chat_endpoint(request: Request):
         loop = asyncio.get_event_loop()
 
         # Pre-flight proactive compaction (provider-aware summarizer), against
-        # the ACTIVE model's own input budget (95% trigger).
+        # the ACTIVE model's own input budget (95% trigger). It makes an LLM
+        # summarization call, so tell the UI what the wait is.
         if estimate_message_size(messages) > thresholds_for(model_key)[0]:
+            _status("Compacting conversation history...")
             messages = await compact_messages_with_claude(
                 messages, model_id, session_id=session_id, model_key=model_key
             )
@@ -1802,6 +1841,7 @@ async def chat_endpoint(request: Request):
                     _active_chat_streams.pop(session_id, None)
                     _stream_heartbeat.pop(session_id, None)
 
+        _log_setup()
         _status("connecting")
         return StreamingResponse(guarded_stream(), media_type="text/event-stream")
 

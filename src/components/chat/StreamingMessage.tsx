@@ -90,7 +90,11 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
                       ? 'Waiting for the model\u2026'
                       : streamStatus === 'preparing'
                         ? 'Preparing\u2026'
-                        : (isLocalModel ? 'Generating\u2026' : 'Thinking\u2026')}
+                        : streamStatus
+                          // Free-text phases (compaction, continuation) arrive
+                          // as human-readable status frames; show them as-is.
+                          ? streamStatus
+                          : (isLocalModel ? 'Generating\u2026' : 'Thinking\u2026')}
               {!content && <span className="pulse-dot"></span>}
               {displayElapsed > 0 && (
                 <span style={{ marginLeft: 'auto', fontSize: '0.85em', opacity: 0.7 }}>
@@ -237,7 +241,11 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
                 const running = streamToolUse.find(
                   (t) => t.status === 'running' || t.status === 'pending',
                 );
-                return running ? `Running ${running.toolName}…` : 'Working…';
+                if (running) return `Running ${running.toolName}…`;
+                // Mid-turn status frames (continuation after an output-limit
+                // cut, compaction between rounds) name the quiet phase; the
+                // generic label is the fallback.
+                return streamStatus || 'Working…';
               })()}
             </span>
           </div>
