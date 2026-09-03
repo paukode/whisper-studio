@@ -119,6 +119,11 @@ DEFAULTS = {
     "translate_mode": "off",
     # Target language for the translation line (ISO 639-1).
     "translate_target": "en",
+    # First-run model-mode notice: flipped true when the user dismisses it.
+    # Lives in config (not browser localStorage) because the Mac app shell
+    # serves the SPA from a fresh localhost origin whenever its port changes,
+    # which would wipe a localStorage flag and re-show the notice every launch.
+    "mode_notice_seen": False,
     # Which ASR backend the live recorder uses:
     #   "streaming" — alias for the Parakeet backend, word-by-word interims (default)
     #   "whisper"   — utterance-based mlx-whisper (proven fallback path)

@@ -21,4 +21,7 @@ export interface AppConfig {
   modelMode: ModelMode;
   /** Per-capability backend overrides, consulted only in hybrid mode. */
   backends: Partial<Record<IndexCapability, string>>;
+  /** First-run model-mode notice dismissed. Config-backed (not localStorage)
+   *  so it survives the Mac app's per-launch localhost origin changes. */
+  modeNoticeSeen: boolean;
 }

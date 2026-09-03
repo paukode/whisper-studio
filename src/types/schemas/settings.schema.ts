@@ -11,6 +11,8 @@ export const AppConfigResponseSchema = z.object({
   model_mode: z.enum(['cloud', 'hybrid', 'local']).optional().default('cloud'),
   // Per-capability backend overrides, consulted only in hybrid mode.
   backends: z.record(z.string(), z.string()).optional().default({}),
+  // First-run model-mode notice dismissed (config-backed; see AppConfig).
+  mode_notice_seen: z.boolean().optional().default(false),
 }).passthrough();
 
 /** GET /api/models */

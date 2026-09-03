@@ -48,6 +48,46 @@ func findFreePort() -> UInt16? {
     return UInt16(bigEndian: bound.sin_port)
 }
 
+/// Test-bind 127.0.0.1:port; true when the port is free to listen on.
+/// SO_REUSEADDR is set so a socket lingering in TIME_WAIT from our own
+/// previous run does not disqualify the port.
+func portIsFree(_ portToTest: UInt16) -> Bool {
+    let sock = socket(AF_INET, SOCK_STREAM, 0)
+    guard sock >= 0 else { return false }
+    defer { Darwin.close(sock) }
+
+    var reuse: Int32 = 1
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+
+    var addr = sockaddr_in()
+    addr.sin_family = sa_family_t(AF_INET)
+    addr.sin_port = portToTest.bigEndian
+    addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+
+    let bindResult = withUnsafePointer(to: &addr) { ptr -> Int32 in
+        ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { saPtr in
+            Darwin.bind(sock, saPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+        }
+    }
+    return bindResult == 0
+}
+
+/// Stable localhost origin across launches: reuse the previous launch's port
+/// whenever it is still free, falling back to a fresh kernel-assigned one.
+/// WKWebView storage (localStorage, IndexedDB) is keyed to the page ORIGIN —
+/// http://127.0.0.1:<port> — so a random port per launch silently wiped every
+/// persisted UI flag (e.g. the first-run model-mode notice) on each restart.
+func stickyPort() -> UInt16? {
+    let key = "BackendPort"
+    let saved = UserDefaults.standard.integer(forKey: key)
+    if saved >= 1024, saved <= 65535, portIsFree(UInt16(saved)) {
+        return UInt16(saved)
+    }
+    guard let fresh = findFreePort() else { return nil }
+    UserDefaults.standard.set(Int(fresh), forKey: key)
+    return fresh
+}
+
 // MARK: - App delegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
@@ -140,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
             return
         }
 
-        guard let freePort = findFreePort() else {
+        guard let freePort = stickyPort() else {
             fatalStartupAlert("Could not find a free TCP port on 127.0.0.1.")
             return
         }

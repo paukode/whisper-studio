@@ -1,13 +1,20 @@
 import { useCallback, useState } from 'react';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 
 /**
  * One-time first-start notice: fresh installs now default to Local mode, and
  * this explains what the three model modes are and where to change them
- * (Settings > Model mode). Shown once per browser profile (the Mac app is a
- * single webview, so effectively once per install); the flag is written on
- * either button so it never comes back. Deliberately no ESC/backdrop dismiss:
- * two explicit buttons, and no interference with the global ESC kill switch.
+ * (Settings > Model mode). The dismissed flag is CONFIG-backed
+ * (config.modeNoticeSeen, persisted via PUT /api/config): localStorage is
+ * origin-keyed, and the Mac app shell serves the SPA from a fresh localhost
+ * port when the old one is taken, which wiped the flag and re-showed the
+ * notice on every launch. localStorage remains a secondary suppressor so a
+ * dev profile that already dismissed it never sees it again either.
+ * The notice only appears AFTER the loaded config reports it unseen (the
+ * pre-load default is seen), so it can never flash. Deliberately no
+ * ESC/backdrop dismiss: two explicit buttons, and no interference with the
+ * global ESC kill switch.
  */
 const SEEN_KEY = 'whisper_mode_notice_v1';
 
@@ -15,7 +22,7 @@ function seen(): boolean {
   try {
     return localStorage.getItem(SEEN_KEY) === '1';
   } catch {
-    return true; // storage unavailable — never nag on every load
+    return false; // storage unavailable — the config flag still gates below
   }
 }
 
@@ -49,21 +56,25 @@ const MODES: { name: string; desc: string }[] = [
 ];
 
 export const ModelModeNotice: React.FC = () => {
-  const [open, setOpen] = useState(() => !seen());
+  const configSeen = useSettingsStore((s) => s.config.modeNoticeSeen);
+  const markModeNoticeSeen = useSettingsStore((s) => s.markModeNoticeSeen);
+  const [dismissed, setDismissed] = useState(seen);
   const openSettings = useUIStore((s) => s.openSettings);
 
   const dismiss = useCallback(() => {
     markSeen();
-    setOpen(false);
-  }, []);
+    markModeNoticeSeen();
+    setDismissed(true);
+  }, [markModeNoticeSeen]);
 
   const goToSettings = useCallback(() => {
     markSeen();
-    setOpen(false);
+    markModeNoticeSeen();
+    setDismissed(true);
     openSettings('model-mode');
-  }, [openSettings]);
+  }, [markModeNoticeSeen, openSettings]);
 
-  if (!open) return null;
+  if (configSeen || dismissed) return null;
 
   return (
     <div className="whisper-dialog-overlay">
