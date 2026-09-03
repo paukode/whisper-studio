@@ -166,13 +166,17 @@ def _grounding_budget_s() -> float:
     return budget
 
 
-async def _run_grounding(selected_indexes: list[str], question: str, history: list[dict]):
+async def _run_grounding(
+    selected_indexes: list[str], question: str, history: list[dict], forced: bool
+):
     """One turn's index retrieval, run as a background task so it overlaps the
     rest of turn setup. Returns ``retrieve_grounding``'s ``(block, meta)``.
 
     ``question`` is the user's message with @-triggers stripped but BEFORE
     @file/@session mention inlining — the raw question is the retrieval
-    signal; an inlined file body would drown it.
+    signal; an inlined file body would drown it. ``forced`` marks an @index
+    turn: automatic turns self-mute when nothing in the corpus is on-topic,
+    forced turns keep the loose noise floor (the user asked for a search).
     """
     from server.index.pipeline import build_context_query, retrieve_grounding
     from server.infrastructure.feature_flags import is_enabled
@@ -208,6 +212,7 @@ async def _run_grounding(selected_indexes: list[str], question: str, history: li
             primary_query,
             extra_queries=extra_queries or None,
             return_meta=True,
+            forced=forced,
         ),
     )
 
@@ -1197,7 +1202,7 @@ async def chat_endpoint(request: Request):
             if _ground_sel:
                 _ground_t0 = time.monotonic()
                 grounding_task = asyncio.create_task(
-                    _run_grounding(_ground_sel, question, chat_history)
+                    _run_grounding(_ground_sel, question, chat_history, force_index)
                 )
                 # Mark a pre-await failure observed, so a setup error between
                 # kickoff and the await below can't add "exception was never
@@ -1512,6 +1517,10 @@ async def chat_endpoint(request: Request):
                     grounding_note = (
                         f"{time.monotonic() - _ground_t0:.2f}s, {_gmeta['passages']} passages"
                     )
+                    if _gmeta.get("dense_muted"):
+                        # Auto-mute fired: the corpus is off-topic for this
+                        # question (best dense cosine under the on-topic floor).
+                        grounding_note += f" (muted off-topic, best {_gmeta.get('best_score')})"
                     # Surface the grounding chip only when at least one index was
                     # actually searched — never for users who have no indexes, and
                     # not on a timeout/error (leave meta None → no chip).

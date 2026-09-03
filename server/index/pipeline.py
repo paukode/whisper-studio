@@ -35,6 +35,7 @@ from .config import (
     COHERE_EMBED_MODEL_ID,
     DATA_EXTENSIONS,
     EMBED_MODEL,
+    GROUND_ON_TOPIC_FLOORS,
     GROUND_REL_FLOOR,
     GROUND_SCORE_FLOORS,
     IMAGE_EXTENSIONS,
@@ -704,6 +705,7 @@ def retrieve_grounding(
     *,
     extra_queries: list[str] | None = None,
     return_meta: bool = False,
+    forced: bool = False,
 ):
     """Search the given indexed workspaces and return a cited Markdown context
     block (or '' if nothing). Used to ground a chat answer when the user has
@@ -718,10 +720,18 @@ def retrieve_grounding(
     files. Source links use absolute paths so they reveal in Finder regardless
     of which workspace is connected.
 
-    With ``return_meta`` the second value is ``{folders, passages, sources}``,
-    where ``sources`` lists every injected passage with its retrieval provenance
-    (``kind``: keyword / semantic / entity / related, plus entity-name chips) —
-    the payload behind the chat's "Answer sources" surface."""
+    With ``return_meta`` the second value is ``{folders, passages, sources,
+    best_score, dense_muted}``, where ``sources`` lists every injected passage
+    with its retrieval provenance (``kind``: keyword / semantic / entity /
+    related, plus entity-name chips) — the payload behind the chat's "Answer
+    sources" surface.
+
+    ``forced`` marks an explicit @index turn. UNforced (automatic) grounding is
+    self-muting: when the best dense cosine stays under the per-backend
+    on-topic floor, the dense leg and its graph-hop expansion are dropped
+    entirely — only exact keyword and entity-name hits may still ground, and
+    with none of those the turn injects nothing. Forced turns keep the loose
+    noise floor."""
     queries = [question]
     for q in extra_queries or []:
         if q and q.strip() and q not in queries:
@@ -766,13 +776,16 @@ def retrieve_grounding(
     legs_by_key: dict[tuple, set] = {}
     ent_names_by_key: dict[tuple, list] = {}
 
-    # Per query, build TWO global lists (across all indexes): the dense list,
+    on_topic_floor = GROUND_ON_TOPIC_FLOORS.get(_embed_backend, 0.40)
+    best_dense = 0.0  # best raw cosine seen across queries/indexes (pre-floor)
+
+    # Per query, build THREE global lists (across all indexes): the dense list,
     # cosine-sorted (cosine is comparable across indexes, so this is a true
-    # global ranking — no per-index rank democracy), and the keyword/BM25 list.
-    # Fuse those two by reciprocal rank: dense order is preserved, and a keyword
-    # hit (e.g. a filename match with near-zero cosine) is promoted in instead of
-    # being lost under the cosine floor. Then fuse across queries the same way.
-    def _hybrid_for_query(q: str, want_related: bool) -> list[dict]:
+    # global ranking — no per-index rank democracy), the keyword/BM25 list, and
+    # the entity leg. They fuse by reciprocal rank below — AFTER the auto-mute
+    # decision, which needs the best dense score across every query first.
+    def _legs_for_query(q: str) -> tuple[list[dict], list[dict], list[dict]]:
+        nonlocal best_dense
         dense: list[dict] = []
         kw: list[dict] = []
         ent: list[dict] = []
@@ -783,7 +796,9 @@ def retrieve_grounding(
         kw_ok = has_content_word(q)
         for p, root in valid_roots:
             try:
-                res = query(p, q, k=k)
+                # graph_hop=False: expansion happens below, from seeds that
+                # actually cleared the floors — never from raw top-k noise.
+                res = query(p, q, k=k, graph_hop=False)
             except Exception as e:  # noqa: BLE001 — one bad index shouldn't break the turn
                 log.warning("Grounding query failed for %s: %s", p, e)
                 continue
@@ -807,26 +822,67 @@ def retrieve_grounding(
                     ent.append(m)
             except Exception as e:  # noqa: BLE001 — best-effort, never break the turn
                 log.warning("Entity-link leg failed for %s: %s", p, e)
-            if want_related:
-                for r in res.get("related", []):
-                    r = dict(r)
-                    r["_abs"] = os.path.join(root, r["path"])
-                    r["_ws"] = p
-                    related.append(r)
         # Global dense ranking: cosine-sorted, sub-floor noise dropped. The floor
         # is the max of the absolute per-backend floor and a relative guard
         # (GROUND_REL_FLOOR x the top score), which adapts to per-query spread so
         # a weak tail below half the best match's relevance can't dilute grounding.
         dense.sort(key=lambda m: m.get("score", 0.0), reverse=True)
         top = dense[0].get("score", 0.0) if dense else 0.0
+        best_dense = max(best_dense, top)
         floor = max(ground_floor, GROUND_REL_FLOOR * top) if top > 0 else ground_floor
         dense = [m for m in dense if m.get("score", 0.0) >= floor]
         # Keyword (BM25, more-negative = better) and entity legs are exempt from the
         # cosine floor — surfacing exact-term and entity-anchored hits is their job.
         kw.sort(key=lambda m: m.get("_bm25", 0.0))
         ent.sort(key=lambda m: m.get("_ent", 0.0), reverse=True)
-        # Record leg membership AFTER the dense floor cut, so a chunk that only
-        # survived via keyword/entity is attributed to the leg that carried it.
+        return dense, kw, ent
+
+    leg_sets = [_legs_for_query(q) for q in queries]
+    folders_searched = len(searched_roots)
+
+    # ── Auto-grounding self-mute ──────────────────────────────────────────────
+    # Dense cosine is the topicality judge: top-k nearest ALWAYS returns
+    # something, so on an unforced turn whose best match stays under the
+    # on-topic floor the corpus simply doesn't cover the question — drop the
+    # dense leg instead of injecting the least-off-topic chunks. The literal
+    # legs stay: an identifier (keyword/BM25) or an entity name the corpus
+    # genuinely contains still grounds. @index keeps the aggressive behavior;
+    # the user explicitly asked for a search.
+    dense_muted = not forced and best_dense < on_topic_floor
+    if dense_muted:
+        leg_sets = [([], kw, ent) for (_dense, kw, ent) in leg_sets]
+        log.info(
+            "Auto-grounding muted the dense leg: best cosine %.3f under the %.2f on-topic floor",
+            best_dense,
+            on_topic_floor,
+        )
+
+    # Graph hop, from the primary query's surviving dense seeds only. On auto
+    # turns seeds must additionally clear the on-topic floor — a weak seed's
+    # entity neighborhood is noise squared. (This expansion historically ran
+    # inside query() off the raw pre-floor top-k, which is how an off-topic
+    # question dragged a dozen "related" passages into the prompt.)
+    seed_floor = ground_floor if forced else on_topic_floor
+    if leg_sets:
+        seeds_by_ws: dict[str, list[int]] = {}
+        for m in leg_sets[0][0]:
+            if m.get("score", 0.0) >= seed_floor and m.get("chunk_id") is not None:
+                seeds_by_ws.setdefault(m["_ws"], []).append(m["chunk_id"])
+        for ws, ids in seeds_by_ws.items():
+            root = os.path.normpath(os.path.abspath(os.path.expanduser(ws)))
+            try:
+                for r in store.expand(ws, ids, limit=max(2, k // 2)):
+                    r = dict(r)
+                    r["_abs"] = os.path.join(root, r["path"])
+                    r["_ws"] = ws
+                    related.append(r)
+            except Exception as e:  # noqa: BLE001 — the hop is best-effort
+                log.warning("Graph hop failed for %s: %s", ws, e)
+
+    # Leg attribution and fusion — after the mute decision, so a dropped leg
+    # never claims a chunk it no longer carries.
+    per_query: list[list[dict]] = []
+    for dense, kw, ent in leg_sets:
         for lst, leg in ((dense, "semantic"), (kw, "keyword"), (ent, "entity")):
             for m in lst:
                 legs_by_key.setdefault(_key(m), set()).add(leg)
@@ -835,13 +891,9 @@ def retrieve_grounding(
             hits.extend(n for n in (m.get("_ent_names") or []) if n not in hits)
         legs = [lst for lst in (dense, kw, ent) if lst]
         if len(legs) > 1:
-            return _rrf_fuse(legs)
-        return legs[0] if legs else []
-
-    per_query = [_hybrid_for_query(q, want_related=(qi == 0)) for qi, q in enumerate(queries)]
-    folders_searched = len(searched_roots)
-
-    per_query = [lst for lst in per_query if lst]
+            per_query.append(_rrf_fuse(legs))
+        elif legs:
+            per_query.append(legs[0])
     if not per_query:
         matches: list[dict] = []
     elif len(per_query) == 1:
@@ -895,7 +947,13 @@ def retrieve_grounding(
 
     if not matches:
         if return_meta:
-            return "", {"folders": folders_searched, "passages": 0, "sources": []}
+            return "", {
+                "folders": folders_searched,
+                "passages": 0,
+                "sources": [],
+                "best_score": round(best_dense, 3),
+                "dense_muted": dense_muted,
+            }
         return ""
 
     # Auto-merge (parent-document retrieval): when a SMALL, focused document has
@@ -1022,5 +1080,11 @@ def retrieve_grounding(
 
         sources = [_source(m, _kind(m), ent_names_by_key.get(_key(m))) for m in matches]
         sources += [_source(r, "related", r.get("shared_entity_names")) for r in related_uniq]
-        return text, {"folders": folders_searched, "passages": len(matches), "sources": sources}
+        return text, {
+            "folders": folders_searched,
+            "passages": len(matches),
+            "sources": sources,
+            "best_score": round(best_dense, 3),
+            "dense_muted": dense_muted,
+        }
     return text
