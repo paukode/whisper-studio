@@ -23,7 +23,12 @@ import pytest
 
 from server.index import paths, pipeline, store
 from server.index.config import EMBED_DIM
-from server.index.query_gate import extract_index_trigger, has_content_word, should_ground
+from server.index.query_gate import (
+    extract_index_trigger,
+    has_content_word,
+    route_grounding,
+    should_ground,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -97,6 +102,81 @@ def test_extract_index_trigger():
     # An email-like token is not a trigger, and @indexes is a different word.
     assert extract_index_trigger("mail foo@index.com") == (False, "mail foo@index.com")
     assert extract_index_trigger("rebuild @indexes now") == (False, "rebuild @indexes now")
+
+
+# ── route_grounding: the instant index-vs-LLM router ─────────────────────────
+
+
+def _patch_all_indexes(monkeypatch, indexes):
+    import server.index.store as index_store
+
+    monkeypatch.setattr(index_store, "list_indexed_workspaces", lambda: indexes)
+
+
+def test_router_skips_when_nothing_indexed(monkeypatch):
+    _patch_all_indexes(monkeypatch, [])
+    sel, reason = route_grounding(None, False, "why is staging failing")
+    assert sel == []
+    assert reason == "no folders indexed"
+
+
+def test_router_defaults_to_all_indexes_in_plain_chat(monkeypatch):
+    _patch_all_indexes(monkeypatch, ["/fake/a", "/fake/b"])
+    sel, reason = route_grounding(None, False, "why is staging failing")
+    assert sel == ["/fake/a", "/fake/b"]
+    assert reason == "index"
+
+
+def test_router_deprioritizes_index_when_workspace_connected(monkeypatch):
+    _patch_all_indexes(monkeypatch, ["/fake/a"])
+    sel, reason = route_grounding(None, True, "why is staging failing")
+    assert sel == []
+    assert reason == "workspace connected, index deprioritized"
+
+
+def test_router_honours_explicit_deselection(monkeypatch):
+    _patch_all_indexes(monkeypatch, ["/fake/a"])
+    sel, reason = route_grounding([], False, "why is staging failing")
+    assert sel == []
+    assert reason == "indexes deselected"
+
+
+def test_router_skips_smalltalk_and_empty(monkeypatch):
+    _patch_all_indexes(monkeypatch, ["/fake/a"])
+    assert route_grounding(["/fake/a"], False, "hey thanks!") == ([], "smalltalk")
+    assert route_grounding(["/fake/a"], False, "   ") == ([], "empty question")
+
+
+def test_router_force_index_overrides_gate_and_selection(monkeypatch):
+    _patch_all_indexes(monkeypatch, ["/fake/auto"])
+    # Past the smalltalk gate on the explicit selection.
+    assert route_grounding(["/fake/a"], False, "hey", force_index=True) == (
+        ["/fake/a"],
+        "forced by @index",
+    )
+    # Empty selection falls back to every indexed folder.
+    assert route_grounding([], True, "what is the etl design", force_index=True) == (
+        ["/fake/auto"],
+        "forced by @index",
+    )
+    # ...but @index with nothing indexed still goes straight to the model.
+    _patch_all_indexes(monkeypatch, [])
+    assert route_grounding([], False, "what is the etl design", force_index=True) == (
+        [],
+        "no folders indexed",
+    )
+
+
+def test_router_docs_turn_and_malformed_selection(monkeypatch):
+    _patch_all_indexes(monkeypatch, ["/fake/a"])
+    assert route_grounding(["/fake/a"], False, "how do skills work", force_docs=True) == (
+        [],
+        "docs turn",
+    )
+    assert route_grounding("not-a-list", False, "real question") == (
+        [],
+        "malformed selection",
+    )
 
 
 # ── keyword leg requires a content word ──────────────────────────────────────
@@ -199,6 +279,35 @@ def test_route_at_index_forces_grounding_and_strips_marker(monkeypatch):
     sent = json.dumps(client.requests[0]["messages"])
     assert "@index" not in sent
     assert "[ctx]" in sent
+
+
+def test_route_no_indexes_goes_straight_to_model(monkeypatch):
+    """A machine with nothing indexed must never pay retrieval latency: no
+    embedder call, and no 'searching' phase on the wire."""
+    import server.index.store as index_store
+    from tests.golden_harness import (
+        FakeBedrockClient,
+        msg_end,
+        msg_start,
+        run_chat_turn,
+        text_block,
+    )
+
+    calls = _spy_grounding(monkeypatch)
+    monkeypatch.setattr(index_store, "list_indexed_workspaces", lambda: [])
+    client = FakeBedrockClient([[msg_start(), *text_block("answer"), *msg_end()]])
+    lines = run_chat_turn(
+        monkeypatch,
+        client,
+        # No selected_search_indexes key: the absent-selection default path.
+        {"question": "why is staging failing"},
+    )
+
+    assert calls == []
+    frames = [json.loads(ln) for ln in lines if ln != "[DONE]"]
+    statuses = [f["status"] for f in frames if "status" in f]
+    assert "searching" not in statuses
+    assert not any("grounding" in f for f in frames)
 
 
 def test_route_at_index_falls_back_to_all_indexes(monkeypatch):

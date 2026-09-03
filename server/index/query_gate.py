@@ -94,3 +94,59 @@ def extract_docs_trigger(question: str) -> tuple[bool, str]:
     """Detect and strip an explicit ``@docs`` mention (ask the app manual).
     Same contract as ``extract_index_trigger``."""
     return _extract_trigger(_DOCS_TRIGGER_RE, question)
+
+
+def route_grounding(
+    raw_selection,
+    workspace_connected: bool,
+    question: str,
+    *,
+    force_index: bool = False,
+    force_docs: bool = False,
+) -> tuple[list[str], str]:
+    """Instant index-vs-LLM router for one chat turn.
+
+    Decides in-process (regex plus one index listing; no models, no network)
+    whether the turn should retrieve from workspace indexes at all, so a turn
+    that doesn't want retrieval pays none of its latency. Returns
+    ``(indexes_to_search, reason)``; an empty list means go straight to the
+    model, and ``reason`` feeds the per-turn setup log line.
+
+    Selection semantics (unchanged from the historical inline logic):
+    an ABSENT selection grounds against every indexed folder in plain chat but
+    against nothing when a workspace is connected (the model reaches the index
+    through workspace_semantic_search on demand); an explicit EMPTY list means
+    the user deselected all; a malformed value searches nothing rather than
+    silently grounding against every folder. ``@index`` forces a search past
+    the smalltalk gate and past the workspace deprioritization, falling back
+    to every indexed folder when the session has none selected.
+    """
+    if force_docs:
+        return [], "docs turn"
+    if not question.strip():
+        return [], "empty question"
+
+    from server.index.store import list_indexed_workspaces
+
+    if raw_selection is None:
+        selected = [] if workspace_connected else list_indexed_workspaces()
+        none_reason = (
+            "workspace connected, index deprioritized"
+            if workspace_connected
+            else "no folders indexed"
+        )
+    elif isinstance(raw_selection, list):
+        selected = list(raw_selection)
+        none_reason = "indexes deselected"
+    else:
+        selected = []
+        none_reason = "malformed selection"
+
+    if force_index:
+        selected = selected or list_indexed_workspaces()
+        return (selected, "forced by @index") if selected else ([], "no folders indexed")
+    if not selected:
+        return [], none_reason
+    if not should_ground(question):
+        return [], "smalltalk"
+    return selected, "index"
