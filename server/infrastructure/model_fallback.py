@@ -31,7 +31,9 @@ except Exception:  # pragma: no cover - defensive
 # pricing table is empty/unavailable. Kept in real catalog order so the module
 # still works standalone. Two provider chains flattened by capability.
 _STATIC_FALLBACK_CHAIN = [
+    "fable5.1",
     "fable5.0",
+    "opus5.0",
     "opus4.8",
     "opus4.7",
     "opus4.6",
