@@ -17,6 +17,13 @@ rejection; the OpenAI adapter uses it to classify those errors as trimmable.
 
 import re
 
+# Re-exported for callers; the tuple lives in infrastructure.config because
+# _lift_stale_context_window() needs it during load_config(), which can run
+# while server.chat is still importing (server.mcp init -> data_root ->
+# load_config) — importing back through the server.chat package there is
+# circular.
+from server.infrastructure.config import ANTHROPIC_1M_MARKERS
+
 # Known input caps by provider family. VERIFIED 2026-08-29: Bedrock accepted a
 # 312K-token prompt on global.anthropic.claude-sonnet-5 (invoke_model,
 # max_tokens=1), so the old "Bedrock caps Claude at 200K" assumption is dead;
@@ -29,20 +36,6 @@ FAMILY_DEFAULTS = {
     "openai_bedrock": 278_528,
 }
 _FALLBACK = 200_000
-
-# Model-id markers of the 1M-context Claude family (Fable 5, Mythos, Opus 5
-# and 4.6/4.7/4.8, Sonnet 5 and 4.6). Anything unrecognized keeps the safe
-# 200K family default.
-ANTHROPIC_1M_MARKERS = (
-    "fable-5",
-    "mythos",
-    "opus-5",
-    "opus-4-6",
-    "opus-4-7",
-    "opus-4-8",
-    "sonnet-5",
-    "sonnet-4-6",
-)
 
 # Fractions of the input budget where compaction acts: the proactive trigger
 # and the last-resort truncation ceiling.

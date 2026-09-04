@@ -11,12 +11,6 @@ and never touch the network or a local model. What matters:
 
 import pytest
 
-# Imported before server.skills on purpose: server.skills -> server.mcp ->
-# load_config triggers a circular import of server.chat that fails and leaves
-# an orphaned server.chat.infra in sys.modules; the orphan blocks a later
-# clean import from ever setting the package's ``infra`` attribute, which
-# breaks string-path monkeypatching of server.chat.infra when this file runs
-# standalone. Importing it first loads server.chat cleanly instead.
 import server.chat.infra as chat_infra
 import server.skills as sk
 import server.summarize.mapreduce as mr

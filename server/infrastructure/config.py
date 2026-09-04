@@ -254,6 +254,24 @@ def _as_int(v) -> int | None:
         return None
 
 
+# Model-id markers of the 1M-context Claude family (Fable 5, Mythos, Opus 5
+# and 4.6/4.7/4.8, Sonnet 5 and 4.6). Anything unrecognized keeps the safe
+# 200K family default. Defined HERE, not in chat.engine.windows: load_config()
+# runs during server.mcp's module init, and importing anything through the
+# server.chat package from there is circular (server.chat imports server.mcp).
+# chat.engine.windows re-exports this tuple for its callers.
+ANTHROPIC_1M_MARKERS = (
+    "fable-5",
+    "mythos",
+    "opus-5",
+    "opus-4-6",
+    "opus-4-7",
+    "opus-4-8",
+    "sonnet-5",
+    "sonnet-4-6",
+)
+
+
 def _lift_stale_context_window(value: int | None, model_id: str) -> int | None:
     """Upgrade-on-read for a stale template default.
 
@@ -266,8 +284,6 @@ def _lift_stale_context_window(value: int | None, model_id: str) -> int | None:
     choice and stands, as does 200000 on non-1M models (Haiku)."""
     if value != 200_000:
         return value
-    from server.chat.engine.windows import ANTHROPIC_1M_MARKERS
-
     mid = (model_id or "").lower()
     if any(marker in mid for marker in ANTHROPIC_1M_MARKERS):
         return 1_000_000
