@@ -85,13 +85,18 @@ interface ScreenProps {
   onCancel: () => void;
 }
 
-function EnableScreen({ retentionOn, onConfirm, onCancel }: ScreenProps & { retentionOn: boolean }) {
+function EnableScreen({
+  modelLabel,
+  retentionOn,
+  onConfirm,
+  onCancel,
+}: ScreenProps & { modelLabel: string; retentionOn: boolean }) {
   return (
     <div className="wd-split">
       <div className="wd-split__brand">
         <span className="wd-split__glyph">F5</span>
         <span className="wd-split__badge">Mythos class</span>
-        <div className="wd-split__model">Fable 5</div>
+        <div className="wd-split__model">{modelLabel}</div>
         <div className="wd-split__tagline">
           Frontier capability, gated by an explicit data-retention opt-in.
         </div>
@@ -108,7 +113,7 @@ function EnableScreen({ retentionOn, onConfirm, onCancel }: ScreenProps & { rete
             <span className="wd-checklist__icon">{IconGlobe}</span>
             <span className="wd-checklist__text">
               <strong>Account-wide</strong>
-              Applies to every model on this AWS account, not just Fable 5.
+              Applies to every model on this AWS account, not just {modelLabel}.
             </span>
           </li>
           <li>
@@ -150,7 +155,7 @@ function EnableScreen({ retentionOn, onConfirm, onCancel }: ScreenProps & { rete
   );
 }
 
-function TurnOffScreen({ onConfirm, onCancel }: ScreenProps) {
+function TurnOffScreen({ modelLabel, onConfirm, onCancel }: ScreenProps & { modelLabel: string }) {
   return (
     <div className="wd-split">
       <div className="wd-split__brand">
@@ -177,7 +182,7 @@ function TurnOffScreen({ onConfirm, onCancel }: ScreenProps) {
           <li>
             <span className="wd-checklist__icon">{IconBan}</span>
             <span className="wd-checklist__text">
-              <strong>Fable 5 stops working</strong>
+              <strong>{modelLabel} stops working</strong>
               Mythos-class models reject requests until retention is enabled again.
             </span>
           </li>
@@ -185,7 +190,7 @@ function TurnOffScreen({ onConfirm, onCancel }: ScreenProps) {
             <span className="wd-checklist__icon">{IconRefresh}</span>
             <span className="wd-checklist__text">
               <strong>Re-enable anytime</strong>
-              Selecting Fable 5 again brings back the consent screen.
+              Selecting {modelLabel} again brings back the consent screen.
             </span>
           </li>
         </ul>
@@ -229,7 +234,7 @@ async function applyRetention(enabled: boolean): Promise<boolean> {
 }
 
 /** Show a chrome-less split-panel dialog. Resolves true only on explicit confirm. */
-function showRetentionDialog(variant: 'enable' | 'turnoff'): Promise<boolean> {
+function showRetentionDialog(variant: 'enable' | 'turnoff', modelLabel: string): Promise<boolean> {
   const retentionOn = useSettingsStore.getState().dataRetentionEnabled;
   return new Promise<boolean>((resolve) => {
     // The body buttons need the dialog id to resolve it, but the id only
@@ -244,9 +249,14 @@ function showRetentionDialog(variant: 'enable' | 'turnoff'): Promise<boolean> {
       size: 'md',   // width is overridden by .whisper-dialog:has(.wd-split)
       body:
         variant === 'enable' ? (
-          <EnableScreen retentionOn={retentionOn} onConfirm={() => finish(true)} onCancel={() => finish(false)} />
+          <EnableScreen
+            modelLabel={modelLabel}
+            retentionOn={retentionOn}
+            onConfirm={() => finish(true)}
+            onCancel={() => finish(false)}
+          />
         ) : (
-          <TurnOffScreen onConfirm={() => finish(true)} onCancel={() => finish(false)} />
+          <TurnOffScreen modelLabel={modelLabel} onConfirm={() => finish(true)} onCancel={() => finish(false)} />
         ),
       // Escape / overlay-click resolve with null → treated as decline.
       _resolve: (v: unknown) => resolve(v === true),
@@ -260,9 +270,11 @@ function showRetentionDialog(variant: 'enable' | 'turnoff'): Promise<boolean> {
  * confirm. Returns true only if the model may now be used.
  */
 export async function ensureRetentionEnabled(): Promise<boolean> {
-  if (useSettingsStore.getState().dataRetentionEnabled) return true;
+  const settings = useSettingsStore.getState();
+  if (settings.dataRetentionEnabled) return true;
 
-  const ok = await showRetentionDialog('enable');
+  const selected = settings.models.find((m) => m.key === settings.selectedModel);
+  const ok = await showRetentionDialog('enable', selected?.name ?? settings.selectedModel);
   if (!ok) return false;
 
   const enabled = await applyRetention(true);
@@ -321,7 +333,7 @@ export async function requestModelChange(targetKey: string): Promise<boolean> {
   const currentNeeds = modelRequiresRetention(current);
 
   if (targetNeeds) {
-    const ok = await showRetentionDialog('enable');
+    const ok = await showRetentionDialog('enable', targetModel?.name ?? targetKey);
     if (!ok) return false; // leave selection unchanged
 
     // Re-read state — the dialog was open for an arbitrary amount of time.
@@ -340,7 +352,7 @@ export async function requestModelChange(targetKey: string): Promise<boolean> {
 
   if (currentNeeds && settings.dataRetentionEnabled) {
     useSettingsStore.getState().setSelectedModel(targetKey); // the switch itself proceeds
-    const turnOff = await showRetentionDialog('turnoff');
+    const turnOff = await showRetentionDialog('turnoff', currentModel?.name ?? current);
     if (turnOff) {
       const ok = await applyRetention(false);
       if (ok) {
