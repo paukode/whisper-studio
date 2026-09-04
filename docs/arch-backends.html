@@ -322,7 +322,7 @@
 
     <h3 id="data-retention">Data-retention consent</h3>
     <p>One piece of model metadata needs its own path: <code>requires_data_retention</code>.
-      Mythos-class models such as Fable 5.0 only run when the AWS account's Bedrock data-retention mode
+      Mythos-class models such as Fable 5.0 and 5.1 only run when the AWS account's Bedrock data-retention mode
       is <code>provider_data_share</code>, so selecting one routes through a consent screen
       (<code class="path">src/components/chat/dataRetentionConsent.tsx</code>) before the model is used.
       The setting is account-wide and managed just-in-time around model selection rather than left on
