@@ -114,7 +114,10 @@ def data_root() -> str:
         from server.infrastructure import config as _config
 
         configured = str(_config.get("data_dir", "") or "").strip()
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — config may be mid-import at boot
+        # Swallowing silently once hid a circular-import bug for weeks (a
+        # configured data_dir was ignored); keep booting, but say so.
+        log.warning("data_root: config unavailable (%s); using default data dir", e)
         configured = ""
     if configured:
         return os.path.abspath(os.path.expanduser(configured))
