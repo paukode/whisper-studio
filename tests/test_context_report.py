@@ -74,12 +74,10 @@ def _report(monkeypatch, ws_path):
     from server.skills import init_skills
 
     init_skills()
-    for target in (
-        "server.workspace.get_workspace_path",
-        "server.chat.tool_pool.get_workspace_path",
-        "server.workspace.tools.get_workspace_path",
-    ):
-        monkeypatch.setattr(target, lambda: ws_path)
+    # tool_pool and workspace.tools no longer import get_workspace_path (the
+    # catalog is workspace-state-independent now — register always, refuse at
+    # execution), so only the state module's function is patched.
+    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: ws_path)
     return build_context_report(ws_path=ws_path)
 
 
