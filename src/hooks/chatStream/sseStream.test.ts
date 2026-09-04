@@ -253,6 +253,20 @@ describe('readSSEStream', () => {
     expect(toast!.type).toBe('info');
     expect(toast!.message).toContain('Compacting context');
   });
+
+  it('clears the setup status when the first tool call arrives', async () => {
+    // A GPT round can open with tool calls and never emit thinking or text.
+    // Only text/thinking frames used to clear the setup status, so the header
+    // sat on "Waiting for the model…" through the entire tool-running phase.
+    const res = sseResponse([
+      { status: 'connecting' },
+      { skill: 'web_search', input: {} },
+    ]);
+
+    await readSSEStream(res, 'sess-skill-status', new AbortController().signal);
+
+    expect(getChatStore('sess-skill-status').getState().streamStatus).toBeNull();
+  });
 });
 
 /**
