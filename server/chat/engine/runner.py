@@ -407,7 +407,11 @@ async def run_turn(ctx: TurnContext):
                 if len(messages) > 4:
                     messages = ensure_valid_start(messages[2:])
                     messages = await compact_messages_with_claude(
-                        messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
+                        messages,
+                        ctx.model_id,
+                        session_id=session_id,
+                        model_key=ctx.model_key,
+                        trigger="context-overflow",
                     )
                     messages = sanitize_tool_pairs(messages)
                     continue  # retry the round

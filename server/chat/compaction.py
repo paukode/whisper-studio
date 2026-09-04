@@ -250,19 +250,79 @@ async def compact_messages_with_claude(
     model_id: str,
     session_id: str = "",
     model_key: str = "",
+    trigger: str = "pressure",
 ) -> list:
-    """Intelligent context compaction with 3 strategies:
+    """Intelligent context compaction, cheapest rung first:
 
+    0. Prune-and-remeasure — age-tiered tool-result pruning (microcompact).
+       When pruning alone brings the history back under the model's trigger
+       threshold, that IS the compaction: no summary call is paid for.
     1. Session memory shortcut — if a session memory file exists, use it as
        the summary instead of calling the LLM (zero API cost).
     2. LLM summarization — call Claude to produce a summary of old messages.
     3. Simple truncation — fallback if LLM call fails.
+
+    Every run is bracketed by durable start/end records
+    (server/chat/compaction_log.py), so a crash mid-compaction leaves an
+    unmatched start instead of silence, and the outcome of each run
+    (pruned-only / session-memory / summary / truncation) is auditable later.
     """
     if len(messages) < 6:
         return messages
 
-    # Pre-pass: smarter microcompact
+    from server.chat.compaction_log import record_end, record_start
+
+    before_chars = estimate_message_size(messages)
+    record_start(session_id, trigger=trigger, before_chars=before_chars)
+
+    def _done(result: list, outcome: str, detail: str = "") -> list:
+        record_end(
+            session_id,
+            outcome=outcome,
+            after_chars=estimate_message_size(result),
+            detail=detail,
+        )
+        return result
+
+    try:
+        return _done(*await _compact_strategies(messages, model_id, session_id, model_key, trigger))
+    except Exception as e:  # noqa: BLE001 - close the bracket, then re-raise
+        record_end(session_id, outcome="error", after_chars=before_chars, detail=str(e))
+        raise
+
+
+async def _compact_strategies(
+    messages: list,
+    model_id: str,
+    session_id: str,
+    model_key: str,
+    trigger: str = "pressure",
+) -> tuple[list, str]:
+    """The strategy ladder body. Returns (compacted_messages, outcome)."""
+    before_chars = estimate_message_size(messages)
+
+    # Rung 0: prune, then REMEASURE. Old tool results are the cheapest thing
+    # to shed; when shedding them resolves the pressure, skip the summary
+    # entirely (no model call, no information loss beyond stale tool output).
+    # Never taken on a provider-reported overflow: the wire said the request
+    # was too long, and that signal outranks the char estimate this rung
+    # would use to declare victory.
     messages = microcompact_messages(messages)
+    pruned_chars = estimate_message_size(messages)
+    trigger_chars = thresholds_for(model_key)[0]
+    if (
+        trigger != "context-overflow"
+        and pruned_chars <= trigger_chars
+        and pruned_chars < before_chars
+    ):
+        log.info(
+            "Compaction resolved by pruning alone: %d -> %d chars (trigger %d); "
+            "no summary call needed",
+            before_chars,
+            pruned_chars,
+            trigger_chars,
+        )
+        return messages, "pruned-only"
 
     keep_recent = min(8, len(messages))
     # Split on a tool_use/tool_result-safe boundary so the recent window never
@@ -272,7 +332,7 @@ async def compact_messages_with_claude(
     if split == 0:
         # No boundary to summarize behind without orphaning a tool_result;
         # leave the history intact rather than build an invalid request.
-        return messages
+        return messages, "unchanged"
     old_messages = messages[:split]
     recent_messages = messages[split:]
 
@@ -296,7 +356,7 @@ async def compact_messages_with_claude(
                     len(old_messages),
                     len(session_mem),
                 )
-                return [summary_msg] + recent_messages
+                return [summary_msg] + recent_messages, "session-memory"
         except Exception as e:
             log.warning("session memory compaction failed, falling back to LLM summary: %s", e)
 
@@ -316,7 +376,7 @@ async def compact_messages_with_claude(
             history_text.append(f"{role.upper()}: {' '.join(parts)[:1000]}")
 
     if not history_text:
-        return recent_messages
+        return recent_messages, "truncation"
 
     summary_prompt = (
         "Summarize the following conversation history concisely. "
@@ -403,12 +463,12 @@ async def compact_messages_with_claude(
             log.info(
                 "Compacted %d old messages into summary (%d chars)", len(old_messages), len(summary)
             )
-            return [summary_msg] + recent_messages
+            return [summary_msg] + recent_messages, "summary"
     except Exception as e:
         log.warning("Claude compaction failed, falling back to truncation: %s", e)
 
     # Strategy 3: Simple truncation fallback
-    return _compact_messages_simple(messages, model_id, model_key=model_key)
+    return _compact_messages_simple(messages, model_id, model_key=model_key), "truncation"
 
 
 def _compact_messages_simple(messages: list, model_id: str, model_key: str = "") -> list:

@@ -25,6 +25,7 @@ from server.attachments import router as attachments_router
 # the tool descriptors themselves are needed.
 from server.buddy import router as buddy_router
 from server.chat import router as chat_router
+from server.chat.compaction_log import router as compaction_log_router
 from server.chat.request_snapshots import router as request_snapshots_router
 from server.ci.routes import router as ci_router
 from server.costs.tracker import router as cost_router
@@ -293,6 +294,14 @@ async def lifespan(app):
     logging.getLogger("pdfminer").setLevel(logging.ERROR)
     run_migrations()
     _seed_bundled_models()
+    # Close any compaction bracket a crash left open, so the per-session
+    # compaction logs never claim an in-flight compaction that died silently.
+    try:
+        from server.chat.compaction_log import reconcile_orphans
+
+        reconcile_orphans()
+    except Exception as e:
+        log.warning("compaction bracket reconcile failed: %s", e)
     # Config-side one-shot: on-device models installed before the agentic-size
     # gate existed all carry supports_tools True, which is what makes a 1-3B
     # model answer "hey" with a raw JSON tool call. Correct those entries once,
@@ -405,6 +414,7 @@ app.include_router(config_raw_router)
 app.include_router(data_retention_router)
 app.include_router(result_cache_router)
 app.include_router(request_snapshots_router)
+app.include_router(compaction_log_router)
 app.include_router(mcp_router)
 app.include_router(skills_router)
 app.include_router(whisper_md_router)
