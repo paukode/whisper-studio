@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from server.infrastructure.paths import data_root
+from server.security.sensitive_env import scrub_credential_env
 
 log = logging.getLogger("whisper-studio")
 
@@ -198,7 +199,13 @@ class MCPManager:
 
         params = None
         if not url:
-            env = {**os.environ, **env_vars}
+            # A third-party MCP server subprocess must not inherit the host
+            # app's credentials (AWS/Bedrock keys, API tokens — canonical list
+            # in server/security/sensitive_env.py). Per-server `env` entries
+            # from mcp_servers.json are applied AFTER the scrub: configuring
+            # one there is the deliberate opt-in that can still forward a
+            # credential to that server.
+            env = {**scrub_credential_env(os.environ), **env_vars}
             # Resolve the command up front so a missing executable yields an
             # actionable message instead of a raw "[Errno 2] No such file or
             # directory" from the spawn. A GUI-launched .app has a minimal PATH;
