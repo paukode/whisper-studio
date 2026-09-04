@@ -2,10 +2,12 @@
 
 A provider adapter consumes its wire protocol (Bedrock invoke stream, OpenAI
 Responses events, llama-server SSE) and yields these events; the turn engine
-consumes them without knowing which provider produced them. Retryable
-conditions are handled inside the adapters (retry helpers, PromptTooLongError
-raised for the engine's reactive-compaction path); a RoundError that reaches
-the engine is terminal for the turn.
+consumes them without knowing which provider produced them. Pre-stream
+failures are retried inside the adapters/SDKs (retry helpers,
+PromptTooLongError raised for the engine's reactive-compaction path). A
+RoundError marked ``retryable`` is a transient MID-STREAM failure the SDKs
+cannot retry (the HTTP response was already 200) — the engine may re-run the
+round; any other RoundError is terminal for the turn.
 
 Pure data: no behavior lives here, and nothing here may import provider code.
 """
@@ -66,10 +68,13 @@ class Usage:
 
 @dataclass(frozen=True)
 class RoundError:
-    """Terminal round failure — the engine surfaces the message and ends
-    the turn (adapters have already exhausted their own retries)."""
+    """Round failure. ``retryable`` marks a transient provider fault that
+    struck mid-stream (server_error/5xx/throttle after HTTP 200 — the SDK
+    retry layer never sees these): the engine may re-run the round instead
+    of ending the turn. Non-retryable errors end the turn with the message."""
 
     message: str
+    retryable: bool = False
 
 
 @dataclass(frozen=True)

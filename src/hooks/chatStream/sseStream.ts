@@ -194,6 +194,13 @@ export async function readSSEStream(
 
           // ── skill (tool trace start) ──
           if (parsed.skill) {
+            // A tool call proves the model is responding: the setup status is
+            // stale now. Models that open with tool calls and no thinking or
+            // text (GPT rounds routinely do) otherwise keep the header on
+            // "Waiting for the model…" through the whole tool-running phase.
+            if (store().streamStatus) {
+              store().setStreamStatus(null);
+            }
             // Remove empty thinking element if no thinking content
             if (!thinkingText) {
               store().appendThinkingToken(''); // signal no thinking

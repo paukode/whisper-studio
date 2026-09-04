@@ -46,6 +46,14 @@ from .policy import TurnPolicy
 
 log = logging.getLogger("whisper-studio")
 
+# Transient mid-stream provider faults (RoundError.retryable — e.g. OpenAI's
+# server_error after HTTP 200, Bedrock's ModelStreamErrorException) get this
+# many re-runs of the failed round before the error is surfaced. The counter
+# resets on a successful round; each retry also consumes a round from the turn
+# budget, so a flapping provider is doubly bounded. Backoff grows linearly.
+_ROUND_RETRIES_MAX = 2
+_ROUND_RETRY_BACKOFF_S = 2.0
+
 
 def strip_partial_tool_use(content: list[dict]) -> list[dict]:
     """Prepare an assistant turn for re-injection without a tool_result.
@@ -230,6 +238,9 @@ async def run_turn(ctx: TurnContext):
     # Reactive prompt-too-long rescue state.
     salvage_mode = False
 
+    # Mid-stream fault rescue state (see _ROUND_RETRIES_MAX).
+    round_retries = 0
+
     if ctx.deferred_count:
         yield f"data: {ndjson_dumps({'tool_pool': {'advertised': ctx.advertised_count, 'deferred': ctx.deferred_count, 'total': ctx.advertised_count + ctx.deferred_count, 'deferred_tokens_est': ctx.deferred_tokens_est}})}\n\n"
 
@@ -301,8 +312,11 @@ async def run_turn(ctx: TurnContext):
                 )
                 round_result: RoundResult | None = None
                 errored = False
+                retry_round = False
+                text_streamed = False
                 async for ev in round_events:
                     if isinstance(ev, TextDelta):
+                        text_streamed = True
                         yield f"data: {ndjson_dumps({'text': ev.text})}\n\n"
                     elif isinstance(ev, ThinkingStart):
                         yield f"data: {ndjson_dumps({'thinking_start': True})}\n\n"
@@ -317,15 +331,52 @@ async def run_turn(ctx: TurnContext):
                     elif isinstance(ev, Heartbeat):
                         yield ": hb\n\n"
                     elif isinstance(ev, Incomplete):
+                        text_streamed = True
                         _trunc_note = "\n\n*(Response truncated: output token limit reached.)*"
                         yield f"data: {ndjson_dumps({'text': _trunc_note})}\n\n"
                     elif isinstance(ev, RoundError):
-                        yield f"data: {ndjson_dumps({'error': ev.message})}\n\n"
-                        yield "data: [DONE]\n\n"
-                        errored = True
+                        # A retryable RoundError is a transient provider fault
+                        # that struck mid-stream (the SDK retry layer only
+                        # covers the request; a 200 that dies mid-stream lands
+                        # here). Re-run the round rather than discarding every
+                        # completed tool round of the turn — but only while no
+                        # answer text has streamed (a retry would duplicate it)
+                        # and a round remains in the budget for the re-run.
+                        if (
+                            ev.retryable
+                            and not text_streamed
+                            and round_retries < _ROUND_RETRIES_MAX
+                            and round_num < max_rounds - 1
+                        ):
+                            round_retries += 1
+                            log.warning(
+                                "Round %d failed mid-stream (retry %d/%d): %s",
+                                round_num,
+                                round_retries,
+                                _ROUND_RETRIES_MAX,
+                                ev.message,
+                            )
+                            retry_round = True
+                        else:
+                            log.warning(
+                                "Round %d failed terminally (retryable=%s, "
+                                "text_streamed=%s, retries=%d): %s",
+                                round_num,
+                                ev.retryable,
+                                text_streamed,
+                                round_retries,
+                                ev.message,
+                            )
+                            yield f"data: {ndjson_dumps({'error': ev.message})}\n\n"
+                            yield "data: [DONE]\n\n"
+                            errored = True
                         break
                     elif isinstance(ev, RoundResult):
                         round_result = ev
+                if retry_round:
+                    yield f"data: {ndjson_dumps({'status': 'Model stream failed; retrying...'})}\n\n"
+                    await asyncio.sleep(_ROUND_RETRY_BACKOFF_S * round_retries)
+                    continue
                 if errored:
                     return
             except PromptTooLongError:
@@ -362,6 +413,7 @@ async def run_turn(ctx: TurnContext):
                 yield "data: [DONE]\n\n"
                 return
             except WhisperAPIError as api_err:
+                log.warning("Round %d failed with API error: %s", round_num, api_err)
                 yield f"data: {ndjson_dumps({'error': api_err.user_message})}\n\n"
                 yield "data: [DONE]\n\n"
                 return
@@ -370,6 +422,11 @@ async def run_turn(ctx: TurnContext):
                 log.warning("Adapter round ended without a result — ending stream")
                 yield "data: [DONE]\n\n"
                 return
+
+            # A completed round proves the provider recovered: give the next
+            # transient fault a fresh retry allowance instead of letting one
+            # early blip spend the whole turn's budget.
+            round_retries = 0
 
             stop_reason = round_result.stop_reason
             usage = round_result.usage

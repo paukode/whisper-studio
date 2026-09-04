@@ -236,7 +236,7 @@ class AnthropicAdapter:
                         data if isinstance(data, WhisperAPIError) else classify_bedrock_error(data)
                     )
                     log.warning("Bedrock stream error: %s", api_err)
-                    yield RoundError(message=api_err.user_message)
+                    yield RoundError(message=api_err.user_message, retryable=api_err.is_retryable)
                     return
                 event_type = data.get("type")
 

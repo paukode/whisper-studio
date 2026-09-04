@@ -17,7 +17,7 @@
     "text": "partial"
   },
   {
-    "error": "API error: InternalServerException: boom"
+    "error": "The model stream failed: InternalServerException: boom"
   },
   "[DONE]"
 ]
