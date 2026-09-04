@@ -218,7 +218,7 @@ def _child_acquire_ctty():
 
 
 def _create_pty_session(
-    cwd: str, cols: int = 80, rows: int = 24, hidden: bool = False
+    cwd: str, cols: int = 80, rows: int = 24, hidden: bool = False, write_mode: str = "open"
 ) -> _PtySession:
     """Spawn a new PTY session running the user's shell.
 
@@ -272,7 +272,7 @@ def _create_pty_session(
     if hidden:
         from server.sandbox import build_pty_sandbox_wrap
 
-        shell_cmd, profile_path = build_pty_sandbox_wrap(shell_cmd, cwd)
+        shell_cmd, profile_path = build_pty_sandbox_wrap(shell_cmd, cwd, write_mode=write_mode)
 
     process = subprocess.Popen(
         shell_cmd,
@@ -460,17 +460,22 @@ def latest_visible_session() -> _PtySession | None:
 
 
 async def run_in_sandbox(
-    command: str, cwd: str | None = None, timeout: float = _DEFAULT_TIMEOUT_S
+    command: str,
+    cwd: str | None = None,
+    timeout: float = _DEFAULT_TIMEOUT_S,
+    write_mode: str = "open",
 ) -> dict:
     """Spawn a fresh hidden PTY session, run `command`, kill the session.
     Use for the default (sandbox) mode of terminal_run. The session is
-    invisible to the user and removed from `_sessions` on completion."""
+    invisible to the user and removed from `_sessions` on completion.
+    ``write_mode="workspace"`` confines writes to cwd + temp (agent-stamped
+    commands — see server/sandbox.py)."""
     if not cwd:
         cwd = os.path.expanduser("~")
     if not os.path.isdir(cwd):
         return {"output": f"cwd not found: {cwd}", "exit_code": -1, "timed_out": False}
 
-    session = _create_pty_session(cwd, hidden=True)
+    session = _create_pty_session(cwd, hidden=True, write_mode=write_mode)
     try:
         # Give the shell a moment to print its banner / first prompt so
         # our command isn't lost in the warmup. Drain by recording the

@@ -140,7 +140,11 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     cwd = _resolve_cwd(payload.get("cwd"))
 
     if mode == "sandbox":
-        result = await run_in_sandbox(command, cwd=cwd, timeout=timeout)
+        # Agent-stamped (unattended) commands run under the stricter
+        # workspace-write sandbox: no human reviews each command, so the OS
+        # confines writes to the working tree + temp instead of the prompt.
+        write_mode = "workspace" if payload.get("__agent__") else "open"
+        result = await run_in_sandbox(command, cwd=cwd, timeout=timeout, write_mode=write_mode)
     else:
         session = latest_visible_session()
         if session is None:
