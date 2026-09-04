@@ -253,6 +253,110 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     return True, f"{preamble}{summary}\n---\n{output}{denial_hint}"
 
 
+_WAIT_REASON_HINTS = {
+    "stdin_read": (
+        "The program is waiting for input (blocked reading stdin). Send the next "
+        "line with terminal_send."
+    ),
+    "inferred_idle": (
+        "Output went quiet and the program appears to be waiting. If it prompted, "
+        "send input with terminal_send; otherwise it may still be working — send an "
+        "empty input or wait."
+    ),
+    "timeout": (
+        "The program kept producing output past the wait budget and has not "
+        "settled. Call terminal_send again to keep reading, or raise the timeout."
+    ),
+    "session_exit": (
+        "The interactive shell has exited. The session is closed; open a new one "
+        "with terminal_send (a fresh PTY starts automatically)."
+    ),
+}
+
+
+async def do_terminal_send(payload: dict) -> tuple[bool, str]:
+    """Send input to this chat session's persistent interactive PTY and return
+    output plus a readiness verdict, instead of waiting for a whole command to
+    finish. Use this to drive REPLs and prompts. Returns (ok, text)."""
+    from server.terminal import get_or_open_interactive, send_and_wait
+
+    chat_session_id = (payload.get("__session_id__") or payload.get("session_id") or "").strip()
+    if not chat_session_id:
+        return False, "no chat session id to key the interactive terminal"
+
+    text = payload.get("input")
+    if text is None:
+        return False, "input is required (use an empty string to just read pending output)"
+    if not isinstance(text, str):
+        return False, "input must be a string"
+
+    # Validate whatever LOOKS like a command: the first non-empty line. An empty
+    # send (read-only poll) and bare REPL expressions skip the shell validator.
+    from server.security.command_validator import validate_command
+
+    first_line = next((ln for ln in text.splitlines() if ln.strip()), "")
+    if first_line:
+        warning = validate_command(first_line)
+        if warning:
+            return False, warning
+
+    try:
+        timeout = float(payload.get("timeout", 10.0))
+    except (TypeError, ValueError):
+        return False, "timeout must be a number (seconds)"
+    timeout = max(0.5, min(timeout, float(_MAX_TIMEOUT_S)))
+
+    cwd = _resolve_cwd(payload.get("cwd"))
+    # A bare send with no trailing newline never reaches a REPL that reads full
+    # lines, so append one unless the caller sent control bytes deliberately.
+    if text and not text.endswith(("\n", "\x04", "\x03")):
+        text += "\n"
+
+    session = get_or_open_interactive(chat_session_id, cwd)
+    result = await send_and_wait(session, text, timeout=timeout)
+
+    reason = result["wait_reason"]
+    hint = _WAIT_REASON_HINTS.get(reason, "")
+    output = result.get("output") or "(no output)"
+    return True, f"wait_reason: {reason}\n{hint}\n---\n{output}"
+
+
+async def do_terminal_close(payload: dict) -> tuple[bool, str]:
+    from server.terminal import close_interactive
+
+    chat_session_id = (payload.get("__session_id__") or payload.get("session_id") or "").strip()
+    if not chat_session_id:
+        return False, "no chat session id"
+    closed = close_interactive(chat_session_id)
+    return True, "Interactive terminal closed." if closed else "No interactive terminal was open."
+
+
+@register_executor("terminal_send", read_only=False, concurrent_safe=False)
+def _exec_terminal_send(tool_input, transcript, current_attachments):
+    """Emit an approval request. Input reaches the PTY only after approval
+    (or session-allow via 'Yes, all cli')."""
+    session_id = tool_input.pop("__session_id__", "")
+    if tool_input.get("input") is None:
+        return "Error: input is required."
+    payload = json.dumps(
+        {
+            "action": "terminal_send",
+            "input": tool_input.get("input"),
+            "timeout": tool_input.get("timeout", 10.0),
+            "cwd": tool_input.get("cwd") or "",
+            "session_id": session_id,
+        }
+    )
+    return f"[WS_APPROVAL]{payload}"
+
+
+@register_executor("terminal_close", read_only=False, concurrent_safe=False)
+def _exec_terminal_close(tool_input, transcript, current_attachments):
+    session_id = tool_input.pop("__session_id__", "")
+    payload = json.dumps({"action": "terminal_close", "session_id": session_id})
+    return f"[WS_APPROVAL]{payload}"
+
+
 @register_executor("terminal_run", read_only=False, concurrent_safe=False)
 def _exec_terminal_run(tool_input, transcript, current_attachments):
     """Emit an approval request. Actual command runs only after approval

@@ -241,6 +241,66 @@ TERMINAL_RUN_TOOL = {
     },
 }
 
+TERMINAL_SEND_TOOL = {
+    "name": "terminal_send",
+    "description": (
+        "Sends input to a PERSISTENT interactive terminal for this chat and returns "
+        "as soon as the program is ready for more input, with a readiness verdict. "
+        "Use this to drive REPLs and programs that prompt for input (python3, a "
+        "database shell, an installer that asks yes/no), where terminal_run's "
+        "one-shot model does not fit. The terminal opens automatically on first use "
+        "and keeps its state (variables, cwd, shell history) between calls. The "
+        "result starts with wait_reason: stdin_read (the program is blocked reading "
+        "input, so send the next line), inferred_idle (output went quiet and it "
+        "appears to be waiting; on macOS stdin_read cannot be proven and shows here "
+        "instead), timeout (still producing output past the budget; call again to "
+        "keep reading), or session_exit (the shell exited). Send an empty string to "
+        "just read pending output without typing. Every call is approval-gated and "
+        "the first command line is validated. Default read budget 10s, max 300s. "
+        "Writes are confined to the workspace and temp. Call terminal_close when done."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "input": {
+                "type": "string",
+                "description": (
+                    "Text to type into the terminal. A trailing newline is added if "
+                    "absent so a line-reading REPL sees a complete line. Use '' to "
+                    "read pending output without sending input. Control bytes are "
+                    "passed through (e.g. \\x03 for Ctrl-C, \\x04 for Ctrl-D/EOF)."
+                ),
+            },
+            "timeout": {
+                "type": "number",
+                "description": (
+                    "Seconds to wait for the program to settle before returning. "
+                    "Default 10, max 300."
+                ),
+            },
+            "cwd": {
+                "type": "string",
+                "description": (
+                    "Working directory for the terminal when it is first opened. "
+                    "Ignored on later sends (the session persists). Defaults to the "
+                    "workspace path if connected, else $HOME."
+                ),
+            },
+        },
+        "required": ["input"],
+    },
+}
+
+TERMINAL_CLOSE_TOOL = {
+    "name": "terminal_close",
+    "description": (
+        "Closes this chat's persistent interactive terminal (opened by terminal_send) "
+        "and kills its process tree. Call it when finished with an interactive "
+        "session to free the PTY; a later terminal_send just opens a fresh one."
+    ),
+    "input_schema": {"type": "object", "properties": {}},
+}
+
 WEB_FETCH_TOOL = {
     "name": "web_fetch",
     "description": (
@@ -379,7 +439,9 @@ CORE_EXECUTOR_TOOLS = [
     AWS_CLI_TOOL,
     RUN_PYTHON_TOOL,
     SUMMARIZE_TRANSCRIPT_TOOL,
+    TERMINAL_CLOSE_TOOL,
     TERMINAL_RUN_TOOL,
+    TERMINAL_SEND_TOOL,
     WEB_FETCH_TOOL,
     WEB_SEARCH_TOOL,
 ]

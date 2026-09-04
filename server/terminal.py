@@ -31,6 +31,7 @@ import secrets
 import signal
 import struct
 import subprocess
+import sys
 import termios
 import threading
 import time
@@ -446,6 +447,211 @@ async def run_in_session(
         "exit_code": -1,
         "timed_out": True,
     }
+
+
+# ── Interactive send with readiness detection ────────────────────────────────
+#
+# run_in_session above drives a WHOLE command to a completion marker: it is for
+# non-interactive one-shots. Driving an interactive program (a REPL, a prompt
+# that reads stdin) needs a different contract — send some input, then return
+# as soon as the program is READY for more, with a typed reason for why the
+# wait ended, instead of polling for a marker that will never arrive or burning
+# the full timeout. That readiness signal is what these functions provide.
+
+# How long output must stay quiet before we call the program "settled".
+_SETTLE_WINDOW_S = 0.4
+_SEND_POLL_INTERVAL = 0.05
+
+# Wait-channel substrings that mean "blocked reading a terminal". Per-OS
+# dialects (Linux /proc/<pid>/wchan vs macOS `ps -o wchan`); deliberately not a
+# union — matching the wrong OS's spelling would misclassify a busy process.
+#
+# Platform honesty: on Linux /proc/<pid>/wchan names the kernel function, so a
+# tty read is positively detectable. On macOS `ps -o wchan` returns "-" for
+# other processes under normal privileges, so stdin_read cannot be PROVEN there
+# and the classifier conservatively reports inferred_idle instead of
+# over-claiming. The darwin entry is kept for the rare host where wchan is
+# exposed; it simply never matches otherwise.
+_TTY_READ_WCHANS = {
+    "linux": ("n_tty_read", "tty_read", "wait_woken"),
+    "darwin": ("ttyin",),
+}
+
+
+def _foreground_pgrp(session: "_PtySession") -> int | None:
+    """The process group currently in the FOREGROUND of the PTY — the group
+    that owns the terminal and would receive typed input. Equals the shell's
+    own group when the shell is at its prompt; a child's group while a program
+    (python3, a pager) runs. None if the fd is gone."""
+    try:
+        return os.tcgetpgrp(session.master_fd)
+    except OSError:
+        return None
+
+
+def _wait_channel(pid: int) -> str:
+    """Best-effort kernel wait-channel for `pid` — what the process is blocked
+    in right now. Empty string when it can't be read. Used only as a positive
+    signal for `stdin_read`; a miss falls back to `inferred_idle`."""
+    try:
+        if sys.platform.startswith("linux"):
+            with open(f"/proc/{pid}/wchan", encoding="utf-8", errors="replace") as f:
+                return f.read().strip()
+        if sys.platform == "darwin":
+            out = subprocess.run(
+                ["ps", "-o", "wchan=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+            )
+            return out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return ""
+
+
+def _blocked_on_tty_read(pgrp: int) -> bool:
+    """True when the foreground group's leader is positively blocked reading
+    the terminal (i.e. prompting for input). Conservative: unknown → False, so
+    the caller reports the weaker `inferred_idle` rather than over-claiming."""
+    if pgrp is None or pgrp <= 0:
+        return False
+    signatures = _TTY_READ_WCHANS.get(
+        "linux" if sys.platform.startswith("linux") else sys.platform, ()
+    )
+    if not signatures:
+        return False
+    wchan = _wait_channel(pgrp)
+    return any(sig in wchan for sig in signatures)
+
+
+def classify_wait_reason(session: "_PtySession", *, settled: bool) -> str:
+    """Why did an interactive send stop waiting?
+
+    session_exit  — the shell process is gone.
+    stdin_read    — a foreground child is blocked reading the terminal
+                    (it is prompting for input).
+    inferred_idle — output went quiet and either control returned to the
+                    shell prompt, or a child is waiting but we can't prove
+                    it's a stdin read.
+    timeout       — output never settled within the budget.
+    """
+    if not session.alive:
+        return "session_exit"
+    if not settled:
+        return "timeout"
+    fg = _foreground_pgrp(session)
+    try:
+        shell_pgrp = os.getpgid(session.process.pid)
+    except OSError:
+        shell_pgrp = None
+    if fg is not None and shell_pgrp is not None and fg == shell_pgrp:
+        # Control is back at the shell prompt — ready for the next command.
+        return "inferred_idle"
+    if _blocked_on_tty_read(fg):
+        return "stdin_read"
+    return "inferred_idle"
+
+
+async def send_and_wait(
+    session: "_PtySession",
+    text: str,
+    *,
+    timeout: float = 10.0,
+    settle: float = _SETTLE_WINDOW_S,
+) -> dict:
+    """Write `text` to the PTY and return once the program is READY for more
+    input, not once a whole command finished. Returns
+    ``{output, wait_reason, session_alive}``.
+
+    "Ready" means output has stayed quiet for `settle` seconds (the program is
+    waiting), or the session exited. The wait_reason names which, and whether a
+    quiet program is specifically blocked reading stdin (`stdin_read`) or merely
+    idle (`inferred_idle`). This is the contract that lets a caller drive an
+    interactive REPL without a fixed sleep or a completion marker.
+    """
+    timeout = max(0.2, min(float(timeout), _MAX_TIMEOUT_S))
+    with session.output_lock:
+        start_pos = len(session.output_buffer)
+    last_len = start_pos
+    try:
+        os.write(session.master_fd, text.encode("utf-8"))
+    except OSError as e:
+        return {
+            "output": f"failed to write to terminal: {e}",
+            "wait_reason": "session_exit" if not session.alive else "timeout",
+            "session_alive": session.alive,
+        }
+
+    deadline = time.monotonic() + timeout
+    last_change = time.monotonic()
+    settled = False
+    while time.monotonic() < deadline:
+        await asyncio.sleep(_SEND_POLL_INTERVAL)
+        if not session.alive:
+            break
+        with session.output_lock:
+            cur_len = len(session.output_buffer)
+        if cur_len != last_len:
+            last_len = cur_len
+            last_change = time.monotonic()
+            continue
+        # No new output since last poll. Once the quiet stretch reaches the
+        # settle window, the program is waiting — stop and classify.
+        if time.monotonic() - last_change >= settle:
+            settled = True
+            break
+
+    with session.output_lock:
+        raw = bytes(session.output_buffer[start_pos:]).decode("utf-8", errors="replace")
+    return {
+        "output": _strip_ansi(raw)[-8192:],
+        "wait_reason": classify_wait_reason(session, settled=settled),
+        "session_alive": session.alive,
+    }
+
+
+# Persistent interactive PTYs keyed by CHAT session id. Unlike run_in_sandbox's
+# throwaway session, these live across tool calls so a REPL's state survives
+# between terminal_send calls. Hidden (no WebSocket) — the assistant drives
+# them; the user isn't watching. Bounded to one per chat session.
+_interactive_ptys: dict[str, str] = {}
+_interactive_lock = threading.Lock()
+
+
+def get_or_open_interactive(
+    chat_session_id: str, cwd: str, write_mode: str = "workspace"
+) -> _PtySession:
+    """The persistent interactive PTY for this chat session, opening one on
+    first use. Writes are workspace-confined by default (same ladder as
+    terminal_run's sandbox mode)."""
+    with _interactive_lock:
+        pty_id = _interactive_ptys.get(chat_session_id)
+        if pty_id:
+            with _sessions_lock:
+                existing = _sessions.get(pty_id)
+            if existing is not None and existing.alive:
+                return existing
+        session = _create_pty_session(cwd, hidden=True, write_mode=write_mode)
+        _interactive_ptys[chat_session_id] = session.id
+        return session
+
+
+def close_interactive(chat_session_id: str) -> bool:
+    """Kill this chat session's interactive PTY. Returns True if one existed."""
+    with _interactive_lock:
+        pty_id = _interactive_ptys.pop(chat_session_id, None)
+    if not pty_id:
+        return False
+    with _sessions_lock:
+        session = _sessions.pop(pty_id, None)
+    if session is not None:
+        try:
+            session.kill()
+        except Exception:
+            pass
+        return True
+    return False
 
 
 def latest_visible_session() -> _PtySession | None:

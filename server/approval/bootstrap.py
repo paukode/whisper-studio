@@ -296,6 +296,20 @@ async def _do_git_clone(payload: dict) -> ApprovalOutcome:
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
+async def _do_terminal_send(payload: dict) -> ApprovalOutcome:
+    from server.executors.terminal_run import do_terminal_send
+
+    ok, output = await do_terminal_send(payload)
+    return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
+
+
+async def _do_terminal_close(payload: dict) -> ApprovalOutcome:
+    from server.executors.terminal_run import do_terminal_close
+
+    ok, output = await do_terminal_close(payload)
+    return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
+
+
 async def _do_terminal_run(payload: dict) -> ApprovalOutcome:
     refusal = refuse_if_agent_rm(payload)
     if refusal:
@@ -813,6 +827,37 @@ def register_defaults() -> None:
                 "justification",
             ],
             render_command=_terminal_run_command,
+        ),
+    )
+
+    def _terminal_send_summary(p: dict) -> str:
+        first = next((ln for ln in (p.get("input") or "").splitlines() if ln.strip()), "")
+        if len(first) > 80:
+            first = first[:77] + "..."
+        return f"terminal_send: {first or '(read pending output)'}"
+
+    register(
+        "terminal_send",
+        ApprovalSpec(
+            category="cli",
+            preview="command",
+            summary=_terminal_send_summary,
+            executor=_do_terminal_send,
+            risk_hint="medium",
+            payload_fields=["input", "timeout", "cwd", "session_id"],
+            render_command=lambda p: p.get("input") or "(read pending output)",
+        ),
+    )
+    register(
+        "terminal_close",
+        ApprovalSpec(
+            category="cli",
+            preview="command",
+            summary="Close the interactive terminal",
+            executor=_do_terminal_close,
+            risk_hint="low",
+            payload_fields=["session_id"],
+            render_command=lambda p: "terminal_close",
         ),
     )
 

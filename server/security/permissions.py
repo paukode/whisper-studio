@@ -361,6 +361,7 @@ _RULE_MATCH_FIELDS = {
     "ws_read_file": "path",
     "ws_run_command": "command",
     "terminal_run": "command",
+    "terminal_send": "input",
     "run_python": "code",
     "aws_cli": "command",
     "git_push": "branch",
