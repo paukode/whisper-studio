@@ -121,6 +121,15 @@ class OpenAIResponsesAdapter:
         self.verbosity = oai.verbosity_for(model_key, body)
         self.region = oai.region_for(model_key)
 
+    def describe_request(self) -> dict:
+        """Provider half of a request snapshot (server/chat/request_snapshots.py)."""
+        return {
+            "instructions": self.instructions,
+            "reasoning_effort": self.effort,
+            "verbosity": self.verbosity,
+            "region": self.region,
+        }
+
     # ── Canonical → Responses input conversion ───────────────────────────────
 
     def to_input_items(self, messages: list[dict]) -> list[dict]:

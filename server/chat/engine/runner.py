@@ -21,6 +21,7 @@ only with an intentional GOLDEN_RECORD refresh.
 """
 
 import asyncio
+import functools
 import logging
 import time
 from collections.abc import Callable
@@ -302,6 +303,26 @@ async def run_turn(ctx: TurnContext):
             tools, core_count = ctx.tool_catalog()
         else:
             tools, core_count = _assemble_round_tools(ctx)
+
+        # Request snapshot: persist exactly what this round sends (tools,
+        # messages, provider envelope) so any past request is reconstructable
+        # from disk — "model-visible means logged". Runs on the default
+        # executor (gzip off the event loop), best-effort by contract.
+        from server.chat.request_snapshots import record_request_snapshot
+
+        asyncio.get_running_loop().run_in_executor(
+            None,
+            functools.partial(
+                record_request_snapshot,
+                session_id=session_id,
+                round_num=round_num,
+                adapter=ctx.adapter,
+                tools=tools,
+                messages=list(messages),
+                effort_label=ctx.effort_label,
+                is_last_round=is_last_round,
+            ),
+        )
 
         _batch_task: asyncio.Task | None = None
         try:

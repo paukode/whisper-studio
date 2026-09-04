@@ -111,6 +111,21 @@ class AnthropicAdapter:
         except (TypeError, ValueError):
             self.max_tokens = ceiling
 
+    def describe_request(self) -> dict:
+        """The provider-specific half of a request snapshot — everything this
+        adapter contributes to the wire request that the engine cannot see
+        (server/chat/request_snapshots.py)."""
+        return {
+            "system_static": self.system_static,
+            "system_dynamic": self.system_dynamic,
+            "system_prompt": "" if self.caching_on else self.system_prompt,
+            "caching_on": self.caching_on,
+            "cache_ttl": self.cache_ttl,
+            "effort_label": self.effort_label,
+            "force_skill": self.force_skill,
+            "max_tokens": getattr(self, "max_tokens", None),
+        }
+
     # ── Request building (port of call_bedrock_stream) ───────────────────────
 
     def _build_body(self, messages, tools, core_count, round_num, is_last_round) -> dict:

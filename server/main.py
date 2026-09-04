@@ -25,6 +25,7 @@ from server.attachments import router as attachments_router
 # the tool descriptors themselves are needed.
 from server.buddy import router as buddy_router
 from server.chat import router as chat_router
+from server.chat.request_snapshots import router as request_snapshots_router
 from server.ci.routes import router as ci_router
 from server.costs.tracker import router as cost_router
 from server.cron_scheduler import init_scheduler
@@ -403,6 +404,7 @@ app.include_router(config_router)
 app.include_router(config_raw_router)
 app.include_router(data_retention_router)
 app.include_router(result_cache_router)
+app.include_router(request_snapshots_router)
 app.include_router(mcp_router)
 app.include_router(skills_router)
 app.include_router(whisper_md_router)

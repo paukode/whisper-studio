@@ -83,6 +83,17 @@ class LocalAdapter:
         # empty-turn quirk message.
         self._turn_out_chars = 0
 
+    def describe_request(self) -> dict:
+        """Provider half of a request snapshot (server/chat/request_snapshots.py)."""
+        return {
+            "system_prompt": self.system_prompt,
+            "thinking": self.thinking,
+            "tools_enabled": self.tools_enabled,
+            "wire_model": self.wire_model,
+            "base_url": self.base_url,
+            "max_tokens": self.max_tokens,
+        }
+
     # ── Canonical → OpenAI chat conversion ───────────────────────────────────
 
     def to_openai_messages(self, messages: list[dict]) -> list[dict]:
