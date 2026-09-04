@@ -43,48 +43,13 @@ def _resolve_model(opts: dict, default_model_id: str) -> tuple[str | None, str, 
     """Resolve a script's ``opts.model`` (a config KEY, e.g. 'sonnet') to a
     Bedrock id. Returns ``(model_id, effective_key, warning)``.
 
-    Two overrides used to fail silently and are now reported instead:
-
-    * An UNKNOWN key fell through to the run's model, but the caller still
-      priced the work under the invalid name — producing real work with a
-      zero or wrong recorded cost. The effective key comes back so the ledger
-      charges what actually ran.
-    * A LOCAL (on-device) key resolved to a ``local:*`` id that the agent
-      runtime has no adapter for, so it was handed to the Bedrock adapter and
-      failed at invoke. Refused up front with a readable reason.
-
-    ``warning`` is empty when the override resolved cleanly.
+    The validation itself (unknown key falls back with a warning, on-device
+    keys refused up front) is shared with the spawn_agent tool — see
+    server/agents/model_resolve.py for the failure-mode rationale.
     """
-    key = opts.get("model")
-    if not key:
-        return (default_model_id or None), "", ""
-    try:
-        from server.infrastructure.config import load_config
+    from server.agents.model_resolve import resolve_model_override
 
-        models = load_config().get("chat_models", {}) or {}
-    except Exception:
-        return (default_model_id or None), "", ""
-
-    resolved = models.get(key)
-    if not resolved:
-        return (
-            (default_model_id or None),
-            "",
-            f"unknown model '{key}' — ran on the workflow's own model instead",
-        )
-
-    from server.local.runtime import is_local_model_id
-
-    if is_local_model_id(resolved):
-        return (
-            (default_model_id or None),
-            "",
-            (
-                f"model '{key}' is on-device and workflow agents have no local "
-                "adapter — ran on the workflow's own model instead"
-            ),
-        )
-    return resolved, key, ""
+    return resolve_model_override(opts.get("model"), default_model_id)
 
 
 async def run_workflow_agent(

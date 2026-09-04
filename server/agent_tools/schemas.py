@@ -225,6 +225,16 @@ SPAWN_AGENT_TOOL = {
                 "type": "string",
                 "description": "Optional context/background for the agent",
             },
+            "model": {
+                "type": "string",
+                "description": (
+                    "Optional model override: a chat_models config key (e.g. "
+                    "'haiku', 'sonnet'). Use a cheaper model for mechanical "
+                    "subtasks. An unknown or on-device key falls back to the "
+                    "session's model and the result carries a model_warning. "
+                    "Default: the session's selected model."
+                ),
+            },
             "detach": {
                 "type": "boolean",
                 "description": (
@@ -298,9 +308,9 @@ SPAWN_AGENT_TOOL = {
                     "model": {
                         "type": "string",
                         "description": (
-                            "Optional informational model hint (not currently "
-                            "used to select the model — the agent always runs "
-                            "on the session's selected model)"
+                            "Optional default model for this type: a "
+                            "chat_models config key (e.g. 'haiku'). Used when "
+                            "the top-level model parameter is absent."
                         ),
                     },
                     "max_turns": {"type": "integer"},
