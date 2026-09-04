@@ -11,6 +11,13 @@ and never touch the network or a local model. What matters:
 
 import pytest
 
+# Imported before server.skills on purpose: server.skills -> server.mcp ->
+# load_config triggers a circular import of server.chat that fails and leaves
+# an orphaned server.chat.infra in sys.modules; the orphan blocks a later
+# clean import from ever setting the package's ``infra`` attribute, which
+# breaks string-path monkeypatching of server.chat.infra when this file runs
+# standalone. Importing it first loads server.chat cleanly instead.
+import server.chat.infra as chat_infra
 import server.skills as sk
 import server.summarize.mapreduce as mr
 from server.infrastructure import oneshot
@@ -223,12 +230,12 @@ def test_pick_claude_fallback_never_returns_non_claude(monkeypatch):
         "opus4.8": "global.anthropic.claude-opus-4-8",
         "haiku": "global.anthropic.claude-haiku-4-5",
     }
-    monkeypatch.setattr("server.chat.infra._get_default_model", lambda: "gpt5.5")
+    monkeypatch.setattr(chat_infra, "_get_default_model", lambda: "gpt5.5")
     assert oneshot._pick_claude_fallback(models).startswith("global.anthropic.claude")
-    monkeypatch.setattr("server.chat.infra._get_default_model", lambda: "opus4.8")
+    monkeypatch.setattr(chat_infra, "_get_default_model", lambda: "opus4.8")
     assert oneshot._pick_claude_fallback(models) == "global.anthropic.claude-opus-4-8"
     # No Claude in the catalogue -> None (caller raises rather than misroute).
-    monkeypatch.setattr("server.chat.infra._get_default_model", lambda: "gpt5.5")
+    monkeypatch.setattr(chat_infra, "_get_default_model", lambda: "gpt5.5")
     assert oneshot._pick_claude_fallback({"gpt5.5": "openai.gpt-5.5", "l": "local:x"}) is None
 
 
