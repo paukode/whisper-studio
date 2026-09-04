@@ -4,6 +4,13 @@
   "transcription_backend": "streaming",
   "bedrock_region": "us-east-1",
   "chat_models": {
+    "fable5.1": {
+      "id": "global.anthropic.claude-fable-5-1",
+      "label": "Fable 5.1",
+      "context_window": 1000000,
+      "thinking": "adaptive",
+      "requires_data_retention": true
+    },
     "fable5.0": {
       "id": "global.anthropic.claude-fable-5",
       "label": "Fable 5.0",

@@ -16,6 +16,7 @@
   "opus4.6": { "input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25 },
   "opus4.7": { "input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25 },
   "opus4.8": { "input": 5.00, "output": 25.00, "cache_read": 0.50, "cache_write": 6.25 },
+  "fable5.1": { "input": 10.00, "output": 50.00, "cache_read": 1.00, "cache_write": 12.50 },
   "fable5.0": { "input": 10.00, "output": 50.00, "cache_read": 1.00, "cache_write": 12.50 },
 
   "gpt5.6-sol":   { "input": 5.50, "output": 33.00, "cache_read": 0.55,  "cache_write": 6.88, "cached_in_input": true },
