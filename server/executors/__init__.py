@@ -63,3 +63,14 @@ def emits_model_prompt(executor_name: str) -> bool:
     if meta is None:
         return False
     return meta.get("emits_prompt", False)
+
+
+def is_read_only(executor_name: str) -> bool:
+    """Check if an executor only reads data (no side effects). Fail-closed:
+    an unknown executor is treated as NOT read-only. This is the gate the
+    programmatic tool-calling runtime (server/executors/tool_script.py) uses to
+    decide which tools a model-written script may invoke without approval."""
+    meta = EXECUTOR_META.get(executor_name)
+    if meta is None:
+        return False
+    return meta.get("read_only", False)

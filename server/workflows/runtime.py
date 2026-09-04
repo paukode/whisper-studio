@@ -15,6 +15,7 @@ Responsibilities:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 
@@ -267,6 +268,8 @@ class WorkflowRun:
         try:
             if method == "agent":
                 await self._handle_agent(mid, params)
+            elif method == "tool":
+                await self._handle_tool(mid, params)
             elif method == "budget_spent":
                 await self._respond(mid, {"spent": self.tokens_out})
             elif method == "workflow":
@@ -275,6 +278,92 @@ class WorkflowRun:
                 await self._error(mid, rpc.ERR_INTERNAL, f"unknown method {method}")
         except Exception as e:  # noqa: BLE001
             await self._error(mid, rpc.ERR_INTERNAL, str(e))
+
+    # Bulky sub-call output kept inline in the DURABLE journal copy; past this
+    # the journal stores a head preview + a result-cache reference while the
+    # running program still receives the full value in its variables.
+    _TOOL_LOG_PREVIEW = 2000
+    # A single script may not fan out more read-only tool calls than this — a
+    # runaway-loop backstop, generous for real orchestration.
+    _TOOL_CALL_CAP = 500
+
+    async def _handle_tool(self, mid, params: dict) -> None:
+        """Programmatic tool calling: run ONE read-only host tool for a script.
+
+        The read-only gate is the safety boundary — a script may orchestrate
+        reads and searches but can never trigger a write or an approval prompt
+        from inside code (those must be called directly as normal tools). Each
+        sub-call is journaled (bulky output spilled in the log copy) and the
+        full result is returned to the program.
+        """
+        name = str(params.get("name") or "")
+        args = params.get("args") or {}
+        if self._cancelled:
+            return await self._error(mid, rpc.ERR_CANCELLED, "run cancelled")
+        if not isinstance(args, dict):
+            return await self._error(mid, rpc.ERR_INTERNAL, "tool args must be an object")
+
+        from server.executors import is_read_only
+
+        if not is_read_only(name):
+            return await self._error(
+                mid,
+                rpc.ERR_INTERNAL,
+                f"tool '{name}' is not read-only and cannot be called from a tool "
+                "script. Read-only tools (file reads, greps, searches, git status/"
+                "diff, web fetch/search, aws_boto3) run here; anything that writes "
+                "or needs approval must be called directly as a normal tool.",
+            )
+
+        seq = self._seq
+        self._seq += 1
+        if seq >= self._TOOL_CALL_CAP:
+            return await self._error(
+                mid, rpc.ERR_INTERNAL, f"tool-call cap {self._TOOL_CALL_CAP} reached"
+            )
+
+        from server.skills import execute_tool
+
+        # Copy the current context into the worker thread: get_workspace_path()
+        # and other tool state read ContextVars (e.g. the workspace override)
+        # that asyncio's default executor does NOT propagate on its own, so a
+        # ws_* tool would otherwise see "No workspace connected." off-thread.
+        ctx = contextvars.copy_context()
+        loop = asyncio.get_event_loop()
+        try:
+            result = await loop.run_in_executor(
+                None, lambda: ctx.run(execute_tool, name, dict(args))
+            )
+        except Exception as e:  # noqa: BLE001 — surface as a JS throw, not a crash
+            self.journal.tool_call({"seq": seq, "name": name, "status": "error", "error": str(e)})
+            return await self._error(mid, rpc.ERR_INTERNAL, f"tool '{name}' failed: {e}")
+
+        result = "" if result is None else str(result)
+        # Spill the DURABLE copy; the program keeps the full value.
+        if len(result) > self._TOOL_LOG_PREVIEW:
+            try:
+                from server.infrastructure import result_cache
+
+                cache_file = result_cache.write(f"toolscript_{name}", result)
+            except Exception:
+                cache_file = ""
+            preview = result[: self._TOOL_LOG_PREVIEW]
+            self.journal.tool_call(
+                {
+                    "seq": seq,
+                    "name": name,
+                    "status": "ok",
+                    "bytes": len(result),
+                    "preview": preview,
+                    "cache_file": cache_file,
+                }
+            )
+        else:
+            self.journal.tool_call(
+                {"seq": seq, "name": name, "status": "ok", "bytes": len(result), "preview": result}
+            )
+        self._emit({"type": "tool", "seq": seq, "name": name, "bytes": len(result)})
+        await self._respond(mid, {"output": result})
 
     async def _handle_agent(self, mid, params: dict) -> None:
         prompt = params.get("prompt", "")

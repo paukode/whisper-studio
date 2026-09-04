@@ -119,6 +119,8 @@ async function runScript({ source, args, meta }) {
 
   const sandbox = Object.assign(Object.create(null), {
     agent: api.agent,
+    tool: api.tool,
+    tools: api.tools,
     pipeline: api.pipeline,
     parallel: api.parallel,
     phase: api.phase,

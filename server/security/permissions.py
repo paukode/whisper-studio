@@ -363,6 +363,7 @@ _RULE_MATCH_FIELDS = {
     "terminal_run": "command",
     "terminal_send": "input",
     "run_python": "code",
+    "run_tool_script": "code",
     "aws_cli": "command",
     "git_push": "branch",
     "git_checkout": "branch",

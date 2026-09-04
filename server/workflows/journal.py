@@ -76,6 +76,12 @@ class Journal:
     def agent_call(self, entry: dict) -> None:
         self._write({"type": "agent_call", **entry})
 
+    def tool_call(self, entry: dict) -> None:
+        """A programmatic tool-calling sub-dispatch (tools.<name>() from a
+        script). The durable copy carries a PREVIEW of bulky output; the running
+        program keeps the full value in memory."""
+        self._write({"type": "tool_call", **entry})
+
     def error(self, message: str, stack: str = "") -> None:
         self._write({"type": "error", "message": message, "stack": stack})
 

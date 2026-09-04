@@ -296,6 +296,13 @@ async def _do_git_clone(payload: dict) -> ApprovalOutcome:
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
+async def _do_run_tool_script(payload: dict) -> ApprovalOutcome:
+    from server.executors.tool_script import do_run_tool_script
+
+    ok, output = await do_run_tool_script(payload)
+    return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
+
+
 async def _do_terminal_send(payload: dict) -> ApprovalOutcome:
     from server.executors.terminal_run import do_terminal_send
 
@@ -827,6 +834,26 @@ def register_defaults() -> None:
                 "justification",
             ],
             render_command=_terminal_run_command,
+        ),
+    )
+
+    def _tool_script_summary(p: dict) -> str:
+        code = (p.get("code") or "").strip()
+        first = next((ln for ln in code.splitlines() if ln.strip()), "")
+        if len(first) > 70:
+            first = first[:67] + "..."
+        return f"Run tool script: {first or '(empty)'}"
+
+    register(
+        "run_tool_script",
+        ApprovalSpec(
+            category="cli",
+            preview="command",
+            summary=_tool_script_summary,
+            executor=_do_run_tool_script,
+            risk_hint="medium",
+            payload_fields=["code", "session_id"],
+            render_command=lambda p: p.get("code") or "",
         ),
     )
 

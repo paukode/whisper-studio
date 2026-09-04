@@ -160,6 +160,7 @@ _EXECUTOR_MODULES = (
     "server.executors.code",
     "server.executors.content",
     "server.executors.terminal_run",
+    "server.executors.tool_script",  # run_tool_script (programmatic tool calling)
     "server.documents.executors",  # create_docx / create_pptx / create_xlsx / create_pdf
     "server.prompt_tools",  # verify_change / create_program / github_actions
     "server.executors.preview",  # metadata-only — dispatch is in tool_router.py

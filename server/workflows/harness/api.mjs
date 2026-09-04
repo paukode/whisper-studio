@@ -16,6 +16,25 @@ export function makeApi(rpcCall, notify, meta, args) {
     return rpcCall("agent", { prompt, opts: opts || {} });
   }
 
+  // Programmatic tool calling: `tool(name, args)` (or the ergonomic
+  // `tools.<name>(args)` proxy) runs ONE read-only host tool via RPC and
+  // resolves to its string output. Non-read-only tools are refused server-side
+  // — the program orchestrates reads/searches, keeping every intermediate
+  // result in its own variables instead of the model's context.
+  async function tool(name, toolArgs = {}) {
+    if (typeof name !== "string" || !name.trim()) {
+      throw new Error("tool(name, args): name must be a non-empty string");
+    }
+    const r = await rpcCall("tool", { name, args: toolArgs || {} });
+    return r?.output ?? "";
+  }
+  const tools = new Proxy(Object.create(null), {
+    get(_t, prop) {
+      if (typeof prop !== "string") return undefined;
+      return (toolArgs = {}) => tool(prop, toolArgs);
+    },
+  });
+
   // Each item runs through ALL stages independently — NO barrier between
   // stages. A stage that throws drops that item to null and skips its rest.
   async function pipeline(items, ...stages) {
@@ -82,5 +101,5 @@ export function makeApi(rpcCall, notify, meta, args) {
 
   const frozenArgs = args?.value !== undefined ? Object.freeze(args.value) : undefined;
 
-  return { agent, pipeline, parallel, phase, log, workflow, budget, args: frozenArgs };
+  return { agent, tool, tools, pipeline, parallel, phase, log, workflow, budget, args: frozenArgs };
 }

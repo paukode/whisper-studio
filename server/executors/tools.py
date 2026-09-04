@@ -301,6 +301,43 @@ TERMINAL_CLOSE_TOOL = {
     "input_schema": {"type": "object", "properties": {}},
 }
 
+RUN_TOOL_SCRIPT_TOOL = {
+    "name": "run_tool_script",
+    "description": (
+        "Runs a short JavaScript program that orchestrates READ-ONLY tools and "
+        "returns one final value, so a tool-heavy task (read many files, grep, run "
+        "several searches, then combine) happens in ONE turn instead of a round trip "
+        "per tool call. Every intermediate result stays in the program's variables "
+        "and never enters the conversation, which is a large token saving on "
+        "multi-step reads. Inside the script, call tools as `await tools.NAME(args)` "
+        "(e.g. `await tools.ws_read_file({path:'x.py'})`, `await tools.ws_glob("
+        "{pattern:'**/*.ts'})`, `await tools.ws_grep({pattern:'TODO'})`, "
+        "`await tools.web_fetch({url})`, `await tools.aws_boto3({service,method})`); "
+        "each returns the tool's output as a string. Only read-only tools are "
+        "allowed — a write, run, or approval-requiring tool throws, so do those as "
+        "normal tool calls instead. Standard JS is available (JSON, Array, Promise, "
+        "await, Promise.all); no fs, network, or process access. End the program "
+        "with `return <value>` (a string or a JSON-serializable object); that value "
+        "is the result. Use log('...') for progress notes. Every call is approval-"
+        "gated (the script is approved once, not each inner tool call). Prefer this "
+        "over many separate read tool calls when the reads feed one answer."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "code": {
+                "type": "string",
+                "description": (
+                    "The JavaScript program body. Use `await tools.NAME(args)` for "
+                    "each read-only tool call and finish with `return <value>`. Top-"
+                    "level await and return are supported."
+                ),
+            },
+        },
+        "required": ["code"],
+    },
+}
+
 WEB_FETCH_TOOL = {
     "name": "web_fetch",
     "description": (
@@ -438,6 +475,7 @@ CORE_EXECUTOR_TOOLS = [
     AWS_BOTO3_TOOL,
     AWS_CLI_TOOL,
     RUN_PYTHON_TOOL,
+    RUN_TOOL_SCRIPT_TOOL,
     SUMMARIZE_TRANSCRIPT_TOOL,
     TERMINAL_CLOSE_TOOL,
     TERMINAL_RUN_TOOL,
