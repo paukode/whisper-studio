@@ -9,6 +9,15 @@ it turns out to be relevant.
 
 Both halves are capped, so one long WHISPER.md cannot silently tax every turn in
 the session or crowd out the conversation itself.
+
+AGENTS.md (the ecosystem-standard instructions filename other coding tools
+maintain) is honored live as a read-only supplement, so a repo that keeps one
+works here without a stale one-time import (server/onboarding/import_external
+still converts it to WHISPER.md for users who want to edit in the app).
+WHISPER.md always wins: at the root the AGENTS.md block is loaded alongside it
+with an explicit precedence note (and skipped entirely when its text is already
+verbatim inside WHISPER.md, the post-import state); in a scoped directory a
+WHISPER.md shadows a sibling AGENTS.md outright.
 """
 
 from __future__ import annotations
@@ -19,6 +28,7 @@ import os
 log = logging.getLogger("whisper-studio")
 
 FILENAME = "WHISPER.md"
+COMPAT_FILENAME = "AGENTS.md"
 
 # The root file is the always-on overview, so it gets the larger budget.
 ROOT_MAX_CHARS = 12_000
@@ -41,10 +51,13 @@ def _truncate(text: str, limit: int, rel_path: str) -> str:
 
 
 def find_scoped_files(ws_path: str) -> list[str]:
-    """Workspace-relative paths of every non-root WHISPER.md, sorted, bounded.
+    """Workspace-relative paths of every non-root WHISPER.md (or, in a
+    directory without one, AGENTS.md), sorted, bounded.
 
     Skips the usual VCS/build/vendor directories, reusing the workspace's own
-    ignore set so this agrees with what the file tools show.
+    ignore set so this agrees with what the file tools show. A WHISPER.md
+    shadows a sibling AGENTS.md: one instructions file per directory, and the
+    native one wins.
     """
     from server.workspace.paths import _WS_IGNORED_DIRS
 
@@ -59,8 +72,11 @@ def find_scoped_files(ws_path: str) -> list[str]:
         dirnames[:] = sorted(
             d for d in dirnames if d not in _WS_IGNORED_DIRS and not d.startswith(".")
         )
-        if rel_dir != "." and FILENAME in filenames:
-            found.append(os.path.join(rel_dir, FILENAME))
+        if rel_dir != ".":
+            if FILENAME in filenames:
+                found.append(os.path.join(rel_dir, FILENAME))
+            elif COMPAT_FILENAME in filenames:
+                found.append(os.path.join(rel_dir, COMPAT_FILENAME))
             if len(found) >= MAX_SCOPED_FILES:
                 break
     return sorted(found)
@@ -111,6 +127,29 @@ def get_whisper_md_context(ws_path: str | None, question: str = "") -> str:
             f"[{FILENAME} — project-specific instructions]\n"
             + _truncate(root_content, ROOT_MAX_CHARS, FILENAME)
         )
+
+    compat_content = ""
+    compat_path = os.path.join(ws_path, COMPAT_FILENAME)
+    if os.path.isfile(compat_path):
+        compat_content = _read(compat_path)
+    # Post-import state: the importer copied AGENTS.md into WHISPER.md verbatim,
+    # so loading both would tax every turn with the same text twice.
+    if compat_content and compat_content in root_content:
+        compat_content = ""
+    if compat_content:
+        if root_content:
+            # A supplement next to a real WHISPER.md gets the scoped budget and
+            # an explicit precedence rule (instruction beats ordering).
+            parts.append(
+                f"[{COMPAT_FILENAME} — project instructions maintained for other "
+                f"coding tools; where this conflicts with {FILENAME} above, "
+                f"{FILENAME} wins]\n" + _truncate(compat_content, SCOPED_MAX_CHARS, COMPAT_FILENAME)
+            )
+        else:
+            parts.append(
+                f"[{COMPAT_FILENAME} — project-specific instructions]\n"
+                + _truncate(compat_content, ROOT_MAX_CHARS, COMPAT_FILENAME)
+            )
 
     try:
         scoped = find_scoped_files(ws_path)
