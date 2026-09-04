@@ -116,6 +116,20 @@ def classify_bedrock_error(error: Exception) -> WhisperAPIError:
     if error_code == "ServiceUnavailableException" or "ServiceUnavailable" in error_str:
         return ServiceUnavailableError(error_str)
 
+    # Bedrock's transient stream faults (AWS documents both as retryable):
+    # a 500 on the invoke, or the stream dying mid-read after a 200.
+    if any(
+        code == error_code or code in error_str
+        for code in ("InternalServerException", "ModelStreamErrorException")
+    ):
+        return WhisperAPIError(
+            error_str,
+            error_code="MODEL_STREAM_ERROR",
+            user_message=f"The model stream failed: {error_str[:200]}",
+            is_retryable=True,
+            original_error=error,
+        )
+
     if "too long" in error_str.lower() or "prompt is too long" in error_str.lower():
         return PromptTooLongError(error_str)
 
