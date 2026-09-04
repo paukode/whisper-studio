@@ -84,18 +84,20 @@ def _resolve_agent_model(model_id_override: str | None, config: AgentConfig) -> 
 
     An explicit override is returned verbatim (the spawn handlers already
     threaded the session-selected model through it). Without one, fall back to
-    the user's configured default chat model, skipping on-device (``local:*``)
-    entries: get_adapter has no local branch, so a local id would silently
-    route to the Bedrock adapter and fail at invoke. This is how background
-    memory agents broke in hybrid mode when the default chat model was local.
-    Returns None when every configured chat model is on-device; run_agent
-    fails the run early instead of erroring at the provider call.
+    the user's configured default chat model. An on-device (``local:*``)
+    candidate is accepted only when the model supports tool calling (the same
+    registry gate interactive chat uses) — a chat-only local model cannot
+    drive an agent loop, and letting one through is how background memory
+    agents broke in hybrid mode. Returns None when no configured chat model
+    can run agents; run_agent fails the run early instead of erroring at the
+    provider call.
     """
     if model_id_override:
         return model_id_override
 
+    from server.agents.providers import model_key_for_id
     from server.infrastructure.config import load_config
-    from server.local.runtime import is_local_model_id
+    from server.local.runtime import is_local_model_id, supports_tools
 
     cfg = load_config()
     chat_models = cfg.get("chat_models", {})
@@ -106,8 +108,11 @@ def _resolve_agent_model(model_id_override: str | None, config: AgentConfig) -> 
         *chat_models.values(),
     ]
     for candidate in candidates:
-        if candidate and not is_local_model_id(candidate):
-            return candidate
+        if not candidate:
+            continue
+        if is_local_model_id(candidate) and not supports_tools(model_key_for_id(candidate)):
+            continue
+        return candidate
     return None
 
 
@@ -190,24 +195,58 @@ async def run_agent(
     # Resolve model. Agents inherit the session-selected model via
     # model_id_override (threaded from /api/chat through the spawn handlers).
     # With no override, fall back to the user's configured default chat model,
-    # never a hardcoded per-agent-type model and never an on-device one (the
-    # agent runtime only has cloud provider adapters).
+    # never a hardcoded per-agent-type model. On-device models are first-class
+    # here when they support tool calling (LocalAdapter below); chat-only
+    # local models are refused up front.
     model_id = _resolve_agent_model(model_id_override, config)
     if not model_id:
         log.warning(
-            "Agent %s cannot run: every configured chat model is on-device "
-            "(local:*) and the agent runtime has no local adapter.",
+            "Agent %s cannot run: no configured chat model can drive an agent "
+            "loop (every entry is an on-device model without tool support).",
             config.agent_type,
         )
         return AgentResult(
             agent_id="",
             agent_type=config.agent_type,
             output=(
-                "[Agent Error] No cloud chat model configured: every chat_models "
-                "entry is on-device (local:*), which agents cannot use."
+                "[Agent Error] No agent-capable chat model configured: every "
+                "chat_models entry is an on-device model without tool support."
             ),
             status="failed",
         )
+
+    from server.agents.providers import model_key_for_id as _model_key_for_id
+    from server.local.runtime import is_local_model_id as _is_local_id
+    from server.local.runtime import supports_tools as _supports_tools
+
+    _is_local = _is_local_id(model_id)
+    if _is_local:
+        _local_key = _model_key_for_id(model_id)
+        if not _supports_tools(_local_key):
+            return AgentResult(
+                agent_id="",
+                agent_type=config.agent_type,
+                output=(
+                    f"[Agent Error] On-device model '{_local_key or model_id}' does not "
+                    "support tool calling, so it cannot run agents. Pick a "
+                    "tool-capable local model or a cloud model."
+                ),
+                status="failed",
+            )
+        if structured_schema is not None:
+            # _distill_structured still runs on the old cloud provider-adapter
+            # system, which has no local branch — refuse readably rather than
+            # failing at the distill call after the whole run.
+            return AgentResult(
+                agent_id="",
+                agent_type=config.agent_type,
+                output=(
+                    "[Agent Error] Structured output (schema) requires a cloud "
+                    "model; run this agent without a schema or override the "
+                    "model with a cloud one."
+                ),
+                status="failed",
+            )
 
     # Pre-flight data-retention gate. Mythos-class models (e.g. Fable 5) reject
     # InvokeModel with "data retention mode 'none' is not available for this
@@ -215,14 +254,19 @@ async def run_agent(
     # with an actionable message instead of spawning a fan-out of agents that
     # each burn a turn hitting the same ValidationException. Never flips the
     # account setting (that's a consented UI action), and fails open if the mode
-    # can't be read.
+    # can't be read. Skipped for on-device models: the gate is a Bedrock
+    # control-plane call, and a local run must stay fully offline.
     from server.infrastructure.data_retention import retention_block_reason
 
     # The gate can hit the Bedrock CONTROL-PLANE (sync boto3, up to tens of
     # seconds on a degraded endpoint) — run it in the executor like every other
     # boto3 call in this runtime, never directly on the event loop.
-    _dr_reason = await asyncio.get_running_loop().run_in_executor(
-        _agent_executor, retention_block_reason, model_id
+    _dr_reason = (
+        None
+        if _is_local
+        else await asyncio.get_running_loop().run_in_executor(
+            _agent_executor, retention_block_reason, model_id
+        )
     )
     if _dr_reason:
         log.warning("Agent (%s) blocked by data-retention gate: %s", config.agent_type, _dr_reason)
@@ -513,7 +557,14 @@ async def _run_agent_loop(
     Not migrated, by design: _distill_structured (a one-shot forced-tool
     call over the finished transcript; chat/engine's adapters have no
     equivalent yet) still goes through server.agents.providers' own adapter
-    system, unchanged. _resolve_agent_model's local:* guard is untouched.
+    system, unchanged — run_agent refuses structured_schema on a local model
+    for exactly this reason.
+
+    On-device models run through the same LocalAdapter interactive chat uses:
+    the model is served (ensure_serving, mark_busy so a switch can never stop
+    the server mid-run, end_turn in the drain's finally) and the turn stays
+    fully offline (no permission-explainer model id). Only tool-capable local
+    models reach this point — run_agent gates on supports_tools up front.
     """
     from server.attachment_store import load_session_attachments
     from server.chat.tool_activation import activate_from_history
@@ -613,10 +664,14 @@ async def _run_agent_loop(
     # adapters for interactive chat.
     from server.agents.providers import model_key_for_id
     from server.chat.infra import _get_chat_model_meta
+    from server.local.runtime import is_local_model_id
 
     model_key = model_key_for_id(model_id)
     _agent_meta = _get_chat_model_meta().get(model_key, {})
     _provider = _agent_meta.get("provider", "anthropic")
+    # Checked BEFORE _provider: _normalize_chat_models defaults a local entry's
+    # provider to "anthropic", so the provider field cannot identify one.
+    _is_local_agent = is_local_model_id(model_id)
 
     # The parent's effort was clamped to the PARENT's model. An agent can run on
     # a different one (opts.model, a config default, a per-agent-type pin), so
@@ -634,9 +689,13 @@ async def _run_agent_loop(
     # demote an extra-effort parent's GPT child from xhigh to high.
     from server.infrastructure.effort import resolve_effort
 
-    if effort_label is not None and _provider != "openai_bedrock":
+    if effort_label is not None and _provider != "openai_bedrock" and not _is_local_agent:
         effort_label = resolve_effort(_agent_meta, model_key, effort_label)
-    if _provider == "openai_bedrock":
+    if _is_local_agent:
+        # Built after _emit exists (below): serving the model can fail, and
+        # that failure must reach the team card as a failed phase.
+        adapter = None
+    elif _provider == "openai_bedrock":
         from server.chat.engine.openai import OpenAIResponsesAdapter
 
         adapter = OpenAIResponsesAdapter(
@@ -725,13 +784,55 @@ async def _run_agent_loop(
     # Report the RESOLVED model_id (threaded into this loop).
     _emit("started", task=_preview(task, 2000), model=model_id, max_turns=config.max_turns)
 
+    _local_turn_marked = False
+    if _is_local_agent:
+        # Serve the on-device model and register this run as a live turn
+        # (mark_busy) so a model switch waits instead of stopping the server
+        # mid-run; end_turn releases it in the drain's finally. ensure_serving
+        # itself gives up with a clear error after its busy-wait timeout when a
+        # displacing switch cannot proceed (e.g. the parent chat turn holds a
+        # DIFFERENT local model busy for as long as this very agent runs).
+        import functools
+
+        from server.chat.engine.local import LocalAdapter
+        from server.local import serving
+        from server.local.runtime import supports_thinking
+
+        try:
+            base_url = await loop.run_in_executor(
+                _agent_executor,
+                functools.partial(serving.ensure_serving, model_key, mark_busy=True),
+            )
+        except Exception as e:
+            _emit("failed", error=str(e)[:500])
+            return AgentResult(
+                agent_id=agent_id,
+                agent_type=config.agent_type,
+                output=f"[Agent Error] On-device model '{model_key}' could not be served: {e}",
+                status="failed",
+            )
+        _local_turn_marked = True
+        adapter = LocalAdapter(
+            model_key=model_key,
+            base_url=base_url,
+            system_prompt=system,
+            thinking=supports_thinking(model_key),
+            # Only tool-capable local models reach this loop (run_agent gates
+            # on supports_tools), and an agent without tools is pointless.
+            tools_enabled=True,
+            wire_model=serving.wire_model(model_key),
+            supports_tool_choice=serving.supports_tool_choice(model_key),
+        )
+
     from server.chat.engine.policy import TurnPolicy
     from server.chat.engine.runner import TurnContext, run_turn
 
     ctx = TurnContext(
         session_id=session_id,
         model_key=model_key,
-        model_id=model_id,
+        # Local plumbing (memory/cost hooks) keys on the model KEY, same as
+        # interactive local chat (server/local/route.py).
+        model_id=(model_key if _is_local_agent else model_id),
         messages=messages,
         adapter=adapter,
         policy=TurnPolicy(
@@ -745,7 +846,8 @@ async def _run_agent_loop(
         loop=loop,
         executor=_agent_executor,
         current_attachments=current_attachments,
-        tool_exec_model_id=model_id,
+        # Offline invariant for local runs: no permission-explainer model.
+        tool_exec_model_id=("" if _is_local_agent else model_id),
         effort_label=effort_label,
         # Agents don't run interactive chat's post-turn memory hooks (auto
         # memory / session memory / dream consolidation) — the pre-migration
@@ -862,6 +964,10 @@ async def _run_agent_loop(
     finally:
         agent_nesting_ctx.reset(_nesting_token)
         _flush_round_text()  # catch trailing text with no following usage frame
+        if _local_turn_marked:
+            from server.local import serving as _serving
+
+            _serving.end_turn()
 
     elapsed = time.monotonic() - turn_start
     # run_turn's own last-round handling (the max_rounds cap, or a deadline

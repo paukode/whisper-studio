@@ -229,10 +229,11 @@ SPAWN_AGENT_TOOL = {
                 "type": "string",
                 "description": (
                     "Optional model override: a chat_models config key (e.g. "
-                    "'haiku', 'sonnet'). Use a cheaper model for mechanical "
-                    "subtasks. An unknown or on-device key falls back to the "
-                    "session's model and the result carries a model_warning. "
-                    "Default: the session's selected model."
+                    "'haiku', 'sonnet', or a tool-capable local model). Use a "
+                    "cheaper model for mechanical subtasks. An unknown key, or "
+                    "an on-device key whose model cannot call tools, falls "
+                    "back to the session's model and the result carries a "
+                    "model_warning. Default: the session's selected model."
                 ),
             },
             "detach": {

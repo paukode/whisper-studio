@@ -10,9 +10,10 @@ path, mispricing the ledger — see tests/test_model_resolution.py):
 * An UNKNOWN key falls back to the caller's default model, and the empty
   effective_key tells the ledger to price under the default's own key rather
   than the invalid name.
-* A LOCAL (on-device) key resolves to a ``local:*`` id the agent runtime has
-  no adapter for; refused up front with a readable reason instead of being
-  handed to the Bedrock adapter to fail at invoke.
+* A LOCAL (on-device) key is honoured only when the model supports tool
+  calling (the same registry gate interactive chat uses); a chat-only local
+  model is refused up front with a readable reason instead of being handed
+  an agent loop it cannot drive.
 
 ``warning`` is empty when the override resolved cleanly (or no override was
 asked for).
@@ -41,15 +42,16 @@ def resolve_model_override(
             f"unknown model '{key}'; ran on the default model instead",
         )
 
-    from server.local.runtime import is_local_model_id
+    from server.local.runtime import is_local_model_id, supports_tools
 
-    if is_local_model_id(resolved):
+    if is_local_model_id(resolved) and not supports_tools(key):
         return (
             (default_model_id or None),
             "",
             (
-                f"model '{key}' is on-device and agents have no local "
-                "adapter; ran on the default model instead"
+                f"model '{key}' is on-device and does not support tool "
+                "calling, so it cannot run agents; ran on the default "
+                "model instead"
             ),
         )
     return resolved, key, ""
