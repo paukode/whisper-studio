@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 
 from server.security import egress_policy
+from server.security.sensitive_env import GITHUB_ENV_VARS
 from server.security.sensitive_paths import expanded_sandbox_paths
 
 log = logging.getLogger("whisper-studio")
@@ -193,8 +194,10 @@ def _bwrap_network_restriction_args() -> list[str]:
 # blocking `gh` would not stop that, since it is a non-gh command reading an env
 # var. GitHub auth for the authenticated git/github tools is file/keychain-based
 # (~/.config/gh/hosts.yml, itself sandbox-denied), so nothing legitimate in the
-# sandbox needs these.
-_SANDBOX_ENV_DENYLIST = frozenset({"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"})
+# sandbox needs these. Canonical list lives in server/security/sensitive_env.py;
+# deliberately ONLY the GitHub subset — see that module's docstring for why the
+# cloud keys must keep passing here.
+_SANDBOX_ENV_DENYLIST = GITHUB_ENV_VARS
 
 
 def _network_proxy_env_vars() -> dict[str, str]:
