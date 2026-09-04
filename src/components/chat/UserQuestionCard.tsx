@@ -20,8 +20,15 @@ export function isOtherChoice(o: string): boolean {
  *
  * If the AI already emitted a Browse option, we leave the list untouched
  * (it's the AI's intent and may include extra context in the label).
+ *
+ * Defensive: `options` is trusted from the model's tool call. The schema
+ * requires an array, but a model can still emit it as a string, null, or omit
+ * it — which used to throw `options.some is not a function` and blow up the
+ * whole chat via the error boundary. Coerce anything non-array to an empty
+ * list; the question card's always-visible free-text input keeps it answerable.
  */
 export function withBrowseOption(question: string, options: string[]): string[] {
+  if (!Array.isArray(options)) options = [];
   if (options.some((o) => o.toLowerCase().includes('browse'))) return options;
 
   // An option is a filesystem path only if it *starts* with a path prefix
@@ -55,7 +62,9 @@ export const UserQuestionCard: React.FC<{
   message: ChatMessageType;
 }> = ({ question, options: rawOptions, answered, message }) => {
   const options = React.useMemo(() => withBrowseOption(question, rawOptions), [question, rawOptions]);
-  const [showOtherInput, setShowOtherInput] = useState(false);
+  // With no options the only way to answer is free text, so open that input
+  // straight away instead of showing an empty, unanswerable card.
+  const [showOtherInput, setShowOtherInput] = useState(options.length === 0);
   const [otherText, setOtherText] = useState('');
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const isAnswered = answered || selectedOption !== null;
