@@ -113,14 +113,17 @@ RUN_PYTHON_TOOL = {
         "Executes a self-contained Python 3 script in an OS-sandboxed subprocess and "
         "returns combined stdout and stderr. Every call is approval-gated; the user "
         "must approve before the code runs. Use for calculations, data analysis, text "
-        "processing, parsing, and quick prototyping when no shell is needed. Limits are "
-        "a 15 second timeout, no stdin, cwd /tmp, and no state between calls; secret "
-        "paths like ~/.ssh are blocked while ~/.aws is allowed, and AWS write "
-        "operations are blocked in-process (only read-shaped boto3 calls pass). Results "
-        "appear only if printed; bare expressions are not echoed. Do not use for shell "
-        "commands (use terminal_run), for files in a connected workspace (use "
-        "ws_run_command or ws_read_file), or for read-only AWS queries (prefer "
-        "aws_boto3, which needs no approval)."
+        "processing, parsing, and quick prototyping when no shell is needed. The cwd "
+        "is the connected workspace (else /tmp), and WRITES are OS-confined to that "
+        "tree plus temp and ~/.aws (workspace-write); when the script genuinely must "
+        "write elsewhere, retry with sandbox_permissions='danger-full-access' plus a "
+        "one-line justification, which always asks the user per call. Limits are a 90 "
+        "second timeout, no stdin, and no state between calls; secret paths like "
+        "~/.ssh are blocked while ~/.aws is allowed, and AWS write operations are "
+        "blocked in-process (only read-shaped boto3 calls pass). Results appear only "
+        "if printed; bare expressions are not echoed. Do not use for shell commands "
+        "(use terminal_run) or for read-only AWS queries (prefer aws_boto3, which "
+        "needs no approval)."
     ),
     "input_schema": {
         "type": "object",
@@ -130,7 +133,25 @@ RUN_PYTHON_TOOL = {
                 "description": (
                     "Complete Python 3 script. Print anything that should be returned; "
                     "bare expressions are not echoed. No state persists between calls, "
-                    "stdin is unavailable, 15 second limit, network access is allowed."
+                    "stdin is unavailable, 90 second limit, network access is allowed."
+                ),
+            },
+            "sandbox_permissions": {
+                "type": "string",
+                "enum": ["workspace-write", "read-only", "danger-full-access"],
+                "description": (
+                    "Filesystem confinement. Omit for the default workspace-write "
+                    "(writes limited to the workspace, temp, and ~/.aws). read-only "
+                    "denies all writes. danger-full-access runs unconfined, requires "
+                    "justification, and always triggers a per-call approval prompt."
+                ),
+            },
+            "justification": {
+                "type": "string",
+                "description": (
+                    "One line explaining why full filesystem access is needed. "
+                    "Required with sandbox_permissions='danger-full-access'; shown "
+                    "verbatim on the user's approval card."
                 ),
             },
         },
@@ -145,17 +166,20 @@ TERMINAL_RUN_TOOL = {
         "combined stdout/stderr. Prefer this over asking the user to run something "
         "themselves; asking is friction, this is one approval click. mode=sandbox "
         "(default) uses a hidden ephemeral PTY with a minimal rc-free shell, sandboxed "
-        "away from secrets; use it to check, try, or probe. Sandbox mode hides the "
-        "output, it does not isolate the filesystem, so writes still land on the real "
-        "machine. mode=visible types the command into the user's open terminal so they "
-        "can watch, and errors if none is open; use it only when the user asks to see "
-        "it run. Every call is approval-gated and validated first; dangerous commands "
-        "and interactive ones that wait for stdin (vim, less, top, watch, ssh without "
-        "BatchMode=yes, sudo without -n) are refused before running. Default timeout "
-        "30s, max 300s; on timeout partial output is returned. Works without a "
-        "connected workspace, but prefer ws_run_command for project commands when a "
-        "workspace is connected. Not for long-running servers or watch loops; use "
-        "preview_start for anything that serves a page."
+        "away from secrets, with WRITES confined by the OS to the working directory "
+        "plus temp (workspace-write). When a command genuinely must write elsewhere, "
+        "retry it with sandbox_permissions='danger-full-access' plus a one-line "
+        "justification; that always asks the user to approve that exact command, even "
+        "when commands are otherwise session-approved. mode=visible types the command "
+        "into the user's open terminal so they can watch, and errors if none is open; "
+        "use it only when the user asks to see it run. Every call is approval-gated "
+        "and validated first; dangerous commands and interactive ones that wait for "
+        "stdin (vim, less, top, watch, ssh without BatchMode=yes, sudo without -n) are "
+        "refused before running. Default timeout 30s, max 300s; on timeout partial "
+        "output is returned. Works without a connected workspace, but prefer "
+        "ws_run_command for project commands when a workspace is connected. Not for "
+        "long-running servers or watch loops; use preview_start for anything that "
+        "serves a page."
     ),
     "input_schema": {
         "type": "object",
@@ -189,6 +213,27 @@ TERMINAL_RUN_TOOL = {
                     "Working directory. Defaults to the workspace path if connected, "
                     "else $HOME. Supports ~ expansion; a nonexistent path falls back "
                     "silently."
+                ),
+            },
+            "sandbox_permissions": {
+                "type": "string",
+                "enum": ["workspace-write", "read-only", "danger-full-access"],
+                "description": (
+                    "Filesystem confinement for sandbox mode. Omit for the default "
+                    "workspace-write (writes limited to cwd + temp). read-only denies "
+                    "all writes. danger-full-access runs unconfined, requires "
+                    "justification, and always triggers a per-call approval prompt; "
+                    "use it only after a workspace-write run was blocked by the "
+                    "sandbox, or when the task clearly requires writing outside the "
+                    "working directory."
+                ),
+            },
+            "justification": {
+                "type": "string",
+                "description": (
+                    "One line explaining why full filesystem access is needed. "
+                    "Required with sandbox_permissions='danger-full-access'; shown "
+                    "verbatim on the user's approval card."
                 ),
             },
         },

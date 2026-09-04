@@ -291,6 +291,16 @@ def resolve_static_decision(
         if is_rm_command(command):
             return "ask"
 
+    # Sandbox escalation (sandbox_permissions="danger-full-access"): the same
+    # absolute floor as rm. The parameter's entire meaning is "run this ONE
+    # command outside the workspace-write OS sandbox, with a human reading the
+    # justification first" — so no bypass mode, category override, trusted-
+    # skill flag, blanket session approval, custom rule, or dontAsk default
+    # may cover it. Without this, "Yes, all cli" would silently convert every
+    # later escalated call into an unconfined auto-run.
+    if str(tool_input.get("sandbox_permissions") or "").strip() == "danger-full-access":
+        return "ask"
+
     # MCP tool calls: a dedicated tier on top of (not instead of) everything
     # below. A server/tool marked `approval_mode: "approve"` in
     # mcp_servers.json (server.mcp.MCPManager.get_tool_approval_tier_for_

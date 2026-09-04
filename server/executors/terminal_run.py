@@ -85,6 +85,53 @@ def _looks_interactive(command: str) -> tuple[bool, str]:
     return False, ""
 
 
+# Model-facing sandbox_permissions values → server/sandbox.py write modes.
+# "workspace-write" is the default the harness picks on its own; the model
+# never has to be explicit unless it wants LESS (read-only) or MORE
+# (danger-full-access, which always costs a per-call approval).
+_WRITE_MODE_FOR_PERMS = {
+    "workspace-write": "workspace",
+    "read-only": "readonly",
+    "danger-full-access": "open",
+}
+
+
+def _resolve_sandbox_permissions(payload: dict) -> tuple[str, str, str]:
+    """Validate the (sandbox_permissions, justification) pair.
+
+    Returns (permissions, justification, error). error is "" when valid.
+    Empty/missing permissions default to workspace-write. danger-full-access
+    requires a non-empty justification and is refused outright for unattended
+    (agent-stamped) payloads — the whole point of the escalation is that a
+    human reads the justification before the command runs unconfined, and the
+    agent auto-approve path has no human."""
+    perms = (payload.get("sandbox_permissions") or "workspace-write").strip()
+    justification = (payload.get("justification") or "").strip()
+    if perms not in _WRITE_MODE_FOR_PERMS:
+        allowed = ", ".join(sorted(_WRITE_MODE_FOR_PERMS))
+        return "", "", f"invalid sandbox_permissions {perms!r} — must be one of: {allowed}"
+    if perms == "danger-full-access":
+        if payload.get("__agent__"):
+            return (
+                "",
+                "",
+                (
+                    "danger-full-access is not permitted from an unattended subagent. "
+                    "Ask the top-level session, where a human can approve it, to run this."
+                ),
+            )
+        if not justification:
+            return (
+                "",
+                "",
+                (
+                    "sandbox_permissions='danger-full-access' requires a justification "
+                    "explaining why the command must write outside the workspace."
+                ),
+            )
+    return perms, justification, ""
+
+
 def _resolve_cwd(payload_cwd: str | None) -> str:
     """Resolve the cwd argument: expanduser, fall back to workspace then $HOME."""
     if payload_cwd:
@@ -137,13 +184,43 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     if interactive:
         return False, why
 
+    perms, justification, perm_error = _resolve_sandbox_permissions(payload)
+    if perm_error:
+        return False, perm_error
+
     cwd = _resolve_cwd(payload.get("cwd"))
 
+    preamble = ""
+    write_mode = "open"
     if mode == "sandbox":
-        # Agent-stamped (unattended) commands run under the stricter
-        # workspace-write sandbox: no human reviews each command, so the OS
-        # confines writes to the working tree + temp instead of the prompt.
-        write_mode = "workspace" if payload.get("__agent__") else "open"
+        # The harness confines by default: every sandboxed run is
+        # workspace-write (writes limited to cwd + temp by the OS), whether a
+        # human approved it or an agent auto-ran it. Consent (approval) and
+        # confinement (sandbox) are independent — approving a command does not
+        # widen the sandbox; only an explicit danger-full-access escalation
+        # does, and resolve_static_decision forces a per-call approval for
+        # that, so a blanket "Yes, all cli" grant can never cover it.
+        write_mode = _WRITE_MODE_FOR_PERMS[perms]
+
+        from server.sandbox import pty_sandbox_backend
+
+        if write_mode != "open" and pty_sandbox_backend() == "none":
+            if payload.get("__agent__"):
+                # Unattended run with no OS backend: fail closed rather than
+                # silently running unconfined with nobody watching.
+                return False, (
+                    "No OS sandbox backend is available on this machine, so the "
+                    "workspace-write confinement this unattended command requires "
+                    "cannot be enforced. Refusing to run it unconfined."
+                )
+            # Interactive (human-approved) run: proceed, but say so — silent
+            # unconfined passthrough is what this disclosure exists to prevent.
+            preamble = (
+                "[sandbox unavailable] No OS sandbox backend on this machine; "
+                "the command ran WITHOUT write confinement.\n"
+            )
+            write_mode = "open"
+
         result = await run_in_sandbox(command, cwd=cwd, timeout=timeout, write_mode=write_mode)
     else:
         session = latest_visible_session()
@@ -161,7 +238,19 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     if result.get("timed_out"):
         summary = f"TIMED OUT after {timeout:.0f}s; partial output below.\n{summary}"
     output = result.get("output") or "(no output)"
-    return True, f"{summary}\n---\n{output}"
+
+    # A failed confined run whose output looks like an OS write denial gets a
+    # hint naming the effective mode and the escalation path, so the model can
+    # tell "the sandbox said no" from "the command itself is broken".
+    denial_hint = ""
+    if write_mode in ("workspace", "readonly") and result.get("exit_code") not in (0, None):
+        from server.sandbox import classify_sandbox_denial
+
+        hint = classify_sandbox_denial(output, write_mode)
+        if hint:
+            denial_hint = f"\n{hint}"
+
+    return True, f"{preamble}{summary}\n---\n{output}{denial_hint}"
 
 
 @register_executor("terminal_run", read_only=False, concurrent_safe=False)
@@ -180,6 +269,8 @@ def _exec_terminal_run(tool_input, transcript, current_attachments):
             "mode": mode,
             "timeout": tool_input.get("timeout", _DEFAULT_TIMEOUT_S),
             "cwd": tool_input.get("cwd") or "",
+            "sandbox_permissions": (tool_input.get("sandbox_permissions") or "").strip(),
+            "justification": (tool_input.get("justification") or "").strip(),
         }
     )
     return f"[WS_APPROVAL]{payload}"

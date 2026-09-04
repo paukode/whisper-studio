@@ -785,6 +785,9 @@ def register_defaults() -> None:
         if len(cmd) > 80:
             cmd = cmd[:77] + "..."
         mode = p.get("mode") or "sandbox"
+        if (p.get("sandbox_permissions") or "").strip() == "danger-full-access":
+            reason = (p.get("justification") or "no justification given").strip()
+            return f"FULL FILESYSTEM ACCESS — {reason} — terminal_run [{mode}]: {cmd}"
         return f"terminal_run [{mode}]: {cmd}"
 
     def _terminal_run_command(p: dict) -> str:
@@ -796,11 +799,19 @@ def register_defaults() -> None:
             category="cli",
             preview="command",
             summary=_terminal_run_summary,
-            # Sandbox runs are reversible per-session; visible runs touch the
-            # user's actual terminal so the risk hint nudges slightly higher.
+            # Sandbox runs are workspace-write confined by default; an
+            # escalated (danger-full-access) run is unconfined, so its card
+            # says so in the summary and carries the model's justification.
             executor=_do_terminal_run,
             risk_hint="medium",
-            payload_fields=["command", "mode", "timeout", "cwd"],
+            payload_fields=[
+                "command",
+                "mode",
+                "timeout",
+                "cwd",
+                "sandbox_permissions",
+                "justification",
+            ],
             render_command=_terminal_run_command,
         ),
     )
@@ -951,17 +962,24 @@ def register_defaults() -> None:
             ),
         ),
     )
+
+    def _run_python_summary(p: dict) -> str:
+        first = (p.get("code") or "").splitlines()[0] if (p.get("code") or "") else ""
+        label = "Run Python: " + first[:80] + ("…" if len(first) > 80 else "")
+        if (p.get("sandbox_permissions") or "").strip() == "danger-full-access":
+            reason = (p.get("justification") or "no justification given").strip()
+            return f"FULL FILESYSTEM ACCESS — {reason} — {label}"
+        return label
+
     register(
         "run_python",
         ApprovalSpec(
             category="cli",
             preview="command",
-            summary=lambda p: "Run Python: "
-            + (p.get("code") or "").splitlines()[0][:80]
-            + ("…" if len((p.get("code") or "").splitlines()[0]) > 80 else ""),
+            summary=_run_python_summary,
             executor=_do_run_python,
             risk_hint="medium",
-            payload_fields=["code"],
+            payload_fields=["code", "sandbox_permissions", "justification"],
             render_command=lambda p: p.get("code") or "",
         ),
     )

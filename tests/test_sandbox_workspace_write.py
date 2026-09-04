@@ -6,10 +6,11 @@ denylist protects the paths someone thought of; default-deny protects the
 rest. In workspace mode, writes are confined to the working tree (plus the
 git dirs a linked worktree needs), system temp, and explicit allow_paths,
 with the secret denies LAST so a workspace containing the home directory can
-never re-expose ~/.ssh. Agent-stamped (unattended) commands get workspace
-mode; human-approved commands keep the open mode (the approval card is the
-control there). Linux/bwrap already mounted the root read-only, so this is
-macOS catching up.
+never re-expose ~/.ssh. EVERY sandboxed run is workspace-confined by default
+(consent and confinement are independent knobs); the only way out is the
+per-call sandbox_permissions='danger-full-access' escalation, which always
+forces a real approval. Linux/bwrap already mounted the root read-only, so
+this is macOS catching up.
 """
 
 import asyncio
@@ -73,7 +74,9 @@ def test_plain_checkout_has_no_extra_git_roots(tmp_path):
     assert sandbox._git_write_roots(str(tmp_path)) == []
 
 
-def test_agent_stamped_terminal_run_uses_workspace_write(monkeypatch):
+def test_terminal_run_defaults_to_workspace_write(monkeypatch):
+    """Every sandboxed run is workspace-confined — agent-stamped or human-
+    approved. Only an explicit danger-full-access escalation runs open."""
     from server.executors.terminal_run import do_terminal_run
 
     seen = {}
@@ -83,6 +86,7 @@ def test_agent_stamped_terminal_run_uses_workspace_write(monkeypatch):
         return {"exit_code": 0, "output": "ok", "timed_out": False}
 
     monkeypatch.setattr("server.terminal.run_in_sandbox", fake_run_in_sandbox)
+    monkeypatch.setattr(sandbox, "pty_sandbox_backend", lambda: "sandbox-exec")
 
     ok, _ = asyncio.run(do_terminal_run({"command": "echo hi", "__agent__": True}))
     assert ok
@@ -90,7 +94,23 @@ def test_agent_stamped_terminal_run_uses_workspace_write(monkeypatch):
 
     ok, _ = asyncio.run(do_terminal_run({"command": "echo hi"}))
     assert ok
+    assert seen["write_mode"] == "workspace"
+
+    ok, _ = asyncio.run(
+        do_terminal_run(
+            {
+                "command": "echo hi",
+                "sandbox_permissions": "danger-full-access",
+                "justification": "writes an installer outside the workspace",
+            }
+        )
+    )
+    assert ok
     assert seen["write_mode"] == "open"
+
+    ok, _ = asyncio.run(do_terminal_run({"command": "echo hi", "sandbox_permissions": "read-only"}))
+    assert ok
+    assert seen["write_mode"] == "readonly"
 
 
 @pytest.mark.skipif(

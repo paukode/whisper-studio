@@ -81,28 +81,63 @@ _ep.Endpoint.make_request = _guarded_make_request
 """.replace("__READ_PREFIXES__", repr(_AWS_READ_PREFIXES))
 
 
+def _python_write_mode(payload: dict) -> tuple[str, str]:
+    """Map run_python's (sandbox_permissions, justification) to a write mode.
+
+    Returns (write_mode, error). Default is workspace confinement (the harness
+    decides; the model doesn't have to be explicit): writes limited to the
+    workspace, temp, and ~/.aws. danger-full-access lifts that for ONE approved
+    call — it requires a justification, always forces a real approval prompt
+    (see resolve_static_decision), and is refused from unattended agents."""
+    perms = (payload.get("sandbox_permissions") or "workspace-write").strip()
+    if perms in ("workspace-write", ""):
+        return "workspace", ""
+    if perms == "read-only":
+        return "readonly", ""
+    if perms != "danger-full-access":
+        return "", f"invalid sandbox_permissions {perms!r}"
+    if payload.get("__agent__"):
+        return "", (
+            "danger-full-access is not permitted from an unattended subagent. "
+            "Ask the top-level session, where a human can approve it, to run this."
+        )
+    if not (payload.get("justification") or "").strip():
+        return "", (
+            "sandbox_permissions='danger-full-access' requires a justification "
+            "explaining why the script must write outside the workspace."
+        )
+    return "open", ""
+
+
 def do_run_python(payload: dict) -> tuple[bool, str]:
     """Execute previously approved Python under the OS sandbox (the real
     boundary — see module docstring). Returns (ok, output_or_error)."""
     code = payload.get("code", "")
     if not code:
         return False, "no code provided"
+    write_mode, perm_error = _python_write_mode(payload)
+    if perm_error:
+        return False, perm_error
     guarded_code = _AWS_READONLY_GUARD + "\n" + code
     # run_sandboxed runs `/bin/sh -c <str>`, so the code goes to a temp file and
-    # we invoke it by path. ~/.aws is allowed so boto3 can authenticate.
+    # we invoke it by path. ~/.aws is allowed so boto3 can authenticate. The
+    # cwd is the workspace when one is connected so workspace-write confinement
+    # covers the project tree the script most plausibly writes to.
+    from server.workspace import get_workspace_path
+
+    cwd = get_workspace_path() or "/tmp"
+    if not os.path.isdir(cwd):
+        cwd = "/tmp"
     fd, script_path = tempfile.mkstemp(suffix=".py", prefix="whisper_run_", dir="/tmp")
     try:
         with os.fdopen(fd, "w") as f:
             f.write(guarded_code)
         result = run_sandboxed(
             f"python3 {shlex.quote(script_path)} < /dev/null",
-            cwd="/tmp",
+            cwd=cwd,
             timeout=RUN_PYTHON_TIMEOUT_S,
             allow_paths=_CLOUD_CRED_PATHS,
-            # Unattended (agent-stamped) code is write-confined to temp +
-            # ~/.aws; a human-approved run keeps the open mode so approved
-            # scripts can still write where the user asked.
-            write_mode=("workspace" if payload.get("__agent__") else "open"),
+            write_mode=write_mode,
         )
     except subprocess.TimeoutExpired:
         return False, f"execution timed out ({RUN_PYTHON_TIMEOUT_S}s limit)"
@@ -123,6 +158,12 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
     # print loop can't flood the model's context with unbounded output.
     if len(output) > 100_000:
         output = output[:100_000] + "\n... (truncated)"
+    if result.returncode not in (0, None) and write_mode in ("workspace", "readonly"):
+        from server.sandbox import classify_sandbox_denial
+
+        hint = classify_sandbox_denial(output, write_mode)
+        if hint:
+            output = f"{output}\n{hint}"
     return True, output
 
 
@@ -133,7 +174,14 @@ def exec_run_python(tool_input, transcript, current_attachments):
     code = tool_input.get("code", "")
     if not code:
         return "Error: no code provided."
-    payload = json.dumps({"action": "run_python", "code": code})
+    payload = json.dumps(
+        {
+            "action": "run_python",
+            "code": code,
+            "sandbox_permissions": (tool_input.get("sandbox_permissions") or "").strip(),
+            "justification": (tool_input.get("justification") or "").strip(),
+        }
+    )
     return f"[WS_APPROVAL]{payload}"
 
 
@@ -193,9 +241,11 @@ def do_aws_cli(payload: dict) -> tuple[bool, str]:
             cwd=cwd,
             timeout=30,
             allow_paths=_CLOUD_CRED_PATHS,
-            # Same unattended confinement as run_python; ~/.aws stays
-            # writable via allow_paths (the CLI writes its own cache).
-            write_mode=("workspace" if payload.get("__agent__") else "open"),
+            # Always workspace-write confined: the CLI's only legitimate local
+            # writes are its own ~/.aws cache (kept writable via allow_paths),
+            # the workspace (s3 cp downloads), and temp. Remote AWS mutations
+            # are unaffected — this confines the LOCAL filesystem only.
+            write_mode="workspace",
         )
     except subprocess.TimeoutExpired:
         return False, "command timed out after 30s"

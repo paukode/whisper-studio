@@ -127,6 +127,11 @@ def _generate_macos_profile(
     rules LAST — so a workspace that contains (or is) the home directory can
     never re-expose ~/.ssh and friends through its own write allow.
 
+    ``write_mode="readonly"`` denies ALL writes and allows back only /dev — a
+    PTY shell must still write to its own slave tty device, and /dev/null is
+    universally assumed writable. Everything else, including the workspace and
+    temp, stays read-only.
+
     When the active network_policy tier is non-permissive, this ALSO appends
     rules forcing outbound HTTP(S) through the egress proxy (see
     `_macos_network_restriction_rules`). With write_mode="open" the output is
@@ -154,6 +159,14 @@ def _generate_macos_profile(
 (allow default)
 (deny file-write*)
 {write_allow_block}
+{deny_block}
+"""
+    elif write_mode == "readonly":
+        profile = f"""\
+(version 1)
+(allow default)
+(deny file-write*)
+(allow file-write* (subpath "/dev"))
 {deny_block}
 """
     else:
@@ -376,6 +389,7 @@ def run_sandboxed(
             allow_paths=allow_paths,
             input_data=input_data,
             env_extra=env_extra,
+            write_mode=write_mode,
         )
     # Fallback: no OS-level sandbox
     from server.process_utils import kill_process_group, new_process_group
@@ -463,25 +477,44 @@ def _run_bwrap_sandboxed(
     allow_paths: list[str] | None = None,
     input_data: str | None = None,
     env_extra: dict | None = None,
+    write_mode: str = "workspace",
 ) -> subprocess.CompletedProcess:
     """Run command under bubblewrap (Linux).
+
+    bwrap has always been workspace-write shaped (read-only root, rw binds
+    for cwd + /tmp), so ``write_mode="open"`` and ``"workspace"`` behave the
+    same here. ``write_mode="readonly"`` drops the rw workspace bind and
+    replaces /tmp with a throwaway tmpfs, so nothing the command writes
+    survives anywhere.
 
     Network restriction (--unshare-net when a non-permissive network_policy
     is active) is best-effort and UNTESTED on this platform — see
     _bwrap_network_restriction_args's docstring for exactly what that does
     and does not cover.
     """
+    if write_mode == "readonly":
+        fs_args = [
+            "--ro-bind",
+            "/",
+            "/",  # read-only root (covers cwd too)
+            "--tmpfs",
+            "/tmp",  # writable but ephemeral — nothing persists
+        ]
+    else:
+        fs_args = [
+            "--ro-bind",
+            "/",
+            "/",  # read-only root
+            "--bind",
+            cwd,
+            cwd,  # read-write workspace
+            "--bind",
+            "/tmp",
+            "/tmp",  # read-write tmp
+        ]
     bwrap_args = [
         "bwrap",
-        "--ro-bind",
-        "/",
-        "/",  # read-only root
-        "--bind",
-        cwd,
-        cwd,  # read-write workspace
-        "--bind",
-        "/tmp",
-        "/tmp",  # read-write tmp
+        *fs_args,
         "--dev",
         "/dev",  # device nodes
         "--proc",
@@ -632,3 +665,64 @@ def build_pty_sandbox_wrap(
     with os.fdopen(fd, "w") as f:
         f.write(profile)
     return ["sandbox-exec", "-f", profile_path, *shell_cmd], profile_path
+
+
+# ---------------------------------------------------------------------------
+# Enforcement facts — who is actually confining, and did the sandbox say no?
+# ---------------------------------------------------------------------------
+
+
+def sandbox_backend() -> str:
+    """Which OS backend `run_sandboxed` would use right now: "sandbox-exec",
+    "bwrap", or "none". A confined write_mode with backend "none" is NOT
+    enforced — callers must either fail closed (unattended runs) or disclose
+    the fact in the tool result, never silently proceed as if confined."""
+    if _is_sandbox_exec_available():
+        return "sandbox-exec"
+    if _is_bwrap_available():
+        return "bwrap"
+    return "none"
+
+
+def pty_sandbox_backend() -> str:
+    """Which backend `build_pty_sandbox_wrap` would use: "sandbox-exec" or
+    "none". PTY sessions are only ever confined via sandbox-exec (bwrap is not
+    wired for interactive PTYs), so this is deliberately narrower than
+    `sandbox_backend`."""
+    return "sandbox-exec" if _is_sandbox_exec_available() else "none"
+
+
+# Per-backend stderr dialects for "the sandbox blocked a write". Deliberately
+# NOT a cross-backend union: matching bwrap's EROFS text on macOS would
+# misattribute an ordinary read-only-volume error to the sandbox.
+_DENIAL_SIGNATURES = {
+    "sandbox-exec": ("Operation not permitted",),
+    "bwrap": ("Read-only file system", "Permission denied"),
+}
+
+
+def classify_sandbox_denial(output: str, write_mode: str) -> str | None:
+    """Best-effort classification: does a failed confined command's output look
+    like the OS sandbox denying a write? Returns a model-facing hint naming the
+    effective mode and the escalation path, or None.
+
+    Only meaningful for confined modes — under "open" the same strings are
+    ordinary filesystem errors, so the caller must not pass those here."""
+    if write_mode not in ("workspace", "readonly") or not output:
+        return None
+    signatures = _DENIAL_SIGNATURES.get(sandbox_backend(), ())
+    if not any(sig in output for sig in signatures):
+        return None
+    mode_label = (
+        "read-only (no writes anywhere)"
+        if write_mode == "readonly"
+        else "workspace-write (writes confined to the working directory, temp, and /dev)"
+    )
+    return (
+        f"[sandbox] This command ran under the {mode_label} OS sandbox, and the "
+        "failure above looks like a sandbox write denial. If the blocked write is "
+        "genuinely needed, retry the same command with "
+        "sandbox_permissions='danger-full-access' and a one-line justification; "
+        "the user will be asked to approve that exact command before it runs "
+        "unconfined."
+    )
