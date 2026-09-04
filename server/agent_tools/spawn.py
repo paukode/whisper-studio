@@ -125,7 +125,13 @@ async def execute_spawn_agent(
     event_channel: str | None = None,
 ) -> str:
     """Spawn a single agent with full tool loop. The agent inherits the
-    session-selected model (model_id) AND the session's clamped effort.
+    session-selected model (model_id) AND the session's clamped effort,
+    unless the call overrides the model: the top-level ``model`` param (a
+    chat_models config key) wins, else ``agent_definition.model``. An
+    override that cannot be honoured (unknown key, on-device model) falls
+    back to the session model and the warning rides the tool result — the
+    same validated-never-silent contract as a workflow agent() override
+    (server/agents/model_resolve.py).
 
     ``detach: true`` runs it in the background instead: the tool returns a
     task_id immediately, progress and completion ride the unified task
@@ -153,11 +159,21 @@ async def execute_spawn_agent(
     chat leaves all four at their defaults, exactly as before this parameter
     set existed.
     """
+    from server.agents.model_resolve import resolve_model_override
     from server.agents.runtime import run_agent
 
     task = tool_input.get("task", "")
     context = tool_input.get("context", "")
     isolation = tool_input.get("isolation") or "none"
+
+    agent_definition = tool_input.get("agent_definition")
+    if not isinstance(agent_definition, dict):
+        agent_definition = None
+
+    requested_model = tool_input.get("model") or ((agent_definition or {}).get("model") or None)
+    model_id, model_key, model_warning = resolve_model_override(requested_model, model_id)
+    if model_warning:
+        log.warning("spawn_agent model override: %s", model_warning)
 
     if parent_agent_id is not None:
         # Nested: this spawn_agent call was made FROM INSIDE another agent's
@@ -180,13 +196,16 @@ async def execute_spawn_agent(
             session_id=session_id,
             context=context,
             depth=depth + 1,
-            # Child inherits the parent's (session) model rather than its
-            # agent-type default, so the whole tree uses one model.
+            # Without an explicit override the child inherits the parent's
+            # (session) model rather than its agent-type default, so the
+            # whole tree uses one model.
             model_id_override=model_id,
             team_id=team_id,
             event_channel=event_channel,
         )
+        warning_line = f"[model override] {model_warning}\n" if model_warning else ""
         return (
+            f"{warning_line}"
             f"[Agent {result.agent_id} ({result.agent_type})] "
             f"Status: {result.status}, Turns: {result.turns_used}\n"
             f"Output:\n{result.output}"
@@ -200,8 +219,7 @@ async def execute_spawn_agent(
     display_agent_type = agent_type
     ephemeral_meta: dict | None = None
 
-    agent_definition = tool_input.get("agent_definition")
-    if isinstance(agent_definition, dict) and str(agent_definition.get("name") or "").strip():
+    if agent_definition is not None and str(agent_definition.get("name") or "").strip():
         from server.agents.custom_config import register_ephemeral_type
 
         agent_type, _ephemeral_config, ephemeral_meta = register_ephemeral_type(
@@ -213,9 +231,15 @@ async def execute_spawn_agent(
         out = _start_detached_from_tool(
             task, agent_type, context, session_id, model_id, effort_label, isolation
         )
-        if ephemeral_meta:
+        if ephemeral_meta or requested_model:
             payload = json.loads(out)
-            payload["ephemeral_type"] = ephemeral_meta
+            if ephemeral_meta:
+                payload["ephemeral_type"] = ephemeral_meta
+            if requested_model:
+                # Empty model_key ⇒ the override fell back to the session model.
+                payload["model_key"] = model_key or None
+                if model_warning:
+                    payload["model_warning"] = model_warning
             out = json.dumps(payload)
         return out
 
@@ -341,6 +365,12 @@ async def execute_spawn_agent(
         "usage": result.usage,
         "output": result.output,
     }
+    if requested_model:
+        # The key the work ACTUALLY ran on (empty ⇒ fell back to the session
+        # model), plus the reason when the override could not be honoured.
+        result_payload["model_key"] = model_key or None
+        if model_warning:
+            result_payload["model_warning"] = model_warning
     if ephemeral_meta:
         result_payload["ephemeral_type"] = ephemeral_meta
     return json.dumps(result_payload)
