@@ -1,22 +1,22 @@
-"""Three-tier tool catalogue assembly.
+"""Tool catalogue assembly.
 
 Tier 1 — catalogue: union of every tool source (skills, workspace, git,
-LSP, notebook, agents, cron, memory, MCP, etc.).
-
-Tier 2 — mode filter: strip tools blocked by the current permissions
-mode (e.g. plan mode forbids file mutators).
+LSP, notebook, agents, cron, memory, MCP, etc.). The catalogue is
+deliberately STABLE across per-turn state flips (plan mode, strict-RAG
+grounding, workspace connect/disconnect): register always, refuse at
+execution. A tools array that changes between turns invalidates the
+prompt-prefix cache, so per-turn filters live at execution time, not here.
 
 Tier 3 — sort & merge: built-ins first (sorted by name), MCP tools next
 (also sorted), deduplicated. Bedrock rejects requests with duplicate
-tool names so dedup is mandatory.
+tool names so dedup is mandatory. (Tier 2, the per-turn mode filter, was
+retired — see the comment above Tier 3 in assemble_full_catalog.)
 
 ``_is_tool_concurrent_safe`` lives here because it's read directly by
 the chat endpoint when deciding whether to run a tool batch in parallel —
 keeping it next to the catalogue keeps the safety classification close
 to the catalogue that produced the tool.
 """
-
-import os
 
 from server.agent_tools import AGENT_TOOLS
 from server.ask_user import ALL_TOOLS as ASK_USER_TOOLS
@@ -33,28 +33,13 @@ from server.plans.tools import PLAN_TOOLS
 from server.prompt_tools import PROMPT_TOOLS
 from server.skills import TOOLS
 from server.tasks_tracker import TASK_TOOLS
-from server.tool_executor import _PLAN_MODE_BLOCKED
 from server.visuals import VISUAL_TOOLS
 from server.workspace import (
     get_global_workspace_tools,
-    get_workspace_path,
     get_workspace_tools,
     get_workspace_write_tools,
     get_worktree_tools,
 )
-
-# Workspace file/search tools withheld on strict-RAG turns. When the answer is
-# already grounded in injected index passages, offering these only tempts the
-# model to re-crawl the workspace instead of answering from the passages.
-_WS_SEARCH_TOOLS = {
-    "workspace_semantic_search",
-    "workspace_graph_query",
-    "ws_read_file",
-    "ws_grep",
-    "ws_glob",
-    "ws_list_directory",
-}
-
 
 # Tools known to be concurrent-safe that don't go through executor registry
 # (handled inline in chat.py or by specialized handlers).
@@ -166,26 +151,21 @@ def assemble_full_catalog(
         if t["name"] == "git_clone":
             builtin_tools.append(t)
             break
-    if ws_connected:
-        builtin_tools += get_workspace_tools()
-        builtin_tools += get_worktree_tools()
-        # Add git tools when workspace is a git repo
-        ws = get_workspace_path()
-        if ws and os.path.exists(os.path.join(ws, ".git")):
-            # `git_clone` is already in the catalog above; the rest of
-            # get_git_tools() needs the repo. Dedup happens in Tier 3.
-            builtin_tools += get_git_tools()
-            # GitHub hybrid tools (verb + raw API planes). Deferred via the
-            # partition below (not in CORE_TOOLS), so zero context cost until
-            # tool_search activates them.
-            from server.git.gh_tools import get_github_tools
+    # Workspace, worktree, git, and GitHub tools are in the catalog
+    # UNCONDITIONALLY — the catalog is deliberately independent of whether a
+    # workspace is connected right now. Their executors gate at execution
+    # ("No workspace connected", "not a git repo", or a folder picker), so a
+    # mid-session connect/disconnect no longer rewrites the tools array and
+    # invalidates the prompt-prefix cache (register always, refuse at
+    # execution). The write-tool variants come last so the workspace schemas
+    # win the Tier-3 dedup on shared names.
+    builtin_tools += get_workspace_tools()
+    builtin_tools += get_worktree_tools()
+    builtin_tools += get_git_tools()
+    from server.git.gh_tools import get_github_tools
 
-            builtin_tools += get_github_tools()
-    else:
-        # The write tools stay in the catalog with no workspace: their executors
-        # answer that with a folder picker and the turn resumes against the
-        # folder the user chose. See get_workspace_write_tools.
-        builtin_tools += get_workspace_write_tools()
+    builtin_tools += get_github_tools()
+    builtin_tools += get_workspace_write_tools()
     # Document tools (create_docx/pptx/xlsx/pdf, office_script,
     # inspect_document) follow the same contract as the write tools above:
     # advertised with or without a connected workspace, since each executor
@@ -247,13 +227,19 @@ def assemble_full_catalog(
 
     mcp_tools = list(mcp_manager.get_bedrock_tools())
 
-    # Tier 2: mode filtering
-    if plan_mode:
-        builtin_tools = [t for t in builtin_tools if t["name"] not in _PLAN_MODE_BLOCKED]
-    # Strict-RAG: when this turn is already grounded in injected passages, drop
-    # the workspace file/search tools so the model answers from them.
-    if suppress_workspace_search:
-        builtin_tools = [t for t in builtin_tools if t["name"] not in _WS_SEARCH_TOOLS]
+    # Tier 2 (retired): per-turn mode filters used to strip tools here, which
+    # rewrote the tools array on every plan-mode toggle and every strict-RAG
+    # round and invalidated the prompt-prefix cache. The catalog is now stable
+    # across those flips; enforcement moved to where it always also lived:
+    #   - plan mode: tool_executor blocks _PLAN_MODE_BLOCKED at execution and
+    #     tells the model why, so the schemas can stay advertised.
+    #   - strict-RAG: the grounding block itself instructs the model to answer
+    #     from the injected passages instead of re-crawling (see
+    #     server/index/pipeline.py); withholding the schemas was belt and
+    #     suspenders that cost a cache miss per grounded turn.
+    # The plan_mode / suppress_workspace_search parameters are kept so call
+    # sites don't churn, and because execution-level consumers still key off
+    # the same per-turn state.
 
     # Tier 3: sort each group, concatenate, deduplicate
     builtin_tools.sort(key=lambda t: t["name"])

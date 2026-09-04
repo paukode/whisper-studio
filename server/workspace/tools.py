@@ -1,19 +1,16 @@
 """Tool schemas advertised to the LLM.
 
-Four schema groups:
-- get_global_workspace_tools(): always-available tools (currently just
-  ws_open_folder so the model can connect a workspace mid-conversation).
-- get_workspace_write_tools(): the four file-write tools. Advertised whether or
-  not a workspace is connected, because each executor answers a missing
-  workspace with a [WS_WORKSPACE_PROMPT] folder picker rather than an error.
-- get_workspace_tools(): everything that needs a connected workspace
-  (read/list/grep/glob + the write tools + run_command).
-- get_worktree_tools(): only surfaced when the workspace is a git repo.
+Four schema groups, ALL returned unconditionally — the tool catalog is
+byte-stable across workspace connect/disconnect so the prompt-prefix cache
+survives the flip (register always, refuse at execution):
+- get_global_workspace_tools(): ws_open_folder, so the model can connect a
+  workspace mid-conversation.
+- get_workspace_write_tools(): the four file-write tools; each executor
+  answers a missing workspace with a [WS_WORKSPACE_PROMPT] folder picker.
+- get_workspace_tools(): read/list/grep/glob + the write tools + run_command;
+  executors answer "No workspace connected." when there is none.
+- get_worktree_tools(): executors refuse when the workspace is not a git repo.
 """
-
-import os
-
-from .state import get_workspace_path
 
 
 def get_global_workspace_tools() -> list[dict]:
@@ -46,9 +43,10 @@ def get_global_workspace_tools() -> list[dict]:
 
 
 def get_workspace_tools() -> list[dict]:
-    ws = get_workspace_path()
-    if not ws:
-        return []
+    # Deliberately NOT gated on a connected workspace: the tool catalog must be
+    # byte-stable across connect/disconnect so the prompt-prefix cache
+    # survives the flip. Every executor behind these schemas answers
+    # "No workspace connected." at execution when there is none.
     read_tools = [
         {
             "name": "ws_read_file",
@@ -420,10 +418,9 @@ def _run_command_tool() -> list[dict]:
 
 
 def get_worktree_tools() -> list[dict]:
-    """Feature 8: Return worktree tools when workspace is a git repo."""
-    ws = get_workspace_path()
-    if not ws or not os.path.isdir(os.path.join(ws, ".git")):
-        return []
+    """The worktree tools. Unconditional for catalog stability (see
+    get_workspace_tools) — their executors refuse at execution when no
+    workspace is connected or the workspace is not a git repo."""
     return [
         {
             "name": "ws_create_worktree",

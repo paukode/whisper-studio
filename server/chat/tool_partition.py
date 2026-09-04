@@ -6,9 +6,10 @@ this session has ACTIVATED (via tool_search or history replay); everything
 else appears only as a one-line entry in the deferred index inside the system
 prompt, discoverable and loadable on demand.
 
-The partition applies AFTER the existing mode filters (plan-mode blocks,
-strict-RAG suppression): an activated tool can never bypass a mode block,
-because activation intersects with the post-filter catalog.
+The partition applies to the full stable catalog. Per-turn mode filters
+(plan-mode blocks, strict-RAG suppression) no longer strip the catalog —
+they are enforced at execution time — so activation intersects with a
+catalog that is byte-stable across those flips.
 """
 
 import logging

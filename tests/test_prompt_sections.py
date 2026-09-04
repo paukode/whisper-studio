@@ -96,8 +96,6 @@ def test_git_sections_appear_and_disappear_together(monkeypatch):
 def _catalog_tool_names(monkeypatch, repo: str) -> set[str]:
     """Every tool name the model could be offered with a git workspace open."""
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: repo)
-    monkeypatch.setattr("server.chat.tool_pool.get_workspace_path", lambda: repo)
-    monkeypatch.setattr("server.workspace.tools.get_workspace_path", lambda: repo)
 
     from server.chat.tool_pool import assemble_full_catalog
     from server.skills import init_skills
@@ -129,36 +127,50 @@ def test_prompt_prose_only_references_real_tools(tmp_path, monkeypatch):
 # ── The no-workspace flow the prompt promises has to be callable ─────────────
 
 
-def test_write_tools_are_advertised_without_a_workspace(monkeypatch):
-    """The no_workspace prompt section tells the model to call a write tool and
-    let the harness show a folder picker. That requires the write tools to be in
-    the catalog with no workspace connected.
-
-    Regression: get_workspace_tools() returned [] without a workspace, so all
-    four write tools were absent. The section instructed the model to call tools
-    it did not have, while forbidding the one workspace tool it did have
-    (ws_open_folder). ws_run_command stays out — it has no picker fallback.
+def test_catalog_is_identical_with_and_without_a_workspace(monkeypatch):
+    """The catalog is deliberately independent of workspace connection state:
+    register always, refuse at execution. A mid-session connect/disconnect used
+    to rewrite the tools array and invalidate the prompt-prefix cache; now the
+    executors answer "No workspace connected" (or show the folder picker) and
+    the advertised schemas never change.
     """
-    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
-    monkeypatch.setattr("server.chat.tool_pool.get_workspace_path", lambda: None)
-    monkeypatch.setattr("server.workspace.tools.get_workspace_path", lambda: None)
-
     from server.chat.tool_pool import assemble_full_catalog
     from server.skills import init_skills
 
     init_skills()
-    names = {t["name"] for t in assemble_full_catalog(ws_connected=False)}
+
+    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
+    without_ws = [t["name"] for t in assemble_full_catalog(ws_connected=False)]
 
     for name in ("ws_write_file", "ws_create_file", "ws_edit_file", "ws_delete_file"):
-        assert name in names, f"{name} must be callable so the folder picker is reachable"
-    assert "ws_run_command" not in names
-    assert "ws_read_file" not in names
+        assert name in without_ws, f"{name} must be callable so the folder picker is reachable"
+    # Read/run/git tools stay advertised too — their executors gate at runtime.
+    for name in ("ws_read_file", "ws_run_command", "git_status", "github"):
+        assert name in without_ws, f"{name} must stay in the catalog without a workspace"
+
+    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: "/tmp")
+    with_ws = [t["name"] for t in assemble_full_catalog(ws_connected=True)]
+
+    assert without_ws == with_ws, "catalog must be byte-stable across workspace flips"
+
+
+def test_catalog_is_identical_across_plan_and_grounding_flips():
+    """Plan mode and strict-RAG grounding are enforced at execution, never by
+    stripping schemas — a per-turn tools array rewrite is a cache miss."""
+    from server.chat.tool_pool import assemble_full_catalog
+    from server.skills import init_skills
+
+    init_skills()
+    base = [t["name"] for t in assemble_full_catalog()]
+    planning = [t["name"] for t in assemble_full_catalog(plan_mode=True)]
+    grounded = [t["name"] for t in assemble_full_catalog(suppress_workspace_search=True)]
+    assert base == planning == grounded
 
 
 def test_git_tools_still_load_with_a_git_workspace(tmp_path, monkeypatch):
-    """Guards the workspace/no-workspace branch in assemble_full_catalog: the git
-    and GitHub tools hang off the ws_connected arm, and an edit that moved them
-    onto the else arm silently removed git from every real session."""
+    """The git and GitHub tools are unconditional catalog members now; this
+    guards that they are present (and deduped) in the common git-workspace
+    case, whatever the assembly internals do."""
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
     names = _catalog_tool_names(monkeypatch, str(repo))
@@ -180,7 +192,6 @@ def test_worktree_warning_lives_on_the_tools_that_need_it(tmp_path, monkeypatch)
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: str(repo))
-    monkeypatch.setattr("server.workspace.tools.get_workspace_path", lambda: str(repo))
 
     from server.git.tools import GIT_TOOLS
 

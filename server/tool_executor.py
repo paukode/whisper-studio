@@ -193,7 +193,12 @@ async def execute_tool_batch(
         # Plan mode block — emit SSE so frontend can offer the upgrade dialog
         if plan_mode and tool_name in _PLAN_MODE_BLOCKED:
             state.status = "skipped"
-            state.output = f"[Plan Mode] Tool '{tool_name}' is blocked in plan mode."
+            state.output = (
+                f"[Plan Mode] Tool '{tool_name}' is blocked while plan mode is active. "
+                "The tool stays advertised so the catalog is stable; it is refused "
+                "here at execution. Design the plan and call create_plan instead; "
+                "the user exits plan mode to apply it."
+            )
             state.side_effects = [
                 {
                     "plan_blocked": {

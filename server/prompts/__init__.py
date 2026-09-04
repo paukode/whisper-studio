@@ -271,11 +271,16 @@ _registry.register(
     )
 )
 
+# Plan mode rides the DYNAMIC (uncached) layer on purpose, unlike its MODE
+# siblings: it toggles mid-session, and a toggle that rewrites the static
+# block invalidates the cached prefix twice per planning session (on + off).
+# Parking the ~100 fixed tokens in the uncached tail costs pennies while
+# active and keeps the static block byte-stable across the flip.
 _registry.register(
     PromptSection(
         name="plan_mode",
-        layer=PromptLayer.MODE,
-        priority=10,
+        layer=PromptLayer.DYNAMIC,
+        priority=5,
         content=PLAN_MODE,
         enabled=False,  # Enabled dynamically
     )
