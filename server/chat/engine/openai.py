@@ -61,6 +61,39 @@ def _is_prompt_too_long(message: str) -> bool:
     )
 
 
+# Faults that pass the 200-OK gate and then kill the Responses stream (a
+# ``response.failed`` event or a transport exception mid-read). The SDK's
+# retry layer never sees these, so the engine re-runs the round when the
+# message matches. "server had an error" is OpenAI's stock server_error text
+# — the exact failure observed live on bedrock-mantle after 5 tool rounds.
+_TRANSIENT_MARKERS = (
+    "server had an error",
+    "server_error",
+    "internal error",
+    "internal server error",
+    "overloaded",
+    "throttl",
+    "rate limit",
+    "too many requests",
+    "service unavailable",
+    "bad gateway",
+    "gateway timeout",
+    "timed out",
+    "timeout",
+    "connection",
+    "429",
+    "500",
+    "502",
+    "503",
+    "504",
+)
+
+
+def _is_transient(message: str) -> bool:
+    low = (message or "").lower()
+    return any(m in low for m in _TRANSIENT_MARKERS)
+
+
 class OpenAIResponsesAdapter:
     provider = "openai"
     # OpenAI reports cached tokens as a SUBSET of input tokens (Anthropic's
@@ -232,7 +265,8 @@ class OpenAIResponsesAdapter:
                     msg = str(payload)
                     if _is_prompt_too_long(msg):
                         raise PromptTooLongError(msg) from payload
-                    yield RoundError(message=_friendly_error(payload))
+                    log.warning("OpenAI stream broke mid-round (%s): %r", self.model_key, payload)
+                    yield RoundError(message=_friendly_error(payload), retryable=_is_transient(msg))
                     return
 
                 ev = payload
@@ -316,7 +350,13 @@ class OpenAIResponsesAdapter:
                     msg = str(getattr(err, "message", err))
                     if _is_prompt_too_long(msg):
                         raise PromptTooLongError(msg)
-                    yield RoundError(message=msg)
+                    log.warning(
+                        "OpenAI stream failed mid-round (%s, event=%s): %s",
+                        self.model_key,
+                        et,
+                        msg,
+                    )
+                    yield RoundError(message=msg, retryable=_is_transient(msg))
                     return
                 elif et == "response.incomplete":
                     yield Incomplete()
