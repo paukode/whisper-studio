@@ -9,6 +9,18 @@ Uses platform-native sandboxing:
 The sandbox denies read/write access to sensitive paths (SSH keys, cloud
 credentials, system secrets) while allowing access to the workspace and
 standard system directories.
+
+Two write modes:
+  - "open" (default): today's behavior — writes allowed everywhere except the
+    secret deny-list. Human-approved commands keep it: the approval card is
+    the control, and flows like saving a document to ~/Documents keep working.
+  - "workspace": Codex-style default-deny — reads stay open (minus secrets)
+    but writes are confined to the command's working tree (plus the git dirs
+    a linked worktree needs), system temp, and explicit allow_paths. Applied
+    to agent-stamped (unattended) commands, where no human reviews each
+    command: the OS, not the prompt, bounds the blast radius. On Linux the
+    bwrap wrapper has always mounted the root read-only with only cwd and
+    /tmp bound writable, so "workspace" is simply macOS catching up.
 """
 
 import logging
@@ -47,15 +59,80 @@ def _effective_denied_paths(allow_paths: list[str] | None) -> list[str]:
     return [p for p in _DENIED_PATHS if os.path.realpath(p) not in allowed_real]
 
 
-def _generate_macos_profile(workspace: str, allow_paths: list[str] | None = None) -> str:
+def _git_write_roots(cwd: str) -> list[str]:
+    """Write roots a linked git WORKTREE needs beyond its own tree.
+
+    A linked worktree's ``.git`` is a FILE pointing at the primary repo's
+    ``.git/worktrees/<name>`` (index, HEAD live there), whose ``commondir``
+    in turn points at the shared ``.git`` (objects, refs). Under
+    workspace-write both must stay writable or ``git add``/``git stash``
+    inside an isolated agent worktree fails on a read-only object store.
+    """
+    roots: list[str] = []
+    dotgit = os.path.join(cwd, ".git")
+    try:
+        if os.path.isfile(dotgit):
+            with open(dotgit) as f:
+                first = f.readline().strip()
+            if first.startswith("gitdir:"):
+                gitdir = os.path.realpath(os.path.join(cwd, first.split(":", 1)[1].strip()))
+                roots.append(gitdir)
+                commondir_file = os.path.join(gitdir, "commondir")
+                if os.path.isfile(commondir_file):
+                    with open(commondir_file) as f:
+                        common = f.read().strip()
+                    roots.append(os.path.realpath(os.path.join(gitdir, common)))
+    except OSError:
+        pass
+    return roots
+
+
+# Always-writable system scratch roots under workspace-write: per-user temp
+# ($TMPDIR lives under /var/folders on macOS), the classic /tmp trees, and
+# /dev (tty, null). Both the /X and /private/X spellings are listed — Seatbelt
+# matches the path as given, and callers see either through the symlinks.
+_WORKSPACE_WRITE_SYSTEM_ROOTS = [
+    "/tmp",
+    "/private/tmp",
+    "/var/tmp",
+    "/private/var/tmp",
+    "/var/folders",
+    "/private/var/folders",
+    "/dev",
+]
+
+
+def _workspace_write_roots(cwd: str, allow_paths: list[str] | None) -> list[str]:
+    """The write-allowed subpaths for ``write_mode="workspace"``: the command's
+    own working tree (plus the git dirs a linked worktree needs), system temp,
+    and any explicitly allowed credential paths (the aws CLI writes its own
+    ~/.aws/cli/cache)."""
+    roots = [os.path.realpath(cwd), *_git_write_roots(cwd)]
+    roots.extend(_WORKSPACE_WRITE_SYSTEM_ROOTS)
+    for p in allow_paths or []:
+        roots.append(os.path.realpath(os.path.expanduser(p)))
+    seen: set[str] = set()
+    return [r for r in roots if not (r in seen or seen.add(r))]
+
+
+def _generate_macos_profile(
+    workspace: str, allow_paths: list[str] | None = None, write_mode: str = "open"
+) -> str:
     """Generate a macOS sandbox-exec profile that denies sensitive paths.
+
+    ``write_mode="workspace"`` additionally denies ALL writes and then allows
+    them back only under the roots from ``_workspace_write_roots``. Rule ORDER
+    is load-bearing (a later SBPL rule overrides an earlier match): the global
+    write deny comes first, the writable roots after it, and the secret deny
+    rules LAST — so a workspace that contains (or is) the home directory can
+    never re-expose ~/.ssh and friends through its own write allow.
 
     When the active network_policy tier is non-permissive, this ALSO appends
     rules forcing outbound HTTP(S) through the egress proxy (see
-    `_macos_network_restriction_rules`). Byte-for-byte identical to the
-    pre-egress-policy output when the tier is permissive (today's default),
-    verified by tests/test_egress_policy.py — no rules are appended in that
-    case, not even an empty line.
+    `_macos_network_restriction_rules`). With write_mode="open" the output is
+    byte-for-byte identical to the pre-egress-policy output when the tier is
+    permissive (today's default), verified by tests/test_egress_policy.py —
+    no rules are appended in that case, not even an empty line.
     """
     deny_rules = []
     for path in _effective_denied_paths(allow_paths):
@@ -66,7 +143,21 @@ def _generate_macos_profile(workspace: str, allow_paths: list[str] | None = None
 
     deny_block = "\n".join(deny_rules)
 
-    profile = f"""\
+    if write_mode == "workspace":
+        write_allows = []
+        for root in _workspace_write_roots(workspace, allow_paths):
+            escaped = root.replace('"', '\\"')
+            write_allows.append(f'(allow file-write* (subpath "{escaped}"))')
+        write_allow_block = "\n".join(write_allows)
+        profile = f"""\
+(version 1)
+(allow default)
+(deny file-write*)
+{write_allow_block}
+{deny_block}
+"""
+    else:
+        profile = f"""\
 (version 1)
 (allow default)
 {deny_block}
@@ -246,6 +337,7 @@ def run_sandboxed(
     allow_paths: list[str] | None = None,
     input_data: str | None = None,
     env_extra: dict | None = None,
+    write_mode: str = "open",
 ) -> subprocess.CompletedProcess:
     """Run a command with OS-level sandboxing if available.
 
@@ -254,6 +346,11 @@ def run_sandboxed(
     adds variables to the subprocess environment (passed via ``env=``, NOT
     prepended to the command — a command prefix would corrupt any command that
     begins with a shell compound construct like ``if``/``for``/``case``).
+
+    ``write_mode="workspace"`` confines WRITES to the working tree + temp +
+    allow_paths on macOS (see the module docstring); the bwrap path has always
+    behaved that way regardless of mode, and the no-sandbox fallback cannot
+    enforce it (command validators remain the only layer there).
 
     Falls back to plain subprocess.run if no sandbox is available.
     """
@@ -267,6 +364,7 @@ def run_sandboxed(
             allow_paths=allow_paths,
             input_data=input_data,
             env_extra=env_extra,
+            write_mode=write_mode,
         )
     if _is_bwrap_available():
         return _run_bwrap_sandboxed(
@@ -311,9 +409,10 @@ def _run_macos_sandboxed(
     allow_paths: list[str] | None = None,
     input_data: str | None = None,
     env_extra: dict | None = None,
+    write_mode: str = "open",
 ) -> subprocess.CompletedProcess:
     """Run command under macOS sandbox-exec."""
-    profile = _generate_macos_profile(cwd, allow_paths)
+    profile = _generate_macos_profile(cwd, allow_paths, write_mode=write_mode)
 
     # Write profile to temp file (sandbox-exec needs a file path)
     fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_sandbox_")
@@ -510,10 +609,13 @@ def popen_sandboxed(
     return proc, profile_path
 
 
-def build_pty_sandbox_wrap(shell_cmd: list[str], cwd: str) -> tuple[list[str], str | None]:
+def build_pty_sandbox_wrap(
+    shell_cmd: list[str], cwd: str, write_mode: str = "open"
+) -> tuple[list[str], str | None]:
     """Wrap an interactive shell command in macOS sandbox-exec so a long-lived
     PTY shell (terminal_run's hidden sandbox session) runs under the same
-    filesystem deny-list as run_sandboxed.
+    filesystem deny-list as run_sandboxed — and, for agent-stamped runs
+    (``write_mode="workspace"``), the same default-deny write confinement.
 
     Returns ``(argv, profile_path)``. The caller MUST ``os.unlink(profile_path)``
     once the process exits (the profile file must outlive the shell, unlike the
@@ -525,7 +627,7 @@ def build_pty_sandbox_wrap(shell_cmd: list[str], cwd: str) -> tuple[list[str], s
     """
     if not _is_sandbox_exec_available():
         return shell_cmd, None
-    profile = _generate_macos_profile(cwd)
+    profile = _generate_macos_profile(cwd, write_mode=write_mode)
     fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_pty_sandbox_")
     with os.fdopen(fd, "w") as f:
         f.write(profile)

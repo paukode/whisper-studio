@@ -99,6 +99,10 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
             cwd="/tmp",
             timeout=RUN_PYTHON_TIMEOUT_S,
             allow_paths=_CLOUD_CRED_PATHS,
+            # Unattended (agent-stamped) code is write-confined to temp +
+            # ~/.aws; a human-approved run keeps the open mode so approved
+            # scripts can still write where the user asked.
+            write_mode=("workspace" if payload.get("__agent__") else "open"),
         )
     except subprocess.TimeoutExpired:
         return False, f"execution timed out ({RUN_PYTHON_TIMEOUT_S}s limit)"
@@ -189,6 +193,9 @@ def do_aws_cli(payload: dict) -> tuple[bool, str]:
             cwd=cwd,
             timeout=30,
             allow_paths=_CLOUD_CRED_PATHS,
+            # Same unattended confinement as run_python; ~/.aws stays
+            # writable via allow_paths (the CLI writes its own cache).
+            write_mode=("workspace" if payload.get("__agent__") else "open"),
         )
     except subprocess.TimeoutExpired:
         return False, "command timed out after 30s"
