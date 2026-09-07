@@ -45,6 +45,15 @@ describe('TranscriptSegment double-click edit — no JS loop or throw', () => {
     expect(ta.value.length).toBe(huge.length);
   });
 
+  it('is memoized so a re-rendering panel does not re-render every segment', () => {
+    // The freeze came from re-rendering the whole (unvirtualized) list on every
+    // live chunk. memo + stable segment identity + stable callbacks is the fix;
+    // this guards it from being unwrapped later.
+    expect((TranscriptSegment as unknown as { $$typeof?: symbol }).$$typeof).toBe(
+      Symbol.for('react.memo'),
+    );
+  });
+
   it('a fresh large block (word-reveal animation path) renders without throwing', () => {
     // receivedAt now + freshIndex 0 forces renderSegmentText into the
     // span-per-word animation path — thousands of spans for a big block.
