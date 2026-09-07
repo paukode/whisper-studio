@@ -37,6 +37,9 @@ export function getSpeakerClass(speaker: string): string {
  */
 const REVEAL_WINDOW_MS = 4000;
 const WORD_STAGGER_MS = 55;
+// Ceiling for the auto-grown edit textarea; beyond it the box scrolls instead
+// of laying out a giant element on every keystroke (freeze guard for big blocks).
+const MAX_EDIT_TEXTAREA_PX = 400;
 
 function renderSegmentText(segment: TranscriptSegmentType): React.ReactNode {
   const { text, receivedAt, freshIndex } = segment;
@@ -78,7 +81,7 @@ function renderSegmentText(segment: TranscriptSegmentType): React.ReactNode {
  * Speaker label is click-to-rename inline.
  * Text is click-to-edit inline.
  */
-export const TranscriptSegment: React.FC<TranscriptSegmentProps> = ({
+const TranscriptSegmentImpl: React.FC<TranscriptSegmentProps> = ({
   segment,
   speakerName,
   onTextEdit,
@@ -124,11 +127,15 @@ export const TranscriptSegment: React.FC<TranscriptSegmentProps> = ({
   // Text editing handlers
   // Grow the edit textarea to fit ALL of its text — a fixed two-line box
   // hides most of a long utterance while editing it.
+  // Grow to fit the text, but CAP the height: a very large "block" (a long
+  // merged utterance) would otherwise autosize to a tens-of-thousands-of-pixel
+  // element, and re-laying that out on every keystroke / re-render is a real
+  // freeze risk in the WebView. Past the cap the textarea scrolls internally.
   const autosizeTextarea = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight + 2}px`;
+    el.style.height = `${Math.min(el.scrollHeight + 2, MAX_EDIT_TEXTAREA_PX)}px`;
   }, []);
 
   const handleTextClick = useCallback(() => {
@@ -218,7 +225,12 @@ export const TranscriptSegment: React.FC<TranscriptSegmentProps> = ({
             onBlur={commitTextEdit}
             onKeyDown={handleTextKeyDown}
             aria-label="Edit segment text"
-            style={{ width: '100%', resize: 'vertical' }}
+            style={{
+              width: '100%',
+              resize: 'vertical',
+              maxHeight: MAX_EDIT_TEXTAREA_PX,
+              overflowY: 'auto',
+            }}
           />
         ) : (
           <div
@@ -242,6 +254,17 @@ export const TranscriptSegment: React.FC<TranscriptSegmentProps> = ({
     </div>
   );
 };
+
+// Memoized: the transcript list is neither virtualized nor windowed, so during
+// a live recording every incoming chunk used to re-render EVERY segment (the
+// store replaces the segments array each append, and a plain FC child always
+// re-renders with its parent). On a long transcript that pegged the main thread
+// on every chunk — and double-clicking a large block to edit piled an
+// auto-growing textarea onto each of those renders until the webview hung and
+// was killed. The store returns the SAME object for unchanged segments (see
+// transcriptionStore.appendSegmentText), and the panel's callbacks are stable,
+// so memo skips every segment except the one that actually changed.
+export const TranscriptSegment = React.memo(TranscriptSegmentImpl);
 
 /** The Whisper translate-to-English companion line: the English text of the
  *  segment's chunks (in chunk order) plus a "Translating…" tail while any

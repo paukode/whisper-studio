@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useActiveTranscriptionStore } from '@/stores/sessionRuntimes';
+import { getActiveTranscriptionStore, useActiveTranscriptionStore } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -349,7 +349,14 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
 
   const handleTextEdit = useCallback(
     (segmentId: string, newText: string) => {
-      const seg = segments.find((sg) => sg.id === segmentId);
+      // Read the segment from the store at call time rather than closing over
+      // `segments` — keeping this callback OUT of the per-chunk `segments`
+      // dependency is what makes TranscriptSegment's React.memo effective (a
+      // new callback identity every chunk would re-render the whole list and
+      // defeat the memo, which is the freeze this guards against).
+      const seg = getActiveTranscriptionStore()
+        .getState()
+        .segments.find((sg) => sg.id === segmentId);
       editSegmentText(segmentId, newText);
       // Re-translate the CORRECTED text. Canary translates audio, and the
       // audio still contains the misheard word — so edits re-translate
@@ -371,7 +378,6 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
     },
     [
       editSegmentText,
-      segments,
       translateMode,
       translateTarget,
       beginSegmentRetranslation,
