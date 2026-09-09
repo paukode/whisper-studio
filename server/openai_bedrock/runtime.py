@@ -11,11 +11,11 @@ before expiry), and point the openai SDK at the mantle base URL.
 from __future__ import annotations
 
 import logging
-import re
 import threading
 import time
 
 from server.infrastructure.config import load_config
+from server.infrastructure.effort import gpt_version
 
 log = logging.getLogger("whisper-studio")
 
@@ -61,8 +61,6 @@ _EFFORT_MAP = {
 # it (GPT-5.6+), else the _EFFORT_MAP default of "xhigh".
 _TOP_TIER_LABELS = {"max", "ultracode"}
 
-_GPT_VERSION_RE = re.compile(r"openai\.gpt-(\d+)\.(\d+)")
-
 
 def _model_meta(model_key: str) -> dict:
     from server.chat.infra import _get_chat_model_meta
@@ -95,10 +93,22 @@ def verbosity_for(model_key: str, body: dict | None = None) -> str:
     return v if v in ("low", "medium", "high") else "medium"
 
 
+def _gpt_version(model_key: str) -> tuple[int, int] | None:
+    return gpt_version(_model_meta(model_key).get("id", ""))
+
+
 def _supports_max_effort(model_key: str) -> bool:
     """True iff the model's reasoning ladder includes "max" (GPT-5.6 and up)."""
-    m = _GPT_VERSION_RE.match(_model_meta(model_key).get("id", ""))
-    return bool(m) and (int(m.group(1)), int(m.group(2))) >= (5, 6)
+    ver = _gpt_version(model_key)
+    return ver is not None and ver >= (5, 6)
+
+
+def _rejects_none_effort(model_key: str) -> bool:
+    """True iff the model has no "none" rung. GPT-6 (Astra) rejects
+    reasoning.effort "none" with unsupported_value (verified live 2026-09-09);
+    GPT-5.x accepts it."""
+    ver = _gpt_version(model_key)
+    return ver is not None and ver >= (6, 0)
 
 
 def reasoning_effort_for(model_key: str, effort_label: str | None) -> str:
@@ -107,7 +117,10 @@ def reasoning_effort_for(model_key: str, effort_label: str | None) -> str:
         return "medium"
     if effort_label in _TOP_TIER_LABELS and _supports_max_effort(model_key):
         return "max"
-    return _EFFORT_MAP.get(effort_label, "medium")
+    effort = _EFFORT_MAP.get(effort_label, "medium")
+    if effort == "none" and _rejects_none_effort(model_key):
+        return "low"
+    return effort
 
 
 def _get_bearer_token(region: str) -> str:

@@ -32,6 +32,7 @@ except Exception:  # pragma: no cover - defensive
 # still works standalone. Two provider chains flattened by capability.
 _STATIC_FALLBACK_CHAIN = [
     "fable5.1",
+    "gpt6-astra",
     "fable5.0",
     "opus5.0",
     "opus4.8",

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Model backends &amp; modes - Whisper Studio Docs</title>
-  <meta name="description" content="How Whisper Studio picks and runs a chat backend: on-device Gemma, OpenAI GPT-5.x over Bedrock, and the default Anthropic Claude path, plus retry, compaction, and the separate model-mode concept.">
+  <meta name="description" content="How Whisper Studio picks and runs a chat backend: on-device Gemma, OpenAI GPT over Bedrock, and the default Anthropic Claude path, plus retry, compaction, and the separate model-mode concept.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -16,7 +16,7 @@
   <main class="doc" data-page="arch-backends">
     <h1>Model backends &amp; modes</h1>
     <p class="subtitle">Whisper Studio can send a chat turn to three very different runtimes: on-device
-      Gemma, OpenAI GPT-5.x over Bedrock, or the default Anthropic Claude path. The choice is made from
+      Gemma, OpenAI GPT over Bedrock, or the default Anthropic Claude path. The choice is made from
       one thing (the model key you picked in the toolbar) and it happens before any tokens stream.</p>
 
     <p>Every chat turn enters the same endpoint in <code class="path">server/chat/routes.py</code>, but
@@ -255,7 +255,7 @@
     </div>
 
     <h2 id="openai">OpenAI on Bedrock</h2>
-    <p>GPT-5.x models are invoked through Bedrock but in OpenAI request/response format (the
+    <p>GPT models are invoked through Bedrock but in OpenAI request/response format (the
       Responses API shape on the bedrock-mantle endpoint). Their turns run on the same engine as
       everything else through the adapter in <code class="path">server/chat/engine/openai.py</code>,
       which owns the mantle stream quirks (early release, heartbeats) and prompt-too-long detection
@@ -267,7 +267,7 @@
         compaction summaries), region resolution, request-mapping helpers, and the effort and
         verbosity mappings below.</dd>
     </dl>
-    <p>Two GPT-5.x-specific controls are mapped from the app's own settings:</p>
+    <p>Two GPT-specific controls are mapped from the app's own settings:</p>
     <ul>
       <li><b>Reasoning effort.</b> <code>reasoning_effort_for(...)</code> maps the app's effort label to
         OpenAI's reasoning effort. On GPT-5.4/5.5 the ladder tops out at <code>xhigh</code>, so the
@@ -275,19 +275,22 @@
         GPT-5.6 and up add a <code>max</code> tier above <code>xhigh</code>: when
         <code>_supports_max_effort(...)</code> is true the top-tier labels (<code>max</code> /
         <code>ultracode</code>) ride it, while only <code>extra</code> always collapses to
-        <code>xhigh</code>.</li>
+        <code>xhigh</code>. GPT-6 (Astra) also has no <code>none</code> rung: its ladder runs
+        <code>low</code> through <code>max</code>, and a <code>none</code> label degrades to
+        <code>low</code> instead of being rejected by the endpoint.</li>
       <li><b>Verbosity.</b> <code>verbosity_for(...)</code> resolves the response verbosity
         (<code>low</code> / <code>medium</code> / <code>high</code>): a per-request override wins, then
         the model's configured default, otherwise <code>medium</code>.</li>
     </ul>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>GPT-5.x follows instructions literally, so a prompt like "think for
+      <div class="callout__body"><p>GPT follows instructions literally, so a prompt like "think for
         N seconds" can turn into an actual wait. To avoid that, the OpenAI path drops the <code>sleep</code>
         tool from the pool and appends a short note to the (Claude-tuned) system prompt telling the model
         to interpret timing phrases as "reason briefly." Requests route to the app-wide
         <code>bedrock_region</code>, with an optional per-model <code>openai_region</code> override in
-        <code>chat_model_meta</code>.</p></div>
+        <code>chat_model_meta</code>. GPT-6 Astra ships with <code>us-west-2</code> pinned: at launch
+        bedrock-mantle served it there only, even though the model is listed in every US region.</p></div>
     </div>
 
     <p>The decision chain above describes the <em>top-level</em> chat turn. The
@@ -337,7 +340,7 @@
     <div class="cols-2">
       <div class="card">
         <h3>Chat model (toolbar)</h3>
-        <p>Selects the backend for the conversation itself: Claude, GPT-5.x, or on-device Gemma. This is
+        <p>Selects the backend for the conversation itself: Claude, GPT, or on-device Gemma. This is
           the decision chain on this page.</p>
       </div>
       <div class="card">

@@ -57,7 +57,7 @@ Deploy setup is in [`docs/README.md`](docs/README.md).
   engines (Parakeet streaming + Whisper batch), per-session speaker
   memory across reconnects.
 - **Chat with Claude or GPT** (Haiku, Sonnet, Sonnet 5, Opus 4.6/4.7/4.8/5,
-  Fable 5.0, GPT-5.4/5.5/5.6) — streaming tokens, tool use, attachments, slash commands,
+  Fable 5.0/5.1, GPT-5.4/5.5/5.6, GPT-6 Astra) — streaming tokens, tool use, attachments, slash commands,
   and voice-submit triggers. Or run fully on-device in local mode.
 - **Full workspace IDE** — file tree, Monaco editor, xterm.js terminal,
   Git (status/diff/log/blame/branches/PR), LSP (Python + TypeScript),
