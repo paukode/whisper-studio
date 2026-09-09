@@ -60,6 +60,7 @@
         <tr><td><code>sonnet</code> / <code>sonnet5</code></td><td>$3.00</td><td>$15.00</td><td>$0.30</td><td>$3.75</td></tr>
         <tr><td><code>opus4.6</code> / <code>opus4.7</code> / <code>opus4.8</code> / <code>opus5.0</code></td><td>$5.00</td><td>$25.00</td><td>$0.50</td><td>$6.25</td></tr>
         <tr><td><code>fable5.0</code></td><td>$10.00</td><td>$50.00</td><td>$1.00</td><td>$12.50</td></tr>
+        <tr><td><code>gpt6-astra</code></td><td>$10.00</td><td>$50.00</td><td>$1.00</td><td>$12.50</td></tr>
         <tr><td><code>gpt5.6-sol</code></td><td>$5.50</td><td>$33.00</td><td>$0.55</td><td>$6.88</td></tr>
         <tr><td><code>gpt5.6-terra</code></td><td>$2.75</td><td>$16.50</td><td>$0.28</td><td>$3.44</td></tr>
         <tr><td><code>gpt5.6-luna</code></td><td>$1.10</td><td>$6.60</td><td>$0.11</td><td>$1.38</td></tr>
@@ -67,11 +68,13 @@
         <tr><td><code>gpt5.4</code></td><td>$2.75</td><td>$16.50</td><td>$0.275</td><td>$0.00</td></tr>
       </tbody>
     </table></div>
-    <p>Haiku is the cheapest and Opus the most capable of the Claude tiers. The GPT-5.x models run
+    <p>Haiku is the cheapest and Opus the most capable of the Claude tiers. The GPT models run
       via <a href="arch-backends.html">OpenAI on Bedrock</a>. Only <code>gpt5.5</code> and
       <code>gpt5.4</code> carry <b>no cache-write charge</b> (cache-creation rate $0); the GPT-5.6 tiers
-      (<code>sol</code> / <code>terra</code> / <code>luna</code>) do add explicit prompt caching, billed at
-      a non-zero cache-write rate (roughly 1.25x input, 30-minute TTL). The pricing file also carries
+      (<code>sol</code> / <code>terra</code> / <code>luna</code>) and <code>gpt6-astra</code> do add explicit
+      prompt caching, billed at a non-zero cache-write rate (roughly 1.25x input, 30-minute TTL).
+      <code>gpt6-astra</code> carries OpenAI's list rates; the Bedrock pricing page had no Astra row when
+      it launched (2026-09-08), so re-check it against the first invoice. The pricing file also carries
       notes per entry; for example, <code>sonnet5</code> deliberately bills the $3/$15 list price while an
       intro discount runs through 2026-08-31, so budget caps stay conservative and need no revert when the
       discount ends.</p>

@@ -49,10 +49,10 @@
         </tr>
         <tr>
           <td><code>Bedrock</code></td>
-          <td>Amazon Bedrock, the AWS managed service Whisper Studio uses to call Claude (and GPT-5.x)
+          <td>Amazon Bedrock, the AWS managed service Whisper Studio uses to call Claude (and GPT)
             for chat. Two distinct endpoints, depending on the model: Claude goes straight to
             <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code> via
-            <code>invoke_model_with_response_stream</code>; GPT-5.x goes to
+            <code>invoke_model_with_response_stream</code>; GPT goes to
             <code>bedrock-mantle.&lt;region&gt;.api.aws</code>'s OpenAI-compatible Responses API. Either
             way, it is the only cloud LLM call the app makes. See
             <a href="arch-backends.html">Model backends &amp; modes</a> and

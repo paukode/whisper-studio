@@ -50,7 +50,7 @@
         <tr>
           <td><b>Default Model</b></td>
           <td>The model new sessions start with: Haiku 4.5, Sonnet 4.6, Sonnet 5,
-            Opus 4.6 / 4.7 / 4.8, Opus 5, Fable 5.0 / 5.1, GPT-5.4 / 5.5, GPT-5.6 Sol / Terra / Luna, or an
+            Opus 4.6 / 4.7 / 4.8, Opus 5, Fable 5.0 / 5.1, GPT-5.4 / 5.5, GPT-5.6 Sol / Terra / Luna, GPT-6 Astra, or an
             on-device model when local mode is on. The picker only shows
             models valid for the current <b>Model Mode</b> (cloud hides on-device models and vice versa).
             The shipped default is <code>opus5.0</code> (set in <code class="path">config.example.json</code>,
@@ -84,7 +84,8 @@
             latency and cost for deeper thinking. Default is <code>high</code>. The levels a model exposes
             depend on its tier: Opus 4.8, Opus 5, and Fable expose the full ladder up through
             <code>ultracode</code>; Sonnet and older Opus cap at <code>max</code>; GPT-5.5 and 5.6 run
-            <code>none</code> through <code>ultracode</code>; Haiku and the local models have no effort control.
+            <code>none</code> through <code>ultracode</code>, GPT-6 Astra <code>low</code> through
+            <code>ultracode</code>; Haiku and the local models have no effort control.
             The value is clamped to the nearest level the selected model supports when you switch models.
             <code>ultracode</code> is a session mode rather than a plain level - it sends the top
             reasoning effort plus dynamic-workflow orchestration. The old <code>auto</code> value is
