@@ -44,13 +44,17 @@ EFFORT_TIERS = {
     # ladder tops there; "minimal" rejected — verified live), the real "max"
     # tier for GPT-5.6 (verified live 2026-07-15).
     "openai": ["none", "low", "medium", "high", "max"],
+    # GPT-6 (Astra) drops the "none" rung: bedrock-mantle rejects
+    # reasoning.effort "none" for it with unsupported_value (verified live
+    # 2026-09-09; accepted values are low/medium/high/xhigh/max).
+    "openai6": ["low", "medium", "high", "max"],
     "none": [],
 }
 
 # Tiers whose models can orchestrate a workflow unless config says otherwise.
 # A model outside these can still opt in with an explicit ``supports_ultracode``
 # in its config entry — that is how Sonnet 5 gets ultracode on a standard ladder.
-_ULTRACODE_TIERS = {"full", "openai"}
+_ULTRACODE_TIERS = {"full", "openai", "openai6"}
 
 # Friendly label → Bedrock output_config.effort value. "ultracode" has no fixed
 # entry: it resolves per model to that model's top rung (see api_effort_for).
@@ -83,6 +87,26 @@ _OPUS_ID_RE = re.compile(r"claude-opus-(\d+)", re.IGNORECASE)
 # The Bedrock id's own version, for a key that doesn't carry one. Opus ids
 # spell the minor separately ("claude-opus-4-8"), so capture both parts.
 _OPUS_ID_VER_RE = re.compile(r"claude-opus-(\d+)(?:-(\d+))?", re.IGNORECASE)
+# OpenAI-on-Bedrock ids carry their version right after "gpt-": "openai.gpt-5.6-sol",
+# "openai.gpt-6-astra" (no minor). The gpt-oss ids ("openai.gpt-oss-120b") don't match.
+_GPT_ID_VER_RE = re.compile(r"openai\.gpt-(\d+)(?:\.(\d+))?", re.IGNORECASE)
+
+
+def gpt_version(model_id: str) -> tuple[int, int] | None:
+    """(major, minor) of an OpenAI-on-Bedrock model id, or None when the id is
+    not a versioned GPT id. A missing minor reads as 0 ("gpt-6" is 6.0), and a
+    wire prefix ("bedrock-mantle.openai.gpt-6-astra") is tolerated."""
+    m = _GPT_ID_VER_RE.search((model_id or "").strip())
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2) or 0)
+
+
+def openai_effort_tier_for(model_id: str) -> str:
+    """The reasoning ladder an OpenAI-on-Bedrock model exposes when its config
+    entry does not declare one: GPT-6 and up have no "none" rung."""
+    ver = gpt_version(model_id)
+    return "openai6" if ver is not None and ver >= (6, 0) else "openai"
 
 
 def infer_effort_tier(key: str, model_id: str = "") -> str:

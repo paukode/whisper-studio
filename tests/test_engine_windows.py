@@ -63,6 +63,13 @@ def test_normalizer_carries_window_metadata():
     assert meta2["bad"]["context_window"] is None
 
 
+# Deployments whose prompt cap differs from their family default. GPT-6 Astra
+# is not on the 278,528 mantle cap: bedrock-mantle accepted a 348K-token prompt
+# (verified live 2026-09-09); its rejection carries no number, so the entry
+# pins OpenAI's published 922K max input.
+_DEPLOYMENT_CAPS = {"openai.gpt-6-astra": 922_000}
+
+
 def test_example_config_carries_windows():
     import json
     import os
@@ -79,11 +86,12 @@ def test_example_config_carries_windows():
                 "openai_bedrock" if val["id"].startswith("openai.") else "anthropic"
             )
             mid = val["id"].lower()
-            expected = (
-                1_000_000
-                if provider == "anthropic" and any(m in mid for m in ANTHROPIC_1M_MARKERS)
-                else FAMILY_DEFAULTS[provider]
-            )
+            if mid in _DEPLOYMENT_CAPS:
+                expected = _DEPLOYMENT_CAPS[mid]
+            elif provider == "anthropic" and any(m in mid for m in ANTHROPIC_1M_MARKERS):
+                expected = 1_000_000
+            else:
+                expected = FAMILY_DEFAULTS[provider]
             assert val["context_window"] == expected, key
 
 
