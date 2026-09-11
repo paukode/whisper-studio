@@ -352,13 +352,13 @@ def test_non_ascii_names_resolve_everywhere():
 
 def test_neighbor_entity_names_with_commas_stay_whole():
     """The file page's shared-entity sample must not split names on commas
-    (no GROUP_CONCAT): 'Idero, Inc.' stays one clickable name."""
+    (no GROUP_CONCAT): 'Contoso, Inc.' stays one clickable name."""
     ws = "/fake/xpl-comma"
-    inc = {"name": "Idero, Inc.", "label": "organization"}
+    inc = {"name": "Contoso, Inc.", "label": "organization"}
     _add(ws, "a.md", [inc], seed=1)
     _add(ws, "b.md", [inc], seed=2)
     out = store.explore_file(ws, "a.md")
-    assert out["neighbors"][0]["entities"] == ["Idero, Inc."]
+    assert out["neighbors"][0]["entities"] == ["Contoso, Inc."]
     assert out["neighbors"][0]["shared"] == 1
 
 
