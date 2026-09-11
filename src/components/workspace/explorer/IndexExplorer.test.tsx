@@ -54,7 +54,7 @@ const ENTITY_PAGE = {
   facts: [
     {
       predicate: 'customer_of',
-      other: 'Idero Consulting',
+      other: 'Contoso Consulting',
       direction: 'out',
       score: 0.8,
       sources: 3,
@@ -118,7 +118,7 @@ describe('IndexExplorer', () => {
       label: 'organization',
     });
     await waitFor(() =>
-      expect(screen.getByText('Northwind Bank is a customer of Idero Consulting.')).toBeInTheDocument(),
+      expect(screen.getByText('Northwind Bank is a customer of Contoso Consulting.')).toBeInTheDocument(),
     );
     expect(screen.getByText('confirmed in 3 files')).toBeInTheDocument();
     expect(screen.getByText(/quoted line/)).toBeInTheDocument();
