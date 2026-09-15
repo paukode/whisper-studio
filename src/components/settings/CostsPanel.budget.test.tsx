@@ -81,6 +81,25 @@ describe('CostsPanel — budget save wiring', () => {
     expect(body).not.toHaveProperty('model_fallback');
   });
 
+  it('clearing a field sends 0, not an omitted key, so the old limit cannot survive the save', async () => {
+    const { put } = await import('@/api/client');
+    const { container } = renderPanel();
+
+    const daily = () => container.querySelector<HTMLInputElement>('#budgetMaxDaily')!;
+    await waitFor(() => expect(daily().value).toBe('12'));
+
+    fireEvent.change(daily(), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /save budget/i }));
+
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/api/config', expect.anything()));
+
+    const body = (put as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => c[0] === '/api/config',
+    )![1] as Record<string, unknown>;
+
+    expect(body).toHaveProperty('max_daily_cost_usd', 0);
+  });
+
   it('shows "Saved!" after a successful save', async () => {
     const { container } = renderPanel();
     await waitFor(() =>

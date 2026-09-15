@@ -106,9 +106,12 @@ export const CostsPanel: React.FC = () => {
       // DEFAULTS). update_config only persists keys present in DEFAULTS, so the
       // old names (max_session_cost / max_daily_cost / model_fallback) were
       // silently dropped and budget enforcement never saw them.
+      // Always send both cost keys, even when blank: update_config only
+      // overwrites keys present in the body, so omitting a cleared field left
+      // the old limit on disk forever. 0 is the existing "unlimited" value.
       const body: Record<string, unknown> = {};
-      if (maxSessionCost) body.max_session_cost_usd = parseFloat(maxSessionCost);
-      if (maxDailyCost) body.max_daily_cost_usd = parseFloat(maxDailyCost);
+      body.max_session_cost_usd = maxSessionCost ? parseFloat(maxSessionCost) : 0;
+      body.max_daily_cost_usd = maxDailyCost ? parseFloat(maxDailyCost) : 0;
       body.model_fallback_enabled = modelFallback;
       await put('/api/config', body);
       setBudgetHint('Saved!');
