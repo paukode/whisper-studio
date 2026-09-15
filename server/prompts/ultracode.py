@@ -43,7 +43,8 @@ const verdicts = await pipeline(results.filter(Boolean),
   r => agent(`Adversarially verify this fix — try to REFUTE it: ${JSON.stringify(r.output)}`,
              { phase: "verify" }));
 
-return { fixed: results.filter(Boolean).length, verdicts };
+return { fixed: results.filter(Boolean).length, verdicts,
+         deliverables: ["/abs/path/report.docx"] };  // files this run produced
 ```
 
 ### API (all injected as globals)
@@ -82,6 +83,11 @@ return { fixed: results.filter(Boolean).length, verdicts };
 - Write each agent prompt as a self-contained brief — the agent sees NONE of this
   conversation: restate the objective, give scope/inputs/constraints, and the
   exact output shape.
+- DELIVERABLES: if the run produces files, return their paths in
+  `deliverables` (absolute, or relative to the workspace). The server checks
+  each one exists and is non-empty BEFORE the run counts as completed; a
+  missing file fails the run with an error naming it. Never list a file an
+  agent merely said it wrote — take the path from a tool result that saved it.
 
 ### Quality patterns (compose freely)
 
