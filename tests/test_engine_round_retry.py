@@ -115,3 +115,21 @@ def test_openai_transient_marker_classification():
     assert _is_transient("peer closed connection without sending complete message body")
     # Auth/config failures must surface immediately, not burn retries.
     assert not _is_transient("You don't have access to the model with the specified model ID.")
+
+
+def test_openai_503_text_and_blank_transport_faults_are_transient():
+    """Two misses seen live on bedrock-mantle: OpenAI's stock 503 text does
+    not contain the substring "service unavailable", and httpx.ReadTimeout('')
+    stringifies to nothing at all, so both ended the turn with zero retries."""
+    from server.chat.engine.openai import _friendly_error
+
+    assert _is_transient("The service is temporarily unavailable.")
+
+    class ReadTimeout(Exception):
+        pass
+
+    assert _is_transient("", ReadTimeout(""))
+    assert not _is_transient("", ValueError(""))
+    # And the user never sees a message that ends in a bare colon.
+    assert _friendly_error(ReadTimeout("")).endswith("(the model stopped responding mid-stream)")
+    assert "ReadTimeout" in _friendly_error(ReadTimeout(""))
