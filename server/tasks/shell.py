@@ -24,6 +24,12 @@ log = logging.getLogger("whisper-studio")
 
 OUTPUT_DIR = os.path.join(data_root(), "background_output")
 
+# Longest a background shell command may run before it is killed and recorded
+# as stopped. Long enough for a real build or test suite; short enough that a
+# runaway model-issued command (a whole-home-directory find) can't sit
+# 'running' for hours.
+MAX_RUNTIME_S = 30 * 60
+
 _procs: dict[str, subprocess.Popen] = {}
 _profiles: dict[str, str | None] = {}
 _stopped: set[str] = set()
@@ -120,8 +126,27 @@ def adopt_running_process(
 
 
 def _waiter(task_id: str, proc: subprocess.Popen, output_path: str, session_id: str) -> None:
+    timed_out = False
     try:
-        exit_code = proc.wait()
+        exit_code = proc.wait(timeout=MAX_RUNTIME_S)
+    except subprocess.TimeoutExpired:
+        # Nothing bounded a background command before this: a model-issued
+        # `find / -type f ...` over a whole home directory ran for hours,
+        # invisible, still 'running' in the registry. Kill the group and
+        # record an explicit stop so the model's next turn sees WHY.
+        timed_out = True
+        from server.process_utils import kill_process_group
+
+        log.warning(
+            "tasks.shell: %s exceeded the %ds background runtime cap; killing",
+            task_id,
+            MAX_RUNTIME_S,
+        )
+        kill_process_group(proc)
+        try:
+            exit_code = proc.wait(timeout=10)
+        except Exception:  # noqa: BLE001 — refused to die; report it anyway
+            exit_code = -1
     except Exception as e:  # pragma: no cover — wait() failing is exotic
         log.error("tasks.shell: wait failed for %s: %s", task_id, e)
         exit_code = -1
@@ -135,15 +160,20 @@ def _waiter(task_id: str, proc: subprocess.Popen, output_path: str, session_id: 
             os.unlink(profile_path)
         except OSError:
             pass
-    if was_stopped:
+    if was_stopped or timed_out:
         status = "stopped"
     else:
         status = "completed" if exit_code == 0 else "failed"
+    result_text = _tail_of_file(output_path)
+    if timed_out:
+        result_text = (
+            f"{result_text}\n" if result_text else ""
+        ) + f"[stopped: exceeded the {MAX_RUNTIME_S // 60}-minute background runtime cap]"
     finished = registry.finish_task(
         task_id,
         status=status,
         exit_code=exit_code,
-        result_text=_tail_of_file(output_path),
+        result_text=result_text,
     )
     if finished:
         emit_task_event(session_id, _STATUS_EVENT[status], finished)

@@ -66,3 +66,15 @@ def test_clean_exit_marks_completed(tmp_path):
     info = shell.start_shell_task("echo ok", cwd=str(tmp_path), session_id="sess-d")
     assert _wait_status(info["task_id"], "completed")
     assert registry.get_task(info["task_id"])["exit_code"] == 0
+
+
+def test_runtime_cap_kills_a_runaway_command_and_records_why(tmp_path, monkeypatch):
+    """Nothing bounded a background command before: a model-issued find over a
+    whole home directory sat 'running' for hours. Past the cap the group is
+    killed, the row records 'stopped', and the tail says why."""
+    monkeypatch.setattr(shell, "MAX_RUNTIME_S", 1)
+    info = shell.start_shell_task("sleep 30", cwd=str(tmp_path), session_id="sess-cap")
+
+    assert _wait_status(info["task_id"], "stopped", timeout=8.0)
+    task = registry.get_task(info["task_id"])
+    assert "background runtime cap" in (task["result_text"] or "")
