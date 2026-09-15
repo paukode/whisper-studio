@@ -383,3 +383,50 @@ def test_store_set_goal_on_session_row_that_does_not_exist_yet():
             "SELECT title, chat_history FROM sessions WHERE id=?", ("fresh-sess",)
         ).fetchone()
     assert row is not None and row["title"] == "New Session" and row["chat_history"] == "[]"
+
+
+def test_gate_blocks_when_the_reply_claims_a_file_that_does_not_exist(tmp_path, monkeypatch):
+    """The completion gate now verifies claimed deliverables for EVERY turn,
+    goal or not: a reply that says a file was saved is held until the file
+    exists or the reply is corrected."""
+    from server.goals import gate
+
+    monkeypatch.setattr(gate, "_flag_on", lambda n, d=True: True)
+    sid = _mk_session()
+    msgs = [
+        {"role": "user", "content": "write the report"},
+        {"role": "assistant", "content": f"Saved to: `{tmp_path}/report.docx`"},
+    ]
+    d = _run(gate.run_completion_gate(_ctx(sid, messages=msgs)))
+    assert d.block and d.source == "deliverable"
+    assert "report.docx" in d.feedback
+    assert d.frame and "stop_hook_block" in d.frame
+
+
+def test_gate_allows_when_the_claimed_file_exists(tmp_path, monkeypatch):
+    from server.goals import gate
+
+    monkeypatch.setattr(gate, "_flag_on", lambda n, d=True: True)
+    (tmp_path / "report.docx").write_bytes(b"content")
+    sid = _mk_session()
+    msgs = [
+        {"role": "user", "content": "write the report"},
+        {"role": "assistant", "content": f"Saved to: `{tmp_path}/report.docx`"},
+    ]
+    d = _run(gate.run_completion_gate(_ctx(sid, messages=msgs)))
+    assert not d.block
+
+
+def test_gate_deliverable_block_respects_the_cap(tmp_path, monkeypatch):
+    from server.goals import gate
+
+    monkeypatch.setattr(gate, "_flag_on", lambda n, d=True: True)
+    monkeypatch.setattr(gate, "_max_blocks", lambda ctx: 2)
+    sid = _mk_session()
+    msgs = [
+        {"role": "user", "content": "write the report"},
+        {"role": "assistant", "content": f"Saved to: `{tmp_path}/report.docx`"},
+    ]
+    d = _run(gate.run_completion_gate(_ctx(sid, messages=msgs, attempt=2)))
+    assert not d.block and d.source == "cap"
+    assert d.frame["goal_cap_reached"]["source"] == "deliverable"
