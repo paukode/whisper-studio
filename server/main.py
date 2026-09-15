@@ -103,7 +103,15 @@ class _QuietPollAccessLog(logging.Filter):
     terminal. Only these pure-polling GETs are hidden; every other request —
     builds, connects, removes, errors — still logs normally."""
 
-    _NOISY = ("/api/workspace/index/status",)
+    # Status-qualified so a failing poll (non-200) still logs. The preview
+    # poll alone was 75% of a 221K-line backend.log before it was quieted
+    # here and slowed in useDockLiveWatcher.
+    _NOISY = (
+        "/api/workspace/index/status",
+        'GET /api/preview/sessions HTTP/1.1" 200',
+        'GET /api/workspace/status HTTP/1.1" 200',
+        'GET /api/notifications/unread-count HTTP/1.1" 200',
+    )
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
