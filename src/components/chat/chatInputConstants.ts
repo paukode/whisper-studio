@@ -48,7 +48,7 @@ export const BASE_SLASH_COMMANDS: SlashCommand[] = [
   { cmd: 'effort ', icon: '🎯', desc: 'Set thinking depth', options: ['low', 'medium', 'high', 'extra', 'max', 'ultracode'], category: 'ai' },
   { cmd: 'export ', icon: '💾', desc: 'Export conversation as text', category: 'general' },
   { cmd: 'file:', icon: '📂', desc: 'Reference a workspace file', submenu: true, category: 'workspace' },
-  { cmd: 'goal ', icon: '🎯', desc: 'Set a goal the loop works toward (clear to end)', category: 'ai' },
+  { cmd: 'goal ', icon: '🎯', desc: 'Set a goal and start working toward it (clear to end)', category: 'ai' },
   { cmd: 'help ', icon: '❓', desc: 'Show available commands', category: 'general' },
   { cmd: 'mcp:', icon: '🔌', desc: 'Browse MCP tools', submenu: true, category: 'workspace' },
   { cmd: 'memory ', icon: '💡', desc: 'Toggle memory (on/off/status)', options: ['on', 'off', 'status'], category: 'ai' },

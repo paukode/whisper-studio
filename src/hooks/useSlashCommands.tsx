@@ -485,7 +485,17 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ goal: goalText }),
           }).catch(() => {});
-          addToast({ type: 'success', message: 'Goal set — the loop will work toward it.', duration: 2500, persist: false });
+          // Claude Code semantics: the goal text IS the first message. Arming
+          // the completion gate alone left the composer empty and nothing
+          // running, which read as a swallowed message. If a turn is already
+          // streaming, fold it into that turn instead of starting a second.
+          if (getChatStore(sessionId).getState().isStreaming) {
+            void chatStream.sendMidTurn(goalText);
+            addToast({ type: 'success', message: 'Goal set. Steering the running turn toward it.', duration: 2500, persist: false });
+          } else {
+            void chatStream.send(goalText);
+            addToast({ type: 'success', message: 'Goal set. Working toward it now.', duration: 2500, persist: false });
+          }
         }
         return true;
       }
