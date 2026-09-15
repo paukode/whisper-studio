@@ -24,6 +24,10 @@ python-docx==1.2.0
 defusedxml==0.7.1
 mcp==1.27.2
 tavily-python==0.7.25
+# TLS verification against the OS trust store (macOS keychain), not only the
+# bundled certifi list: the packaged runtime failed every HTTPS fetch behind a
+# TLS-intercepting corporate proxy. Injected at startup in server/main.py.
+truststore==0.10.4
 # OpenAI GPT models on Bedrock (GPT-5.5 / GPT-5.4): the Responses API on the
 # bedrock-mantle endpoint. The openai SDK targets
 # https://bedrock-mantle.{region}.api.aws/openai/v1 with a short-lived bearer

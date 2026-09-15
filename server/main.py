@@ -156,6 +156,32 @@ def _raise_fd_soft_limit() -> None:
 
 _raise_fd_soft_limit()
 
+
+def _trust_system_certs() -> None:
+    """Verify TLS against the OS trust store (the macOS keychain), not only the
+    bundled certifi CA list.
+
+    The packaged runtime is python-build-standalone, which knows nothing of the
+    keychain, so behind a TLS-intercepting corporate proxy every HTTPS fetch
+    failed CERTIFICATE_VERIFY_FAILED ("self-signed certificate in chain" on
+    gov.pl and zus.pl, "unable to get local issuer" on ec.europa.eu and
+    stat.gov.pl; 85 in one log) while the same sites opened fine in the
+    browser. truststore swaps ssl.SSLContext for one that also consults the
+    system store, so urllib (WebFetch), requests (Tavily) and httpx (the OpenAI
+    SDK) all pick it up without per-call changes. Must run before any of them
+    build a context, hence module import time. Fails open to the old
+    certifi-only behavior.
+    """
+    try:
+        import truststore
+
+        truststore.inject_into_ssl()
+    except Exception as exc:
+        log.warning("system trust store unavailable, using the bundled CA list: %s", exc)
+
+
+_trust_system_certs()
+
 # Import executor modules to trigger registration. Each module
 # registers tool executors as a side-effect of being imported. We do
 # this in a guarded loop so a single broken executor (e.g. a missing
