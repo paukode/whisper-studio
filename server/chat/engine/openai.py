@@ -76,6 +76,11 @@ _TRANSIENT_MARKERS = (
     "rate limit",
     "too many requests",
     "service unavailable",
+    # OpenAI's stock 503 text is "The service is temporarily unavailable." —
+    # "service unavailable" is not a substring of it, so it was judged
+    # permanent and a round-0 fault ended the turn with zero retries.
+    "temporarily unavailable",
+    "unavailable",
     "bad gateway",
     "gateway timeout",
     "timed out",
@@ -89,8 +94,17 @@ _TRANSIENT_MARKERS = (
 )
 
 
-def _is_transient(message: str) -> bool:
+def _is_transient(message: str, exc: BaseException | None = None) -> bool:
+    """Transient (retry the round) vs permanent (end the turn).
+
+    Judged on the message text, plus the exception's class name when one is
+    given: a transport fault like ``httpx.ReadTimeout('')`` stringifies to
+    nothing at all, so message matching alone called it permanent and the
+    user saw a round die with zero retries.
+    """
     low = (message or "").lower()
+    if exc is not None:
+        low = f"{low} {type(exc).__name__.lower()}"
     return any(m in low for m in _TRANSIENT_MARKERS)
 
 
@@ -275,7 +289,9 @@ class OpenAIResponsesAdapter:
                     if _is_prompt_too_long(msg):
                         raise PromptTooLongError(msg) from payload
                     log.warning("OpenAI stream broke mid-round (%s): %r", self.model_key, payload)
-                    yield RoundError(message=_friendly_error(payload), retryable=_is_transient(msg))
+                    yield RoundError(
+                        message=_friendly_error(payload), retryable=_is_transient(msg, payload)
+                    )
                     return
 
                 ev = payload
@@ -410,7 +426,9 @@ class OpenAIResponsesAdapter:
 
 def _friendly_error(e: Exception) -> str:
     """Actionable text for the common GPT-on-Bedrock failure classes."""
-    msg = str(e)
+    # Transport exceptions can stringify to nothing (httpx.ReadTimeout('')),
+    # which left the user with "request failed: " and no clue why.
+    msg = str(e) or f"{type(e).__name__} (the model stopped responding mid-stream)"
     low = msg.lower()
     if any(s in low for s in ("auth", "401", "403", "denied", "credential", "token")):
         return (
