@@ -362,3 +362,24 @@ def test_gate_cap_forces_allow(monkeypatch):
     store.set_goal(sid, "g")
     d = _run(gate.run_completion_gate(_ctx(sid, goal="g", attempt=8, max_consecutive_blocks=8)))
     assert not d.block and d.source == "cap"
+
+
+def test_store_set_goal_on_session_row_that_does_not_exist_yet():
+    """/goal on a brand-new session lands before the frontend's first save
+    creates the row. The UPDATE matched nothing and the goal was silently lost
+    while the route still said ok; now a placeholder row is inserted."""
+    from server.goals import store
+    from server.infrastructure import sessions
+
+    sessions._ensure_db()
+    out = store.set_goal("fresh-sess", "fix the CI", set_at="2026-01-01T00:00:00Z")
+    assert out["goal"] == "fix the CI" and out["state"]["active"] is True
+
+    got = store.get_goal("fresh-sess")
+    assert got["goal"] == "fix the CI"
+    assert got["state"]["active"] is True
+    with sessions._get_conn() as conn:
+        row = conn.execute(
+            "SELECT title, chat_history FROM sessions WHERE id=?", ("fresh-sess",)
+        ).fetchone()
+    assert row is not None and row["title"] == "New Session" and row["chat_history"] == "[]"
