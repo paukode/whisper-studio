@@ -60,6 +60,12 @@ export interface SendOptions {
 
 export interface UseChatStreamReturn {
   send: (question: string, opts?: SendOptions) => Promise<void>;
+  /** Send a message while a turn for this session is ALREADY streaming.
+   *  Delivered into that running turn instead of starting (or being
+   *  refused by) a second one — see server/chat/engine/midturn_inbox.py.
+   *  Resolves to whether it was actually delivered (strictly binary: no
+   *  message is shown, and no state changes, unless this is true). */
+  sendMidTurn: (question: string) => Promise<boolean>;
   abort: () => void;
 }
 
@@ -426,6 +432,55 @@ export function useChatStream(): UseChatStreamReturn {
     }
   }, []);
 
+  // Send a message while THIS session's turn is already streaming. Unlike
+  // `send`, this never touches the running stream's AbortController or
+  // `isStreaming` — the ORIGINAL turn keeps owning both. Strictly binary, on
+  // purpose: either the backend confirms it queued the text into the inbox
+  // the running turn drains (server/chat/engine/midturn_inbox.py) and the
+  // message appears, or nothing is shown and the caller is told it wasn't
+  // delivered — never a silent middle state where the message looks sent
+  // but wasn't, or quietly turns into something else. Returns whether it was
+  // delivered, so the composer only clears the input on confirmed success.
+  const sendMidTurn = useCallback(async (question: string): Promise<boolean> => {
+    const activeSessionId = useSessionStore.getState().currentSessionId;
+    if (!activeSessionId) return false;
+
+    let delivered = false;
+    try {
+      // Deliberately a minimal body: the backend only needs `question` +
+      // `session_id` to queue it into the turn that's actually running.
+      // If that turn already finished in the tiny window before this
+      // request arrived, the backend would instead start a genuine new
+      // (SSE) turn from this same minimal, incomplete body — so that
+      // outcome is treated as NOT delivered and closed immediately, rather
+      // than rendered as a degraded reply from a half-built request.
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question, session_id: activeSessionId }),
+      });
+      delivered = response.ok && (response.headers.get('content-type') || '').includes('application/json');
+      if (!delivered) void response.body?.cancel();
+    } catch {
+      delivered = false;
+    }
+
+    if (delivered) {
+      getChatStore(activeSessionId).getState().addMessage({
+        role: 'user',
+        content: question,
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: "Not delivered — the turn may have just finished. Nothing was sent; try again.",
+        duration: 5000,
+      });
+    }
+    return delivered;
+  }, []);
+
   // Stop button: instant kill of the session the user is LOOKING AT (state
   // finalized synchronously) plus every running subagent. Background
   // sessions keep streaming.
@@ -433,7 +488,7 @@ export function useChatStream(): UseChatStreamReturn {
     killSessionStream(useSessionStore.getState().currentSessionId);
   }, []);
 
-  return { send, abort };
+  return { send, sendMidTurn, abort };
 }
 
 // Re-export for use in approval components

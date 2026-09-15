@@ -1,9 +1,14 @@
 """The same-session double-stream guard: a second NEW turn for a session that
-is already streaming gets 409; the slot is timestamped so an abandoned stream
-goes stale and is reclaimed; the /reset endpoint clears a wedged session; the
-slot clears on every stream exit path."""
+is already streaming gets queued into the running turn (server.chat.engine.
+midturn_inbox) instead of erroring or racing it as an independent second
+turn — the slot is claimed synchronously at the very top of chat_endpoint,
+before the turn's own setup (condensation/grounding/hooks) runs, which is
+what makes the queuing decision race-free; the slot is timestamped so an
+abandoned stream goes stale and is reclaimed instead of queued forever; the
+/reset endpoint clears a wedged session; the slot clears on every stream exit
+path."""
 
-import json
+import asyncio
 import time
 
 from server.chat import routes
@@ -41,16 +46,86 @@ def test_fresh_slot_is_busy_stale_slot_is_reclaimable():
     assert (now - stale) >= routes._STREAM_STALE_AFTER_S  # reclaimable
 
 
-def test_second_new_turn_refused_while_streaming(monkeypatch):
+def test_second_new_turn_queued_into_running_turn_while_streaming(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    # Force the unified engine path regardless of this machine's config.json
-    # default model: with a local_mode config (default_chat_model=local_gemma)
-    # local_chat_response() returns a StreamingResponse and short-circuits
-    # before the guard. GPT models share the engine path (and its guard) since
-    # the P3 cutover, so only the local bridge needs neutralizing.
+    from server.chat.engine import midturn_inbox
+
+    app = FastAPI()
+    app.include_router(routes.router)
+    client = TestClient(app)
+
+    routes._active_chat_streams.clear()
+    midturn_inbox.drain("busy-session")
+    # Fresh timestamp => within the busy window => queued, not started as a
+    # second stream and not refused.
+    routes._active_chat_streams["busy-session"] = time.monotonic()
+    try:
+        r = client.post(
+            "/api/chat",
+            json={
+                "question": "actually, stop and give me what you have",
+                "session_id": "busy-session",
+                "history": [],
+            },
+        )
+        # A plain, instant JSON reply — no second SSE stream is opened, and
+        # the busy slot (still owned by the ACTUAL running turn) is untouched.
+        assert r.status_code == 200
+        assert r.json() == {"queued_into_running_turn": True}
+        assert "busy-session" in routes._active_chat_streams
+        assert midturn_inbox.drain("busy-session") == ["actually, stop and give me what you have"]
+    finally:
+        routes._active_chat_streams.clear()
+        midturn_inbox.drain("busy-session")
+
+
+def test_slot_is_claimed_synchronously_before_the_turns_own_setup_runs():
+    """The real bug this guarded against: the slot used to be claimed deep
+    inside _build_turn, AFTER condensation/grounding/hook setup that can take
+    real seconds — so a message sent during that setup window found the slot
+    still looking free and started its own independent turn instead of
+    queuing, racing and interleaving with the one already running. The claim
+    now happens in chat_endpoint's synchronous prefix, before _build_turn is
+    even created as a task, so it must be visible the instant chat_endpoint
+    returns — before that task has run a single line of its own setup."""
+
+    class _FakeRequest:
+        def __init__(self, body):
+            self._body = body
+
+        async def json(self):
+            return self._body
+
+    routes._active_chat_streams.clear()
+    routes._stream_heartbeat.clear()
+
+    async def _call():
+        req = _FakeRequest({"question": "hello", "session_id": "claim-timing-sess", "history": []})
+        return await routes.chat_endpoint(req)
+
+    try:
+        resp = asyncio.run(_call())
+        # asyncio.create_task schedules but does not run _build_turn before
+        # chat_endpoint's own return — this passing is the whole point: the
+        # slot is already held with NO turn setup having executed at all.
+        assert "claim-timing-sess" in routes._active_chat_streams
+        assert resp is not None
+    finally:
+        routes._active_chat_streams.clear()
+        routes._stream_heartbeat.clear()
+
+
+def test_stale_busy_slot_is_reclaimed_not_queued(monkeypatch):
+    # A stale slot (the guard's existing abandoned-stream case) must fall
+    # through to the normal new-turn path, not get silently swallowed into
+    # the inbox of a turn that isn't actually running anymore.
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
     import server.local.route as local_route
+    from server.chat.engine import midturn_inbox
 
     monkeypatch.setattr(local_route, "local_chat_response", lambda **kw: None)
 
@@ -59,29 +134,21 @@ def test_second_new_turn_refused_while_streaming(monkeypatch):
     client = TestClient(app)
 
     routes._active_chat_streams.clear()
-    # Fresh timestamp => within the busy window => must 409.
-    routes._active_chat_streams["busy-session"] = time.monotonic()
+    midturn_inbox.drain("stale-session")
+    routes._active_chat_streams["stale-session"] = (
+        time.monotonic() - routes._STREAM_STALE_AFTER_S - 1
+    )
     try:
         r = client.post(
             "/api/chat",
-            json={
-                "question": "hello again",
-                "session_id": "busy-session",
-                "history": [],
-            },
+            json={"question": "hello again", "session_id": "stale-session", "history": []},
         )
-        # The endpoint streams from byte zero now, so the refusal arrives as
-        # an SSE error frame on a 200 stream instead of an HTTP 409 (an HTTP
-        # status can't be changed once the stream has started).
         assert r.status_code == 200
-        frames = [
-            json.loads(line[6:])
-            for line in r.text.splitlines()
-            if line.startswith("data: ") and line != "data: [DONE]"
-        ]
-        assert any(f.get("error_code") == "SESSION_BUSY" for f in frames)
+        # Reclaimed and streamed normally — never queued.
+        assert midturn_inbox.drain("stale-session") == []
     finally:
         routes._active_chat_streams.clear()
+        midturn_inbox.drain("stale-session")
 
 
 def test_reset_endpoint_clears_wedged_state():

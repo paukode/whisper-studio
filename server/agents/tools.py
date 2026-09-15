@@ -116,3 +116,25 @@ def get_agent_runtime_tools(agent_id: str, depth: int) -> list[dict]:
         tools.append(SPAWN_AGENT_TOOL)
     tools.append(COMPLETE_COORDINATION_TOOL)
     return tools
+
+
+# Tool names that let an agent delegate to further agents. Both are also
+# top-level chat tools, so they arrive in a fresh agent's base pool
+# unconditionally, before get_agent_runtime_tools' own depth<4 gate ever runs.
+DELEGATION_TOOL_NAMES = ("spawn_agent", "team_create")
+
+
+def strip_delegation_tools_at_depth_limit(tools: list[dict], depth: int) -> list[dict]:
+    """Remove delegation tools once nesting is at the recursion limit.
+
+    get_agent_runtime_tools already omits SPAWN_AGENT_TOOL past depth 4, but
+    that only stops it being ADDED — a tool already present in the base pool
+    (assembled from the same catalog interactive chat uses, which carries
+    spawn_agent and team_create unconditionally) stays there regardless. This
+    is the actual enforcement: strip both once depth is at the limit, so a
+    deeply-nested agent doesn't see delegation as an option at all. run_agent's
+    MAX_DEPTH check still hard-fails a call that gets through some other way.
+    """
+    if depth < 4:
+        return tools
+    return [t for t in tools if t["name"] not in DELEGATION_TOOL_NAMES]

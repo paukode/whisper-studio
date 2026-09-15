@@ -433,8 +433,23 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         return;
       }
 
-      // Regular messages are blocked during streaming
-      if (getActiveChatStore().getState().isStreaming) return;
+      // A message sent while the model is already working gets folded into
+      // the SAME running turn instead of being blocked — mirrors how a
+      // message sent mid-turn gets taken into account rather than refused
+      // or starting a second, separate turn. Attachments and the on-device
+      // load / upload waits below are for STARTING a fresh turn and don't
+      // apply to steering one already in flight. Strictly binary: only
+      // clear the composer once delivery is CONFIRMED — on failure the
+      // text stays put (nothing was sent) so it's obvious and easy to retry.
+      if (getActiveChatStore().getState().isStreaming) {
+        const delivered = await chatStream.sendMidTurn(trimmed);
+        if (delivered) {
+          inputTextRef.current = '';
+          setText('');
+          setAttachments([]);
+        }
+        return;
+      }
 
       // Lazy on-device load: in local/hybrid mode a selected model isn't loaded
       // until the session starts. If the chosen model is on-device and not yet

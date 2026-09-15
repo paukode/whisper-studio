@@ -259,6 +259,25 @@ async def run_turn(ctx: TurnContext):
         if _reminder and inject_reminder(messages, _reminder):
             log.info("Injected near-cap reminder (%d rounds left)", max_rounds - round_num)
 
+        # A message the user sent WHILE this turn was already running (see
+        # server/chat/engine/midturn_inbox.py + server/chat/routes.py's
+        # SESSION_BUSY short-circuit). Fold it in the same way as the reminder
+        # above — appended onto the live message list — so the model
+        # addresses it as it continues this turn instead of it being lost or
+        # forcing a separate one.
+        from server.chat.engine.midturn_inbox import drain as _drain_midturn
+
+        for _mid_msg in _drain_midturn(session_id):
+            _wrapped = (
+                "<user_message_mid_turn>The user sent a new message while you "
+                "were still working. It is not a new, separate request — "
+                "address it as you continue this same turn (adjust course, "
+                "answer a quick question, or stop early if they asked you to)"
+                f":\n\n{_mid_msg}</user_message_mid_turn>"
+            )
+            if inject_reminder(messages, _wrapped):
+                log.info("Injected mid-turn user message (session %s)", session_id)
+
         # Deadline enforcement: the FIRST round observed past the wall-clock
         # deadline gets a "finalize now" reminder, exactly once (a later
         # max_tokens/pause_turn continuation must not repeat it every round).

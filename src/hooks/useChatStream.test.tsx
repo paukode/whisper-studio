@@ -56,15 +56,80 @@ describe('useChatStream', () => {
     expect(s.messages.some((m) => m.role === 'user' && m.content === 'hello world')).toBe(true);
   });
 
-  it('exposes a stable {send, abort} shape', () => {
+  it('exposes a stable {send, sendMidTurn, abort} shape', () => {
     const { result } = renderHook(() => useChatStream());
     expect(typeof result.current.send).toBe('function');
+    expect(typeof result.current.sendMidTurn).toBe('function');
     expect(typeof result.current.abort).toBe('function');
   });
 
   it('abort is callable when no stream is active without throwing', () => {
     const { result } = renderHook(() => useChatStream());
     expect(() => result.current.abort()).not.toThrow();
+  });
+
+  describe('sendMidTurn', () => {
+    it('confirmed delivery: shows the message and resolves true, without touching isStreaming', async () => {
+      useSessionStore.setState({ currentSessionId: 'mid-turn-sess', liveSessions: {}, sessions: [] });
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ queued_into_running_turn: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+      const store = getChatStore('mid-turn-sess');
+      store.getState().setStreaming(true); // a turn is presumed already running
+
+      const { result } = renderHook(() => useChatStream());
+      let delivered: boolean | undefined;
+      await act(async () => {
+        delivered = await result.current.sendMidTurn('stop and give me what you have');
+      });
+
+      expect(delivered).toBe(true);
+      const s = store.getState();
+      expect(
+        s.messages.some(
+          (m) => m.role === 'user' && m.content === 'stop and give me what you have',
+        ),
+      ).toBe(true);
+      // Untouched — the ALREADY-running turn owns isStreaming, not this call.
+      expect(s.isStreaming).toBe(true);
+    });
+
+    it('not delivered: shows nothing, resolves false, and closes the stray response', async () => {
+      useSessionStore.setState({ currentSessionId: 'race-sess', liveSessions: {}, sessions: [] });
+      const cancel = vi.fn();
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        headers: { get: () => 'text/event-stream' },
+        body: { cancel },
+      } as unknown as Response);
+
+      const { result } = renderHook(() => useChatStream());
+      let delivered: boolean | undefined;
+      await act(async () => {
+        delivered = await result.current.sendMidTurn('are you still there');
+      });
+
+      expect(delivered).toBe(false);
+      expect(cancel).toHaveBeenCalled();
+      // Strictly binary — nothing is shown for an attempt that wasn't delivered.
+      const s = getChatStore('race-sess').getState();
+      expect(s.messages.some((m) => m.role === 'user' && m.content === 'are you still there')).toBe(false);
+    });
+
+    it('does nothing when there is no active session', async () => {
+      useSessionStore.setState({ currentSessionId: null, liveSessions: {}, sessions: [] });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      const { result } = renderHook(() => useChatStream());
+      let delivered: boolean | undefined;
+      await act(async () => {
+        delivered = await result.current.sendMidTurn('hello?');
+      });
+      expect(delivered).toBe(false);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
   });
 
   /** A /api/chat response built from raw SSE frames; anything else 200s empty. */

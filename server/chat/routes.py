@@ -1148,6 +1148,55 @@ async def chat_endpoint(request: Request):
     # rather than a new user message — the LLM resumes where it paused.
     approved_tool_result = body.get("approved_tool_result")
 
+    # Same-session double-stream guard, claimed HERE — synchronously, before
+    # any `await` past parsing the body, and before ANY of the turn's own
+    # setup work (transcript condensation, attachment/PDF analysis, index
+    # grounding, hooks) runs. That setup can easily take seconds on a
+    # heavier turn, and it used to be where this slot got claimed (deep
+    # inside _build_turn, well after this point) — so a message sent during
+    # that window found the slot still looking free and started its OWN
+    # independent turn instead of joining the one already running, racing it
+    # and interleaving unpredictably. Claiming immediately closes that
+    # window: the busy/queued decision below is made before either turn's
+    # setup has had a chance to run at all.
+    #
+    # A NEW turn (not an approval continuation) finding the session ALREADY
+    # busy is exactly "the user sent another message while the model is
+    # working" — deliver it INTO the running turn instead of the old
+    # behavior (HTTP 409 SESSION_BUSY; the composer either blocked sending
+    # or the text was silently dropped). run_turn's per-round loop
+    # (server/chat/engine/runner.py) drains server.chat.engine.midturn_inbox
+    # once per round and folds the text into the live message list the same
+    # way it already injects wind-down reminders, so the SAME turn keeps
+    # running and simply takes the new message into account at its next
+    # round — no second stream is opened.
+    #
+    # `is_new_turn`/`stream_token` are consumed further down (inside
+    # _build_turn, as closure reads — no `nonlocal` needed since neither is
+    # reassigned there any more) for the TurnContext and for the matching
+    # cleanup in the stream's `finally`, which pops the slot only if it
+    # still holds THIS turn's token.
+    is_new_turn = approved_tool_result is None
+    stream_token: float | None = None
+    if is_new_turn:
+        _busy_since = _active_chat_streams.get(session_id)
+        _now = time.monotonic()
+        _last_seen = _stream_heartbeat.get(session_id, _busy_since)
+        if _busy_since is not None and (_now - _last_seen) < _STREAM_STALE_AFTER_S:
+            from server.chat.engine.midturn_inbox import push as _push_midturn
+
+            _push_midturn(session_id, question)
+            return JSONResponse({"queued_into_running_turn": True})
+        if _busy_since is not None:
+            log.warning(
+                "Reclaiming stale stream slot for session %s (age %.0fs)",
+                session_id,
+                _now - _last_seen,
+            )
+        stream_token = _now
+        _active_chat_streams[session_id] = stream_token
+        _stream_heartbeat[session_id] = _now
+
     # Stream from byte zero: everything below (transcript condensation, index
     # grounding, hooks, provider dispatch) can take long seconds, and with the
     # old shape the HTTP response did not even START until it finished — the
@@ -1681,42 +1730,14 @@ async def chat_endpoint(request: Request):
         # turn (fresh + approval-resume), after compaction, on the exact list sent.
         messages = sanitize_tool_pairs(messages)
 
-        # Same-session double-stream guard. Two NEW turns streaming for one
-        # session would corrupt _paused_sessions (approval pause/resume state).
-        # Approval continuations are exempt: the auto-allow path fires its
-        # continuation while the original response is still draining, and that
-        # is the normal, intended flow. Different sessions stream in parallel
-        # freely (parallel sessions feature).
-        is_new_turn = approved_tool_result is None
-        stream_token: float | None = None
-        if is_new_turn:
-            started = _active_chat_streams.get(session_id)
-            now = time.monotonic()
-            # Judge staleness by last progress (heartbeat), falling back to the
-            # start time if none recorded yet.
-            last_seen = _stream_heartbeat.get(session_id, started)
-            if started is not None and (now - last_seen) < _STREAM_STALE_AFTER_S:
-                return JSONResponse(
-                    {
-                        "error": (
-                            "This session already has a response in progress. If it "
-                            "looks stuck (e.g. after the app was suspended or a tab "
-                            "was closed mid-reply), reset it from the chat ⋯ menu, "
-                            "or wait a moment and try again."
-                        ),
-                        "error_code": "SESSION_BUSY",
-                    },
-                    status_code=409,
-                )
-            if started is not None:
-                log.warning(
-                    "Reclaiming stale stream slot for session %s (age %.0fs)",
-                    session_id,
-                    now - started,
-                )
-            stream_token = now
-            _active_chat_streams[session_id] = stream_token
-            _stream_heartbeat[session_id] = now
+        # Same-session double-stream guard: `is_new_turn`/`stream_token` were
+        # already decided and (for a genuine new turn) the slot already
+        # claimed at the very top of chat_endpoint, before this turn's own
+        # setup (condensation/grounding/hooks, all of it above) ran — not
+        # here, so a message arriving DURING that setup sees the slot
+        # already held and gets queued into it instead of racing it with a
+        # second independent turn. Both names are read from that outer
+        # scope (no `nonlocal`: neither is reassigned in here).
 
         # Fire SessionStart + UserPromptSubmit hooks. Any additionalContext they
         # return (or a project's SessionStart hook loading conventions) is injected
