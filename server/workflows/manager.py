@@ -467,12 +467,55 @@ async def _drive(run: WorkflowRun) -> None:
     outcome = {"status": "failed", "error": "runner did not start"}
     try:
         outcome = await run.run()
+        outcome = verify_deliverables(outcome, getattr(run, "workspace_path", None))
     except Exception as e:  # noqa: BLE001
         log.error("workflow %s crashed: %s", run.run_id, e, exc_info=True)
         outcome = {"status": "failed", "error": str(e)}
     finally:
         _live.pop(run.run_id, None)
         _finalize(run, outcome)
+
+
+_COMPLETED_STATUSES = ("done", "completed")
+
+
+def verify_deliverables(outcome: dict, workspace_path: str | None) -> dict:
+    """Refuse to call a run 'completed' when a file it says it produced is
+    not there.
+
+    A run was 'completed' the moment its script returned without raising,
+    and the model then told the user the report was saved. In one real case
+    the script's own return text said the file could not be found at the
+    required path; the card still said completed, and the user learned the
+    truth 43 minutes later by asking. A script that produces files lists
+    them in its return value as ``deliverables`` (paths, or ``{path}`` dicts;
+    relative paths resolve against the run's workspace). Any missing or
+    empty file downgrades the run to failed with an error naming it, which
+    is what the card shows and what the model reads next turn.
+    """
+    if outcome.get("status") not in _COMPLETED_STATUSES:
+        return outcome
+    result = outcome.get("result")
+    if not isinstance(result, dict):
+        return outcome
+    declared = result.get("deliverables")
+    if not isinstance(declared, list) or not declared:
+        return outcome
+    missing: list[str] = []
+    for item in declared:
+        path = item.get("path") if isinstance(item, dict) else item
+        if not isinstance(path, str) or not path.strip():
+            continue
+        resolved = os.path.expanduser(path.strip())
+        if not os.path.isabs(resolved) and workspace_path:
+            resolved = os.path.join(workspace_path, resolved)
+        if not (os.path.isfile(resolved) and os.path.getsize(resolved) > 0):
+            missing.append(path)
+    if not missing:
+        return outcome
+    shown = ", ".join(missing[:5]) + (f" and {len(missing) - 5} more" if len(missing) > 5 else "")
+    log.warning("workflow result claims deliverables that do not exist: %s", shown)
+    return {**outcome, "status": "failed", "error": f"deliverable missing or empty: {shown}"}
 
 
 def _finalize(run: WorkflowRun, outcome: dict) -> None:
