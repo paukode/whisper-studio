@@ -108,7 +108,13 @@ def get_model_pricing(model_key: str) -> dict | None:
     there is no fallback to another model's rate."""
     pricing = _MODEL_PRICING.get(model_key)
     if pricing is None:
-        log.error(
+        # On-device models cost $0 by design and the placeholder key
+        # 'unknown' is a subagent row with no model; neither is a missing
+        # cloud rate, so neither belongs at ERROR (they were the only ERROR
+        # lines in an otherwise clean log).
+        expected_free = model_key.startswith("local_") or model_key in ("unknown", "")
+        log.log(
+            logging.DEBUG if expected_free else logging.ERROR,
             "No pricing entry for model %r — billing $0. Add it to _MODEL_PRICING.",
             model_key,
         )

@@ -542,6 +542,20 @@ async def local_model_load(model: str, n_ctx: int | None = None):
                     should_abort=lambda: _load_cancel_requested(model),
                 ),
             )
+
+            # If the client drops this stream before the load finishes, the
+            # generator is closed and nothing ever awaits the future: a
+            # llama-server that failed to come up surfaced only as asyncio's
+            # "Future exception was never retrieved", with the real reason
+            # buried in that dump. Retrieve and log it wherever the stream is.
+            def _log_load_failure(fut, _model=model):
+                if fut.cancelled():
+                    return
+                exc = fut.exception()
+                if exc is not None:
+                    log.warning("local model load for %s failed: %s", _model, str(exc)[:400])
+
+            load_future.add_done_callback(_log_load_failure)
             ramp = 0.0
             cancelled = False
             while not load_future.done():

@@ -35,6 +35,18 @@ def resolve_model_override(
         return (default_model_id or None), "", ""
 
     resolved = models.get(key)
+    alias_note = ""
+    if not resolved:
+        # Family alias: the model asks for "sonnet" / "opus" / "haiku" while
+        # the catalog keys are versioned ("sonnet5.0"). Seen 14 times in one
+        # log, each silently downgraded to the default model. Resolve to the
+        # newest configured key in that family and say so in the warning, so
+        # the override still never fails silently.
+        family = [k for k in models if k.lower().startswith(key.lower())]
+        if family:
+            key = sorted(family, key=_version_sort_key)[-1]
+            resolved = models.get(key)
+            alias_note = f"model alias resolved to '{key}'"
     if not resolved:
         return (
             (default_model_id or None),
@@ -54,4 +66,14 @@ def resolve_model_override(
                 "model instead"
             ),
         )
-    return resolved, key, ""
+    return resolved, key, alias_note
+
+
+def _version_sort_key(key: str) -> tuple:
+    """ "sonnet5.0" -> (5, 0); a key with no trailing version sorts lowest."""
+    import re
+
+    m = re.search(r"(\d+(?:\.\d+)*)$", key)
+    if not m:
+        return (0,)
+    return tuple(int(p) for p in m.group(1).split("."))
