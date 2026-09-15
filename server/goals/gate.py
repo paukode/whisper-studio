@@ -76,6 +76,40 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
             source="stop_hook",
         )
 
+    # ── Phase 1.5: claimed deliverables (on for every turn, goal or not) ─────
+    # The reply says a file was saved or points at an artifact card; check the
+    # file exists (non-empty) and the artifact call happened THIS turn. Twice
+    # in real sessions neither was true and the user found out only by asking.
+    # A miss is a block with the missing items named, under the same cap.
+    if _flag_on("deliverable_check"):
+        from server.goals.deliverables import check_claims
+
+        try:
+            claim_feedback = check_claims(ctx.messages, ctx.workspace)
+        except Exception as e:  # noqa: BLE001 — a checker bug must never abort a turn
+            log.warning("deliverable check failed (%s); skipping", e)
+            claim_feedback = None
+        if claim_feedback:
+            if ctx.attempt >= cap:
+                return GateDecision(
+                    block=False,
+                    frame={
+                        "goal_cap_reached": {
+                            "attempt": ctx.attempt,
+                            "cap": cap,
+                            "source": "deliverable",
+                        }
+                    },
+                    source="cap",
+                )
+            log.info("completion gate: deliverable claim unmet; continuing the turn")
+            return GateDecision(
+                block=True,
+                feedback=claim_feedback,
+                frame={"stop_hook_block": {"reason": claim_feedback, "attempt": ctx.attempt + 1}},
+                source="deliverable",
+            )
+
     # ── Phase 2: goal evaluator (only if the flag is on and a goal is active) ─
     if not _flag_on("goal_loop"):
         return GateDecision(block=False)

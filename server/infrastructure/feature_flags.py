@@ -211,6 +211,17 @@ register_flag(
 )
 
 register_flag(
+    "deliverable_check",
+    description=(
+        "Before a turn ends, verify every file path the reply claims was saved "
+        "exists and is non-empty (and an artifact card it mentions was actually "
+        "created); otherwise the turn continues with the missing items named"
+    ),
+    default=True,
+    category="agent",
+)
+
+register_flag(
     "dream_consolidation",
     description="Cross-session memory distillation after 24h and 5 sessions",
     default=True,
