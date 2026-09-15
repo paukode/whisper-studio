@@ -217,8 +217,15 @@ async def _query_selector(query: str, manifest: str, model_id: str) -> list[str]
         )
         body = json.loads(response["body"].read())
         text = body.get("content", [{}])[0].get("text", "")
-        # Parse JSON response
-        parsed = json.loads(text)
+        # Parse JSON response. A bare "Expecting value: line 1 column 1" said
+        # nothing about WHICH model answered or WHAT it said (61 times in one
+        # log); name both so the degradation is diagnosable.
+        try:
+            parsed = json.loads(text)
+        except ValueError as e:
+            raise ValueError(
+                f"selector model {haiku_model!r} returned non-JSON ({e}): {text[:160]!r}"
+            ) from e
         return parsed.get("selected", [])
 
     return await asyncio.to_thread(_invoke)
