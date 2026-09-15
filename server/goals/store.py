@@ -11,6 +11,8 @@ is a small JSON blob holding the live counters and last verdict:
 from __future__ import annotations
 
 import json
+import sqlite3
+from datetime import datetime, timezone
 
 from server.infrastructure.sessions import _get_conn
 
@@ -62,10 +64,32 @@ def set_goal(session_id: str, goal: str, *, set_at: str = "") -> dict:
     if goal:
         state.update(active=True, set_at=set_at)
     with _get_conn() as conn:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE sessions SET goal = ?, goal_state = ? WHERE id = ?",
             (goal, json.dumps(state), session_id),
         )
+        if cur.rowcount == 0:
+            # A brand-new session: the frontend creates its row on the first
+            # save, which can land AFTER /goal on an empty session. The UPDATE
+            # then matched nothing and the goal was silently lost while the
+            # route still reported ok. Insert the placeholder row the same way
+            # sessions._append_message_sync does; the next save fills in the
+            # title and metadata without touching goal/goal_state.
+            now = set_at or datetime.now(timezone.utc).isoformat()
+            try:
+                conn.execute(
+                    "INSERT INTO sessions (id, title, custom_title, generated_title, "
+                    "created_at, updated_at, segments, chat_history, speaker_names, "
+                    "goal, goal_state) "
+                    "VALUES (?, 'New Session', 0, 0, ?, ?, '[]', '[]', '{}', ?, ?)",
+                    (session_id, now, now, goal, json.dumps(state)),
+                )
+            except sqlite3.IntegrityError:
+                # Another writer inserted the row in the gap; apply the goal to it.
+                conn.execute(
+                    "UPDATE sessions SET goal = ?, goal_state = ? WHERE id = ?",
+                    (goal, json.dumps(state), session_id),
+                )
     return {"goal": goal, "state": state}
 
 
