@@ -201,6 +201,13 @@ export async function readSSEStream(
             if (store().streamStatus) {
               store().setStreamStatus(null);
             }
+            // Prose that was streamed BEFORE this tool call is a finished
+            // thought; commit it as its own bubble so the text the model
+            // writes after the tool work lands as a separate, later bubble.
+            // Concatenating both into one reply produced "No. ... Yes, it's
+            // saved now." in a single message. Tool-only segments are left
+            // to accumulate (no text = nothing to separate).
+            if (fullResponse) flushSegment();
             // Remove empty thinking element if no thinking content
             if (!thinkingText) {
               store().appendThinkingToken(''); // signal no thinking
