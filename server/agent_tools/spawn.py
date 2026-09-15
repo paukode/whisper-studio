@@ -14,6 +14,112 @@ log = logging.getLogger("whisper-studio")
 # agents use, nor pile up unbounded background work.
 DETACHED_PER_SESSION_CAP = 8
 
+# Max concurrently-RUNNING live (non-detached) agents per session, counting
+# every team_create member and every blocking spawn_agent call, nested or
+# not. Without this, one team_create can fan out arbitrarily wide, and a
+# team member that itself calls team_create adds its own members to the
+# same unbounded total — the exact shape of a real incident where one
+# request queued 56 agent slots and blew a $600 cost cap.
+#
+# 16, matching server.agents.providers.base.AGENT_CALL_CONCURRENCY — the ONE
+# knob every agent model call is throttled through (also equal to
+# server.workflows.runtime.WORKFLOW_MAX_CONCURRENCY; see that module and
+# tests/test_audit_remainder.py for why: a past mismatch there let 16 agents
+# get dispatched against a 4-wide pool, so 12 sat blocked). A second,
+# independently-chosen number here would reintroduce exactly that class of
+# bug for this path, so this stays locked to the same value — verified by
+# test_agent_recursion_guards.py, not just this comment.
+MAX_CONCURRENT_AGENTS_PER_SESSION = 16
+_active_agent_counts: dict[str, int] = {}
+
+
+def _try_reserve_agent_slot(session_id: str) -> bool:
+    """Reserve one of MAX_CONCURRENT_AGENTS_PER_SESSION concurrent slots.
+
+    Synchronous and await-free by design: asyncio only switches between
+    coroutines at an ``await``, so a check-then-increment with no ``await``
+    in between can't race even when many siblings are scheduled together
+    (e.g. team_create's ``asyncio.gather``). Call ``_release_agent_slot``
+    exactly once for every reservation that returns True, in a ``finally``.
+    """
+    running = _active_agent_counts.get(session_id, 0)
+    if running >= MAX_CONCURRENT_AGENTS_PER_SESSION:
+        return False
+    _active_agent_counts[session_id] = running + 1
+    return True
+
+
+def _release_agent_slot(session_id: str) -> None:
+    _active_agent_counts[session_id] = max(0, _active_agent_counts.get(session_id, 1) - 1)
+
+
+def _concurrency_limit_message() -> str:
+    return (
+        f"[Concurrency limit] {MAX_CONCURRENT_AGENTS_PER_SESSION} agents are "
+        "already running in this session. Wait for some to finish (task_status "
+        "/ list_agents) before starting more, or shrink this team."
+    )
+
+
+def _budget_exceeded_message(session_id: str) -> str | None:
+    """'[Budget exceeded] ...' if this session's cost cap is ALREADY over,
+    else None. Checked before dispatching a new agent — not only reactively
+    inside its own round loop (server.chat.engine.runner's check_budget call,
+    which is the sole existing call site) — so agent N+1 in a team never
+    starts once agents 1..N's combined spend already cleared the cap. Without
+    this, every sibling found out only after starting, each spending real
+    tokens (system prompt, tool catalog) to reach its OWN first check —
+    exactly why a real incident showed several agents each failing at a
+    different, already-over-limit dollar figure instead of none of them
+    starting at all.
+    """
+    from server.costs.budget import check_budget
+
+    exceeded = check_budget(session_id)
+    if exceeded is None:
+        return None
+    return f"[Budget exceeded] {exceeded.message}"
+
+
+def _persist_agent_result(
+    session_id: str, task: str, agent_type: str, model_id: str | None, result
+) -> None:
+    """Write a finished team/spawn_agent's result into the durable task
+    registry (server/tasks/registry.py), keyed by its OWN agent_id — the same
+    store a detached agent already lands in (server/tasks/agents.py), so
+    task_output/task_status can find it later exactly the same way regardless
+    of how the agent was started. Without this, a live agent's output existed
+    only in the tool result the calling turn already read once: gone the
+    moment it's out of context (compaction, a later round, a fresh turn) —
+    which is what forced a real incident to spawn a whole EXTRA agent whose
+    only job was asking already-finished siblings to repeat themselves,
+    something task_output could not do because they were never in this store.
+    Best-effort: a registry write failure here must never fail the agent run
+    it's merely recording.
+    """
+    agent_id = getattr(result, "agent_id", "") or ""
+    if not agent_id:
+        return  # pre-flight failure (never actually ran) — nothing to key by
+    try:
+        from server.tasks import registry
+
+        registry.create_task(
+            "agent",
+            session_id=session_id,
+            title=task,
+            meta={"agent_type": agent_type, "model": model_id or ""},
+            task_id=agent_id,
+        )
+        status = {"completed": "completed", "stopped": "stopped"}.get(result.status, "failed")
+        registry.finish_task(
+            agent_id,
+            status=status,
+            exit_code=None,
+            result_text=(result.output or "").strip(),
+        )
+    except Exception as e:
+        log.debug("agent result persistence failed: %s", e)
+
 
 def _spawn_label(task: str, max_len: int = 60) -> str:
     """A short, single-line title for a spawned agent's card, from its task."""
@@ -188,20 +294,31 @@ async def execute_spawn_agent(
         # exactly: no detach, no ephemeral agent_definition, no isolation — a
         # nested spawn never supported those, and this preserves that scope
         # rather than quietly widening it.
-        result = await run_agent(
-            task,
-            agent_type=tool_input.get("agent_type", "general"),
-            effort_label=effort_label,
-            parent_agent_id=parent_agent_id,
-            session_id=session_id,
-            context=context,
-            depth=depth + 1,
-            # Without an explicit override the child inherits the parent's
-            # (session) model rather than its agent-type default, so the
-            # whole tree uses one model.
-            model_id_override=model_id,
-            team_id=team_id,
-            event_channel=event_channel,
+        _budget_msg = _budget_exceeded_message(session_id)
+        if _budget_msg:
+            return _budget_msg
+        if not _try_reserve_agent_slot(session_id):
+            return _concurrency_limit_message()
+        try:
+            result = await run_agent(
+                task,
+                agent_type=tool_input.get("agent_type", "general"),
+                effort_label=effort_label,
+                parent_agent_id=parent_agent_id,
+                session_id=session_id,
+                context=context,
+                depth=depth + 1,
+                # Without an explicit override the child inherits the parent's
+                # (session) model rather than its agent-type default, so the
+                # whole tree uses one model.
+                model_id_override=model_id,
+                team_id=team_id,
+                event_channel=event_channel,
+            )
+        finally:
+            _release_agent_slot(session_id)
+        _persist_agent_result(
+            session_id, task, tool_input.get("agent_type", "general"), model_id, result
         )
         warning_line = f"[model override] {model_warning}\n" if model_warning else ""
         return (
@@ -242,6 +359,17 @@ async def execute_spawn_agent(
                     payload["model_warning"] = model_warning
             out = json.dumps(payload)
         return out
+
+    # Live (non-detached) spawns share the same session-wide concurrency cap
+    # and pre-flight budget check as team_create members — a blocking
+    # spawn_agent call is still a new agent starting, and detached agents
+    # already have their own separate cap above, so these checks sit after
+    # that branch returns.
+    _budget_msg = _budget_exceeded_message(session_id)
+    if _budget_msg:
+        return json.dumps({"status": "failed", "output": _budget_msg})
+    if not _try_reserve_agent_slot(session_id):
+        return json.dumps({"status": "failed", "output": _concurrency_limit_message()})
 
     # Wrap the single agent in a one-member "team" so its live tool_call/
     # tool_result/text events render in the rich TeamReportCard (the same view
@@ -311,6 +439,7 @@ async def execute_spawn_agent(
         stopped_by_user = True
         result = None
     finally:
+        _release_agent_slot(session_id)
         _teams.get(team_id, {}).pop("task", None)
         # team_completed must fire on EVERY exit — skipping it on the exception
         # paths left the card stuck at "running" forever.
@@ -338,6 +467,7 @@ async def execute_spawn_agent(
         return json.dumps(stopped_payload)
 
     _record_agent_cost(session_id, model_id, result)
+    _persist_agent_result(session_id, task, display_agent_type, model_id, result)
 
     # Pre-flight failures (data-retention gate, no cloud model, depth cap)
     # return status="failed" WITHOUT emitting any per-agent event — publish a

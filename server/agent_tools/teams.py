@@ -7,7 +7,14 @@ import asyncio
 import json
 import uuid
 
-from .spawn import _record_agent_cost
+from .spawn import (
+    _budget_exceeded_message,
+    _concurrency_limit_message,
+    _persist_agent_result,
+    _record_agent_cost,
+    _release_agent_slot,
+    _try_reserve_agent_slot,
+)
 
 # In-memory team store
 _teams: dict[str, dict] = {}
@@ -37,8 +44,24 @@ async def execute_team_create(
     model_id: str,
     session_id: str = "default",
     effort_label: str | None = None,
+    *,
+    parent_agent_id: str | None = None,
+    depth: int = 0,
 ) -> tuple[str, dict]:
-    """Spawn multiple agents in parallel with full tool loops."""
+    """Spawn multiple agents in parallel with full tool loops.
+
+    ``parent_agent_id``/``depth`` are set by server.tool_router.route_tool
+    when this call originates from INSIDE another agent's own turn (the same
+    ambient server.agents.runtime.agent_nesting_ctx that spawn_agent already
+    reads) — a team spawned from inside a running agent must inherit that
+    agent's recursion depth so run_agent's MAX_DEPTH guard actually applies to
+    team members. Left at their defaults, every team_create call ran its
+    members at depth 0 regardless of how deeply nested the calling agent
+    already was, letting a team member's own team_create recurse without
+    limit — the mechanism behind a real incident where one request queued 56
+    agent slots. A top-level call from interactive chat leaves both at their
+    defaults, exactly as before this parameter pair existed.
+    """
     from server.agents.event_bus import event_bus
     from server.agents.runtime import run_agent as run_agent_fn
 
@@ -82,6 +105,23 @@ async def execute_team_create(
         agent_type = agent_spec.get("agent_type", "general")
         name = agent_spec.get("name")
         ctx = f"Team: {team_name}. {description}"
+        _budget_msg = _budget_exceeded_message(session_id)
+        if _budget_msg:
+            return {
+                "name": name,
+                "agent_type": agent_type,
+                "task": task,
+                "result": _budget_msg,
+                "status": "failed",
+            }
+        if not _try_reserve_agent_slot(session_id):
+            return {
+                "name": name,
+                "agent_type": agent_type,
+                "task": task,
+                "result": _concurrency_limit_message(),
+                "status": "failed",
+            }
         try:
             result = await run_agent_fn(
                 task,
@@ -93,8 +133,11 @@ async def execute_team_create(
                 # Every team member uses the session-selected model + effort.
                 model_id_override=model_id,
                 effort_label=effort_label,
+                parent_agent_id=parent_agent_id,
+                depth=depth + 1,
             )
             _record_agent_cost(session_id, model_id, result)
+            _persist_agent_result(session_id, task, agent_type, model_id, result)
             return {
                 "name": name,
                 "agent_id": result.agent_id,
@@ -112,6 +155,8 @@ async def execute_team_create(
                 "result": str(e),
                 "status": "error",
             }
+        finally:
+            _release_agent_slot(session_id)
 
     # Run the members through a named task so the stop endpoint
     # (POST /api/teams/{team_id}/stop) can cancel the whole team mid-flight.

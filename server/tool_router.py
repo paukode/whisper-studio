@@ -439,7 +439,13 @@ async def route_tool(
     # interactive chat) so a nested call threads the calling agent's real
     # id/depth/team/event-channel through instead of behaving as a fresh,
     # unrelated top-level spawn every time.
-    if tool_name in ("spawn_agent", "send_message", "receive_messages", "complete_coordination"):
+    if tool_name in (
+        "spawn_agent",
+        "send_message",
+        "receive_messages",
+        "complete_coordination",
+        "team_create",
+    ):
         from server.agents.runtime import agent_nesting_ctx
 
         _nesting = agent_nesting_ctx.get()
@@ -517,7 +523,12 @@ async def route_tool(
         from server.agent_tools import execute_team_create
 
         output, team_payload = await execute_team_create(
-            tool_input, model_id, session_id, effort_label=effort_label
+            tool_input,
+            model_id,
+            session_id,
+            effort_label=effort_label,
+            parent_agent_id=_nesting["agent_id"] if _nesting else None,
+            depth=_nesting["depth"] if _nesting else 0,
         )
         side_effects.append({"team_results": team_payload})
         return output, side_effects

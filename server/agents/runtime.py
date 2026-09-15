@@ -636,13 +636,15 @@ async def _run_agent_loop(
     if deferred_tool_index:
         system += "\n\n" + deferred_tool_index
 
-    from server.agents.tools import get_agent_runtime_tools
+    from server.agents.tools import get_agent_runtime_tools, strip_delegation_tools_at_depth_limit
 
     existing_names = {t["name"] for t in all_tools}
     for t in get_agent_runtime_tools(agent_id, depth):
         if t["name"] not in existing_names:
             all_tools.append(t)
             existing_names.add(t["name"])
+
+    all_tools = strip_delegation_tools_at_depth_limit(all_tools, depth)
 
     tools = filter_tools_for_agent(all_tools, config)
 
