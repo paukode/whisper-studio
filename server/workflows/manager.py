@@ -97,13 +97,50 @@ def _task_result_text(status: str, outcome: dict) -> str:
     )
     if outcome.get("error"):
         return f"{head}\n\nError: {outcome['error']}"
-    try:
-        body = json.dumps(outcome.get("result"), indent=2)
-    except (TypeError, ValueError):
-        body = str(outcome.get("result"))
-    if body and body != "null":
+    body = _render_result(outcome.get("result"))
+    if body:
         return f"{head}\n\nResult:\n{body[:4000]}"
     return head
+
+
+def _render_result(value, indent: int = 0) -> str:
+    """Readable text for a script's return value.
+
+    This is what the task card shows and the model reads next turn, so it is
+    prose, not JSON: json.dumps escaped every quote as \\u2019 and every
+    paragraph break as a literal \\n, and the card rendered exactly that. Strings
+    are emitted as they are, lists as one item per line, dicts as key: value.
+    """
+    pad = "  " * indent
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        text = value.strip()
+        return "\n".join(f"{pad}{line}" for line in text.splitlines()) if pad else text
+    if isinstance(value, bool | int | float):
+        return f"{pad}{value}"
+    if isinstance(value, dict):
+        lines = []
+        for k, v in value.items():
+            if isinstance(v, dict | list) or (isinstance(v, str) and "\n" in v):
+                lines.append(f"{pad}{k}:")
+                lines.append(_render_result(v, indent + 1))
+            else:
+                lines.append(f"{pad}{k}: {_render_result(v).strip()}")
+        return "\n".join(lines)
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            if isinstance(item, dict | list):
+                lines.append(f"{pad}-")
+                lines.append(_render_result(item, indent + 1))
+            else:
+                lines.append(f"{pad}- {_render_result(item).strip()}")
+        return "\n".join(lines)
+    try:
+        return f"{pad}{json.dumps(value, ensure_ascii=False)}"
+    except (TypeError, ValueError):
+        return f"{pad}{value}"
 
 
 def resolve_workflow_effort(effort_label: str | None, model_key: str) -> str | None:

@@ -25,6 +25,21 @@ _server_loop: asyncio.AbstractEventLoop | None = None
 RESULT_TAIL_MAX = 2048
 
 
+def _result_excerpt(kind: str, text: str) -> str:
+    """The slice of a task's result the card shows, capped at RESULT_TAIL_MAX.
+
+    A shell task's output is a log: the END is what matters, so keep the
+    tail. A workflow result is a report that LEADS with its headline (status,
+    agents, cost) and the script's findings, so keep the head; taking the tail
+    there showed the card a mid-sentence fragment with the headline cut off.
+    """
+    if len(text) <= RESULT_TAIL_MAX:
+        return text
+    if kind == "workflow":
+        return text[: RESULT_TAIL_MAX - 1] + "…"
+    return text[-RESULT_TAIL_MAX:]
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -125,7 +140,7 @@ def emit_task_event(session_id: str, event_type: str, task: dict) -> None:
         "status": task.get("status", ""),
         "exit_code": task.get("exit_code"),
         "duration_ms": _duration_ms(task),
-        "result_tail": (task.get("result_text") or "")[-RESULT_TAIL_MAX:],
+        "result_tail": _result_excerpt(task.get("kind", ""), task.get("result_text") or ""),
         "timestamp": _utc_now_iso(),
     }
     emit_session_event(session_id, role="task_event", payload_key="taskEvent", payload=payload)
