@@ -6,6 +6,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { getActiveTranscriptionStore } from '@/stores/sessionRuntimes';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { ChatMessage } from './ChatMessage';
+import { groupToolOnlyRuns } from './groupToolOnlyRuns';
 import { resolveTaskCheckpoints } from './TaskCard';
 import { StreamingMessage } from './StreamingMessage';
 import { ChatInput } from './ChatInput';
@@ -57,6 +58,11 @@ export const ChatPanel: React.FC = () => {
   // Session history is loaded into chatStore when switching sessions.
   const allMessages = messages;
   const hasMessages = messages.length > 0 || isStreaming;
+  // Consecutive tool-only assistant rows (every agent card commits the
+  // in-progress segment, leaving bare "ACTIVITY N steps" rows behind) render
+  // as ONE entry. Indices stay real so actions and checkpoints still address
+  // the right store rows.
+  const displayEntries = useMemo(() => groupToolOnlyRuns(allMessages), [allMessages]);
 
   // Tasks rows are deduped at the conversation level: a row appears only at a
   // turn where the cumulative task state changed (computeTaskCheckpoints), so
@@ -367,15 +373,20 @@ export const ChatPanel: React.FC = () => {
         )}
 
         {/* Rendered messages */}
-        {allMessages.map((msg, idx) => {
+        {displayEntries.map((entry) => {
+          const { message: msg, index: idx, indices } = entry;
           const key = `${msg.timestamp}-${idx}`;
+          // A merged run answers to its first store index; its Tasks
+          // checkpoint is the last one any folded row carried.
+          const checkpoint =
+            indices.map((i) => taskCheckpoints.get(i) ?? null).filter(Boolean).pop() ?? null;
           return (
             <ChatMessage
               key={key}
               message={msg}
               index={idx}
-              taskCheckpoint={taskCheckpoints.get(idx) ?? null}
-              taskCheckpointLive={idx === liveCheckpointIdx}
+              taskCheckpoint={checkpoint}
+              taskCheckpointLive={indices.includes(liveCheckpointIdx)}
               noEnter={noEnterKeys.has(key)}
             />
           );
