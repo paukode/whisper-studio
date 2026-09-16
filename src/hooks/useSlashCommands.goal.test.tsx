@@ -86,3 +86,39 @@ describe('useSlashCommands – /goal', () => {
     expect(chatStream.sendMidTurn).not.toHaveBeenCalled();
   });
 });
+
+describe('useSlashCommands – /goal gate', () => {
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"ok":true,"gates":[{"command":"npm test","failures":0}]}', { status: 200 }),
+    );
+    useGoalStore.getState().clearGoal('goal-sess');
+    getChatStore('goal-sess').getState().setStreaming(false);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('/goal gate add posts the command and never sends a chat message', async () => {
+    const chatStream = { send: vi.fn(), sendMidTurn: vi.fn(), abort: vi.fn() };
+    const { result } = renderHook(() =>
+      useSlashCommands(makeOpts({ chatStream: chatStream as unknown as UseSlashCommandsOptions['chatStream'] })),
+    );
+    expect(result.current.handleSlashCommand('/goal gate add npm test -- --run')).toBe(true);
+    await Promise.resolve();
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/sessions/goal-sess/goal/gates',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ command: 'npm test -- --run' }) }),
+    );
+    expect(chatStream.send).not.toHaveBeenCalled();
+  });
+
+  it('/goal gate lists, /goal gate remove N deletes, /goal gate clear wipes', async () => {
+    const { result } = renderHook(() => useSlashCommands(makeOpts()));
+    result.current.handleSlashCommand('/goal gate');
+    result.current.handleSlashCommand('/goal gate remove 2');
+    result.current.handleSlashCommand('/goal gate clear');
+    await Promise.resolve();
+    expect(fetch).toHaveBeenCalledWith('/api/sessions/goal-sess/goal/gates');
+    expect(fetch).toHaveBeenCalledWith('/api/sessions/goal-sess/goal/gates/2', { method: 'DELETE' });
+    expect(fetch).toHaveBeenCalledWith('/api/sessions/goal-sess/goal/gates', { method: 'DELETE' });
+  });
+});

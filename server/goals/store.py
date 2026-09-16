@@ -147,3 +147,76 @@ def reset_for_new_turn(session_id: str) -> None:
 def is_active(session_id: str) -> bool:
     g = get_goal(session_id)
     return bool(g["goal"]) and bool(g["state"].get("active"))
+
+
+# ── Quality gates (shell commands that must exit 0 before the judge runs) ────
+#
+# Stored on goal_state["gates"] as [{"command": str, "failures": int}, ...].
+# They survive /resume and compaction with the goal, and are cleared with it.
+
+
+def get_gates(session_id: str) -> list[dict]:
+    gates = _load_state(session_id).get("gates")
+    if not isinstance(gates, list):
+        return []
+    out = []
+    for g in gates:
+        if isinstance(g, dict) and str(g.get("command") or "").strip():
+            out.append({"command": str(g["command"]), "failures": int(g.get("failures") or 0)})
+        elif isinstance(g, str) and g.strip():
+            out.append({"command": g.strip(), "failures": 0})
+    return out
+
+
+def add_gate(session_id: str, command: str) -> list[dict]:
+    command = (command or "").strip()
+    state = _load_state(session_id)
+    gates = get_gates(session_id)
+    if command and command not in {g["command"] for g in gates}:
+        gates.append({"command": command, "failures": 0})
+    state["gates"] = gates
+    _save_state(session_id, state)
+    return gates
+
+
+def remove_gate(session_id: str, index: int) -> list[dict]:
+    """Remove the gate at 1-based ``index``; out-of-range is a no-op."""
+    state = _load_state(session_id)
+    gates = get_gates(session_id)
+    if 1 <= index <= len(gates):
+        gates.pop(index - 1)
+    state["gates"] = gates
+    _save_state(session_id, state)
+    return gates
+
+
+def clear_gates(session_id: str) -> None:
+    state = _load_state(session_id)
+    state["gates"] = []
+    _save_state(session_id, state)
+
+
+def record_gate_results(session_id: str, results: dict[str, bool]) -> list[dict]:
+    """Bump the failure counter of every gate that failed, reset the ones that
+    passed. Returns the updated list."""
+    state = _load_state(session_id)
+    gates = get_gates(session_id)
+    for g in gates:
+        passed = results.get(g["command"])
+        if passed is True:
+            g["failures"] = 0
+        elif passed is False:
+            g["failures"] = int(g.get("failures") or 0) + 1
+    state["gates"] = gates
+    _save_state(session_id, state)
+    return gates
+
+
+def pause_goal(session_id: str, reason: str = "") -> None:
+    """Deactivate the goal without clearing it (an exhausted gate, a cap)."""
+    state = _load_state(session_id)
+    state["active"] = False
+    state["last_verdict"] = "paused"
+    if reason:
+        state["last_feedback"] = reason
+    _save_state(session_id, state)
