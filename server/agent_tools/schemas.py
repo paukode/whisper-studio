@@ -79,6 +79,110 @@ SKILL_LIST_TOOL = {
     },
 }
 
+SKILL_MANAGE_TOOL = {
+    "name": "skill_manage",
+    "description": (
+        "Create, read and maintain your own skills (procedural memory: how to do a class "
+        "of task the way this user wants). Actions: view (SKILL.md text and file list), "
+        "create (new folder skill from description + content), patch (replace one unique "
+        "old_text with new_text), append (add content at the end), write_file / "
+        "remove_file (a support file under references/, scripts/, templates/ or assets/), "
+        "delete (only skills you created). Always view before patching. Prefer patching an "
+        "existing skill over creating a new one; name new skills at the class level "
+        "(deploy_staging, weekly_report), never after today's task. Write procedure first, "
+        "pitfalls as imperative rules with a one-clause why, no ticket numbers or dates."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": [
+                    "view",
+                    "create",
+                    "patch",
+                    "append",
+                    "write_file",
+                    "remove_file",
+                    "delete",
+                ],
+            },
+            "name": {
+                "type": "string",
+                "description": "Skill name: lowercase letters, digits, '_' or '-' (2-64 chars)",
+            },
+            "description": {
+                "type": "string",
+                "description": "create: one line, at most 200 chars; it becomes the index entry",
+            },
+            "content": {
+                "type": "string",
+                "description": "create/append: markdown body; write_file: the file's text",
+            },
+            "triggers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "create: optional trigger phrases",
+            },
+            "old_text": {
+                "type": "string",
+                "description": "patch: exact unique substring to replace",
+            },
+            "new_text": {"type": "string", "description": "patch: replacement text (may be empty)"},
+            "path": {
+                "type": "string",
+                "description": "write_file/remove_file: skill-relative path, e.g. references/api.md",
+            },
+        },
+        "required": ["action", "name"],
+    },
+}
+
+SESSION_SEARCH_TOOL = {
+    "name": "session_search",
+    "description": (
+        "Search this user's past chat sessions (and this session's own stored history, "
+        "including turns that were compacted away) by full text, then read the actual "
+        "messages. No arguments: browse recent sessions. query: find sessions whose "
+        'messages match (FTS5 syntax: plain words are ANDed, "quoted phrase", OR, NOT, '
+        "prefix*); the top result includes the messages around its match. session_id + "
+        "around_index: scroll a window of messages around an index. session_id alone: read "
+        "the session (head and tail when long). Use it when the user refers to an earlier "
+        "conversation ('we discussed', 'last time', 'as I said') or when context from this "
+        "session was summarized, before asking them to repeat themselves."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Full-text query"},
+            "session_id": {
+                "type": "string",
+                "description": "Restrict to, scroll, or read one session",
+            },
+            "around_index": {
+                "type": "integer",
+                "description": "Message index to center a scroll window on (from a result's msg_index)",
+            },
+            "window": {
+                "type": "integer",
+                "description": "Messages on each side when scrolling (default 5)",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Max sessions for discovery or browse (default 5)",
+            },
+            "include_tool_output": {
+                "type": "boolean",
+                "description": (
+                    "Also search tool result payloads (file dumps, command output). Off by "
+                    "default: they are noisy. Turn on when looking for something a tool printed."
+                ),
+            },
+        },
+        "required": [],
+    },
+}
+
 # ── Notify user (BriefTool equivalent) ───────────────────────────────────────
 
 NOTIFY_USER_TOOL = {
@@ -502,6 +606,8 @@ AGENT_TOOLS = [
     CONFIG_SET_TOOL,
     SKILL_INVOKE_TOOL,
     SKILL_LIST_TOOL,
+    SKILL_MANAGE_TOOL,
+    SESSION_SEARCH_TOOL,
     NOTIFY_USER_TOOL,
     LIST_MCP_RESOURCES_TOOL,
     READ_MCP_RESOURCE_TOOL,

@@ -472,12 +472,56 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           return true;
         }
         const goalText = input.slice(6).trim(); // everything after "/goal "
-        if (goalText.toLowerCase() === 'clear') {
+        const gateMatch = /^gate(?:\s+(\S+))?(?:\s+([\s\S]+))?$/i.exec(goalText);
+        if (gateMatch) {
+          // Quality gates: shell commands that must exit 0 before the goal can
+          // be judged done. They run at every turn boundary, before the judge.
+          const sub = (gateMatch[1] || 'list').toLowerCase();
+          const rest = (gateMatch[2] || '').trim();
+          const base = `/api/sessions/${sessionId}/goal/gates`;
+          const showGates = (gates: Array<{ command: string; failures: number }>) => {
+            const lines = gates.length
+              ? gates.map((g, i) => `${i + 1}. ${g.command}${g.failures ? ` (failed ${g.failures}x)` : ''}`).join('\n')
+              : 'No quality gates. Add one with /goal gate add <command>.';
+            addToast({ type: 'info', message: lines, duration: 6000, persist: false });
+          };
+          void (async () => {
+            try {
+              if (sub === 'add') {
+                if (!rest) {
+                  addToast({ type: 'info', message: 'Usage: /goal gate add <shell command>', duration: 3000, persist: false });
+                  return;
+                }
+                const r = await fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: rest }) });
+                const data = await r.json();
+                addToast({ type: 'success', message: `Gate added. ${data.gates?.length ?? 0} gate(s) must exit 0 before the goal counts as done.`, duration: 3000, persist: false });
+              } else if (sub === 'remove') {
+                const idx = parseInt(rest, 10);
+                if (!idx) {
+                  addToast({ type: 'info', message: 'Usage: /goal gate remove <N>', duration: 3000, persist: false });
+                  return;
+                }
+                const r = await fetch(`${base}/${idx}`, { method: 'DELETE' });
+                const data = await r.json();
+                showGates(data.gates ?? []);
+              } else if (sub === 'clear') {
+                await fetch(base, { method: 'DELETE' });
+                addToast({ type: 'success', message: 'All quality gates removed.', duration: 2000, persist: false });
+              } else {
+                const r = await fetch(base);
+                const data = await r.json();
+                showGates(data.gates ?? []);
+              }
+            } catch {
+              addToast({ type: 'error', message: 'Could not update quality gates.', duration: 3000, persist: false });
+            }
+          })();
+        } else if (goalText.toLowerCase() === 'clear') {
           useGoalStore.getState().clearGoal(sessionId);
           void fetch(`/api/sessions/${sessionId}/goal`, { method: 'DELETE' }).catch(() => {});
           addToast({ type: 'success', message: 'Goal cleared.', duration: 2000, persist: false });
         } else if (!goalText) {
-          addToast({ type: 'info', message: 'Usage: /goal <text>  ·  /goal clear', duration: 3000, persist: false });
+          addToast({ type: 'info', message: 'Usage: /goal <text>  ·  /goal clear  ·  /goal gate add <command>', duration: 3000, persist: false });
         } else {
           useGoalStore.getState().setGoal(sessionId, goalText, true);
           void fetch(`/api/sessions/${sessionId}/goal`, {

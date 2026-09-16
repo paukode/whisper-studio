@@ -31,3 +31,31 @@ async def set_goal(session_id: str, request: Request):
 async def clear_goal(session_id: str):
     store.clear_goal(session_id)
     return {"ok": True}
+
+
+# ── Quality gates: /goal gate add|list|remove|clear ──────────────────────────
+
+
+@router.get("/{session_id}/goal/gates")
+async def list_gates(session_id: str):
+    return {"gates": store.get_gates(session_id)}
+
+
+@router.post("/{session_id}/goal/gates")
+async def add_gate(session_id: str, request: Request):
+    body = await request.json()
+    command = (body.get("command") or "").strip()
+    if not command:
+        return JSONResponse({"error": "command is required"}, status_code=400)
+    return {"ok": True, "gates": store.add_gate(session_id, command)}
+
+
+@router.delete("/{session_id}/goal/gates/{index}")
+async def remove_gate(session_id: str, index: int):
+    return {"ok": True, "gates": store.remove_gate(session_id, index)}
+
+
+@router.delete("/{session_id}/goal/gates")
+async def clear_gates(session_id: str):
+    store.clear_gates(session_id)
+    return {"ok": True, "gates": []}

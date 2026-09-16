@@ -83,9 +83,10 @@ def _coerce(data: dict) -> Verdict:
 def _one_shot(system: str, user: str) -> str | None:
     """Run the cheap single completion, or None if no usable model / it fails."""
     try:
-        from server.infrastructure.oneshot import one_shot
+        from server.infrastructure.auxiliary import aux_one_shot
 
-        return one_shot(system, user, max_tokens=_MAX_TOKENS, cloud_model_key="haiku")
+        # auxiliary_models.goal_evaluator picks the judge; Haiku by default.
+        return aux_one_shot("goal_evaluator", system, user, max_tokens=_MAX_TOKENS)
     except Exception as e:
         log.info("Goal evaluator one_shot unavailable: %s", e)
         return None

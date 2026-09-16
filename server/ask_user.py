@@ -70,7 +70,9 @@ CREATE_ARTIFACT_TOOL = {
         "field must be a complete, standalone HTML document with <!DOCTYPE html>. "
         "For a new request to build an app, program, tool, game, or dashboard, "
         "prefer the create_program tool first so the user can choose a single "
-        "page or a modular project; use create_artifact once the HTML is ready."
+        "page or a modular project; use create_artifact once the HTML is ready. "
+        "To change an artifact that already exists in this session, use "
+        "read_artifact and edit_artifact instead of regenerating it."
     ),
     "input_schema": {
         "type": "object",

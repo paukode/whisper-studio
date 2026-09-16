@@ -190,8 +190,14 @@ async def _query_selector(query: str, manifest: str, model_id: str) -> list[str]
     config = load_config()
     region = config.get("bedrock_region", "us-east-1")
     chat_models = config.get("chat_models", {})
-    # Use haiku for recall (cheapest model)
-    haiku_model = chat_models.get("haiku", model_id)
+    # Haiku for recall by default (cheapest model); auxiliary_models.memory_recall
+    # may name another cloud key.
+    from server.infrastructure.auxiliary import aux_model_id
+
+    haiku_model = (
+        aux_model_id("memory_recall", fallback_id=model_id, models=chat_models, config=config)
+        or model_id
+    )
 
     client = _get_recall_client(region)
 

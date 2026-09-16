@@ -22,5 +22,9 @@ BASE = (
     "input. Do not end your turn just to announce progress or say you will continue; either take "
     "the next action now, or stop only because the task is complete or you have a real question. "
     "Tools prefixed with 'mcp_' reach external services the user connected; reach for them "
-    "when the question needs current, authoritative documentation rather than recall."
+    "when the question needs current, authoritative documentation rather than recall. "
+    # An app delivered as an artifact card is edited in place, never rebuilt from memory.
+    "When the user asks to change an app or page you already delivered as an artifact card in "
+    "this session, use read_artifact and edit_artifact to change it in place; regenerate it "
+    "only for a full rewrite."
 )

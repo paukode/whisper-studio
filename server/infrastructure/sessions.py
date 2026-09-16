@@ -98,6 +98,10 @@ def _ensure_db():
             CREATE INDEX IF NOT EXISTS idx_sessions_updated
             ON sessions(updated_at DESC)
         """)
+        # Full-text mirror of session messages (migration 019 backfills it).
+        from server.infrastructure.session_search import ensure_fts
+
+        ensure_fts(conn)
 
 
 @contextmanager
@@ -289,6 +293,9 @@ def _append_message_sync(session_id: str, message: dict) -> bool:
             "UPDATE sessions SET chat_history = ?, updated_at = ? WHERE id = ?",
             (json.dumps(history), now, session_id),
         )
+        from server.infrastructure.session_search import reindex_session
+
+        reindex_session(conn, session_id, history)
     return True
 
 
@@ -408,6 +415,9 @@ def _upsert_session(
                 latched_config,
             ),
         )
+        from server.infrastructure.session_search import reindex_session
+
+        reindex_session(conn, session_id, merged_history, segments=segments, title=title)
 
 
 def _delete_session_sync(session_id: str) -> None:
@@ -429,6 +439,9 @@ def _delete_session_sync(session_id: str) -> None:
 
     with _get_conn() as conn:
         conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        from server.infrastructure.session_search import drop_session as _drop_fts
+
+        _drop_fts(conn, session_id)
         try:
             conn.execute("DELETE FROM session_costs WHERE session_id = ?", (session_id,))
         except sqlite3.OperationalError:

@@ -317,6 +317,41 @@ _registry.register(
 )
 
 
+def _build_learning_guidance(**_) -> str:
+    """When to reach for session_search and skill_manage. Flag-gated, and the
+    flags are session-stable, so this sits in the cached STATIC block."""
+    try:
+        from server.infrastructure.feature_flags import is_enabled
+    except Exception:  # noqa: BLE001
+        return ""
+    parts: list[str] = []
+    if is_enabled("session_search"):
+        parts.append(
+            "Past sessions are searchable with session_search. Before asking the user to "
+            "repeat something from an earlier session, or something from this session that "
+            "compaction summarized away, look it up there first."
+        )
+    if is_enabled("skill_self_improvement"):
+        parts.append(
+            "Skills are your procedural memory. When the user asks you to remember a way of "
+            "working, or corrects a multi-step procedure you will need again, encode it with "
+            "skill_manage (view the relevant skill first, patch it if one covers the task, "
+            "create a class-level skill only when nothing fits). Memory holds facts about the "
+            "user; skills hold how to do a class of task."
+        )
+    return ("\n\n" + " ".join(parts)) if parts else ""
+
+
+_registry.register(
+    PromptSection(
+        name="learning_guidance",
+        layer=PromptLayer.WORKSPACE,
+        priority=30,
+        builder=_build_learning_guidance,
+    )
+)
+
+
 def _build_deferred_tool_index(deferred_tool_index: str | None = None, **_) -> str:
     """Progressive tool disclosure: the compact list of not-loaded tools.
 

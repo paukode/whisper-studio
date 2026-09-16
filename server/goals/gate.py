@@ -110,6 +110,36 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
                 source="deliverable",
             )
 
+    # ── Phase 1.7: verification evidence (every turn, goal or not) ──────────
+    # Code was edited this turn but no test/lint/typecheck/build command ran
+    # green afterwards: ask for the run (or an honest blocker) instead of
+    # letting "done, should work" end the turn. Deterministic, no model call,
+    # bounded to MAX_VERIFY_NUDGES per turn on top of the shared cap.
+    if _flag_on("verify_on_stop"):
+        from server.goals.verification import verify_on_stop_feedback
+
+        try:
+            verify_feedback = verify_on_stop_feedback(ctx.messages, ctx.workspace)
+        except Exception as e:  # noqa: BLE001 - the ledger must never abort a turn
+            log.warning("verify-on-stop check failed (%s); skipping", e)
+            verify_feedback = None
+        if verify_feedback:
+            if ctx.attempt >= cap:
+                return GateDecision(
+                    block=False,
+                    frame={
+                        "goal_cap_reached": {"attempt": ctx.attempt, "cap": cap, "source": "verify"}
+                    },
+                    source="cap",
+                )
+            log.info("completion gate: code edited without fresh verification; continuing")
+            return GateDecision(
+                block=True,
+                feedback=verify_feedback,
+                frame={"stop_hook_block": {"reason": verify_feedback, "attempt": ctx.attempt + 1}},
+                source="verify",
+            )
+
     # ── Phase 2: goal evaluator (only if the flag is on and a goal is active) ─
     if not _flag_on("goal_loop"):
         return GateDecision(block=False)
@@ -124,6 +154,50 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
             frame={"goal_cap_reached": {"attempt": ctx.attempt, "cap": cap, "source": "evaluator"}},
             source="cap",
         )
+
+    # ── Phase 2a: quality gates (deterministic, before the LLM judge) ────────
+    # A red gate is proof the goal is not met: its output tail becomes the
+    # continuation feedback and the evaluator is not consulted. Every boundary
+    # re-runs a failed gate; a gate that has failed GATE_MAX_RETRIES times in a
+    # row pauses the goal rather than looping.
+    gates = goal_store.get_gates(ctx.session_id)
+    if gates:
+        from server.goals.gates import GATE_MAX_RETRIES, format_failure, run_gates
+
+        results = await asyncio.to_thread(run_gates, [g["command"] for g in gates], ctx.workspace)
+        updated = goal_store.record_gate_results(
+            ctx.session_id, {r.command: r.passed for r in results}
+        )
+        failed = [r for r in results if not r.passed]
+        if failed:
+            exhausted = [g for g in updated if g["failures"] >= GATE_MAX_RETRIES]
+            if exhausted:
+                reason = (
+                    f"quality gate `{exhausted[0]['command']}` failed {GATE_MAX_RETRIES} times; "
+                    "goal paused. Fix it manually, remove the gate, or set the goal again."
+                )
+                goal_store.pause_goal(ctx.session_id, reason)
+                return GateDecision(
+                    block=False,
+                    frame={
+                        "goal_eval": {
+                            "verdict": "blocked",
+                            "feedback": reason,
+                            "confidence": 1.0,
+                            "attempt": ctx.attempt,
+                            "cap": cap,
+                        }
+                    },
+                    source="gate",
+                )
+            feedback = format_failure(results)
+            new_count = goal_store.record_block(ctx.session_id, "not_achieved", feedback[:400])
+            return GateDecision(
+                block=True,
+                feedback=feedback,
+                frame={"stop_hook_block": {"reason": feedback[:600], "attempt": new_count}},
+                source="gate",
+            )
 
     from server.goals import Verdict
     from server.goals.evaluator import evaluate

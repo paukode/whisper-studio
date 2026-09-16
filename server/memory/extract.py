@@ -137,8 +137,13 @@ async def maybe_extract_memory(
     session_id: str,
     ws_path: str | None,
     model_id: str,
+    fork=None,
 ) -> None:
     """Post-query hook. Called as background task (fire-and-forget).
+
+    ``fork`` (a server.memory.review_fork.ReviewFork) lets the review replay
+    the turn's own cached request instead of re-sending an excerpt; None (or
+    a disabled flag) keeps the excerpt-based extraction agent.
 
     Guards:
     1. Feature flag must be enabled (via ensure_*_memory_dir)
@@ -206,18 +211,127 @@ async def maybe_extract_memory(
 
         _inflight.add(session_id)
         try:
-            await _run_extraction(
-                new_messages,
-                global_dir=global_dir,
-                project_dir=project_dir,
-                model_id=model_id,
-                session_id=session_id,
-            )
+            if fork is not None and _fork_route(fork):
+                await _run_review_fork(
+                    fork,
+                    since_index=cursor,
+                    global_dir=global_dir,
+                    project_dir=project_dir,
+                    session_id=session_id,
+                )
+            else:
+                await _run_extraction(
+                    new_messages,
+                    global_dir=global_dir,
+                    project_dir=project_dir,
+                    model_id=model_id,
+                    session_id=session_id,
+                )
         finally:
             _inflight.discard(session_id)
 
     except Exception as e:
         log.error("Memory extraction failed: %s", e, exc_info=True)
+
+
+def _fork_route(fork) -> bool:
+    """True when the review should run as a fork of the live turn: the flag is
+    on, the provider can be forked, and ``auxiliary_models.learning_review``
+    is unset, "main", or the turn's own model. A different configured model
+    means the user wants the cheaper excerpt-based agent on that model."""
+    try:
+        from server.infrastructure.auxiliary import MAIN, aux_model_key
+        from server.infrastructure.feature_flags import is_enabled
+        from server.memory.review_fork import supports_fork
+
+        if not is_enabled("learning_review_fork") or not supports_fork(fork.adapter):
+            return False
+        key = aux_model_key("learning_review", MAIN)
+        return key in (MAIN, fork.model_key)
+    except Exception as e:  # noqa: BLE001
+        log.debug("review fork routing failed (%s); using the extraction agent", e)
+        return False
+
+
+def _review_model_override(model_id: str) -> str | None:
+    """Explicit model for the excerpt-based agent when ``learning_review`` names
+    a chat_models key other than the session model; None keeps ``model_id``."""
+    try:
+        from server.chat.infra import _get_chat_models
+        from server.infrastructure.auxiliary import MAIN, aux_model_key
+
+        key = aux_model_key("learning_review", MAIN)
+        if key == MAIN:
+            return None
+        return _get_chat_models().get(key) or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _run_review_fork(
+    fork,
+    *,
+    since_index: int,
+    global_dir: str | None,
+    project_dir: str | None,
+    session_id: str,
+) -> None:
+    """Cache-parity review: replay the turn's request plus one review message."""
+    from server.infrastructure.feature_flags import is_enabled
+    from server.memory.review_fork import run_review
+
+    before = _store_snapshot(global_dir, project_dir)
+    skills_before = _skills_snapshot()
+    stats = await run_review(
+        fork,
+        since_index=since_index,
+        review_skills=is_enabled("skill_self_improvement"),
+        project_scope=bool(project_dir),
+    )
+    log.info(
+        "Learning review (fork) %s: rounds=%d tools=%s cache_read=%d in=%d out=%d",
+        stats.get("ended"),
+        stats.get("rounds", 0),
+        stats.get("tool_calls"),
+        stats.get("cache_read_tokens", 0),
+        stats.get("input_tokens", 0),
+        stats.get("output_tokens", 0),
+    )
+    after = _store_snapshot(global_dir, project_dir)
+    writes = sum(1 for k, sig in after.items() if before.get(k) != sig)
+    deletes = sum(1 for k in before if k not in after)
+    skills_after = _skills_snapshot()
+    skill_changes = sum(1 for k, sig in skills_after.items() if skills_before.get(k) != sig) + sum(
+        1 for k in skills_before if k not in skills_after
+    )
+    if writes or deletes or skill_changes:
+        publish_memory_event(
+            session_id, action="extracted", writes=writes, deletes=deletes, skills=skill_changes
+        )
+
+
+def _skills_snapshot() -> dict[str, tuple]:
+    """(skill name) -> (mtime, size) of every skill's markdown, for change detection."""
+    out: dict[str, tuple] = {}
+    try:
+        import server.skills as _sk
+
+        for name, skill in (_sk.SKILLS or {}).items():
+            path = None
+            if skill.get("skill_dir"):
+                for fn in ("SKILL.md", "skill.md"):
+                    cand = os.path.join(skill["skill_dir"], fn)
+                    if os.path.isfile(cand):
+                        path = cand
+                        break
+            if path:
+                st = os.stat(path)
+                out[name] = (st.st_mtime, st.st_size)
+            else:
+                out[name] = (0, len(skill.get("body") or ""))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def _tier_manifest(global_dir: str | None, project_dir: str | None) -> str:
@@ -288,7 +402,9 @@ async def _run_extraction(
         f"{scope_note} "
         f"Use memory_write to save new memories or update existing ones. "
         f"Use memory_read to check existing files before overwriting. "
-        f"Be selective — only save what would be valuable in future sessions."
+        f"Be selective — only save what would be valuable in future sessions. "
+        f"If the user corrected a repeatable workflow, encode it with skill_manage "
+        f"(view the relevant skill first) rather than as a memory."
     )
 
     # Snapshot the stores before the agent runs: the event must report what
@@ -302,6 +418,8 @@ async def _run_extraction(
         agent_type="memory_extractor",
         session_id=session_id,
         depth=1,  # Prevent recursive extraction
+        # auxiliary_models.learning_review may pin a cheaper model for this agent.
+        model_id_override=_review_model_override(model_id),
     )
 
     if result.status == "completed":

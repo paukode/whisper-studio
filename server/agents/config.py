@@ -75,6 +75,9 @@ WRITE_TOOLS = frozenset(
         "notify_user",
         "memory_write",
         "memory_delete",
+        # Writes skill folders under ~/.whisper/skills (server/agent_tools/
+        # skill_manage.py); dispatched directly in tool_router.py.
+        "skill_manage",
         # Execution tools. aws_cli/run_python/terminal_run are registered
         # read_only=False (so the backstop also gates them, but listing them
         # keeps the guarantee if the registry isn't populated yet) and emit the
@@ -116,6 +119,9 @@ MEMORY_RW_TOOLS = frozenset(
         "memory_write",
         "memory_list",
         "memory_delete",
+        # The learning review may also encode a corrected workflow as a skill.
+        "skill_list",
+        "skill_manage",
         "ws_read_file",
         "ws_grep",
         "ws_glob",

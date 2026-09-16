@@ -184,6 +184,14 @@ DEFAULTS = {
     # How late a missed fire may still run after the server was down (seconds).
     # Booted 09:15 for a 09:00 job → still runs; booted 11:00 → skips the day.
     "cron_misfire_grace_sec": 3600,
+    # Side-task model routing: {task: chat_models key | "main"}. Empty keeps every
+    # task on its historical default (Haiku for cheap judges and selectors, the
+    # session model for compaction and the learning review). Tasks are listed in
+    # server/infrastructure/auxiliary.py.
+    "auxiliary_models": {},
+    # Per-turn tool-call caps for the loop guard, overlaying
+    # server/chat/loop_guard.py DEFAULT_CAPS ({tool_name: max calls, 0 = off}).
+    "tool_loop_caps": {},
     # Feature flags namespace — see server/feature_flags.py
     "feature_flags": {},
 }

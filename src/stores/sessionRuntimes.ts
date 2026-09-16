@@ -203,6 +203,8 @@ interface MemoryEventPayload {
   count?: number;
   writes?: number;
   deletes?: number;
+  /** Skills created or patched by the post-turn learning review. */
+  skills?: number;
 }
 
 /** Quiet toast for background memory activity (recall happens pre-stream and
@@ -219,12 +221,14 @@ function toastMemoryEvent(sid: string, ev: MemoryEventPayload): void {
   } else {
     const w = ev.writes ?? 0;
     const d = ev.deletes ?? 0;
+    const s = ev.skills ?? 0;
     const parts: string[] = [];
     if (w) parts.push(w === 1 ? '1 memory saved' : `${w} memories saved`);
     if (d) parts.push(`${d} removed`);
+    if (s) parts.push(s === 1 ? '1 skill updated' : `${s} skills updated`);
     if (!parts.length) return;
-    message = `Memory updated: ${parts.join(', ')}`;
-    key = `memory-extracted-${w}-${d}`;
+    message = `${w || d ? 'Memory' : 'Skills'} updated: ${parts.join(', ')}`;
+    key = `memory-extracted-${w}-${d}-${s}`;
   }
   // The dedup key carries the counts: addToast's collapse path bumps a
   // counter but keeps the FIRST message, so "Recalled 2" followed by

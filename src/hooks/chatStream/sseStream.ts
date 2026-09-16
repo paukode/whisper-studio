@@ -236,6 +236,15 @@ export async function readSSEStream(
             }
           }
 
+          // ── skill_progress (arguments still streaming) ──
+          // A whole HTML app arrives as one tool call's arguments and can take
+          // minutes; without this the running card looked hung the entire time.
+          if (parsed.skill_progress) {
+            store().updateStreamToolUse(parsed.skill_progress.name, {
+              progressChars: parsed.skill_progress.chars,
+            });
+          }
+
           // ── skill_result (tool complete) ──
           if (parsed.skill_result) {
             const toolName = parsed.skill_result;

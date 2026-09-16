@@ -40,6 +40,7 @@ from .events import (
     ThinkingStart,
     ThinkingStop,
     ToolCall,
+    ToolCallProgress,
     ToolCallStart,
 )
 from .pause import paused_sessions
@@ -232,6 +233,10 @@ async def run_turn(ctx: TurnContext):
         from server.security.permissions import reset_auto_mode_breaker
 
         reset_auto_mode_breaker(_scope_id)
+        # The tool-call loop guard is turn-scoped too.
+        from server.chat.loop_guard import reset_for_turn as _reset_loop_guard
+
+        _reset_loop_guard(_scope_id)
 
     # Replay protection — skip duplicate tool_use IDs across the stream.
     _seen_tool_ids = BoundedUUIDSet(capacity=256)
@@ -366,6 +371,8 @@ async def run_turn(ctx: TurnContext):
                         yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
                     elif isinstance(ev, ToolCallStart):
                         yield f"data: {ndjson_dumps({'skill': ev.name, 'input': {}})}\n\n"
+                    elif isinstance(ev, ToolCallProgress):
+                        yield f"data: {ndjson_dumps({'skill_progress': {'name': ev.name, 'chars': ev.chars}})}\n\n"
                     elif isinstance(ev, ToolCall):
                         yield f"data: {ndjson_dumps({'skill_input': ev.name, 'input': ev.input})}\n\n"
                     elif isinstance(ev, Heartbeat):
@@ -533,6 +540,20 @@ async def run_turn(ctx: TurnContext):
                     tool_uses.append(_tu)
 
             if stop_reason == "max_tokens":
+                # A repetition loop spends the whole output budget echoing one
+                # fragment; continuing would stitch more of it on, round after
+                # round. End the turn with a clear note instead.
+                from server.chat.repetition import assistant_text, is_repetition_dominated
+
+                if is_repetition_dominated(assistant_text(result_content)):
+                    log.warning(
+                        "Round %d output is repetition-dominated; ending the turn instead of "
+                        "continuing",
+                        round_num,
+                    )
+                    yield f"data: {ndjson_dumps({'text': chr(10) + chr(10) + '*(Response stopped: the model was repeating itself. Ask again or rephrase.)*'})}\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
                 # Cut off mid-answer: strip partial tool_use and continue.
                 # The continuation is a fresh provider request (full prompt
                 # reprocessing, possible throttle backoff), so tell the UI why
@@ -638,7 +659,13 @@ async def run_turn(ctx: TurnContext):
                 if ctx.memory_hooks is not None:
                     ctx.memory_hooks(messages)
                 else:
-                    _fire_memory_hooks(messages, session_id, ctx.ws_path, ctx.model_id)
+                    _fire_memory_hooks(
+                        messages,
+                        session_id,
+                        ctx.ws_path,
+                        ctx.model_id,
+                        fork=_build_review_fork(ctx, tools, core_count, messages, result_content),
+                    )
 
                 yield "data: [DONE]\n\n"
                 return
@@ -668,6 +695,7 @@ async def run_turn(ctx: TurnContext):
                     # ultracode parent no longer fans out to plain children.
                     effort_label=ctx.effort_label,
                     unattended=ctx.unattended,
+                    guard_scope=_scope_id,
                 )
             )
 
@@ -785,7 +813,46 @@ async def run_turn(ctx: TurnContext):
     yield "data: [DONE]\n\n"
 
 
-def _fire_memory_hooks(messages, session_id, ws_path, model_id) -> None:
+def _build_review_fork(ctx: TurnContext, tools, core_count, messages, final_content):
+    """The turn's own request, packaged for the post-turn learning review
+    (server/memory/review_fork.py): same adapter, same tools, the final
+    message list plus the last assistant reply. None when the provider cannot
+    be forked (on-device) or the flag is off; the extractor then falls back
+    to the excerpt-based agent."""
+    try:
+        from server.infrastructure.feature_flags import is_enabled
+        from server.memory.review_fork import ReviewFork, supports_fork
+
+        if not is_enabled("learning_review_fork") or not supports_fork(ctx.adapter):
+            return None
+        final = [
+            b
+            for b in (final_content or [])
+            if isinstance(b, dict) and b.get("type") in ("text", "thinking")
+        ]
+        full = list(messages)
+        if final:
+            full.append({"role": "assistant", "content": final})
+        return ReviewFork(
+            adapter=ctx.adapter,
+            tools=list(tools),
+            core_count=core_count,
+            messages=full,
+            model_key=ctx.model_key,
+            model_id=ctx.model_id,
+            session_id=ctx.session_id,
+            ws_path=ctx.ws_path,
+            loop=ctx.loop,
+            executor=ctx.executor,
+            transcript=ctx.transcript,
+            attachments=ctx.current_attachments,
+        )
+    except Exception as e:  # noqa: BLE001 - the review is optional
+        log.debug("review fork not built: %s", e)
+        return None
+
+
+def _fire_memory_hooks(messages, session_id, ws_path, model_id, fork=None) -> None:
     """Post-turn fire-and-forget hooks: auto-memory extraction, session
     memory, dream consolidation. Flag-gated; failures never touch the turn."""
     from server.infrastructure.async_tasks import spawn
@@ -800,6 +867,7 @@ def _fire_memory_hooks(messages, session_id, ws_path, model_id) -> None:
                 session_id=session_id,
                 ws_path=ws_path,
                 model_id=model_id,
+                fork=fork,
             ),
             name="auto-memory-extract",
         )
