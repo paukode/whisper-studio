@@ -471,6 +471,17 @@ export function useChatStream(): UseChatStreamReturn {
         content: question,
         timestamp: new Date().toISOString(),
       });
+      // Say where the message went: it is folded into the turn that is
+      // already running and answered at that turn's end, not by a separate
+      // reply. Without this, the silence after sending read as a lost message.
+      useUIStore.getState().addToast({
+        type: 'info',
+        message:
+          'Added to the running turn. The assistant will take it into account as it continues and answer it when this turn finishes.',
+        duration: 5000,
+        key: 'midturn-queued',
+        persist: false,
+      });
     } else {
       useUIStore.getState().addToast({
         type: 'error',
