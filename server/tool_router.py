@@ -294,6 +294,22 @@ async def route_tool(
         output = await _submit(loop, executor, execute_skill_list)
         return output, side_effects
 
+    if tool_name == "skill_manage":
+        from server.agent_tools import execute_skill_manage
+
+        output = await _submit(
+            loop, executor, lambda ci=tool_input: execute_skill_manage(ci, session_id)
+        )
+        return output, side_effects
+
+    if tool_name == "session_search":
+        from server.agent_tools import execute_session_search
+
+        output = await _submit(
+            loop, executor, lambda ci=tool_input: execute_session_search(ci, session_id)
+        )
+        return output, side_effects
+
     # --- Skill invoke (agent-powered) ---
     if tool_name == "skill_invoke":
         from server.agents.runtime import run_agent

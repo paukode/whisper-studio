@@ -44,8 +44,10 @@ from .schemas import (  # noqa: F401
     READ_MCP_RESOURCE_TOOL,
     SEND_MESSAGE_TOOL,
     SEND_SESSION_MESSAGE_TOOL,
+    SESSION_SEARCH_TOOL,
     SKILL_INVOKE_TOOL,
     SKILL_LIST_TOOL,
+    SKILL_MANAGE_TOOL,
     SPAWN_AGENT_TOOL,
     TEAM_CREATE_TOOL,
     TEAM_DELETE_TOOL,
@@ -56,6 +58,8 @@ from .search_tools import (  # noqa: F401
     _SCHEMA_BYTES_MAX,
     execute_tool_search,
 )
+from .session_search_tool import execute_session_search  # noqa: F401
+from .skill_manage import execute_skill_manage  # noqa: F401
 from .skill_tools import execute_skill_list  # noqa: F401
 from .spawn import (  # noqa: F401
     DETACHED_PER_SESSION_CAP,

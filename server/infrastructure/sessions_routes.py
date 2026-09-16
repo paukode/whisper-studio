@@ -116,6 +116,16 @@ async def search_sessions(q: str = "", limit: int = 50):
     if not needle:
         return {"results": [], "truncated": False}
     limit = max(1, min(limit, 200))
+    # FTS5 first (the same index the model's session_search tool uses); the
+    # regex scan below stays as the fallback for a build without FTS5.
+    from server.infrastructure import session_search as _fts
+
+    if _fts.available():
+        hits = _fts.search(needle, limit=limit, prefix=True, roles=_fts.SIDEBAR_ROLES)
+        return {
+            "results": [{"id": h["session_id"], "snippet": h["snippet"]} for h in hits],
+            "truncated": len(hits) >= limit,
+        }
     pattern = re.compile(re.escape(needle), re.IGNORECASE)
     with _get_conn() as conn:
         rows = conn.execute(

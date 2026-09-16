@@ -59,6 +59,7 @@ _BUILTIN_CONCURRENT_SAFE = {
     "list_agents",
     "memory_read",
     "memory_list",
+    "session_search",
 }
 
 
