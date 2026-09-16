@@ -53,6 +53,22 @@ class ToolCall:
     input: dict = field(default_factory=dict)
 
 
+# Adapters report tool-argument streaming progress once per this many chars.
+# A whole single-file app arrives as one tool call's arguments and can take
+# minutes; below this size nothing is emitted (small calls stay frame-free).
+TOOL_ARGS_PROGRESS_STEP = 4096
+
+
+@dataclass(frozen=True)
+class ToolCallProgress:
+    """Tool-call arguments are still streaming: ``chars`` received so far.
+    Progress only, never the content; the UI shows a size next to the
+    running tool so a long generation does not read as a hang."""
+
+    name: str
+    chars: int
+
+
 @dataclass(frozen=True)
 class Usage:
     """Token truth for the round, when the provider reports it. ``exact`` is
@@ -109,6 +125,7 @@ RoundEvent = (
     | ThinkingDelta
     | ThinkingStop
     | ToolCallStart
+    | ToolCallProgress
     | ToolCall
     | Usage
     | RoundError

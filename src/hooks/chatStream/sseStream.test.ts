@@ -405,3 +405,33 @@ describe('sendApprovalContinuation', () => {
     expect(messages[0].content).toContain('already has a response in progress');
   });
 });
+
+describe('readSSEStream skill_progress', () => {
+  afterEach(() => {
+    for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
+  });
+
+  it('records the argument size on the running tool while a large call streams', async () => {
+    const sid = 'sess-progress';
+    const store = getChatStore(sid);
+    const seen: Array<{ name: string; updates: Record<string, unknown> }> = [];
+    const original = store.getState().updateStreamToolUse;
+    store.setState({
+      updateStreamToolUse: (name, updates) => {
+        seen.push({ name, updates: updates as Record<string, unknown> });
+        original(name, updates);
+      },
+    });
+    const res = sseResponse([
+      { skill: 'create_artifact', input: {} },
+      { skill_progress: { name: 'create_artifact', chars: 8192 } },
+      { skill_progress: { name: 'create_artifact', chars: 16384 } },
+    ]);
+
+    await readSSEStream(res, sid, new AbortController().signal);
+
+    const progress = seen.filter((s) => 'progressChars' in s.updates);
+    expect(progress.map((s) => s.updates.progressChars)).toEqual([8192, 16384]);
+    expect(progress.every((s) => s.name === 'create_artifact')).toBe(true);
+  });
+});

@@ -23,6 +23,7 @@ from server.infrastructure.errors import (
 )
 
 from .events import (
+    TOOL_ARGS_PROGRESS_STEP,
     RoundError,
     RoundResult,
     TextDelta,
@@ -30,6 +31,7 @@ from .events import (
     ThinkingStart,
     ThinkingStop,
     ToolCall,
+    ToolCallProgress,
     ToolCallStart,
     Usage,
 )
@@ -307,6 +309,14 @@ class AnthropicAdapter:
                         and current_block["type"] == "tool_use"
                     ):
                         current_block["input_json"] += delta.get("partial_json", "")
+                        # A large tool argument (a whole HTML app) streams for
+                        # minutes with nothing else to show: report its size.
+                        _n = len(current_block["input_json"])
+                        if _n >= current_block.get("next_progress", TOOL_ARGS_PROGRESS_STEP):
+                            current_block["next_progress"] = (
+                                _n // TOOL_ARGS_PROGRESS_STEP + 1
+                            ) * TOOL_ARGS_PROGRESS_STEP
+                            yield ToolCallProgress(name=current_block["name"], chars=_n)
 
                 elif event_type == "content_block_stop":
                     if current_block and current_block["type"] == "thinking":

@@ -20,6 +20,8 @@ export const SSEEventDataSchema = z.object({
   input: z.record(z.string(), z.unknown()).optional(),
   skill_result: z.string().optional(),
   output: z.string().optional(),
+  /** Tool-call arguments still streaming (a large artifact): size so far. */
+  skill_progress: z.object({ name: z.string(), chars: z.number() }).optional(),
 
   // Approvals — generic shape; `preview` selects the renderer.
   approval_request: z.object({

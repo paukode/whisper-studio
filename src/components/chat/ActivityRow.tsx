@@ -135,6 +135,12 @@ function displayName(name: string): string {
 }
 
 /** Build a one-line description of what this tool call did. */
+/** "12 KB" style size for a tool call whose arguments are still arriving. */
+function formatKb(chars: number): string {
+  const kb = chars / 1024;
+  return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
+}
+
 function summariseTool(tool: ToolUseEvent): string {
   const input = (tool.input ?? {}) as Record<string, unknown>;
   const name = tool.toolName;
@@ -299,6 +305,11 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools }) => {
                 {detail && <span className="activity-step-detail">{detail}</span>}
                 <span className="activity-step-spacer" />
                 <span className="activity-step-status">
+                  {isRunning && tool.progressChars ? (
+                    <span className="activity-step-detail" title="Tool arguments received so far">
+                      {formatKb(tool.progressChars)}
+                    </span>
+                  ) : null}
                   {isRunning && <span className="activity-spinner" aria-label="running">◐</span>}
                   {tool.status === 'complete' && <span className="activity-check">✓</span>}
                   {isError && <span className="activity-x">⚠</span>}

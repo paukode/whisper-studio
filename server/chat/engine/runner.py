@@ -40,6 +40,7 @@ from .events import (
     ThinkingStart,
     ThinkingStop,
     ToolCall,
+    ToolCallProgress,
     ToolCallStart,
 )
 from .pause import paused_sessions
@@ -370,6 +371,8 @@ async def run_turn(ctx: TurnContext):
                         yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
                     elif isinstance(ev, ToolCallStart):
                         yield f"data: {ndjson_dumps({'skill': ev.name, 'input': {}})}\n\n"
+                    elif isinstance(ev, ToolCallProgress):
+                        yield f"data: {ndjson_dumps({'skill_progress': {'name': ev.name, 'chars': ev.chars}})}\n\n"
                     elif isinstance(ev, ToolCall):
                         yield f"data: {ndjson_dumps({'skill_input': ev.name, 'input': ev.input})}\n\n"
                     elif isinstance(ev, Heartbeat):

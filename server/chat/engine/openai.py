@@ -31,6 +31,7 @@ from server.infrastructure.errors import PromptTooLongError
 
 from . import windows
 from .events import (
+    TOOL_ARGS_PROGRESS_STEP,
     Heartbeat,
     Incomplete,
     RoundError,
@@ -40,6 +41,7 @@ from .events import (
     ThinkingStart,
     ThinkingStop,
     ToolCall,
+    ToolCallProgress,
     ToolCallStart,
     Usage,
 )
@@ -344,6 +346,14 @@ class OpenAIResponsesAdapter:
                     if fc is not None:
                         fc["args"] += getattr(ev, "delta", "") or ""
                         last_event = loop.time()
+                        # A large tool argument (a whole HTML app) streams for
+                        # minutes with nothing else to show: report its size.
+                        _n = len(fc["args"])
+                        if _n >= fc.get("next_progress", TOOL_ARGS_PROGRESS_STEP):
+                            fc["next_progress"] = (
+                                _n // TOOL_ARGS_PROGRESS_STEP + 1
+                            ) * TOOL_ARGS_PROGRESS_STEP
+                            yield ToolCallProgress(name=fc["name"], chars=_n)
                 elif et == "response.function_call_arguments.done":
                     fc = fcalls.get(getattr(ev, "item_id", "") or "")
                     if fc is not None:
