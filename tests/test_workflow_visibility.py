@@ -136,8 +136,11 @@ def test_finished_run_closes_its_task_and_reaches_the_model():
     tasks = _workflow_tasks("s1")
     assert len(tasks) == 1
     assert tasks[0]["status"] == "completed"
-    # The result the script returned is what the card and the model read.
-    assert '"ok": 1' in (tasks[0]["result_text"] or "")
+    # The result the script returned is what the card and the model read,
+    # rendered as readable "key: value" prose rather than JSON.
+    result_text = tasks[0]["result_text"] or ""
+    assert "Result:" in result_text
+    assert "ok: 1" in result_text
 
     pending = completion_inject.pending_completions("s1")
     assert [t["task_id"] for t in pending] == [tasks[0]["task_id"]]
