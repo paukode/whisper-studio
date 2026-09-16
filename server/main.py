@@ -171,12 +171,18 @@ def _trust_system_certs() -> None:
     SDK) all pick it up without per-call changes. Must run before any of them
     build a context, hence module import time. Fails open to the old
     certifi-only behavior.
+
+    The injection alone broke every Bedrock call: botocore builds the ORIGINAL
+    ssl.SSLContext, whose property setters recursed once the module global
+    named truststore's subclass ("maximum recursion depth exceeded" on every
+    chat turn). server.infrastructure.tls repairs those setters right after
+    injecting, and undoes the injection if the repair cannot be proven.
     """
     try:
-        import truststore
+        from server.infrastructure.tls import install_system_trust
 
-        truststore.inject_into_ssl()
-    except Exception as exc:
+        install_system_trust()
+    except Exception as exc:  # noqa: BLE001 - never block boot on TLS setup
         log.warning("system trust store unavailable, using the bundled CA list: %s", exc)
 
 
