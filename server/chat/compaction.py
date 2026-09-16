@@ -348,6 +348,7 @@ async def _compact_strategies(
                     "content": (
                         "[Context summary from session memory]\n"
                         f"{session_mem}\n\n"
+                        f"{_summary_extras(old_messages, session_id)}"
                         "[End of session memory, recent messages follow]"
                     ),
                 }
@@ -405,21 +406,23 @@ async def _compact_strategies(
             # model key, one_shot routes the summary through that same model
             # (Claude via Bedrock, GPT via mantle, local via llama-server) —
             # so a GPT or local turn never depends on the Anthropic path.
-            if model_key:
+            # auxiliary_models.compaction may name a different (cheaper) key.
+            summary_key = _summary_model_key(model_key)
+            if summary_key:
                 try:
                     from server.infrastructure.oneshot import one_shot
                     from server.local.runtime import is_local_model
 
-                    if is_local_model(model_key):
+                    if is_local_model(summary_key):
                         return one_shot(
-                            _summary_system, summary_prompt, max_tokens=1024, engine=model_key
+                            _summary_system, summary_prompt, max_tokens=1024, engine=summary_key
                         )
                     return one_shot(
                         _summary_system,
                         summary_prompt,
                         max_tokens=1024,
                         engine="cloud",
-                        cloud_model_key=model_key,
+                        cloud_model_key=summary_key,
                     )
                 except Exception as os_err:
                     log.warning(
@@ -458,7 +461,10 @@ async def _compact_strategies(
 
             summary_msg = {
                 "role": "user",
-                "content": f"[Context summary of earlier conversation]\n{summary}",
+                "content": (
+                    f"[Context summary of earlier conversation]\n{summary}\n\n"
+                    f"{_summary_extras(old_messages, session_id)}"
+                ).rstrip(),
             }
             log.info(
                 "Compacted %d old messages into summary (%d chars)", len(old_messages), len(summary)
@@ -469,6 +475,35 @@ async def _compact_strategies(
 
     # Strategy 3: Simple truncation fallback
     return _compact_messages_simple(messages, model_id, model_key=model_key), "truncation"
+
+
+def _summary_extras(old_messages: list, session_id: str) -> str:
+    """Verbatim user messages, the mechanical anchor index and the
+    session_search recovery pointer (server/chat/compaction_anchors.py),
+    ready to append to a summary message. Empty string when nothing applies
+    or the flag is off; never raises."""
+    try:
+        from server.chat.compaction_anchors import render_summary_extras
+        from server.infrastructure.feature_flags import is_enabled
+
+        pointer_sid = session_id if is_enabled("session_search") else ""
+        extras = render_summary_extras(old_messages, pointer_sid)
+        return f"{extras}\n\n" if extras else ""
+    except Exception as e:  # noqa: BLE001 - extras are a bonus, never a failure
+        log.debug("compaction extras skipped: %s", e)
+        return ""
+
+
+def _summary_model_key(model_key: str) -> str:
+    """The chat_models key the summarizer runs on: ``auxiliary_models.compaction``
+    when set to a real key, else the session's own model."""
+    try:
+        from server.infrastructure.auxiliary import MAIN, aux_model_key
+
+        key = aux_model_key("compaction", MAIN)
+        return model_key if key == MAIN else key
+    except Exception:  # noqa: BLE001
+        return model_key
 
 
 def _compact_messages_simple(messages: list, model_id: str, model_key: str = "") -> list:
