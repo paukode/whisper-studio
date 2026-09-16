@@ -229,6 +229,62 @@ register_flag(
 )
 
 register_flag(
+    "learning_review_fork",
+    description=(
+        "Run the post-turn memory and skill review as a fork of the live turn: same "
+        "system prompt, tools and messages plus one review message, so the request is a "
+        "warm prompt-cache read instead of a cold re-send of an excerpt. Off falls back "
+        "to the excerpt-based extraction agent"
+    ),
+    default=True,
+    category="memory",
+)
+
+register_flag(
+    "skill_self_improvement",
+    description=(
+        "Let the assistant create and patch its own folder skills with skill_manage, and "
+        "let the post-turn learning review update skills when the user corrected the "
+        "workflow or a durable technique emerged"
+    ),
+    default=True,
+    category="memory",
+)
+
+register_flag(
+    "session_search",
+    description=(
+        "Model-callable full-text search over past sessions (session_search tool, SQLite "
+        "FTS5, no model calls) plus a recovery pointer in every compaction summary so "
+        "summarized-away messages can be read back verbatim"
+    ),
+    default=True,
+    category="chat",
+)
+
+register_flag(
+    "tool_loop_guard",
+    description=(
+        "Refuse a tool call that repeats the same arguments after two identical results, "
+        "a call that already failed three times unchanged, or a repeating cycle of calls; "
+        "cap runaway web searches and delegation per turn (tool_loop_caps config)"
+    ),
+    default=True,
+    category="agent",
+)
+
+register_flag(
+    "verify_on_stop",
+    description=(
+        "When a turn edited code files but no test, lint, typecheck or build command ran "
+        "successfully afterwards, the completion gate asks for a real verification (or an "
+        "honest blocker) before the turn ends; at most two nudges per turn"
+    ),
+    default=True,
+    category="agent",
+)
+
+register_flag(
     "preview_tools",
     description=(
         "Assistant-controllable browser preview tools (preview_start/stop/click/"

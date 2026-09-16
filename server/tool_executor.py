@@ -147,8 +147,15 @@ async def execute_tool_batch(
     mode: str = "default",
     effort_label: str | None = None,
     unattended: bool = False,
+    guard_scope: str = "",
 ) -> list[ToolState]:
     """Execute a batch of tool_use blocks with full lifecycle management.
+
+    ``guard_scope`` keys the per-turn loop guard (server.chat.loop_guard): a
+    call that repeats identical arguments after identical results, repeats a
+    failing call unchanged, cycles, or exceeds a per-turn cap is refused with
+    a synthetic result instead of dispatched. Empty (the default, and every
+    direct test caller) disables the guard.
 
     ``unattended`` marks every dispatched call as originating from a turn with
     no human present (subagents today). It stamps ``__agent__`` onto the call
@@ -223,6 +230,17 @@ async def execute_tool_batch(
                 state.output = f"[Denied] '{tool_name}' has been denied {denials} times. Re-enable in permissions settings to use again."
                 return
 
+        # --- Loop guard: identical repeats, repeated failures, cycles, caps ---
+        if guard_scope:
+            from server.chat import loop_guard
+
+            _guard = loop_guard.before_call(guard_scope, tool_name, hook_input)
+            if not _guard.allow:
+                state.status = "skipped"
+                state.output = _guard.message
+                log.info("loop guard refused %s (%s)", tool_name, _guard.reason)
+                return
+
         # --- Hook: PreToolUse (in-process plugins + shell hooks; can block/rewrite) ---
         pre = await run_hooks(
             "PreToolUse",
@@ -274,6 +292,20 @@ async def execute_tool_batch(
             state.side_effects = side_effects
             state.status = "completed"
 
+            if guard_scope:
+                from server.chat import loop_guard
+
+                _is_err = isinstance(output, str) and output.startswith(
+                    ("[Tool Error]", "Error:", "[Denied", "[Skipped]")
+                )
+                _notice, _stub = loop_guard.after_call(
+                    guard_scope, tool_name, hook_input, state.output, is_error=_is_err
+                )
+                if _stub:
+                    state.output = _stub
+                if _notice:
+                    state.output = f"{state.output}{_notice}"
+
             # Hook: PostToolUse — additionalContext is fed back to the model by
             # appending it to the tool result the model reads next turn.
             post = await run_hooks(
@@ -295,6 +327,12 @@ async def execute_tool_batch(
             log.error("Tool execution error (%s): %s", tool_name, e, exc_info=True)
             state.output = f"[Tool Error] {e}"
             state.status = "completed"
+            if guard_scope:
+                from server.chat import loop_guard
+
+                loop_guard.after_call(
+                    guard_scope, tool_name, hook_input, state.output, is_error=True
+                )
 
             fail = await run_hooks(
                 "PostToolUseFailure",
