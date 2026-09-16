@@ -61,6 +61,13 @@ def activate_from_history(session_id: str, messages: list[dict]) -> list[str]:
     for msg in messages:
         if msg.get("role") != "assistant":
             continue
+        # An artifact delivered earlier (persisted as programArtifact on the
+        # assistant row; the tool_use itself is not kept) means the model must
+        # be able to read and edit it now. Checked before the content-shape
+        # filter: persisted assistant rows carry plain-string content.
+        if isinstance(msg.get("programArtifact"), dict) and "create_artifact" not in seen:
+            seen.add("create_artifact")
+            names.append("create_artifact")
         content = msg.get("content")
         if not isinstance(content, list):
             continue
@@ -70,4 +77,15 @@ def activate_from_history(session_id: str, messages: list[dict]) -> list[str]:
                 if name and name not in seen:
                     seen.add(name)
                     names.append(name)
+    # Tool families: using one member advertises the rest.
+    try:
+        from server.artifacts import ARTIFACT_TOOL_FAMILY
+
+        if any(n in ARTIFACT_TOOL_FAMILY for n in names):
+            for member in ("read_artifact", "edit_artifact"):
+                if member not in seen:
+                    seen.add(member)
+                    names.append(member)
+    except Exception as e:  # noqa: BLE001
+        log.debug("artifact family activation skipped: %s", e)
     return activate(session_id, names)

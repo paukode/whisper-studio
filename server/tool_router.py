@@ -175,7 +175,37 @@ async def route_tool(
                 }
             }
         )
-        output = f"Artifact '{title}' added to the chat. The user can preview and download it."
+        # Remember it so read_artifact / edit_artifact can change it in place
+        # later in the session instead of regenerating it (server/artifacts.py).
+        from server.artifacts import activate_artifact_tools, record_artifact
+
+        record_artifact(
+            session_id, title=title, html=html, description=description, tool_use_id=tool_use_id
+        )
+        activate_artifact_tools(session_id)
+        output = (
+            f"Artifact '{title}' added to the chat. The user can preview and download it. "
+            "For later changes use read_artifact and edit_artifact rather than regenerating."
+        )
+        return output, side_effects
+
+    if tool_name == "read_artifact":
+        from server.artifacts import execute_read_artifact
+
+        output = await _submit(
+            loop, executor, lambda ci=tool_input: execute_read_artifact(ci, session_id)
+        )
+        return output, side_effects
+
+    if tool_name == "edit_artifact":
+        from server.artifacts import execute_edit_artifact
+
+        output, effects = await _submit(
+            loop,
+            executor,
+            lambda ci=tool_input: execute_edit_artifact(ci, session_id, tool_use_id),
+        )
+        side_effects.extend(effects)
         return output, side_effects
 
     # --- create_visual / create_chart: inline diagram or chart card ---

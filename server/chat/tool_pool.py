@@ -60,6 +60,7 @@ _BUILTIN_CONCURRENT_SAFE = {
     "memory_read",
     "memory_list",
     "session_search",
+    "read_artifact",
 }
 
 
@@ -182,6 +183,12 @@ def assemble_full_catalog(
     builtin_tools += CRON_TOOLS
     builtin_tools += LSP_TOOLS
     builtin_tools += ASK_USER_TOOLS
+    # read_artifact / edit_artifact: change a delivered app in place instead of
+    # regenerating it. Deferred until an artifact exists (activated by
+    # create_artifact and by history replay), discoverable via tool_search.
+    from server.artifacts import ARTIFACT_TOOLS
+
+    builtin_tools += ARTIFACT_TOOLS
     builtin_tools += VISUAL_TOOLS
     builtin_tools += NOTEBOOK_TOOLS
     builtin_tools += AGENT_TOOLS

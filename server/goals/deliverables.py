@@ -106,8 +106,9 @@ def _exists_non_empty(path: str, workspace: str | None) -> bool:
 
 
 def artifact_created(messages: list) -> bool:
-    """True if this turn contains a create_artifact call (Anthropic tool_use
-    block or Responses function_call item)."""
+    """True if this turn contains a create_artifact or edit_artifact call
+    (Anthropic tool_use block or Responses function_call item); both put a
+    card in the chat."""
     for m in turn_messages(messages):
         if not isinstance(m, dict) or m.get("role") != "assistant":
             continue
@@ -118,7 +119,7 @@ def artifact_created(messages: list) -> bool:
             if (
                 isinstance(b, dict)
                 and b.get("type") in ("tool_use", "function_call")
-                and b.get("name") == "create_artifact"
+                and b.get("name") in ("create_artifact", "edit_artifact")
             ):
                 return True
     return False

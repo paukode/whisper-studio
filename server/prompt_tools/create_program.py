@@ -73,6 +73,16 @@ Wait for the user's response before continuing.
 **Never output the HTML as text in your response. The full document goes through
 `create_artifact` only**; pasted code blocks flood the chat and skip the preview card.
 
+### Changing an app you already delivered
+
+When the user asks to change an artifact from earlier in this session (add a
+feature, a language, a title, fix a bug), do NOT regenerate it. Call
+`read_artifact` (whole, or a line range for a large one) to see the current
+HTML, then `edit_artifact` with targeted old_text/new_text replacements. The
+card updates in place in seconds instead of minutes. Rebuild with
+`create_artifact` only when the user asks for a rewrite or the change touches
+most of the file.
+
 ### Code quality rules for single HTML
 
 - Complete `<!DOCTYPE html>` document with `<html>`, `<head>`, `<body>`
