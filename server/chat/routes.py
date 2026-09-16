@@ -101,8 +101,10 @@ async def _rewrite_query_for_retrieval(question: str, history: list[dict]) -> st
     model (Haiku), resolving pronouns/references. Returns None on any failure so
     the caller falls back to the heuristic contextualization path."""
     try:
+        from server.infrastructure.auxiliary import aux_model_id
+
         models = _get_chat_models()
-        model_id = models.get("haiku") or models.get("sonnet")
+        model_id = aux_model_id("query_rewrite", fallback_id=models.get("sonnet"), models=models)
         if not model_id:
             return None
         from server.index.pipeline import message_text
@@ -796,12 +798,18 @@ async def generate_title_endpoint(request: Request):
     if not messages_text.strip():
         return {"title": "New Conversation"}
     chat_models = _get_chat_models()
-    # A small, fast model is the right tool for titling (Claude does the same).
-    model_id = (
-        chat_models.get("haiku")
-        or chat_models.get("sonnet")
-        or chat_models.get("opus4.6")
-        or next(iter(chat_models.values()))
+    # A small, fast model is the right tool for titling (Claude does the same);
+    # auxiliary_models.title may name another cloud key.
+    from server.infrastructure.auxiliary import aux_model_id
+
+    model_id = aux_model_id(
+        "title",
+        fallback_id=(
+            chat_models.get("sonnet")
+            or chat_models.get("opus4.6")
+            or next(iter(chat_models.values()))
+        ),
+        models=chat_models,
     )
     bedrock_client = _get_bedrock_client()
     loop = asyncio.get_event_loop()

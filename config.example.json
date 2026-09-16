@@ -164,5 +164,7 @@
   "cron_timezone": "",
   "cron_max_runs_per_job": 200,
   "cron_misfire_grace_sec": 3600,
-  "goal_max_consecutive_blocks": 8
+  "goal_max_consecutive_blocks": 8,
+  "auxiliary_models": {},
+  "tool_loop_caps": {}
 }

@@ -102,8 +102,13 @@ async def _call_explainer(
 
     region = config.get("bedrock_region", "us-east-1")
     chat_models = config.get("chat_models", DEFAULTS["chat_models"])
-    haiku = (
-        chat_models.get("haiku") or chat_models.get("sonnet") or next(iter(chat_models.values()))
+    from server.infrastructure.auxiliary import aux_model_id
+
+    haiku = aux_model_id(
+        "permission_explainer",
+        fallback_id=chat_models.get("sonnet") or next(iter(chat_models.values())),
+        models=chat_models,
+        config=config,
     )
 
     user_msg = _build_user_message(tool_name, tool_input, recent_messages)

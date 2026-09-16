@@ -185,8 +185,13 @@ async def classify_tool_call(
     from server.infrastructure.config import DEFAULTS
 
     chat_models = cfg.get("chat_models", DEFAULTS["chat_models"])
-    haiku = (
-        chat_models.get("haiku") or chat_models.get("sonnet") or next(iter(chat_models.values()))
+    from server.infrastructure.auxiliary import aux_model_id
+
+    haiku = aux_model_id(
+        "auto_mode_classifier",
+        fallback_id=chat_models.get("sonnet") or next(iter(chat_models.values())),
+        models=chat_models,
+        config=cfg,
     )
 
     context = _build_turn_context(recent_messages)

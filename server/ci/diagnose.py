@@ -94,9 +94,9 @@ def _build_user(run: dict, log_text: str, failed_job_names: list[str]) -> str:
 
 def _one_shot(system: str, user: str) -> str | None:
     try:
-        from server.infrastructure.oneshot import one_shot
+        from server.infrastructure.auxiliary import aux_one_shot
 
-        return one_shot(system, user, max_tokens=_MAX_TOKENS, cloud_model_key="haiku")
+        return aux_one_shot("ci_diagnose", system, user, max_tokens=_MAX_TOKENS)
     except Exception as e:  # noqa: BLE001
         log.info("CI diagnose one_shot unavailable: %s", e)
         return None
