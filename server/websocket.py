@@ -182,6 +182,17 @@ async def websocket_endpoint(
     # single-user, so diarization is pointless and its compute is wasted.
     skip_speaker = (dictation or "").strip().lower() in ("1", "true", "yes")
     speakers = None if skip_speaker else diarization.get_session(session_id)
+    # Cut utterances at speaker handovers (needs word timestamps from the
+    # engine; Whisper and Parakeet report them, Canary does not). Read once
+    # per connection so a mid-recording config edit can't change the shape
+    # of the stream the client is already rendering.
+    split_setting = config_get("speaker_split_turns")
+    split_turns = True if split_setting is None else bool(split_setting)
+    # Safety net for the case the detector misreads a recording: if most
+    # utterances come back "containing a handover", that is one person
+    # being fragmented, not a conversation, and splitting latches off for
+    # the rest of this recording.
+    split_budget = diarization.turns.SplitBudget()
     # Chunk ids must stay monotonic across reconnects within a session (see
     # the _chunk_counters note above): resume from the highest id already
     # used for this session so a reconnect never reuses an id that keys an
@@ -214,6 +225,23 @@ async def websocket_endpoint(
             except Exception:
                 pass  # client closed mid-send — benign disconnect race
 
+    async def _spans_for(ev: dict) -> list:
+        """One final event -> the speaker turns inside it.
+
+        A VAD utterance ends on silence, not on a speaker change, so a
+        handover with no real pause ("...my point." / "Right, but—") lands
+        inside one utterance. Splitting it here, before anything is
+        labelled, is what stops the second speaker's words being filed
+        under the first. Returns a single whole-utterance span whenever
+        splitting is off, unavailable, or unwarranted.
+        """
+        audio = ev.get("audio")
+        if speakers is None or audio is None or not split_turns or not split_budget.open:
+            return []
+        return await loop.run_in_executor(
+            diarization.executor, diarization.turns.split_utterance, audio, ev.get("words")
+        )
+
     async def emit_events(events: list[dict]) -> None:
         """Relay ordered backend events; label finals via diarization."""
         nonlocal chunk_counter
@@ -225,60 +253,28 @@ async def websocket_endpoint(
                 await send_json({"type": "interim", "text": text})
                 continue
 
-            # final
-            chunk_id = chunk_counter
-            chunk_counter += 1
-            # Persist the next unused id immediately (before the embed) so a
-            # reconnect resumes past this chunk even if the embed fails and
-            # no speaker-memory entry is written. Skipped for dictation,
-            # whose ids don't feed speaker memory.
-            if not skip_speaker:
-                _record_chunk_counter(session_id, chunk_counter)
-            speaker = "Speaker 1"
-            if speakers is not None:
-                embedding = await loop.run_in_executor(
-                    diarization.executor, diarization.embed, ev.get("audio")
+            # final. One utterance can carry more than one speaker turn;
+            # each turn is emitted as its own chunk, which is exactly what
+            # the client already handles (consecutive same-speaker chunks
+            # merge into one segment, differing ones do not).
+            spans = await _spans_for(ev)
+            split_budget.record(len(spans) > 1)
+            if len(spans) > 1:
+                log.info("Speaker handover split one utterance into %d turns", len(spans))
+            else:
+                spans = []
+            for span in spans or [None]:
+                span_text = span.text if span is not None else text
+                span_audio = span.audio if span is not None else ev.get("audio")
+                if not span_text:
+                    continue
+                await emit_final(
+                    span_text,
+                    span_audio,
+                    ev.get("language"),
+                    span.embedding if span is not None else None,
+                    span.overlap if span is not None else False,
                 )
-                if embedding is None:
-                    # Too short / failed embed: speaker continuity is the
-                    # best guess and never pollutes the cluster space.
-                    speaker = speakers.fallback_label()
-                else:
-                    duration = len(ev["audio"]) / 16000.0
-                    speaker = speakers.assign(chunk_id, embedding, duration)
-            # The engine's per-utterance language ID rides on the final
-            # event. resolve_translator picks who produces the translation
-            # line for the configured target — this server (engine decode,
-            # scheduled below) or the client (Apple bridge, signalled by
-            # translate_via). An UNKNOWN language (Parakeet does no language
-            # ID) can still translate via Apple, whose on-device translator
-            # auto-detects the source (and clears the pending slot on
-            # same-language input), but never via a model decode.
-            language = ev.get("language")
-            translator = resolve_translator(
-                translate_mode, apple_available, language, translate_target
-            )
-            payload = {
-                "type": "transcript",
-                "text": text,
-                "speaker": speaker,
-                "chunk_id": chunk_id,
-                "language": language,
-            }
-            if translator is not None:
-                # Tells the client to render a "Translating…" slot under the
-                # segment until the translation for this chunk arrives.
-                payload["translating"] = True
-            if translator == "apple":
-                payload["translate_via"] = "apple"
-                payload["translate_target"] = translate_target
-            await send_json(payload)
-            if translator == "canary":
-                task = asyncio.create_task(
-                    _run_translation(chunk_id, ev.get("audio"), language, translate_target)
-                )
-                pending_translations.add(task)
-                task.add_done_callback(pending_translations.discard)
             if speakers is not None:
                 # Periodic self-heal: re-cluster everything seen so far and
                 # retro-fix the few utterances whose label changed.
@@ -293,6 +289,80 @@ async def websocket_endpoint(
                             ],
                         }
                     )
+                await push_names()
+
+    async def push_names(force: bool = False) -> None:
+        """Tell the client about identities recovered from the voiceprint gallery."""
+        if speakers is None:
+            return
+        found = speakers.known_names() if force else speakers.take_new_names()
+        if found:
+            await send_json({"type": "speaker_named", "names": found})
+
+    async def emit_final(
+        text: str,
+        audio,
+        language: str | None,
+        embedding=None,
+        overlap: bool = False,
+    ) -> None:
+        """Label one settled turn and send it to the client."""
+        nonlocal chunk_counter
+        chunk_id = chunk_counter
+        chunk_counter += 1
+        # Persist the next unused id immediately (before the embed) so a
+        # reconnect resumes past this chunk even if the embed fails and
+        # no speaker-memory entry is written. Skipped for dictation,
+        # whose ids don't feed speaker memory.
+        if not skip_speaker:
+            _record_chunk_counter(session_id, chunk_counter)
+        speaker = "Speaker 1"
+        if speakers is not None:
+            if embedding is None:
+                embedding = await loop.run_in_executor(
+                    diarization.executor, diarization.embed, audio
+                )
+            if embedding is None:
+                # Too short / failed embed: speaker continuity is the
+                # best guess and never pollutes the cluster space.
+                speaker = speakers.fallback_label()
+            else:
+                duration = len(audio) / 16000.0 if audio is not None else None
+                speaker = speakers.assign(chunk_id, embedding, duration, text)
+        # The engine's per-utterance language ID rides on the final
+        # event. resolve_translator picks who produces the translation
+        # line for the configured target — this server (engine decode,
+        # scheduled below) or the client (Apple bridge, signalled by
+        # translate_via). An UNKNOWN language (Parakeet does no language
+        # ID) can still translate via Apple, whose on-device translator
+        # auto-detects the source (and clears the pending slot on
+        # same-language input), but never via a model decode.
+        translator = resolve_translator(translate_mode, apple_available, language, translate_target)
+        payload = {
+            "type": "transcript",
+            "text": text,
+            "speaker": speaker,
+            "chunk_id": chunk_id,
+            "language": language,
+        }
+        if overlap:
+            # The turns abut or overlap: this boundary is a best estimate,
+            # and the client marks it rather than implying exact timing.
+            payload["overlap"] = True
+        if translator is not None:
+            # Tells the client to render a "Translating…" slot under the
+            # segment until the translation for this chunk arrives.
+            payload["translating"] = True
+        if translator == "apple":
+            payload["translate_via"] = "apple"
+            payload["translate_target"] = translate_target
+        await send_json(payload)
+        if translator == "canary":
+            task = asyncio.create_task(
+                _run_translation(chunk_id, audio, language, translate_target)
+            )
+            pending_translations.add(task)
+            task.add_done_callback(pending_translations.discard)
 
     async def _run_translation(chunk_id: int, audio, language: str | None, target: str) -> None:
         """Decode the utterance's translation via Canary and deliver it.
@@ -449,6 +519,11 @@ async def websocket_endpoint(
         backend_name = new_name
         backend_mod = get_backend(new_name)
         log.info("Transcription model switched to %s", new_name)
+
+    # A reconnect inherits the session's speaker state, names included, so
+    # replay them: the client's rename map is per-tab and would otherwise
+    # show "Speaker 2" for somebody the server already knows as Anna.
+    await push_names(force=True)
 
     try:
         while True:

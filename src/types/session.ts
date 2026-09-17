@@ -37,6 +37,10 @@ export interface TranscriptSegment {
   // Live-only: chunk ids whose English translation is still decoding —
   // drives the "Translating…" placeholder. Stripped on load from history.
   pendingTranslations?: number[];
+  // This turn began at a speaker handover with no clean silence between
+  // the two voices, so its opening words could belong to either speaker.
+  // The transcript marks it instead of implying the cut is exact.
+  overlap?: boolean;
 }
 
 export interface Speaker {

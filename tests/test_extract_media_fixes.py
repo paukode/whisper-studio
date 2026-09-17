@@ -45,10 +45,10 @@ def test_decode_utterance_drops_uppercase_origin_hallucination(monkeypatch):
     monkeypatch.setattr(
         whisper_backend,
         "_transcribe",
-        lambda audio, language=None, relaxed=False: ("Obrigado", language),
+        lambda audio, language=None, relaxed=False: ("Obrigado", language, []),
     )
     pcm = np.full(16000, 1000, dtype=np.int16).tobytes()
-    text, audio, _ = whisper_backend._decode_utterance(pcm)
+    text, audio, _, _ = whisper_backend._decode_utterance(pcm)
     assert text == ""
     assert isinstance(audio, np.ndarray)
 

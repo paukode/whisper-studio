@@ -97,9 +97,12 @@ def _reserved_companion_bytes() -> int:
     except Exception as e:  # pragma: no cover - defensive
         log.debug("Could not resolve the active ASR model dir: %s", e)
     try:
-        from server.diarization.speakers import SPEAKER_MODEL_DIR
+        # Whichever speaker encoder is configured, only one of these two
+        # directories exists on disk; the missing one contributes zero.
+        from server.diarization import embedder
 
-        dirs.append(SPEAKER_MODEL_DIR)
+        dirs.append(embedder.ECAPA_MODEL_DIR)
+        dirs.append(embedder.REDIMNET_CACHE_DIR)
     except Exception as e:  # pragma: no cover - defensive
         log.debug("Could not resolve speaker model dir: %s", e)
 

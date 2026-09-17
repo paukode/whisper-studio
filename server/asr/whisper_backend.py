@@ -324,12 +324,43 @@ def _detect_language(audio_data: np.ndarray, allowed: list[str]) -> str:
     return _pick_language(probs, allowed)
 
 
+def _words_from_segments(result: dict) -> list[dict]:
+    """mlx-whisper segments -> flat [{text, start, end}] word list.
+
+    Word timing is what lets the turn splitter cut an utterance at the
+    handover instead of guessing, so a decode that returns no word data
+    (older mlx-whisper, a degenerate segment) simply yields an empty list
+    and the utterance stays whole.
+    """
+    words: list[dict] = []
+    for segment in result.get("segments") or []:
+        for word in segment.get("words") or []:
+            raw = str(word.get("word", ""))
+            text = raw.strip()
+            start, end = word.get("start"), word.get("end")
+            if not text or start is None or end is None:
+                continue
+            words.append(
+                {
+                    "text": text,
+                    "start": float(start),
+                    "end": float(end),
+                    # Whisper marks a space-separated word with a leading
+                    # space and omits it for scripts that have none, which
+                    # is how a split turn gets rejoined correctly in
+                    # Chinese, Japanese or Thai.
+                    "space": raw[:1].isspace(),
+                }
+            )
+    return words
+
+
 def _transcribe(
     audio_data: np.ndarray,
     language: str | None = None,
     relaxed: bool = False,
-) -> tuple[str, str | None]:
-    """Decode one utterance with mlx-whisper -> (text, decoded language).
+) -> tuple[str, str | None, list[dict]]:
+    """Decode one utterance with mlx-whisper -> (text, decoded language, words).
 
     Strict (default) decoding params suppress Whisper's well-known
     hallucination loops on silence/low-energy audio: deterministic greedy
@@ -349,6 +380,9 @@ def _transcribe(
         "fp16": True,
         "compression_ratio_threshold": 2.4,
         "condition_on_previous_text": False,
+        # Cheap here (one cross-attention alignment pass over an 8 s
+        # window) and the input the turn splitter needs.
+        "word_timestamps": True,
     }
     if relaxed:
         kwargs.update(temperature=(0.0, 0.2, 0.4), logprob_threshold=None, no_speech_threshold=None)
@@ -358,27 +392,33 @@ def _transcribe(
         kwargs["language"] = language
 
     result = mlx_whisper.transcribe(audio_data, **kwargs)
-    return result["text"].strip(), result.get("language") or language
+    return (
+        result["text"].strip(),
+        result.get("language") or language,
+        _words_from_segments(result),
+    )
 
 
 def _is_junk(text: str) -> bool:
     return text.strip().lower() in WHISPER_HALLUCINATIONS or is_repetition_hallucination(text)
 
 
-def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None]:
-    """PCM16 utterance -> (filtered text, float32 audio, decoded language)."""
+def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None, list[dict]]:
+    """PCM16 utterance -> (filtered text, float32 audio, language, word times)."""
     # No energy gate — the VAD is the only speech filter (matching Parakeet;
-    # RMS gates silently ate quiet mics, proven live).
+    # RMS gates silently ate quiet mics, proven live). The VAD buffer's
+    # AutoGain lifts quiet capture before it ever gets here.
     audio = np.frombuffer(utterance_pcm, dtype=np.int16).astype(np.float32) / 32768.0
 
     text = ""
     language = None
+    words: list[dict] = []
     try:
         langs = _configured_languages()
         language = langs[0] if len(langs) == 1 else None
         if len(langs) > 1:
             language = _detect_language(audio, langs)
-        text, language = _transcribe(audio, language=language)
+        text, language, words = _transcribe(audio, language=language)
         if text and _is_junk(text):
             log.debug("Whisper: hallucination filter dropped %r", text[:80])
             text = ""
@@ -387,7 +427,7 @@ def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None
             # (no_speech + logprob rejection). On accented or overlapped
             # speech that silently eats real utterances, so retry once
             # relaxed — the filters above still guard the result.
-            text, language = _transcribe(audio, language=language, relaxed=True)
+            text, language, words = _transcribe(audio, language=language, relaxed=True)
             if text and _is_junk(text):
                 log.debug("Whisper: hallucination filter dropped rescue %r", text[:80])
                 text = ""
@@ -399,7 +439,7 @@ def _decode_utterance(utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None
                 )
     except Exception as e:
         log.warning("Whisper transcription error: %s", e)
-    return text, audio, language
+    return text, audio, language, words
 
 
 class WhisperSession:
@@ -411,9 +451,17 @@ class WhisperSession:
     def process(self, raw_pcm: bytes) -> list[dict]:
         events: list[dict] = []
         for utterance_pcm in self._buf.feed(raw_pcm):
-            text, audio, language = _decode_utterance(utterance_pcm)
+            text, audio, language, words = _decode_utterance(utterance_pcm)
             if text:
-                events.append({"kind": "final", "text": text, "audio": audio, "language": language})
+                events.append(
+                    {
+                        "kind": "final",
+                        "text": text,
+                        "audio": audio,
+                        "language": language,
+                        "words": words,
+                    }
+                )
         return events
 
     def finish(self) -> list[dict]:
@@ -421,10 +469,16 @@ class WhisperSession:
         try:
             tail = self._buf.flush()
             if tail is not None:
-                text, audio, language = _decode_utterance(tail)
+                text, audio, language, words = _decode_utterance(tail)
                 if text:
                     events.append(
-                        {"kind": "final", "text": text, "audio": audio, "language": language}
+                        {
+                            "kind": "final",
+                            "text": text,
+                            "audio": audio,
+                            "language": language,
+                            "words": words,
+                        }
                     )
         except Exception as e:
             log.debug("Whisper finish flush failed: %s", e)

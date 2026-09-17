@@ -162,6 +162,40 @@ def unload() -> None:
     log.info("Parakeet model unloaded.")
 
 
+def _words_from_result(result) -> list[dict]:
+    """AlignedResult -> [{text, start, end}] at WORD granularity.
+
+    Parakeet emits SentencePiece tokens, where a leading space marks the
+    start of a new word ("▁the" decodes to " the"), so tokens are merged
+    until the next one that starts a word. A result without token timings
+    yields nothing and the utterance simply never splits.
+    """
+    words: list[dict] = []
+    try:
+        tokens = list(result.tokens)
+    except Exception:
+        return words
+    for token in tokens:
+        text = str(getattr(token, "text", ""))
+        start = getattr(token, "start", None)
+        end = getattr(token, "end", None)
+        if not text.strip() or start is None or end is None:
+            continue
+        if words and not text.startswith((" ", "\t")):
+            words[-1]["text"] += text.strip()
+            words[-1]["end"] = float(end)
+        else:
+            words.append(
+                {
+                    "text": text.strip(),
+                    "start": float(start),
+                    "end": float(end),
+                    "space": text[:1].isspace(),
+                }
+            )
+    return words
+
+
 class ParakeetSession:
     """One per-connection Parakeet decoder.
 
@@ -183,19 +217,22 @@ class ParakeetSession:
         # Last interim text emitted, so we don't re-send an unchanged draft.
         self._last_interim = ""
 
-    def _decode(self, pcm_bytes: bytes) -> tuple[str, np.ndarray]:
-        """Full-context decode of an audio span. Returns (text, float32 audio).
+    def _decode(self, pcm_bytes: bytes) -> tuple[str, np.ndarray, list[dict]]:
+        """Full-context decode of an audio span -> (text, float32 audio, words).
+
         The audio is handed back so the caller can run speaker
-        identification on an utterance-sized window."""
+        identification on an utterance-sized window, and the word times so
+        it can cut that window at a speaker handover."""
         audio = np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
         mel = self._get_logmel(self._mx.array(audio), self._model.preprocessor_config)
-        text = self._model.generate(mel)[0].text.strip()
+        result = self._model.generate(mel)[0]
+        text = result.text.strip()
 
         self._decodes += 1
         if self._decodes % _CLEAR_CACHE_EVERY == 0:
             self._mx.clear_cache()
 
-        return text, audio
+        return text, audio, _words_from_result(result)
 
     @staticmethod
     def _has_words(text: str) -> bool:
@@ -209,9 +246,9 @@ class ParakeetSession:
         completed = self._buf.feed(raw_pcm)
         if completed:
             for utterance_pcm in completed:
-                text, audio = self._decode(utterance_pcm)
+                text, audio, words = self._decode(utterance_pcm)
                 if self._has_words(text):
-                    events.append({"kind": "final", "text": text, "audio": audio})
+                    events.append({"kind": "final", "text": text, "audio": audio, "words": words})
             # An utterance just closed; the next interim starts a fresh window.
             self._last_interim = ""
             return events
@@ -219,7 +256,7 @@ class ParakeetSession:
         # No boundary this chunk — re-decode the growing in-flight utterance.
         pending = self._buf.pending()
         if len(pending) >= _MIN_INTERIM_BYTES:
-            text, _ = self._decode(pending)
+            text, _, _ = self._decode(pending)
             if self._has_words(text) and text != self._last_interim:
                 self._last_interim = text
                 events.append({"kind": "interim", "text": text})
@@ -230,9 +267,9 @@ class ParakeetSession:
         try:
             tail = self._buf.flush()
             if tail is not None:
-                text, audio = self._decode(tail)
+                text, audio, words = self._decode(tail)
                 if self._has_words(text):
-                    events.append({"kind": "final", "text": text, "audio": audio})
+                    events.append({"kind": "final", "text": text, "audio": audio, "words": words})
             self._last_interim = ""
         except Exception as e:
             log.debug("Parakeet finish flush failed: %s", e)

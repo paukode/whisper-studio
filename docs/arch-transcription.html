@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Transcription &amp; diarization - Whisper Studio Docs</title>
-  <meta name="description" content="How Whisper Studio streams audio over one WebSocket, transcribes on-device with Parakeet, Whisper, or Canary, detects languages, translates live, gates utterances with VAD, and clusters speakers with ECAPA - all without audio leaving the machine.">
+  <meta name="description" content="How Whisper Studio streams audio over one WebSocket, transcribes on-device with Parakeet, Whisper, or Canary, detects languages, translates live, gates utterances with VAD, splits speaker turns, and clusters speakers with ReDimNet2 - all without audio leaving the machine.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -185,8 +185,14 @@
       clustering:</p>
 
     <h3 id="embedding">1. Embed each final</h3>
-    <p>Every settled utterance's audio is embedded by the ECAPA-VoxCeleb encoder
-      (<code>speechbrain/spkrec-ecapa-voxceleb</code>) into an L2-normalized speaker vector. This runs
+    <p>Every settled utterance's audio is embedded into an L2-normalized speaker vector by the encoder
+      named in <code>speaker_embedder</code>. The default is <b>ReDimNet2-B2</b>
+      (<code>PalabraAI/redimnet2</code>, 3.6M params, 0.57% EER on VoxCeleb1-O); <b>ECAPA-VoxCeleb</b>
+      (<code>speechbrain/spkrec-ecapa-voxceleb</code>, ~1% EER) remains as the automatic fallback.
+      Packaged builds ship both encoders (plus the VoxLingua107 language-ID model) inside the app and
+      install them into <code>~/.whisper/models</code> on first launch, so speaker labels work offline
+      from the first recording; both appear as normal cards in the Settings model panel. Vectors from the two encoders are not comparable, which is why
+      thresholds and stored voiceprints are both filed per encoder. This runs
       on its own <code>diarize</code> thread pool, off the event loop and off the decode thread.
       Windows under <b>1 second</b> (<code>MIN_EMBED_SAMPLES</code>) return no embedding: below that,
       the vector is dominated by phoneme content rather than speaker identity, so such utterances get a
@@ -199,7 +205,9 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Constant</th><th>Value</th><th>Meaning</th></tr></thead>
       <tbody>
-        <tr><td><code>NEW_SPEAKER_THRESHOLD</code></td><td>0.15</td><td>Below the best cluster's score, create a new speaker; at or above, join the nearest one (provisionally when weak).</td></tr>
+        <tr><td><code>THRESHOLDS[…]["new"]</code></td><td>0.45 ReDimNet2<br>0.15 ECAPA</td><td>Below the best cluster's score, create a new speaker; at or above, join the nearest one (provisionally when weak). Per encoder: ReDimNet2 puts the same speaker at 0.83-0.90 and different speakers at 0.02-0.52, ECAPA at 0.25-0.55 and 0.0-0.2.</td></tr>
+        <tr><td><code>FILLERS</code></td><td>29 words</td><td>An utterance that is only backchannel ("uh", "mm-hmm", "oh") joins the nearest cluster but never creates one.</td></tr>
+        <tr><td><code>MIN_SPEAKER_TOTAL_SEC</code></td><td>3.0</td><td>A cluster holding less total speech than this across the session is dissolved into its nearest neighbour on re-cluster.</td></tr>
         <tr><td><code>MIN_NEW_SPEAKER_SEC</code></td><td>2.0</td><td>Utterances shorter than this never <em>create</em> a speaker; a short fragment must not define an identity.</td></tr>
         <tr><td><code>MAX_SPEAKERS</code></td><td>12</td><td>At the cap, snap to the nearest cluster instead of spawning yet another spurious speaker.</td></tr>
       </tbody>
@@ -228,6 +236,43 @@
         tight, meaning fewer people have actually spoken yet, in which case it declines to split
         someone.</p></div>
     </div>
+
+    <h2 id="turns">Splitting one utterance at a handover</h2>
+    <p>The VAD buffer closes an utterance on <em>silence</em>, not on a speaker change, so a handover
+      with little or no gap ("...that's my point." / "Right, but-") lands inside a single utterance.
+      Labelling that whole window once files the second speaker's words under the first.
+      <code class="path">server/diarization/turns.py</code> cuts it first:</p>
+    <ol>
+      <li>Slide a <b>1.25 s</b> window (0.25 s hop) over the utterance and embed every window in one
+        batched forward pass.</li>
+      <li>Score each candidate cut by comparing a bounded context of windows on its left against the
+        same on its right. The context is local, not whole-utterance, because a global left-versus-right
+        split is blind to a change that is not the only one: in A &rarr; B &rarr; A every global cut has
+        A on both sides.</li>
+      <li>Keep the peaks strongest first, each suppressing anything within one analysis window, so a
+        single handover cannot register as two cuts with a phantom turn between them.</li>
+      <li>Snap each surviving cut to the widest inter-word silence nearby, using the engine's word
+        timestamps.</li>
+    </ol>
+    <p>Each resulting turn is emitted as its own chunk with its own embedding, so the incoming speaker
+      is placed on their own audio rather than inheriting a label. The client already merges
+      consecutive same-speaker chunks into one segment and keeps differing ones apart, so nothing
+      downstream changed. A cut with no clean silence between the voices carries <code>overlap</code>,
+      and the transcript marks it rather than implying the timing is exact.</p>
+    <p>Word timestamps are required, and a backend that cannot report them simply never splits: a wrong
+      text cut is worse than a single label. Whisper and Parakeet report them; Canary does not.</p>
+
+    <h2 id="voiceprints">Voiceprints across sessions</h2>
+    <p>Session labels answer "who spoke when" inside one recording and reset the next morning.
+      <code class="path">server/diarization/voiceprints.py</code> answers the other half. Renaming
+      "Speaker 2" to a name stores the centroid of every embedding that cluster has accumulated, so the
+      same person is recognised by name in later recordings. Enrollment is therefore a side effect of a
+      gesture the user already performs, built from real meeting audio rather than a separate ritual.</p>
+    <p>Matching is deliberately conservative: a hit needs both a high absolute similarity and a clear
+      margin over the runner-up, because putting the wrong name on somebody is worse than leaving them
+      as "Speaker 3". A recovered identity reaches the client as <code>speaker_named</code> and is
+      applied exactly like a manual rename. Set <code>speaker_voiceprints</code> to <code>false</code>
+      to keep everything session-scoped.</p>
 
     <h2 id="dictation">Dictation skips speaker ID</h2>
     <p>When the connection carries <code>dictation=1</code> (the chat-input microphone), speaker
@@ -271,8 +316,9 @@
       <thead><tr><th>Type</th><th>Fields</th><th>Meaning</th></tr></thead>
       <tbody>
         <tr><td><code>interim</code></td><td><code>text</code></td><td>A volatile word-by-word draft of the in-flight utterance (Parakeet and Canary).</td></tr>
-        <tr><td><code>transcript</code></td><td><code>text</code>, <code>speaker</code>, <code>chunk_id</code>; when translating, <code>translating</code> plus <code>translate_via</code>/<code>translate_target</code> for the Apple path</td><td>A settled final, labeled with its speaker and a monotonic chunk id. <code>translating: true</code> tells the client to show a pending translation slot for this chunk.</td></tr>
+        <tr><td><code>transcript</code></td><td><code>text</code>, <code>speaker</code>, <code>chunk_id</code>, <code>overlap</code>; when translating, <code>translating</code> plus <code>translate_via</code>/<code>translate_target</code> for the Apple path</td><td>A settled final (one speaker turn), labeled with its speaker and a monotonic chunk id. <code>overlap</code> marks a turn that began before the previous speaker stopped. <code>translating: true</code> tells the client to show a pending translation slot for this chunk.</td></tr>
         <tr><td><code>translation</code></td><td><code>chunk_id</code>, <code>text</code>, <code>target</code></td><td>The settled translation line for an earlier final, delivered when Canary's queued decode lands.</td></tr>
+        <tr><td><code>speaker_named</code></td><td><code>names</code> (map of <code>speaker</code> to name)</td><td>An identity recovered from the voiceprint gallery, applied like a manual rename.</td></tr>
         <tr><td><code>speaker_update</code></td><td><code>updates</code> (list of <code>chunk_id</code> to <code>speaker</code>)</td><td>Re-clustering corrections that retroactively re-label earlier segments.</td></tr>
         <tr><td><code>model_loading</code></td><td><code>backend</code>, <code>label</code>, <code>stage</code>, <code>progress</code></td><td>Local-mode load banner, <code>stage</code> one of <code>start</code>/<code>loading</code>/<code>ready</code>.</td></tr>
         <tr><td><code>model_unloaded</code></td><td><code>backend</code>, <code>label</code></td><td>The paired unload notice on an engine switch.</td></tr>
@@ -291,7 +337,10 @@
       <dt><code class="path">server/asr/lid.py</code></dt><dd>The VoxLingua107 language classifier Canary leans on.</dd>
       <dt><code class="path">macapp/shell/NativeTranslation.swift</code></dt><dd>The Apple Translation bridge: the hidden SwiftUI host that owns the <code>TranslationSession</code>.</dd>
       <dt><code class="path">server/audio_buffer.py</code></dt><dd>The <code>UtteranceBuffer</code>: webrtcvad gating, trailing-silence settling, and the in-flight pending window.</dd>
-      <dt><code class="path">server/diarization/speakers.py</code></dt><dd>ECAPA embedding, immediate assignment, and periodic re-clustering with label re-mapping.</dd>
+      <dt><code class="path">server/diarization/speakers.py</code></dt><dd>Immediate assignment, per-encoder thresholds, backchannel gates, and periodic re-clustering with label re-mapping.</dd>
+      <dt><code class="path">server/diarization/embedder.py</code></dt><dd>The speaker encoder behind one call: ReDimNet2 by default, ECAPA as the fallback, batched for the turn splitter.</dd>
+      <dt><code class="path">server/diarization/turns.py</code></dt><dd>Cuts one utterance at its speaker handovers using window embeddings plus the engine's word timestamps.</dd>
+      <dt><code class="path">server/diarization/voiceprints.py</code></dt><dd>Named identities that outlive the session, filed per encoder.</dd>
     </div>
 
     <div class="callout callout--tip">

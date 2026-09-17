@@ -188,7 +188,8 @@ def test_reserved_companion_bytes_zero_when_no_companion_dirs_exist(tmp_path, mo
     for target in (
         "server.asr.parakeet_backend.PARAKEET_MODEL_DIR",
         "server.asr.whisper_backend.WHISPER_MODEL_DIR",
-        "server.diarization.speakers.SPEAKER_MODEL_DIR",
+        "server.diarization.embedder.ECAPA_MODEL_DIR",
+        "server.diarization.embedder.REDIMNET_CACHE_DIR",
     ):
         monkeypatch.setattr(target, missing)
     service._reserved_companion_bytes.cache_clear()
@@ -211,7 +212,8 @@ def test_reserved_companion_bytes_counts_only_the_active_asr_backend(tmp_path, m
     (whisper_dir / "weights.bin").write_bytes(b"y" * 9000)
     monkeypatch.setattr("server.asr.parakeet_backend.PARAKEET_MODEL_DIR", str(parakeet_dir))
     monkeypatch.setattr("server.asr.whisper_backend.WHISPER_MODEL_DIR", str(whisper_dir))
-    monkeypatch.setattr("server.diarization.speakers.SPEAKER_MODEL_DIR", missing)
+    monkeypatch.setattr("server.diarization.embedder.ECAPA_MODEL_DIR", missing)
+    monkeypatch.setattr("server.diarization.embedder.REDIMNET_CACHE_DIR", missing)
 
     monkeypatch.setattr(cfg, "load_config", lambda: {"transcription_backend": "streaming"})
     service._reserved_companion_bytes.cache_clear()
@@ -234,7 +236,8 @@ def test_reserved_companion_bytes_never_counts_index_models(tmp_path, monkeypatc
     missing = str(tmp_path / "does-not-exist")
     monkeypatch.setattr(cfg, "load_config", lambda: {"transcription_backend": "whisper"})
     monkeypatch.setattr("server.asr.whisper_backend.WHISPER_MODEL_DIR", missing)
-    monkeypatch.setattr("server.diarization.speakers.SPEAKER_MODEL_DIR", missing)
+    monkeypatch.setattr("server.diarization.embedder.ECAPA_MODEL_DIR", missing)
+    monkeypatch.setattr("server.diarization.embedder.REDIMNET_CACHE_DIR", missing)
     big_index_model = tmp_path / "huge-index-model"
     big_index_model.mkdir()
     (big_index_model / "weights.bin").write_bytes(b"z" * 20_000)

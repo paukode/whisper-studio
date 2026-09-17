@@ -28,6 +28,9 @@ FALLBACK_SIZES: dict[str, int] = {
     "voxlingua_lid": 86_000_000,
     "parakeet": 2_509_045_082,
     "ecapa_speaker": 89_134_981,
+    # GitHub-hosted (torch.hub), so the HF size API never resolves it and
+    # this fallback is the permanent estimate: repo snapshot + b2 checkpoint.
+    "redimnet_speaker": 18_500_000,
     "qwen3_embed": 1_207_490_483,
     "qwen3_rerank": 1_207_489_987,
     "gliner": 3_687_509_485,

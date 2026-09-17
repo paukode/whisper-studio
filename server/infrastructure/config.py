@@ -131,6 +131,21 @@ DEFAULTS = {
     # Resolved via the registry in server/asr. Read once at /ws connect so
     # a mid-recording change doesn't swap models on a live session.
     "transcription_backend": "streaming",
+    # ── Speaker attribution ──
+    # Which speaker encoder produces the embeddings behind "Speaker N":
+    #   "redimnet" — ReDimNet2-B2, 0.57% EER on VoxCeleb1-O (default)
+    #   "ecapa"    — ECAPA-VoxCeleb, the previous encoder, ~1% EER
+    # ReDimNet2 downloads on first use and falls back to ECAPA if it can't.
+    # Changing this invalidates stored voiceprints (vectors from different
+    # encoders are not comparable), which the gallery files per encoder.
+    "speaker_embedder": "redimnet",
+    # Cut a VAD utterance at speaker handovers instead of labelling the
+    # whole thing as one speaker. Needs word timestamps from the engine
+    # (Whisper and Parakeet report them; Canary does not).
+    "speaker_split_turns": True,
+    # Remember named speakers across recordings. Renaming "Speaker 2" to a
+    # name stores that cluster's voiceprint; later sessions recognise them.
+    "speaker_voiceprints": True,
     "bedrock_region": "us-east-1",
     # Hands-free voice mode (Amazon Nova 2 Sonic over Bedrock). region "" follows
     # bedrock_region; Sonic is only in us-east-1, us-west-2, eu-north-1 and

@@ -27,44 +27,54 @@ Two-stage design:
 from __future__ import annotations
 
 import logging
-import os
+import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
-from server.infrastructure.paths import models_root
+from server.diarization import embedder, voiceprints
 
 log = logging.getLogger("whisper-studio")
 
-MODELS_DIR = models_root()
-SPEAKER_MODEL_DIR = os.path.join(MODELS_DIR, "spkrec-ecapa-voxceleb")
-SPEAKER_REPO_ID = "speechbrain/spkrec-ecapa-voxceleb"
-
-# ECAPA-VoxCeleb is trained on ~3 s utterances. Below ~1 s the embedding
-# is dominated by phoneme content, not speaker identity. The upstream VAD
-# buffer makes most utterances comfortably exceed this bar.
-MIN_EMBED_SAMPLES = 16000  # 1.0 s @ 16 kHz
-# Threshold calibration. ECAPA cosine similarities on short (1-8 s)
-# real-world utterances run far lower than the folklore 0.6+: the same
-# speaker across two utterances typically lands 0.25-0.55 (worse with
-# room reverb, played-back media, or music underneath), while different
-# speakers land roughly 0.0-0.2. The original 0.60/0.45 pair was tuned
-# against close-mic audio and over-segmented badly in practice (11
-# "speakers" from a 2-person clip). Lower if speakers get split, raise
-# if they get merged.
+# Speaker encoders are trained on ~3 s utterances. Below ~1 s the
+# embedding is dominated by phoneme content, not speaker identity. The
+# upstream VAD buffer makes most utterances comfortably exceed this bar.
+MIN_EMBED_SAMPLES = embedder.MIN_EMBED_SAMPLES
+# Threshold calibration. These are PER ENCODER: cosine similarity means
+# something different in each embedding space, and reusing one encoder's
+# numbers for another is how every utterance ends up as "Speaker 1".
 #
-# Fallback re-clustering cut (similarity): only used when the merge-gap
-# heuristic in _agglomerative can't find a confident cluster count.
-MATCH_THRESHOLD = 0.40
-# Below this, the embedding is clearly nobody we know — create a new
-# speaker. At or above it, join the best cluster (provisionally when
-# weak) and let re-clustering correct any mistake. Deliberately low: the
-# canonical online system (diart) tunes its equivalent to similarity
-# ~0.0 on AMI meetings, because a wrong merge is one fixable label while
-# a wrong new speaker pollutes everything after it. The re-clusterer
-# owns the real cluster count.
-NEW_SPEAKER_THRESHOLD = 0.15
+# ECAPA cosine similarities on short (1-8 s) real-world utterances run far
+# lower than the folklore 0.6+: the same speaker across two utterances
+# typically lands 0.25-0.55 (worse with room reverb, played-back media, or
+# music underneath), while different speakers land roughly 0.0-0.2. The
+# original 0.60/0.45 pair was tuned against close-mic audio and
+# over-segmented badly in practice (11 "speakers" from a 2-person clip).
+#
+# ReDimNet2 separates far more sharply, measured on real speech: the same
+# speaker across different sentences lands 0.83-0.90, different speakers
+# 0.02-0.52 (the top of that range being a deliberately similar-sounding
+# pair). Its thresholds sit in the gap between those bands.
+#
+#   match     fallback re-clustering cut (similarity), used only when the
+#             merge-gap heuristic in _agglomerative finds no clear count
+#   new       below this the embedding is nobody we know, so create a
+#             speaker; at or above it join the best cluster (provisionally
+#             when weak) and let re-clustering correct any mistake
+#   single    if even the final merge is tighter than this cosine
+#             DISTANCE, everybody in the recording is one speaker
+#
+# Lower `new` if speakers get merged, raise it if one speaker gets split.
+THRESHOLDS = {
+    embedder.NAME_ECAPA: {"match": 0.40, "new": 0.15, "single": 0.60},
+    embedder.NAME_REDIMNET: {"match": 0.45, "new": 0.45, "single": 0.45},
+}
+# The historical (ECAPA) calibration, kept as the module-level names so
+# callers and tests that never load an encoder behave exactly as before.
+MATCH_THRESHOLD = THRESHOLDS[embedder.NAME_ECAPA]["match"]
+NEW_SPEAKER_THRESHOLD = THRESHOLDS[embedder.NAME_ECAPA]["new"]
+
 # Utterances shorter than this never CREATE a new speaker — short
 # windows give unreliable embeddings (a cough or cross-talk fragment
 # must not define a new identity). They still get labels (nearest
@@ -74,6 +84,50 @@ MIN_NEW_SPEAKER_SEC = 2.0
 # Real meetings rarely exceed ~10 speakers; at the cap we snap to the
 # nearest cluster instead of creating yet another spurious speaker.
 MAX_SPEAKERS = 12
+# Backchannels are the other half of the spurious-speaker problem, and
+# duration gates alone never caught them: "mm-hmm" thrown over somebody
+# else's sentence is loud, long enough, and acoustically a blend of two
+# voices, so it lands far from every cluster and looks exactly like a new
+# person. A filler-only utterance therefore never CREATES a speaker; it
+# still gets the nearest label, and re-clustering can still move it.
+FILLERS = {
+    "a",
+    "ah",
+    "aha",
+    "eh",
+    "er",
+    "erm",
+    "h",
+    "hm",
+    "hmm",
+    "huh",
+    "m",
+    "mhm",
+    "mm",
+    "mmhmm",
+    "mmm",
+    "oh",
+    "ok",
+    "okay",
+    "right",
+    "sure",
+    "uh",
+    "uhhuh",
+    "uhm",
+    "um",
+    "wow",
+    "yeah",
+    "yep",
+    "yes",
+    "yup",
+}
+# ...and so does anything this short: one or two characters of transcript
+# carry no identity regardless of which word they are.
+MIN_NEW_SPEAKER_CHARS = 3
+# A cluster holding less than this much total speech across the whole
+# session is not a person, it is an artefact. Re-clustering folds it into
+# its nearest neighbour instead of leaving it in the speaker list.
+MIN_SPEAKER_TOTAL_SEC = 3.0
 # Re-cluster after this many new finalized utterances...
 RECLUSTER_EVERY = 10
 # ...or this many when a brand-new speaker was just created — that is
@@ -82,55 +136,28 @@ RECLUSTER_AFTER_NEW = 3
 # Tree cutting (cosine distance): if even the final merge is below this,
 # everything is one speaker; and a merge-distance gap must be at least
 # MIN_GAP to be trusted as the cluster-count boundary.
-SINGLE_CLUSTER_DIST = 0.60
+SINGLE_CLUSTER_DIST = THRESHOLDS[embedder.NAME_ECAPA]["single"]
 MIN_GAP = 0.12
 
-# ECAPA embedding (torch/speechbrain) work runs here, off the event loop
-# and off the backends' decode threads.
+# Embedding (torch) work runs here, off the event loop and off the
+# backends' decode threads.
 executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="diarize")
 
-_encoder = None
-_encoder_lock = threading.Lock()
 
+def _thresholds() -> dict:
+    """Calibration for the encoder that is actually loaded.
 
-def _ensure_speaker_model() -> str:
-    """Download the ECAPA speaker encoder into models/ if absent (idempotent, download-only)."""
-    hyperparams = os.path.join(SPEAKER_MODEL_DIR, "hyperparams.yaml")
-    if not os.path.exists(hyperparams):
-        from huggingface_hub import snapshot_download
-
-        log.info("Downloading Speaker ID model %s ...", SPEAKER_REPO_ID)
-        snapshot_download(
-            repo_id=SPEAKER_REPO_ID,
-            local_dir=SPEAKER_MODEL_DIR,
-            local_dir_use_symlinks=False,
-        )
-        log.info("Speaker ID model download complete.")
-    return os.path.abspath(SPEAKER_MODEL_DIR)
-
-
-def _get_encoder():
-    """Lazily download + load the ECAPA speaker encoder."""
-    global _encoder
-    if _encoder is not None:
-        return _encoder
-    with _encoder_lock:
-        if _encoder is None:
-            _ensure_speaker_model()
-            log.info("Loading Speaker ID model...")
-            from speechbrain.inference.speaker import EncoderClassifier
-
-            _encoder = EncoderClassifier.from_hparams(
-                source=os.path.abspath(SPEAKER_MODEL_DIR),
-                savedir=os.path.abspath(SPEAKER_MODEL_DIR),
-            )
-            log.info("Speaker ID model loaded.")
-    return _encoder
+    Falls back to the ECAPA numbers when nothing has been loaded yet:
+    there are no embeddings to judge in that state anyway, and it keeps
+    the historical behaviour for callers that inject their own vectors.
+    """
+    name = embedder.active_name() or embedder.NAME_ECAPA
+    return THRESHOLDS.get(name, THRESHOLDS[embedder.NAME_ECAPA])
 
 
 def preload() -> None:
     """Eagerly load the encoder (startup warmup). Blocks until loaded."""
-    executor.submit(_get_encoder).result()
+    executor.submit(embedder.preload).result()
 
 
 def embed(audio: np.ndarray) -> np.ndarray | None:
@@ -139,20 +166,25 @@ def embed(audio: np.ndarray) -> np.ndarray | None:
     Returns ``None`` for windows under 1 s — the guard that keeps phoneme
     noise out of the cluster space.
     """
-    if audio is None or len(audio) < MIN_EMBED_SAMPLES:
-        return None
-    try:
-        import torch
+    return embedder.encode(audio)
 
-        signal = torch.from_numpy(audio).unsqueeze(0)
-        vec = _get_encoder().encode_batch(signal).flatten().cpu().numpy()
-        norm = np.linalg.norm(vec)
-        if norm == 0:
-            return None
-        return (vec / norm).astype(np.float32)
-    except Exception as e:
-        log.warning("Speaker embedding failed: %s", e)
-        return None
+
+def is_filler(text: str | None) -> bool:
+    """Is this utterance nothing but backchannel noise ("uh", "mm-hmm", "oh")?
+
+    Used only to deny SPEAKER CREATION, never to deny a label, so a real
+    one-word answer still shows up in the transcript under somebody.
+    """
+    if text is None:
+        return False
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if len(re.sub(r"[^\w]", "", stripped)) < MIN_NEW_SPEAKER_CHARS:
+        return True
+    tokens = [re.sub(r"[^\w]", "", t.lower()) for t in stripped.split()]
+    tokens = [t for t in tokens if t]
+    return bool(tokens) and all(t in FILLERS for t in tokens)
 
 
 def _label(idx: int) -> str:
@@ -171,6 +203,9 @@ class SpeakerSession:
         # state — scoring works against members, not maintained centroids,
         # so a re-cluster rebuild is just rewriting this map.
         self._assignments: dict[int, int] = {}
+        # chunk_id -> seconds of speech, for the total-speech gate that
+        # dissolves clusters too small to be a real participant.
+        self._durations: dict[int, float] = {}
         self._n_clusters = 0
         self._since_recluster = 0
         self._new_speaker_pending = False
@@ -178,6 +213,10 @@ class SpeakerSession:
         # User-provided participant count (the industry-standard knob:
         # speakers_expected). None = estimate the count from the data.
         self._expected: int | None = None
+        # cluster index -> name recovered from the voiceprint gallery, and
+        # the ones the caller has not been told about yet.
+        self._names: dict[int, str] = {}
+        self._pending_names: dict[int, str] = {}
 
     def set_expected(self, count: int | None) -> None:
         """Set how many speakers the meeting actually has. The user knows
@@ -210,11 +249,18 @@ class SpeakerSession:
             scores[idx] = float(np.median(top))
         return scores
 
-    def assign(self, chunk_id: int, emb: np.ndarray, duration_sec: float | None = None) -> str:
+    def assign(
+        self,
+        chunk_id: int,
+        emb: np.ndarray,
+        duration_sec: float | None = None,
+        text: str | None = None,
+    ) -> str:
         """Immediately label one utterance and fold it into the clusters.
 
-        ``duration_sec`` feeds the quality gate: an unknown duration is
-        treated as long enough (trusted callers / tests)."""
+        ``duration_sec`` and ``text`` feed the creation gates: an unknown
+        duration is treated as long enough (trusted callers / tests), and
+        a filler-only ``text`` can join a cluster but never start one."""
         if self._n_clusters == 0:
             idx = 0
             self._n_clusters = 1
@@ -223,7 +269,12 @@ class SpeakerSession:
             best = int(np.argmax(scores))
             cap = min(self._expected or MAX_SPEAKERS, MAX_SPEAKERS)
             too_short = duration_sec is not None and duration_sec < MIN_NEW_SPEAKER_SEC
-            if scores[best] >= NEW_SPEAKER_THRESHOLD or self._n_clusters >= cap or too_short:
+            if (
+                scores[best] >= _thresholds()["new"]
+                or self._n_clusters >= cap
+                or too_short
+                or is_filler(text)
+            ):
                 idx = best
             else:
                 idx = self._n_clusters
@@ -232,9 +283,102 @@ class SpeakerSession:
 
         self._embeddings[chunk_id] = emb
         self._assignments[chunk_id] = idx
+        if duration_sec is not None:
+            self._durations[chunk_id] = float(duration_sec)
         self._since_recluster += 1
         self._last_label = _label(idx)
+        self._maybe_name(idx)
         return self._last_label
+
+    # ── Voiceprint gallery ──────────────────────────────────────────────
+
+    def _members(self, idx: int) -> list[np.ndarray]:
+        return [self._embeddings[c] for c, g in self._assignments.items() if g == idx]
+
+    def _centroid(self, idx: int) -> np.ndarray | None:
+        members = self._members(idx)
+        if not members:
+            return None
+        vec = np.stack(members).mean(axis=0)
+        norm = float(np.linalg.norm(vec))
+        return (vec / norm).astype(np.float32) if norm > 0.0 else None
+
+    def _maybe_name(self, idx: int) -> None:
+        """Ask the gallery who this cluster is, once it is worth asking.
+
+        Deferred until the cluster holds two utterances: a name pinned
+        from a single noisy embedding is the one mistake that would be
+        visible for the rest of the meeting.
+        """
+        if idx in self._names or len(self._members(idx)) < 2:
+            return
+        centroid = self._centroid(idx)
+        if centroid is None:
+            return
+        try:
+            name = voiceprints.match(centroid)
+        except Exception as e:  # a broken gallery must not break labelling
+            log.warning("Voiceprint match failed: %s", e)
+            return
+        if name and name not in self._names.values():
+            self._names[idx] = name
+            self._pending_names[idx] = name
+
+    def take_new_names(self) -> dict[str, str]:
+        """Names discovered since the last call, as {label: name}."""
+        found = {_label(idx): name for idx, name in self._pending_names.items()}
+        self._pending_names.clear()
+        return found
+
+    def known_names(self) -> dict[str, str]:
+        """Every {label: name} resolved so far (for a reconnecting client)."""
+        return {_label(idx): name for idx, name in self._names.items()}
+
+    def embeddings_for(self, label: str) -> list[np.ndarray]:
+        """Every embedding behind a label like "Speaker 2" (enrollment input)."""
+        for idx in range(self._n_clusters):
+            if _label(idx) == label:
+                return self._members(idx)
+        return []
+
+    def adopt_name(self, label: str, name: str) -> None:
+        """Record a user-assigned name so the gallery is not re-queried for it."""
+        for idx in range(self._n_clusters):
+            if _label(idx) == label:
+                self._names[idx] = name
+                self._pending_names.pop(idx, None)
+                return
+
+    def _dissolve_small(
+        self, chunk_ids: list[int], groups: list[int], matrix: np.ndarray
+    ) -> list[int]:
+        """Fold clusters holding too little speech into their nearest neighbour.
+
+        A person who has spoken for two seconds across an hour is not a
+        person, they are a handful of backchannels and cross-talk that
+        clustered together. Only runs while at least one real cluster
+        survives, so an early meeting (everybody still under the bar)
+        is left alone.
+        """
+        totals: dict[int, float] = {}
+        for cid, g in zip(chunk_ids, groups, strict=False):
+            totals[g] = totals.get(g, 0.0) + self._durations.get(cid, 0.0)
+        # No durations recorded at all (trusted callers / tests): nothing to judge.
+        if not any(totals.values()):
+            return groups
+        big = [g for g, total in totals.items() if total >= MIN_SPEAKER_TOTAL_SEC]
+        small = [g for g in totals if g not in big]
+        if not big or not small:
+            return groups
+        centroids = {
+            g: matrix[[i for i, x in enumerate(groups) if x == g]].mean(axis=0) for g in totals
+        }
+        moved = [
+            max(big, key=lambda k: float(centroids[g] @ centroids[k])) if g in small else g
+            for g in groups
+        ]
+        log.debug("Dissolved %d undersized speaker cluster(s)", len(small))
+        return _compact(moved)
 
     def maybe_recluster(self) -> dict[int, str]:
         """Re-cluster all embeddings every RECLUSTER_EVERY finals, or
@@ -258,9 +402,11 @@ class SpeakerSession:
         matrix = np.stack([self._embeddings[c] for c in chunk_ids])
         groups = _agglomerative(
             matrix,
-            distance_threshold=1.0 - MATCH_THRESHOLD,
+            distance_threshold=1.0 - _thresholds()["match"],
+            single_cluster_dist=_thresholds()["single"],
             expected=self._expected,
         )
+        groups = self._dissolve_small(chunk_ids, groups, matrix)
 
         # Map new group ids onto existing labels by overlap, largest first,
         # so an early mislabel can't steal a bigger speaker's number.
@@ -295,6 +441,8 @@ class SpeakerSession:
         if self._embeddings:
             last_chunk = max(self._embeddings.keys())
             self._last_label = _label(self._assignments[last_chunk])
+        for idx in range(self._n_clusters):
+            self._maybe_name(idx)
         return changes
 
 
@@ -302,6 +450,7 @@ def _agglomerative(
     matrix: np.ndarray,
     distance_threshold: float,
     expected: int | None = None,
+    single_cluster_dist: float = SINGLE_CLUSTER_DIST,
 ) -> list[int]:
     """Average-linkage agglomerative clustering on normalized embeddings.
 
@@ -330,7 +479,7 @@ def _agglomerative(
     link = linkage(matrix, method="average", metric="cosine")
     heights = link[:, 2]
 
-    if heights[-1] <= SINGLE_CLUSTER_DIST:
+    if heights[-1] <= single_cluster_dist:
         return [0] * n
 
     if expected is not None:

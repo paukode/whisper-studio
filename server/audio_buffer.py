@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
 import webrtcvad
 
 log = logging.getLogger("whisper-studio")
@@ -56,6 +57,65 @@ MAX_UTTERANCE_MS = 8000
 # through normal mid-sentence pauses (around 200-300 ms in English).
 TRAILING_SILENCE_MS = 400
 
+# ── Automatic gain ──
+# Quiet capture is the norm, not the exception: a soft talker a metre from
+# a laptop mic sits around -50 dBFS, and a system-audio tap's amplitude
+# scales with the OUTPUT volume, so a call captured at 30% volume arrives
+# at a third of the level the same call has at full volume. Both land
+# below the VAD's sensitivity and the backends' energy gates, and the
+# words silently vanish. The browser's autoGainControl only covers the
+# microphone; nothing covered the tap. Normalizing here, in front of the
+# VAD, fixes every source at once.
+#
+# Speech level the gain steers toward (~-24 dBFS, comfortable for the
+# VAD, the recognizers, and the speaker encoder alike).
+AGC_TARGET_RMS = 0.06
+# Never amplify beyond this (+21.6 dB): past it, the floor of any real
+# room comes up far enough to read as speech.
+AGC_MAX_GAIN = 12.0
+# Frames quieter than this (~-58 dBFS) are ambient, not speech, and must
+# not steer the gain — boosting room tone until it trips the VAD is how
+# an AGC manufactures phantom utterances. They still get the CURRENT gain
+# applied, so levels stay continuous across a pause.
+AGC_NOISE_FLOOR = 0.0012
+# Per-frame smoothing toward a HIGHER gain (~0.5 s to converge at 30 ms
+# frames). Drops toward a lower gain are immediate: ramping down slowly
+# would clip the first loud syllable after a quiet stretch.
+AGC_RISE = 0.06
+
+
+class AutoGain:
+    """Frame-by-frame upward-only gain rider for PCM16 speech.
+
+    Upward-only by design: attenuating loud audio would fight the
+    browser's own microphone AGC, and int16 input is already bounded.
+    All it does is lift quiet capture to a workable level, smoothly,
+    with saturation instead of wraparound when the rare hot frame
+    arrives mid-ramp.
+    """
+
+    def __init__(self) -> None:
+        self._gain = 1.0
+
+    @property
+    def gain(self) -> float:
+        return self._gain
+
+    def process(self, frame: bytes) -> bytes:
+        """One PCM16 frame in, the same frame at the ridden gain out."""
+        samples = np.frombuffer(frame, dtype=np.int16).astype(np.float32) / 32768.0
+        rms = float(np.sqrt(np.mean(samples * samples))) if len(samples) else 0.0
+        if rms > AGC_NOISE_FLOOR:
+            desired = min(max(AGC_TARGET_RMS / rms, 1.0), AGC_MAX_GAIN)
+            if desired < self._gain:
+                self._gain = desired
+            else:
+                self._gain += AGC_RISE * (desired - self._gain)
+        if self._gain <= 1.0:
+            return frame
+        boosted = np.clip(samples * self._gain, -1.0, 0.999969)
+        return (boosted * 32768.0).astype(np.int16).tobytes()
+
 
 class UtteranceBuffer:
     """Per-connection VAD buffer.
@@ -80,6 +140,9 @@ class UtteranceBuffer:
         # non-speech. 2 is the sweet spot for desktop mic capture —
         # 3 clips faint speakers, 0-1 leaks too much room tone.
         self._vad = webrtcvad.Vad(aggressiveness)
+        # Level-normalize every frame BEFORE the VAD sees it — see the AGC
+        # block above for why quiet capture otherwise never becomes text.
+        self._agc = AutoGain()
         # Per-instance so backends can trade boundary latency against
         # mid-sentence splits (e.g. Parakeet runs slightly tighter because
         # its interims already carry the perceived latency).
@@ -101,7 +164,7 @@ class UtteranceBuffer:
         flushed: list[bytes] = []
 
         while len(self._partial) >= FRAME_BYTES:
-            frame = bytes(self._partial[:FRAME_BYTES])
+            frame = self._agc.process(bytes(self._partial[:FRAME_BYTES]))
             del self._partial[:FRAME_BYTES]
 
             try:

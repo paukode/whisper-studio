@@ -47,7 +47,7 @@ def test_whisper_session_emits_final_events(monkeypatch):
     monkeypatch.setattr(
         whisper_backend,
         "_decode_utterance",
-        lambda pcm: ("hello world", np.zeros(16000, dtype=np.float32), "en"),
+        lambda pcm: ("hello world", np.zeros(16000, dtype=np.float32), "en", []),
     )
     session = whisper_backend.create_session()
     session._buf = _StubBuffer([b"\x00" * 32000])
@@ -64,7 +64,7 @@ def test_whisper_session_drops_empty_decodes(monkeypatch):
     monkeypatch.setattr(
         whisper_backend,
         "_decode_utterance",
-        lambda pcm: ("", np.zeros(16000, dtype=np.float32), None),
+        lambda pcm: ("", np.zeros(16000, dtype=np.float32), None, []),
     )
     session = whisper_backend.create_session()
     session._buf = _StubBuffer([b"\x00" * 32000], tail=b"\x00" * 32000)
@@ -76,7 +76,7 @@ def test_whisper_finish_flushes_tail(monkeypatch):
     monkeypatch.setattr(
         whisper_backend,
         "_decode_utterance",
-        lambda pcm: ("the tail", np.zeros(16000, dtype=np.float32), "en"),
+        lambda pcm: ("the tail", np.zeros(16000, dtype=np.float32), "en", []),
     )
     session = whisper_backend.create_session()
     session._buf = _StubBuffer([], tail=b"\x00" * 32000)
@@ -169,11 +169,11 @@ def test_decode_retries_relaxed_when_strict_pass_is_empty(monkeypatch):
 
     def fake_transcribe(audio, language=None, relaxed=False):
         calls.append((language, relaxed))
-        return ("prawdziwy tekst" if relaxed else "", language)
+        return ("prawdziwy tekst" if relaxed else "", language, [])
 
     monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
     monkeypatch.setattr(whisper_backend, "_configured_languages", lambda: [])
-    text, _, _ = whisper_backend._decode_utterance(_speech_pcm())
+    text, _, _, _ = whisper_backend._decode_utterance(_speech_pcm())
     assert text == "prawdziwy tekst"
     assert calls == [(None, False), (None, True)]
 
@@ -185,10 +185,11 @@ def test_decode_rescue_is_still_hallucination_filtered(monkeypatch):
         lambda audio, language=None, relaxed=False: (
             "thank you." if relaxed else "",
             language,
+            [],
         ),
     )
     monkeypatch.setattr(whisper_backend, "_configured_languages", lambda: [])
-    text, _, _ = whisper_backend._decode_utterance(_speech_pcm())
+    text, _, _, _ = whisper_backend._decode_utterance(_speech_pcm())
     assert text == ""
 
 
@@ -199,10 +200,10 @@ def test_decode_uses_constrained_detection_for_allowlist(monkeypatch):
 
     def fake_transcribe(audio, language=None, relaxed=False):
         seen["language"] = language
-        return "dzień dobry wszystkim", language
+        return "dzień dobry wszystkim", language, []
 
     monkeypatch.setattr(whisper_backend, "_transcribe", fake_transcribe)
-    text, _, _ = whisper_backend._decode_utterance(_speech_pcm())
+    text, _, _, _ = whisper_backend._decode_utterance(_speech_pcm())
     assert text == "dzień dobry wszystkim"
     assert seen["language"] == "pl"
 
@@ -446,3 +447,75 @@ def test_canary_draft_cadence_backs_off(monkeypatch):
     assert not session._draft_due(2 * 16000 * 6)  # 6 s window needs 2 s gap
     session._last_interim_at = _time.monotonic() - 2.1
     assert session._draft_due(2 * 16000 * 6)
+
+
+# ── word timings (what lets the orchestrator split a turn) ───────────────────
+
+
+def test_whisper_words_are_flattened_from_segments():
+    words = whisper_backend._words_from_segments(
+        {
+            "segments": [
+                {"words": [{"word": " hello", "start": 0.0, "end": 0.4}]},
+                {
+                    "words": [
+                        {"word": " there", "start": 0.4, "end": 0.9},
+                        {"word": "", "start": 1.0, "end": 1.2},
+                        {"word": " late", "start": None, "end": 1.5},
+                    ]
+                },
+            ]
+        }
+    )
+    assert [w["text"] for w in words] == ["hello", "there"]
+    assert words[0]["start"] == 0.0 and words[1]["end"] == 0.9
+
+
+def test_whisper_words_tolerate_a_decode_without_them():
+    assert whisper_backend._words_from_segments({}) == []
+    assert whisper_backend._words_from_segments({"segments": [{"text": "hi"}]}) == []
+
+
+def test_parakeet_tokens_merge_into_words():
+    from types import SimpleNamespace
+
+    from server.asr import parakeet_backend
+
+    def token(text, start, end):
+        return SimpleNamespace(text=text, start=start, end=end)
+
+    result = SimpleNamespace(
+        tokens=[
+            token(" quar", 0.0, 0.2),
+            token("ter", 0.2, 0.35),
+            token("ly", 0.35, 0.5),
+            token(" numbers", 0.5, 0.9),
+        ]
+    )
+    words = parakeet_backend._words_from_result(result)
+    assert [w["text"] for w in words] == ["quarterly", "numbers"]
+    assert words[0]["start"] == 0.0 and words[0]["end"] == 0.5
+
+
+def test_parakeet_words_tolerate_a_result_without_tokens():
+    from types import SimpleNamespace
+
+    from server.asr import parakeet_backend
+
+    assert parakeet_backend._words_from_result(SimpleNamespace()) == []
+
+
+def test_whisper_words_record_whether_a_space_preceded_them():
+    words = whisper_backend._words_from_segments(
+        {
+            "segments": [
+                {
+                    "words": [
+                        {"word": "你好", "start": 0.0, "end": 0.3},
+                        {"word": " hello", "start": 0.3, "end": 0.7},
+                    ]
+                }
+            ]
+        }
+    )
+    assert [w["space"] for w in words] == [False, True]

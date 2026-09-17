@@ -2,6 +2,9 @@
   "tavily_api_key": "",
   "whisper_language": "",
   "transcription_backend": "streaming",
+  "speaker_embedder": "redimnet",
+  "speaker_split_turns": true,
+  "speaker_voiceprints": true,
   "bedrock_region": "us-east-1",
   "chat_models": {
     "fable5.1": {

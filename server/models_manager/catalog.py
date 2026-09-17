@@ -65,7 +65,7 @@ def _static_entries() -> tuple[ModelEntry, ...]:
     with a pointer to the source.
     """
     from server.asr import canary_backend, parakeet_backend, whisper_backend
-    from server.diarization import speakers
+    from server.diarization import embedder as speaker_embedder
     from server.index import config as ic
 
     def rel(path: str, root: str) -> str:
@@ -140,16 +140,38 @@ def _static_entries() -> tuple[ModelEntry, ...]:
             ),
         ),
         ModelEntry(
+            key="redimnet_speaker",
+            label="ReDimNet2 Speaker Encoder",
+            group=GROUP_TRANSCRIPTION,
+            repo_id=speaker_embedder.REDIMNET_HUB,
+            dir_name=rel(speaker_embedder.REDIMNET_CACHE_DIR, speaker_embedder.MODELS_DIR),
+            # Mirrors embedder._ensure_redimnet_files: torch.hub drops the
+            # checkpoint at this path inside the cache dir.
+            sentinel_rel=speaker_embedder.REDIMNET_SENTINEL,
+            ensure_module="server.diarization.embedder",
+            ensure_func="_ensure_redimnet_files",
+            note=(
+                "Default speaker encoder: tells voices apart for the "
+                "transcript's Speaker labels and voiceprints. Ships with "
+                "the app; if deleted, re-downloads from GitHub."
+            ),
+        ),
+        ModelEntry(
             key="ecapa_speaker",
             label="ECAPA Speaker Encoder",
             group=GROUP_TRANSCRIPTION,
             bundled=True,
-            repo_id=speakers.SPEAKER_REPO_ID,
-            dir_name=rel(speakers.SPEAKER_MODEL_DIR, speakers.MODELS_DIR),
-            # Mirrors speakers._ensure_speaker_model's hyperparams check.
+            repo_id=speaker_embedder.ECAPA_REPO_ID,
+            dir_name=rel(speaker_embedder.ECAPA_MODEL_DIR, speaker_embedder.MODELS_DIR),
+            # Mirrors embedder._ensure_ecapa_files' hyperparams check.
             sentinel_rel="hyperparams.yaml",
-            ensure_module="server.diarization.speakers",
-            ensure_func="_ensure_speaker_model",
+            ensure_module="server.diarization.embedder",
+            ensure_func="_ensure_ecapa_files",
+            note=(
+                "Fallback speaker encoder, used automatically when "
+                "ReDimNet2 is unavailable (offline first run) or when "
+                "speaker_embedder is set to ecapa."
+            ),
         ),
         ModelEntry(
             key="qwen3_embed",
