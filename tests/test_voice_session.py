@@ -323,6 +323,8 @@ async def test_model_closing_the_stream_triggers_reopen(harness):
     vs = harness["make"]()
     await vs.start()
     s1 = harness["streams"][0]
+    s1.feed_text_block("u1", "USER", "hello", "FINAL")  # a healthy stream first
+    await _settle(10)
     await s1.incoming.put(None)  # model hung up
     for _ in range(40):
         await asyncio.sleep(0.02)
@@ -364,15 +366,16 @@ async def test_stream_error_reopens_instead_of_ending(harness):
 
 
 @run_async
-async def test_persistent_stream_failures_end_the_session(harness):
+async def test_first_stream_failing_before_any_event_is_a_start_failure(harness):
+    """Bedrock refusing the very first request (model not enabled, wrong
+    region, blocked transport) is reported at once with the real error, not
+    retried six times and then blamed on a renewal."""
     from server.voice.sonic_client import SonicStreamError
 
     async def boom():
         raise SonicStreamError("ValidationException: model access denied")
 
-    original_make = harness["make"]
-    vs = original_make()
-    # Every stream the session opens fails right away.
+    vs = harness["make"]()
     real_opener = vs._open_stream
 
     async def failing_opener(model_id, region):
@@ -387,9 +390,46 @@ async def test_persistent_stream_failures_end_the_session(harness):
         if vs.done.is_set():
             break
     assert vs.done.is_set()
+    assert len(harness["streams"]) == 1
+    errors = [e for e in harness["events"] if e["type"] == "error"]
+    assert errors and errors[0]["message"].startswith("Voice could not start")
+    assert "model access denied" in errors[0]["message"]
+    assert "renewed" not in errors[0]["message"]
+    assert harness["events"][-1] == {"type": "ended", "reason": "error"}
+
+
+@run_async
+async def test_persistent_stream_failures_after_a_healthy_start_end_the_session(harness):
+    from server.voice.sonic_client import SonicStreamError
+
+    async def boom():
+        raise SonicStreamError("ValidationException: model access denied")
+
+    vs = harness["make"]()
+    real_opener = vs._open_stream
+
+    async def failing_opener(model_id, region):
+        s = await real_opener(model_id, region)
+        s.receive = boom  # type: ignore[assignment]
+        return s
+
+    await vs.start()
+    s1 = harness["streams"][0]
+    s1.feed_text_block("u1", "USER", "hello", "FINAL")
+    await _settle(10)
+    # From here every stream, the live one included, fails right away.
+    vs._open_stream = failing_opener
+    s1.receive = boom  # type: ignore[assignment]
+    s1.feed({"completionStart": {"promptName": "p"}})
+    for _ in range(200):
+        await asyncio.sleep(0.02)
+        if vs.done.is_set():
+            break
+    assert vs.done.is_set()
     assert len(harness["streams"]) == voice_session.MAX_REOPENS + 1
     errors = [e for e in harness["events"] if e["type"] == "error"]
     assert errors and "could not be renewed" in errors[0]["message"]
+    assert "model access denied" in errors[0]["message"]
     assert harness["events"][-1] == {"type": "ended", "reason": "error"}
 
 

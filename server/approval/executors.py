@@ -382,6 +382,13 @@ async def _do_git_push(payload: dict) -> ApprovalOutcome:
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
+async def _do_git_pull(payload: dict) -> ApprovalOutcome:
+    from server.git.executor import do_git_pull
+
+    ok, output = do_git_pull(payload)
+    return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
+
+
 async def _do_git_create_branch(payload: dict) -> ApprovalOutcome:
     from server.git.executor import do_git_create_branch
 

@@ -25,18 +25,18 @@ from server.infrastructure.sessions import (
     _get_conn,
     _lock_for,
     _row_to_dict,
-    _row_to_summary,
     _safe_col,
     _upsert_session,
+    list_session_summaries,
     router,
 )
 
 
 @router.get("/api/sessions")
 async def list_sessions():
-    with _get_conn() as conn:
-        rows = conn.execute("SELECT * FROM sessions ORDER BY updated_at DESC").fetchall()
-    return [_row_to_summary(r) for r in rows]
+    # Off the event loop: a SQLite read that waits on a writer (busy_timeout)
+    # must never stall every other request with it.
+    return await asyncio.to_thread(list_session_summaries)
 
 
 def _message_text(content) -> str:
@@ -127,10 +127,14 @@ async def search_sessions(q: str = "", limit: int = 50):
             "truncated": len(hits) >= limit,
         }
     pattern = re.compile(re.escape(needle), re.IGNORECASE)
-    with _get_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, chat_history, segments FROM sessions ORDER BY updated_at DESC"
-        ).fetchall()
+
+    def _all_rows():
+        with _get_conn() as conn:
+            return conn.execute(
+                "SELECT id, chat_history, segments FROM sessions ORDER BY updated_at DESC"
+            ).fetchall()
+
+    rows = await asyncio.to_thread(_all_rows)
     results = []
     truncated = False
     for i, row in enumerate(rows):
@@ -145,16 +149,25 @@ async def search_sessions(q: str = "", limit: int = 50):
     return {"results": results, "truncated": truncated}
 
 
-@router.get("/api/sessions/{session_id}")
-async def get_session(session_id: str):
+def _load_session(session_id: str) -> dict | None:
     with _get_conn() as conn:
         row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
     if not row:
-        return JSONResponse(status_code=404, content={"error": "not found"})
+        return None
     from server.tasks_tracker import get_session_tasks
 
     data = _row_to_dict(row)
     data["tasks"] = get_session_tasks(session_id)
+    return data
+
+
+@router.get("/api/sessions/{session_id}")
+async def get_session(session_id: str):
+    # A long session is megabytes of JSON; reading and decoding it stays off
+    # the event loop so the rest of the UI keeps answering while it loads.
+    data = await asyncio.to_thread(_load_session, session_id)
+    if data is None:
+        return JSONResponse(status_code=404, content={"error": "not found"})
     return data
 
 

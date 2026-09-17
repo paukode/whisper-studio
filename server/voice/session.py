@@ -133,6 +133,9 @@ class _Live:
     pump: asyncio.Task | None = None
     closing: bool = False
     tool_ids: set[str] = field(default_factory=set)
+    # Model events received on this stream. Zero when it dies means Bedrock
+    # never answered: the failure is reported as a start failure, not retried.
+    events: int = 0
 
 
 @dataclass
@@ -194,6 +197,12 @@ class VoiceSession:
         self._live: _Live | None = None
         self._send_lock = asyncio.Lock()
         self._renew_task: asyncio.Task | None = None
+        # Set once any stream has delivered a model event. Until then a dying
+        # stream is a configuration or access problem (wrong region, model not
+        # enabled, blocked transport) and reopening it six times only delays
+        # the real message; see _stream_failed.
+        self._ever_healthy = False
+        self._last_stream_error = ""
         # Sonic-side work (its tool calls, UI resolves, the goodbye timer):
         # cancelled when the conversation ends.
         self._tool_tasks: set[asyncio.Task] = set()
@@ -590,7 +599,10 @@ class VoiceSession:
         if self._stopping or old is not self._live or old.closing:
             return
         if self._reopens >= MAX_REOPENS:
-            await self._fail("Voice stream could not be renewed. Please start voice mode again.")
+            detail = f" ({self._last_stream_error})" if self._last_stream_error else ""
+            await self._fail(
+                f"Voice stream could not be renewed{detail}. Please start voice mode again."
+            )
             return
         self._reopens += 1
         old.closing = True
@@ -628,8 +640,7 @@ class VoiceSession:
                 # transcript so far (background runs and the browser keep going).
                 # Persistent failures exhaust the reopen budget and end it.
                 if live is self._live and not self._stopping and not live.closing:
-                    log.warning("voice: stream failed (%s: %s); reopening", type(exc).__name__, exc)
-                    await self._reopen(live, why=f"stream failed: {exc}")
+                    await self._stream_failed(live, f"{type(exc).__name__}: {exc}")
                 return
             if raw is None:
                 break
@@ -639,6 +650,9 @@ class VoiceSession:
                 # One odd field is not worth a stream: skip the event.
                 log.warning("voice: ignoring malformed model event: %s", exc)
                 continue
+            if parsed:
+                live.events += len(parsed)
+                self._ever_healthy = True
             for ev in parsed:
                 try:
                     await self._handle(ev, live)
@@ -649,7 +663,23 @@ class VoiceSession:
         # The model closed the stream on its own (the 8-minute cut, or an
         # error we did not see). If this is still the live stream, reopen.
         if live is self._live and not self._stopping and not live.closing:
-            await self._reopen(live, why="model closed the stream")
+            await self._stream_failed(live, "the model closed the stream before responding")
+
+    async def _stream_failed(self, live: _Live, error: str) -> None:
+        """A live stream died. A stream that never delivered a model event on
+        a conversation that never had one is not a hiccup to retry: it is the
+        first request being refused (model not enabled in the region, no
+        access, a transport that cannot reach Bedrock), so the user gets that
+        error now instead of a renewal message minutes later."""
+        self._last_stream_error = error
+        if not self._ever_healthy and live.events == 0:
+            await self._fail(
+                f"Voice could not start: {error}. Check that {self.config.model_id} "
+                f"is available to this account in {self.config.region}."
+            )
+            return
+        log.warning("voice: stream failed (%s); reopening", error)
+        await self._reopen(live, why=f"stream failed: {error}")
 
     async def _handle(self, ev: dict[str, Any], live: _Live) -> None:
         kind = ev["kind"]

@@ -65,6 +65,7 @@ WRITE_TOOLS = frozenset(
         "promote_agent_type",
         "git_add_commit",
         "git_push",
+        "git_pull",
         "git_create_branch",
         "git_checkout",
         "git_merge",
