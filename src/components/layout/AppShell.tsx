@@ -11,6 +11,8 @@ import { useSessionPersistence } from '@/hooks/useSessionPersistence';
 import { killSessionStream } from '@/hooks/chatStream/streamControl';
 import { useActiveChatStore } from '@/stores/sessionRuntimes';
 import { useSubagentStore } from '@/stores/subagentStore';
+import { useVoiceStore } from '@/stores/voiceStore';
+import { voiceController } from '@/services/voiceController';
 import { initRecordingControllerEvents } from '@/services/recordingController';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
@@ -223,10 +225,17 @@ const AppShell: React.FC = () => {
   // (preventDefault) always win — the next ESC then stops the stream.
   const isActiveStreaming = useActiveChatStore((s) => s.isStreaming);
   const hasRunningSubagents = useSubagentStore((s) => Object.keys(s.stops).length > 0);
+  const voiceDraining = useVoiceStore((s) => s.draining > 0);
   useKeyboardShortcut(
     'escape',
-    () => killSessionStream(useSessionStore.getState().currentSessionId),
-    isActiveStreaming || hasRunningSubagents,
+    () => {
+      if (isActiveStreaming || hasRunningSubagents) {
+        killSessionStream(useSessionStore.getState().currentSessionId);
+      } else {
+        voiceController.cancelRuns();
+      }
+    },
+    isActiveStreaming || hasRunningSubagents || voiceDraining,
   );
 
   // ── Workspace collapse / expand ──

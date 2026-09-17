@@ -125,6 +125,10 @@ class TurnContext:
     # would reset the PARENT's in-flight goal tracking / auto-mode breaker
     # and collide with its paused-approval slot.
     turn_scope_id: str | None = None
+    # Channel the turn's agent progress is published on and drained from.
+    # None means the session id (typed chat). A run that must not mix its
+    # agent cards into a concurrent chat turn (voice) uses its own channel.
+    event_channel: str | None = None
     # Per-round tool catalog override. When set, called instead of
     # _assemble_round_tools(ctx) to get (tools, core_count) — lets a caller
     # (e.g. the agent runtime) supply its own filtered/precomputed tool pool
@@ -675,7 +679,8 @@ async def run_turn(ctx: TurnContext):
             # ── Tool execution through the shared safety gate ────────────────
             from server.agents.event_bus import event_bus as _agent_event_bus
 
-            _event_queue = _agent_event_bus.subscribe(session_id)
+            _agent_channel = ctx.event_channel or session_id
+            _event_queue = _agent_event_bus.subscribe(_agent_channel)
             _batch_task = asyncio.create_task(
                 execute_tool_batch(
                     tool_uses,
@@ -696,6 +701,7 @@ async def run_turn(ctx: TurnContext):
                     effort_label=ctx.effort_label,
                     unattended=ctx.unattended,
                     guard_scope=_scope_id,
+                    event_channel=ctx.event_channel,
                 )
             )
 
@@ -738,7 +744,7 @@ async def run_turn(ctx: TurnContext):
                         yield f"data: {ndjson_dumps(_payload)}\n\n"
                 states = _batch_task.result()
             finally:
-                _agent_event_bus.unsubscribe(session_id, _event_queue)
+                _agent_event_bus.unsubscribe(_agent_channel, _event_queue)
 
             truncation_events: list[dict] = []
             (

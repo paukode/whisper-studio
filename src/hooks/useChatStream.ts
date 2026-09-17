@@ -35,6 +35,7 @@ import { turnModelSettings } from './chatStream/turnSettings';
 import { buildHistoryPayload } from './chatStream/history';
 import {
   abortSessionStream,
+  buildStoppedMessage,
   killSessionStream,
   registerStreamController,
   releaseStreamController,
@@ -396,22 +397,10 @@ export function useChatStream(): UseChatStreamReturn {
         // "(Stopped)" message) synchronously; only a plain re-send abort
         // still needs the fallback finalization here.
         if (!wasKillFinalized(controller)) {
-          // Capture content BEFORE clearing streaming state, then finish atomically
-          const { currentStreamContent, currentThinkingContent, thinkingElapsedMs } = store();
-          // Keep whatever team activity was already folded — an aborted turn
-          // should leave the partial team card in place, not erase it.
-          const abortTeamReports = store().takeTeamReports();
-          const abortMsg: ChatMessage | undefined = (currentStreamContent || abortTeamReports)
-            ? {
-                role: 'assistant',
-                content: currentStreamContent ? currentStreamContent + '\n\n*(Stopped)*' : '*(Stopped)*',
-                timestamp: new Date().toISOString(),
-                teamReports: abortTeamReports,
-                _thinkingMs: thinkingElapsedMs > 0 ? Math.round(thinkingElapsedMs) : undefined,
-                _thinkingText: currentThinkingContent || undefined,
-              }
-            : undefined;
-          store().finishStream(abortMsg);
+          // Same commit as the kill switch: partial prose, the tool activity
+          // shown so far and any live team card land as one "(Stopped)"
+          // message in the same pass that clears the streaming state.
+          store().finishStream(buildStoppedMessage(store()));
         }
       } else {
         console.error('[Chat] Error:', err);
@@ -449,15 +438,14 @@ export function useChatStream(): UseChatStreamReturn {
     try {
       // Deliberately a minimal body: the backend only needs `question` +
       // `session_id` to queue it into the turn that's actually running.
-      // If that turn already finished in the tiny window before this
-      // request arrived, the backend would instead start a genuine new
-      // (SSE) turn from this same minimal, incomplete body — so that
-      // outcome is treated as NOT delivered and closed immediately, rather
-      // than rendered as a degraded reply from a half-built request.
+      // `midturn` tells it this body may ONLY be queued: if the turn already
+      // finished in the tiny window before the request arrived, the backend
+      // answers 409 instead of starting a fresh turn from an incomplete
+      // body, and that outcome is reported as NOT delivered.
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, session_id: activeSessionId }),
+        body: JSON.stringify({ question, session_id: activeSessionId, midturn: true }),
       });
       delivered = response.ok && (response.headers.get('content-type') || '').includes('application/json');
       if (!delivered) void response.body?.cancel();

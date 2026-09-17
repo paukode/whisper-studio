@@ -213,6 +213,15 @@ const TranscriptSegmentImpl: React.FC<TranscriptSegmentProps> = ({
         </div>
       )}
       <div className="segment-body">
+        {segment.overlap && (
+          <span
+            className="segment-overlap-badge"
+            title="Overlapping turn: the speakers talked over each other here, so the first words may belong to either one"
+            aria-label="Overlapping turn boundary"
+          >
+            ⇥
+          </span>
+        )}
         {isEditingText ? (
           <textarea
             ref={textareaRef}

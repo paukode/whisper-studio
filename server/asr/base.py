@@ -23,11 +23,19 @@ Sessions are duck-typed to the protocol below. Events are plain dicts:
         self-correct; carries no audio and never gets a speaker label.
         Backends without live drafts simply never emit it.
 
-    {"kind": "final", "text": str, "audio": np.ndarray}
+    {"kind": "final", "text": str, "audio": np.ndarray, "words": list[dict]}
         A settled utterance at a natural silence boundary. ``audio`` is
         the float32 mono 16 kHz window the text was decoded from, handed
         back so the caller can run speaker identification on it. The
         backend itself never touches diarization.
+
+        ``words`` is optional: ``[{"text": str, "start": float, "end":
+        float}, ...]`` in utterance-relative seconds. When present, the
+        orchestrator can cut the utterance at a speaker handover (see
+        server/diarization/turns.py) and attribute the words on each side
+        separately. Backends that cannot report word times omit it, and
+        their utterances stay whole — a wrong text cut would be worse
+        than a single label.
 
 Adding a backend: drop a module in this package and register it in
 ``BACKENDS`` (see __init__.py). Removing one: delete the module and its

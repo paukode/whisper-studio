@@ -107,6 +107,13 @@ export interface ChatMessage {
    *  the stream finishes (either via [DONE] or finishStream). Never sent
    *  to the backend or persisted. */
   _inFlight?: boolean;
+  /** Voice mode: this turn was spoken (user speech transcribed by the voice
+   *  model, or the assistant's spoken reply). Renders a small mic glyph. */
+  spoken?: boolean;
+  /** Set when the user cut this turn short (Stop button or ESC). The
+   *  content ends in "(Stopped)" and any toolUse entry that was still
+   *  running carries status 'stopped'. */
+  stopped?: true;
   /** Interactive user question from ask_user tool.
    *
    * Single-question rounds populate `userQuestion`. When the assistant emits
@@ -153,7 +160,10 @@ export interface ToolUseEvent {
   toolName: string;
   input: Record<string, unknown>;
   result?: string;
-  status: 'pending' | 'running' | 'complete' | 'error';
+  /** 'stopped' is client-only: the kill switch (Stop / ESC) stamps it on
+   *  every step that was still running or pending so the committed
+   *  transcript shows a terminal glyph instead of a spinner. */
+  status: 'pending' | 'running' | 'complete' | 'error' | 'stopped';
   /** Characters of tool arguments received so far while the call is still
    *  streaming (a whole HTML app can take minutes); shown next to the spinner. */
   progressChars?: number;

@@ -46,8 +46,12 @@ async def route_tool(
     tool_use_id: str,
     origin: str = "chat",
     effort_label: str | None = None,
+    event_channel: str | None = None,
 ) -> tuple[str, list[dict]]:
     """Dispatch a tool call to its handler.
+
+    ``event_channel`` is where agent progress for this turn is published
+    (None: the session id). A nested agent's own channel takes precedence.
 
     Returns:
         (output, side_effects) where side_effects is a list of dicts.
@@ -509,7 +513,7 @@ async def route_tool(
             parent_agent_id=_nesting["agent_id"] if _nesting else None,
             depth=_nesting["depth"] if _nesting else 0,
             team_id=_nesting["team_id"] if _nesting else None,
-            event_channel=_nesting["event_channel"] if _nesting else None,
+            event_channel=(_nesting["event_channel"] if _nesting else None) or event_channel,
         )
         return output, side_effects
 
@@ -575,6 +579,7 @@ async def route_tool(
             effort_label=effort_label,
             parent_agent_id=_nesting["agent_id"] if _nesting else None,
             depth=_nesting["depth"] if _nesting else 0,
+            event_channel=event_channel,
         )
         side_effects.append({"team_results": team_payload})
         return output, side_effects

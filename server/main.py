@@ -31,6 +31,7 @@ from server.ci.routes import router as ci_router
 from server.costs.tracker import router as cost_router
 from server.cron_scheduler import init_scheduler
 from server.cron_scheduler import router as cron_router
+from server.diarization.routes import router as speakers_router
 from server.doctor import router as doctor_router
 from server.git.router import router as git_router
 from server.goals.routes import router as goals_router
@@ -70,6 +71,7 @@ from server.skills import router as skills_router
 from server.tasks.routes import router as background_tasks_router
 from server.tasks_tracker import router as tasks_router
 from server.terminal import router as terminal_router
+from server.voice.routes import router as voice_router
 from server.websocket import router as ws_router
 from server.workflows.routes import router as workflows_router
 from server.workspace import router as workspace_router
@@ -466,6 +468,8 @@ app.include_router(attachments_router)
 app.include_router(chat_router)
 app.include_router(sessions_router)
 app.include_router(ws_router)
+app.include_router(voice_router)
+app.include_router(speakers_router)
 app.include_router(permissions_router)
 app.include_router(hooks_router)
 app.include_router(goals_router)

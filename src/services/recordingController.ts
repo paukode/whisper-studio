@@ -114,6 +114,7 @@ function onTranscriptResult(
   speaker: string,
   chunkId?: number,
   translating?: boolean,
+  overlap?: boolean,
 ): void {
   if (!text) return;
   const store = ownerStore();
@@ -131,6 +132,10 @@ function onTranscriptResult(
       speaker,
       chunks: chunkId !== undefined ? [{ id: chunkId, start: 0 }] : undefined,
       pendingTranslations: translating && chunkId !== undefined ? [chunkId] : undefined,
+      // This turn started at a handover with no clean silence, so its first
+      // words may belong to either speaker. Only meaningful on the segment
+      // that opens at the boundary, which is exactly where it is set.
+      overlap: overlap === true ? true : undefined,
       timestamp: now,
       edited: false,
       receivedAt: now,
@@ -306,6 +311,7 @@ function connectWS(): void {
           String(msg.speaker ?? 'Speaker 1'),
           chunkId,
           msg.translating === true,
+          msg.overlap === true,
         );
         // The server resolved this chunk's translator; translate_via 'apple'
         // means this client runs it through the shell's on-device bridge and
@@ -336,6 +342,13 @@ function connectWS(): void {
         // Diarization re-clustered and corrected some earlier labels.
         const updates = Array.isArray(msg.updates) ? msg.updates : [];
         ownerStore().applySpeakerUpdates(updates as { chunk_id: number; speaker: string }[]);
+      } else if (msg.type === 'speaker_named') {
+        // The voiceprint gallery recognised somebody who has been recorded
+        // before: apply their stored name the same way a manual rename does.
+        const names = (msg.names ?? {}) as Record<string, string>;
+        for (const [label, name] of Object.entries(names)) {
+          if (label && name) ownerStore().renameSpeaker(label, name);
+        }
       } else if (msg.type === 'interim') {
         // Parakeet's growing word-by-word draft of the utterance in progress.
         ownerStore().setInterimText(String(msg.text ?? ''));

@@ -26,6 +26,7 @@ STATIC_KEYS = {
     "canary",
     "voxlingua_lid",
     "parakeet",
+    "redimnet_speaker",
     "ecapa_speaker",
     "qwen3_embed",
     "qwen3_rerank",

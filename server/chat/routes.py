@@ -1198,26 +1198,41 @@ async def chat_endpoint(request: Request):
     # reassigned there any more) for the TurnContext and for the matching
     # cleanup in the stream's `finally`, which pops the slot only if it
     # still holds THIS turn's token.
+    #
+    # Every turn claims the slot, continuations included. An approval resume
+    # used to skip the claim, so from the first approval card onward the
+    # session looked idle to the server: a message typed while the resumed
+    # turn kept working started a second, independent turn from the composer's
+    # minimal body (no history, default approvals) instead of being queued.
+    #
+    # ``midturn`` marks the composer's steer-the-running-turn request. When
+    # nothing is running any more it is refused with a JSON 409 rather than
+    # silently becoming a fresh turn: the composer keeps the text and tells
+    # the user nothing was sent.
     is_new_turn = approved_tool_result is None
-    stream_token: float | None = None
-    if is_new_turn:
-        _busy_since = _active_chat_streams.get(session_id)
-        _now = time.monotonic()
-        _last_seen = _stream_heartbeat.get(session_id, _busy_since)
-        if _busy_since is not None and (_now - _last_seen) < _STREAM_STALE_AFTER_S:
-            from server.chat.engine.midturn_inbox import push as _push_midturn
+    midturn_only = bool(body.get("midturn"))
+    _busy_since = _active_chat_streams.get(session_id)
+    _now = time.monotonic()
+    _last_seen = _stream_heartbeat.get(session_id, _busy_since)
+    _slot_live = _busy_since is not None and (_now - _last_seen) < _STREAM_STALE_AFTER_S
+    if is_new_turn and _slot_live:
+        from server.chat.engine.midturn_inbox import push as _push_midturn
 
-            _push_midturn(session_id, question)
-            return JSONResponse({"queued_into_running_turn": True})
-        if _busy_since is not None:
-            log.warning(
-                "Reclaiming stale stream slot for session %s (age %.0fs)",
-                session_id,
-                _now - _last_seen,
-            )
-        stream_token = _now
-        _active_chat_streams[session_id] = stream_token
-        _stream_heartbeat[session_id] = _now
+        _push_midturn(session_id, question)
+        return JSONResponse({"queued_into_running_turn": True})
+    if midturn_only:
+        return JSONResponse(
+            {"queued_into_running_turn": False, "error": "no_running_turn"}, status_code=409
+        )
+    if _busy_since is not None and not _slot_live:
+        log.warning(
+            "Reclaiming stale stream slot for session %s (age %.0fs)",
+            session_id,
+            _now - _last_seen,
+        )
+    stream_token: float | None = _now
+    _active_chat_streams[session_id] = stream_token
+    _stream_heartbeat[session_id] = _now
 
     # Stream from byte zero: everything below (transcript condensation, index
     # grounding, hooks, provider dispatch) can take long seconds, and with the
@@ -1859,7 +1874,7 @@ async def chat_endpoint(request: Request):
             deferred_count=len(_deferred0),
             deferred_tokens_est=_deferred_tokens_est,
             is_new_turn=is_new_turn,
-            heartbeat=_heartbeat if is_new_turn else None,
+            heartbeat=_heartbeat,
             is_disconnected=request.is_disconnected,
         )
 
@@ -1889,7 +1904,7 @@ async def chat_endpoint(request: Request):
                 async for chunk in run_turn(turn_ctx):
                     yield chunk
             finally:
-                if is_new_turn and _active_chat_streams.get(session_id) == stream_token:
+                if _active_chat_streams.get(session_id) == stream_token:
                     _active_chat_streams.pop(session_id, None)
                     _stream_heartbeat.pop(session_id, None)
 

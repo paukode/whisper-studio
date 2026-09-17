@@ -47,8 +47,10 @@ async def execute_team_create(
     *,
     parent_agent_id: str | None = None,
     depth: int = 0,
+    event_channel: str | None = None,
 ) -> tuple[str, dict]:
-    """Spawn multiple agents in parallel with full tool loops.
+    """Spawn multiple agents in parallel with full tool loops. Progress is
+    published on ``event_channel`` (default: the session id).
 
     ``parent_agent_id``/``depth`` are set by server.tool_router.route_tool
     when this call originates from INSIDE another agent's own turn (the same
@@ -62,6 +64,7 @@ async def execute_team_create(
     agent slots. A top-level call from interactive chat leaves both at their
     defaults, exactly as before this parameter pair existed.
     """
+    progress_channel = event_channel or session_id
     from server.agents.event_bus import event_bus
     from server.agents.runtime import run_agent as run_agent_fn
 
@@ -80,9 +83,9 @@ async def execute_team_create(
 
     # Announce the team up front so the UI can render the card scaffold and
     # group subsequent per-agent events.
-    if session_id:
+    if progress_channel:
         event_bus.publish(
-            session_id,
+            progress_channel,
             {
                 "phase": "team_started",
                 "team_id": team_id,
@@ -127,6 +130,7 @@ async def execute_team_create(
                 task,
                 agent_type=agent_type,
                 session_id=session_id,
+                event_channel=event_channel,
                 context=ctx,
                 agent_name=name,
                 team_id=team_id,
@@ -200,9 +204,9 @@ async def execute_team_create(
     if stopped_by_user:
         summary = "Team stopped by user before completion.\n" + summary
 
-    if session_id:
+    if progress_channel:
         event_bus.publish(
-            session_id,
+            progress_channel,
             {
                 "phase": "team_completed",
                 "team_id": team_id,

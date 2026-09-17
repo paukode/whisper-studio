@@ -195,10 +195,12 @@ function summariseTool(tool: ToolUseEvent): string {
   return '';
 }
 
-/** Aggregate status for the collapsed header. */
-function aggregateStatus(tools: ToolUseEvent[]): 'running' | 'error' | 'ok' {
+/** Aggregate status for the collapsed header. 'stopped' (the user cut the
+ *  turn short) is terminal: it must never read as running. */
+function aggregateStatus(tools: ToolUseEvent[]): 'running' | 'error' | 'stopped' | 'ok' {
   if (tools.some((t) => t.status === 'error')) return 'error';
   if (tools.some((t) => t.status === 'running' || t.status === 'pending')) return 'running';
+  if (tools.some((t) => t.status === 'stopped')) return 'stopped';
   return 'ok';
 }
 
@@ -244,7 +246,8 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools }) => {
     const done = tools.filter((t) => t.status === 'complete').length;
     const errored = tools.filter((t) => t.status === 'error').length;
     const running = tools.filter((t) => t.status === 'running' || t.status === 'pending').length;
-    return { total, done, errored, running };
+    const stopped = tools.filter((t) => t.status === 'stopped').length;
+    return { total, done, errored, running, stopped };
   }, [tools]);
 
   return (
@@ -267,7 +270,10 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools }) => {
           {counts.errored > 0 && (
             <span className="activity-badge error" title="Errored">⚠ {counts.errored}</span>
           )}
-          {counts.errored === 0 && counts.running === 0 && (
+          {counts.stopped > 0 && (
+            <span className="activity-badge stopped" title="Stopped">{'\u23F9'} {counts.stopped}</span>
+          )}
+          {counts.errored === 0 && counts.running === 0 && counts.stopped === 0 && (
             <span className="activity-badge ok" title="All complete">✓ {counts.done}</span>
           )}
         </button>
@@ -313,6 +319,7 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools }) => {
                   {isRunning && <span className="activity-spinner" aria-label="running">◐</span>}
                   {tool.status === 'complete' && <span className="activity-check">✓</span>}
                   {isError && <span className="activity-x">⚠</span>}
+                  {tool.status === 'stopped' && <span className="activity-stopped" aria-label="stopped">{'\u23F9'}</span>}
                 </span>
                 {result && (
                   <button

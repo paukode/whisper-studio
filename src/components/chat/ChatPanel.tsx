@@ -9,6 +9,7 @@ import { ChatMessage } from './ChatMessage';
 import { groupToolOnlyRuns } from './groupToolOnlyRuns';
 import { resolveTaskCheckpoints } from './TaskCard';
 import { StreamingMessage } from './StreamingMessage';
+import { VoiceLiveMessage } from './VoiceLiveMessage';
 import { ChatInput } from './ChatInput';
 import { GoalBanner } from './GoalBanner';
 import { ApprovalBanner } from './ApprovalBanner';
@@ -387,10 +388,16 @@ export const ChatPanel: React.FC = () => {
               index={idx}
               taskCheckpoint={checkpoint}
               taskCheckpointLive={indices.includes(liveCheckpointIdx)}
-              noEnter={noEnterKeys.has(key)}
+              // A spoken assistant bubble replaces the live voice bubble that
+              // already showed its words; replaying the entrance animation
+              // would read as the message vanishing and streaming back in.
+              noEnter={noEnterKeys.has(key) || (msg.role === 'assistant' && !!msg.spoken)}
             />
           );
         })}
+
+        {/* Voice mode: the utterance being spoken right now */}
+        <VoiceLiveMessage />
 
         {/* Streaming response */}
         {isStreaming && (

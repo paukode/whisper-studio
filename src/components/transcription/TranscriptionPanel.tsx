@@ -6,6 +6,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useChatStream } from '@/hooks/useChatStream';
 import { put } from '@/api/client';
+import { enrollSpeaker } from '@/api/speakers';
 import { TranscriptSegment, getSpeakerClass } from './TranscriptSegment';
 import { downloadFile } from '@/utils/downloadFile';
 import { isNativeTranslationAvailable, translateNative } from '@/services/nativeTranslation';
@@ -388,8 +389,13 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
   const handleSpeakerRename = useCallback(
     (originalKey: string, newName: string) => {
       renameSpeaker(originalKey, newName);
+      // The rename doubles as voiceprint enrollment: the server stores this
+      // cluster's centroid under the name, so the same person is recognised
+      // by name in later recordings instead of restarting at "Speaker N".
+      // Best-effort — the label is already applied locally either way.
+      if (currentSessionId) enrollSpeaker(currentSessionId, originalKey, newName);
     },
-    [renameSpeaker],
+    [renameSpeaker, currentSessionId],
   );
 
   const getSpeakerDisplayName = useCallback(

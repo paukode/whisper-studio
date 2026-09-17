@@ -2,7 +2,9 @@
 allowed so AWS auth still works), and aws_cli must validate the command."""
 
 import os
+import shlex
 import subprocess
+import sys
 
 from server.executors import code as codemod
 
@@ -47,7 +49,10 @@ def test_run_python_runs_sandboxed_and_cleans_temp(monkeypatch):
     monkeypatch.setattr(codemod, "run_sandboxed", fake)
     ok, out = codemod.do_run_python({"code": "print('hi')"})
     assert ok is True
-    assert "python3" in captured["cmd"]
+    # The app's own interpreter (the one with pandas, python-pptx and friends),
+    # not whatever python3 the user's shell would find.
+    assert shlex.quote(sys.executable) in captured["cmd"]
+    assert captured["cmd"].startswith(shlex.quote(sys.executable) + " ")
     assert captured["allow_paths"] and any(".aws" in p for p in captured["allow_paths"])
     assert captured["write_mode"] == "workspace"
 
@@ -82,5 +87,11 @@ def test_run_python_runs_sandboxed_and_cleans_temp(monkeypatch):
     assert ok is False and "unattended" in msg
 
     # The temp script is unlinked in finally — extract its path and confirm.
-    path = captured["cmd"].split("python3 ", 1)[1].rsplit(" < /dev/null", 1)[0].strip().strip("'\"")
+    path = (
+        captured["cmd"]
+        .split(shlex.quote(sys.executable) + " ", 1)[1]
+        .rsplit(" < /dev/null", 1)[0]
+        .strip()
+        .strip("'\"")
+    )
     assert not os.path.exists(path), "temp script should be cleaned up"

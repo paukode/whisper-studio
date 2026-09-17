@@ -3,6 +3,7 @@ import logging
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 
 import boto3
@@ -109,6 +110,12 @@ def _python_write_mode(payload: dict) -> tuple[str, str]:
     return "open", ""
 
 
+def _interpreter() -> str:
+    """The Python this server runs on, or plain python3 when unknown."""
+    exe = sys.executable or ""
+    return exe if exe and os.path.isfile(exe) else "python3"
+
+
 def do_run_python(payload: dict) -> tuple[bool, str]:
     """Execute previously approved Python under the OS sandbox (the real
     boundary — see module docstring). Returns (ok, output_or_error)."""
@@ -132,8 +139,11 @@ def do_run_python(payload: dict) -> tuple[bool, str]:
     try:
         with os.fdopen(fd, "w") as f:
             f.write(guarded_code)
+        # The app's own interpreter (the bundled Python in the Mac app, the
+        # venv in dev), never the machine's python3: it is the one that has
+        # pandas, openpyxl, python-docx, python-pptx and friends installed.
         result = run_sandboxed(
-            f"python3 {shlex.quote(script_path)} < /dev/null",
+            f"{shlex.quote(_interpreter())} {shlex.quote(script_path)} < /dev/null",
             cwd=cwd,
             timeout=RUN_PYTHON_TIMEOUT_S,
             allow_paths=_CLOUD_CRED_PATHS,

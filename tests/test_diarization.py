@@ -18,6 +18,7 @@ from server.diarization.speakers import (
     SpeakerSession,
     drop_session,
     get_session,
+    is_filler,
 )
 
 DIM = 8
@@ -204,3 +205,96 @@ def test_registry_keyed_and_droppable():
     assert get_session(None) is not get_session(None)
     drop_session("sess-x")
     drop_session(None)  # no-ops must not raise
+
+
+# ── spurious-speaker gates ────────────────────────────────────────────────────
+# Backchannels are the failure mode duration gates never caught: "mm-hmm"
+# thrown over somebody else's sentence is loud, long enough, and
+# acoustically a blend of two voices, so it lands far from every cluster
+# and looks exactly like a new person.
+
+
+def test_filler_text_is_recognised():
+    assert is_filler("uh")
+    assert is_filler("Mm-hmm.")
+    assert is_filler("oh, yeah")
+    assert is_filler("  ")
+    assert is_filler("a")  # too short to carry identity
+    assert not is_filler("that's the whole point")
+    assert not is_filler(None)
+
+
+def test_filler_utterance_never_creates_a_speaker():
+    s = SpeakerSession()
+    s.assign(0, basis(0), 5.0, "the quarterly numbers are in")
+    # Acoustically nothing like speaker 1 — normally a brand-new cluster.
+    assert s.assign(1, basis(1), 5.0, "mm-hmm") == "Speaker 1"
+    assert s._n_clusters == 1
+
+
+def test_real_words_still_create_a_speaker():
+    s = SpeakerSession()
+    s.assign(0, basis(0), 5.0, "the quarterly numbers are in")
+    assert s.assign(1, basis(1), 5.0, "actually I disagree with that") == "Speaker 2"
+
+
+def test_undersized_cluster_is_dissolved_on_recluster():
+    s = SpeakerSession()
+    # Two real speakers with plenty of speech...
+    for i, chunk in enumerate((0, 1, 2, 3)):
+        s.assign(chunk, mix(0.95, i % 2, 0.31, 2 + i % 2), 6.0, "a real sentence here")
+    # ...plus a stray fragment that clustered on its own.
+    s.assign(9, basis(5), 0.9, "some words")
+    s._since_recluster = RECLUSTER_EVERY
+    s.maybe_recluster()
+    totals = {}
+    for chunk, group in s._assignments.items():
+        totals[group] = totals.get(group, 0.0) + s._durations.get(chunk, 0.0)
+    assert all(total >= 3.0 for total in totals.values())
+
+
+def test_dissolve_is_skipped_while_everyone_is_still_small():
+    """Early in a meeting nobody has cleared the bar yet — leave it alone."""
+    s = SpeakerSession()
+    s.assign(0, basis(0), 1.0, "first words")
+    s.assign(1, basis(1), 1.0, "different voice entirely")
+    s.assign(2, basis(2), 1.0, "and a third one")
+    s._since_recluster = RECLUSTER_EVERY
+    s.maybe_recluster()
+    assert s._n_clusters == 3
+
+
+# ── per-encoder threshold calibration ────────────────────────────────────────
+# Cosine similarity means something different in each embedding space:
+# ReDimNet2 puts the same speaker at 0.83-0.90 and different speakers at
+# 0.02-0.52, where ECAPA puts them at 0.25-0.55 and 0.0-0.2. Running one
+# encoder's numbers against the other labels the whole meeting "Speaker 1".
+
+
+def test_thresholds_follow_the_loaded_encoder(monkeypatch):
+    from server.diarization import embedder
+    from server.diarization import speakers as sp
+
+    monkeypatch.setattr(embedder, "active_name", lambda: embedder.NAME_REDIMNET)
+    assert sp._thresholds() == sp.THRESHOLDS[embedder.NAME_REDIMNET]
+    monkeypatch.setattr(embedder, "active_name", lambda: embedder.NAME_ECAPA)
+    assert sp._thresholds() == sp.THRESHOLDS[embedder.NAME_ECAPA]
+    # Nothing loaded: keep the historical calibration.
+    monkeypatch.setattr(embedder, "active_name", lambda: None)
+    assert sp._thresholds() == sp.THRESHOLDS[embedder.NAME_ECAPA]
+
+
+def test_a_different_voice_creates_a_speaker_under_redimnet(monkeypatch):
+    """0.30 similarity is a weak-but-plausible match for ECAPA and a clear
+    stranger for ReDimNet2, and each encoder must be judged by its own bar."""
+    from server.diarization import embedder
+
+    monkeypatch.setattr(embedder, "active_name", lambda: embedder.NAME_REDIMNET)
+    s = SpeakerSession()
+    s.assign(0, basis(0), 5.0, "a real sentence")
+    assert s.assign(1, mix(0.30, 0, 0.954, 1), 5.0, "another real sentence") == "Speaker 2"
+
+    monkeypatch.setattr(embedder, "active_name", lambda: embedder.NAME_ECAPA)
+    t = SpeakerSession()
+    t.assign(0, basis(0), 5.0, "a real sentence")
+    assert t.assign(1, mix(0.30, 0, 0.954, 1), 5.0, "another real sentence") == "Speaker 1"

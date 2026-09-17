@@ -1,5 +1,43 @@
 import { z } from 'zod';
 
+/** One agent progress event from the chat engine (server/agents/runtime.py _emit,
+ *  spawn.py team_started/team_completed). Shared by the chat SSE frame and the
+ *  voice socket's team_progress event. */
+export const TeamProgressEventSchema = z.object({
+  agent_id: z.string().optional(),
+  agent_name: z.string().nullable().optional(),
+  agent_type: z.string().optional(),
+  team_id: z.string().nullable().optional(),
+  parent_agent_id: z.string().nullable().optional(),
+  phase: z.enum([
+    'team_started', 'team_completed', 'started', 'turn_start', 'text',
+    'tool_call', 'tool_result', 'completed', 'turn_limit', 'failed',
+    'stopped',
+  ]),
+  task: z.string().optional(),
+  model: z.string().nullable().optional(),
+  max_turns: z.number().optional(),
+  turn: z.number().optional(),
+  turns_used: z.number().optional(),
+  text: z.string().optional(),
+  tool_name: z.string().optional(),
+  tool_input_preview: z.string().optional(),
+  output_preview: z.string().optional(),
+  tool_input_full: z.string().optional(),
+  output_full: z.string().optional(),
+  status: z.string().optional(),
+  error: z.string().optional(),
+  team_name: z.string().optional(),
+  description: z.string().optional(),
+  agents: z.array(z.object({
+    name: z.string(),
+    task: z.string(),
+    agent_type: z.string(),
+    role: z.enum(['team', 'orchestrator']).optional(),
+  })).optional(),
+  agents_completed: z.number().optional(),
+}).passthrough();
+
 /** Schema for SSE event data parsed from JSON.parse in useChatStream. */
 export const SSEEventDataSchema = z.object({
   // Text streaming
@@ -125,40 +163,7 @@ export const SSEEventDataSchema = z.object({
     })
     .optional(),
   team_results: z.record(z.string(), z.unknown()).optional(),
-  team_progress: z.object({
-    agent_id: z.string().optional(),
-    agent_name: z.string().nullable().optional(),
-    agent_type: z.string().optional(),
-    team_id: z.string().nullable().optional(),
-    parent_agent_id: z.string().nullable().optional(),
-    phase: z.enum([
-      'team_started', 'team_completed', 'started', 'turn_start', 'text',
-      'tool_call', 'tool_result', 'completed', 'turn_limit', 'failed',
-      'stopped',
-    ]),
-    task: z.string().optional(),
-    model: z.string().nullable().optional(),
-    max_turns: z.number().optional(),
-    turn: z.number().optional(),
-    turns_used: z.number().optional(),
-    text: z.string().optional(),
-    tool_name: z.string().optional(),
-    tool_input_preview: z.string().optional(),
-    output_preview: z.string().optional(),
-    tool_input_full: z.string().optional(),
-    output_full: z.string().optional(),
-    status: z.string().optional(),
-    error: z.string().optional(),
-    team_name: z.string().optional(),
-    description: z.string().optional(),
-    agents: z.array(z.object({
-      name: z.string(),
-      task: z.string(),
-      agent_type: z.string(),
-      role: z.enum(['team', 'orchestrator']).optional(),
-    })).optional(),
-    agents_completed: z.number().optional(),
-  }).passthrough().optional(),
+  team_progress: TeamProgressEventSchema.optional(),
   /** Cron card emitted by server/cron_scheduler.py when a cron is
    *  created/deleted (via tool) or when it fires in the background.
    *  Dispatched as a fresh ChatMessage with role='cron_event'. */

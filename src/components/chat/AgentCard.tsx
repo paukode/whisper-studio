@@ -225,6 +225,8 @@ function stepIcon(name: string): string {
 function statusGlyph(status: ToolUseEvent['status']) {
   if (status === 'complete') return <span className="trace-check">{'✓'}</span>;
   if (status === 'error') return <span className="trace-check" style={{ color: 'var(--error, #f87171)' }}>{'✕'}</span>;
+  // Cut short by the user: terminal, never a spinner.
+  if (status === 'stopped') return <span className="trace-check trace-stopped" title="Stopped">{'\u23F9'}</span>;
   return <span className="trace-spinner">{'⟳'}</span>;
 }
 
@@ -350,6 +352,7 @@ export interface AgentCardProps {
 export function AgentCard({ tools }: AgentCardProps) {
   const running = tools.filter(t => t.status === 'pending' || t.status === 'running').length;
   const errored = tools.filter(t => t.status === 'error').length;
+  const stopped = tools.filter(t => t.status === 'stopped').length;
   const done = tools.filter(t => t.status === 'complete').length;
   const total = tools.length;
   const allDone = running === 0;
@@ -359,7 +362,9 @@ export function AgentCard({ tools }: AgentCardProps) {
     ? `${done}/${total} steps · running`
     : errored > 0
       ? `${done}/${total} steps · ${errored} error${errored === 1 ? '' : 's'}`
-      : `${done}/${total} steps · done`;
+      : stopped > 0
+        ? `${done}/${total} steps · stopped`
+        : `${done}/${total} steps · done`;
 
   return (
     <details className={`agent-card ${allDone ? (errored > 0 ? 'errored' : 'done') : 'running'}`} open={!allDone}>
@@ -372,6 +377,8 @@ export function AgentCard({ tools }: AgentCardProps) {
             <span className="trace-spinner">{'⟳'}</span>
           ) : errored > 0 ? (
             <span className="trace-check" style={{ color: 'var(--error, #f87171)' }}>{'✕'}</span>
+          ) : stopped > 0 ? (
+            <span className="trace-check trace-stopped" title="Stopped">{'\u23F9'}</span>
           ) : (
             <span className="trace-check">{'✓'}</span>
           )}

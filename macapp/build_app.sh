@@ -119,6 +119,10 @@ command -v codesign >/dev/null || die "codesign not found (install Command Line 
 VERSION="$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo "0.1.0")"
 VERSION="${VERSION#v}"
 [[ -n "$VERSION" ]] || VERSION="0.1.0"
+# APP_VERSION overrides the derived version verbatim (e.g. a feature build
+# labelled 2.6.0-sonic); VERSION_SUFFIX appends to whatever was derived.
+if [[ -n "${APP_VERSION:-}" ]]; then VERSION="$APP_VERSION"; fi
+VERSION="${VERSION}${VERSION_SUFFIX:-}"
 
 log "Building Whisper Studio.app (version $VERSION, identity: $SIGN_IDENTITY)"
 
@@ -469,6 +473,28 @@ print("    bundled speech models cached")
 PYEOF
 mkdir -p "$RES_DIR/backend/models-bundled"
 rsync -a --delete "$BUNDLED_MODELS_CACHE/" "$RES_DIR/backend/models-bundled/"
+
+# ReDimNet2 (the default speaker encoder) comes through torch.hub rather than
+# a Hub snapshot, so it is fetched with the bundled interpreter into its own
+# staging home and copied next to the snapshots as models-bundled/torch-hub;
+# server/main.py::_seed_bundled_models seeds it on first launch like the rest.
+# A hub hiccup must not fail the build: the encoder then downloads on first
+# use exactly as it does in a source checkout.
+substep "bundled speaker encoder (ReDimNet2 via torch.hub)"
+REDIMNET_HOME="$BUILD_DIR/downloads/redimnet-home"
+mkdir -p "$REDIMNET_HOME"
+if WHISPER_USER_DIR="$REDIMNET_HOME" PYTHONPATH="$REPO_ROOT" "$PY_BIN" - <<'PYEOF'
+from server.diarization.embedder import _ensure_redimnet_files
+
+_ensure_redimnet_files()
+print("    ReDimNet2 cached")
+PYEOF
+then
+    mkdir -p "$RES_DIR/backend/models-bundled/torch-hub"
+    rsync -a --delete "$REDIMNET_HOME/models/torch-hub/" "$RES_DIR/backend/models-bundled/torch-hub/"
+else
+    echo "    warning: ReDimNet2 not bundled (it downloads on first use)"
+fi
 
 # f.6: helper binaries.
 substep "copying bin/ (llama-server + dylibs/metallib, ffmpeg, ffprobe, node)"

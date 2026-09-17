@@ -148,6 +148,7 @@ async def execute_tool_batch(
     effort_label: str | None = None,
     unattended: bool = False,
     guard_scope: str = "",
+    event_channel: str | None = None,
 ) -> list[ToolState]:
     """Execute a batch of tool_use blocks with full lifecycle management.
 
@@ -287,6 +288,7 @@ async def execute_tool_batch(
                 model_id=model_id,
                 tool_use_id=state.tool_id,
                 effort_label=effort_label,
+                event_channel=event_channel,
             )
             state.output = output
             state.side_effects = side_effects
