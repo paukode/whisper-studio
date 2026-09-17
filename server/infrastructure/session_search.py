@@ -89,14 +89,32 @@ def _flatten(content) -> str:
     return "\n".join(parts)
 
 
+STATE_TABLE = "session_fts_state"
+# Every session owns one rowid range of this size; a row's rowid is derived
+# from the session's slot and its message index (see _rowid), so a save
+# rewrites only the rows that changed and deletes by rowid range instead of
+# scanning the whole mirror for a session_id.
+_SPAN = 1 << 21
+# Two rows can share a message index (the message text and its tool payload).
+_KIND_TEXT = 0
+_KIND_TOOL = 1
+
+
 def ensure_fts(conn: sqlite3.Connection) -> bool:
-    """Create the FTS5 mirror table if needed. False when FTS5 is unavailable."""
+    """Create the FTS5 mirror table (and its per-session slot table) if needed.
+    False when FTS5 is unavailable."""
     global _fts_ok
     try:
         conn.execute(
             f"CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5("
             "session_id UNINDEXED, msg_index UNINDEXED, role UNINDEXED, text, "
             "tokenize='porter unicode61')"
+        )
+        conn.execute(
+            f"CREATE TABLE IF NOT EXISTS {STATE_TABLE} ("
+            "seq INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "session_id TEXT NOT NULL UNIQUE, "
+            "title TEXT, msg_sigs TEXT, seg_sigs TEXT)"
         )
         _fts_ok = True
     except sqlite3.OperationalError as e:
@@ -130,6 +148,72 @@ def _segment_texts(segments) -> list[str]:
     return out
 
 
+def _rowid(seq: int, msg_index: int, kind: int = _KIND_TEXT) -> int:
+    # msg_index starts at TITLE_INDEX (-1); +1 keeps every offset positive.
+    return seq * _SPAN + 2 * (msg_index + 1) + kind
+
+
+def _state(conn: sqlite3.Connection, session_id: str) -> tuple[int, dict | None]:
+    """The session's slot number and its last indexed state (None on first
+    contact or after a drop)."""
+    conn.execute(f"INSERT OR IGNORE INTO {STATE_TABLE}(session_id) VALUES (?)", (session_id,))
+    row = conn.execute(
+        f"SELECT seq, title, msg_sigs, seg_sigs FROM {STATE_TABLE} WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    seq = int(row[0])
+    if row[1] is None and row[2] is None:
+        return seq, None
+    try:
+        return seq, {
+            "title": row[1] or "",
+            "msg_sigs": [tuple(x) for x in json.loads(row[2] or "[]")],
+            "seg_sigs": json.loads(row[3] or "[]"),
+        }
+    except (TypeError, ValueError):
+        return seq, None
+
+
+def _message_rows(session_id: str, history: list | None) -> tuple[list[tuple], list[tuple]]:
+    """(rows, signatures) for every message: rows are (index, kind, role, text)
+    and a signature is (role, text length, tool length), cheap to compare
+    across saves. Messages without indexable text still get a signature so
+    positions stay aligned with the history."""
+    rows: list[tuple] = []
+    sigs: list[tuple] = []
+    for i, msg in enumerate(history or []):
+        if not isinstance(msg, dict) or msg.get("role") not in PROMPT_ROLES:
+            sigs.append(("", 0, 0))
+            continue
+        text, tool = _split_content(msg.get("content"))
+        text, tool = text.strip(), tool.strip()
+        sigs.append((msg["role"], len(text), len(tool)))
+        if text:
+            rows.append((i, _KIND_TEXT, msg["role"], text[:MAX_INDEXED_CHARS]))
+        if tool:
+            rows.append((i, _KIND_TOOL, "tool", tool[:MAX_INDEXED_CHARS]))
+    return rows, sigs
+
+
+def _first_change(old: list, new: list) -> int:
+    """Index of the first position where two signature lists differ (their
+    common length when one is a prefix of the other)."""
+    n = min(len(old), len(new))
+    for i in range(n):
+        if old[i] != new[i]:
+            return i
+    return n
+
+
+def _insert(conn: sqlite3.Connection, seq: int, session_id: str, rows: list[tuple]) -> None:
+    if rows:
+        conn.executemany(
+            f"INSERT INTO {FTS_TABLE}(rowid, session_id, msg_index, role, text) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [(_rowid(seq, i, kind), session_id, i, role, text) for i, kind, role, text in rows],
+        )
+
+
 def reindex_session(
     conn: sqlite3.Connection,
     session_id: str,
@@ -138,9 +222,16 @@ def reindex_session(
     segments=None,
     title: str | None = None,
 ) -> None:
-    """Replace the mirror rows of one session. ``segments`` and ``title``
-    default to the values on the sessions row (the append path only has the
-    history in hand). Best-effort: never raises into the caller's save."""
+    """Bring the mirror rows of one session up to date. ``segments`` and
+    ``title`` default to the values on the sessions row (the append path only
+    has the history in hand).
+
+    Incremental: the last indexed state (per-message and per-segment
+    signatures plus the title) is kept next to the session's slot, and only
+    rows from the first changed position onward are rewritten. A streaming
+    save that grows the last message rewrites one message; an edit to an
+    early message or a compaction that rewrites the list reindexes from that
+    point. Best-effort: never raises into the caller's save."""
     try:
         if not ensure_fts(conn):
             return
@@ -153,44 +244,86 @@ def reindex_session(
                     title = row["title"]
                 if segments is None:
                     segments = row["segments"]
-        conn.execute(f"DELETE FROM {FTS_TABLE} WHERE session_id = ?", (session_id,))
-        rows: list[tuple] = []
-        if title and str(title).strip():
-            rows.append((session_id, TITLE_INDEX, "title", str(title).strip()[:MAX_INDEXED_CHARS]))
-        for i, msg in enumerate(history or []):
-            if not isinstance(msg, dict) or msg.get("role") not in PROMPT_ROLES:
-                continue
-            text, tool = _split_content(msg.get("content"))
-            if text.strip():
-                rows.append((session_id, i, msg["role"], text.strip()[:MAX_INDEXED_CHARS]))
-            if tool.strip():
-                rows.append((session_id, i, "tool", tool.strip()[:MAX_INDEXED_CHARS]))
-        for i, text in enumerate(_segment_texts(segments)):
-            if text:
-                rows.append(
-                    (session_id, TRANSCRIPT_BASE + i, "transcript", text[:MAX_INDEXED_CHARS])
-                )
-        if rows:
-            conn.executemany(
-                f"INSERT INTO {FTS_TABLE}(session_id, msg_index, role, text) VALUES (?, ?, ?, ?)",
-                rows,
+        title = str(title).strip() if title and str(title).strip() else ""
+        seq, prev = _state(conn, session_id)
+        msg_rows, msg_sigs = _message_rows(session_id, history)
+        seg_texts = _segment_texts(segments)
+        seg_sigs = [len(t) for t in seg_texts]
+        base = seq * _SPAN
+
+        if prev is None:
+            conn.execute(
+                f"DELETE FROM {FTS_TABLE} WHERE rowid >= ? AND rowid < ?", (base, base + _SPAN)
             )
+            msg_from, seg_from, title_changed = 0, 0, True
+        else:
+            msg_from = _first_change(prev["msg_sigs"], msg_sigs)
+            seg_from = _first_change(prev["seg_sigs"], seg_sigs)
+            title_changed = prev["title"] != title
+            if msg_from < max(len(prev["msg_sigs"]), len(msg_sigs)):
+                conn.execute(
+                    f"DELETE FROM {FTS_TABLE} WHERE rowid >= ? AND rowid < ?",
+                    (_rowid(seq, msg_from), _rowid(seq, TRANSCRIPT_BASE)),
+                )
+            if seg_from < max(len(prev["seg_sigs"]), len(seg_sigs)):
+                conn.execute(
+                    f"DELETE FROM {FTS_TABLE} WHERE rowid >= ? AND rowid < ?",
+                    (_rowid(seq, TRANSCRIPT_BASE + seg_from), base + _SPAN),
+                )
+            if title_changed:
+                conn.execute(
+                    f"DELETE FROM {FTS_TABLE} WHERE rowid = ?", (_rowid(seq, TITLE_INDEX),)
+                )
+
+        if title_changed and title:
+            _insert(
+                conn,
+                seq,
+                session_id,
+                [(TITLE_INDEX, _KIND_TEXT, "title", title[:MAX_INDEXED_CHARS])],
+            )
+        _insert(conn, seq, session_id, [r for r in msg_rows if r[0] >= msg_from])
+        _insert(
+            conn,
+            seq,
+            session_id,
+            [
+                (TRANSCRIPT_BASE + i, _KIND_TEXT, "transcript", text[:MAX_INDEXED_CHARS])
+                for i, text in enumerate(seg_texts)
+                if i >= seg_from and text
+            ],
+        )
+        conn.execute(
+            f"UPDATE {STATE_TABLE} SET title = ?, msg_sigs = ?, seg_sigs = ? WHERE seq = ?",
+            (title, json.dumps(msg_sigs), json.dumps(seg_sigs), seq),
+        )
     except sqlite3.Error as e:
         log.debug("session search reindex skipped for %s: %s", session_id, e)
 
 
 def drop_session(conn: sqlite3.Connection, session_id: str) -> None:
     try:
-        if ensure_fts(conn):
-            conn.execute(f"DELETE FROM {FTS_TABLE} WHERE session_id = ?", (session_id,))
+        if not ensure_fts(conn):
+            return
+        row = conn.execute(
+            f"SELECT seq FROM {STATE_TABLE} WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        if row is not None:
+            base = int(row[0]) * _SPAN
+            conn.execute(
+                f"DELETE FROM {FTS_TABLE} WHERE rowid >= ? AND rowid < ?", (base, base + _SPAN)
+            )
+            conn.execute(f"DELETE FROM {STATE_TABLE} WHERE session_id = ?", (session_id,))
     except sqlite3.Error as e:
         log.debug("session search drop skipped for %s: %s", session_id, e)
 
 
 def rebuild_all(conn: sqlite3.Connection) -> int:
-    """Re-mirror every session. Returns the number of sessions indexed."""
+    """Re-mirror every session from scratch. Returns the number indexed."""
     if not ensure_fts(conn):
         return 0
+    conn.execute(f"DELETE FROM {FTS_TABLE}")
+    conn.execute(f"DELETE FROM {STATE_TABLE}")
     rows = conn.execute("SELECT id, title, segments, chat_history FROM sessions").fetchall()
     n = 0
     for row in rows:

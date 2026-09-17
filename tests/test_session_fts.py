@@ -138,3 +138,57 @@ def test_sidebar_endpoint_uses_the_index(monkeypatch):
     out = asyncio.run(search_sessions(q="kuber", limit=10))
     assert [r["id"] for r in out["results"]] == ["kube"] and out["truncated"] is False
     assert asyncio.run(search_sessions(q=""))["results"] == []
+
+
+def test_reindex_is_incremental_and_edits_reindex_from_the_change():
+    """A save rewrites only the rows from the first changed message on: an
+    append leaves earlier rows (their rowids) untouched, an edit to message 0
+    replaces its text in the mirror and keeps the later messages searchable."""
+    _seed()
+
+    def rows():
+        with sessions._get_conn() as conn:
+            return {
+                int(r[0]): int(r[1])
+                for r in conn.execute(
+                    f"SELECT msg_index, rowid FROM {ss.FTS_TABLE} WHERE session_id = 'kube'"
+                )
+            }
+
+    before = rows()
+    sessions._append_message_sync(
+        "kube", {"role": "assistant", "content": "Helm has its own rollback command."}
+    )
+    after = rows()
+    assert all(after[i] == rid for i, rid in before.items())
+    assert 3 in after
+    assert [h["session_id"] for h in ss.search("rollback command")] == ["kube"]
+
+    with sessions._get_conn() as conn:
+        history = json.loads(
+            conn.execute("SELECT chat_history FROM sessions WHERE id = 'kube'").fetchone()[0]
+        )
+    history[0] = {"role": "user", "content": "How do I undo a deployment on openshift?"}
+    sessions._upsert_session(
+        "kube",
+        title="K8s rollback",
+        custom_title=0,
+        generated_title=0,
+        created_at="a",
+        updated_at="b",
+        segments="[]",
+        chat_history_frontend=history,
+        speaker_names="{}",
+        workspace_path="",
+        compaction_count=0,
+        latched_config="{}",
+    )
+    assert [h["session_id"] for h in ss.search("openshift")] == ["kube"]
+    assert ss.search("kubernetes") == []
+    assert [h["session_id"] for h in ss.search("helm")] == ["kube"]
+    # Every row still sits inside the session's own rowid range.
+    with sessions._get_conn() as conn:
+        seq = conn.execute(
+            f"SELECT seq FROM {ss.STATE_TABLE} WHERE session_id = 'kube'"
+        ).fetchone()[0]
+    assert all(seq * ss._SPAN <= rid < (seq + 1) * ss._SPAN for rid in rows().values())
