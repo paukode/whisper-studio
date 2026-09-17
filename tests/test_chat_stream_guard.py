@@ -185,3 +185,97 @@ def test_reset_endpoint_clears_wedged_state():
     finally:
         routes._active_chat_streams.clear()
         routes._paused_sessions.clear()
+
+
+class _FakeRequest:
+    def __init__(self, body):
+        self._body = body
+
+    async def json(self):
+        return self._body
+
+    async def is_disconnected(self):
+        return False
+
+
+def test_continuation_turn_claims_the_slot_too():
+    """An approval resume used to skip the claim, so from the first approval
+    card onward the session looked idle: a message typed while the resumed
+    turn kept working started a second turn from the composer's minimal body
+    instead of being queued into the running one."""
+    routes._active_chat_streams.clear()
+    routes._stream_heartbeat.clear()
+
+    async def _call():
+        req = _FakeRequest(
+            {
+                "question": "",
+                "session_id": "resume-sess",
+                "history": [],
+                "approved_tool_result": {"tool_use_id": "t1", "content": "ok"},
+            }
+        )
+        return await routes.chat_endpoint(req)
+
+    try:
+        resp = asyncio.run(_call())
+        assert resp is not None
+        assert "resume-sess" in routes._active_chat_streams
+        assert "resume-sess" in routes._stream_heartbeat
+    finally:
+        routes._active_chat_streams.clear()
+        routes._stream_heartbeat.clear()
+
+
+def test_midturn_body_is_refused_when_nothing_is_running():
+    """The composer's steer-the-running-turn body may only be queued. When the
+    turn finished in the window before it arrived, the server says so with a
+    JSON 409 instead of starting a fresh turn from an incomplete body."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.chat.engine import midturn_inbox
+
+    app = FastAPI()
+    app.include_router(routes.router)
+    client = TestClient(app)
+    routes._active_chat_streams.clear()
+    routes._stream_heartbeat.clear()
+    midturn_inbox.drain("idle-session")
+    try:
+        r = client.post(
+            "/api/chat",
+            json={"question": "are you stuck?", "session_id": "idle-session", "midturn": True},
+        )
+        assert r.status_code == 409
+        assert r.json()["queued_into_running_turn"] is False
+        assert "idle-session" not in routes._active_chat_streams
+        assert midturn_inbox.drain("idle-session") == []
+    finally:
+        routes._active_chat_streams.clear()
+        routes._stream_heartbeat.clear()
+
+
+def test_midturn_body_is_queued_while_running():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.chat.engine import midturn_inbox
+
+    app = FastAPI()
+    app.include_router(routes.router)
+    client = TestClient(app)
+    routes._active_chat_streams.clear()
+    routes._active_chat_streams["live-session"] = time.monotonic()
+    midturn_inbox.drain("live-session")
+    try:
+        r = client.post(
+            "/api/chat",
+            json={"question": "what is the status?", "session_id": "live-session", "midturn": True},
+        )
+        assert r.status_code == 200
+        assert r.json() == {"queued_into_running_turn": True}
+        assert midturn_inbox.drain("live-session") == ["what is the status?"]
+    finally:
+        routes._active_chat_streams.clear()
+        midturn_inbox.drain("live-session")

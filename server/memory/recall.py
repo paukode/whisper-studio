@@ -227,7 +227,7 @@ async def _query_selector(query: str, manifest: str, model_id: str) -> list[str]
         # nothing about WHICH model answered or WHAT it said (61 times in one
         # log); name both so the degradation is diagnosable.
         try:
-            parsed = json.loads(text)
+            parsed = json.loads(_bare_json(text))
         except ValueError as e:
             raise ValueError(
                 f"selector model {haiku_model!r} returned non-JSON ({e}): {text[:160]!r}"
@@ -235,6 +235,26 @@ async def _query_selector(query: str, manifest: str, model_id: str) -> list[str]
         return parsed.get("selected", [])
 
     return await asyncio.to_thread(_invoke)
+
+
+def _bare_json(text: str) -> str:
+    """The JSON object inside a selector reply.
+
+    The selector is told to answer with JSON only, but Haiku regularly wraps
+    it in a ```json fence anyway; one production log had every recall fail
+    on that fence, so every turn ran without memory. Strip a fence and any
+    prose around the first top-level object; a reply with no object at all
+    is returned as-is so the caller's error still names what came back.
+    """
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.split("\n", 1)[1] if "\n" in stripped else ""
+        if stripped.rstrip().endswith("```"):
+            stripped = stripped.rstrip()[:-3]
+    start, end = stripped.find("{"), stripped.rfind("}")
+    if start != -1 and end > start:
+        return stripped[start : end + 1]
+    return stripped.strip()
 
 
 def _build_context(

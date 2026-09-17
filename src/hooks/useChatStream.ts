@@ -438,15 +438,14 @@ export function useChatStream(): UseChatStreamReturn {
     try {
       // Deliberately a minimal body: the backend only needs `question` +
       // `session_id` to queue it into the turn that's actually running.
-      // If that turn already finished in the tiny window before this
-      // request arrived, the backend would instead start a genuine new
-      // (SSE) turn from this same minimal, incomplete body — so that
-      // outcome is treated as NOT delivered and closed immediately, rather
-      // than rendered as a degraded reply from a half-built request.
+      // `midturn` tells it this body may ONLY be queued: if the turn already
+      // finished in the tiny window before the request arrived, the backend
+      // answers 409 instead of starting a fresh turn from an incomplete
+      // body, and that outcome is reported as NOT delivered.
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, session_id: activeSessionId }),
+        body: JSON.stringify({ question, session_id: activeSessionId, midturn: true }),
       });
       delivered = response.ok && (response.headers.get('content-type') || '').includes('application/json');
       if (!delivered) void response.body?.cancel();
