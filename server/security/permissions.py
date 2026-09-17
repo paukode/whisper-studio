@@ -366,6 +366,8 @@ _RULE_MATCH_FIELDS = {
     "run_tool_script": "code",
     "aws_cli": "command",
     "git_push": "branch",
+    "git_pull": "branch",
+    "git_fetch": "remote",
     "git_checkout": "branch",
     "git_merge": "branch",
     "git_create_branch": "name",

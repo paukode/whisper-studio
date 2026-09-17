@@ -130,4 +130,10 @@ skips the approval cards, skips the verification the github tools perform, and i
 not authenticated for GitHub — which is how it has produced confident but false
 "I closed the PR" claims. That includes `git worktree add`, checkout, merge,
 rebase, and `reset --hard`.
+
+Syncing with the remote is git_fetch (refresh remote-tracking branches) and
+git_pull (bring the current branch up to date). Both run with the user's own
+credentials; the sandbox has none, so a shelled `git fetch` fails there with a
+permission error while the tools succeed. Never ask the user to run a fetch or
+pull for you.
 """

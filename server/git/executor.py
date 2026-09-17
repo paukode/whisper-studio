@@ -462,6 +462,70 @@ def _exec_git_push(tool_input, transcript, current_attachments):
     return f"[WS_APPROVAL]{payload}"
 
 
+@register_executor("git_fetch", read_only=True, concurrent_safe=False)
+def _exec_git_fetch(tool_input, transcript, current_attachments):
+    """Update remote-tracking branches. Runs outside the command sandbox with
+    the user's own git credentials; the sandbox has none, which is why a
+    shell `git fetch` there fails with a permission error."""
+    cwd, err = _get_git_cwd()
+    if err:
+        return err
+    tool_input.pop("__session_id__", "")
+    remote = str(tool_input.get("remote") or "origin")
+    if not is_safe_ref_name(remote):
+        return f"Error: invalid remote name {remote!r}"
+    args = ["fetch", "--prune"]
+    args.append("--all" if tool_input.get("all") else remote)
+    stdout, stderr, rc = _git(args, cwd, timeout=60)
+    if rc != 0:
+        return f"Error: fetch failed: {stderr.strip()}"
+    detail = _truncate((stdout + stderr).strip())
+    head = "Fetched all remotes" if tool_input.get("all") else f"Fetched {remote}"
+    return f"{head}; remote-tracking branches are up to date and stale ones pruned." + (
+        f"\n\n{detail}" if detail else ""
+    )
+
+
+def do_git_pull(payload: dict) -> tuple[bool, str]:
+    cwd, err = _get_git_cwd()
+    if err:
+        return False, err
+    remote = str(payload.get("remote") or "origin")
+    branch = str(payload.get("branch") or get_branch(cwd) or "")
+    if not is_safe_ref_name(remote) or (branch and not is_safe_ref_name(branch)):
+        return False, "invalid remote or branch name"
+    args = ["pull", "--rebase" if payload.get("rebase") else "--ff-only", remote]
+    if branch:
+        args.append(branch)
+    stdout, stderr, rc = _git(args, cwd, timeout=60)
+    if rc != 0:
+        hint = ""
+        if not payload.get("rebase") and "fast-forward" in (stderr + stdout).lower():
+            hint = (
+                "\n\nLocal commits diverge from the remote: pull again with rebase=true, "
+                "or merge origin/<branch> with git_merge."
+            )
+        return False, f"pull failed: {stderr.strip()}\n\n{stdout.strip()}".rstrip() + hint
+    return True, f"Pulled {remote}/{branch or '(current)'}.\n\n{(stdout + stderr).strip()}"
+
+
+@register_executor("git_pull", read_only=False, concurrent_safe=False)
+def _exec_git_pull(tool_input, transcript, current_attachments):
+    import json
+
+    session_id = tool_input.pop("__session_id__", "")
+    payload = json.dumps(
+        {
+            "action": "git_pull",
+            "remote": str(tool_input.get("remote") or "origin"),
+            "branch": str(tool_input.get("branch") or ""),
+            "rebase": bool(tool_input.get("rebase", False)),
+            "session_id": session_id,
+        }
+    )
+    return f"[WS_APPROVAL]{payload}"
+
+
 def do_git_create_branch(payload: dict) -> tuple[bool, str]:
     cwd, err = _get_git_cwd()
     if err:

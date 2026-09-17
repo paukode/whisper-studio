@@ -28,6 +28,7 @@ from .executors import (
     _do_git_create_branch,
     _do_git_delete_branch,
     _do_git_merge,
+    _do_git_pull,
     _do_git_push,
     _do_git_push_pr,
     _do_git_stash,
@@ -341,6 +342,24 @@ def register_defaults() -> None:
                 f"git push -u origin {p.get('branch') or '(current)'}"
                 if p.get("set_upstream", True)
                 else f"git push origin {p.get('branch') or '(current)'}"
+            ),
+        ),
+    )
+    register(
+        "git_pull",
+        ApprovalSpec(
+            category="cli",
+            preview="command",
+            summary=lambda p: (
+                f"Pull {p.get('remote') or 'origin'}/{p.get('branch') or '(current)'}"
+                + (" with rebase" if p.get("rebase") else " (fast-forward only)")
+            ),
+            executor=_do_git_pull,
+            risk_hint="medium",
+            payload_fields=["remote", "branch", "rebase", "session_id"],
+            render_command=lambda p: (
+                f"git pull {'--rebase' if p.get('rebase') else '--ff-only'} "
+                f"{p.get('remote') or 'origin'} {p.get('branch') or '(current)'}"
             ),
         ),
     )

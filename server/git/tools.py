@@ -149,6 +149,28 @@ GIT_READ_TOOLS = [
             "properties": {},
         },
     },
+    {
+        "name": "git_fetch",
+        "description": (
+            "[Git] Fetch from a remote: refresh the remote-tracking branches and prune the "
+            "ones deleted upstream. Working files are untouched. Use it before comparing "
+            "against origin, pulling, or checking whether a branch is behind. Runs with the "
+            "user's git credentials, which shell commands in the sandbox do not have."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "remote": {
+                    "type": "string",
+                    "description": "Remote to fetch. Defaults to origin.",
+                },
+                "all": {
+                    "type": "boolean",
+                    "description": "Fetch every configured remote instead of one.",
+                },
+            },
+        },
+    },
 ]
 
 GIT_WRITE_TOOLS = [
@@ -222,6 +244,32 @@ GIT_WRITE_TOOLS = [
                 "set_upstream": {
                     "type": "boolean",
                     "description": "Set upstream tracking (-u flag). Default true for new branches.",
+                },
+            },
+        },
+    },
+    {
+        "name": "git_pull",
+        "description": (
+            "[Git] Pull a branch from its remote into the working tree, fast-forward only "
+            "unless rebase is set. Needs the user's approval. If the branch has diverged "
+            "the pull is refused with the reason instead of creating a merge commit."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "remote": {
+                    "type": "string",
+                    "description": "Remote to pull from. Defaults to origin.",
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Branch to pull. Defaults to the current branch.",
+                },
+                "rebase": {
+                    "type": "boolean",
+                    "description": "Rebase local commits on top of the remote instead of "
+                    "requiring a fast-forward.",
                 },
             },
         },
