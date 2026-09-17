@@ -166,6 +166,49 @@ def _row_to_summary(row):
     }
 
 
+def list_session_summaries() -> list[dict]:
+    """Sidebar rows for every session, cheapest first.
+
+    The summary needs only counts from the two JSON columns, so they are
+    measured in SQL. The old path loaded every session's full chat history
+    and transcript into Python and parsed them just to take len(): on a store
+    with a few long agentic sessions that was hundreds of megabytes of JSON
+    per sidebar refresh, and it ran on the event loop. A SQLite without the
+    JSON functions falls back to the parsing path."""
+    with _get_conn() as conn:
+        try:
+            rows = conn.execute(
+                """
+                SELECT id, title, custom_title, generated_title, created_at, updated_at,
+                       workspace_path, pinned, archived,
+                       CASE WHEN json_valid(segments) THEN json_array_length(segments) ELSE 0 END
+                           AS segment_count,
+                       CASE WHEN json_valid(chat_history) THEN json_array_length(chat_history)
+                            ELSE 0 END AS chat_count
+                FROM sessions ORDER BY updated_at DESC
+                """
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = conn.execute("SELECT * FROM sessions ORDER BY updated_at DESC").fetchall()
+            return [_row_to_summary(r) for r in rows]
+    return [
+        {
+            "id": r["id"],
+            "title": r["title"],
+            "customTitle": bool(r["custom_title"]),
+            "generatedTitle": bool(r["generated_title"]),
+            "createdAt": r["created_at"],
+            "date": r["updated_at"],
+            "segmentCount": int(r["segment_count"] or 0),
+            "chatCount": int(r["chat_count"] or 0),
+            "workspacePath": _safe_col(r, "workspace_path", "") or "",
+            "pinned": bool(_safe_col(r, "pinned", 0)),
+            "archived": bool(_safe_col(r, "archived", 0)),
+        }
+        for r in rows
+    ]
+
+
 def _session_message_prompt_view(msg: dict) -> dict:
     """Reshape a persisted session_message row into a valid API turn.
 
