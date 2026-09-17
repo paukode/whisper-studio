@@ -273,13 +273,21 @@ const AppShell: React.FC = () => {
           // below is dragged tall or the window is shrunk (matches MIN_CHAT_PX
           // in TerminalPanel.tsx). The terminal is flex-shrinkable, so it
           // yields to this minimum instead of clipping the composer.
-          style={{ flex: '1 1 auto', minHeight: 220 }}
+          //
+          // Basis 0, not auto: with `auto` the row's flex basis is the chat's
+          // full content height, so a long conversation made the row absorb
+          // the overflow in proportion to that height and the terminal below
+          // was squeezed to its header alone (its body pushed out of frame,
+          // drag included). With basis 0 the chat takes whatever the terminal
+          // leaves, and the terminal keeps its own height until the window is
+          // too small for both.
+          style={{ flex: '1 1 0%', minHeight: 220 }}
         >
           <ChatPanel />
           <TranscriptionPanel hidden={false} />
         </Splitter>
       ) : (
-        <div style={{ display: 'flex', flex: '1 1 auto', minHeight: 220, minWidth: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', flex: '1 1 0%', minHeight: 220, minWidth: 0, overflow: 'hidden' }}>
           <ChatPanel />
         </div>
       )}
