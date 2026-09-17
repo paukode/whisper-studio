@@ -265,6 +265,9 @@ async def execute_spawn_agent(
     chat leaves all four at their defaults, exactly as before this parameter
     set existed.
     """
+    # Progress cards go where this turn drains them (voice runs use their own
+    # channel so a concurrent chat turn never adopts their agents).
+    progress_channel = event_channel or session_id
     from server.agents.model_resolve import resolve_model_override
     from server.agents.runtime import run_agent
 
@@ -392,9 +395,9 @@ async def execute_spawn_agent(
         "session_id": session_id,
         "agents": [],
     }
-    if session_id:
+    if progress_channel:
         event_bus.publish(
-            session_id,
+            progress_channel,
             {
                 "phase": "team_started",
                 "team_id": team_id,
@@ -419,6 +422,7 @@ async def execute_spawn_agent(
             context=context,
             agent_name=agent_label,
             team_id=team_id,
+            event_channel=event_channel,
             model_id_override=model_id,
             effort_label=effort_label,
             isolation=isolation,
@@ -443,9 +447,9 @@ async def execute_spawn_agent(
         _teams.get(team_id, {}).pop("task", None)
         # team_completed must fire on EVERY exit — skipping it on the exception
         # paths left the card stuck at "running" forever.
-        if session_id:
+        if progress_channel:
             event_bus.publish(
-                session_id,
+                progress_channel,
                 {
                     "phase": "team_completed",
                     "team_id": team_id,
@@ -473,9 +477,9 @@ async def execute_spawn_agent(
     # return status="failed" WITHOUT emitting any per-agent event — publish a
     # synthetic one so the card's row shows the failure instead of a
     # forever-pending spinner under a "completed" team.
-    if session_id and result.status == "failed" and not result.agent_id:
+    if progress_channel and result.status == "failed" and not result.agent_id:
         event_bus.publish(
-            session_id,
+            progress_channel,
             {
                 "phase": "failed",
                 "team_id": team_id,

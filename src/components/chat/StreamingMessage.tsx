@@ -164,6 +164,8 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
                       <span className="trace-check">{'\u2713'}</span>
                     ) : tool.status === 'error' ? (
                       <span className="trace-check" style={{ color: 'var(--error, #f87171)' }}>{'\u2715'}</span>
+                    ) : tool.status === 'stopped' ? (
+                      <span className="trace-check trace-stopped" title="Stopped">{'\u23F9'}</span>
                     ) : (
                       <span className="trace-spinner">{'\u27F3'}</span>
                     )}

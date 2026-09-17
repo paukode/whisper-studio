@@ -11,6 +11,8 @@ import { BackgroundTasksPanel } from '@/components/tasks/BackgroundTasksPanel';
 import { NotificationsBell } from '@/components/layout/NotificationsBell';
 import { useTheme } from '@/providers/ThemeProvider';
 import type { ThemeKey } from '@/types/theme';
+import { useVoiceStore } from '@/stores/voiceStore';
+import { useVoiceClock } from '@/hooks/useVoiceClock';
 
 // The recording ENGINE (websocket, mic worklet, PCM buffering, watchdog,
 // stop-drain protocol) lives in src/services/recordingController.ts as a
@@ -56,6 +58,8 @@ export const Header: React.FC = () => {
   const taskPanelOpen = useBackgroundTaskStore((s) => s.panelOpen);
   const setTaskPanelOpen = useBackgroundTaskStore((s) => s.setPanelOpen);
   const { themeKey, setTheme, themes } = useTheme();
+  const voiceStatus = useVoiceStore((s) => s.status);
+  const { elapsed: voiceElapsed } = useVoiceClock();
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
@@ -252,6 +256,14 @@ export const Header: React.FC = () => {
             </svg>
           )}
         </button>
+
+        {/* Voice conversation pill: on only while a Nova Sonic session is
+          * open, beside the recorder controls so both live states read together. */}
+        {voiceStatus !== 'off' && (
+          <span className="voice-pill" id="voicePill" title="Voice conversation is on">
+            <span className="pulse-dot voice-pulse"></span> Voice {voiceElapsed}
+          </span>
+        )}
 
         {/* This reflects the transcription websocket, which is only live
           * while recording. On a fresh, idle load it's simply not connected —

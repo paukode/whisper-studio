@@ -132,6 +132,16 @@ DEFAULTS = {
     # a mid-recording change doesn't swap models on a live session.
     "transcription_backend": "streaming",
     "bedrock_region": "us-east-1",
+    # Hands-free voice mode (Amazon Nova 2 Sonic over Bedrock). region "" follows
+    # bedrock_region; Sonic is only in us-east-1, us-west-2, eu-north-1 and
+    # ap-northeast-1. Effective values resolve in server/voice/routes.py.
+    "voice": {
+        "enabled": True,
+        "model_id": "amazon.nova-2-sonic-v1:0",
+        "region": "",
+        "voice_id": "tiffany",
+        "endpointing": "MEDIUM",
+    },
     # Chat-model catalog. The app-owned catalog lives in config.example.json (the
     # SYSTEM layer); this DEFAULTS copy is sourced from it so the two can't drift,
     # and serves only as the ultimate fallback when no layer defines chat_models.

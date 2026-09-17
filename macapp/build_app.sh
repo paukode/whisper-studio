@@ -119,6 +119,10 @@ command -v codesign >/dev/null || die "codesign not found (install Command Line 
 VERSION="$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo "0.1.0")"
 VERSION="${VERSION#v}"
 [[ -n "$VERSION" ]] || VERSION="0.1.0"
+# APP_VERSION overrides the derived version verbatim (e.g. a feature build
+# labelled 2.6.0-sonic); VERSION_SUFFIX appends to whatever was derived.
+if [[ -n "${APP_VERSION:-}" ]]; then VERSION="$APP_VERSION"; fi
+VERSION="${VERSION}${VERSION_SUFFIX:-}"
 
 log "Building Whisper Studio.app (version $VERSION, identity: $SIGN_IDENTITY)"
 

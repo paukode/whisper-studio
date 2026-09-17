@@ -27,7 +27,12 @@ import type {
 } from '@/types/chat';
 import { SSEEventDataSchema } from '@/types/schemas';
 import { toError } from '@/utils/toError';
-import { registerStreamController, releaseStreamController } from './streamControl';
+import {
+  buildStoppedMessage,
+  registerStreamController,
+  releaseStreamController,
+  wasKillFinalized,
+} from './streamControl';
 import { renderEventCards } from './sseEventCards';
 import { emptyResponseFallback } from './emptyResponse';
 import { turnModelSettings } from './turnSettings';
@@ -1044,6 +1049,11 @@ export async function sendApprovalContinuation(
     }
 
     const result = await readSSEStream(response, sessionId, continuationSignal);
+    // The kill switch may have finalized this leg while the read loop was
+    // draining (an aborted signal exits the loop normally). It already
+    // committed the traces shown so far; appending them again here would
+    // duplicate the activity.
+    if (wasKillFinalized(ownController)) return;
 
     const contTeamReports = store().takeTeamReports();
     const contToolUse: ToolUseEvent[] = result.skillTraces.map(t => ({
@@ -1103,8 +1113,16 @@ export async function sendApprovalContinuation(
     window.dispatchEvent(new CustomEvent('whisper-git-refresh'));
   } catch (err) {
     if (toError(err).name === 'AbortError') {
-      // User stop: the kill switch already finalized the UI — a fabricated
-      // "failed to continue" bubble here would misreport a deliberate stop.
+      // User stop: the kill switch already finalized the UI (traces included)
+      // and a fabricated "failed to continue" bubble would misreport a
+      // deliberate stop. A plain re-send abort of this leg gets the same
+      // "(Stopped)" commit the fresh-turn path makes, so the prose and tool
+      // activity of the leg are not lost; the finally below clears the live
+      // trace, mirroring how the success path above commits.
+      if (!wasKillFinalized(ownController)) {
+        const stoppedMsg = buildStoppedMessage(store());
+        if (stoppedMsg) store().addMessage(stoppedMsg);
+      }
     } else {
       console.error('Approval continuation failed:', err);
       store().addMessage({

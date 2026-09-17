@@ -236,9 +236,10 @@ def test_approving_the_card_actually_connects_the_workspace(tmp_path, monkeypatc
 
 
 def test_approving_the_card_creates_a_folder_that_does_not_exist_yet(tmp_path, monkeypatch):
-    """ws_open_folder has always been allowed to create the folder it opens.
-    The grant gate broke that: grant() refuses a path that isn't there, so
-    "make me a new project folder" failed after the user approved it."""
+    """ws_open_folder creates the folder it opens when the user asked for a new
+    one (create=true; a misheard name must never turn into a folder). The grant
+    gate once broke that: grant() refused a path that wasn't there, so "make me
+    a new project folder" failed after the user approved it."""
     import json as _json
 
     from server.approval.bootstrap import _do_folder_access
@@ -248,7 +249,7 @@ def test_approving_the_card_creates_a_folder_that_does_not_exist_yet(tmp_path, m
     target = tmp_path / "brand-new"
     assert not target.exists()
 
-    out = execute_ws_open_folder({"path": str(target)})
+    out = execute_ws_open_folder({"path": str(target), "create": True})
     payload = _json.loads(out[len("[WS_APPROVAL]") :])
     outcome = asyncio.run(_do_folder_access(payload))
 

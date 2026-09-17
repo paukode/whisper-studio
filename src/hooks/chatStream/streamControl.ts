@@ -9,7 +9,8 @@
  */
 import { getChatStore, getRuntime } from '@/stores/sessionRuntimes';
 import { useSubagentStore } from '@/stores/subagentStore';
-import type { ChatMessage } from '@/types/chat';
+import type { ChatState } from '@/stores/chatStore';
+import type { ChatMessage, ToolUseEvent } from '@/types/chat';
 
 /** One in-flight controller per session, module-scoped so it survives
  *  component remounts and session switches. */
@@ -59,6 +60,71 @@ export function abortSessionStream(sessionId: string): void {
   }
 }
 
+/** Placeholder result for a step the user cut short before its tool
+ *  returned, so the committed row still has something to expand. */
+export const STOPPED_TOOL_RESULT = '[Stopped by user]';
+
+/** Freeze a live tool trace for the transcript: a step still running (or
+ *  never started) becomes 'stopped' so no committed row spins forever. */
+function stopToolEntry(t: ToolUseEvent): ToolUseEvent {
+  if (t.status !== 'running' && t.status !== 'pending') return t;
+  return { ...t, status: 'stopped', result: t.result || STOPPED_TOOL_RESULT };
+}
+
+/** Close every live team report in place: each agent still running (or
+ *  never started) gets a synthetic `stopped` event and the team a synthetic
+ *  `team_completed`, folded through the same reducer the SSE events use, so
+ *  the card stops spinning and reads exactly like a server-side stop. Must
+ *  run BEFORE takeTeamReports, which detaches the map from the store. */
+function closeLiveTeams(chat: ChatState): void {
+  for (const report of Object.values(chat.liveTeamReports)) {
+    if (report.status !== 'running') continue;
+    for (const [key, agent] of Object.entries(report.agents)) {
+      if (agent.status !== 'running' && agent.status !== 'pending') continue;
+      // Keyed the way _agentKey files agents: the map key IS the name the
+      // team_started scaffold (or the agent_id fallback) used.
+      chat.foldTeamEvent({
+        team_id: report.team_id,
+        agent_name: key,
+        agent_id: agent.agent_id,
+        phase: 'stopped',
+      });
+    }
+    chat.foldTeamEvent({ team_id: report.team_id, phase: 'team_completed' });
+  }
+}
+
+/**
+ * The assistant message a stopped turn leaves behind, built from the live
+ * accumulators of the given chat state: partial prose (with the "(Stopped)"
+ * marker), the tool activity shown so far (running steps frozen as
+ * 'stopped'), the live team reports (closed) and the thinking shown so far.
+ * Returns undefined when the turn had produced none of that yet, so an abort
+ * during the pure thinking phase appends nothing.
+ *
+ * Side effects on `chat`: closes live teams and takes (clears) the live team
+ * reports. The caller commits the result with finishStream (fresh turn) or
+ * addMessage (continuation leg) so the live trace is cleared in the same
+ * pass the message lands.
+ */
+export function buildStoppedMessage(chat: ChatState): ChatMessage | undefined {
+  const { currentStreamContent, currentThinkingContent, thinkingElapsedMs } = chat;
+  const toolUse = chat.currentStreamToolUse.map(stopToolEntry);
+  closeLiveTeams(chat);
+  const teamReports = chat.takeTeamReports();
+  if (!currentStreamContent && toolUse.length === 0 && !teamReports) return undefined;
+  return {
+    role: 'assistant',
+    content: currentStreamContent ? currentStreamContent + '\n\n*(Stopped)*' : '*(Stopped)*',
+    timestamp: new Date().toISOString(),
+    stopped: true,
+    toolUse: toolUse.length > 0 ? toolUse : undefined,
+    teamReports,
+    _thinkingMs: thinkingElapsedMs > 0 ? Math.round(thinkingElapsedMs) : undefined,
+    _thinkingText: currentThinkingContent || undefined,
+  };
+}
+
 /**
  * Instant kill switch (Stop button, ESC). Strictly synchronous and
  * idempotent: the first re-render after it returns already shows the
@@ -85,23 +151,11 @@ export function killSessionStream(sessionId: string | null): void {
     const chat = getChatStore(sessionId).getState();
     const controller = abortControllers.get(sessionId);
     if (chat.isStreaming) {
-      // Mirror of the AbortError catch in useChatStream: preserve any
-      // partial content as a "(Stopped)" message, nothing when empty.
-      // Team activity folded so far is preserved too — the kill switch
-      // must not erase a live team card mid-run.
-      const { currentStreamContent, currentThinkingContent, thinkingElapsedMs } = chat;
-      const killTeamReports = chat.takeTeamReports();
-      const abortMsg: ChatMessage | undefined = (currentStreamContent || killTeamReports)
-        ? {
-            role: 'assistant',
-            content: currentStreamContent ? currentStreamContent + '\n\n*(Stopped)*' : '*(Stopped)*',
-            timestamp: new Date().toISOString(),
-            teamReports: killTeamReports,
-            _thinkingMs: thinkingElapsedMs > 0 ? Math.round(thinkingElapsedMs) : undefined,
-            _thinkingText: currentThinkingContent || undefined,
-          }
-        : undefined;
-      chat.finishStream(abortMsg);
+      // Same commit the AbortError catch in useChatStream performs: partial
+      // prose, the tool activity shown so far and any live team card all
+      // survive as one "(Stopped)" message; nothing is appended when the
+      // turn had produced none of them yet.
+      chat.finishStream(buildStoppedMessage(chat));
     }
     if (controller) killFinalized.add(controller);
     abortSessionStream(sessionId);

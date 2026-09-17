@@ -15,6 +15,10 @@ APP_DIR="$DIST_DIR/Whisper Studio.app"
 VERSION="$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null || echo "0.1.0")"
 VERSION="${VERSION#v}"
 [[ -n "$VERSION" ]] || VERSION="0.1.0"
+# APP_VERSION overrides the derived version verbatim (e.g. a feature build
+# labelled 2.6.0-sonic); VERSION_SUFFIX appends to whatever was derived.
+if [[ -n "${APP_VERSION:-}" ]]; then VERSION="$APP_VERSION"; fi
+VERSION="${VERSION}${VERSION_SUFFIX:-}"
 # DMG filename must not contain path separators.
 VERSION="${VERSION//\//-}"
 

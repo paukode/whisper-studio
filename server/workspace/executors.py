@@ -81,17 +81,72 @@ def open_folder_now(path: str) -> str:
 
 
 def execute_ws_open_folder(tool_input: dict) -> str:
-    """Create folder if needed, connect workspace, return connection info."""
-    path = tool_input.get("path", "").strip()
-    if not path:
+    """Resolve the folder the user named, connect it as the workspace (creating
+    it only when asked), and return connection info.
+
+    Resolution (server/workspace/folder_lookup.py): an existing path wins; a
+    bare or misspelled name is matched against its parent, the usual roots and
+    recent workspaces. One confident match proceeds; several come back as
+    ``candidates`` for the model to confirm with the user; none comes back with
+    the folders that DO exist there (``available``) so the model asks with real
+    names instead of inventing some. Nothing is ever created unless
+    ``create=true`` was passed: a misheard or mistyped name must not turn into
+    an approval card for a folder nobody asked for.
+    """
+    raw = str(tool_input.get("path", "")).strip()
+    if not raw:
         return json.dumps({"error": "path is required"})
-    path = os.path.expanduser(path)
-    path = os.path.realpath(path)
+    switch = _flag(tool_input.get("switch"))
+    create = _flag(tool_input.get("create"))
+
+    from server.workspace.folder_lookup import browse_names, resolve_folder
+    from server.workspace.state import load_recent_workspaces
+
+    recents = load_recent_workspaces()
+    resolved, candidates = resolve_folder(raw, recents=recents)
+    if resolved is None:
+        if candidates:
+            return json.dumps(
+                {
+                    "error": f"No folder is named exactly {raw!r}, but these are close.",
+                    "candidates": candidates,
+                    "hint": (
+                        "Ask the user which one they meant (ask_user_question, options = these "
+                        "exact names), then call ws_open_folder again with that path. Never "
+                        "offer names that are not in this list. Pass create=true only if the "
+                        "user asks for a new folder."
+                    ),
+                }
+            )
+        if not create:
+            return json.dumps(
+                {
+                    "error": f"No folder matching {raw!r} exists in the usual places.",
+                    "available": browse_names(raw, recents=recents),
+                    "hint": (
+                        "The name was probably misheard or mistyped. Ask the user which of the "
+                        "available folders they meant (ask_user_question with those exact "
+                        "names, or the closest few), or for the full path. Never invent folder "
+                        "names, and never create a folder unless the user asked for a new one "
+                        "(then pass create=true with the full path)."
+                    ),
+                }
+            )
+        path = os.path.realpath(os.path.expanduser(raw))
+    else:
+        path = resolved
+
     existing = get_workspace_path()
-    if existing and os.path.realpath(existing) != path:
+    if existing and os.path.realpath(existing) != path and not switch:
         return json.dumps(
             {
-                "error": f"A workspace is already connected at '{existing}'. Use ws_read_file, ws_write_file, and ws_create_file to work with it. Do not switch workspaces unless the user explicitly asks."
+                "error": (
+                    f"A workspace is already connected at '{existing}'. Use ws_read_file, "
+                    "ws_write_file, and ws_create_file to work with it. If the user explicitly "
+                    "asked to open or switch to this other folder, call ws_open_folder again "
+                    "with switch=true."
+                ),
+                "resolved_path": path,
             }
         )
     # Ask the user once before reaching into a folder they have not already
@@ -117,6 +172,13 @@ def execute_ws_open_folder(tool_input: dict) -> str:
         )
         return f"[WS_APPROVAL]{payload}"
     return open_folder_now(path)
+
+
+def _flag(value) -> bool:
+    """Tool inputs arrive as JSON booleans, but models also send "true"."""
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in ("true", "yes", "1")
 
 
 # --- Workspace Tool Executors ---

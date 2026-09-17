@@ -19,17 +19,38 @@ def get_global_workspace_tools() -> list[dict]:
         {
             "name": "ws_open_folder",
             "description": (
-                "[Workspace] Connect a specific folder as the workspace. "
-                "ONLY use this when NO workspace is currently connected and the user explicitly asks to open or create a project folder. "
-                "Do NOT call this if a workspace is already connected — use ws_read_file/ws_write_file/ws_create_file instead. "
-                "Supports ~ expansion and absolute paths."
+                "[Workspace] Open (connect) a folder as the workspace when the user asks to open, "
+                "connect or switch to a folder or project. Give the path as said (~ and absolute "
+                "paths work) or just the folder name: a name is looked up case-insensitively and "
+                "spelling-tolerantly under its parent, the usual roots (~, ~/Documents, ~/Desktop, "
+                "~/Downloads, ~/Developer, ~/Projects) and recent workspaces. One confident match "
+                "opens; several matches come back as candidates for you to confirm with the user "
+                "(ask_user_question) before calling again with the chosen path. When a DIFFERENT "
+                "workspace is already connected, pass switch=true if the user explicitly asked to "
+                "open or switch to this folder; otherwise keep using the connected one. Pass "
+                "create=true only when the user asked for a NEW folder. Opening a folder the user "
+                "has not granted before asks them once."
             ),
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Absolute path or ~/relative path for the folder (e.g. '~/Desktop/my-website')",
+                        "description": (
+                            "Folder path or name, e.g. '~/Documents/ml-ops', 'ml-ops', or the "
+                            "user's words 'the ml-ops folder in Documents'"
+                        ),
+                    },
+                    "switch": {
+                        "type": "boolean",
+                        "description": (
+                            "true when the user explicitly asked to open or switch to this folder "
+                            "while another workspace is connected"
+                        ),
+                    },
+                    "create": {
+                        "type": "boolean",
+                        "description": "true only when the user asked to create a new folder",
                     },
                     "description": {
                         "type": "string",
@@ -396,6 +417,10 @@ def _run_command_tool() -> list[dict]:
             "description": (
                 "[Workspace] Run a shell command in the workspace directory. "
                 "Requires user approval for write commands. Read-only commands run directly. "
+                "Its python3 is the system one and lacks this app's libraries, so prefer "
+                "run_python for Python and office_script for documents; do not reuse other "
+                "projects' virtualenvs or look for interpreters, and put any package a shell "
+                "task needs into a fresh .venv here. "
                 "Commands that take longer than 30s keep running as a background task (the "
                 "same process is handed off, not restarted). Set run_in_background=true to "
                 "start in background immediately for known long-running commands. Check "

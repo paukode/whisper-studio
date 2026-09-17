@@ -35,6 +35,7 @@ import { turnModelSettings } from './chatStream/turnSettings';
 import { buildHistoryPayload } from './chatStream/history';
 import {
   abortSessionStream,
+  buildStoppedMessage,
   killSessionStream,
   registerStreamController,
   releaseStreamController,
@@ -396,22 +397,10 @@ export function useChatStream(): UseChatStreamReturn {
         // "(Stopped)" message) synchronously; only a plain re-send abort
         // still needs the fallback finalization here.
         if (!wasKillFinalized(controller)) {
-          // Capture content BEFORE clearing streaming state, then finish atomically
-          const { currentStreamContent, currentThinkingContent, thinkingElapsedMs } = store();
-          // Keep whatever team activity was already folded — an aborted turn
-          // should leave the partial team card in place, not erase it.
-          const abortTeamReports = store().takeTeamReports();
-          const abortMsg: ChatMessage | undefined = (currentStreamContent || abortTeamReports)
-            ? {
-                role: 'assistant',
-                content: currentStreamContent ? currentStreamContent + '\n\n*(Stopped)*' : '*(Stopped)*',
-                timestamp: new Date().toISOString(),
-                teamReports: abortTeamReports,
-                _thinkingMs: thinkingElapsedMs > 0 ? Math.round(thinkingElapsedMs) : undefined,
-                _thinkingText: currentThinkingContent || undefined,
-              }
-            : undefined;
-          store().finishStream(abortMsg);
+          // Same commit as the kill switch: partial prose, the tool activity
+          // shown so far and any live team card land as one "(Stopped)"
+          // message in the same pass that clears the streaming state.
+          store().finishStream(buildStoppedMessage(store()));
         }
       } else {
         console.error('[Chat] Error:', err);

@@ -111,7 +111,10 @@ RUN_PYTHON_TOOL = {
     "name": "run_python",
     "description": (
         "Executes a self-contained Python 3 script in an OS-sandboxed subprocess and "
-        "returns combined stdout and stderr. Every call is approval-gated; the user "
+        "returns combined stdout and stderr. The interpreter is this app's own, with "
+        "pandas, numpy, openpyxl, python-docx, python-pptx, lxml, Pillow and boto3 "
+        "installed: use it as is instead of checking other Python installations. Every "
+        "call is approval-gated; the user "
         "must approve before the code runs. Use for calculations, data analysis, text "
         "processing, parsing, and quick prototyping when no shell is needed. The cwd "
         "is the connected workspace (else /tmp), and WRITES are OS-confined to that "

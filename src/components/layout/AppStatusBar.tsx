@@ -4,6 +4,8 @@ import { useUIStore } from '@/stores/uiStore';
 import { useBackgroundTaskStore } from '@/stores/backgroundTaskStore';
 import { useGitStatusBar } from '@/hooks/useGitStatusBar';
 import { permissionModeLabel } from '@/utils/permissionModes';
+import { useVoiceStore } from '@/stores/voiceStore';
+import { useVoiceClock } from '@/hooks/useVoiceClock';
 
 /**
  * Persistent bottom status strip for the workspace column — the glanceable
@@ -30,6 +32,9 @@ export const AppStatusBar: React.FC = () => {
   const taskPanelOpen = useBackgroundTaskStore((s) => s.panelOpen);
 
   const git = useGitStatusBar(wsConnected);
+  const voiceStatus = useVoiceStore((s) => s.status);
+  const voiceRegion = useVoiceStore((s) => s.region);
+  const { renewIn: voiceRenewIn } = useVoiceClock();
 
   const modelLabel = models.find((m) => m.key === selectedModel)?.name ?? selectedModel;
 
@@ -65,6 +70,12 @@ export const AppStatusBar: React.FC = () => {
           {!git.clean && <span className="asb-git-count">±{git.changed + git.untracked}</span>}
           {git.ahead > 0 && <span className="asb-ahead">↑{git.ahead}</span>}
           {git.behind > 0 && <span className="asb-behind">↓{git.behind}</span>}
+        </span>
+      )}
+
+      {voiceStatus !== 'off' && (
+        <span className="asb-seg asb-voice" title="Voice conversation over Amazon Bedrock. The stream is renewed before Bedrock's 8-minute limit.">
+          Voice · Nova 2 Sonic{voiceRegion ? ` · ${voiceRegion}` : ''}{voiceRenewIn ? ` · renews in ${voiceRenewIn}` : ''}
         </span>
       )}
 

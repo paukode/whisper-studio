@@ -340,6 +340,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
                         <span className="trace-check">{'\u2713'}</span>
                       ) : tool.status === 'error' ? (
                         <span className="trace-check" style={{ color: 'var(--error, #f87171)' }}>{'\u2715'}</span>
+                      ) : tool.status === 'stopped' ? (
+                        <span className="trace-check trace-stopped" title="Stopped">{'\u23F9'}</span>
                       ) : (
                         <span className="trace-spinner">{'\u27F3'}</span>
                       )}
@@ -390,12 +392,12 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
         {!isUser && message.userQuestions && message.userQuestions.length > 0 ? (
           <>
             {/* Prose the model streamed before asking renders above the card. */}
-            {message.content && <MarkdownRenderer content={message.content} stepFormat />}
+            {message.content && <MarkdownRenderer content={message.content} stepFormat={!message.spoken} />}
             <UserQuestionGroupCard message={message} />
           </>
         ) : !isUser && message.userQuestion ? (
           <>
-            {message.content && <MarkdownRenderer content={message.content} stepFormat />}
+            {message.content && <MarkdownRenderer content={message.content} stepFormat={!message.spoken} />}
             <UserQuestionCard
               question={message.userQuestion.question}
               options={message.userQuestion.options}
@@ -405,13 +407,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
           </>
         ) : !isUser && message.plan ? (
           <>
-            {message.content && <MarkdownRenderer content={message.content} stepFormat />}
+            {message.content && <MarkdownRenderer content={message.content} stepFormat={!message.spoken} />}
             <PlanCard plan={message.plan} />
           </>
         ) : !isUser && message.visuals && message.visuals.length > 0 ? (
           <>
             {/* The sentence that introduces the picture renders above it. */}
-            {message.content && <MarkdownRenderer content={message.content} stepFormat />}
+            {message.content && <MarkdownRenderer content={message.content} stepFormat={!message.spoken} />}
             {message.visuals.map((viz, i) => (
               <VizCard key={`viz-${i}`} viz={viz} />
             ))}
@@ -480,12 +482,20 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
             </>
           )
         ) : message.content ? (
-          <MarkdownRenderer content={message.content} stepFormat />
+          <MarkdownRenderer content={message.content} stepFormat={!message.spoken} />
         ) : null}
 
         {/* Timestamp */}
         {message.timestamp && (
-          <span className="msg-timestamp">{formatMessageTimestamp(message.timestamp)}</span>
+          <span className="msg-timestamp">
+            {message.spoken && (
+              <span className="msg-spoken" title="Spoken in voice mode">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M19 11a7 7 0 0 1-14 0"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+                spoken ·{' '}
+              </span>
+            )}
+            {formatMessageTimestamp(message.timestamp)}
+          </span>
         )}
 
         {/* Message actions — different for user vs assistant */}

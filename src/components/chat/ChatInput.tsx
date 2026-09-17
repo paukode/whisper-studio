@@ -33,6 +33,9 @@ import {
 } from './chatInputConstants';
 import { TokenCounter } from './TokenCounter';
 import { MoreMenu, type MoreSection } from './MoreMenu';
+import { useVoiceStore } from '@/stores/voiceStore';
+import { voiceController } from '@/services/voiceController';
+import { VoiceBar } from './VoiceBar';
 
 export interface ChatInputProps {
   sessionId: string | null;
@@ -65,6 +68,19 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const acRef = useRef<HTMLDivElement>(null);
 
   const chatStream = useChatStream();
+  // Voice mode (Nova 2 Sonic). While a conversation is open the text row is
+  // replaced by the VoiceBar unless the user asked to type; typed text then
+  // goes to the voice model as a cross-modal turn instead of the SSE chat.
+  const voiceStatus = useVoiceStore((s) => s.status);
+  const voiceTyping = useVoiceStore((s) => s.typing);
+  const voiceAvailable = useVoiceStore((s) => s.available);
+  const voiceReason = useVoiceStore((s) => s.unavailableReason);
+  const voiceOn = voiceStatus !== 'off';
+  const voiceDraining = useVoiceStore((s) => s.draining);
+  const voiceRunSession = useVoiceStore((s) => s.runSessionId);
+  // Voice is off but its delegated work is still running for this session.
+  const voiceWorking = !voiceOn && voiceDraining > 0 && (!voiceRunSession || voiceRunSession === sessionId);
+  useEffect(() => { void voiceController.loadStatus(); }, []);
   const { mic, handleMicClick, inputTextRef, submitRef, stopMic } = useDictationInput({
     text,
     setText,
@@ -433,6 +449,15 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         return;
       }
 
+      // Voice mode is on: a typed message is a cross-modal turn for the voice
+      // model (it hears it as if spoken); the normal SSE turn is bypassed.
+      if (useVoiceStore.getState().status !== 'off') {
+        inputTextRef.current = '';
+        setText('');
+        voiceController.sendText(trimmed);
+        return;
+      }
+
       // A message sent while the model is already working gets folded into
       // the SAME running turn instead of being blocked — mirrors how a
       // message sent mid-turn gets taken into account rather than refused
@@ -684,6 +709,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         })}
       </div>
 
+      {voiceOn && !voiceTyping ? (
+        <VoiceBar />
+      ) : (
       <div className="chat-input-row" style={{ position: 'relative' }}>
         <textarea
           ref={textareaRef}
@@ -782,9 +810,39 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
             </svg>
           )}
         </button>
-        {/* Item 5: Stop button during streaming, send button otherwise */}
-        {isStreaming ? (
-          <button className="btn btn-chat-stop" type="button" onClick={handleAbort}>
+        {/* Talk — hands-free voice conversation (Nova 2 Sonic). Between the
+         *  dictation mic and Send. Once a conversation is open this whole row
+         *  is replaced by the VoiceBar; when the user chose to type mid-call,
+         *  the button brings the bar back instead of starting a second call. */}
+        <button
+          type="button"
+          className={`mic-btn talk-btn${voiceOn ? ' on' : ''}`}
+          id="chatTalkBtn"
+          title={
+            voiceOn
+              ? 'Back to the voice bar'
+              : voiceAvailable === false
+                ? `Voice mode unavailable: ${voiceReason ?? 'not configured'}`
+                : 'Talk with the assistant hands-free. Your audio goes to Amazon Bedrock (Nova 2 Sonic) while this is on.'
+          }
+          aria-label={voiceOn ? 'Back to the voice bar' : 'Start voice conversation'}
+          disabled={!voiceOn && voiceAvailable === false}
+          onClick={() => {
+            if (voiceOn) useVoiceStore.getState().setTyping(false);
+            else void voiceController.start(sessionId);
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="7" x2="8" y2="17"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="8" x2="16" y2="16"/><line x1="20" y1="11" x2="20" y2="13"/></svg>
+        </button>
+        {/* Item 5: Stop button during streaming (or while voice work is still
+         *  finishing after a hang-up), send button otherwise */}
+        {isStreaming || (voiceWorking && !text.trim()) ? (
+          <button
+            className="btn btn-chat-stop"
+            type="button"
+            title={isStreaming ? 'Stop' : 'Stop the background work'}
+            onClick={isStreaming ? handleAbort : () => voiceController.cancelRuns()}
+          >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
             </svg>
@@ -797,6 +855,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
           </button>
         )}
       </div>
+      )}
 
       {/* Dictation hint — only while recording. Surfaces the hands-free submit
        *  phrases so users discover them in context, exactly when relevant. */}
@@ -911,6 +970,31 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
             textareaRef.current?.focus();
           }}
         />
+
+        {voiceWorking && (
+          <>
+            <span className="toolbar-sep"></span>
+            <span className="toolbar-btn voice-chip voice-working-chip" title="The assistant is still finishing the work you started by voice. Type to continue, or press Stop.">
+              <span className="pulse voice-request-dot" aria-hidden="true" />
+              Working in background
+            </span>
+          </>
+        )}
+        {voiceOn && (
+          <>
+            <span className="toolbar-sep"></span>
+            <button
+              type="button"
+              className="toolbar-btn active voice-chip"
+              id="voiceChip"
+              title={voiceTyping ? 'Back to the voice bar' : 'Voice conversation is on. Click to type instead.'}
+              onClick={() => useVoiceStore.getState().setTyping(!voiceTyping)}
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="7" x2="8" y2="17"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="8" x2="16" y2="16"/><line x1="20" y1="11" x2="20" y2="13"/></svg>
+              Voice on
+            </button>
+          </>
+        )}
 
         {/* Token counter — reads from chatStore instead of DOM */}
         <TokenCounter />
