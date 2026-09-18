@@ -31,9 +31,21 @@ function statusGlyph(status: TeamAgentReport['status']): React.ReactNode {
   return <span className="trace-spinner" style={{ opacity: 0.5 }}>{'⟳'}</span>;
 }
 
+const STOP_REASON_LABEL: Record<string, string> = {
+  turn_limit: 'stopped at the turn limit · report written',
+  deadline: 'stopped at the time limit · report written',
+  cost_cap: 'stopped at the cost cap · report written',
+  cancelled: 'cancelled · report salvaged',
+  error: 'failed',
+};
+
 function statusLabel(a: TeamAgentReport): string {
   const tools = a.events.filter(e => e.phase === 'tool_call').length;
   const toolsSuffix = tools > 0 ? ` · ${tools} tool${tools === 1 ? '' : 's'}` : '';
+  const turnsSuffix = a.turns_used ? ` · ${a.turns_used} turn${a.turns_used === 1 ? '' : 's'}` : '';
+  if (a.stop_reason && a.stop_reason !== 'completed' && STOP_REASON_LABEL[a.stop_reason]) {
+    return STOP_REASON_LABEL[a.stop_reason] + turnsSuffix + toolsSuffix;
+  }
   if (a.status === 'completed') {
     const turns = a.turns_used ? `done · ${a.turns_used} turn${a.turns_used === 1 ? '' : 's'}` : 'done';
     return turns + toolsSuffix;

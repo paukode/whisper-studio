@@ -151,6 +151,56 @@ def create_task(
     return tid
 
 
+def ensure_running_task(
+    task_id: str,
+    *,
+    kind: str,
+    session_id: str = "",
+    title: str,
+    output_path: str | None = None,
+    meta: dict | None = None,
+) -> str:
+    """Create the row if it does not exist, otherwise put it back into the
+    running state (a resumed agent keeps its id and its record). Returns the
+    task id."""
+    _ensure_table()
+    now = _utc_now_iso()
+    try:
+        with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT task_id FROM agent_tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if row is None:
+                pass
+            else:
+                conn.execute(
+                    "UPDATE agent_tasks SET status='running', exit_code=NULL, result_text='', "
+                    "finished_at=NULL, updated_at=?, pid=?, title=COALESCE(?, title), "
+                    "output_path=COALESCE(?, output_path), meta=COALESCE(?, meta) "
+                    "WHERE task_id=?",
+                    (
+                        now,
+                        os.getpid(),
+                        (title or "").strip()[:200] or None,
+                        output_path,
+                        json.dumps(meta) if meta else None,
+                        task_id,
+                    ),
+                )
+                return task_id
+    except sqlite3.DatabaseError as e:
+        log.warning("tasks.registry: ensure_running_task failed: %s", e)
+        return task_id
+    return create_task(
+        kind,
+        session_id=session_id,
+        title=title,
+        output_path=output_path,
+        meta=meta,
+        task_id=task_id,
+    )
+
+
 def attach_pid(task_id: str, pid: int) -> None:
     """Record the process-group leader pid of a shell task."""
     _ensure_table()

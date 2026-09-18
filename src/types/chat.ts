@@ -64,7 +64,7 @@ export interface SessionMessagePayload {
 }
 
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'cron_event' | 'task_event' | 'session_message';
+  role: 'user' | 'assistant' | 'cron_event' | 'task_event' | 'session_message' | 'agent_report';
   content: string;
   timestamp: string;
   /** Populated when role === 'cron_event'. Renders as a CronEventCard
@@ -72,6 +72,11 @@ export interface ChatMessage {
   cronEvent?: CronEventPayload;
   /** Populated when role === 'task_event'. Renders as a BackgroundTaskCard. */
   taskEvent?: TaskEventPayload;
+  /** role='agent_report' (UI-only in storage, relabeled as a user turn for the
+   *  model): agent reports delivered outside a live turn, so the work of a
+   *  cancelled team, a background agent or a resumed agent still reaches
+   *  both the user and the next turn. */
+  agentReport?: AgentReportPayload;
   /** Populated when role === 'session_message'. Renders as a
    *  SessionMessageCard. */
   sessionMessage?: SessionMessagePayload;
@@ -235,6 +240,30 @@ export interface TeamProgressEvent {
   agents_completed?: number;
 }
 
+/** One agent's report row as delivered by the backend (team results,
+ *  agent_report session rows). */
+export interface AgentReportRow {
+  name?: string;
+  agent_id?: string;
+  agent_type: string;
+  task: string;
+  result: string;
+  status: string;
+  /** completed | turn_limit | deadline | cost_cap | cancelled | error */
+  stop_reason?: string;
+  turns_used?: number;
+}
+
+export interface AgentReportPayload {
+  team_id: string;
+  team_name: string;
+  description?: string;
+  /** Why the reports arrive as a row rather than inside a turn. */
+  reason?: string;
+  timestamp?: string;
+  agents: AgentReportRow[];
+}
+
 export interface TeamAgentReport {
   agent_id?: string;
   name: string;
@@ -247,6 +276,8 @@ export interface TeamAgentReport {
   parent_agent_id?: string | null;
   turns_used?: number;
   result?: string;
+  /** Why the run ended, when the backend named it (turn_limit, deadline, cost_cap, cancelled). */
+  stop_reason?: string;
   events: TeamProgressEvent[];
 }
 

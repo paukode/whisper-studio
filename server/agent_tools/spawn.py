@@ -7,6 +7,8 @@ import json
 import logging
 import uuid
 
+from server.agents.journal import RELAY_NOTE, REPORT_CHARS
+
 log = logging.getLogger("whisper-studio")
 
 # Max concurrently-RUNNING detached agents per session: fire-and-forget
@@ -103,6 +105,11 @@ def _persist_agent_result(
     try:
         from server.tasks import registry
 
+        if registry.get_task(agent_id) is not None:
+            # The runtime's journal created and closed this row itself
+            # (server/agents/journal.py); this path only backfills runs that
+            # bypassed it (tests with a fake run_agent, older callers).
+            return
         registry.create_task(
             "agent",
             session_id=session_id,
@@ -119,6 +126,68 @@ def _persist_agent_result(
         )
     except Exception as e:
         log.debug("agent result persistence failed: %s", e)
+
+
+def _journal_report(agent_id: str, session_id: str) -> str:
+    """The report a stopped agent left in its on-disk record, if any."""
+    try:
+        from server.agents import journal as journal_mod
+
+        rec = journal_mod.load(agent_id, session_id or None) or {}
+        return (rec.get("report") or "").strip()
+    except Exception:  # noqa: BLE001 - best effort
+        return ""
+
+
+async def _deliver_orphaned_spawn(
+    session_id: str,
+    team_id: str,
+    label: str,
+    agent_type: str,
+    task: str,
+    agent_id: str,
+    run_task,
+) -> None:
+    """A spawned agent whose launching turn was cancelled: wait briefly for
+    its salvage report, then deliver it as an agent_report session row."""
+    import asyncio
+
+    from server.agents import journal as journal_mod
+    from server.tasks.events import emit_agent_report
+
+    try:
+        await asyncio.wait({run_task}, timeout=5.0)
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001 - best effort
+        pass
+    rec = journal_mod.load(agent_id, session_id or None) or {}
+    meta = rec.get("meta") or {}
+    emit_agent_report(
+        session_id,
+        {
+            "team_id": team_id,
+            "team_name": label,
+            "description": task[:500],
+            "reason": (
+                "the turn that launched this agent ended before it could read the "
+                "result; the agent was stopped and its record kept"
+            ),
+            "agents": [
+                {
+                    "name": label,
+                    "agent_id": agent_id,
+                    "agent_type": agent_type,
+                    "task": task,
+                    "result": (
+                        (rec.get("report") or "").strip()
+                        or "[No record was written before the stop]"
+                    )[:REPORT_CHARS],
+                    "status": "completed" if meta.get("status") == "completed" else "stopped",
+                    "stop_reason": meta.get("stop_reason") or "cancelled",
+                    "turns_used": int(meta.get("rounds") or 0),
+                }
+            ],
+        },
+    )
 
 
 def _spawn_label(task: str, max_len: int = 60) -> str:
@@ -324,10 +393,12 @@ async def execute_spawn_agent(
             session_id, task, tool_input.get("agent_type", "general"), model_id, result
         )
         warning_line = f"[model override] {model_warning}\n" if model_warning else ""
+        stop_reason = getattr(result, "stop_reason", result.status)
         return (
             f"{warning_line}"
             f"[Agent {result.agent_id} ({result.agent_type})] "
-            f"Status: {result.status}, Turns: {result.turns_used}\n"
+            f"Status: {result.status} ({stop_reason}), Turns: {result.turns_used}\n"
+            f"{RELAY_NOTE}\n"
             f"Output:\n{result.output}"
         )
 
@@ -414,6 +485,9 @@ async def execute_spawn_agent(
             },
         )
 
+    # Pre-assigned so the agent's on-disk record can be found and delivered
+    # even when this call is cancelled before the run returns.
+    spawn_agent_id = uuid.uuid4().hex[:10]
     run_task = asyncio.ensure_future(
         run_agent(
             task,
@@ -426,6 +500,7 @@ async def execute_spawn_agent(
             model_id_override=model_id,
             effort_label=effort_label,
             isolation=isolation,
+            agent_id=spawn_agent_id,
         )
     )
     _teams[team_id]["task"] = run_task
@@ -435,11 +510,16 @@ async def execute_spawn_agent(
         result = await run_task
     except asyncio.CancelledError:
         if not _teams.get(team_id, {}).get("stop_requested"):
-            # Outer turn cancelled (ESC / stream disconnect) — propagate.
+            # Outer turn cancelled (ESC / stream disconnect / shutdown): nobody
+            # will read this tool result, so the agent's salvage report goes
+            # into the session as a row the next turn reads.
             run_task.cancel()
+            await _deliver_orphaned_spawn(
+                session_id, team_id, agent_label, display_agent_type, task, spawn_agent_id, run_task
+            )
             raise
         # Stop button: the agent already published its "stopped" event; give the
-        # model an honest result instead of an exception.
+        # model its salvage report instead of an exception.
         stopped_by_user = True
         result = None
     finally:
@@ -460,11 +540,13 @@ async def execute_spawn_agent(
 
     if stopped_by_user:
         stopped_payload = {
-            "agent_id": "",
+            "agent_id": spawn_agent_id,
             "agent_type": display_agent_type,
             "team_id": team_id,
             "status": "stopped",
-            "output": "[Stopped by user]",
+            "stop_reason": "cancelled",
+            "output": _journal_report(spawn_agent_id, session_id) or "[Stopped by user]",
+            "relay": RELAY_NOTE,
         }
         if ephemeral_meta:
             stopped_payload["ephemeral_type"] = ephemeral_meta
@@ -494,10 +576,12 @@ async def execute_spawn_agent(
         "agent_type": result.agent_type,
         "team_id": team_id,
         "status": result.status,
+        "stop_reason": getattr(result, "stop_reason", result.status),
         "turns_used": result.turns_used,
         "tools_called": result.tools_called,
         "usage": result.usage,
         "output": result.output,
+        "relay": RELAY_NOTE,
     }
     if requested_model:
         # The key the work ACTUALLY ran on (empty ⇒ fell back to the session
@@ -529,6 +613,37 @@ def execute_send_message(tool_input: dict, from_id: str = "main") -> str:
         count = message_bus.broadcast(from_id, content)
         return json.dumps({"sent": True, "broadcast": True, "recipients": count})
     elif to_id:
+        from server.agents.registry import agent_registry
+
+        info = agent_registry.get(to_id)
+        if info is None or info.status != "running":
+            # A finished or interrupted agent keeps its record; a message to it
+            # resumes the run with that context and the reply lands in the
+            # session as an agent report (Claude Code's SendMessage habit).
+            from server.agents import journal as _journal
+
+            if _journal.find_dir(to_id):
+                from server.tasks.agents import resume_agent
+
+                session_id = str(
+                    tool_input.get("__session_id__") or getattr(info, "session_id", "") or ""
+                )
+                try:
+                    resume_agent(to_id, content, session_id=session_id)
+                except Exception as e:  # noqa: BLE001 - report, never raise into the tool
+                    return json.dumps({"error": f"could not resume agent {to_id}: {e}"})
+                return json.dumps(
+                    {
+                        "sent": True,
+                        "to": to_id,
+                        "resumed": True,
+                        "note": (
+                            "The agent was not running. It has been resumed with its stored "
+                            "context; its reply lands in this session as an agent report "
+                            f"(task_output {to_id} shows progress)."
+                        ),
+                    }
+                )
         message_bus.send(from_id, to_id, content)
         return json.dumps({"sent": True, "to": to_id})
     else:

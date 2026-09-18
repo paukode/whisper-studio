@@ -22,6 +22,9 @@ DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
 # filtered out before building the Bedrock messages array.
 PROMPT_ROLES = frozenset({"user", "assistant"})
 
+# Agent report rows (reports delivered outside a live turn) kept per session;
+# the full records stay in the task registry and the on-disk journals.
+MAX_AGENT_REPORTS_PER_SESSION = 20
 # Hard cap on inline cron_event rows kept in chat_history per session.
 # Older cron_events are dropped on append; the durable per-run record
 # lives in the cron_runs table (see server/cron_history.py), so the
@@ -229,6 +232,37 @@ def _session_message_prompt_view(msg: dict) -> dict:
     }
 
 
+def _agent_report_prompt_view(msg: dict) -> dict:
+    """Reshape a persisted agent_report row into a user turn. The row lands
+    when agent work finished with no live turn to carry it (the parent was
+    cancelled, a detached or resumed agent ended); the next turn must see the
+    reports, or the work is lost a second time."""
+    payload = msg.get("agentReport") or {}
+    name = payload.get("team_name") or "agents"
+    reason = payload.get("reason") or "finished while no turn was running"
+    parts = [
+        f'[Agent reports from "{name}": {reason}. These were not shown to the user; '
+        "relay what matters and how confident each report is.]"
+    ]
+    for a in payload.get("agents") or []:
+        if not isinstance(a, dict):
+            continue
+        head = f"## {a.get('name') or a.get('agent_id') or 'agent'} ({a.get('agent_type') or 'general'})"
+        state = a.get("stop_reason") or a.get("status") or ""
+        turns = a.get("turns_used")
+        meta = ", ".join(x for x in (state, f"{turns} rounds" if turns else "") if x)
+        if meta:
+            head += f" [{meta}]"
+        if a.get("agent_id"):
+            head += f" record: task_output {a['agent_id']}"
+        parts.append(head + "\n" + str(a.get("result") or "").strip())
+    return {
+        "role": "user",
+        "content": "\n\n".join(parts),
+        "timestamp": msg.get("timestamp"),
+    }
+
+
 def visible_chat_history(history: list[dict]) -> list[dict]:
     """Drop non-prompt roles before building a Bedrock request.
 
@@ -247,6 +281,8 @@ def visible_chat_history(history: list[dict]) -> list[dict]:
             out.append(m)
         elif role == "session_message":
             out.append(_session_message_prompt_view(m))
+        elif role == "agent_report":
+            out.append(_agent_report_prompt_view(m))
     return out
 
 
@@ -265,6 +301,7 @@ def _enforce_row_cap(history: list[dict], role: str, cap: int) -> list[dict]:
 def _enforce_backend_row_caps(history: list[dict]) -> list[dict]:
     """Apply every backend-owned row's cap (cron_event, session_message)."""
     history = _enforce_row_cap(history, "cron_event", MAX_CRON_EVENTS_PER_SESSION)
+    history = _enforce_row_cap(history, "agent_report", MAX_AGENT_REPORTS_PER_SESSION)
     history = _enforce_row_cap(history, "session_message", MAX_SESSION_MESSAGES_PER_SESSION)
     return history
 
