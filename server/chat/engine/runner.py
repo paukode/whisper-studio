@@ -22,6 +22,7 @@ only with an intentional GOLDEN_RECORD refresh.
 
 import asyncio
 import functools
+import itertools
 import logging
 import time
 from collections.abc import Callable
@@ -54,6 +55,10 @@ log = logging.getLogger("whisper-studio")
 # resets on a successful round; each retry also consumes a round from the turn
 # budget, so a flapping provider is doubly bounded. Backoff grows linearly.
 _ROUND_RETRIES_MAX = 2
+
+# Fraction of a time or cost budget at which the final (reporting) round
+# starts. The last tenth is reserved for writing the report.
+SOFT_LIMIT_FRACTION = 0.9
 _ROUND_RETRY_BACKOFF_S = 2.0
 
 
@@ -116,6 +121,10 @@ class TurnContext:
     # cap, deadline or cost cap): the agent runtime passes its report
     # template so the last message is a report, not the tail of a narration.
     final_round_hint: str | None = None
+    # Live budget grant, mutated from outside the turn (server.agents.
+    # extensions): {"rounds": int, "seconds": float} added to the policy's
+    # round cap and deadline, read again at every round start.
+    budget_extension: dict | None = None
     # True for a turn with no human attending it (subagents today; any future
     # unattended caller). Threaded into execute_tool_batch/process_tool_results
     # so approval-gated and pause-inducing tools resolve without a human:
@@ -206,6 +215,7 @@ async def run_turn(ctx: TurnContext):
     deadline = (
         (time.monotonic() + ctx.policy.deadline_seconds) if ctx.policy.deadline_seconds else None
     )
+    _ext = ctx.budget_extension if isinstance(ctx.budget_extension, dict) else {}
     # Set once when a deadline-hit round has been given its forced-empty-tools
     # treatment and finalize-now reminder, so a subsequent round (e.g. a
     # max_tokens continuation) doesn't re-inject the same reminder every time.
@@ -266,9 +276,25 @@ async def run_turn(ctx: TurnContext):
     if ctx.deferred_count:
         yield f"data: {ndjson_dumps({'tool_pool': {'advertised': ctx.advertised_count, 'deferred': ctx.deferred_count, 'total': ctx.advertised_count + ctx.deferred_count, 'deferred_tokens_est': ctx.deferred_tokens_est}})}\n\n"
 
-    for round_num in range(max_rounds):
-        deadline_hit = deadline is not None and time.monotonic() >= deadline
-        is_last_round = round_num == max_rounds - 1 or deadline_hit or salvage_mode
+    for round_num in itertools.count():
+        # The cap and the deadline are re-read every round so a live
+        # extension (server.agents.extensions) applies to the next round.
+        cap = max_rounds + int(_ext.get("rounds") or 0)
+        if round_num >= cap:
+            break
+        _deadline_now = (
+            deadline + float(_ext.get("seconds") or 0.0) if deadline is not None else None
+        )
+        # The final round starts at the soft limit (SOFT_LIMIT_FRACTION of the
+        # time budget), so the report is written inside the budget instead of
+        # after it, where an outer limit could still kill it unsaved.
+        _soft_deadline = (
+            _deadline_now - (1.0 - SOFT_LIMIT_FRACTION) * float(ctx.policy.deadline_seconds or 0)
+            if _deadline_now is not None
+            else None
+        )
+        deadline_hit = _soft_deadline is not None and time.monotonic() >= _soft_deadline
+        is_last_round = round_num == cap - 1 or deadline_hit or salvage_mode
 
         # Wind-down: tell the model when the round cap is near so it
         # consolidates instead of getting cut off mid-plan. Persisted into
@@ -276,10 +302,10 @@ async def run_turn(ctx: TurnContext):
         # prefix and break the moving cache checkpoint.
         from server.chat.loop_hints import FINAL_ROUND_AT, inject_reminder, near_cap_reminder
 
-        _reminder = near_cap_reminder(max_rounds - round_num)
+        _reminder = near_cap_reminder(cap - round_num)
         if _reminder and inject_reminder(messages, _reminder):
-            log.info("Injected near-cap reminder (%d rounds left)", max_rounds - round_num)
-            if ctx.final_round_hint and max_rounds - round_num == FINAL_ROUND_AT:
+            log.info("Injected near-cap reminder (%d rounds left)", cap - round_num)
+            if ctx.final_round_hint and cap - round_num == FINAL_ROUND_AT:
                 inject_reminder(messages, ctx.final_round_hint)
 
         # A message the user sent WHILE this turn was already running (see
@@ -310,9 +336,9 @@ async def run_turn(ctx: TurnContext):
         if deadline_hit and not _deadline_finalized:
             _deadline_finalized = True
             _deadline_reminder = (
-                "<system-reminder>Time is up for this turn. Finalize your "
-                "answer now with what you have; further tool calls will not "
-                "execute.</system-reminder>"
+                "<system-reminder>Time is up for this turn (the time budget is "
+                "nearly used). Finalize your answer now with what you have; "
+                "further tool calls will not execute.</system-reminder>"
             )
             if inject_reminder(messages, _deadline_reminder):
                 log.info(
@@ -340,9 +366,14 @@ async def run_turn(ctx: TurnContext):
             return
 
         # Cost budget check before each round.
-        from server.costs.budget import check_budget
+        from server.costs.budget import check_budget, check_budget_soft
 
-        budget_exceeded = check_budget(session_id)
+        # Hard cap first; below it, the soft limit (SOFT_LIMIT_FRACTION of the
+        # cap) starts the final round so the report itself stays inside the
+        # budget. Either one, once finalized, ends the turn on its next trip.
+        budget_exceeded = check_budget(session_id) or check_budget_soft(
+            session_id, SOFT_LIMIT_FRACTION
+        )
         budget_final = False
         if budget_exceeded:
             yield f"data: {ndjson_dumps({'budget_warning': budget_exceeded.message, 'budget_kind': budget_exceeded.kind, 'budget_limit': budget_exceeded.limit, 'budget_current': budget_exceeded.current})}\n\n"
@@ -357,10 +388,10 @@ async def run_turn(ctx: TurnContext):
             budget_final = True
             is_last_round = True
             _budget_reminder = (
-                "<system-reminder>The cost budget for this session is reached "
-                f"({budget_exceeded.message}). This is the final round: answer now "
-                "with what you have; further tool calls will not execute."
-                "</system-reminder>"
+                "<system-reminder>The cost budget for this session is nearly "
+                f"or fully used ({budget_exceeded.message}). This is the final "
+                "round: answer now with what you have; further tool calls will "
+                "not execute.</system-reminder>"
             )
             if inject_reminder(messages, _budget_reminder):
                 log.info(

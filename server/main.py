@@ -15,6 +15,7 @@ from server.infrastructure.paths import relocate_legacy_home
 
 relocate_legacy_home()
 
+from server.agents.routes import router as agents_router
 from server.approval.bootstrap import register_defaults as register_approval_defaults
 from server.approval.router import router as approval_router
 from server.attachments import cleanup_loop
@@ -452,6 +453,7 @@ from server.infrastructure.security import origin_guard  # noqa: E402
 app.middleware("http")(origin_guard)
 
 # Mount all routers
+app.include_router(agents_router)
 app.include_router(config_router)
 app.include_router(config_raw_router)
 app.include_router(data_retention_router)

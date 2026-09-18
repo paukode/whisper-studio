@@ -15,6 +15,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
+from server.agents import extensions as budget_extensions
 from server.agents.config import (
     AgentConfig,
     filter_tools_for_agent,
@@ -34,7 +35,9 @@ from server.agents.runtime_support import (  # noqa: F401 - re-exported for call
     _harvest_worktree,
     _resolve_agent_model,
     _with_session_id,
+    budget_readout,
 )
+from server.chat.engine.runner import SOFT_LIMIT_FRACTION
 
 log = logging.getLogger("whisper-studio")
 
@@ -278,6 +281,10 @@ async def run_agent(
         agent_name=agent_name,
         resumed=_resume is not None,
     )
+    # Live budget grant (Extend on the card): rounds/seconds added to the cap
+    # and deadline, read by the runner at every round start.
+    _extension = budget_extensions.new_extension()
+    budget_extensions.register(agent_id, _extension)
 
     # Give this agent its own working-directory identity. Worktree isolation
     # already separates agents by their unique worktree path, but a
@@ -365,6 +372,7 @@ async def run_agent(
             event_channel=event_channel,
             journal=journal,
             resume_messages=_resume["messages"] if _resume else None,
+            extension=_extension,
         )
         if _wt_session is not None:
             # Bring the agent's work home: apply its changes UNCOMMITTED to the
@@ -502,6 +510,7 @@ async def run_agent(
             except BaseException:  # noqa: BLE001 — incl. CancelledError mid-teardown
                 pass
         message_bus.delete_mailbox(agent_id)
+        budget_extensions.unregister(agent_id)
         # Prune stale completed agents once the top-level (coordinator) run
         # finishes consuming results. register()/update_status() are the only
         # things that ever touched the in-memory _agents dict, so without a
@@ -535,6 +544,7 @@ async def _run_agent_loop(
     structured_schema: dict | None = None,
     journal: AgentJournal | None = None,
     resume_messages: list | None = None,
+    extension: dict | None = None,
 ) -> AgentResult:
     """Internal agent loop — the shared chat/engine turn loop
     (server.chat.engine.runner.run_turn) instead of a hand-rolled round loop.
@@ -788,7 +798,13 @@ async def _run_agent_loop(
     # Full task text (generous cap): the card shows the whole brief for rows
     # that were not pre-announced by team_started — spawned children mainly.
     # Report the RESOLVED model_id (threaded into this loop).
-    _emit("started", task=_preview(task, 2000), model=model_id, max_turns=config.max_turns)
+    _emit(
+        "started",
+        task=_preview(task, 2000),
+        model=model_id,
+        max_turns=config.max_turns,
+        deadline_s=config.deadline_seconds,
+    )
 
     _local_turn_marked = False
     if _is_local_agent:
@@ -866,6 +882,7 @@ async def _run_agent_loop(
         # whichever limit forces the final round.
         on_round=(journal.checkpoint if journal is not None else None),
         final_round_hint=REPORT_TEMPLATE,
+        budget_extension=extension,
     )
 
     # Drain run_turn: an async generator yielding SSE-format ndjson strings
@@ -943,7 +960,19 @@ async def _run_agent_loop(
                     rounds_used += 1
                     turn_no = rounds_used
                     _flush_round_text()
-                    _emit("turn_start", turn=turn_no + 1)
+                    _emit(
+                        "turn_start",
+                        turn=turn_no + 1,
+                        **budget_readout(
+                            config,
+                            extension,
+                            next_turn=turn_no + 1,
+                            elapsed=time.monotonic() - turn_start,
+                            usage=final_usage,
+                            model_key=model_key,
+                            cost_capped=cost_capped,
+                        ),
+                    )
                 elif "text" in frame and isinstance(frame.get("text"), str):
                     round_text_parts.append(frame["text"])
                 elif "error" in frame:
@@ -1038,11 +1067,15 @@ async def _run_agent_loop(
     # frames (no frame says "this was the capped round"), so it is inferred
     # exactly the way the pre-migration loop's own limit detection worked:
     # the round budget was exhausted, or the wall-clock deadline passed.
-    stopped_early = (
-        cost_capped
-        or rounds_used >= config.max_turns
-        or (config.deadline_seconds is not None and elapsed >= config.deadline_seconds)
+    _ext = extension or {}
+    _cap = config.max_turns + int(_ext.get("rounds") or 0)
+    _deadline_total = (
+        float(config.deadline_seconds) + float(_ext.get("seconds") or 0.0)
+        if config.deadline_seconds is not None
+        else None
     )
+    _time_up = _deadline_total is not None and elapsed >= SOFT_LIMIT_FRACTION * _deadline_total
+    stopped_early = cost_capped or rounds_used >= _cap or _time_up
 
     collected_text = "\n\n".join(all_text_parts)
     # The report is the final round's message (the agent's last word is its
@@ -1095,10 +1128,10 @@ async def _run_agent_loop(
     if stopped_early:
         if cost_capped:
             stop_reason, reason_text = "cost_cap", "reached the session cost cap"
-        elif config.deadline_seconds is not None and elapsed >= config.deadline_seconds:
+        elif _time_up:
             stop_reason, reason_text = "deadline", "reached time limit"
         else:
-            stop_reason, reason_text = "turn_limit", f"reached turn limit ({config.max_turns})"
+            stop_reason, reason_text = "turn_limit", f"reached turn limit ({_cap})"
         stop_note = f"[Agent stopped - {reason_text}]"
         if not body_text.strip():
             body_text = salvage_report(
