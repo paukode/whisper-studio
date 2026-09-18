@@ -218,6 +218,12 @@ export interface TeamProgressEvent {
   max_turns?: number;
   turn?: number;
   turns_used?: number;
+  /** Budget readout carried on turn_start events (and max_turns on started). */
+  elapsed_s?: number | null;
+  deadline_s?: number | null;
+  cost_usd?: number | null;
+  budget_state?: string;
+  stop_reason?: string;
   text?: string;
   tool_name?: string;
   tool_input_preview?: string;

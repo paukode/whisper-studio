@@ -19,6 +19,13 @@ export const TeamProgressEventSchema = z.object({
   max_turns: z.number().optional(),
   turn: z.number().optional(),
   turns_used: z.number().optional(),
+  /** Budget readout on turn_start events: seconds elapsed and allowed,
+   *  estimated spend so far, and whether the agent is in its final round. */
+  elapsed_s: z.number().nullable().optional(),
+  deadline_s: z.number().nullable().optional(),
+  cost_usd: z.number().nullable().optional(),
+  budget_state: z.string().optional(),
+  stop_reason: z.string().optional(),
   text: z.string().optional(),
   tool_name: z.string().optional(),
   tool_input_preview: z.string().optional(),
