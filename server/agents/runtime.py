@@ -21,9 +21,20 @@ from server.agents.config import (
     get_agent_config,
 )
 from server.agents.event_bus import event_bus
+from server.agents.journal import REPORT_TEMPLATE, AgentJournal, salvage_report
+from server.agents.journal import close_quietly as _close_journal
 from server.agents.messaging import message_bus
 from server.agents.providers.base import AGENT_CALL_CONCURRENCY
 from server.agents.registry import agent_registry
+from server.agents.runtime_support import (  # noqa: F401 - re-exported for callers/tests
+    _agent_finished,
+    _distill_structured,
+    _enter_agent_worktree,
+    _git_executor,
+    _harvest_worktree,
+    _resolve_agent_model,
+    _with_session_id,
+)
 
 log = logging.getLogger("whisper-studio")
 
@@ -35,9 +46,6 @@ log = logging.getLogger("whisper-studio")
 _agent_executor = ThreadPoolExecutor(max_workers=AGENT_CALL_CONCURRENCY)
 # Separate small pool for git/worktree harvesting so a burst of finishing
 # agents doing git ops can't head-of-line-block model calls on _agent_executor.
-_git_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="agent-git")
-
-# Ambient nesting context for a spawn_agent/send_message/receive_messages/
 # complete_coordination tool call dispatched from INSIDE this unattended
 # loop, as opposed to interactive chat. server.tool_router.route_tool reads
 # this so a nested call threads the CALLING agent's real id/depth/team/event-
@@ -55,67 +63,6 @@ agent_nesting_ctx: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
 )
 
 
-def _with_session_id(tool_input: dict, session_id: str) -> dict:
-    """Return a COPY of the model's tool input with internal markers injected
-    for the executor: the session id, and an unattended-agent stamp.
-
-    The original ``tool_input`` is ``tu["input"]`` — the exact dict that lives
-    inside the assistant message replayed to Bedrock on every subsequent turn.
-    Mutating it in place would leak the internal ``__session_id__``/``__agent__``
-    keys into the transcript (where the model can see and imitate them), and
-    some executors only ``.get()`` rather than ``.pop()`` them, so they'd
-    persist. Copying keeps ``tu["input"]`` pristine, mirroring the main chat
-    path (tool_executor.py).
-
-    ``__agent__`` marks every tool call dispatched from this unattended loop —
-    no human is present to answer on-the-spot questions. High-blast-radius
-    executors (github mutations via refuse_if_agent, and MCP's elicitation
-    callback) check for this stamp and refuse/auto-decline rather than acting
-    or answering on a human's behalf.
-    """
-    call_input = dict(tool_input)
-    call_input["__session_id__"] = session_id
-    call_input["__agent__"] = True
-    return call_input
-
-
-def _resolve_agent_model(model_id_override: str | None, config: AgentConfig) -> str | None:
-    """Resolve the model id for an agent run.
-
-    An explicit override is returned verbatim (the spawn handlers already
-    threaded the session-selected model through it). Without one, fall back to
-    the user's configured default chat model. An on-device (``local:*``)
-    candidate is accepted only when the model supports tool calling (the same
-    registry gate interactive chat uses) — a chat-only local model cannot
-    drive an agent loop, and letting one through is how background memory
-    agents broke in hybrid mode. Returns None when no configured chat model
-    can run agents; run_agent fails the run early instead of erroring at the
-    provider call.
-    """
-    if model_id_override:
-        return model_id_override
-
-    from server.agents.providers import model_key_for_id
-    from server.infrastructure.config import load_config
-    from server.local.runtime import is_local_model_id, supports_tools
-
-    cfg = load_config()
-    chat_models = cfg.get("chat_models", {})
-    default_key = cfg.get("default_chat_model")
-    candidates = [
-        chat_models.get(default_key) if default_key else None,
-        chat_models.get("sonnet"),
-        *chat_models.values(),
-    ]
-    for candidate in candidates:
-        if not candidate:
-            continue
-        if is_local_model_id(candidate) and not supports_tools(model_key_for_id(candidate)):
-            continue
-        return candidate
-    return None
-
-
 @dataclass
 class AgentResult:
     """Result from an agent execution."""
@@ -124,6 +71,10 @@ class AgentResult:
     agent_type: str
     output: str
     status: str = "completed"  # completed | failed | stopped
+    # Why the run ended: completed | turn_limit | deadline | cost_cap |
+    # cancelled | error. status stays coarse for callers that branch on it;
+    # this names the limit that ended the run, never silently.
+    stop_reason: str = "completed"
     turns_used: int = 0
     tools_called: list[str] = field(default_factory=list)
     # Aggregated token usage across the agent's turns (provider-normalized:
@@ -155,6 +106,8 @@ async def run_agent(
     structured_schema: dict | None = None,
     isolation: str = "none",
     workspace_path: str | None = None,
+    agent_id: str | None = None,
+    resume_agent_id: str | None = None,
 ) -> AgentResult:
     """Run an agent with full tool execution loop.
 
@@ -277,8 +230,26 @@ async def run_agent(
             status="failed",
         )
 
-    # Generate agent ID and register
-    agent_id = uuid.uuid4().hex[:10]
+    # Generate agent ID and register. A caller may pre-assign the id (team
+    # members, detached runs) so the on-disk record can be found even when
+    # this call never returns; a resume reuses a stopped agent's id and picks
+    # up its stored messages.
+    _resume = None
+    if resume_agent_id:
+        from server.agents import journal as _journal_mod
+
+        _resume = _journal_mod.load(resume_agent_id, session_id or None)
+        if _resume is None or not _resume.get("messages"):
+            return AgentResult(
+                agent_id=resume_agent_id,
+                agent_type=agent_type,
+                output=f"[Agent Error] No stored record for agent {resume_agent_id}; nothing to resume.",
+                status="failed",
+                stop_reason="error",
+            )
+        agent_id = resume_agent_id
+    else:
+        agent_id = agent_id or uuid.uuid4().hex[:10]
     message_bus.create_mailbox(agent_id, session_id=session_id)
 
     agent_registry.register(
@@ -290,6 +261,22 @@ async def run_agent(
         # event carries a real model id.
         model=model_id,
         session_id=session_id,
+    )
+    # The on-disk record (and its task registry row) exists from this moment,
+    # so a run that is cancelled, crashes or outlives the parent turn still
+    # leaves its transcript, checkpoints and a report behind.
+    journal = AgentJournal.open(
+        agent_id,
+        session_id=session_id,
+        task=task,
+        agent_type=config.agent_type,
+        model=model_id,
+        max_turns=config.max_turns,
+        deadline_seconds=config.deadline_seconds,
+        parent_agent_id=parent_agent_id,
+        team_id=team_id,
+        agent_name=agent_name,
+        resumed=_resume is not None,
     )
 
     # Give this agent its own working-directory identity. Worktree isolation
@@ -376,6 +363,8 @@ async def run_agent(
             agent_name=agent_name,
             team_id=team_id,
             event_channel=event_channel,
+            journal=journal,
+            resume_messages=_resume["messages"] if _resume else None,
         )
         if _wt_session is not None:
             # Bring the agent's work home: apply its changes UNCOMMITTED to the
@@ -425,6 +414,9 @@ async def run_agent(
         # re-raise so the cancellation propagates normally.
         log.info("Agent %s cancelled", agent_id)
         agent_registry.update_status(agent_id, "stopped", "Cancelled by user")
+        _close_journal(
+            journal, "stopped", "cancelled", "[Agent cancelled before it started working]"
+        )
         stop_channel = event_channel or session_id
         if stop_channel:
             event_bus.publish(
@@ -442,6 +434,7 @@ async def run_agent(
     except Exception as e:
         log.error("Agent %s failed: %s", agent_id, e, exc_info=True)
         agent_registry.update_status(agent_id, "failed", str(e))
+        _close_journal(journal, "failed", "error", f"[Agent Error] {e}")
         fail_channel = event_channel or session_id
         if fail_channel:
             event_bus.publish(
@@ -460,6 +453,7 @@ async def run_agent(
             agent_type=config.agent_type,
             output=f"[Agent Error] {e}",
             status="failed",
+            stop_reason="error",
         )
     finally:
         if _ws_token is not None:
@@ -539,6 +533,8 @@ async def _run_agent_loop(
     event_channel: str | None = None,
     effort_label: str | None = None,
     structured_schema: dict | None = None,
+    journal: AgentJournal | None = None,
+    resume_messages: list | None = None,
 ) -> AgentResult:
     """Internal agent loop — the shared chat/engine turn loop
     (server.chat.engine.runner.run_turn) instead of a hand-rolled round loop.
@@ -615,9 +611,14 @@ async def _run_agent_loop(
         user_content += f"{context}\n\n"
     if msg_context:
         user_content += msg_context
-    user_content += f"Task: {task}"
-
-    messages = [{"role": "user", "content": user_content}]
+    if resume_messages:
+        # A stopped agent continued with its context intact: its stored
+        # messages first, then the caller's follow-up as the new user turn.
+        user_content += f"[Follow-up from the caller after this run stopped]\n{task}"
+        messages = [*resume_messages, {"role": "user", "content": user_content}]
+    else:
+        user_content += f"Task: {task}"
+        messages = [{"role": "user", "content": user_content}]
 
     # Progressive tool disclosure: re-derive this session's activations from
     # visible history first (self-healing across restarts, exactly like
@@ -759,7 +760,10 @@ async def _run_agent_loop(
     progress_channel = event_channel or session_id
 
     def _emit(phase: str, **extra) -> None:
-        """Publish a progress event for this agent (no-op if no channel)."""
+        """Journal a progress event for this agent and publish it (the publish
+        is a no-op without a channel; the journal write always happens)."""
+        if journal is not None:
+            journal.event(phase, **extra)
         if not progress_channel:
             return
         ev = {
@@ -858,6 +862,10 @@ async def _run_agent_loop(
         unattended=True,
         turn_scope_id=f"agent:{agent_id}",
         tool_catalog=_tool_catalog,
+        # Round-start checkpoint into the journal, and the report template for
+        # whichever limit forces the final round.
+        on_round=(journal.checkpoint if journal is not None else None),
+        final_round_hint=REPORT_TEMPLATE,
     )
 
     # Drain run_turn: an async generator yielding SSE-format ndjson strings
@@ -881,14 +889,22 @@ async def _run_agent_loop(
     }
     round_text_parts: list[str] = []
     error_text: str | None = None
+    # The final round's message is the report the caller receives; the
+    # earlier rounds are narration that lives in the journal.
+    last_round_text = ""
+    # Set when the engine reports the session's cost cap: the engine gives
+    # the agent one final round to report, then ends the run.
+    cost_capped = False
 
     def _flush_round_text() -> None:
+        nonlocal last_round_text
         if not round_text_parts:
             return
         round_text = "".join(round_text_parts)
         round_text_parts.clear()
         if round_text.strip():
             all_text_parts.append(round_text)
+            last_round_text = round_text
             _emit("text", turn=turn_no, text=_preview(round_text, 2000))
 
     _nesting_token = agent_nesting_ctx.set(
@@ -932,6 +948,8 @@ async def _run_agent_loop(
                     round_text_parts.append(frame["text"])
                 elif "error" in frame:
                     error_text = frame["error"]
+                elif "budget_warning" in frame:
+                    cost_capped = True
                 elif "skill_input" in frame:
                     tool_name = frame["skill_input"]
                     tool_input_visible = frame.get("input") or {}
@@ -963,6 +981,46 @@ async def _run_agent_loop(
                     msg = (frame["notify_user"] or {}).get("message", "")
                     if msg:
                         notifications.append(msg)
+    except asyncio.CancelledError:
+        # The run is being killed (Stop, the parent stream closing, a server
+        # shutdown). The record still gets a report: what the agent said
+        # last and what it ran, assembled here since the model cannot.
+        _flush_round_text()
+        _close_journal(
+            journal,
+            "stopped",
+            "cancelled",
+            salvage_report(
+                "cancelled",
+                texts=all_text_parts,
+                tools_called=tools_called,
+                turns_used=rounds_used,
+                agent_id=agent_id,
+            ),
+            turns_used=rounds_used,
+            usage=final_usage,
+            messages=ctx.messages,
+        )
+        raise
+    except Exception as e:
+        _flush_round_text()
+        _close_journal(
+            journal,
+            "failed",
+            "error",
+            salvage_report(
+                "error",
+                texts=all_text_parts,
+                tools_called=tools_called,
+                turns_used=rounds_used,
+                error=str(e),
+                agent_id=agent_id,
+            ),
+            turns_used=rounds_used,
+            usage=final_usage,
+            messages=ctx.messages,
+        )
+        raise
     finally:
         agent_nesting_ctx.reset(_nesting_token)
         _flush_round_text()  # catch trailing text with no following usage frame
@@ -980,14 +1038,23 @@ async def _run_agent_loop(
     # frames (no frame says "this was the capped round"), so it is inferred
     # exactly the way the pre-migration loop's own limit detection worked:
     # the round budget was exhausted, or the wall-clock deadline passed.
-    stopped_early = rounds_used >= config.max_turns or (
-        config.deadline_seconds is not None and elapsed >= config.deadline_seconds
+    stopped_early = (
+        cost_capped
+        or rounds_used >= config.max_turns
+        or (config.deadline_seconds is not None and elapsed >= config.deadline_seconds)
     )
 
     collected_text = "\n\n".join(all_text_parts)
-    body_text = _finalize(
-        coordination_summary if coordination_summary is not None else collected_text
-    )
+    # The report is the final round's message (the agent's last word is its
+    # return value); a terse last message keeps the tail of the earlier notes
+    # so a finding stated two rounds back is not lost either way.
+    report_text = coordination_summary if coordination_summary is not None else last_round_text
+    if len(report_text.strip()) < 300 and len(all_text_parts) > 1:
+        earlier = "\n\n".join(all_text_parts[:-1] if last_round_text else all_text_parts)
+        if len(earlier) > 2500:
+            earlier = "\u2026" + earlier[-2500:]
+        report_text = (report_text.strip() + "\n\nEarlier notes:\n" + earlier).strip()
+    body_text = _finalize(report_text or collected_text)
 
     structured = None
     if structured_schema is not None:
@@ -1026,22 +1093,41 @@ async def _run_agent_loop(
         final_usage = _old_usage.as_dict()
 
     if stopped_early:
-        reason_text = (
-            "reached time limit"
-            if config.deadline_seconds is not None and elapsed >= config.deadline_seconds
-            else f"reached turn limit ({config.max_turns})"
-        )
+        if cost_capped:
+            stop_reason, reason_text = "cost_cap", "reached the session cost cap"
+        elif config.deadline_seconds is not None and elapsed >= config.deadline_seconds:
+            stop_reason, reason_text = "deadline", "reached time limit"
+        else:
+            stop_reason, reason_text = "turn_limit", f"reached turn limit ({config.max_turns})"
         stop_note = f"[Agent stopped - {reason_text}]"
-        final_output = f"{stop_note}\n\n{body_text}" if body_text.strip() else stop_note
+        if not body_text.strip():
+            body_text = salvage_report(
+                stop_reason,
+                texts=all_text_parts,
+                tools_called=tools_called,
+                turns_used=rounds_used,
+                agent_id=agent_id,
+            )
+        final_output = f"{stop_note}\n\n{body_text}"
         # Keep status="completed" for backward compatibility (memory/subagent
         # callers branch on it); the emitted turn_limit phase drives the UI
         # badge, and stopped_early is what gates the worktree harvest.
-        _emit("turn_limit", turns_used=rounds_used, status="turn_limit")
+        _emit("turn_limit", turns_used=rounds_used, status="turn_limit", stop_reason=stop_reason)
+        _close_journal(
+            journal,
+            "completed",
+            stop_reason,
+            final_output,
+            turns_used=rounds_used,
+            usage=final_usage,
+            messages=ctx.messages,
+        )
         return AgentResult(
             agent_id=agent_id,
             agent_type=config.agent_type,
             output=final_output,
             status="completed",
+            stop_reason=stop_reason,
             turns_used=rounds_used,
             tools_called=tools_called,
             usage=final_usage,
@@ -1055,128 +1141,23 @@ async def _run_agent_loop(
         body_text = f"[Agent Error] {error_text}"
 
     _emit("completed", turn=rounds_used, turns_used=rounds_used, status="completed")
+    _close_journal(
+        journal,
+        "completed",
+        "completed",
+        body_text,
+        turns_used=rounds_used,
+        usage=final_usage,
+        messages=ctx.messages,
+    )
     return AgentResult(
         agent_id=agent_id,
         agent_type=config.agent_type,
         output=body_text,
         status="completed",
+        stop_reason="completed",
         turns_used=rounds_used,
         tools_called=tools_called,
         usage=final_usage,
         structured_output=structured,
     )
-
-
-def _enter_agent_worktree(agent_id: str, session_id: str, repo_root: str | None = None):
-    """Create (or resume) an isolated git worktree for this agent.
-
-    Only when the target is a git repo; failures degrade to the shared
-    workspace with a warning (isolation is an optimization for parallel
-    writes, not a correctness gate). Returns the WorktreeSession so run_agent
-    can HARVEST it on completion: the agent's changes are applied uncommitted
-    back to the originating working tree and the worktree + branch are
-    removed (see server/git/worktree_harvest.py).
-
-    ``repo_root`` lets a caller with its own pinned root (a workflow run) fork
-    from that instead of whatever is globally connected. This runs on a
-    worker thread via loop.run_in_executor, which does NOT propagate
-    contextvars, so a caller cannot rely on set_workspace_override being
-    visible here — it must pass the root explicitly.
-    """
-    try:
-        import os as _os
-
-        from server.git.worktree_session import enter_worktree
-        from server.workspace.state import get_workspace_path
-
-        repo_root = repo_root or get_workspace_path()
-        if not repo_root or not _os.path.exists(_os.path.join(repo_root, ".git")):
-            return None
-        # Namespaced session key: enter_worktree records a session->worktree
-        # mapping meant for CHAT sessions; an agent must never clobber the
-        # user's own worktree state for the real session id.
-        return enter_worktree(repo_root, f"agent-{agent_id}", f"agent:{agent_id}")
-    except Exception as e:
-        log.warning("agent worktree isolation failed (%s); using shared workspace", e)
-        return None
-
-
-def _agent_finished(result: "AgentResult") -> bool:
-    """True only when the agent genuinely completed its goal — so its worktree
-    work is applied. A turn/deadline limit reports status='completed' (kept that
-    way for memory/subagent callers) but sets stopped_early, meaning the work is
-    partial and the worktree is kept for inspection instead of applied."""
-    return result.status == "completed" and not result.stopped_early
-
-
-async def _harvest_worktree(wt_session, agent_id: str, apply_changes: bool) -> str:
-    """Run the worktree harvest off-loop (dedicated git pool) and return its
-    user-facing note."""
-    from functools import partial
-
-    from server.git.worktree_harvest import harvest_agent_worktree
-
-    call = partial(
-        harvest_agent_worktree,
-        wt_session.original_cwd,
-        wt_session.worktree_path,
-        wt_session.worktree_branch,
-        f"agent:{agent_id}",
-        apply_changes,
-        base_commit=wt_session.original_head_commit,
-    )
-    outcome = await asyncio.get_running_loop().run_in_executor(_git_executor, call)
-    return outcome.get("note", "")
-
-
-async def _distill_structured(adapter, system, messages, schema, config, total_usage):
-    """One forced-structured call over the finished transcript, with a single
-    schema-repair retry. jsonschema is a hard dependency of the venv (via mcp)
-    but validation failing twice returns None rather than raising — callers
-    decide whether an unstructured fallback is acceptable."""
-    from server.agents.providers.base import TurnUsage as _TU
-
-    ask = {
-        "role": "user",
-        "content": (
-            "Now emit the final structured result for the task above using the "
-            "emit_result tool (or the required JSON format). Output the complete "
-            "object only."
-        ),
-    }
-    attempt_messages = [*messages, ask]
-    for attempt in range(2):
-        turn = await adapter.invoke(
-            system=system,
-            messages=attempt_messages,
-            tools=None,
-            max_tokens=config.max_tokens,
-            effort_label=None,
-            force_structured=schema,
-        )
-        if isinstance(turn.usage, _TU):
-            total_usage.add(turn.usage)
-        candidate = turn.structured_output
-        if candidate is not None:
-            try:
-                import jsonschema
-
-                jsonschema.validate(candidate, schema)
-                return candidate
-            except Exception as e:
-                if attempt == 0:
-                    attempt_messages = [
-                        *attempt_messages,
-                        {"role": "assistant", "content": json.dumps(candidate)},
-                        {
-                            "role": "user",
-                            "content": f"That did not validate against the schema ({e}). "
-                            "Emit a corrected complete object.",
-                        },
-                    ]
-                    continue
-                log.warning("structured output failed validation twice: %s", e)
-                return None
-        if attempt == 0:
-            continue
-    return None

@@ -60,7 +60,9 @@ server/tool_executor.py  lifecycle: hooks, permissions, plan mode, loop guard
 server/tool_router.py    name to handler dispatch
 server/goals/            completion gate: Stop hooks, deliverables, verification, gates, evaluator
 server/memory/           two-tier memory, extraction, dream consolidation, review fork
-server/agents/           subagent runtime, agent types, tool filtering
+server/agents/           subagent runtime, agent types, tool filtering, journal.py
+                         (on-disk record of every run: events, message checkpoints,
+                         report; the task registry row exists from the first round)
 server/infrastructure/   config, sessions store, session_search, auxiliary models, one_shot
 server/skills.py         skill loader; skills_routes.py (HTTP); agent_tools/ (model tools)
 src/hooks/useSlashCommands.tsx   slash commands; src/types/schemas/chat.schema.ts SSE schema

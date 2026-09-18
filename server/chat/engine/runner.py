@@ -108,6 +108,14 @@ class TurnContext:
     # Callbacks into route-owned state (None outside interactive chat).
     heartbeat: Callable[[], None] | None = None
     is_disconnected: Callable[[], Any] | None = None  # async
+    # Called at every round start with (round_num, messages): the agent
+    # runtime snapshots the message list to its on-disk journal here, so a
+    # killed run can be resumed from its last round. Errors are swallowed.
+    on_round: Callable[[int, list], None] | None = None
+    # Extra text appended to the reminder that forces the final round (turn
+    # cap, deadline or cost cap): the agent runtime passes its report
+    # template so the last message is a report, not the tail of a narration.
+    final_round_hint: str | None = None
     # True for a turn with no human attending it (subagents today; any future
     # unattended caller). Threaded into execute_tool_batch/process_tool_results
     # so approval-gated and pause-inducing tools resolve without a human:
@@ -251,6 +259,10 @@ async def run_turn(ctx: TurnContext):
     # Mid-stream fault rescue state (see _ROUND_RETRIES_MAX).
     round_retries = 0
 
+    # Cost cap: the first trip forces one final round with tools off (so the
+    # turn ends with an answer instead of mid-sentence); the second ends it.
+    _budget_finalized = False
+
     if ctx.deferred_count:
         yield f"data: {ndjson_dumps({'tool_pool': {'advertised': ctx.advertised_count, 'deferred': ctx.deferred_count, 'total': ctx.advertised_count + ctx.deferred_count, 'deferred_tokens_est': ctx.deferred_tokens_est}})}\n\n"
 
@@ -262,11 +274,13 @@ async def run_turn(ctx: TurnContext):
         # consolidates instead of getting cut off mid-plan. Persisted into
         # history on purpose — a request-only injection would fork the token
         # prefix and break the moving cache checkpoint.
-        from server.chat.loop_hints import inject_reminder, near_cap_reminder
+        from server.chat.loop_hints import FINAL_ROUND_AT, inject_reminder, near_cap_reminder
 
         _reminder = near_cap_reminder(max_rounds - round_num)
         if _reminder and inject_reminder(messages, _reminder):
             log.info("Injected near-cap reminder (%d rounds left)", max_rounds - round_num)
+            if ctx.final_round_hint and max_rounds - round_num == FINAL_ROUND_AT:
+                inject_reminder(messages, ctx.final_round_hint)
 
         # A message the user sent WHILE this turn was already running (see
         # server/chat/engine/midturn_inbox.py + server/chat/routes.py's
@@ -304,11 +318,21 @@ async def run_turn(ctx: TurnContext):
                 log.info(
                     "Deadline hit — injected finalize-now reminder and forced a no-tools round"
                 )
+                if ctx.final_round_hint:
+                    inject_reminder(messages, ctx.final_round_hint)
 
         # Heartbeat the stream slot so a long multi-round turn is never
         # mistaken for an abandoned stream.
         if ctx.heartbeat:
             ctx.heartbeat()
+
+        # Journal checkpoint (agents): the message list as it stands at this
+        # round start, so a killed run resumes from here.
+        if ctx.on_round is not None:
+            try:
+                ctx.on_round(round_num, messages)
+            except Exception as e:  # noqa: BLE001 - a record write never costs the turn
+                log.debug("on_round hook failed: %s", e)
 
         # Client gone (tab closed / hard refresh): stop promptly.
         if ctx.is_disconnected is not None and await ctx.is_disconnected():
@@ -319,13 +343,33 @@ async def run_turn(ctx: TurnContext):
         from server.costs.budget import check_budget
 
         budget_exceeded = check_budget(session_id)
+        budget_final = False
         if budget_exceeded:
             yield f"data: {ndjson_dumps({'budget_warning': budget_exceeded.message, 'budget_kind': budget_exceeded.kind, 'budget_limit': budget_exceeded.limit, 'budget_current': budget_exceeded.current})}\n\n"
-            yield f"data: {ndjson_dumps({'text': f'[Budget exceeded] {budget_exceeded.message}'})}\n\n"
-            yield "data: [DONE]\n\n"
-            return
+            if _budget_finalized:
+                yield f"data: {ndjson_dumps({'text': f'[Budget exceeded] {budget_exceeded.message}'})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            # First trip: one more round, tools off, to answer with what is
+            # in hand. Ending here mid-task threw away every finding the
+            # turn (or agent) had gathered.
+            _budget_finalized = True
+            budget_final = True
+            is_last_round = True
+            _budget_reminder = (
+                "<system-reminder>The cost budget for this session is reached "
+                f"({budget_exceeded.message}). This is the final round: answer now "
+                "with what you have; further tool calls will not execute."
+                "</system-reminder>"
+            )
+            if inject_reminder(messages, _budget_reminder):
+                log.info(
+                    "Cost cap hit — injected finalize-now reminder and forced a no-tools round"
+                )
+                if ctx.final_round_hint:
+                    inject_reminder(messages, ctx.final_round_hint)
 
-        if salvage_mode or deadline_hit:
+        if salvage_mode or deadline_hit or budget_final:
             tools, core_count = [], None
         elif ctx.tool_catalog is not None:
             tools, core_count = ctx.tool_catalog()
