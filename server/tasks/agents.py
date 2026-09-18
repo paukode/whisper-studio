@@ -9,9 +9,11 @@ kinds), and completion lands in the session as a ``task_event`` card.
 
 import asyncio
 import logging
+import os
 
+from server.agents.journal import REPORT_CHARS
 from server.tasks import registry, shell
-from server.tasks.events import emit_task_event
+from server.tasks.events import emit_agent_report, emit_task_event
 
 log = logging.getLogger("whisper-studio")
 
@@ -67,6 +69,8 @@ def start_detached_agent(
             effort_label,
             read_only,
             isolation,
+            # The registry row and the on-disk journal share the agent's id.
+            agent_id=task_id,
         ),
         name=f"detached-agent-{task_id}",
     )
@@ -88,6 +92,9 @@ async def _run_detached(
     effort_label: str | None = None,
     read_only: bool = False,
     isolation: str = "none",
+    *,
+    agent_id: str | None = None,
+    resume_agent_id: str | None = None,
 ) -> None:
     from server.agents.event_bus import event_bus
     from server.agents.runtime import run_agent
@@ -110,6 +117,8 @@ async def _run_detached(
     pump = asyncio.create_task(_pump_events(queue, session_id, task_id, out_path))
     status = "failed"
     result_text = ""
+    stop_reason = "error"
+    turns_used = 0
     try:
         async with _semaphore():
             result = await run_agent(
@@ -121,14 +130,21 @@ async def _run_detached(
                 event_channel=channel,
                 effort_label=effort_label,
                 isolation=isolation,
+                agent_id=agent_id,
+                resume_agent_id=resume_agent_id,
             )
         result_text = (result.output or "").strip()
         status = {"completed": "completed", "stopped": "stopped"}.get(result.status, "failed")
+        stop_reason = getattr(result, "stop_reason", status)
+        turns_used = int(getattr(result, "turns_used", 0) or 0)
     except asyncio.CancelledError:
         status = "stopped"
-        result_text = "[Stopped by user]"
+        stop_reason = "cancelled"
+        rec = _journal_record(task_id, session_id)
+        result_text = rec or "[Stopped by user]"
     except Exception as e:
         status = "failed"
+        stop_reason = "error"
         result_text = f"[Agent Error] {e}"
         log.error("detached agent %s failed: %s", task_id, e)
     finally:
@@ -143,9 +159,11 @@ async def _run_detached(
         except (asyncio.CancelledError, Exception):  # noqa: BLE001 — backstop only
             pump.cancel()
         event_bus.unsubscribe(channel, queue)
+        # The runtime's journal normally closes the registry row first (with
+        # the report); this call is then a no-op and the row is re-read.
         finished = registry.finish_task(
             task_id, status=status, exit_code=None, result_text=result_text
-        )
+        ) or registry.get_task(task_id)
         if finished:
             event_name = {
                 "completed": "task_completed",
@@ -153,11 +171,100 @@ async def _run_detached(
                 "failed": "task_failed",
             }[status]
             emit_task_event(session_id, event_name, finished)
+        # The launching turn did not wait for this result (detached) or has
+        # long ended (resumed): deliver the report as a session row the next
+        # turn reads, so the parent still gets to act on it.
+        if session_id:
+            emit_agent_report(
+                session_id,
+                {
+                    "team_id": task_id,
+                    "team_name": ("Resumed agent" if resume_agent_id else "Background agent")
+                    + f": {task[:60]}",
+                    "description": task[:500],
+                    "reason": (
+                        "resumed after it had stopped; this is its reply"
+                        if resume_agent_id
+                        else "ran in the background; the turn that launched it did not wait"
+                    ),
+                    "agents": [
+                        {
+                            "name": agent_type,
+                            "agent_id": task_id,
+                            "agent_type": agent_type,
+                            "task": task,
+                            "result": (result_text or "")[:REPORT_CHARS],
+                            "status": status,
+                            "stop_reason": stop_reason,
+                            "turns_used": turns_used,
+                        }
+                    ],
+                },
+            )
 
 
 # Sentinel published to a detached agent's private channel after its run
 # returns; the pump drains everything queued before it, then exits cleanly.
 _PUMP_STOP: dict = {"__pump_stop__": True}
+
+
+def _journal_record(agent_id: str, session_id: str) -> str:
+    """The salvage report a cancelled run left in its journal, if any."""
+    try:
+        from server.agents import journal as journal_mod
+
+        rec = journal_mod.load(agent_id, session_id or None) or {}
+        return (rec.get("report") or "").strip()
+    except Exception:  # noqa: BLE001 - best effort
+        return ""
+
+
+def resume_agent(agent_id: str, message: str, *, session_id: str = "") -> str:
+    """Continue a finished or interrupted agent with its stored context.
+
+    The agent keeps its id and its on-disk record; the run is detached (the
+    caller's turn does not wait) and its reply lands in the session as an
+    agent report. Must be called from the server event loop.
+    """
+    from server.agents import journal as journal_mod
+
+    rec = journal_mod.load(agent_id, session_id or None)
+    if rec is None or not rec.get("messages"):
+        raise ValueError(f"no stored record for agent {agent_id}")
+    meta = rec.get("meta") or {}
+    sid = session_id or str(meta.get("session_id") or "")
+    agent_type = str(meta.get("agent_type") or "general")
+    model_id = str(meta.get("model") or "") or None
+    registry.ensure_running_task(
+        agent_id,
+        kind="agent",
+        session_id=sid,
+        title=str(meta.get("task") or message)[:200],
+        output_path=os.path.join(rec["dir"], "events.jsonl"),
+        meta={"agent_type": agent_type, "model": model_id or "", "journal_dir": rec["dir"]},
+    )
+    aio_task = asyncio.create_task(
+        _run_detached(
+            agent_id,
+            message,
+            agent_type,
+            sid,
+            model_id,
+            None,
+            None,
+            False,
+            "none",
+            agent_id=agent_id,
+            resume_agent_id=agent_id,
+        ),
+        name=f"resume-agent-{agent_id}",
+    )
+    _running[agent_id] = aio_task
+    aio_task.add_done_callback(lambda _t: _running.pop(agent_id, None))
+    started = registry.get_task(agent_id)
+    if started:
+        emit_task_event(sid, "task_started", started)
+    return agent_id
 
 
 async def _pump_events(queue: asyncio.Queue, session_id: str, task_id: str, out_path: str) -> None:
@@ -171,7 +278,7 @@ async def _pump_events(queue: asyncio.Queue, session_id: str, task_id: str, out_
             if ev is _PUMP_STOP or (isinstance(ev, dict) and ev.get("__pump_stop__")):
                 return
             line = _event_line(ev)
-            if line:
+            if line and out_path:
                 try:
                     with open(out_path, "a", encoding="utf-8") as f:
                         f.write(line + "\n")

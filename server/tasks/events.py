@@ -144,3 +144,29 @@ def emit_task_event(session_id: str, event_type: str, task: dict) -> None:
         "timestamp": _utc_now_iso(),
     }
     emit_session_event(session_id, role="task_event", payload_key="taskEvent", payload=payload)
+
+
+def emit_agent_report(session_id: str, payload: dict) -> None:
+    """Persist finished agent reports into the session when no live turn can
+    carry them (the parent was cancelled, or the agent ran detached or was
+    resumed). Unlike task_event this row IS shown to the model: the next turn
+    reads it as a user message (server.infrastructure.sessions.
+    visible_chat_history), so the parent still gets its turn to act."""
+    if not session_id or not isinstance(payload, dict):
+        return
+    payload = {**payload, "timestamp": payload.get("timestamp") or _utc_now_iso()}
+    emit_session_event(session_id, role="agent_report", payload_key="agentReport", payload=payload)
+    try:
+        from server.notifications import record_notification
+
+        agents = payload.get("agents") or []
+        title = payload.get("team_name") or (agents[0].get("name") if agents else "") or "Agent"
+        record_notification(
+            session_id=session_id,
+            source="agents",
+            title=f"Results ready: {title}",
+            message=payload.get("reason")
+            or f"{len(agents)} agent report(s) landed in the session.",
+        )
+    except Exception as e:  # noqa: BLE001 - a missed notification never blocks the row
+        log.debug("agent report notification skipped: %s", e)
