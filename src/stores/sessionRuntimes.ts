@@ -26,8 +26,7 @@ import type {
   CronEventPayload,
   SessionMessagePayload,
   TaskEventPayload,
-  TeamProgressEvent,
-} from '@/types/chat';
+  TeamProgressEvent, AgentReportPayload } from '@/types/chat';
 
 /** Backs `currentSessionId === null` (welcome screen, pre-first-session).
  *  Never saved, never evicted, never event-sourced. */
@@ -250,6 +249,7 @@ function openEventStream(sid: string, entry: RuntimeEntry): void {
       cron_event?: CronEventPayload;
       memory_event?: MemoryEventPayload;
       task_event?: TaskEventPayload;
+      agent_report?: AgentReportPayload;
       session_message?: SessionMessagePayload;
       team_progress?: TeamProgressEvent;
       ci_progress?: Record<string, unknown>;
@@ -260,6 +260,7 @@ function openEventStream(sid: string, entry: RuntimeEntry): void {
         cron_event?: CronEventPayload;
         memory_event?: MemoryEventPayload;
         task_event?: TaskEventPayload;
+        agent_report?: AgentReportPayload;
         session_message?: SessionMessagePayload;
         team_progress?: TeamProgressEvent;
         ci_progress?: Record<string, unknown>;
@@ -297,6 +298,19 @@ function openEventStream(sid: string, entry: RuntimeEntry): void {
     }
     if (parsed?.memory_event) {
       toastMemoryEvent(sid, parsed.memory_event);
+      return;
+    }
+    if (parsed?.agent_report) {
+      // Reports that arrived with no live turn to carry them (a cancelled
+      // team, a background or resumed agent). Same UI-only row contract as
+      // task_event; the backend relabels it for the model.
+      const payload = parsed.agent_report;
+      entry.chat.getState().addMessage({
+        role: 'agent_report',
+        content: '',
+        timestamp: payload.timestamp ?? new Date().toISOString(),
+        agentReport: payload,
+      });
       return;
     }
     if (parsed?.task_event) {

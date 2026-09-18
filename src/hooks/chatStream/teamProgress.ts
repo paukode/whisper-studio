@@ -64,6 +64,7 @@ export function foldTeamResultsInto(
       task?: string;
       result?: string;
       status?: string;
+      stop_reason?: string;
       turns_used?: number;
     }>;
   };
@@ -85,6 +86,7 @@ export function foldTeamResultsInto(
           agent_type: a.agent_type ?? existing.agent_type,
           turns_used: a.turns_used ?? existing.turns_used,
           result: a.result ?? existing.result,
+          stop_reason: a.stop_reason ?? existing.stop_reason,
           status:
             a.status === 'completed' ? 'completed'
             : a.status === 'failed' || a.status === 'error' ? 'failed'
@@ -102,6 +104,7 @@ export function foldTeamResultsInto(
           agent_id: a.agent_id,
           turns_used: a.turns_used,
           result: a.result,
+          stop_reason: a.stop_reason,
           events: [],
         };
     agents[key] = merged;

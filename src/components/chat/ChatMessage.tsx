@@ -11,6 +11,7 @@ import type { SessionTask } from '@/stores/taskStore';
 import { ActivityRow } from '@/components/chat/ActivityRow';
 import { TeamReportCard } from '@/components/chat/TeamReportCard';
 import { BackgroundTaskCard } from '@/components/chat/BackgroundTaskCard';
+import { AgentReportCard } from './AgentReportCard';
 import { CronEventCard } from '@/components/chat/CronEventCard';
 import { SessionMessageCard } from '@/components/chat/SessionMessageCard';
 import { WorkflowPreviewCard } from '@/components/chat/WorkflowPreviewCard';
@@ -167,6 +168,15 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
   if (message.role === 'task_event') {
     if (message.taskEvent) {
       return <BackgroundTaskCard event={message.taskEvent} />;
+    }
+    return null;
+  }
+
+  // Agent reports delivered outside a live turn (cancelled team, background
+  // or resumed agent). UI-only in storage; the model reads a relabeled copy.
+  if (message.role === 'agent_report') {
+    if (message.agentReport) {
+      return <AgentReportCard report={message.agentReport} />;
     }
     return null;
   }
