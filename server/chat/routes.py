@@ -302,6 +302,35 @@ _stream_heartbeat: dict[str, float] = {}
 # disconnect-poll free it sooner on the common paths; this is the backstop for
 # a suspended connection that never cleanly disconnects.
 _STREAM_STALE_AFTER_S = 900.0  # above a single Bedrock read timeout (~600s)
+# How often a live stream refreshes its heartbeat while it is silent.
+_HEARTBEAT_KEEPALIVE_S = 30.0
+
+
+async def _with_heartbeat(chunks, beat, interval: float = _HEARTBEAT_KEEPALIVE_S):
+    """Forward ``chunks``, calling ``beat`` on every chunk and every ``interval``
+    seconds of silence in between.
+
+    The runner heartbeats once per round, but one tool call can outlast the
+    stale window on its own: a team of agents working for an hour, a long
+    shell command. Judged stale, the slot refused the user's mid-turn message
+    (409, the composer kept the text) or, before 2.8.1, let a second turn
+    start on top of the running one. The pulse lives exactly as long as this
+    generator, so a stream that ends or is cancelled stops heartbeating with
+    it; Stop closes the stream and frees the slot the same way as before.
+    """
+
+    async def _pulse():
+        while True:
+            await asyncio.sleep(interval)
+            beat()
+
+    pulse = asyncio.create_task(_pulse())
+    try:
+        async for chunk in chunks:
+            beat()
+            yield chunk
+    finally:
+        pulse.cancel()
 
 
 @router.post("/api/chat/sessions/{session_id}/reset")
@@ -1901,7 +1930,7 @@ async def chat_endpoint(request: Request):
                 # first token so the notice is visible while the turn runs.
                 if _downgrade:
                     yield f"data: {ndjson_dumps({'turn_downgrade': _downgrade})}\n\n"
-                async for chunk in run_turn(turn_ctx):
+                async for chunk in _with_heartbeat(run_turn(turn_ctx), _heartbeat):
                     yield chunk
             finally:
                 if _active_chat_streams.get(session_id) == stream_token:

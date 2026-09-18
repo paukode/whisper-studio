@@ -473,7 +473,8 @@ export function useChatStream(): UseChatStreamReturn {
     } else {
       useUIStore.getState().addToast({
         type: 'error',
-        message: "Not delivered — the turn may have just finished. Nothing was sent; try again.",
+        message:
+          'Not delivered: the server no longer counts this turn as running, so nothing was sent. Send it again as a new message, or press Stop first if the assistant still looks busy.',
         duration: 5000,
       });
     }
