@@ -70,6 +70,22 @@ def _client() -> TestClient:
     return TestClient(app)
 
 
+def _await_tasks_terminal(session_id, timeout=5.0):
+    """The run row and its mirrored registry task are two stores closed one
+    after the other; a poller that sees the run finish can read the task a
+    moment before it closes. Wait for the task to leave 'running'."""
+    import time
+
+    deadline = time.monotonic() + timeout
+    while True:
+        tasks = _workflow_tasks(session_id)
+        if tasks and all(t["status"] != "running" for t in tasks):
+            return tasks
+        if time.monotonic() >= deadline:
+            return tasks
+        time.sleep(0.05)
+
+
 async def _await_done(run_id, timeout=20):
     from server.workflows import manager
 
@@ -133,7 +149,7 @@ def test_finished_run_closes_its_task_and_reaches_the_model():
 
     asyncio.run(go())
 
-    tasks = _workflow_tasks("s1")
+    tasks = _await_tasks_terminal("s1")
     assert len(tasks) == 1
     assert tasks[0]["status"] == "completed"
     # The result the script returned is what the card and the model read,
@@ -161,7 +177,7 @@ def test_failed_run_closes_its_task_as_failed():
 
     asyncio.run(go())
 
-    tasks = _workflow_tasks("s1")
+    tasks = _await_tasks_terminal("s1")
     assert tasks[0]["status"] == "failed"
     assert "kaboom" in (tasks[0]["result_text"] or "")
 
