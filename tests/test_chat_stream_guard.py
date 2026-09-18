@@ -279,3 +279,27 @@ def test_midturn_body_is_queued_while_running():
     finally:
         routes._active_chat_streams.clear()
         midturn_inbox.drain("live-session")
+
+
+def test_stream_heartbeat_keeps_pulsing_during_a_silent_tool_call():
+    """One tool call (a team of agents, a long command) can outlast the stale
+    window with no chunk and no new round. The wrapper pulses the heartbeat on
+    its own while the stream is silent, so the slot stays live and a mid-turn
+    message is queued instead of refused."""
+    beats: list[float] = []
+
+    async def silent_turn():
+        await asyncio.sleep(0.35)
+        yield "data: {}\n\n"
+
+    async def run():
+        out = []
+        async for chunk in routes._with_heartbeat(
+            silent_turn(), lambda: beats.append(time.monotonic()), interval=0.05
+        ):
+            out.append(chunk)
+        return out
+
+    assert asyncio.run(run()) == ["data: {}\n\n"]
+    # Several pulses landed during the silence, plus one for the chunk itself.
+    assert len(beats) >= 4
