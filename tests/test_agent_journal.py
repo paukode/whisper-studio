@@ -111,7 +111,7 @@ def test_cost_cap_gives_one_reporting_round_then_names_the_reason(monkeypatch):
     assert result.stop_reason == "cost_cap"
     assert result.output.startswith("[Agent stopped - reached the session cost cap]")
     assert "FINDINGS: what I had" in result.output
-    assert "cost budget for this session is reached" in json.dumps(
+    assert "cost budget for this session is nearly or fully used" in json.dumps(
         _record(result.agent_id)["messages"]
     )
 

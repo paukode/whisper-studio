@@ -12,6 +12,8 @@
 import React from 'react';
 import type { TeamReportData, TeamAgentReport, TeamProgressEvent } from '@/types/chat';
 import { useSubagentStore } from '@/stores/subagentStore';
+import { useUIStore } from '@/stores/uiStore';
+import { agentBudget, formatSeconds, STATE_LABEL, FINALE_FRACTION } from '@/hooks/chatStream/agentBudget';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 
 interface Props {
@@ -211,8 +213,82 @@ function EventRow({ ev }: { ev: TeamProgressEvent }) {
   }
 }
 
+/** One budget dimension as a thin bar; the last tenth is the reserved
+ *  finale slice, drawn hatched so "nearly there" reads at a glance. */
+function BudgetBar({ label, value, cap, text }: { label: string; value: number; cap: number | null; text: string }) {
+  const pct = cap && cap > 0 ? Math.max(0, Math.min(100, (value / cap) * 100)) : null;
+  return (
+    <div className="budget-row" title={`${label}: ${text}`}>
+      <span className="budget-label">{label}</span>
+      <span className="budget-bar" aria-hidden="true">
+        {pct !== null && <span className="budget-fill" style={{ width: `${pct}%` }} />}
+        {pct !== null && (
+          <span className="budget-finale" style={{ width: `${FINALE_FRACTION * 100}%` }} />
+        )}
+      </span>
+      <span className="budget-text">{text}</span>
+    </div>
+  );
+}
+
+const EXTEND_ROUNDS = 20;
+
+function AgentBudgetPanel({ agent }: { agent: TeamAgentReport }) {
+  const budget = agentBudget(agent);
+  const running = agent.status === 'running' || agent.status === 'pending';
+  const [busy, setBusy] = React.useState(false);
+  const extend = React.useCallback(async () => {
+    if (!agent.agent_id || busy) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/agents/${encodeURIComponent(agent.agent_id)}/extend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rounds: EXTEND_ROUNDS }),
+      });
+      const data = (await r.json().catch(() => ({}))) as { error?: string; extension?: { rounds?: number } };
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      useUIStore.getState().addToast({
+        type: 'info',
+        message: `${agent.name}: ${EXTEND_ROUNDS} more rounds granted (${data.extension?.rounds ?? EXTEND_ROUNDS} extra in total).`,
+        duration: 4000,
+      });
+    } catch (e) {
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: `Could not extend ${agent.name}: ${e instanceof Error ? e.message : String(e)}`,
+        duration: 5000,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }, [agent.agent_id, agent.name, busy]);
+
+  const hasAny = budget.turns.cap !== null || budget.time.cap !== null || budget.costUsd !== null;
+  if (!hasAny) return null;
+  return (
+    <div className="team-agent-budget">
+      {budget.turns.cap !== null && (
+        <BudgetBar label="rounds" value={budget.turns.used} cap={budget.turns.cap} text={`${budget.turns.used}/${budget.turns.cap}`} />
+      )}
+      {budget.time.cap !== null && budget.time.elapsed !== null && (
+        <BudgetBar label="time" value={budget.time.elapsed} cap={budget.time.cap} text={`${formatSeconds(budget.time.elapsed)}/${formatSeconds(budget.time.cap)}`} />
+      )}
+      {budget.costUsd !== null && (
+        <BudgetBar label="cost" value={budget.costUsd} cap={null} text={`$${budget.costUsd.toFixed(2)}`} />
+      )}
+      {running && agent.agent_id && (
+        <button type="button" className="budget-extend" onClick={() => void extend()} disabled={busy} title={`Grant ${EXTEND_ROUNDS} more rounds while the context is still loaded`}>
+          {busy ? 'Extending…' : `Extend +${EXTEND_ROUNDS} rounds`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function AgentRow({ agent }: { agent: TeamAgentReport }) {
   const open = agent.status === 'running' || agent.status === 'failed';
+  const budgetState = agentBudget(agent).state;
   return (
     <details className={`team-agent-row team-agent-${agent.status}`} open={open}>
       <summary className="team-agent-summary">
@@ -231,12 +307,14 @@ export function AgentRow({ agent }: { agent: TeamAgentReport }) {
         {agent.model && (
           <span className="team-agent-badge team-agent-badge-model">{agent.model}</span>
         )}
+        <span className={`team-agent-pill team-agent-pill-${budgetState}`}>{STATE_LABEL[budgetState]}</span>
         <span className="team-agent-status">
           {statusGlyph(agent.status)}
           <span className="team-agent-status-text">{statusLabel(agent)}</span>
         </span>
       </summary>
       <div className="team-agent-body">
+        <AgentBudgetPanel agent={agent} />
         {agent.task && (
           <div className="team-agent-task">
             <span className="team-agent-task-label">Task:</span>

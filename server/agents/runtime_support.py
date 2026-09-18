@@ -196,3 +196,52 @@ def _resolve_agent_model(model_id_override: str | None, config: AgentConfig) -> 
             continue
         return candidate
     return None
+
+
+def budget_readout(
+    config: AgentConfig,
+    extension: dict | None,
+    *,
+    next_turn: int,
+    elapsed: float,
+    usage: dict,
+    model_key: str,
+    cost_capped: bool,
+) -> dict:
+    """Turns, time and estimated cost so far, plus whether the next round is
+    the final one. Stamped on every turn_start event; the card's budget bars
+    and state pill read it. Pure: every input is passed in."""
+    from server.chat.engine.runner import SOFT_LIMIT_FRACTION
+
+    ext = extension or {}
+    cap = config.max_turns + int(ext.get("rounds") or 0)
+    deadline_s = (
+        float(config.deadline_seconds) + float(ext.get("seconds") or 0.0)
+        if config.deadline_seconds is not None
+        else None
+    )
+    try:
+        from server.costs.tracker import estimate_cost
+
+        cost = estimate_cost(
+            model_key,
+            int(usage.get("input_tokens", 0)),
+            int(usage.get("output_tokens", 0)),
+            int(usage.get("cache_read_tokens", 0)),
+            int(usage.get("cache_creation_tokens", 0)),
+        )
+        cost_usd: float | None = round(float(cost), 4)
+    except Exception:  # noqa: BLE001 - a missing price is not a reason to drop the event
+        cost_usd = None
+    finishing = (
+        next_turn >= cap
+        or (deadline_s is not None and elapsed >= SOFT_LIMIT_FRACTION * deadline_s)
+        or cost_capped
+    )
+    return {
+        "max_turns": cap,
+        "elapsed_s": round(elapsed, 1),
+        "deadline_s": deadline_s,
+        "cost_usd": cost_usd,
+        "budget_state": "finishing" if finishing else "working",
+    }

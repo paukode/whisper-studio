@@ -6338,3 +6338,64 @@ button.ws-git-status-badge:hover {
 .agent-report-status { color: var(--text-muted); font-size: 0.85em; margin-left: auto; }
 .agent-report-body { padding: 6px 2px 2px; }
 .agent-report-record { color: var(--text-muted); font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.8em; margin-top: 6px; }
+
+
+/* Agent budget bars, state pill and Extend (Phase 5 of the flight recorder). */
+.team-agent-budget {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--bg-inset, rgba(127, 127, 127, 0.06));
+  font-size: 0.82em;
+}
+.budget-row { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 8px; }
+.budget-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.85em; }
+.budget-bar {
+  position: relative;
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border, rgba(127, 127, 127, 0.25));
+  overflow: hidden;
+}
+.budget-fill {
+  position: absolute; inset: 0 auto 0 0;
+  background: var(--accent, #3b82f6);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.budget-finale {
+  position: absolute; inset: 0 0 0 auto;
+  background: repeating-linear-gradient(135deg, rgba(245, 158, 11, 0.55) 0 3px, transparent 3px 6px);
+}
+.budget-text { color: var(--text-muted); font-family: var(--font-mono, ui-monospace, monospace); font-variant-numeric: tabular-nums; }
+.budget-extend {
+  justify-self: start;
+  margin-top: 2px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.9em;
+  cursor: pointer;
+}
+.budget-extend:hover { border-color: var(--accent, #3b82f6); }
+.budget-extend:disabled { opacity: 0.6; cursor: default; }
+.team-agent-pill {
+  font-size: 0.72em;
+  letter-spacing: 0.04em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.team-agent-pill-finishing { color: #b45309; border-color: rgba(245, 158, 11, 0.7); }
+.team-agent-pill-limit { color: #b45309; border-color: rgba(245, 158, 11, 0.7); }
+.team-agent-pill-salvaged { color: #4338ca; border-color: rgba(99, 102, 241, 0.6); }
+.team-agent-pill-failed { color: var(--error, #f87171); border-color: var(--error, #f87171); }
+.team-agent-pill-done { color: var(--success, #15803d); }
