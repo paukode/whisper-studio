@@ -1,4 +1,4 @@
-# Whisper Studio — macOS app packaging
+# Whisper Studio, macOS app packaging
 
 Builds a self-contained `Whisper Studio.app` (Apple Silicon, macOS 14+):
 a thin Swift/WebKit shell that spawns the bundled FastAPI backend
@@ -19,7 +19,7 @@ fast. Versions and checksums are pinned at the top of `build_app.sh`.
 The bundle also ships the Playwright browsers for Live Preview (stage b2):
 `playwright install chromium` runs once with the standalone runtime into
 `build-app/pw-browsers/` (versions follow the `playwright` pin in
-`requirements.txt` — a bump re-installs the matching builds automatically and
+`requirements.txt`; a bump re-installs the matching builds automatically and
 prunes stale ones), and the cache is copied to `Resources/pw-browsers/`. This
 covers full Chrome for Testing, the Chrome Headless Shell build (the binary
 a `headless=True` launch actually executes), and Playwright's small ffmpeg,
@@ -39,7 +39,7 @@ cwd = `Contents/Resources/backend` and this environment:
 | --- | --- |
 | `HOST` | `127.0.0.1` |
 | `PORT` | free port picked at launch |
-| `WHISPER_HOME` | `~/Library/Application Support/WhisperStudio` (a pre-set `WHISPER_HOME` is respected, for testing). Holds `storage/` (session history) and `logs/` — nothing else. All user-editable state — the config files, `models/`, `skills/`, `plugins/`, `agents/`, `data/` (memory, workflows, attachments) — lives at `~/.whisper`; the first boot moves any existing Application Support copies there and rewrites recorded paths (no symlinks left behind). Bytecode caches go to `~/Library/Caches/WhisperStudio`. |
+| `WHISPER_HOME` | `~/Library/Application Support/WhisperStudio` (a pre-set `WHISPER_HOME` is respected, for testing). Holds `storage/` (session history) and `logs/`, nothing else. All user-editable state (the config files, `models/`, `skills/`, `plugins/`, `agents/`, `data/` for memory, workflows and attachments) lives at `~/.whisper`; the first boot moves any existing Application Support copies there and rewrites recorded paths (no symlinks left behind). Bytecode caches go to `~/Library/Caches/WhisperStudio`. |
 | `WHISPER_BIN_DIR` | `Contents/Resources/bin` (backend prepends it to PATH) |
 | `WHISPER_LLAMA_SERVER_PATH` | `Resources/bin/llama-server` |
 | `WHISPER_FFMPEG_PATH` | `Resources/bin/ffmpeg` |
@@ -59,12 +59,12 @@ The shell can capture the Mac's audio OUTPUT and feed it to transcription,
 alongside or instead of the microphone. In the app, open the headphones menu
 next to Record:
 
-- **Microphone** — always available; can be turned off only while a native
+- **Microphone**: always available; can be turned off only while a native
   source is armed ("native only" mode, which never calls getUserMedia).
-- **System audio** — everything the Mac plays. EVERY process belonging to
+- **System audio**: everything the Mac plays. EVERY process belonging to
   Whisper Studio itself (shell, its WebKit GPU/media helpers, the spawned
   backend tree) is excluded from the tap.
-- **One app** (e.g. Zoom) — the per-app list shows USER-FACING APPS currently
+- **One app** (e.g. Zoom): the per-app list shows USER-FACING APPS currently
   producing audio and refreshes each time the menu opens. Helper processes
   ("Google Chrome Helper", WebKit XPC services) are grouped into their app;
   one row can span several audio pids, and starting a capture re-resolves and
@@ -75,7 +75,7 @@ While recording, the active native source row shows a small 3-bar activity
 meter (driven by the live capture level), and the header's source label gets
 a green dot while the native capture is audibly delivering sound. If a
 capture starts but stays silent for 5 seconds (no callbacks, or only zero
-samples — the classic symptom of a revoked/denied System Audio Recording
+samples, the classic symptom of a revoked or denied System Audio Recording
 permission), a warning toast explains where to fix it; it persists to the
 notification bell.
 
@@ -96,7 +96,7 @@ The aggregate device contains NO physical sub-devices: including the real
 output device opens an IO path to the user's speakers/headphones (Bluetooth
 headsets flip into call mode and the app shows up in the audio chain). Only
 if the tap-only aggregate fails does the shell fall back to including the
-default output device — and then every output buffer is zero-filled in the
+default output device, and then every output buffer is zero-filled in the
 IOProc and the tap's input buffers are located by format rather than assumed
 at index 0. The default input/output devices are never modified.
 
@@ -127,11 +127,11 @@ never a bare "helper" row; and never any Whisper Studio row.
 
 **Manual test checklist**
 
-1. Build and launch the app, play music (Music/Safari/`afplay`), open the
-   headphones menu → the playing app appears in "This Mac" under its real
+1. Build and launch the app, play music (Music, Safari or `afplay`), then open
+   the headphones menu. The playing app appears in "This Mac" under its real
    app name. Chrome shows as ONE "Google Chrome" row (no "helper" rows), and
    no "Whisper Studio"/"Whisper Studio Graphics and Media" row ever appears.
-2. Pick **System audio**, press Record — first time, expect the OS
+2. Pick **System audio** and press Record. The first time, expect the OS
    permission prompt; accept. Speak AND keep the music playing: the
    transcript should contain the music's lyrics/speech and your voice, with
    diarization splitting speakers. The header shows "Mic + System audio"
@@ -142,28 +142,28 @@ never a bare "helper" row; and never any Whisper Studio row.
    into call-quality audio, no audio "routing through" Whisper Studio
    (the aggregate is tap-only; check `backend.log` for "tap-only aggregate"
    in the `[native-audio]` capture-started line).
-4. Stop. Pick the app source instead (e.g. the browser playing a video) —
-   only that app's audio should be transcribed alongside the mic, including
+4. Stop. Pick the app source instead (for example the browser playing a
+   video): only that app's audio should be transcribed alongside the mic, including
    audio played by the app's helper processes (a second Chrome tab/window).
 5. Turn the microphone **off** (allowed while a native source is armed) and
-   record — transcript comes from the native source alone; no mic permission
+   record. The transcript comes from the native source alone; no mic permission
    prompt appears on a fresh install in this mode.
 6. Zoom two-device test: join a meeting from a second device, wear
-   headphones on the Mac, arm "Zoom" + mic, record — both sides of the call
-   land in the transcript as separate speakers.
-7. Deny the TCC permission (System Settings) and start a capture — either
+   headphones on the Mac, arm "Zoom" plus the mic and record. Both sides of
+   the call land in the transcript as separate speakers.
+7. Deny the TCC permission (System Settings) and start a capture. Either
    the start fails with a toast pointing at System Settings, or (macOS
    versions where a denied tap starts silently) a warning toast appears
-   after ~5 s: "System audio capture is producing no sound…" — and it lands
+   after ~5 s, "System audio capture is producing no sound...", and it lands
    in the notification bell. The MIC KEEPS RECORDING either way: with the
    mic on, the transcript keeps growing mic-only while the native side is
    silent or degraded.
-8. Quit the app mid-capture — no stray "Whisper Studio Capture" device stays
+8. Quit the app mid-capture. No stray "Whisper Studio Capture" device stays
    behind (check Audio MIDI Setup).
 
 ## Downloads (exports)
 
-WKWebView has no default download behavior — without explicit handling, an
+WKWebView has no default download behavior. Without explicit handling, an
 export click would just navigate the web view to the generated blob and
 render raw markdown over the app. The shell therefore routes downloads
 natively:
@@ -174,22 +174,22 @@ natively:
   which clicks a temporary anchor with the `download` attribute. In
   browsers that downloads normally; in the shell it marks the navigation
   action `shouldPerformDownload`.
-- `main.swift` turns such navigation actions — and any response with an
-  unrenderable MIME type or a `Content-Disposition: attachment` header —
+- `main.swift` turns such navigation actions, and any response with an
+  unrenderable MIME type or a `Content-Disposition: attachment` header,
   into a `WKDownload`, delegated to `macapp/shell/DownloadHandler.swift`.
 - Files are saved into `~/Downloads` with the suggested filename, never
-  overwriting: collisions get `name (2).ext`, `name (3).ext`, … suffixes.
+  overwriting: collisions get `name (2).ext`, `name (3).ext` and so on.
   No save panel is shown.
 - On completion the shell calls the page hook `window.__whisperShellToast`
   (registered in `src/services/shellToastBridge.ts`): a "Saved to
   Downloads: <file>" toast appears and persists to the notification bell
   (source "export"). Failures raise an error toast with the reason. If the
   hook is missing (older cached page), the shell logs to stderr and stays
-  silent — no alert, no crash.
+  silent: no alert, no crash.
 
 **Permission**: the first write into `~/Downloads` triggers the standard
 macOS "wants to access your Downloads folder" consent prompt. For a
-non-sandboxed app this needs no Info.plist usage key and no entitlement —
+non-sandboxed app this needs no Info.plist usage key and no entitlement:
 the TCC prompt is automatic (there is no purpose-string key for the
 Downloads folder; sandboxed apps would instead need the
 `com.apple.security.files.downloads.read-write` entitlement, which does not
@@ -208,11 +208,11 @@ swiftc -D DOWNLOAD_SMOKE_CLI -parse-as-library \
 
 **Manual test checklist**
 
-1. Open a chat with messages and click Export — first time, expect the OS
+1. Open a chat with messages and click Export. First time, expect the OS
    "access your Downloads folder" prompt; accept. The file (e.g.
    `conversation-<session>.md`) lands in `~/Downloads`, and the app UI
    stays put (no raw markdown page).
-2. Click Export again — a second file appears with a
+2. Click Export again: a second file appears with a
    ` (2)` suffix (`conversation-<session> (2).md`); nothing is overwritten.
 3. A "Saved to Downloads: <filename>" toast appears for each export and the
    messages are kept in the header notification bell.
@@ -239,7 +239,7 @@ xcrun stapler staple dist-app/WhisperStudio-<version>.dmg
 
 Real-identity builds sign with `--options runtime --timestamp` and
 `macapp/entitlements.plist` (allow-jit, allow-unsigned-executable-memory,
-disable-library-validation, audio-input) — required by CPython/torch and
+disable-library-validation, audio-input), required by CPython/torch and
 llama.cpp Metal under the hardened runtime.
 
 Bundle id defaults to `io.paukode.whisper-studio` (override with `BUNDLE_ID`).

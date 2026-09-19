@@ -16,11 +16,18 @@ python3 -m http.server 8123
 # open http://127.0.0.1:8123
 ```
 
+## Served inside the app
+
+The backend mounts this folder at `/docs-site` and the app opens it from the
+**?** panel, so a docs change ships with the app. `@docs` in the composer
+grounds an answer strictly in these pages. The packaged Mac app stages the
+folder next to `server/`; `WHISPER_DOCS_DIR` overrides the location.
+
 ## Deploy
 
 The site is prebuilt static files, so publishing is just copying `docs/`
-as-is - no build step. All links are relative, so it works at any base path (a
-project-pages subpath, a custom domain, or a local file).
+as-is, with no build step. All links are relative, so it works at any base
+path (a project-pages subpath, a custom domain, or a local file).
 
 ### GitHub Pages
 
