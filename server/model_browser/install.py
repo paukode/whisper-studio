@@ -211,16 +211,26 @@ def build_recommended_entry(key: str) -> tuple[str, dict]:
 
 def adopt_local_index_llm() -> bool:
     """After the user installs their first local chat model, point the index LLM
-    at the active on-device model — but only if they are still on the fresh-install
-    cloud default (``model_mode`` hybrid with ``backends.index_llm`` == "haiku").
+    at the active on-device model, but only while they are still on the untouched
+    ``backends.index_llm`` == "haiku" default a fresh install ships.
+
+    A fresh install seeds ``model_mode`` "local" with that cloud index_llm
+    (``FIRST_RUN_USER_CONFIG`` in server/infrastructure/config.py): the app ships
+    no local chat model, so a "local" key would point at nothing. The entry lies
+    dormant while the mode is local (``resolve_backend`` hardwires the on-device
+    backend there) and goes live the moment the user switches to hybrid, which is
+    exactly when a stale "haiku" would quietly send indexing to the cloud. So
+    both local and hybrid adopt; a user who explicitly chose "cloud" keeps Haiku.
 
     Uses the ``"local"`` alias (follow the available on-device model) rather than a
     fixed key, so it stays valid as models are added or removed. Never overrides an
-    explicit user choice (a specific key, "none", or a non-hybrid mode). Returns
+    explicit user choice (a specific key, "none", or cloud mode). Returns
     whether it changed anything."""
-    raw = config_mod._load_user_config()
-    if (raw.get("model_mode") or "") != "hybrid":
+    from server.infrastructure.model_mode import current_mode
+
+    if current_mode() not in ("local", "hybrid"):
         return False
+    raw = config_mod._load_user_config()
     backends = raw.get("backends")
     if not isinstance(backends, dict) or backends.get("index_llm") != "haiku":
         return False
