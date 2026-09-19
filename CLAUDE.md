@@ -90,9 +90,11 @@ npx tsc --noEmit && npm test && npm run lint && npm run build
 
 - Python 3.12 is the floor (the voice SDK pins it); the packaged app ships
   3.13. Only Node 24 is installed locally; do not assume other versions.
-- Run the full pytest suite with the DEFAULT environment. Two local-model
-  resolver tests are known red on some Macs regardless of code; gate on the
-  exit code, and never trust a piped `pytest | tail` exit status.
+- Run the full pytest suite with the DEFAULT environment and expect it green.
+  The local-model resolver tests that used to be red on some Macs read the
+  live on-device registry instead of a fixture; they pin it now, so a failure
+  there is a real one. Gate on the exit code, and never trust a piped
+  `pytest | tail` exit status.
 - The live runtime config is the gitignored `config.user.json` (or the legacy
   `config.json`) at the repo root, merged over `config.example.json` and
   `DEFAULTS`. A fresh install is seeded from `FIRST_RUN_USER_CONFIG`, which is
