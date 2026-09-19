@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Security model - Whisper Studio Docs</title>
-  <meta name="description" content="A reference summary of Whisper Studio's security model: localhost binding, Markdown sanitization, the server-held approval pause, no-shell aws_cli, the OS sandbox, opt-in plugins, and the accepted residual risks.">
+  <meta name="description" content="A reference summary of Whisper Studio's security model: localhost binding, Markdown sanitization, the server-held approval pause, the OS sandbox and its write modes, the credential scrub, TLS trust, what leaves the machine, and the accepted residual risks.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -27,7 +27,7 @@
       <a href="arch-approval.html">Approval &amp; permissions</a>.</p>
 
     <h2 id="headlines">Headline points</h2>
-    <p>Fourteen properties hold by default, out of the box, with no configuration:</p>
+    <p>These properties hold by default, out of the box, with no configuration:</p>
     <ul>
       <li><b>Localhost-only by default.</b> The server binds <code>127.0.0.1</code>. LAN exposure is an
         explicit opt-in via <code>HOST=0.0.0.0</code> (see <code class="path">server/main.py</code>).
@@ -58,11 +58,34 @@
         before moving it - so even a forged approval payload sent directly to
         <code>POST /api/approval/execute</code> cannot "move" an arbitrary readable file into a
         user-visible folder.</li>
-      <li><b>Destructive GitHub actions always ask.</b> Repo or ref deletion, a PR merge, an
-        archive/rename, or a raw API DELETE carries the <code>github-destructive</code> approval
-        category, and that category is a hard floor: no permission mode, category override, bypass
-        mode, or blanket session approval can skip it
+      <li><b>Three things always ask, whatever the mode says.</b> Destructive GitHub actions (repo or
+        ref deletion, a PR merge, an archive or rename, a raw API DELETE, carried under the
+        <code>github-destructive</code> category); any command that is <code>rm</code> or a close
+        cousin; and any tool call asking to escape the sandbox with
+        <code>sandbox_permissions: "danger-full-access"</code>. Each is a hard floor: no permission
+        mode, category override, bypass mode, trusted skill, or blanket session approval can skip it
         (<code class="path">server/security/permissions.py</code>).</li>
+      <li><b>Unattended agents write only inside their own tree.</b> A shell command or Python script
+        run by an agent, with no human reading each call, gets a sandbox profile that denies all
+        writes and allows them back only under the command's working tree, the git directories a
+        linked worktree needs, and system temp. The escape hatch,
+        <code>sandbox_permissions: "danger-full-access"</code>, requires a written justification,
+        always shows an approval card, and is <em>refused outright</em> from an unattended agent, so
+        there is no path where a delegated agent self-approves unconfined writes.</li>
+      <li><b>MCP child processes never inherit your credentials.</b> A local (stdio) MCP server is
+        spawned with <code>AWS_ACCESS_KEY_ID</code>, <code>AWS_SECRET_ACCESS_KEY</code>,
+        <code>AWS_SESSION_TOKEN</code>, <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>,
+        <code>TAVILY_API_KEY</code>, <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code> and
+        <code>GH_ENTERPRISE_TOKEN</code> stripped from its environment
+        (<code class="path">server/security/sensitive_env.py</code>). A third-party server has no
+        claim on the host app's credentials. A per-server <code>env</code> entry you configured
+        yourself is applied <em>after</em> the scrub, so a credential you deliberately forwarded still
+        reaches that one server.</li>
+      <li><b>Pulling from a remote asks first.</b> <code>git_fetch</code> is read-only and touches no
+        working files, so it runs freely. <code>git_pull</code> changes the working tree, so it goes
+        through the approval card, is fast-forward only unless you asked for a rebase, and explains
+        the situation rather than guessing when the branch has diverged. Both run with your own git
+        credentials.</li>
       <li><b>Auto mode has a built-in circuit breaker.</b> The <code>auto</code> classifier judges one
         tool call in isolation and can drift over a long turn, so a per-session tracker trips the
         effective mode back to asking after 3 consecutive denials or 5 in the last 10 calls, with an
@@ -84,7 +107,7 @@
         A freshly cloned repo cannot run hook code on its own
         (see <code class="path">server/hooks/config_loader.py</code>).</li>
       <li><b>The ultracode workflow harness is isolated, but not a certified boundary.</b> Model-authored
-        workflow JavaScript runs in a Node-24 <code>vm.createContext</code>
+        workflow JavaScript runs in a Node-22 <code>vm.createContext</code>
         (<code class="path">server/workflows/harness/harness.mjs</code>) whose isolation rests on layers,
         not a kernel sandbox: the Node globals (<code>require</code>, <code>process</code>, <code>fs</code>,
         <code>child_process</code>, timers) are simply absent from the context; determinism guards neuter
@@ -98,11 +121,61 @@
         the <code>tavily_api_key</code> config value, so rotation is one <code>export</code> away and the
         key need never be committed. It enables the <code>web_search</code> tool only;
         <code>web_fetch</code> needs no key.</li>
-      <li><b>No telemetry.</b> The only outbound call the backend makes on its own is to Amazon Bedrock for
-        chat. Tool calls and skills reach the network only when a user message invokes them - including
-        the <code>/ci</code> command, which shells out to the GitHub CLI (<code>gh</code>) only on explicit
-        invocation, so the "network only when a user acts" property still holds.</li>
+      <li><b>TLS verifies against your system trust store as well as the bundled one.</b> At boot the
+        server installs <code>truststore</code>, which makes <code>ssl</code> consult the macOS
+        keychain in addition to the bundled <code>certifi</code> CA list, so a page or API behind a
+        corporate or government root verifies instead of failing
+        (<code class="path">server/infrastructure/tls.py</code>). This loosens nothing: a certificate
+        still has to chain to a root <em>you</em> trust. If the install cannot be proven safe it is
+        undone and the old certifi-only behavior stands, with a warning in the log.</li>
+      <li><b>No telemetry.</b> Nothing is reported anywhere about you, your files, or your usage, and
+        nothing phones home on a timer. See <a href="#what-leaves">What leaves the machine</a> for the
+        complete list of outbound traffic.</li>
     </ul>
+
+    <h2 id="what-leaves">What leaves the machine</h2>
+    <p>Everything below happens only because you asked for it, either directly or by sending a message
+      that made the assistant use a tool. There is no other outbound traffic.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>What</th><th>Where it goes</th><th>When</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Your conversation: messages, system prompt, tool definitions, tool results, and any
+            file content a tool read into the turn</td>
+          <td>Amazon Bedrock in your configured region. Claude goes to
+            <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code>; GPT goes to
+            <code>bedrock-mantle.&lt;region&gt;.api.aws</code></td>
+          <td>Every cloud chat turn. Nothing leaves in local model mode with an on-device model
+            selected.</td>
+        </tr>
+        <tr>
+          <td>Your microphone audio, and the model's spoken replies coming back</td>
+          <td>Amazon Nova 2 Sonic on Bedrock, over a bidirectional stream</td>
+          <td>Only while a voice conversation is open. The <b>Talk</b> button's tooltip says so before
+            you press it, and hanging up ends the stream. Meeting transcription is a different feature
+            and stays entirely on-device.</td>
+        </tr>
+        <tr>
+          <td>Your search query</td>
+          <td>The Tavily API</td>
+          <td>Only on a <code>web_search</code> call, and only when a Tavily key is set.
+            <code>web_fetch</code> instead requests the page you named, directly.</td>
+        </tr>
+        <tr>
+          <td>A model weight request (no content of yours)</td>
+          <td>Hugging Face, and GitHub for the ReDimNet2 checkpoint that comes through torch.hub</td>
+          <td>When a speech engine, index model, speaker encoder, or on-device chat model is downloaded
+            for the first time. Weights are cached under your models folder, so it happens once.</td>
+        </tr>
+        <tr>
+          <td>Whatever the command itself sends</td>
+          <td>Wherever it goes: package registries for <code>npm</code> or <code>pip</code>, your git
+            remote, the GitHub API through <code>gh</code></td>
+          <td>When a tool call you approved runs such a command. The sandbox leaves the network open by
+            default; the opt-in <a href="#egress">egress policy</a> narrows it.</td>
+        </tr>
+      </tbody>
+    </table></div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
@@ -147,9 +220,29 @@
             could otherwise exploit to exfiltrate an arbitrary readable file.</td>
         </tr>
         <tr>
-          <td><code>github-destructive</code> approval category</td>
-          <td>Repo/ref deletion, PR merge, archive/rename, and raw API DELETE.</td>
-          <td><b>Boundary</b> - unconditional; no mode, override, or bypass setting can skip it.</td>
+          <td>The three unconditional floors</td>
+          <td><code>github-destructive</code> (repo/ref deletion, PR merge, archive/rename, raw API
+            DELETE), any <code>rm</code>-class command, and any
+            <code>sandbox_permissions: "danger-full-access"</code> request.</td>
+          <td><b>Boundary</b> - unconditional; no mode, override, bypass setting, trusted skill or
+            session approval can skip any of the three.</td>
+        </tr>
+        <tr>
+          <td>Credential scrub on MCP children
+            (<code class="path">server/security/sensitive_env.py</code>)</td>
+          <td>Removes the AWS, Anthropic, OpenAI, Tavily and GitHub credential variables from the
+            environment of every stdio MCP child process.</td>
+          <td><b>Boundary</b> for the "third-party MCP server reads your keys out of the environment"
+            vector. A per-server <code>env</code> you configured is re-applied afterwards, on purpose.</td>
+        </tr>
+        <tr>
+          <td><code>truststore</code> at boot
+            (<code class="path">server/infrastructure/tls.py</code>)</td>
+          <td>Makes TLS verification consult the macOS keychain in addition to the bundled certifi CA
+            list, for urllib (<code>web_fetch</code>), requests (Tavily) and httpx (the OpenAI SDK).</td>
+          <td><b>Boundary</b>, and a widening of trust rather than a loosening of verification: a
+            certificate must still chain to a root you trust. Fails open to certifi-only if it cannot
+            install cleanly.</td>
         </tr>
         <tr>
           <td>Auto-mode circuit breaker</td>
@@ -176,9 +269,19 @@
         <tr>
           <td><code>sandbox.run_sandboxed</code> via <code>sandbox-exec(5)</code> / <code>bwrap</code></td>
           <td>A macOS / Linux sandbox profile wraps every shell and code-execution path, including the
-            hidden <code>terminal_run</code> PTY.</td>
+            hidden <code>terminal_run</code> PTY, in one of three write modes (see
+            <a href="#write-modes">Write modes</a>).</td>
           <td><b>Boundary</b> - the strongest layer. Even if everything above is bypassed, code runs
-            with the secret-store deny-list applied.</td>
+            with the secret-store deny-list applied, and in workspace-write or read-only mode with the
+            write deny applied too.</td>
+        </tr>
+        <tr>
+          <td>Workflow-launch category mode
+            (<code class="path">server/workflows/launch_policy.py</code>)</td>
+          <td>Reads the <code>workflow</code> entry in <code>category_modes</code> to decide whether a
+            new, not-yet-trusted ultracode script launches, cards, or is declined.</td>
+          <td><b>Defence-in-depth</b> - a policy dial in front of the vm harness, not a containment
+            layer. It never relaxes the runtime's own caps.</td>
         </tr>
         <tr>
           <td><code>_AWS_READONLY_GUARD</code> in <code class="path">server/executors/code.py</code></td>
@@ -189,7 +292,7 @@
         <tr>
           <td>Workflow vm harness
             (<code class="path">server/workflows/harness/harness.mjs</code>)</td>
-          <td>Runs model-authored <a href="arch-ultracode.html">ultracode</a> JS in a Node-24
+          <td>Runs model-authored <a href="arch-ultracode.html">ultracode</a> JS in a Node-22
             <code>vm.createContext</code> with Node globals absent, determinism guards, a scrubbed env,
             and <code>--disallow-code-generation-from-strings</code>.</td>
           <td><b>Defence-in-depth, not a certified boundary.</b> Its anchor is upfront user approval of
@@ -219,25 +322,66 @@
     </table></div>
 
     <h2 id="sandbox-enforces">What the sandbox actually enforces</h2>
-    <p>The sandbox is <b>allow-by-default with denials</b>, not deny-by-default. The macOS profile is
-      <code>(allow default)</code> plus <code>deny</code> rules for a curated
-      <code>_DENIED_PATHS</code> list; the Linux <code>bwrap</code> setup read-only-binds the whole
-      filesystem and masks the same paths (directories via tmpfs, files via <code>/dev/null</code>).
-      What it concretely enforces:</p>
+    <p>Two independent things: a <b>path deny-list</b> that is always on, and a <b>write mode</b> that
+      decides how much of the filesystem is writable at all.</p>
     <dl class="spec">
-      <dt><code class="path">server/sandbox.py</code> - <code>_DENIED_PATHS</code></dt>
-      <dd>Read and write denial of a curated secret-store list: SSH / GPG keys, cloud credentials
+      <dt><code class="path">server/security/sensitive_paths.py</code> - the shared deny-list</dt>
+      <dd>Read and write denial of a curated secret-store list: SSH and GPG keys, cloud credentials for
+        AWS, Google Cloud, Azure, Docker and Kubernetes
         (<code class="path">~/.aws</code> is denied for generic commands but re-allowed per-call for the
-        AWS tools), git credentials, browser cookies and keychains, shell history, password-manager
-        stores, and assorted CLI token files.</dd>
+        AWS tools), git credentials and <code class="path">.netrc</code>, npm and PyPI tokens, and,
+        for the sandbox only, browser cookies and keychains, shell history and password-manager stores.
+        One module feeds both consumers, as expanded paths for the OS sandbox profile and as regexes
+        for the command validator, so the two layers cannot drift on the shared core.</dd>
       <dt><code class="path">server/sandbox.py</code> - <code>_SANDBOX_ENV_DENYLIST</code></dt>
       <dd>Strips <code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>, and <code>GH_ENTERPRISE_TOKEN</code>
         from the environment handed to every sandboxed child, so a GitHub token your shell happens to
-        export cannot leak into a sandboxed command's environment. One more defence-in-depth layer, not
-        a substitute for the path deny-list above.</dd>
+        export cannot leak into a sandboxed command's environment. The GitHub tools authenticate from
+        <code class="path">~/.config/gh/hosts.yml</code>, which is itself sandbox-denied, so nothing
+        sandboxed legitimately needs them. The cloud keys deliberately keep passing, because sandboxed
+        code authenticates to Bedrock with them. MCP children get the
+        <a href="#headlines">wider scrub</a> instead.</dd>
     </dl>
-    <p>Because the default is <em>allow</em>, the deny-list is broad but not exhaustive, and it is what
-      the sandbox leans on. That shapes the accepted risks below.</p>
+
+    <h3 id="write-modes">Write modes</h3>
+    <p>The deny-list above is the floor. On top of it, every sandboxed run picks one of three write
+      modes, and which one it gets depends on who asked:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Mode</th><th>What is writable</th><th>Who gets it</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>workspace</code> (workspace-write)</td>
+          <td>Deny all writes, then allow back the command's own working tree, the git directories a
+            linked worktree needs, system temp, and any explicitly allowed credential path such as the
+            AWS CLI's own cache. The rule order is load-bearing: the secret denials come last, so a
+            workspace that contains your home directory can never re-expose
+            <code class="path">~/.ssh</code> through its own write allow.</td>
+          <td>The default for <code>run_python</code> and <code>terminal_run</code>, and what every
+            agent-stamped (unattended) command gets.</td>
+        </tr>
+        <tr>
+          <td><code>readonly</code></td>
+          <td>Deny all writes, allow back only <code class="path">/dev</code> (a PTY shell must write
+            to its own slave tty, and <code class="path">/dev/null</code> is universally assumed
+            writable). The workspace and temp stay read-only too.</td>
+          <td>A caller that passed <code>sandbox_permissions: "read-only"</code>.</td>
+        </tr>
+        <tr>
+          <td><code>open</code></td>
+          <td>Writes allowed everywhere except the deny-list.</td>
+          <td>Only <code>sandbox_permissions: "danger-full-access"</code>, which needs a written
+            justification, always shows an approval card no matter the permission mode, and is refused
+            outright from an unattended agent. Human-approved commands on the ordinary shell path also
+            run open, because there the approval card is the control.</td>
+        </tr>
+      </tbody>
+    </table></div>
+    <p>On Linux the <code>bwrap</code> wrapper has always been workspace-write shaped: it read-only
+      binds the root filesystem, binds the working directory and temp writable, and masks the same
+      denied paths (directories via tmpfs, files via <code class="path">/dev/null</code>). The macOS
+      profile is <code>(allow default)</code> plus deny rules, so for reads it stays allow-by-default:
+      the deny-list is broad but not exhaustive, and a secret file that is not on it can still be read.
+      That shapes the accepted risks below.</p>
 
     <h2 id="egress">Network egress policy</h2>
     <p>The sandbox's network access is open by default, matching the residual risk above. For anyone who
@@ -269,11 +413,11 @@
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
       <div class="callout__body">
-        <p><b>Network stays open by default, and non-listed secret reads are possible.</b> Because the
-          sandbox is allow-default, it does <em>not</em> restrict network access and does <em>not</em>
-          block reads of secret files that are not on <code>_DENIED_PATHS</code>. Network is left open
+        <p><b>Network stays open by default, and non-listed secret reads are possible.</b> Reads are
+          allow-default, so the sandbox does <em>not</em> restrict network access and does <em>not</em>
+          block reads of secret files that are not on the deny-list. Network is left open
           on purpose: sandboxed <code>git</code>, <code>npm</code>, <code>pip</code>, <code>aws</code>,
-          and build commands need it. An opt-in <a href="#egress">network egress policy</a> now exists
+          and build commands need it. An opt-in <a href="#egress">network egress policy</a> exists
           for anyone who wants to restrict it; the default tier remains exactly today's unrestricted
           behavior.</p>
         <p><b><code>HOST=0.0.0.0</code> exposes an unauthenticated API.</b> Enabling it puts the API on
@@ -349,11 +493,16 @@
         <tr><td>How is command consent enforced?</td><td>A server-held pause plus executor-side re-validation via <code class="path">server/approval/router.py</code>.</td></tr>
         <tr><td>Does <code>aws_cli</code> run through a shell?</td><td>No. <code>shlex.split</code> into argv; no shell operators.</td></tr>
         <tr><td>What contains shell / Python execution?</td><td><code>sandbox-exec(5)</code> (macOS) or <code>bwrap</code> (Linux).</td></tr>
+        <tr><td>Where can an unattended agent write?</td><td>Its own working tree, the git dirs a worktree needs, and temp. Nothing else; the escape hatch is refused for agents.</td></tr>
         <tr><td>Are plugins loaded automatically?</td><td>No. Opt-in per plugin; a dropped file does nothing until enabled.</td></tr>
         <tr><td>Where does the Tavily key come from?</td><td>Env first (<code>TAVILY_API_KEY</code>), then your user config file.</td></tr>
-        <tr><td>What outbound calls does the backend make on its own?</td><td>Only Amazon Bedrock for chat. No telemetry.</td></tr>
+        <tr><td>Does an MCP server see my AWS or GitHub credentials?</td><td>No, unless you forwarded one to that server yourself through its <code>env</code>. They are stripped from every stdio child's environment.</td></tr>
+        <tr><td>What leaves the machine?</td><td>Your conversation to Bedrock, your voice audio to Nova 2 Sonic while a voice call is open, search queries to Tavily, model-weight downloads from Hugging Face and GitHub, and whatever a command you approved sends. Nothing else, and no telemetry. See <a href="#what-leaves">What leaves the machine</a>.</td></tr>
+        <tr><td>Does voice mode send my meetings to the cloud?</td><td>No. Only a voice conversation you started with <b>Talk</b> streams audio. Meeting transcription runs entirely on-device.</td></tr>
+        <tr><td>How is TLS verified?</td><td>Against the macOS keychain plus the bundled certifi CA list. A certificate still has to chain to a root you trust.</td></tr>
         <tr><td>Can I restrict what the sandbox reaches on the network?</td><td>Yes, opt-in: <code>network_policy.tier</code> (<code>curated</code>/<code>restrictive</code>), enforced by a local SNI-filtering proxy. Default is <code>permissive</code> (unrestricted).</td></tr>
-        <tr><td>Can a GitHub deletion or an "approve"-tier MCP call ever skip the approval prompt?</td><td>No. <code>github-destructive</code> and a server's <code>approval_mode: "approve"</code> are both unconditional floors.</td></tr>
+        <tr><td>Can a GitHub deletion, an <code>rm</code>, a full-access escalation, or an "approve"-tier MCP call ever skip the approval prompt?</td><td>No. All four are unconditional floors.</td></tr>
+        <tr><td>Does <code>git_pull</code> run on its own?</td><td>No, it asks. <code>git_fetch</code> is read-only and does not.</td></tr>
         <tr><td>Are direct-saved files exposed before I approve them?</td><td>No. They are built and staged inside the app sandbox first; approving only moves the already-staged file.</td></tr>
       </tbody>
     </table></div>
@@ -363,9 +512,11 @@
       <div class="callout__body"><p><b>Related:</b> <a href="arch-sandbox.html">Sandbox &amp; security</a>
         (the mechanisms behind these rows), <a href="arch-approval.html">Approval &amp; permissions</a>
         (the pause-and-resume flow and permission modes), <a href="ref-settings.html#permission-modes">Settings &amp;
-        config keys</a> (category modes and the network policy field), and
+        config keys</a> (category modes and the network policy field),
         <a href="ref-env.html">Environment variables</a>
-        (<code>HOST</code>, <code>TAVILY_API_KEY</code>, and friends).</p></div>
+        (<code>HOST</code>, <code>TAVILY_API_KEY</code>, and friends), and
+        <a href="tut-voice-mode.html">Voice conversations</a> (what the microphone stream does and does
+        not carry).</p></div>
     </div>
   </main>
 
