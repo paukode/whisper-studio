@@ -183,3 +183,88 @@ describe('streaming/committed grouping parity', () => {
     expect(isActivityEntry(live[0])).toBe(true);
   });
 });
+
+/* ── Web tool naming ─────────────────────────────────────────────────
+ * The Activity row keyed its web entries off CamelCase names this app
+ * never emits, so a real web_search / web_fetch step rendered with the
+ * generic wrench and an empty summary — the user saw an unlabelled step
+ * instead of the query or URL. Both spellings must resolve. */
+import { iconFor, summariseTool } from './ActivityRow';
+
+describe('web tool icons and summaries', () => {
+  it('gives a web_search step the magnifier, not the wrench fallback', () => {
+    const fallback = iconFor('a_tool_no_map_knows');
+    expect(iconFor('web_search')).not.toBe(fallback);
+    // Same glyph as the other search-shaped tool, not merely "something".
+    expect(iconFor('web_search')).toBe(iconFor('ws_grep'));
+  });
+
+  it('summarises a web_search step with its query', () => {
+    const step = tool('web_search', { input: { query: 'vite config proxy websocket' } });
+    expect(summariseTool(step)).toBe('vite config proxy websocket');
+  });
+
+  it('gives a web_fetch step the globe and summarises its URL', () => {
+    expect(iconFor('web_fetch')).not.toBe(iconFor('a_tool_no_map_knows'));
+    const step = tool('web_fetch', { input: { url: 'https://example.com/docs/page' } });
+    expect(summariseTool(step)).toBe('https://example.com/docs/page');
+  });
+
+  it('keeps the CamelCase spellings resolving to the same icon and summary', () => {
+    expect(iconFor('WebSearch')).toBe(iconFor('web_search'));
+    expect(iconFor('WebFetch')).toBe(iconFor('web_fetch'));
+    expect(summariseTool(tool('WebSearch', { input: { query: 'still labelled' } })))
+      .toBe('still labelled');
+  });
+});
+
+/* ── Icon coverage ───────────────────────────────────────────────────
+ * A tool with no entry in TOOL_ICON renders as the generic wrench, which
+ * reads as an anonymous step. One representative per family the catalog
+ * actually emits — a sample, not a frozen catalog, so adding tools never
+ * breaks this but dropping a whole family does. */
+describe('tool icon coverage', () => {
+  const REPRESENTATIVES = [
+    'terminal_run', 'terminal_send', 'terminal_close',
+    'git_add_commit', 'git_diff', 'git_push', 'git_stash', 'git_branch_list',
+    'github_api', 'github_actions', 'ci_status', 'verify_change',
+    'memory_write', 'memory_delete',
+    'preview_navigate', 'preview_click', 'preview_logs', 'preview_screenshot',
+    'cron_run', 'cron_update',
+    'task_get', 'task_status', 'task_output', 'task_cancel',
+    'lsp_diagnostics', 'lsp_hover', 'lsp_references',
+    'skill_invoke', 'skill_list', 'workflow_run', 'workflow_status',
+    'create_docx', 'create_xlsx', 'create_pptx', 'create_chart', 'create_plan',
+    'create_artifact', 'save_file', 'analyze_document', 'summarize_transcript',
+    'spawn_agent', 'send_message', 'notify_user', 'list_agents',
+    'aws_cli', 'config_set', 'list_mcp_resources', 'sleep',
+    'session_search', 'list_sessions', 'notebook_edit', 'run_tool_script',
+    'ws_create_worktree', 'ws_diff_worktree', 'workspace_graph_query',
+    'web_search', 'web_fetch',
+  ];
+
+  it('never renders a tool the app emits as the anonymous wrench', () => {
+    const fallback = iconFor('a_tool_no_map_knows');
+    const unmapped = REPRESENTATIVES.filter((name) => iconFor(name) === fallback);
+    expect(unmapped, `fell through to the wrench: ${unmapped.join(', ')}`).toEqual([]);
+  });
+
+  it('still falls back to the wrench for a genuinely unknown tool', () => {
+    expect(iconFor('some_tool_from_the_future')).toBe(iconFor('another_unknown'));
+  });
+});
+
+/* ── Terminal summaries ──────────────────────────────────────────────
+ * ws_run_command showed its command while this app's own terminal tools
+ * showed nothing; they read their line from different input keys. */
+describe('terminal step summaries', () => {
+  it('summarises terminal_run with its command', () => {
+    const step = tool('terminal_run', { input: { command: 'npm run build' } });
+    expect(summariseTool(step)).toBe('npm run build');
+  });
+
+  it('summarises terminal_send with the line it typed', () => {
+    const step = tool('terminal_send', { input: { input: 'print(len(rows))' } });
+    expect(summariseTool(step)).toBe('print(len(rows))');
+  });
+});
