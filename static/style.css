@@ -774,6 +774,14 @@ body.ws-embed-drag embed {
     color: var(--accent);
 }
 .translate-select.on:hover { border-color: var(--accent-hover); }
+/* The saved translator cannot run here: the picker keeps its neutral (not
+   accent-lit) look, and the badge beside it says why. */
+.translate-select.unavailable { border-color: var(--risk-warn, #d97706); color: var(--risk-warn, #d97706); }
+.translate-unavailable {
+    display: inline-flex; align-items: center;
+    font-size: var(--fs-caption); color: var(--risk-warn, #d97706);
+    cursor: help;
+}
 /* Word-by-word fade-in for freshly transcribed speech. Each word carries a
  * staggered inline animation-delay so a chunk of text "streams" in rather than
  * appearing as one lump. fill-mode backwards keeps words hidden until their
@@ -2745,6 +2753,10 @@ input.segment-speaker {
    where nothing more specific overrides it, i.e. exactly the intro-paragraph
    case that needs it. */
 .settings-hint { font-size: var(--fs-caption); color: var(--text-muted); display: block; margin: 2px 0 12px; }
+/* A hint that reports a setting which cannot take effect on this host (e.g.
+   Apple translation selected outside the Mac app). Caution orange, not the
+   gold --warning accent, so it reads as a problem rather than as branding. */
+.settings-hint--warn { color: var(--risk-warn, #d97706); margin-bottom: 8px; }
 /* A button placed directly under an input/select needs breathing room so it
    doesn't collide with the field's border (e.g. Permissions "Save Mode"). */
 .settings-form .settings-input + .btn { margin-top: 12px; }
