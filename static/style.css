@@ -6399,3 +6399,13 @@ button.ws-git-status-badge:hover {
 .team-agent-pill-salvaged { color: #4338ca; border-color: rgba(99, 102, 241, 0.6); }
 .team-agent-pill-failed { color: var(--error, #f87171); border-color: var(--error, #f87171); }
 .team-agent-pill-done { color: var(--success, #15803d); }
+
+
+/* The wake turn's answer to agent reports: an assistant bubble with a label. */
+.agent-answer-label {
+  font-size: 0.75em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}

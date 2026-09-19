@@ -64,7 +64,7 @@ export interface SessionMessagePayload {
 }
 
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'cron_event' | 'task_event' | 'session_message' | 'agent_report';
+  role: 'user' | 'assistant' | 'cron_event' | 'task_event' | 'session_message' | 'agent_report' | 'agent_answer';
   content: string;
   timestamp: string;
   /** Populated when role === 'cron_event'. Renders as a CronEventCard
@@ -77,6 +77,10 @@ export interface ChatMessage {
    *  cancelled team, a background agent or a resumed agent still reaches
    *  both the user and the next turn. */
   agentReport?: AgentReportPayload;
+  /** role='agent_answer': the assistant's answer written by the wake turn
+   *  after agent reports landed with no turn running. Backend-owned row so
+   *  it survives saves; rendered as an assistant bubble. */
+  agentAnswer?: AgentAnswerPayload;
   /** Populated when role === 'session_message'. Renders as a
    *  SessionMessageCard. */
   sessionMessage?: SessionMessagePayload;
@@ -258,6 +262,14 @@ export interface AgentReportRow {
   /** completed | turn_limit | deadline | cost_cap | cancelled | error */
   stop_reason?: string;
   turns_used?: number;
+}
+
+export interface AgentAnswerPayload {
+  text: string;
+  team_id?: string;
+  team_name?: string;
+  model?: string | null;
+  timestamp?: string;
 }
 
 export interface AgentReportPayload {

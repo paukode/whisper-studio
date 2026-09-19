@@ -217,6 +217,10 @@ DEFAULTS = {
     # Per-turn tool-call caps for the loop guard, overlaying
     # server/chat/loop_guard.py DEFAULT_CAPS ({tool_name: max calls, 0 = off}).
     "tool_loop_caps": {},
+    # When agent reports land in a session with no turn running (a cancelled
+    # team, a background or resumed agent), start a synthesis turn on the
+    # session's model that answers from them (server/agents/wake.py).
+    "wake_parent_on_reports": True,
     # Feature flags namespace — see server/feature_flags.py
     "feature_flags": {},
 }

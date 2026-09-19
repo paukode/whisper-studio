@@ -172,6 +172,24 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
     return null;
   }
 
+  // The wake turn's answer to agent reports that landed with no live turn:
+  // the assistant speaking, so it gets the assistant bubble, with a small
+  // label saying why it appeared without a prompt.
+  if (message.role === 'agent_answer') {
+    const text = message.agentAnswer?.text ?? '';
+    if (!text) return null;
+    return (
+      <div className="chat-msg-wrap assistant-wrap">
+        <div className="chat-msg assistant agent-answer">
+          <div className="agent-answer-label">
+            Answered from the agents' reports{message.agentAnswer?.team_name ? ` (${message.agentAnswer.team_name})` : ''}
+          </div>
+          <MarkdownRenderer content={text} />
+        </div>
+      </div>
+    );
+  }
+
   // Agent reports delivered outside a live turn (cancelled team, background
   // or resumed agent). UI-only in storage; the model reads a relabeled copy.
   if (message.role === 'agent_report') {

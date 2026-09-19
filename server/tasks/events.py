@@ -157,6 +157,12 @@ def emit_agent_report(session_id: str, payload: dict) -> None:
     payload = {**payload, "timestamp": payload.get("timestamp") or _utc_now_iso()}
     emit_session_event(session_id, role="agent_report", payload_key="agentReport", payload=payload)
     try:
+        from server.agents.wake import maybe_wake
+
+        maybe_wake(session_id, payload)
+    except Exception as e:  # noqa: BLE001 - the row is already persisted; the wake is extra
+        log.warning("agent report wake skipped: %s", e)
+    try:
         from server.notifications import record_notification
 
         agents = payload.get("agents") or []
