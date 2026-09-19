@@ -49,9 +49,15 @@
 
     <p>There is deliberately <b>no fallback bucket</b>. An unknown model key bills $0 and logs an error
       rather than silently inheriting another model's rate, so a missing entry is loud instead of
-      quietly wrong. Adding or repricing a model is a JSON edit (an entry in
-      <code class="path">pricing.example.json</code>, or an override in
+      quietly wrong. Two cases are expected to be free and log at debug instead: on-device
+      (<code>local_*</code>) models, which cost nothing, and the <code>unknown</code> placeholder a
+      subagent row carries when no model was resolved. Adding or repricing a model is a JSON edit (an
+      entry in <code class="path">pricing.example.json</code>, or an override in
       <code class="path">pricing.json</code>), not a code change.</p>
+    <p>On the read side only, <code>_resolve_pricing()</code> is more forgiving: a recorded model may
+      carry a suffix (<code>opus4.8_subagent</code>), so it falls back to the <em>longest</em> prefix
+      match, which is why <code>sonnet5_subagent</code> resolves to <code>sonnet5</code> and never to
+      <code>sonnet</code>. Billing itself stays exact-match.</p>
 
     <div class="table-wrap"><table>
       <thead><tr><th>Model key</th><th>Input</th><th>Output</th><th>Cache read</th><th>Cache write</th></tr></thead>
@@ -59,7 +65,7 @@
         <tr><td><code>haiku</code></td><td>$1.00</td><td>$5.00</td><td>$0.10</td><td>$1.25</td></tr>
         <tr><td><code>sonnet</code> / <code>sonnet5</code></td><td>$3.00</td><td>$15.00</td><td>$0.30</td><td>$3.75</td></tr>
         <tr><td><code>opus4.6</code> / <code>opus4.7</code> / <code>opus4.8</code> / <code>opus5.0</code></td><td>$5.00</td><td>$25.00</td><td>$0.50</td><td>$6.25</td></tr>
-        <tr><td><code>fable5.0</code></td><td>$10.00</td><td>$50.00</td><td>$1.00</td><td>$12.50</td></tr>
+        <tr><td><code>fable5.0</code> / <code>fable5.1</code></td><td>$10.00</td><td>$50.00</td><td>$1.00</td><td>$12.50</td></tr>
         <tr><td><code>gpt6-astra</code></td><td>$10.00</td><td>$50.00</td><td>$1.00</td><td>$12.50</td></tr>
         <tr><td><code>gpt5.6-sol</code></td><td>$5.50</td><td>$33.00</td><td>$0.55</td><td>$6.88</td></tr>
         <tr><td><code>gpt5.6-terra</code></td><td>$2.75</td><td>$16.50</td><td>$0.28</td><td>$3.44</td></tr>
@@ -140,6 +146,35 @@
       with indexes on <code>session_id</code> and <code>created_at</code>. When a session is deleted,
       its cost rows are deleted with it. See <a href="arch-persistence.html">Persistence</a> for how
       the SQLite store is managed overall.</p>
+    <p>Background work bills against the session too, at turn numbers outside the live range so it
+      never collides with a real round. The post-turn learning review
+      (<a href="arch-memory.html#workspace-extraction">a fork of the turn's own request</a>) numbers
+      its rounds from <code>REVIEW_TURN_BASE</code> (900), precisely so the cost is visible in the
+      panel instead of hiding behind the turn that triggered it.</p>
+
+    <h3 id="auxiliary-models">Side tasks and auxiliary_models</h3>
+    <p>A turn is not the only thing that calls a model. Memory recall, the goal evaluator, title
+      generation, the auto-mode classifier, the permission explainer, query rewriting, CI diagnosis,
+      compaction summaries, and the learning review each make their own call, and each used to
+      hard-code Haiku at its own call site.</p>
+    <p>The <code>auxiliary_models</code> config map now names the model per task
+      (<code class="path">server/infrastructure/auxiliary.py</code>). Values are
+      <code>chat_models</code> keys, plus one special value, <code>"main"</code>, meaning "the
+      session's own model", which the caller resolves because only it knows that model. A task absent
+      from the map keeps its historical default, so an empty map (the shipped default) behaves
+      exactly as before:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Task key</th><th>Default when unset</th></tr></thead>
+      <tbody>
+        <tr><td><code>memory_recall</code>, <code>goal_evaluator</code>, <code>title</code>, <code>auto_mode_classifier</code>, <code>permission_explainer</code>, <code>query_rewrite</code>, <code>ci_diagnose</code></td><td>Haiku</td></tr>
+        <tr><td><code>compaction</code>, <code>learning_review</code></td><td>The session's own model</td></tr>
+      </tbody>
+    </table></div>
+    <p>Not every call site can honour every value. Recall, the classifier, and the explainer are
+      direct Bedrock invokes, so an on-device key there falls back to the default; tasks routed
+      through <code>one_shot</code> accept a local key. And naming a model other than the session's
+      own for <code>learning_review</code> is read as a request for the cheap excerpt-based review on
+      that model, because the cache-parity fork by definition runs on the turn's model.</p>
 
     <h2 id="aggregation">Aggregations</h2>
     <p>The logged rows are read back through a handful of query helpers in
@@ -155,6 +190,8 @@
       <dd>Daily totals for the last N days, grouped by <code>DATE(created_at)</code> - the data behind the bar chart.</dd>
       <dt><code>get_today_total_cost()</code></dt>
       <dd>The single number the daily budget check compares against: today's total cost in UTC.</dd>
+      <dt><code>get_session_usage(session_id)</code></dt>
+      <dd>The live composer readout's totals, grouped by model so each group's prompt tokens are normalized for its own cache convention before summing.</dd>
     </dl>
 
     <h3 id="cache-telemetry">Cache telemetry</h3>
@@ -176,9 +213,14 @@
       <li>The true prompt size is <code>input + cache_read + cache_creation</code> tokens from
         <code>message_start</code>. <code>note_prompt_tokens()</code> stores the latest value per session
         and <code>context_estimate()</code> reads back <code>(context_used, context_max)</code>.</li>
-      <li>The window defaults to <code>DEFAULT_CONTEXT_MAX</code> (200,000 tokens) and can be overridden
-        per model via <code>context_window_for()</code> and the <code>context_windows</code> config map.</li>
-      <li>When the real prompt crosses <code>COMPACT_NUDGE_FRACTION</code> (0.8) of the window,
+      <li>The window is the <em>usable input budget</em>, not the raw context window:
+        <code>context_window_for()</code> defers to the engine's own window accounting
+        (<code class="path">server/chat/engine/windows.py</code>), which subtracts the tokens reserved
+        for the answer. A 1M-window Claude model therefore budgets against roughly 872K, GPT on
+        mantle against its real 278,528-token prompt cap, and an on-device model against its live
+        <code>n_ctx</code>. <code>DEFAULT_CONTEXT_MAX</code> (200,000 tokens) is only the fallback
+        when that lookup fails.</li>
+      <li>When the real prompt crosses <code>COMPACT_NUDGE_FRACTION</code> (0.95) of the window,
         <code>should_nudge_compaction()</code> fires once so proactive compaction can trigger on token
         truth rather than a character guess.</li>
     </ul>
@@ -188,8 +230,8 @@
       <div class="callout__body"><p><b>The meter reads real prompt tokens.</b>
         Every round's <code>message_start</code> usage reports the true prompt size and
         <code>note_prompt_tokens()</code> records it directly, so cached reads and cache creation need no
-        correction. See <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> and
-        <a href="arch-index.html">compaction</a>.</p></div>
+        correction. See <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for the
+        compaction path this meter triggers.</p></div>
     </div>
 
     <h2 id="budgets">Budgets: stopping before you overspend</h2>
@@ -206,22 +248,53 @@
     <p>The session cap is checked first, then the daily cap. Because either limit set to <code>0</code>
       means "no limit", cost enforcement is off by default and you opt into it in Settings.</p>
 
-    <h3 id="what-happens">What happens when a cap is hit</h3>
-    <p>When <code>check_budget</code> returns a <code>BudgetExceeded</code>, the chat loop does not
-      start another Bedrock call. Instead it:</p>
+    <h3 id="soft-limit">The soft limit: one round to answer</h3>
+    <p>A hard stop at 100 percent of a cap throws away everything the turn had gathered, mid-sentence.
+      So the same comparison runs twice, at two fractions. <code>check_budget_soft(session_id,
+      fraction)</code> is <code>check_budget</code> with the cap multiplied by <code>fraction</code>;
+      the engine calls it at <code>SOFT_LIMIT_FRACTION</code> (0.9, in
+      <code class="path">server/chat/engine/runner.py</code>) before every round, right after the hard
+      check:</p>
     <ol class="steps">
-      <li><h4>Emits a <code>budget_warning</code> event</h4><p>An SSE frame carries the human-readable
-        message plus the structured <code>budget_kind</code> (<code>session</code> or
-        <code>daily</code>), <code>budget_limit</code>, and <code>budget_current</code> so the SPA can
-        render a precise notice.</p></li>
-      <li><h4>Writes the warning into the transcript</h4><p>A short <code>[Budget exceeded]</code> text
-        line is streamed so the halt is visible in the conversation, not just a silent stop.</p></li>
-      <li><h4>Ends the turn cleanly</h4><p>It sends <code>[DONE]</code> and returns. The turn stops
-        rather than erroring, so nothing is left half-streamed.</p></li>
+      <li><h4>First trip: finalize</h4><p>At 90 percent of a cap (or immediately, if the hard cap is
+        already blown), a <code>budget_warning</code> frame goes out and a
+        <code>&lt;system-reminder&gt;</code> is appended to the message list saying this is the final
+        round: answer now, further tool calls will not execute. The round runs with tools forced off,
+        so it genuinely terminates instead of asking for another tool.</p></li>
+      <li><h4>Second trip: stop</h4><p>Once <code>_budget_finalized</code> is set, the next check
+        emits the warning again, streams a short <code>[Budget exceeded]</code> line into the
+        transcript so the halt is visible in the conversation, sends <code>[DONE]</code>, and returns.
+        The turn stops rather than erroring, so nothing is left half-streamed.</p></li>
     </ol>
-    <p>The message tells you exactly how to proceed - start a new session, raise the relevant cap, or
-      wait until tomorrow for a daily reset. You can also clear today's records manually with
+    <p>The <code>budget_warning</code> frame carries the human-readable message plus the structured
+      <code>budget_kind</code> (<code>session</code> or <code>daily</code>),
+      <code>budget_limit</code>, and <code>budget_current</code>, so the SPA can render a precise
+      notice. The message tells you exactly how to proceed: start a new session, raise the relevant
+      cap, or wait until tomorrow for a daily reset. You can also clear today's records manually with
       <code>POST /api/costs/reset-daily</code>.</p>
+    <p>The reminder is <em>appended to the message list</em>, not injected into the request only.
+      That is deliberate: a request-only injection would fork the token prefix and break the moving
+      cache checkpoint, which would cost more than the cap was trying to save.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>The same 0.9 fraction governs the <em>time</em> budget of an
+        agent run, so the two behave alike: the reporting round starts with a tenth of the budget
+        still in hand, and the report is written inside the budget instead of after it, where an
+        outer limit could still kill it unsaved. See
+        <a href="arch-agent-recorder.html">The agent flight recorder</a>.</p></div>
+    </div>
+
+    <h3 id="agent-bars">Agent budget bars</h3>
+    <p>Because the engine is shared, an agent run is priced by the same code, and its progress events
+      carry the numbers out to the UI. Every <code>turn_start</code> event a member emits is stamped
+      with its round cap (live extensions included), seconds elapsed and allowed, the estimated spend
+      so far as <code>cost_usd</code>, and whether the coming round is the final one.</p>
+    <p><code class="path">src/hooks/chatStream/agentBudget.ts</code> folds the latest of each into
+      three bars (rounds, time, estimated cost) plus one state pill: <b>working</b>, <b>finishing
+      up</b>, <b>done</b>, <b>hit limit</b>, <b>salvaged</b>, or <b>failed</b>. The reserved final
+      slice is drawn from the same constant (<code>FINALE_FRACTION</code>, 0.1). Nothing is computed
+      from client wall-clock time, so reopening the conversation later renders identical bars.</p>
 
     <h2 id="settings-panel">Settings and the Costs panel</h2>
     <p>The two caps are set in the Settings UI (and persisted to <code>config.json</code>); see
@@ -248,6 +321,7 @@
       <thead><tr><th>Endpoint</th><th>Returns</th></tr></thead>
       <tbody>
         <tr><td><code>GET /api/costs/summary</code></td><td>Global summary: the last 30 days' total cost (<code>total_cost_usd</code> sums the daily series, so it is a 30-day figure, not all-time), today's cost, turn count, the daily series, per-model breakdown, the pricing table, and a <code>cache</code> telemetry block (<code>get_cache_stats</code>). Pass <code>session_id</code> to also get that session's <code>context_used</code> / <code>context_max</code> from <code class="path">server/chat/loop_hints.py</code>.</td></tr>
+        <tr><td><code>GET /api/costs/session/{session_id}</code></td><td>One session's running totals (prompt tokens, output tokens, cost, rounds) for the composer readout, rehydrated when a session is reopened so the counter does not restart. Grouped by model first, because what <code>input_tokens</code> means depends on the model's cache convention, so a session that mixed Claude and GPT turns still adds up.</td></tr>
         <tr><td><code>GET /api/costs/models</code></td><td>Per-model token usage and cost totals, plus the pricing table.</td></tr>
         <tr><td><code>GET /api/costs/daily?days=N</code></td><td>Daily totals for the bar chart over the last N days (default 30).</td></tr>
         <tr><td><code>POST /api/costs/reset-daily</code></td><td>Deletes today's cost rows - a manual daily reset.</td></tr>

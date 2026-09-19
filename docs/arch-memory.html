@@ -22,9 +22,19 @@
       before the model is ever called.</p>
 
     <p>There is no single "memory blob". Each store has its own file layout, its own update cadence,
-      and its own wrapper tag in the prompt. Extraction happens <em>after</em> a turn as a
+      and its own wrapper tag in the prompt. Writing happens <em>after</em> a turn as a
       fire-and-forget background task; recall happens <em>before</em> a turn to pick what the model
       reads. <b>Click a box</b> in the diagram to trace how a store feeds the next turn.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Every <code class="path">data/</code> path on this page resolves
+        through <code>data_root()</code> in <code class="path">server/infrastructure/paths.py</code>:
+        <code class="path">~/.whisper/data/</code> in a packaged install, the repo's own
+        <code class="path">data/</code> in a dev checkout, or whatever
+        <code>WHISPER_DATA_DIR</code> / the <code>data_dir</code> config key names. Memory is user
+        data, so it lives under the user root, not under <code>storage/</code>.</p></div>
+    </div>
 
     <figure class="diagram-figure wide">
       <div id="memory-diagram" class="diagram"></div>
@@ -40,7 +50,7 @@
       <thead><tr><th>Store</th><th>Scope</th><th>Written by</th><th>Prompt tag</th></tr></thead>
       <tbody>
         <tr><td>Session memory</td><td>One conversation</td><td>Background summarizer</td><td><code>&lt;session-memory&gt;</code></td></tr>
-        <tr><td>Persistent memory</td><td>Global (every chat) plus per-workspace</td><td>Extraction agent or the model itself</td><td><code>&lt;memory-context&gt;</code></td></tr>
+        <tr><td>Persistent memory</td><td>Global (every chat) plus per-workspace</td><td>The post-turn learning review, or the model itself</td><td><code>&lt;memory-context&gt;</code></td></tr>
         <tr><td>WHISPER.md</td><td>The workspace, hand-authored</td><td>You (via the app or an editor)</td><td>Inline project-instructions block</td></tr>
       </tbody>
     </table></div>
@@ -125,46 +135,102 @@
       <li><h4>Scan both tiers</h4><p>List the topic files across global and project. If there are none, nothing is injected.</p></li>
       <li><h4>Few files? Take them all</h4><p>At or below <code>MAX_SELECTIONS</code> (5) files, every file is returned and no model call is made.</p></li>
       <li><h4>Local turn? Stay offline</h4><p>For on-device models, the ranking side-query is skipped and the most recent files (up to 5) are returned. This trades smart ranking for isolation.</p></li>
-      <li><h4>Otherwise, rank with Haiku</h4><p>A cheap Haiku side-query receives a manifest of file names, types, and descriptions plus the user query, and returns up to 5 filenames as JSON. If it fails, recall degrades to the most recent files.</p></li>
+      <li><h4>Otherwise, rank with a side-query</h4><p>A cheap model receives a manifest of file names, types, and descriptions plus the user query, and returns up to 5 filenames as JSON. If it fails, recall degrades to the most recent files.</p></li>
     </ol>
-    <p>The Haiku call is deliberately tiny: <code>MAX_RECALL_TOKENS</code> is 256 and it runs with a
+    <p>The side-query is deliberately tiny: <code>MAX_RECALL_TOKENS</code> is 256 and it runs with a
       single retry and short timeouts. It then reads the selected files, always prepends each tier's
       <code>MEMORY.md</code> index, and tags each entry with a freshness note ("today", "yesterday",
       or "N days ago"). The whole block is wrapped in <code>&lt;memory-context&gt;</code>.</p>
+    <p>Which model runs it is configurable. <code>aux_model_id("memory_recall")</code> reads the
+      <code>auxiliary_models</code> config map (<code class="path">server/infrastructure/auxiliary.py</code>);
+      unset, it stays on Haiku, the cheapest entry. The call site is a direct Bedrock invoke, so an
+      on-device key is refused there and falls back to Haiku.</p>
+    <p>The selector's reply is parsed leniently. It is asked for bare JSON, but a model that wraps the
+      object in a <code>```json</code> fence is still accepted: <code>_bare_json()</code> strips the
+      fence before parsing. Without that, one stray fence made every recall fail and every turn ran
+      with no memory at all.</p>
 
-    <h3 id="workspace-extraction">Extraction: writing new memories</h3>
+    <h3 id="workspace-extraction">The post-turn learning review: writing new memories</h3>
     <p>After a turn (when the model is not asking for more tools), <code>maybe_extract_memory()</code>
-      fires in the background. It runs with or without a workspace: with one the agent sees both tiers
-      and routes each write by <code>scope</code>; without one, everything lands in global memory. It
-      is guarded five ways:</p>
+      fires in the background. It runs with or without a workspace: with one the reviewer sees both
+      tiers and routes each write by <code>scope</code>; without one, everything lands in global
+      memory. It is guarded five ways:</p>
     <ul>
       <li><b>Feature flag.</b> <code>auto_memory</code> must be enabled. <code>ensure_global_memory_dir()</code>
         returns nothing when it is off, so the whole pipeline (and recall) short-circuits.</li>
-      <li><b>Throttle.</b> Extraction runs only every <code>DEFAULT_EXTRACT_INTERVAL</code> (3) turns.</li>
+      <li><b>Throttle.</b> The review runs only every <code>DEFAULT_EXTRACT_INTERVAL</code> (3) turns.
+        The counter is persisted, so a short session keeps accruing toward the cadence across restarts.</li>
       <li><b>Mutual exclusion.</b> If the model already called <code>memory_write</code> this turn, the
-        cursor advances and extraction is skipped, so the model and the agent never fight over the store.</li>
-      <li><b>In-flight.</b> Only one extraction agent runs per session at a time.</li>
+        cursor advances and the review is skipped, so the model and the reviewer never fight over the store.</li>
+      <li><b>In-flight.</b> Only one review runs per session at a time.</li>
       <li><b>Cursor.</b> Cursors are keyed by session id and persisted in the global tier; only messages
         after this session's saved cursor are considered. The cursor is claimed <em>before</em> the
-        agent runs, so overlapping turns cannot double-extract.</li>
+        review runs, so overlapping turns cannot double-write.</li>
     </ul>
-    <p>When it does run, the <code>memory_extractor</code> agent gets an excerpt of the new messages
-      (last 20, truncated) plus a manifest of existing memories per tier, and is told to save what
-      would be valuable in future sessions. It runs at <code>depth=1</code> so it cannot recurse into
-      further extraction.</p>
+
+    <h4>The cache-parity fork</h4>
+    <p>Past the guards there are two implementations, and the default is the fork
+      (<code class="path">server/memory/review_fork.py</code>). Instead of re-sending an excerpt of
+      the conversation to a separate agent with its own system prompt, the fork <b>replays the turn's
+      own request</b>: the same adapter, the same system prompt with the same cache breakpoints, the
+      same tools array byte for byte, the same messages, plus one appended user message asking what
+      should be remembered or encoded as a skill
+      (<code>build_learning_review_prompt()</code>). Every token before that message is a warm
+      prompt-cache read, and the reviewer sees the whole conversation rather than a lossy excerpt.</p>
+    <p>The fork is deliberately boxed in:</p>
+    <ul>
+      <li>Only <code>ALLOWED_TOOLS</code> may run: the four memory tools, <code>skill_list</code> and
+        <code>skill_manage</code>, and the read-only workspace reads (<code>ws_read_file</code>,
+        <code>ws_grep</code>, <code>ws_glob</code>). Anything else the model calls gets a refusal
+        <code>tool_result</code>.</li>
+      <li>At most <code>MAX_ROUNDS</code> (6) rounds.</li>
+      <li>It never touches the live conversation and never emits SSE. Its usage <em>is</em> recorded
+        against the session, at turn numbers counted from <code>REVIEW_TURN_BASE</code> (900), so the
+        cost shows up in the Costs panel instead of hiding.</li>
+      <li>The review message tells the model plainly that it is not from the user, its reply is not
+        shown, and it must not continue, redo, or critique the task.</li>
+    </ul>
+    <p>Routing is decided by <code>_fork_route()</code>: the <code>learning_review_fork</code> flag
+      must be on (it is by default), the provider must be forkable (Anthropic or OpenAI), and
+      <code>auxiliary_models.learning_review</code> must be unset, <code>"main"</code>, or the turn's
+      own model. Naming a <em>different</em> model there is read as "run the cheaper review on that
+      model", which the fork cannot do, so it falls back to the excerpt path.</p>
+    <p>That fallback is the original <code>memory_extractor</code> agent: an excerpt of the new
+      messages (last 20, truncated) plus a per-tier manifest of existing memories, told to save what
+      would be valuable in future sessions, at <code>depth=1</code> so it cannot recurse.</p>
+
+    <h4>Memories and skills</h4>
+    <p>The review writes two kinds of thing. Durable facts go to memory. A repeatable procedure the
+      user corrected or walked through goes to a <b>skill</b> via <code>skill_manage</code>, in a
+      fixed preference order: patch a skill used this turn, else patch an existing skill that covers
+      the class of task, else add a <code class="path">references/</code> file under one, and only
+      create a new class-level skill when nothing fits. That half is gated by the
+      <code>skill_self_improvement</code> flag (on by default); see
+      <a href="tut-skills.html">Skills</a>.</p>
+    <p>Both halves share one set of writing rules (<code>LESSON_RULES</code> and
+      <code>DO_NOT_CAPTURE</code> in <code class="path">server/memory/prompts.py</code>), so the
+      stores converge on rules instead of incident narration: procedure first, a pitfall stated as an
+      imperative with its mechanism, no ticket numbers or quoted user text, the same lesson learned
+      twice strengthened in place rather than duplicated. And a hard "never save" list: environment
+      failures the user can fix, negative claims that a tool "does not work", transient errors a
+      retry resolved, one-off task narratives, and dead ends dressed up as guidance. If nothing
+      qualifies the reviewer is told to reply exactly "Nothing to save".</p>
     <p>Local-model turns feed this pipeline too: the local path fires the same
       <code>maybe_extract_memory()</code> and <code>record_and_maybe_dream()</code> hooks after a
       turn. Both skip gracefully when <code>model_mode</code> is <code>local</code> (fully offline),
       because the extractor and consolidator agents run on cloud models; in hybrid or cloud modes a
-      local chat gets the same two-tier extraction and dream cadence as a cloud chat. (Session
-      memory's local story is different: there the summary runs on the local model itself.)</p>
+      local chat gets the same two-tier extraction and dream cadence as a cloud chat. It always takes
+      the excerpt path, never the fork: the local path passes no <code>ReviewFork</code>, and
+      <code>supports_fork()</code> only accepts the Anthropic and OpenAI adapters. (Session
+      memory's local story is different again: there the summary runs on the local model itself.)</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
-      <div class="callout__body"><p>Extraction is opinionated about <em>what not to save</em>: code
-        patterns, git history, and one-off debugging fixes are all derivable from the code itself and
-        are skipped. It stores durable facts instead, such as user preferences and role, working
-        guidance, project goals and deadlines, and pointers to external systems.</p></div>
+      <div class="callout__body"><p>Neither path stores what the environment already teaches: code
+        patterns, git history, and one-off debugging fixes are derivable from the repository, and
+        <code>WHISPER.md</code> and <code>AGENTS.md</code> are already in the prompt. What gets saved
+        is what only the user can supply: preferences and role, working guidance, project goals and
+        deadlines, and pointers to external systems.</p></div>
     </div>
 
     <h2 id="whisper-md">WHISPER.md</h2>
@@ -181,6 +247,15 @@
       so the model can read them with <code>ws_read_file</code> when needed. Truncation is honest:
       a capped file gets a note appended telling the model to read the rest with
       <code>ws_read_file</code>.</p>
+    <p><code>AGENTS.md</code>, the instructions filename other coding tools maintain, is honored live
+      as a read-only supplement rather than imported once and left to go stale. At the root it is
+      loaded alongside <code>WHISPER.md</code> under an explicit precedence note
+      ("where this conflicts with <code>WHISPER.md</code> above, <code>WHISPER.md</code> wins") and
+      given the scoped budget; with no <code>WHISPER.md</code> present it takes the root budget
+      instead. It is skipped entirely when its text already appears verbatim inside
+      <code>WHISPER.md</code>, which is the post-import state, so the same text is never billed
+      twice. In a scoped directory a <code>WHISPER.md</code> shadows a sibling <code>AGENTS.md</code>
+      outright: one instructions file per directory.</p>
     <p>Unlike the other two stores, it is fully under your control. The in-app Project Memory dialog is
       backed by a small CRUD API:</p>
     <div class="table-wrap"><table>
@@ -243,10 +318,13 @@
         <tr><td><code>POST /api/memory/promote</code></td><td>Move a file from the project tier up to global, so every project can use it.</td></tr>
       </tbody>
     </table></div>
-    <p>Extraction and consolidation finish after the chat stream closes, so their results surface as
-      live "Memory updated" toasts over the session's long-lived event channel rather than inline in
-      the turn. Recall gets its own variant: a "Recalled N memories" toast when a turn injected
-      memory context.</p>
+    <p>The review and consolidation finish after the chat stream closes, so their results surface over
+      the session's long-lived event channel rather than inline in the turn. The payload carries
+      <code>writes</code>, <code>deletes</code> and <code>skills</code> counts, which the client turns
+      into a toast: "Memory updated: 2 memories saved, 1 removed", or "Skills updated: 1 skill
+      updated" when only a skill changed. Recall gets its own variant, "Recalled N memories", when a
+      turn injected memory context. Toasts are suppressed for background sessions and are not
+      persisted to the notification bell, since per-turn memory telemetry would flood it.</p>
 
     <h2 id="consolidation">Consolidation (dream)</h2>
     <p>Over time a tier can drift: duplicates pile up, facts go stale, the index grows past its cap.
@@ -268,10 +346,11 @@
     <div class="spec">
       <dt><code class="path">server/memory/session_memory.py</code></dt><dd>Per-session summaries: thresholds, the background updater, cloud vs local paths, and the <code>&lt;session-memory&gt;</code> wrapper.</dd>
       <dt><code class="path">server/memory/recall.py</code></dt><dd>Query-time selection (Haiku side-query or recent-files fallback) and the <code>&lt;memory-context&gt;</code> block builder.</dd>
-      <dt><code class="path">server/memory/extract.py</code></dt><dd>Post-turn extraction: flag, throttle, mutual-exclusion, cursor, and the extractor agent run.</dd>
+      <dt><code class="path">server/memory/extract.py</code></dt><dd>The post-turn hook: flag, throttle, mutual exclusion, cursor, the fork-versus-agent routing, and the change snapshot behind the toast.</dd>
+      <dt><code class="path">server/memory/review_fork.py</code></dt><dd>The cache-parity learning review: replaying the turn's own request, the allowed-tool box, the round cap, and usage recording.</dd>
       <dt><code class="path">server/memory/memdir.py</code></dt><dd>Two-tier directory layout, slug and scope resolution, <code>MEMORY.md</code> loading and truncation, and the <code>auto_memory</code> guard.</dd>
       <dt><code class="path">server/memory/dream.py</code></dt><dd>Cross-session consolidation: trigger thresholds, locking, and the four-phase agent.</dd>
-      <dt><code class="path">server/memory/prompts.py</code></dt><dd>System prompts for recall, extraction, consolidation, and session summarization.</dd>
+      <dt><code class="path">server/memory/prompts.py</code></dt><dd>Prompts for recall, extraction, consolidation, session summarization, and the learning review, plus the shared <code>LESSON_RULES</code> and <code>DO_NOT_CAPTURE</code> writing rules.</dd>
       <dt><code class="path">server/memory/tools.py</code></dt><dd>The four memory tool schemas the model can call directly.</dd>
       <dt><code class="path">server/whisper_md.py</code></dt><dd><code>WHISPER.md</code> tree loading: the always-loaded root, question-scoped directory files, and truncation notes. (The CRUD router is declared in <code class="path">server/skills.py</code>; its handlers live in <code class="path">server/skills_routes.py</code>.)</dd>
     </div>

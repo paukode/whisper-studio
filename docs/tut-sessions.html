@@ -55,6 +55,11 @@
       row, so nothing is lost or summarized in translation. Unknown line types are ignored on import
       rather than rejected, so an older export still imports cleanly even after the format gains new
       fields.</p>
+    <p>Every row of the conversation travels, including the cards the app writes into it: scheduled
+      task results, agent reports, and messages sent in from another session. What does not travel is
+      everything stored <em>beside</em> the conversation: its cost records, its uploaded attachments,
+      the passages behind a grounded answer, and the scheduled jobs that pointed at it. An import is
+      a fresh session, not a clone of your whole install.</p>
 
     <h2 id="import-one">Import it back</h2>
     <p>Click <b>Import</b> in the sidebar toolbar and pick a <code class="path">.jsonl</code> file (a
@@ -155,6 +160,31 @@
       </div>
     </div>
 
+    <h2 id="search">Finding the session first</h2>
+    <p>All of the above assumes you can find the conversation. The sidebar search box
+      (<b>Search conversations…</b>) filters by title as you type. Once you have typed something, a
+      <b>Search message content</b> checkbox appears under the box. Tick it and the search also
+      matches the text of messages and transcripts, with a snippet under each hit showing why it
+      matched.</p>
+    <p>That content search runs against a full-text index of every session, kept up to date as you
+      chat, so it stays fast on a long history. If more sessions match than the list shows, it says
+      "not all matches shown" rather than pretending the results are complete.</p>
+    <p>Claude can search the same index. Ask it something like <em>"what did we decide about the
+      retry policy a few weeks ago?"</em> and it uses the <code>session_search</code> tool: it finds
+      the best hit per session, reads the messages around one, and can scroll further or read a whole
+      session. No model call is involved in the search itself, and the messages it quotes are the
+      ones actually stored, not a summary.</p>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>This also works <em>inside</em> the session you are in. A long
+        conversation gets compacted: older exchanges are summarized so the prompt stays affordable.
+        Two things soften that. Your own messages from the summarized stretch ride along in the
+        summary verbatim, newest first, so what you actually asked for is never paraphrased away. And
+        because the stored history is never summarized, only the prompt is, the summary carries a
+        pointer telling Claude how to search this session and read any compacted-away message back
+        word for word.</p></div>
+    </div>
+
     <h2 id="key-files">Where it all lives</h2>
     <div class="spec">
       <dt><code class="path">GET /api/sessions/&lt;id&gt;/export</code></dt><dd>Streams one session as portable JSONL.</dd>
@@ -162,8 +192,10 @@
       <dt><code class="path">POST /api/sessions/import-transcript</code></dt><dd>Creates one new session from an uploaded JSONL export.</dd>
       <dt><code class="path">POST /api/sessions/bulk-import</code></dt><dd>Creates a new session per file from multiple uploads or a bulk-export zip (capped at 200 files).</dd>
       <dt><code class="path">POST /api/sessions/&lt;id&gt;/branch</code></dt><dd>Copies a session's persisted content into a new session row.</dd>
-      <dt><code class="path">server/infrastructure/sessions_routes.py</code></dt><dd>All five routes above, plus the shared JSONL line-building helper both export paths use.</dd>
-      <dt><code class="path">src/components/layout/Sidebar.tsx</code></dt><dd>The row menu (Export, Branch), select mode, and the select-all / Export / Delete / Import toolbar.</dd>
+      <dt><code class="path">GET /api/sessions/search?q=</code></dt><dd>Which sessions match by message or transcript text, newest first, each with a snippet. Backs the "Search message content" checkbox.</dd>
+      <dt><code class="path">server/infrastructure/sessions_routes.py</code></dt><dd>All six routes above, plus the shared JSONL line-building helper both export paths use.</dd>
+      <dt><code class="path">server/infrastructure/session_search.py</code></dt><dd>The full-text index behind both the sidebar search and the <code>session_search</code> tool.</dd>
+      <dt><code class="path">src/components/layout/Sidebar.tsx</code></dt><dd>The row menu (Pin, Rename, Branch, Export, Archive, Delete), the search box, select mode, and the Import / Select toolbar.</dd>
     </div>
 
     <div class="callout callout--tip">
