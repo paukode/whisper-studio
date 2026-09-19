@@ -694,7 +694,7 @@ def test_install_recommended_writes_canonical_entry_and_adopts_index_llm(
     isolated_home, monkeypatch
 ):
     _stub_hf_and_queue(monkeypatch)
-    # Fresh-install seed: hybrid + index_llm=haiku (the cloud default).
+    # Hybrid mode still carrying the untouched index_llm=haiku default.
     (isolated_home / "config.user.json").write_text(
         json.dumps({"model_mode": "hybrid", "backends": {"index_llm": "haiku"}})
     )
@@ -724,6 +724,61 @@ def test_install_recommended_does_not_override_explicit_index_llm(isolated_home,
     assert out["adopted_index_llm"] is False
     data = json.loads((isolated_home / "config.user.json").read_text())
     assert data["backends"]["index_llm"] == "local_gemma_coder"
+
+
+def test_install_recommended_adopts_index_llm_on_a_fresh_local_install(isolated_home, monkeypatch):
+    _stub_hf_and_queue(monkeypatch)
+    # The REAL first-run seed, so this tracks whatever a fresh install ships:
+    # local mode with the index writer parked on cloud Haiku (no local chat
+    # model is bundled, so a "local" key would point at nothing yet).
+    # A copy, so an assertion below can never read a mutated module constant.
+    seed = json.loads(json.dumps(cfg.FIRST_RUN_USER_CONFIG))
+    assert seed["backends"]["index_llm"] == "haiku", "first-run seed no longer parks on haiku"
+    assert seed["model_mode"] == "local", "first-run seed no longer starts in local mode"
+    (isolated_home / "config.user.json").write_text(json.dumps(seed))
+    cfg._invalidate_cache()
+
+    out = service.install_recommended("local_gemma")
+    assert out["adopted_index_llm"] is True
+
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    # Dormant under local mode, but correct the moment the user picks hybrid.
+    assert data["backends"]["index_llm"] == "local"
+    # The other capabilities keep the seed's choices.
+    assert data["backends"]["embed"] == seed["backends"]["embed"]
+    assert data["backends"]["ner"] == seed["backends"]["ner"]
+
+
+def test_install_recommended_keeps_haiku_in_cloud_mode(isolated_home, monkeypatch):
+    _stub_hf_and_queue(monkeypatch)
+    # Cloud is never the first-run default, so it is an explicit user choice:
+    # installing an on-device model must not move the index writer off Haiku.
+    (isolated_home / "config.user.json").write_text(
+        json.dumps({"model_mode": "cloud", "backends": {"index_llm": "haiku"}})
+    )
+    cfg._invalidate_cache()
+
+    out = service.install_recommended("local_gemma")
+    assert out["adopted_index_llm"] is False
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert data["backends"]["index_llm"] == "haiku"
+
+
+def test_install_recommended_does_not_override_explicit_index_llm_in_local_mode(
+    isolated_home, monkeypatch
+):
+    _stub_hf_and_queue(monkeypatch)
+    # Widening the mode gate must not weaken the "untouched haiku only" guard:
+    # a deliberate pick stands in local mode exactly as it does in hybrid.
+    (isolated_home / "config.user.json").write_text(
+        json.dumps({"model_mode": "local", "backends": {"index_llm": "none"}})
+    )
+    cfg._invalidate_cache()
+
+    out = service.install_recommended("local_gemma")
+    assert out["adopted_index_llm"] is False
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert data["backends"]["index_llm"] == "none"
 
 
 def test_install_recommended_rejects_unknown_key(isolated_home, monkeypatch):
