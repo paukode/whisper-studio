@@ -86,6 +86,11 @@
       looking at a different session at the time</b>. You do not have to have that chat open, and you do
       not have to be watching. Come back to the conversation later and every past run is still there,
       in chronological order, interleaved with the rest of the thread.</p>
+    <p>A run that has something urgent to say does not have to wait for you to open that chat. If the
+      prompt tells Claude to flag a problem, it can call <code>notify_user</code>, and that message
+      is both folded into the result card and written to the notification log, so it is waiting behind
+      the header bell when you come back. That is the pattern for a monitoring job: check, and only
+      raise your voice when something is wrong.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p>If you delete or archive the conversation a job belonged to, its
@@ -103,11 +108,14 @@
       same tool pool an interactive turn gets; what stays flat is the cost of your own turns. When a
       single run produces a lot of output, the card keeps it readable rather than sprawling.</p>
     <p>Under the hood a cron run is a normal turn on the same unified engine as chat, with the same
-      round budgets and tool safety gate, on the session's Claude or GPT-on-Bedrock model (on-device
-      models cannot run scheduled jobs). A job can also pin its own <code>model</code>, as long as it
-      names a configured Anthropic chat model, and by default a quick verification pass checks that a
-      run actually achieved its prompt before the card reports <code>ok</code>, which is why a failed
-      run's history shows the assertion that broke.</p>
+      round budgets and tool safety gate. It does not inherit the model your chat is using: a job can
+      pin its own <code>model</code> as long as that names a configured Anthropic chat model, and
+      otherwise the run falls back to Haiku, then Sonnet, then whatever model is configured first. A
+      job pinned to an on-device model fails loudly rather than half-working, because scheduled runs
+      cannot cold-start a local model yet.</p>
+    <p>By default a quick verification pass checks that a run actually achieved its prompt before the
+      card reports <code>ok</code>, which is why a failed run's history shows the assertion that
+      broke.</p>
 
     <h2 id="schedule-types">Schedule types</h2>
     <p>Every job has one of three schedule shapes. You express them in plain language and Claude picks
@@ -122,11 +130,22 @@
     </table></div>
     <p>Wall-clock schedules use your host system timezone by default, so <em>daily at 09:00</em> fires
       at 9am your local time and stays correct when the clocks change. You can pin a different timezone
-      by naming one (an IANA name like <code>America/New_York</code>). Wall-clock times also accept
+      by naming one (an IANA name like <code>America/New_York</code>), or set
+      <code>cron_timezone</code> in settings to change the default for every job that does not name
+      one. Wall-clock times also accept
       several values at once, so <em>at 9 and 4</em> becomes two firings a day, and a day-of-week can be
       a single day (<code>mon</code>), a range (<code>mon-fri</code>), or a list (<code>mon,thu</code>).
       For how these triggers are built and stored, see <a href="arch-cron.html">Cron / scheduled
       tasks</a>.</p>
+
+    <h3 id="missed-runs">If the app was closed when a job was due</h3>
+    <p>A wall-clock job whose time passed while Whisper Studio was not running is replayed once at the
+      next launch, rather than silently skipped. There is a grace window on that catch-up, one hour by
+      default (<code>cron_misfire_grace_sec</code>), so a laptop that was shut for a week does not wake
+      up and fire a backlog at you. Set it to a smaller number if you would rather miss a stale run
+      than see a late one, or a larger one if the run matters more than its timing. A job that has
+      never fired is not caught up, it just waits for its next scheduled time, and interval jobs need
+      no catch-up at all: they simply fire once the interval has elapsed since their last run.</p>
 
     <h2 id="managing-jobs">Manage jobs in the Scheduled Tasks panel</h2>
     <p>For a bird's-eye view of everything you have scheduled, open the <b>Scheduled Tasks</b> panel.
@@ -140,8 +159,10 @@
       </div>
       <div class="card">
         <h3>Run history</h3>
-        <p>Each job keeps a capped history of its recent runs with status and duration, so you can see
-          whether the last few checks passed or failed at a glance.</p>
+        <p>Click <b>History</b> on a job to see its recent runs with status and duration, failures
+          included, so you can tell at a glance whether the last few checks passed. The history is
+          capped per job (200 runs by default, <code>cron_max_runs_per_job</code>) and older runs are
+          pruned.</p>
       </div>
       <div class="card">
         <h3>Unread badges</h3>

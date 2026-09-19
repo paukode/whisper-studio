@@ -56,20 +56,31 @@
       executors</a> carry out tool calls; the <a href="arch-agents.html">agent runtime</a> spawns
       sub-agents and teams; and the <a href="arch-approval.html">approval + validator</a> layer gates
       anything that writes.</p>
-    <p>The A-J program added five more server subsystems the map now covers. A unified
+    <p>Five more server subsystems sit around that loop. A unified
       <b>background-task framework</b> (<code class="path">server/tasks/</code>, the
       <code>agent_tasks</code> table, kinds <code>shell</code>/<code>agent</code>/<code>workflow</code>/<code>ci</code>,
       <code>/api/background-tasks</code>) registers every detached job, including
       <a href="arch-cron.html">scheduled</a> and <a href="arch-agents.html">sub-agent</a> runs.
       <b>Blocking hooks</b> (<code class="path">server/hooks/</code>) gate the loop at
       <code>PreToolUse</code>, <code>PostToolUse</code>, and <code>Stop</code> (see
-      <a href="arch-hooks.html">Blocking hooks</a>). A <b>goal loop + completion gate</b>
-      (<code class="path">server/goals/</code>, <code>run_completion_gate</code>) keeps a turn running
-      until a goal verdict clears (see <a href="arch-goals.html">The goal loop</a>). The <b>ultracode workflow runtime</b>
-      (<code class="path">server/workflows/</code>) runs model-authored deterministic JS in a Node-24
-      <code>vm</code> harness over JSON-RPC into Python; see
+      <a href="arch-hooks.html">Blocking hooks</a>). A <b>completion gate</b>
+      (<code class="path">server/goals/</code>, <code>run_completion_gate</code>) decides whether a
+      turn may end: it runs the Stop hooks, checks that the files and artifacts the reply claims
+      actually exist, asks for a real test or build run when code was edited without one, and judges
+      an active goal (see <a href="arch-goals.html">The goal loop</a>). The <b>ultracode workflow
+      runtime</b> (<code class="path">server/workflows/</code>) runs model-authored deterministic JS
+      in a Node-24 <code>vm</code> harness over JSON-RPC into Python; see
       <a href="arch-ultracode.html">The ultracode workflow runtime</a>. And <b>CI watch + PR autofix</b>
       (<code class="path">server/ci/</code>) watches a build and drives it back to green.</p>
+    <p>Two smaller server facts matter often enough to name here. Every agent run is journaled to
+      disk from its first round (<code class="path">server/agents/journal.py</code>), so a cancelled
+      or crashed run still leaves a transcript and a report behind, and reports that land with no
+      live turn wake the session to answer them
+      (<code class="path">server/agents/wake.py</code>); see
+      <a href="arch-agent-recorder.html">the agent flight recorder</a>. And this documentation site is
+      served by the same process at <code>/docs-site</code>. The header's <b>Documentation</b> button
+      opens it as a dock panel without leaving the app, and an <code>@docs</code> mention grounds an
+      answer in it.</p>
 
     <h3>Local runtime &amp; storage</h3>
     <p>Transcription (<a href="arch-transcription.html">Whisper / Parakeet / Canary</a>), the
@@ -83,8 +94,10 @@
       <code>network_policy.tier</code> in <code>permissions.json</code>.</p>
 
     <h3>External services</h3>
-    <p><a href="arch-backends.html">Amazon Bedrock</a> is the only cloud LLM. It is called when you
-      submit a message, and now also from detached background work: the goal evaluator
+    <p><a href="arch-backends.html">Amazon Bedrock</a> is the only cloud LLM. It carries the Claude
+      and GPT chat models and the Amazon Nova 2 Sonic voice stream behind
+      <a href="tut-voice-mode.html">voice mode</a>. It is called when you
+      submit a message, and also from detached background work: the goal evaluator
       (<code class="path">server/goals/evaluator.py</code>), CI diagnose
       (<code class="path">server/ci/diagnose.py</code>), and workflow agents make their own (often
       Haiku) Bedrock calls without a fresh submit. Optional MCP servers - local processes over stdio or
@@ -103,7 +116,9 @@
       <div class="card"><h3>Transcription is local</h3><p>Audio never leaves the machine. Only a
         transcript can become a prompt - and only when you type something.</p></div>
       <div class="card"><h3>Bedrock is the only cloud LLM</h3><p>No telemetry, no proxy, no gateway.
-        The signed request goes straight from the local process to Bedrock.</p></div>
+        The signed request goes straight from the local process to Bedrock. TLS verifies against the
+        system keychain as well as the bundled CA list, so a corporate proxy does not break
+        outbound fetches.</p></div>
     </div>
 
     <div class="callout">

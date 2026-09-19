@@ -49,18 +49,24 @@
 
     <h2 id="modes">The six modes</h2>
     <p>Pick the row that matches how much you trust the current task. The default is a good starting
-      point: you can read anything, but any change to your files or system waits for a click.</p>
+      point: you can read anything, but any change to your files or system waits for a click. The
+      names in the first column are what the Mode dropdown and the status bar show you; the second
+      column is the same wording the app uses.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
       <tbody>
-        <tr><td><code>default</code></td><td>Reads run freely; writes ask for approval. The everyday setting.</td></tr>
-        <tr><td><code>auto</code></td><td>Reads run freely; a classifier decides per-tool, per-call whether a write is safe enough to run or should ask. It runs whenever this mode is selected; edit its rules with config_set in chat.</td></tr>
-        <tr><td><code>plan</code></td><td>Read-only. Claude investigates and proposes a plan but never executes. File writes, deletes, commands, and merges are hard-blocked before they can dispatch.</td></tr>
-        <tr><td><code>acceptEdits</code></td><td>File edits and new files auto-approve; deletes and commands still ask. Good for a focused editing session.</td></tr>
-        <tr><td><code>bypassPermissions</code></td><td>Everything runs without prompts. Fastest, least guarded. Use only in a throwaway or fully trusted workspace.</td></tr>
-        <tr><td><code>dontAsk</code></td><td>Reads auto-allow; writes are silently denied. Claude keeps working on read-only tasks and simply cannot change anything, without stopping to ask.</td></tr>
+        <tr><td><b>Default</b> (<code>default</code>)</td><td>Reads are allowed. Every file write and command asks first. The everyday setting.</td></tr>
+        <tr><td><b>Auto</b> (<code>auto</code>)</td><td>Reads are allowed. A classifier approves or asks for each write and command, per call. Its allow and soft-deny lists live in the <code>auto_mode_allow</code>, <code>auto_mode_soft_deny</code> and <code>auto_mode_environment</code> config keys, which you can edit by asking in chat.</td></tr>
+        <tr><td><b>Plan</b> (<code>plan</code>)</td><td>Read only. File edits and commands are blocked; changes come back as a proposal.</td></tr>
+        <tr><td><b>Accept edits</b> (<code>acceptEdits</code>)</td><td>File writes and creates run without asking. Deletes and commands still ask. Good for a focused editing session.</td></tr>
+        <tr><td><b>Bypass</b> (<code>bypassPermissions</code>)</td><td>Everything runs immediately. No prompts, no review. Use only when you fully trust the task.</td></tr>
+        <tr><td><b>Don't ask</b> (<code>dontAsk</code>)</td><td>Writes are silently denied. Nothing will prompt you; only read-only tools run.</td></tr>
       </tbody>
     </table></div>
+    <p>The same six appear in <b>Settings &rsaquo; Permissions</b> under <b>Permission Mode</b>, each
+      with a one-line hint ("Default: ask for writes", "Auto: AI classifier decides", "Plan:
+      read-only, offers upgrade on writes", "Accept edits: auto-allow file edits", "Bypass: allow
+      everything", "Don't ask: auto-deny writes silently"). Pick one and press <b>Save Mode</b>.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
@@ -93,10 +99,26 @@
     <h2 id="category-modes">Per-category modes</h2>
     <p>The global mode is one dial for everything. When you want different latitude for different
       <em>kinds</em> of action, set a <b>per-category mode</b> under <b>Settings &rsaquo;
-      Permissions</b>: each approval category (for example <code>write</code>, <code>delete</code>,
-      <code>cli</code>, <code>save</code>, <code>worktree</code>, <code>github</code>,
-      <code>workflow</code>) can carry its own mode that overrides the global one for that category
-      only. A category with no entry simply follows the global mode.</p>
+      Permissions</b>, in the <b>Per-Category Defaults</b> section. Each row is one approval
+      category, and each can carry its own mode that overrides the global one for that category only.
+      A row left on <b>Use global setting</b> simply follows the global mode.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Row</th><th>Covers</th></tr></thead>
+      <tbody>
+        <tr><td>File writes</td><td>Writing and creating files in the connected workspace, and creating a Word, Excel, PowerPoint or PDF file there.</td></tr>
+        <tr><td>File deletes</td><td>Deleting a file.</td></tr>
+        <tr><td>Shell commands</td><td>Commands, Python runs, the terminal, the AWS CLI, and the git tools that write: commit, push, pull, checkout, merge, branch and stash.</td></tr>
+        <tr><td>Saving files outside the workspace</td><td>The "save this to my Documents" flow. Its own category, so a blanket yes to workspace writes never covers it.</td></tr>
+        <tr><td>Folder access</td><td>Reading a folder outside the connected workspace. You are asked once per folder and the grant covers everything inside it.</td></tr>
+        <tr><td>Worktrees</td><td>Entering and leaving an isolated git worktree.</td></tr>
+        <tr><td>Live preview</td><td>Starting, driving and stopping a dev-server preview session.</td></tr>
+        <tr><td>Word/Excel/PowerPoint scripts</td><td>The <code>office_script</code> tool, which writes real Python against your documents.</td></tr>
+        <tr><td>GitHub / GitHub (destructive)</td><td>Ordinary GitHub mutations, and the irreversible ones. The destructive row is fixed and reads "Always asks (cannot be overridden)".</td></tr>
+        <tr><td>Workflow runs</td><td>Launching a new ultracode workflow script. See below.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The list is served by the backend, so it always matches the actions that actually exist. Press
+      <b>Save Category Settings</b> to apply.</p>
     <p>This cuts both ways. "<code>acceptEdits</code> for writes but <code>default</code> for
       commands" is the loosening direction; the tightening direction is just as useful, for example
       pinning <code>delete</code> to <code>default</code> so deletes always confirm even while the
@@ -136,7 +158,10 @@
       </tbody>
     </table></div>
     <p>Each card carries a short <span class="badge badge--muted">risk</span> hint and, when several
-      actions are queued, a "N more pending" counter. You have four buttons:</p>
+      actions are queued, a "N more pending" counter. Many cards also carry one sentence explaining
+      what is risky about this particular call, written by a fast model in the three seconds while
+      the card is being raised; if that model is slow or unavailable the card simply appears without
+      it. You have four buttons:</p>
     <ol class="steps">
       <li><h4>Yes</h4><p>Approve just this one call. The turn continues from exactly where it paused.</p></li>
       <li><h4>Yes, all &lt;category&gt;</h4><p>Approve this and every later call in the same category
@@ -188,6 +213,10 @@
     <p>Rules are evaluated top to bottom and the first match wins, so order matters. The Settings panel
       warns you when a broad earlier rule shadows a narrower later one so you can reorder before it
       surprises you.</p>
+    <p>In the editor the fields are <b>Tool Name</b>, <b>Match Type</b> (Pattern or Prefix), the
+      <b>Pattern</b> or <b>Prefix</b> itself, <b>Action</b> (Allow, Ask or Deny), an optional
+      <b>Justification</b>, and a <b>Test input (JSON)</b> box. <b>Save Rule</b> stores it;
+      <b>Delete</b> on a listed rule removes it.</p>
 
     <h3 id="rule-dry-run">Test a rule before you trust it</h3>
     <p>You do not have to save a rule and wait for a live tool call to find out what it does. The rule
@@ -200,13 +229,15 @@
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Resolution order, top to bottom:
-        <code>github-destructive</code> always asks (absolute) &rarr; the per-category mode, if set,
-        replaces the global mode &rarr; <code>bypassPermissions</code> &rarr; a trusted skill script
-        &rarr; your session-wide "all this session" choice &rarr; your custom rules &rarr; the mode's
-        own default. So <code>bypassPermissions</code> overrides even a <code>deny</code> rule, but a
-        stricter per-category mode overrides <code>bypassPermissions</code>, and every other mode
-        respects your rules first.</p></div>
+      <div class="callout__body"><p>Resolution order, top to bottom: three absolutes first -
+        <code>github-destructive</code>, any deleting command (<code>rm</code> and its relatives,
+        including <code>find -delete</code>), and any command asking to run outside the sandbox's
+        write confinement - then an MCP server you marked as needing approval &rarr; the per-category
+        mode, if set, replaces the global mode &rarr; <code>bypassPermissions</code> &rarr; a trusted
+        skill script &rarr; your session-wide "all this session" choice &rarr; your custom rules
+        &rarr; the mode's own default. So <code>bypassPermissions</code> overrides even a
+        <code>deny</code> rule, but a stricter per-category mode overrides it, the three absolutes
+        override everything, and every other mode respects your rules first.</p></div>
     </div>
 
     <h2 id="hard-guards">The guards that never turn off</h2>
@@ -233,6 +264,19 @@
       defence-in-depth: it catches the easy cases without being what stops a determined attacker. That
       job belongs to <code>sandbox-exec</code>. And of course, reads never prompt because they cannot
       change anything.</p>
+    <p>Two things always stop for a click, whatever the dial says. A command that <b>deletes</b> -
+      <code>rm</code>, <code>rmdir</code>, <code>shred</code>, <code>find -delete</code>, and the
+      same commands hidden behind <code>sudo</code> or <code>xargs</code> - always raises a card. So
+      does a command that asks to run with <b>full disk write access</b> instead of the usual
+      project-only confinement. Neither can be waved through by a mode, a rule, or a "yes to all",
+      and an unattended agent cannot run either on your behalf.</p>
+    <p>Two more sections sit under <b>Settings &rsaquo; Permissions</b> alongside the mode and the
+      rules. <b>Sandbox Network Policy</b> chooses how much of the internet sandboxed commands can
+      reach: Permissive (no restriction, the default), Curated (common package and docs domains plus
+      your own), or Restrictive (nothing but your own list). <b>Folder Access</b> lists the folders
+      outside your workspace you have allowed the app to read, with a <b>Revoke</b> button for each;
+      grants are only ever made from an approval card, so this panel can take access away but never
+      widen it.</p>
 
     <h2 id="which-mode">Which mode should you use?</h2>
     <dl class="spec">

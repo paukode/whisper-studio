@@ -1,4 +1,4 @@
-Whisper Studio — read me first
+Whisper Studio, read me first
 
 1. Drag "Whisper Studio" onto the Applications folder in this window.
 

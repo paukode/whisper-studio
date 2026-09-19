@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Glossary - Whisper Studio Docs</title>
-  <meta name="description" content="Definitions of the terms used across Whisper Studio: ASR, Bedrock, GraphRAG, MCP, permission mode, sandbox-exec, SSE, sub-agents, WHISPER.md, and more.">
+  <meta name="description" content="Definitions of the terms used across Whisper Studio: ASR, Bedrock, GraphRAG, MCP, permission mode, sandbox-exec, SSE, voice mode, voiceprints, the agent flight recorder, sub-agents, WHISPER.md, and more.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -33,6 +33,33 @@
       <thead><tr><th>Term</th><th>Definition</th></tr></thead>
       <tbody>
         <tr>
+          <td>agent journal (flight recorder)</td>
+          <td>The on-disk record every agent run writes while it is alive, from its first round:
+            <code class="path">&lt;storage&gt;/agents/&lt;session&gt;/&lt;agent&gt;/</code> holding
+            <code class="path">meta.json</code> (task, type, model, budgets, status, stop reason,
+            usage), <code class="path">events.jsonl</code> (every progress event as it happened),
+            <code class="path">messages.json</code> (the message list, rewritten each round) and
+            <code class="path">report.md</code>. It makes the record primary rather than something the
+            parent's context holds: journals survive a restart, <code>task_output &lt;id&gt;</code>
+            tails a live agent or returns a finished one's report, and
+            <code class="path">messages.json</code> is what lets a stopped agent be resumed with its
+            context intact. See <a href="arch-agent-recorder.html">The agent flight recorder</a>.</td>
+        </tr>
+        <tr>
+          <td>agent report</td>
+          <td>The last thing an agent writes: a fixed-shape summary (findings, evidence, what was not
+            checked, confidence, files touched, and one quotable line) produced in a reserved final
+            round. The caller gets that text, not a transcript, and is reminded that you never saw it
+            and must relay what matters. Compare <b>salvage report</b>. See
+            <a href="arch-agent-recorder.html">The agent flight recorder</a>.</td>
+        </tr>
+        <tr>
+          <td>agent report card</td>
+          <td>The chat card that appears when agent reports arrive with no turn running, because you
+            pressed Stop or the app restarted. It lists each agent's report and comes with a
+            notification. The parent then <b>wakes</b> (see that entry) to actually answer from them.</td>
+        </tr>
+        <tr>
           <td>approval pause</td>
           <td>The server-side hold on a turn that needs consent. When a tool needs approval, the engine
             stashes the in-flight turn in <code>paused_sessions</code> and only resumes it once the
@@ -44,8 +71,18 @@
         <tr>
           <td><code>ASR</code></td>
           <td>Automatic Speech Recognition. The task of turning audio into text. Whisper Studio runs ASR
-            entirely on-device (Whisper, Parakeet, or Canary) in every model mode, so audio never leaves
-            your machine. See <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+            entirely on-device (Whisper, Parakeet, or Canary) in every model mode, so recorded audio
+            never leaves your machine. <b>Voice mode</b> is the exception and is a different feature.
+            See <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+        </tr>
+        <tr>
+          <td>auxiliary models</td>
+          <td>The map that names which model runs each side task the assistant does on your behalf:
+            memory recall, the goal evaluator, session titling, the auto-mode classifier, the
+            permission explainer, query rewriting, CI diagnosis, compaction and the post-turn learning
+            review. Values are <code>chat_models</code> keys, and <code>"main"</code> means the
+            session's own model. An empty map (the default) leaves every task on its historical
+            default. See <a href="ref-settings.html#auxiliary">Settings &amp; config keys</a>.</td>
         </tr>
         <tr>
           <td><code>Bedrock</code></td>
@@ -53,8 +90,10 @@
             for chat. Two distinct endpoints, depending on the model: Claude goes straight to
             <code>bedrock-runtime.&lt;region&gt;.amazonaws.com</code> via
             <code>invoke_model_with_response_stream</code>; GPT goes to
-            <code>bedrock-mantle.&lt;region&gt;.api.aws</code>'s OpenAI-compatible Responses API. Either
-            way, it is the only cloud LLM call the app makes. See
+            <code>bedrock-mantle.&lt;region&gt;.api.aws</code>'s OpenAI-compatible Responses API.
+            <b>Voice mode</b> is a third Bedrock surface, a bidirectional stream to
+            <b>Nova 2 Sonic</b>. All cloud model calls the app makes go to Bedrock; there is no other
+            provider. See
             <a href="arch-backends.html">Model backends &amp; modes</a> and
             <a href="https://docs.aws.amazon.com/bedrock/">the Amazon Bedrock docs</a>.</td>
         </tr>
@@ -64,6 +103,16 @@
             Aggregate Device, it lets a meeting recording capture both your microphone and whatever
             macOS is playing. Install with <code>brew install blackhole-2ch</code>. See
             <a href="tut-voice.html">Voice &amp; meetings</a>.</td>
+        </tr>
+        <tr>
+          <td>busy slot</td>
+          <td>The per-session claim that says a turn is running. Every turn takes it, continuations
+            after an approval included, so a second turn cannot start on top of one in flight: it gets
+            a <code>409</code>, or, when it is a mid-turn message, is queued into the
+            <b>mid-turn inbox</b>. A heartbeat refreshes the slot while the turn is silent, so an hour
+            of agents or one long shell command does not look abandoned; a slot with no heartbeat for
+            15 minutes is reclaimed as stale. See <a href="arch-chat-turn.html">Anatomy of a chat
+            turn</a>.</td>
         </tr>
       </tbody>
     </table></div>
@@ -78,7 +127,8 @@
             port). The fastest of the accurate engines and the app's universal model translator:
             transcribes 25 European languages with live word-by-word drafts, and translates between
             any of them and English whichever engine is transcribing. Having no language head of its
-            own, it pairs with the VoxLingua107 language classifier. See
+            own, it pairs with the VoxLingua107 <b>language ID</b> classifier. It does not report word
+            timestamps, so <b>speaker turn splitting</b> does not run on Canary audio. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
         <tr>
@@ -123,12 +173,14 @@
         </tr>
         <tr>
           <td>diarization</td>
-          <td>Assigning "who spoke when" to a transcript. Whisper Studio uses Resemblyzer speaker
-            embeddings plus voice-activity detection, and remembers speakers per session across
-            reconnects so you can rename them once. See
+          <td>Assigning "who spoke when" to a transcript. Whisper Studio embeds each utterance with a
+            speaker encoder (<b>ReDimNet2</b> by default, <b>ECAPA</b> as the fallback), clusters the
+            vectors, and cuts an utterance at a handover when <b>speaker turn splitting</b> finds one.
+            Labels hold per session across reconnects so you rename a speaker once, and a
+            <b>voiceprint</b> carries that name into later recordings. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
-        <tr>
+                <tr>
           <td>Discover / memory-fit</td>
           <td>The model browser under Settings &gt; Models &gt; Discover. The app ships with no local
             model installed by default; Discover lists recommended on-device models you can install,
@@ -141,6 +193,14 @@
             reaches the React DOM. It strips <code>&lt;script&gt;</code>, inline event handlers, and
             <code>javascript:</code> URLs, so a prompt-injected page fetched by <code>web_fetch</code>
             cannot run arbitrary JS in the SPA origin. See <a href="ref-security.html">Security model</a>.</td>
+        </tr>
+<tr>
+          <td><code>ECAPA</code></td>
+          <td>ECAPA-VoxCeleb, the speaker encoder Whisper Studio used before ReDimNet2 and now keeps as
+            the automatic fallback: ReDimNet2 arrives over the network on first use, and a blocked or
+            offline first run should degrade to a working encoder rather than to no speaker labels at
+            all. Select it explicitly with <code>speaker_embedder: "ecapa"</code>. A separate ECAPA
+            model does spoken-<b>language ID</b>; the two share an architecture, not a job.</td>
         </tr>
         <tr>
           <td>effort level</td>
@@ -190,6 +250,13 @@
             completions all travel across it. See <a href="arch-agents.html">Sub-agents &amp; the event
             bus</a>.</td>
         </tr>
+        <tr>
+          <td>Extend</td>
+          <td>The button on a running agent's budget bar that grants it 20 more rounds while its
+            context is still loaded, instead of letting it stop at its limit and resuming it later with
+            a reloaded context. The runner reads the grant at the start of its next round. See
+            <a href="arch-agent-recorder.html">The agent flight recorder</a>.</td>
+        </tr>
       </tbody>
     </table></div>
 
@@ -207,10 +274,13 @@
           <td>goal / goal gate</td>
           <td>A per-session objective the assistant works toward. Set it with <code>/goal</code> (and
             <code>/goal clear</code> to end it); it is stored on the session row and a goal banner shows
-            above the composer. After each turn a <b>completion gate</b> - a cheap Haiku evaluator in
+            above the composer. After each turn a <b>completion gate</b> - a cheap evaluator in
             <code class="path">server/goals/gate.py</code> - judges whether the goal is met, and if not
-            the goal loop auto-continues the turn (capped). Gated by the <code>goal_loop</code> feature
-            flag. See <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</td>
+            the goal loop auto-continues the turn, capped at 8 consecutive blocks
+            (<code>goal_max_consecutive_blocks</code>). Gated by the <code>goal_loop</code> feature
+            flag. See <a href="arch-goals.html">The goal loop &amp; completion gate</a>, and compare
+            <b>quality gate</b> and <b>verification gate</b>, the two deterministic checks that run
+            inside the same gate.</td>
         </tr>
         <tr>
           <td>GraphRAG</td>
@@ -246,10 +316,12 @@
         </tr>
         <tr>
           <td>hybrid mode</td>
-          <td>One of three model modes, and the first-run default on a fresh install. In hybrid mode
-            you pick a backend per capability (embeddings,
-            reranker, entity extraction), mixing cloud and on-device; the on-device weights download
-            on first use. Compare cloud and local. See
+          <td>One of three model modes. In hybrid mode you pick a backend per capability (embeddings,
+            reranker, entity extraction, the indexing writer), mixing cloud and on-device; the
+            on-device weights download on first use. A fresh install is seeded to <b>local</b>, not
+            hybrid, but with the hybrid backend map already filled in, so switching to hybrid picks up
+            on-device embeddings and reranking (Qwen3), GLiNER entity extraction and cloud Haiku as the
+            writer. Compare cloud and local. See
             <a href="tut-model-modes.html">Model modes</a> and
             <a href="arch-backends.html">Model backends &amp; modes</a>.</td>
         </tr>
@@ -262,6 +334,37 @@
             existing files, and nothing imported runs as part of the import. Run it from Settings &gt;
             Tools and automation &gt; Import project. See
             <a href="ref-settings.html#fields">Settings &amp; config keys</a>.</td>
+        </tr>
+        <tr>
+          <td>language ID</td>
+          <td>Deciding which language an utterance is in, as a separate step from transcribing it.
+            Whisper Studio uses VoxLingua107 ECAPA, one of the three speech models that ship bundled
+            with the app. Whisper has its own language head and does not need it; Canary has none, so
+            it pairs with this classifier. Constrain what it may choose with the
+            <b>Whisper Language</b> setting. See
+            <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+        </tr>
+        <tr>
+          <td>llama-server</td>
+          <td>One of the two on-device chat engines: upstream llama.cpp's own server, run as a
+            subprocess serving GGUF weights over an OpenAI-compatible API. It is a subprocess rather
+            than in-process bindings because llama.cpp owns the tool-calling and reasoning parsers for
+            every model family it supports, so a new GGUF gets tool calls and a thinking channel with
+            no per-family parser written here. One model is resident at a time; switching models stops
+            the old process first. Compare <b>MLX engine</b>. See
+            <a href="arch-backends.html">Model backends &amp; modes</a>.</td>
+        </tr>
+        <tr>
+          <td>loop guard</td>
+          <td>The per-turn guard that stops a model going in circles. It refuses a tool call that
+            repeats the same arguments after two identical results, one that has already failed three
+            times unchanged, and a repeating cycle of calls, each with a note so the model changes
+            course. It also caps the two runaway-prone tools per turn (web search and delegation,
+            tunable through <code>tool_loop_caps</code>), and replaces a byte-identical large payload
+            with a stub pointing at the earlier result. Pollers such as <code>task_status</code> and
+            <code>sleep</code> are exempt from the repeat checks. Gated by the
+            <code>tool_loop_guard</code> feature flag. See
+            <a href="ref-settings.html#loop-caps">Settings &amp; config keys</a>.</td>
         </tr>
         <tr>
           <td><code>LSP</code></td>
@@ -296,13 +399,33 @@
             <a href="ref-settings.html#mcp-fields">the per-server MCP fields</a>.</td>
         </tr>
         <tr>
+          <td>mid-turn message</td>
+          <td>A message you send while the assistant is already working. Instead of being refused or
+            dropped, it is folded into the running turn: it goes to the per-session <b>mid-turn
+            inbox</b>, the turn engine drains that inbox once per round, and the text is appended to the
+            live message list so the model sees it, addressed, before its next tool call. A short notice
+            confirms it went in. If the turn has just finished you are told nothing was sent, rather
+            than a second answer starting. Works after an approval card too. See
+            <a href="arch-chat-turn.html">Anatomy of a chat turn</a>.</td>
+        </tr>
+        <tr>
+          <td>MLX engine</td>
+          <td>The second on-device chat engine, beside llama-server: <code>mlx_lm server</code> running
+            inside the app's own Python, serving MLX-format weights (a safetensors directory rather
+            than one GGUF file) over the same OpenAI-compatible API, so the rest of the stack is
+            shared. Availability is an import check, not a binary lookup, and the context window is
+            whatever the model's own config carries. A model declares which engine it wants in the
+            catalog. See <a href="arch-backends.html">Model backends &amp; modes</a>.</td>
+        </tr>
+        <tr>
           <td>model mode</td>
-          <td>Where indexing and retrieval run: <code>cloud</code> (the shipped SYSTEM default),
-            <code>hybrid</code>, or <code>local</code>. Every fresh install (setup.sh or the Mac app)
-            is seeded to <code>hybrid</code> with on-device embed/rerank and entity extraction. This
-            is separate from the chat-model choice in the toolbar. Cohere embed/rerank are pinned to
-            <code>us-east-1</code>; chat can run in any region. See
-            <a href="tut-model-modes.html">Model modes</a>.</td>
+          <td>Where indexing and retrieval run: <code>cloud</code>, <code>hybrid</code>, or
+            <code>local</code>. <code>cloud</code> is the shipped SYSTEM value, but a fresh install
+            (setup.sh or the Mac app alike) seeds <code>local</code> into the user layer, which
+            outranks it, so <code>local</code> is what a new install runs. This is separate from the
+            chat-model choice in the toolbar. Cohere embed/rerank are pinned to <code>us-east-1</code>;
+            chat can run in any region. See <a href="tut-model-modes.html">Model modes</a> and
+            <a href="ref-settings.html#model-selection">Settings &amp; config keys</a>.</td>
         </tr>
         <tr>
           <td>network egress policy</td>
@@ -312,6 +435,16 @@
             (only domains you add). Enforced by a local proxy that reads only the TLS ClientHello's SNI
             hostname, never the traffic itself. See <a href="ref-security.html#egress">Security
             model</a>.</td>
+        </tr>
+        <tr>
+          <td>Nova 2 Sonic</td>
+          <td>Amazon Nova 2 Sonic, the speech-to-speech model on Bedrock that carries a
+            <b>voice mode</b> conversation: it hears your microphone and speaks the replies, over one
+            bidirectional stream. Default model id <code>amazon.nova-2-sonic-v1:0</code>, available in
+            <code>us-east-1</code>, <code>us-west-2</code>, <code>eu-north-1</code> and
+            <code>ap-northeast-1</code> only, with sixteen voices across nine locales. It is not the
+            model doing the work: the session's own Claude or GPT model still answers and uses the
+            tools. See <a href="tut-voice-mode.html">Voice conversations</a>.</td>
         </tr>
       </tbody>
     </table></div>
@@ -339,16 +472,20 @@
           <td>Parakeet</td>
           <td>One of the three on-device speech-recognition engines (the others are Whisper and
             Canary), and the default. Lowest latency: words appear live as you speak, in 25 European
-            languages, with no translation support. All three keep audio local. See
+            languages. It cannot translate on its own, but Canary can translate whatever Parakeet
+            transcribes. It reports word timestamps, so <b>speaker turn splitting</b> works with it.
+            All three engines keep recorded audio local. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
         </tr>
-        <tr>
+                <tr>
           <td>permission mode</td>
           <td>The dial that decides how tool calls are gated: <code>default</code> (reads free, writes
-            ask), <code>auto</code> (a classifier decides per call), <code>plan</code> (read-only),
-            <code>acceptEdits</code> (edits auto-approve), <code>bypassPermissions</code> (no prompts),
-            or <code>dontAsk</code> (reads allow, writes silently deny). Per-tool rules override any
-            mode. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td>
+            ask), <code>auto</code> (a classifier decides per call), <code>plan</code> (workspace
+            writes hard-blocked, a proposal comes back), <code>acceptEdits</code> (edits auto-approve),
+            <code>bypassPermissions</code> (no prompts), or <code>dontAsk</code> (reads allow, writes
+            silently deny). Per-tool rules override any mode, and three things ask no matter what:
+            destructive GitHub actions, an <code>rm</code>-class command, and a request to escape the
+            sandbox. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td>
         </tr>
         <tr>
           <td>plugin</td>
@@ -368,6 +505,30 @@
             tool-schema tokens per turn. Gated by the <code>progressive_tools</code> feature flag. See
             <a href="ref-settings.html#feature-flags">Settings &amp; config keys</a>.</td>
         </tr>
+<tr>
+          <td>prompt cache layers</td>
+          <td>The ordering that makes Bedrock prompt caching pay off. The system prompt is assembled
+            from named sections on six layers: <code>IDENTITY</code>, <code>MODE</code>,
+            <code>WORKSPACE</code>, <code>DYNAMIC</code>, <code>TOOL_GUIDANCE</code> and
+            <code>EXTENSION</code>. Everything at or below <code>WORKSPACE</code> is the static block
+            and is cached; anything that varies per request has to ride <code>DYNAMIC</code> or later.
+            Parking session-stable text on a dynamic layer re-bills it every round, and rewriting the
+            static block mid-session throws the cache away, which is why plan mode deliberately sits on
+            the uncached tail and why seven config keys are <b>latched</b> per session. Cache
+            checkpoints are then placed on the tool block and on the static system block. See
+            <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.</td>
+        </tr>
+        <tr>
+          <td>quality gate</td>
+          <td>A shell command that must exit 0 before a goal can be judged done. Add one with
+            <code>/goal gate add &lt;command&gt;</code>. Gates run at every turn boundary while the goal
+            is active, and they run <em>before</em> the evaluator: a red gate is deterministic proof the
+            goal is not met, its exit code and output tail become the continuation feedback, and the
+            model judge is not called at all. A failed gate is re-run against the current tree each
+            boundary, so a repaired one passes next time; after three failed attempts the gate pauses
+            the goal instead of looping. See <a href="arch-goals.html">The goal loop &amp; completion
+            gate</a>.</td>
+        </tr>
         <tr>
           <td>Qwen3</td>
           <td>The on-device model family used for embeddings and reranking in local mode (Qwen3 embedder
@@ -382,11 +543,28 @@
       <thead><tr><th>Term</th><th>Definition</th></tr></thead>
       <tbody>
         <tr>
+          <td>ReDimNet2</td>
+          <td>The default speaker encoder (the B2 variant): 3.6M parameters, a 15 MB checkpoint, 0.57
+            percent equal error rate on VoxCeleb1-O against ECAPA's roughly 1 percent. The gap widens
+            on the short windows this app actually feeds it, because <b>speaker turn splitting</b>
+            embeds slices of about 1.25 seconds and ECAPA was trained for about 3. Its weights ship
+            inside the Mac app and <code>setup.sh</code> fetches them for a source install; failing
+            that it downloads on first use and falls back to <b>ECAPA</b>. See
+            <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+        </tr>
+        <tr>
           <td>reranker</td>
           <td>A second-pass model that reorders retrieved passages by relevance to the query, sharpening
             what actually reaches the prompt. Cohere Rerank 3.5 in cloud mode, Qwen3 Reranker on-device.
             Off by default (the <code>rag_reranker</code> feature flag turns it on).
             See <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</td>
+        </tr>
+        <tr>
+          <td>salvage report</td>
+          <td>The report the runtime assembles from an agent's <b>journal</b> when the agent never got
+            to write one itself: it was cancelled, or it crashed. The team card marks that agent
+            "salvaged" so you can tell a reconstructed record from the agent's own words. See
+            <a href="arch-agent-recorder.html">The agent flight recorder</a>.</td>
         </tr>
         <tr>
           <td><code>sandbox-exec</code></td>
@@ -395,6 +573,17 @@
             trusts last and most; a curated deny-list masks secret stores (SSH/GPG keys, cloud and git
             credentials, browser cookies, shell history). On Linux the equivalent is <code>bwrap</code>.
             See <a href="arch-sandbox.html">Sandbox &amp; security</a>.</td>
+        </tr>
+        <tr>
+          <td>session content search</td>
+          <td>Full-text search across every past session by what was actually said, with no model call.
+            One SQLite FTS5 index mirrors each session's stored history and serves both the sidebar's
+            content search and the model's own <code>session_search</code> tool, which can quote exact
+            messages and read around them. It is what makes compaction recoverable: the request-side
+            history gets summarized, the persisted history does not, so a summarized-away message can
+            be pulled back verbatim, and every compaction summary carries a pointer saying so. Gated by
+            the <code>session_search</code> feature flag. See
+            <a href="tut-sessions.html">Sessions</a>.</td>
         </tr>
         <tr>
           <td>session export</td>
@@ -415,6 +604,27 @@
             <a href="tut-skills.html">Skills</a>.</td>
         </tr>
         <tr>
+          <td>soft limit / reserved reporting round</td>
+          <td>How an agent is guaranteed to leave a report instead of being cut off mid-sentence. At 90
+            percent of its time or cost budget, or one round from its turn cap, the runtime declares the
+            next round the final one, withholds tools, and appends the report template to the prompt.
+            The budget bar shows that reserved slice marked off at the end and flips the agent's pill
+            from "working" to "finishing up". The main turn gets the same courtesy at the session cost
+            cap: one last round to answer. See <a href="arch-agent-recorder.html">The agent flight
+            recorder</a>.</td>
+        </tr>
+        <tr>
+          <td>speaker turn splitting</td>
+          <td>Cutting one recorded utterance where the speaker changes, instead of labelling the whole
+            thing as one person. The silence detector flushes on silence, not on handovers, so
+            "...that's my point." / "Right, but" lands in a single utterance. The splitter slides a
+            1.25 second window across it, compares each side of every candidate cut, keeps the strongest
+            peaks and snaps each to a word boundary. It needs word timestamps, which Whisper and
+            Parakeet report and Canary does not. The word or two that genuinely overlap are marked as
+            overlapping rather than given a pretend-precise cut. Controlled by
+            <code>speaker_split_turns</code>, on by default.</td>
+        </tr>
+        <tr>
           <td><code>SSE</code></td>
           <td>Server-Sent Events. The one-way HTTP streaming used to push chat tokens, tool activity,
             usage counters, and sub-agent events to the browser as they happen. A chat turn is an SSE
@@ -431,6 +641,15 @@
             declined or abandoned entries are garbage-collected after 24 hours. See
             <a href="ref-tools.html#direct-save">The direct-save flow</a> and
             <a href="ref-security.html">Security model</a>.</td>
+        </tr>
+        <tr>
+          <td>stop reason</td>
+          <td>Why an agent run ended, recorded in its journal and shown on its row: <code>completed</code>,
+            <code>turn_limit</code>, <code>deadline</code>, <code>cost_cap</code>,
+            <code>cancelled</code> or <code>error</code>. A team result carries each member's full
+            report with its stop reason and a pointer to its record, so "stopped at the time limit,
+            report written" reads differently from "cancelled, report salvaged". See
+            <a href="arch-agent-recorder.html">The agent flight recorder</a>.</td>
         </tr>
         <tr>
           <td>sub-agent</td>
@@ -470,6 +689,15 @@
             <a href="arch-summarization.html">Transcript summarization &amp; condensation</a>.</td>
         </tr>
         <tr>
+          <td>truststore</td>
+          <td>The library Whisper Studio installs at boot so TLS verification consults your macOS
+            keychain <em>as well as</em> the bundled certifi CA list. Without it, a site behind a
+            corporate or government root fails to verify in the app while opening fine in your browser.
+            It widens which roots are trusted, not whether certificates are checked, and it fails open
+            to certifi-only if it cannot install cleanly. See
+            <a href="ref-security.html">Security model</a>.</td>
+        </tr>
+        <tr>
           <td>ultracode</td>
           <td>Whisper Studio's top reasoning mode: the model authors a deterministic JavaScript workflow
             script that a Node-22 vm harness runs detached over stdio JSON-RPC into Python, on both Claude
@@ -480,10 +708,52 @@
             runtime</a>.</td>
         </tr>
         <tr>
+          <td>utterance</td>
+          <td>The unit a recording is cut into: one stretch of speech between two silences, flushed by
+            the <b>VAD</b> buffer and handed to the transcription engine as one piece. Speaker labels,
+            language detection and the translation line all attach per utterance. Because the buffer
+            flushes on silence and not on speaker change, a handover with no gap lands inside one
+            utterance, which is what <b>speaker turn splitting</b> exists to fix. In <b>voice mode</b>
+            the same word means one spoken turn, and each gets its own chat bubble.</td>
+        </tr>
+        <tr>
           <td><code>VAD</code></td>
-          <td>Voice-Activity Detection. Distinguishes speech from silence in the audio stream, feeding
-            diarization and keeping the transcript clean. Whisper Studio uses WebRTC VAD locally. See
+          <td>Voice-Activity Detection. Distinguishes speech from silence in the audio stream, deciding
+            where one <b>utterance</b> ends and keeping the transcript clean. Whisper Studio uses WebRTC
+            VAD locally, with automatic gain in front of it so a quiet microphone still registers. See
             <a href="arch-transcription.html">Transcription &amp; diarization</a>.</td>
+        </tr>
+        <tr>
+          <td>verification gate</td>
+          <td>The check that stops "done, the tests should pass" from ending a turn. It is passive: it
+            never runs a suite itself, it reads the turn's own messages and asks which code files were
+            edited, which test, lint, typecheck or build commands ran afterwards, and whether they
+            passed. When code was edited with no fresh passing evidence, the completion gate asks for a
+            real verification or an honest blocker, at most twice per turn. Prose-only edits never
+            trigger it. Gated by the <code>verify_on_stop</code> feature flag. Compare <b>quality
+            gate</b>, which is a command you named rather than an inference.</td>
+        </tr>
+        <tr>
+          <td>voice mode (Talk)</td>
+          <td>A spoken conversation with the assistant, opened with the <b>Talk</b> button beside the
+            composer. <b>Nova 2 Sonic</b> carries the voice while the session's own model does the work
+            through the same tools as typed chat, so it can read files, run commands and delegate.
+            Approvals are asked aloud and shown as the usual card. The composer is replaced by a voice
+            bar (Type instead, Mute, End); one bubble is written per <b>utterance</b>, so the
+            conversation is in your history afterwards. Long delegated work keeps running in the
+            background and is reported back, and hanging up never cancels it. Distinct from dictation
+            (speaking one message into the composer) and from meeting transcription. See
+            <a href="tut-voice-mode.html">Voice conversations</a>.</td>
+        </tr>
+        <tr>
+          <td>voiceprint</td>
+          <td>A stored speaker embedding with a name on it, so somebody who spoke in an earlier
+            recording is recognised in this one. Enrolling is a side effect of the rename you already
+            do: naming "Speaker 2" stores that cluster's centroid. Matching is deliberately
+            conservative, needing both a high similarity and a clear margin over the runner-up, because
+            putting the wrong name on somebody is worse than leaving them as "Speaker 3". Entries are
+            filed per encoder, since ReDimNet2 and ECAPA vectors are not comparable. Controlled by
+            <code>speaker_voiceprints</code>, on by default.</td>
         </tr>
       </tbody>
     </table></div>
@@ -492,6 +762,18 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Term</th><th>Definition</th></tr></thead>
       <tbody>
+        <tr>
+          <td>wake (answering from reports)</td>
+          <td>What happens when agent reports land in a session with no turn to read them, because you
+            pressed Stop or the app restarted. If a turn is still running, the reports go in through
+            the <b>mid-turn inbox</b> like a message you typed. If none is, a one-round synthesis turn
+            starts on the session's model with the original request plus the reports, and posts its
+            answer as an assistant bubble labelled "Answered from the agents' reports". It never opens
+            new work: one round, no tools. One wake per session at a time, skipped with a notification
+            when the session cost cap is reached, and turned off entirely by
+            <code>wake_parent_on_reports</code>. See <a href="arch-agent-recorder.html">The agent
+            flight recorder</a>.</td>
+        </tr>
         <tr>
           <td><code>WAL</code></td>
           <td>Write-Ahead Logging, the SQLite journaling mode Whisper Studio runs sessions in. It lets
@@ -530,6 +812,16 @@
             <a href="tut-workspace.html">The workspace IDE</a>.</td>
         </tr>
         <tr>
+          <td>workspace-write (sandbox mode)</td>
+          <td>The sandbox write mode that denies every write and then allows back only the command's own
+            working tree, the git directories a linked worktree needs, and system temp. It is the
+            default for <code>run_python</code> and <code>terminal_run</code>, and it is what every
+            unattended agent command gets, so the OS rather than the prompt bounds what a delegated
+            agent can touch. The other two modes are <code>read-only</code> and, behind a written
+            justification and an unconditional approval card, <code>danger-full-access</code>. See
+            <a href="ref-security.html#write-modes">Security model</a>.</td>
+        </tr>
+        <tr>
           <td>worktree</td>
           <td>An isolated Git working tree on its own branch, created so the assistant can make changes
             without touching your current checkout. Task worktrees, managed with
@@ -540,10 +832,22 @@
             its own worktree via the <code>enter_worktree</code> / <code>exit_worktree</code> approval
             actions, under <code class="path">&lt;repo&gt;/.whisper/worktrees/&lt;slug&gt;</code> on
             branch <code>worktree-&lt;slug&gt;</code>, persisted across restarts. A worktree-<b>isolated
-            agent</b> (see the detached/worktree agent entry) gets a third variant: on completion, its
-            clean changes are applied uncommitted back to the originating branch and the worktree is
-            removed. See <a href="arch-git-lsp.html">Git integration &amp; LSP</a> and
+            agent</b> (see the detached/worktree agent entry) gets a third variant, brought back by the
+            <b>worktree harvest</b>. See <a href="arch-git-lsp.html">Git integration &amp; LSP</a> and
             <a href="ref-tools.html#session-worktrees">Agent tools</a>.</td>
+        </tr>
+        <tr>
+          <td>worktree harvest</td>
+          <td>How a worktree-isolated agent's work comes back. An agent has git tools, so it may leave
+            its work committed, uncommitted, or a mix; the harvest materializes the whole delta since
+            the branch point into the originating working tree, <em>uncommitted</em>, so
+            <code>git status</code> shows it for normal review. It works file by file off the git
+            object database, which handles committed work, binaries, deletions and executable bits, and
+            lets non-conflicting files land even when one file collides. A file counts as a conflict
+            only when the main tree changed it away from the base and differently from the agent; those
+            are left behind in the worktree, which is kept, and the note says where. Nothing is ever
+            committed or force-resolved on your behalf, and an agent that stopped early keeps its
+            worktree for inspection instead of applying partial work.</td>
         </tr>
       </tbody>
     </table></div>
@@ -552,7 +856,10 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
       <div class="callout__body"><p>Whisper (the speech model) and Whisper Studio (the app) are
         different things. When these docs say "Whisper" alone in a transcription context, they mean the
-        model; the product is always "Whisper Studio".</p></div>
+        model; the product is always "Whisper Studio". Three separate things involve your voice, too:
+        <b>dictation</b> speaks one message into the composer, <b>meeting transcription</b> records and
+        writes up a conversation, and <b>voice mode</b> is a spoken conversation with the assistant.
+        Only the last one sends audio anywhere.</p></div>
     </div>
 
     <div class="callout callout--tip">

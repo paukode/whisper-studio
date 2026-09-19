@@ -129,6 +129,13 @@
       many passages were retrieved. If the chip shows no matches, nothing in the selected folders
       scored above the relevance floor, and Claude falls back to its normal tools rather than
       inventing a citation.</p>
+    <p>There is a second, blunter guard behind that. A nearest-neighbour search always returns
+      <em>something</em>, however unrelated, so if the closest passage in the whole corpus is still a
+      poor match for your question, the turn treats the folder as off-topic and injects nothing at
+      all. That is the difference between "your files have nothing on this" and a confident answer
+      built from the least-bad paragraph. Forcing a search with <code>@index</code> overrides it,
+      which is the right move when you know the answer is in there and the wording is just
+      unusual.</p>
     <p>The chip is also a button: <b>click it to see the exact passages behind the answer</b>. Each
       source row shows the file and line range (click it to open the file right there), a
       plain-words note on <em>why</em> it was retrieved - "matched your words" (keyword), "similar
@@ -142,15 +149,27 @@
         is both indexed and selected for this session - or force it with <code>@index</code>.</p></div>
     </div>
 
+    <h2 id="at-docs">@docs: ask this manual</h2>
+    <p>The same retrieval machinery is pointed at the app's own documentation, the pages you are
+      reading now. Put <b><code>@docs</code></b> anywhere in a message and the question is matched
+      against the manual's sections, and the passages are injected under a strict contract: answer
+      only from the manual, cite the pages you used, and say the manual does not cover it rather than
+      guessing. The citations open in the docs viewer in the right pane.</p>
+    <p>Use it for questions about Whisper Studio itself ("<code>@docs</code> how do cron jobs pick a
+      timezone?"). It is separate from <code>@index</code>, which searches your own folders, and it
+      needs no setup: the section index is built on first use and rebuilt automatically when the app
+      updates. That first build takes a moment while it embeds the manual; after that it is
+      instant.</p>
+
     <h2 id="entity-graph">The index explorer</h2>
     <p>Indexing does more than embed text. As it processes files, it extracts <b>named entities</b>
       (people, organizations, topics, and so on) from each passage and collapses case, spacing, and
       punctuation variants into a single canonical name, so you get one entry per person or topic
       rather than five spellings of the same name. Which entity types it looks for is picked
       automatically per file from its extension, so a CV and a source file get different profiles
-      (business vs code). The local extractor is GLiNER by default; a workspace can switch to the
-      faster, English-focused GLiNER2 model from the Index settings panel (keep GLiNER for
-      multilingual documents), and in cloud mode Claude Haiku does the extraction.</p>
+      (business vs code). The local extractor is GLiNER by default, which is the strongest on
+      multilingual documents; a workspace can switch to GLiNER2 from the Index settings panel for an
+      English-only corpus. In cloud mode Claude Haiku does the extraction instead.</p>
     <p>The <b>index explorer</b> is the browsable result, in plain words instead of a node diagram.
       It opens from the compass button in the workspace panel header, from a file's right-click
       "Show connections", from the command palette, or from an indexed folder's menu in the connect
@@ -175,12 +194,13 @@
       <thead><tr><th>Mode</th><th>Embeddings</th><th>Reranker</th><th>Entity extraction</th></tr></thead>
       <tbody>
         <tr><td><b>Cloud</b></td><td>Cohere Embed v4 (Bedrock)</td><td>Cohere Rerank 3.5</td><td>Claude Haiku</td></tr>
-        <tr><td><b>Hybrid</b> (first-run default)</td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td></tr>
+        <tr><td><b>Hybrid</b></td><td>per-capability pick</td><td>per-capability pick</td><td>per-capability pick</td></tr>
         <tr><td><b>Local</b></td><td>Qwen3 (on-device)</td><td>Qwen3 Reranker</td><td>GLiNER (on-device)</td></tr>
       </tbody>
     </table></div>
     <p>Because different embedders produce incompatible vectors, <b>each embedding backend keeps its
-      own index</b>. Switching model mode never rebuilds the other mode's index, and it also means a
+      own index</b>. On disk that is a separate database file inside the same per-folder directory,
+      so switching model mode never rebuilds or overwrites the other mode's index. It also means a
       folder indexed under one backend is not searchable under another until you index it there. If
       you switch modes and a folder stops turning up in searches, re-index it once under the new
       backend.</p>

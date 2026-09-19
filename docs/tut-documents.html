@@ -72,6 +72,11 @@
     <div class="code-block"><pre><code>And the termination clause?</code></pre></div>
     <p>You do not re-upload. The document is already in the conversation, so Claude answers about
       termination from the same source. Keep going as long as you like, one question per turn.</p>
+    <p>That holds across restarts too. The first turn that uses an upload binds it to the session and
+      its extracted content is stored there, so reopening the conversation tomorrow still answers from
+      the same document. A bound attachment is kept for 30 days from the last turn that used it, and
+      every use slides that window forward. Deleting the session deletes its attachments with it, and an
+      upload you never sent is swept after a few hours.</p>
 
     <h2 id="what-happens-locally">What happens on your machine</h2>
     <p>The important detail: the file is parsed <b>locally</b>. When you attach a document, Whisper
@@ -98,20 +103,27 @@
         <tr><td>Word (<code>.docx</code>)</td><td>Document body converted to Markdown, headings preserved.</td></tr>
         <tr><td>PowerPoint (<code>.pptx</code>)</td><td>Slide text pulled out deck-wide.</td></tr>
         <tr><td>Excel / CSV (<code>.xlsx</code>, <code>.xls</code>, <code>.csv</code>)</td><td>Small sheets in full; large ones sampled (see below).</td></tr>
-        <tr><td>Images (PNG, JPG, and more)</td><td>Sent as a vision block, and OCR'd to text so text-only models can still read them.</td></tr>
+        <tr><td>Images (PNG, JPEG, GIF, WebP)</td><td>Sent as a vision block, and OCR'd to text so text-only models can still read them.</td></tr>
+        <tr><td>Audio (<code>.mp3</code>, <code>.wav</code>, <code>.m4a</code>, <code>.flac</code>, and more)</td><td>Transcribed on your machine into a timestamped, speaker-labelled transcript. Only the transcript is kept.</td></tr>
+        <tr><td>Video (<code>.mp4</code>, <code>.mov</code>, <code>.webm</code>, <code>.mkv</code>, and more)</td><td>The same transcript, plus up to 20 sampled frames whose on-screen text is read and folded in as timestamped notes. A vision model also gets the frames themselves.</td></tr>
+        <tr><td>Text, Markdown, HTML, EPUB, JSON, XML, ZIP, and common code files</td><td>Converted to Markdown text as-is.</td></tr>
       </tbody>
     </table></div>
+    <p>The legacy binary Office formats, <code>.doc</code> and <code>.ppt</code>, are not supported and
+      are rejected with a clear message. Save them as <code>.docx</code> or <code>.pptx</code> first.</p>
 
     <h3 id="large-spreadsheets">Large spreadsheets are sampled</h3>
-    <p>A spreadsheet with thousands of rows would blow past the context window if dumped whole, so a
-      big sheet is turned into a compact <b>schema plus sample</b> instead: each sheet's dimensions,
-      the header row, and the first 20 rows. Claude sees the shape of the data and can ask for
-      specific rows or columns when it needs more, rather than reading everything at once.</p>
+    <p>A spreadsheet with thousands of rows would blow past the context window if dumped whole. A
+      small sheet is kept whole; once the converted text passes roughly 60,000 characters it is turned
+      into a compact <b>schema plus sample</b> instead: each sheet's dimensions, the header row, and the
+      first 20 rows. Claude sees the shape of the data and can ask for specific rows or columns when it
+      needs more, rather than reading everything at once. The same rule applies to a large CSV.</p>
 
     <h3 id="size-limits">Size limits</h3>
-    <p>Documents are accepted up to about <b>50 MB</b>. A file over that limit is rejected with a
-      clear message (surfaced from the backend, not a blanket "upload failed"), so you know to trim
-      or split it. Very large documents that fit under the size limit are still capped at roughly
+    <p>Documents and images are accepted up to <b>50 MB</b>. Audio and video get <b>200 MB</b>,
+      because only their transcript is kept rather than their bytes. A file over its limit is rejected
+      with a clear message (surfaced from the backend, not a blanket "upload failed"), so you know to
+      trim or split it. Very large documents that fit under the size limit are still capped at roughly
       <b>150,000 characters</b> of injected text per attachment, which keeps a single big file from
       swamping the conversation.</p>
     <div class="callout callout--warn">
@@ -150,9 +162,9 @@
       summary" or "a deck from these notes" and Whisper Studio builds the finished file in a standard
       layout (A4 Word docs, 16:9 decks, formatted spreadsheets, A4 PDFs) and saves it after a single
       approval card, never asking where to put it.</p>
-    <p>Those standard layouts are quick but fixed. When you want something specific &mdash; shade
-      these table cells, merge that column, drop in a logo, apply a number format &mdash; or when you
-      want to change a document you already have rather than get a new one, the assistant switches to
+    <p>Those standard layouts are quick but fixed. When you want something specific (shade these
+      table cells, merge that column, drop in a logo, apply a number format), or when you want to
+      change a document you already have rather than get a new one, the assistant switches to
       writing real python-docx / python-pptx / openpyxl code against your file. You see that code on
       the approval card before it runs, it works on a copy so your original is never touched, and the
       result is saved the same way as everything else. Just ask for what you want in the file; the

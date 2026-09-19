@@ -117,6 +117,19 @@
       <li><h4>github-destructive</h4><p>A destructive GitHub mutation (repo or ref delete, PR merge,
         archive or rename, API DELETE) always returns ask. No mode, session approval, trusted skill,
         or category override can cover it, given the irreversibility and remote blast radius.</p></li>
+      <li><h4>An rm-class command</h4><p>A command that deletes always returns ask, whatever the mode.
+        <code>is_rm_command</code> (<code class="path">server/security/command_validator.py</code>)
+        parses the command with <code>shlex</code> rather than matching a substring, so it sees
+        through wrappers (<code>sudo</code>, <code>env</code>, <code>command</code>,
+        <code>nice</code>, <code>exec</code>, <code>doas</code>, <code>xargs</code>,
+        <code>parallel</code>) and catches <code>rm</code>, <code>rmdir</code>, <code>unlink</code>,
+        <code>shred</code>, <code>srm</code>, and <code>find ... -delete</code> /
+        <code>find ... -exec rm</code>. A command it cannot parse is treated as rm-like, so it fails
+        toward asking. Note that this check does not <em>block</em> anything: it forces the card.</p></li>
+      <li><h4>A request to leave the sandbox</h4><p>A call asking for
+        <code>sandbox_permissions: "danger-full-access"</code> always returns ask. That parameter is
+        a request to drop the sandbox's write confinement for one command, so it can never be covered
+        by a mode, a rule, or a session approval.</p></li>
       <li><h4>MCP approve tier</h4><p>An MCP tool whose server or tool is marked
         <code>approval_mode: "approve"</code> in <code>mcp_servers.json</code> always returns ask.
         Like the previous check, this is a hard floor: the user explicitly marked that server as one
@@ -241,8 +254,15 @@
 
     <p>Two extras ride this flow. Each card can carry a <b>risk explanation</b>:
       <code>explain_permission</code> (<code class="path">server/security/explainer.py</code>) makes a
-      Haiku side call capped at 3 seconds, and its result (a LOW / MEDIUM / HIGH risk level plus a
-      sentence of prose) rides the <code>approval_request</code> event as <code>explanation</code>.
+      side call on the <code>permission_explainer</code> auxiliary model (Haiku by default), hard
+      capped at 3 seconds and never allowed to raise, and its result (a LOW / MEDIUM / HIGH risk
+      level plus a sentence of prose) rides the <code>approval_request</code> event as
+      <code>explanation</code>. It runs only on the <em>ask</em> branch, and only when the turn has a
+      cloud model to ask, so an offline local-model turn simply shows the card without one. The
+      config key <code>permission_explainer_enabled</code> (default <code>true</code>) turns it off;
+      there is no toggle in Settings, it is a <code class="path">config.json</code> key. The separate
+      <code>risk_hint</code> badge on the card comes from the spec, not from this call, so it is
+      always present.
       And <b>unattended turns never pause</b>: subagent, cron, and headless runs dispatch with
       <code>unattended=True</code>, which executes a <code>[WS_APPROVAL]</code> action inline
       automatically instead of waiting for a human who is not there. The payload is stamped
@@ -257,7 +277,7 @@
       <code class="path">server/approval/bootstrap.py</code> and wired in at startup by a single
       <code>register_defaults()</code> call.</p>
     <div class="spec">
-      <dt><code class="path">category</code></dt><dd>The session-memory bucket - <code>write</code>, <code>delete</code>, <code>cli</code>, <code>save</code>, <code>worktree</code>, <code>preview</code>, <code>mcp</code>, <code>mcp-elicit</code>, <code>github</code>, or <code>github-destructive</code>. "Yes for all commands" stores <code>allow</code> here so it also covers commits and pushes, which share the <code>cli</code> category.</dd>
+      <dt><code class="path">category</code></dt><dd>The session-memory bucket - <code>write</code>, <code>delete</code>, <code>cli</code>, <code>save</code>, <code>folder-access</code>, <code>worktree</code>, <code>preview</code>, <code>office-script</code>, <code>mcp</code>, <code>mcp-elicit</code>, <code>github</code>, or <code>github-destructive</code>. "Yes for all commands" stores <code>allow</code> here so it also covers commits, pushes and pulls, which all share the <code>cli</code> category.</dd>
       <dt><code class="path">preview</code></dt><dd>Which of the four frontend renderers shows the action: <code>diff</code> (file changes), <code>command</code> (shell), <code>list</code> (multi-file), or <code>text</code> (free-form).</dd>
       <dt><code class="path">summary</code></dt><dd>A one-line label - a constant string or a callable over the tool input (for example <code>Commit 3 files: fix parser</code>).</dd>
       <dt><code class="path">executor</code></dt><dd>The async function that runs on Yes. Sync functions are wrapped at registration so the registry always exposes an awaitable.</dd>
@@ -269,8 +289,10 @@
     <p>The registry (<code class="path">server/approval/registry.py</code>) is a module-level map keyed
       by action name. <code>POST /api/approval/execute</code> is the single hub: it calls
       <code>registry.get(action)</code>, runs the spec's executor with the payload, and (for
-      <code>write</code>/<code>delete</code>/<code>cli</code> outcomes) invalidates the git-changes
-      cache so the panel refreshes. The <code>save</code> category is deliberately excluded from that
+      <code>write</code>, <code>delete</code>, <code>cli</code> and <code>office-script</code>
+      outcomes) invalidates the git-changes cache so the panel refreshes. An action with no
+      registered spec is a 404, and a tool that returns an unregistered action is refused outright
+      rather than run. The <code>save</code> category is deliberately excluded from that
       invalidation: saved files land outside any workspace, so there is no git state to refresh. The
       frontend never learns which endpoint actually did the work -
       it just POSTs an action and a payload. Adding a new approval-gated tool is one new
@@ -296,6 +318,30 @@
       leave their staged file behind, so every staging call also garbage-collects entries older than
       24 hours. The <code>save</code> category means a "Yes for all" on ordinary workspace writes
       never covers saves, and vice versa.</p>
+
+    <h2 id="git-pull">A worked spec: git_pull</h2>
+    <p><code>git_pull</code> is a good example of what a spec buys you, because a pull is the one git
+      read that writes. It fetches from a remote and then moves your working tree, using your own git
+      credentials, so it is registered in the <code>cli</code> category with a
+      <code>command</code> preview and a <code>medium</code> risk hint.</p>
+    <ul>
+      <li>The <b>summary</b> is generated from the input, so the card says
+        <code>Pull origin/main (fast-forward only)</code> or <code>Pull origin/main with rebase</code>
+        rather than a generic label.</li>
+      <li>The <b>preview</b> uses <code>render_command</code> to show the literal command the
+        executor will run - <code>git pull --ff-only origin main</code>, or
+        <code>git pull --rebase ...</code> when you asked for a rebase - so you approve the exact
+        thing.</li>
+      <li>The <b>payload fields</b> carried to the card and replayed to the executor are
+        <code>remote</code>, <code>branch</code>, <code>rebase</code>, and <code>session_id</code>;
+        both refs are re-validated as safe ref names at execute time.</li>
+      <li><b>Divergence never becomes a merge commit.</b> Without <code>rebase</code> the pull runs
+        <code>--ff-only</code>. If the branch has moved apart, the pull fails and the result explains
+        it: your local commits diverge from the remote, so pull again with <code>rebase</code> or
+        merge the remote branch with <code>git_merge</code>. The decision stays yours.</li>
+    </ul>
+    <p>Its read-only sibling <code>git_fetch</code> needs no approval: it refreshes the
+      remote-tracking branches and prunes deleted ones without touching a working file.</p>
 
     <h2 id="mcp-github">MCP and GitHub categories</h2>
     <p>Two tool families get categories with extra teeth. For <b>MCP</b>, the <code>mcp</code>

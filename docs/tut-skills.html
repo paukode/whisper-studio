@@ -21,7 +21,8 @@
 
     <p class="lead">You never have to name a skill. You just ask for what you want, and Claude picks
       the skill whose description matches. This page shows what ships in the box, how selection works,
-      and how to write and invoke a skill of your own.</p>
+      how to write and invoke a skill of your own, and how Claude writes skills for itself when you
+      correct the way it works.</p>
 
     <figure class="diagram-figure wide">
       <div id="skills-flow-diagram" class="diagram"></div>
@@ -91,11 +92,11 @@
     <h2 id="managing">Turning skills on and off</h2>
     <p>Every skill is listed in <b>Settings, Skills</b>, where you can enable or disable each one and
       read its definition. Disabling a skill removes it from the catalogue, so Claude can no longer
-      pick it. The on and off state is stored in <code class="path">data/skills_config.json</code>,
-      separately from the skill files themselves, so toggling a built-in skill off never edits or
-      deletes it. The same panel has an <b>Import</b> flow for bringing in skills shared by someone
-      else, and <b>Import project</b> during onboarding copies skills over from an existing Claude
-      Code or Codex project.</p>
+      pick it. The on and off state is stored in <code class="path">skills_config.json</code> under the
+      data directory, separately from the skill files themselves, so toggling a built-in skill off never
+      edits or deletes it. The panel's toolbar has <b>+ New Skill</b> for writing one in the app and
+      <b>Import skill</b> for bringing in skills shared by someone else, and <b>Import project</b>
+      during onboarding copies skills over from an existing Claude Code or Codex project.</p>
 
     <h2 id="custom">Writing a custom skill</h2>
     <p>A custom skill is one Markdown file in <code class="path">skills/</code>. The frontmatter is
@@ -124,8 +125,9 @@ under Blockers even if it wasn't labelled that way. Keep it terse.</code></pre><
     <p>The steps to add and use it:</p>
     <ol class="steps">
       <li><h4>Create the file</h4><p>Drop your <code>.md</code> file into
-        <code class="path">skills/</code>, or use <b>Settings, Skills, New</b> to write it in the app.
-        Files created in the UI are validated and hot-reloaded, no restart needed.</p></li>
+        <code class="path">skills/</code>, or use <b>+ New Skill</b> in <b>Settings, Skills</b> to
+        write it in the app. Files created in the UI are validated and hot-reloaded, no restart
+        needed.</p></li>
       <li><h4>Confirm it loaded</h4><p>Ask Claude to run <code>skill_list</code>, or open
         <b>Settings, Skills</b>. Your skill should appear with its description and trigger count.</p></li>
       <li><h4>Just ask</h4><p>Say something that matches the description ("clean up these standup
@@ -142,15 +144,16 @@ under Blockers even if it wasn't labelled that way. Keep it terse.</code></pre><
         Claude isn't guessing between them.</p></div>
     </div>
 
-    <h3 id="the-two-tools">skill_list and skill_invoke</h3>
-    <p>Two tools let Claude work with skills directly, rather than relying only on automatic
+    <h3 id="the-two-tools">skill_list, skill_invoke and skill_manage</h3>
+    <p>Three tools let Claude work with skills directly, rather than relying only on automatic
       selection:</p>
     <div class="spec">
       <dt><code>skill_list</code></dt><dd>Returns every available skill with its name, description, and triggers. Claude calls this to discover what is on hand before picking one.</dd>
       <dt><code>skill_invoke</code></dt><dd>Runs a named skill. It takes a <code>skill_name</code> and an <code>input</code> string, then applies the skill to that input.</dd>
+      <dt><code>skill_manage</code></dt><dd>The write side: read a skill's text and file list, create one, patch or append to it, add or remove a support file, and delete a skill it created itself. See <a href="#self-maintained">Skills Claude writes for itself</a>.</dd>
     </div>
-    <p>You rarely need to think about these. They exist so Claude can be explicit ("let me list the
-      skills, then invoke the right one") when a request is ambiguous or when you name a skill
+    <p>You rarely need to think about the first two. They exist so Claude can be explicit ("let me list
+      the skills, then invoke the right one") when a request is ambiguous or when you name a skill
       outright.</p>
 
     <h2 id="folder-skills">Folder skills</h2>
@@ -162,6 +165,46 @@ under Blockers even if it wasn't labelled that way. Keep it terse.</code></pre><
       folder skills still surface the normal approval card. See
       <a href="tut-permissions.html">Permissions &amp; approvals</a> for what trust does and does not
       grant.</p>
+
+    <h2 id="self-maintained">Skills Claude writes for itself</h2>
+    <p>Skills are also Claude's procedural memory: how to do a class of task the way <em>you</em> want
+      it. So it maintains them itself. After a turn, a background review looks over what just
+      happened and asks one question: did the user correct my workflow, or did a non-trivial
+      procedure emerge that a future session would need to reproduce? If so, it encodes it with
+      <code>skill_manage</code>. This is the same review that writes memories, described in
+      <a href="tut-memory.html#learning-review">Memory &amp; WHISPER.md</a>. The dividing line is
+      simple: memory holds facts that apply in every session, a skill holds how to do one kind of
+      job.</p>
+    <p>It prefers editing to creating, in a fixed order:</p>
+    <ol class="steps">
+      <li><h4>Patch a skill used this turn</h4><p>If a skill ran and you corrected its output, that
+        skill gets the fix. It reads the current text first, then replaces an exact passage.</p></li>
+      <li><h4>Patch an existing skill for that class of task</h4><p>Even if it did not run this turn,
+        an existing skill that covers the job is the right home.</p></li>
+      <li><h4>Add a reference file</h4><p>Bulk that does not belong in the main instructions goes into
+        a <code class="path">references/</code> file under the skill.</p></li>
+      <li><h4>Create a new skill, last</h4><p>Only when nothing fits. The name describes a class of
+        work (<code>deploy_staging</code>, <code>weekly_report</code>), never today's task.</p></li>
+    </ol>
+    <p>You stay in control of the result:</p>
+    <ul>
+      <li>Skills it created carry <code>created_by: agent</code> in their frontmatter, so you can tell
+        them apart from yours.</li>
+      <li>It can only delete a skill it created. One of yours it can edit, but removing it is a
+        Settings action.</li>
+      <li>Names are validated and cannot collide with a built-in tool name, every file path is
+        resolved inside the skill's own folder, and support files may only land in
+        <code class="path">references/</code>, <code class="path">scripts/</code>,
+        <code class="path">templates/</code>, or <code class="path">assets/</code>.</li>
+      <li>The instructions file is capped at 64 KB and a support file at 200 KB, which is the nudge to
+        keep depth in <code class="path">references/</code> rather than in the skill body.</li>
+      <li>Every change is a file on disk. Open <b>Settings, Skills</b> to read it, edit it, or turn
+        the skill off.</li>
+    </ul>
+    <p>A toast tells you when it happens, for example <b>"Skills updated: 1 skill updated"</b>. If you
+      would rather Claude never touched its own skills, turn off the
+      <code>skill_self_improvement</code> feature flag in Settings; <code>skill_manage</code> then
+      refuses and the review sticks to memory.</p>
 
     <h2 id="safety">Sandboxing and guardrails</h2>
     <p>Anything a skill reaches for runs behind the same protections as every other tool. Two of the
@@ -193,15 +236,23 @@ under Blockers even if it wasn't labelled that way. Keep it terse.</code></pre><
     </div>
 
     <h2 id="key-files">Where skills live</h2>
+    <p>Skills are yours to edit, so they sit in the user directory:
+      <code class="path">~/.whisper/skills/</code> in the Mac app, and
+      <code class="path">skills/</code> at the repo root in a source checkout. The bundled set is
+      copied there once on first launch and never restored afterwards, so a skill you rename or
+      delete stays that way.</p>
     <div class="spec">
       <dt><code class="path">skills/</code></dt><dd>Skill definitions: one Markdown file per skill, plus folder skills as subdirectories.</dd>
-      <dt><code class="path">server/skills.py</code></dt><dd>Loads the files, parses frontmatter, builds the tool catalogue, and serves the Skills API.</dd>
-      <dt><code class="path">data/skills_config.json</code></dt><dd>Which skills are disabled or trusted, kept apart from the skill files.</dd>
+      <dt><code class="path">skills_config.json</code></dt><dd>Which skills are disabled or trusted, kept apart from the skill files (under the data directory).</dd>
+      <dt><code class="path">server/skills.py</code></dt><dd>Loads the files, parses frontmatter, and builds the tool catalogue; the HTTP handlers live in <code class="path">server/skills_routes.py</code>.</dd>
+      <dt><code class="path">server/agent_tools/skill_manage.py</code></dt><dd>The <code>skill_manage</code> executor: name validation, path confinement, size caps, and the agent-created delete rule.</dd>
     </div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      <div class="callout__body"><p><b>Related:</b> <a href="tut-research.html">Web research</a> (the
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-memory.html">Memory &amp;
+        WHISPER.md</a> (the review that also writes skills),
+        <a href="tut-research.html">Web research</a> (the
         built-in web tools in action), <a href="tut-mcp-plugins.html">MCP &amp; plugins</a>
         (other ways to add tools), and the architecture pages
         <a href="arch-tools.html">Tool dispatch &amp; executors</a> and

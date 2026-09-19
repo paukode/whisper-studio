@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sub-agents &amp; the event bus - Whisper Studio Docs</title>
-  <meta name="description" content="The agent runtime, agent types, teams, the inter-agent mailbox, and the per-session event bus that streams live agent progress to the chat as team_progress frames.">
+  <meta name="description" content="The agent runtime, agent types, teams, the inter-agent mailbox, the budget readout on every progress event, and the per-session event bus that streams live agent progress to the chat as team_progress frames.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -26,6 +26,11 @@
       same tools, the same dispatch path, and the same session as the chat that spawned it. What makes
       it feel live is the <b>event bus</b>: a per-session queue the runtime publishes to, which the
       turn engine drains and forwards as <code>team_progress</code> frames.</p>
+
+    <p>Everything a run leaves behind - its journal on disk, its report, the budget that reserves the
+      reporting round, and how a report reaches you when the turn that launched it is gone - lives on
+      its own page: <a href="arch-agent-recorder.html">Agent flight recorder</a>. This page is the
+      runtime that produces those records.</p>
 
     <p><b>Click a box</b> in the map below to trace how a spawn flows out to the runtime and how its
       progress finds its way back to the report card in the SPA.</p>
@@ -56,22 +61,31 @@
       <li><h4>Guards recursion</h4><p>Depth is capped. An agent that spawns an agent that spawns an
         agent stops at <code>MAX_DEPTH = 5</code> and returns a failed result rather than recursing
         forever.</p></li>
-      <li><h4>Registers an id and a mailbox</h4><p>A short random <code>agent_id</code> is minted, a
-        mailbox is created on the <a href="#mailbox">message bus</a>, and the agent is recorded in the
+      <li><h4>Registers an id, a mailbox, and a journal</h4><p>A short random <code>agent_id</code> is
+        minted (a caller may pre-assign one so a run that never returns can still be found), a mailbox
+        is created on the <a href="#mailbox">message bus</a>, and the agent is recorded in the
         <code class="path">server/agents/registry.py</code> registry so <code>list_agents</code> and the
-        UI can see it. Detached agents (below) and <code>/subagent</code>-launched runs are additionally
-        recorded in the unified task registry (<code class="path">server/tasks/registry.py</code>, the
-        <code>agent_tasks</code> table from migration 007, kinds <code>shell|agent|workflow|ci</code>),
-        which emits <code>task_event</code> lifecycle events through
-        <code class="path">server/tasks/events.py</code> so they surface in the global background-tasks
-        panel.</p></li>
+        UI can see it. The on-disk <a href="arch-agent-recorder.html">journal</a> opens here too, before
+        the first model call, and with it a row in the unified task registry
+        (<code class="path">server/tasks/registry.py</code>, the <code>agent_tasks</code> table from
+        migration 007, kinds <code>shell|agent|workflow|ci</code>) pointing at the journal's event log.
+        That is what makes <code>task_output</code> work for <em>any</em> agent, not just a detached
+        one, and what emits <code>task_event</code> lifecycle events through
+        <code class="path">server/tasks/events.py</code> into the global background-tasks panel.</p></li>
       <li><h4>Resolves the model</h4><p>Agents <b>inherit the session-selected model</b> through a
         <code>model_id_override</code> threaded from <code>/api/chat</code>. There is no hardcoded
-        per-type model. With no override it falls back to your configured default chat model (then
-        <code>sonnet</code>, then the first configured model). Fallback resolution skips on-device
-        <code>local:</code> entries: <b>agents are cloud-only</b>, and when every configured chat
-        model is local the run fails early with an explanatory error (cron and headless turns refuse
-        local models the same way).</p></li>
+        per-type model. A <code>spawn_agent</code> call can override it with a <code>chat_models</code>
+        key; an unknown key resolves through the family alias ("sonnet" to the newest configured
+        <code>sonnet*</code>), and an override that still cannot be honoured falls back to the session
+        model with a <code>model_warning</code> on the tool result rather than failing silently
+        (<code class="path">server/agents/model_resolve.py</code>). With no override at all it falls
+        back to your configured default chat model (then <code>sonnet</code>, then the first configured
+        model). <b>On-device models are first-class here when they support tool calling</b>: those run
+        through the same <code>LocalAdapter</code> interactive chat uses, served with
+        <code>mark_busy</code> so a model switch cannot stop the server mid-run. A chat-only local model
+        is refused up front with a readable error, as is a structured-output schema on a local model,
+        and when no configured entry can drive an agent loop the run fails early instead of erroring at
+        the provider call.</p></li>
       <li><h4>Builds a filtered tool pool</h4><p>Agents use the same
         <a href="arch-tools.html#progressive-disclosure">progressive tool disclosure</a> as chat:
         <code>activate_from_history</code> plus <code>assemble_partitioned_pool</code>, with the
@@ -81,20 +95,44 @@
         deduplicates by name, and applies the agent type's tool filter (see below).</p></li>
       <li><h4>Runs the loop</h4><p>Up to <code>config.max_turns</code> rounds, bounded also by the
         type's <code>deadline_seconds</code> wall-clock budget (the primary "don't loop forever"
-        brake). The mailbox is drained once at run start into the initial user message; each round
-        invokes the model, executes any <code>tool_use</code> blocks, and emits progress
-        events. It ends on any stop reason other than <code>tool_use</code>, when the turn limit is
-        reached, or when the deadline passes - and at the cap or deadline the engine forces one
-        final no-tools best-effort round rather than truncating. The completion gate is
-        deliberately off for agents.</p></li>
+        brake) and by the session cost cap. The mailbox is drained once at run start into the initial
+        user message; each round invokes the model, executes any <code>tool_use</code> blocks,
+        checkpoints the message list into the journal, and emits progress events. It ends on any stop
+        reason other than <code>tool_use</code>, at the round cap, at the deadline, or at the cost cap -
+        and each of those limits reserves one final no-tools round for the agent's report rather than
+        truncating mid-plan. The completion gate is deliberately off for agents. Whichever limit ended
+        the run is named in the result's <code>stop_reason</code>. See
+        <a href="arch-agent-recorder.html">Agent flight recorder</a>.</p></li>
     </ol>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg></span>
-      <div class="callout__body"><p>Bedrock calls for agents run on a shared 4-worker
-        <code>ThreadPoolExecutor</code>, off the request's event loop. That is why publishing progress
-        must be thread-safe (see <a href="#event-bus">the event bus</a>).</p></div>
+      <div class="callout__body"><p>Bedrock calls for agents run on a shared 16-worker
+        <code>ThreadPoolExecutor</code>, off the request's event loop. Its size is taken from the single
+        <code>AGENT_CALL_CONCURRENCY</code> knob rather than a literal of its own, because that pool is
+        what actually gates how many agent model calls can be in flight. Running the calls off-loop is
+        why publishing progress must be thread-safe (see <a href="#event-bus">the event bus</a>).</p></div>
     </div>
+
+    <h3 id="fan-out-limits">Bounding the fan-out</h3>
+    <p>Two checks sit in front of every new agent, in
+      <code class="path">server/agent_tools/spawn.py</code>, and both apply to
+      <code>team_create</code> members and blocking <code>spawn_agent</code> calls alike:</p>
+    <ul>
+      <li><b>A concurrency cap.</b> At most <code>MAX_CONCURRENT_AGENTS_PER_SESSION = 16</code> agents
+        run at once in one session. The slot is reserved with a deliberately <code>await</code>-free
+        check-then-increment, so a whole <code>asyncio.gather</code> of siblings cannot race past it,
+        and released in a <code>finally</code>. Over the cap, the agent is refused with a message
+        telling the model to wait or shrink the team. The number is locked to
+        <code>AGENT_CALL_CONCURRENCY</code> on purpose: a second, independently chosen number is how 16
+        agents once got dispatched against a 4-wide pool, leaving 12 blocked.</li>
+      <li><b>A pre-flight cost check.</b> The session cost cap is checked <em>before</em> dispatching
+        each agent, not only reactively inside its own round loop, so agent N+1 never starts once the
+        combined spend of agents 1 through N has already cleared the cap. Without it each sibling found
+        out only after starting, having already paid for its system prompt and tool catalog.</li>
+    </ul>
+    <p>Per-type turn and time budgets are user-overridable through <code>agent_limits</code> in
+      <code class="path">config.json</code>, per type or under a <code>"default"</code> key.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
@@ -108,8 +146,13 @@
         git worktree to write into. Its result is folded into a later turn by
         <code class="path">server/agents/completion_inject.py</code> (<code>inject_completions</code>);
         the model polls with <code>task_status</code> / <code>task_output</code> and cancels with
-        <code>task_cancel</code>. At most <code>DETACHED_PER_SESSION_CAP = 8</code> run concurrently per
-        session.</p>
+        <code>task_cancel</code>. Two separate limits apply: at most
+        <code>DETACHED_PER_SESSION_CAP = 8</code> detached agents are accepted per session, and a
+        server-wide semaphore, <code>DETACHED_CONCURRENCY = 2</code>, decides how many of those actually
+        run at a time, so fire-and-forget spawns cannot starve the shared model-call pool that blocking
+        spawns use. When the run finishes after its launching turn has ended, its report is delivered
+        into the session as an agent report row rather than lost (see
+        <a href="arch-agent-recorder.html">Agent flight recorder</a>).</p>
       <p><b>Worktree harvest.</b> When a worktree-isolated agent finishes, its changes are
         auto-applied <b>uncommitted</b> onto the spawning branch and the worktree is removed
         (<code>harvest_agent_worktree</code>, <code class="path">server/git/worktree_harvest.py</code>).
@@ -142,8 +185,11 @@
       dispatch through the router too, with the caller's id, depth, and team threaded via the
       ambient <code>agent_nesting_ctx</code> context variable; <code>complete_coordination</code> is
       a normal tool call whose summary is captured from the engine's frames rather than a hard
-      mid-round stop. Tool output is capped at 50K characters per result before it
-      is fed back to the model.</p>
+      mid-round stop. Tool output is budgeted the same way chat budgets it, around 50,000 bytes per
+      result, keeping the head and the tail and naming a cache file the model can read in full with
+      <code>read_cached_result</code>. Results that are themselves model prompts (prompt and folder
+      skills, <code>summarize_transcript</code>, <code>analyze_document</code>) are exempt, because
+      their instructions sit at the tail.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0Z"/></svg></span>
@@ -201,14 +247,19 @@
         <code>.whisper/agents/&lt;name&gt;.md</code> files: YAML frontmatter over a markdown system
         prompt. They load from two scopes - project
         (<code>&lt;workspace&gt;/.whisper/agents/</code>) and user
-        (<code>&lt;config_dir&gt;/.whisper/agents/</code>) - with project winning name collisions,
+        (<code class="path">~/.whisper/agents/</code> in an installed app, the checkout's own
+        <code>.whisper/agents/</code> in a source install) - with project winning name collisions,
         and they resolve before the built-in <code>AGENT_TYPES</code>, so a custom type can shadow a
-        built-in name.</li>
+        built-in name. The frontmatter keys that are read are <code>name</code>, <code>tools</code>,
+        <code>read_only</code>, <code>model</code> and <code>max_turns</code>; the markdown body is the
+        system prompt.</li>
       <li><b>Ephemeral types</b> are built in-memory at spawn time from an inline
         <code>agent_definition</code> object passed to <code>spawn_agent</code> instead of a
         registered type name; they are never written to disk.</li>
       <li><b><code>promote_agent_type</code></b> saves an ephemeral type used earlier in the session
-        out to a <code>.whisper/agents/</code> file, re-validating it on the way.</li>
+        out to a <code>.whisper/agents/</code> file, re-validating it through the same builder on the
+        way rather than trusting the stored definition. Its <code>scope</code> parameter picks
+        <code>project</code> (the default) or <code>user</code>.</li>
     </ul>
     <p>Every custom or ephemeral config passes through the exact same <code>WRITE_TOOLS</code> plus
       registry-backstop filtering as the built-in presets, so a file- or model-authored type cannot
@@ -226,14 +277,23 @@
         with <code>asyncio.gather</code>. Every member inherits the session model and is tagged with the
         shared <code>team_id</code>, so its events land in the same card.</p></li>
       <li><h4>Aggregate and finish</h4><p>When all members finish, a <code>team_completed</code> event is
-        published and the tool returns a JSON summary (each member's name, type, status, turns, and a
-        trailing slice of its output) back to the model.</p></li>
+        published and the tool returns a JSON summary back to the model. That summary carries each
+        member's <b>full report</b> (bounded at 6,000 characters), never just a trailing slice, headed
+        by its status in words, its round count, and a <code>task_output &lt;agent_id&gt;</code> pointer.
+        Ahead of the members sits the relay note, which states outright that the user has not seen any
+        of this. A manifest of the team's members is written to disk at the same time, so a restart can
+        find every member's record from the team id alone.</p></li>
     </ol>
     <p>A running team can be stopped mid-flight: <code>POST /api/teams/{team_id}/stop</code> sets a stop
       flag and cancels the gather task, and each member publishes a <code>stopped</code> event as its
-      loop is cancelled. Agents can also spawn their own children with <code>spawn_agent</code>; the
-      child inherits the parent's <code>team_id</code> and event channel, so "agents spawning agents"
-      renders as badged child rows under the same card rather than vanishing.</p>
+      loop is cancelled. The flag is what distinguishes the two ways a gather can be cancelled. With it
+      set, the model gets each member's salvage report in place of a bare "stopped by user". Without it
+      the <em>outer turn</em> was cancelled and nobody will read the tool result at all, so the members
+      are stopped, given a few seconds to write their salvage reports, and those reports are delivered
+      into the session as a row the next turn reads. Agents can also spawn their own children with
+      <code>spawn_agent</code>; the child inherits the parent's <code>team_id</code> and event channel,
+      so "agents spawning agents" renders as badged child rows under the same card rather than
+      vanishing.</p>
 
     <h2 id="mailbox">Inter-agent messaging</h2>
     <p>Agents coordinate through a mailbox, not shared memory. The <code>MessageBus</code> in
@@ -281,21 +341,44 @@
 
     <h3 id="phases">Event phases</h3>
     <p>Runtime events are plain payloads (no <code>type</code> field) carrying an <code>agent_id</code>,
-      the optional <code>team_id</code> and <code>parent_agent_id</code>, and a <code>phase</code>. The
-      phases you will see over a run:</p>
+      the agent's name and type, the optional <code>team_id</code> and <code>parent_agent_id</code>, and
+      a <code>phase</code>. Every event the runtime emits is journaled as well as published, so the
+      on-disk log and the live card see the same sequence; the publish is a no-op when a run has no
+      channel, the journal write always happens. The phases you will see over a run:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Phase</th><th>When</th></tr></thead>
       <tbody>
         <tr><td><code>team_started</code></td><td>A team is announced with its member roster.</td></tr>
-        <tr><td><code>started</code></td><td>An agent begins; carries the task preview, model, and max turns.</td></tr>
-        <tr><td><code>turn_start</code></td><td>A new loop iteration starts.</td></tr>
-        <tr><td><code>text</code></td><td>The agent produced text this turn (including its self-check).</td></tr>
-        <tr><td><code>tool_call</code> / <code>tool_result</code></td><td>A tool was invoked, then returned (with a short and a fuller preview).</td></tr>
-        <tr><td><code>completed</code> / <code>turn_limit</code></td><td>The agent finished, or stopped at its turn limit.</td></tr>
+        <tr><td><code>started</code></td><td>An agent begins; carries the task preview, the resolved model, <code>max_turns</code> and <code>deadline_s</code>.</td></tr>
+        <tr><td><code>turn_start</code></td><td>A new loop iteration starts, stamped with the budget readout below.</td></tr>
+        <tr><td><code>text</code></td><td>The agent produced text this turn (including its self-check). Buffered per round and flushed once, not once per streamed delta.</td></tr>
+        <tr><td><code>tool_call</code> / <code>tool_result</code></td><td>A tool was invoked, then returned. Each carries a short preview and a fuller one, so a row can expand to the whole input or output.</td></tr>
+        <tr><td><code>completed</code> / <code>turn_limit</code></td><td>The agent finished, or stopped at a limit. <code>turn_limit</code> carries the <code>stop_reason</code> that names which limit.</td></tr>
         <tr><td><code>stopped</code> / <code>failed</code></td><td>The agent was cancelled by the user, or raised an error.</td></tr>
         <tr><td><code>team_completed</code></td><td>Every member of a team has finished.</td></tr>
       </tbody>
     </table></div>
+    <p>Two more phases exist only in the journal, never on the bus: <code>resumed</code>, written when a
+      stopped agent is picked up again, and <code>finished</code>, the terminal record with the status,
+      stop reason and round count.</p>
+
+    <h3 id="budget-readout">The budget readout on turn_start</h3>
+    <p>Every <code>turn_start</code> is stamped by <code>budget_readout</code>
+      (<code class="path">server/agents/runtime_support.py</code>), a pure function whose every input is
+      passed in, so a reloaded history renders identical bars:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Field</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td><code>max_turns</code></td><td>The round cap including any live extension granted by the Extend button.</td></tr>
+        <tr><td><code>elapsed_s</code></td><td>Seconds since the run started, to one decimal.</td></tr>
+        <tr><td><code>deadline_s</code></td><td>The wall-clock budget plus any extension; <code>null</code> for a type with no time limit.</td></tr>
+        <tr><td><code>cost_usd</code></td><td>Estimated spend so far from the run's own usage totals. <code>null</code>, rather than zero, when the model has no price entry.</td></tr>
+        <tr><td><code>budget_state</code></td><td><code>finishing</code> once the coming round is the last one (the cap, 90 percent of the time budget, or a cost cap already tripped), else <code>working</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The SPA reads exactly these fields for an agent row's budget bars and its state pill
+      (<code class="path">src/hooks/chatStream/agentBudget.ts</code>); nothing there is computed from the
+      browser's own clock.</p>
 
     <h2 id="to-the-client">Getting to the client</h2>
     <p>The event bus does not talk to the browser directly. While the chat turn runs the tool batch, the
@@ -303,12 +386,14 @@
       and drains it in a tight loop, re-emitting each event as a <code>team_progress</code> SSE frame.
       Draining happens <em>during</em> the batch, so a long-running <code>team_create</code> streams
       activity in real time instead of arriving in one burst when the tool finally returns.</p>
-    <p>Seven event types are filtered out here: <code>cron_event</code>, <code>memory_event</code>,
+    <p>Eight event types are filtered out here: <code>cron_event</code>, <code>memory_event</code>,
       <code>task_event</code>, <code>cron_progress</code>, <code>ci_progress</code>,
-      <code>ci_result</code>, and <code>session_message</code> are skipped, because a separate
-      long-lived stream,
-      <code>/api/sessions/{id}/events</code>, delivers those (<code>task_event</code> is the new unified
-      background-task lifecycle role). Skipping them prevents double-rendering. On the client, the SPA groups
+      <code>ci_result</code>, <code>session_message</code>, and <code>workflow_event</code> are skipped,
+      because a separate long-lived stream, <code>/api/sessions/{id}/events</code>, delivers those
+      (<code>task_event</code> is the unified background-task lifecycle role, and a workflow run also has
+      its own per-run stream). Skipping them prevents double-rendering: without the
+      <code>workflow_event</code> entry a detached workflow rendered mid-batch as if it were this turn's
+      own subagent team. On the client, the SPA groups
       <code>team_progress</code> frames by <code>team_id</code> and <code>agent_id</code> into the live
       report card, badging spawned children under their parent. See
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for the wider SSE frame set
@@ -317,6 +402,8 @@
     <h2 id="key-files">Key files</h2>
     <div class="spec">
       <dt><code class="path">server/agents/runtime.py</code></dt><dd><code>run_agent</code>: policy setup, model resolution, the <code>run_turn</code> drain loop, and progress events.</dd>
+      <dt><code class="path">server/agents/runtime_support.py</code></dt><dd>Worktree entry and harvest, the structured-output distillation, model resolution, and <code>budget_readout</code>.</dd>
+      <dt><code class="path">server/agents/journal.py</code></dt><dd>The on-disk record of every run, its report template, and the relay note. See <a href="arch-agent-recorder.html">Agent flight recorder</a>.</dd>
       <dt><code class="path">server/agents/config.py</code></dt><dd>Agent type presets (turn limits + deadlines), the write-tool set, and <code>filter_tools_for_agent</code>.</dd>
       <dt><code class="path">server/agents/custom_config.py</code></dt><dd>Custom <code>.whisper/agents/*.md</code> types and ephemeral <code>agent_definition</code> configs.</dd>
       <dt><code class="path">server/agents/messaging.py</code></dt><dd>The inter-agent mailbox (<code>MessageBus</code>).</dd>
@@ -331,7 +418,9 @@
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      <div class="callout__body"><p><b>Related:</b> <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>,
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-agent-recorder.html">Agent flight recorder</a>
+        for the journal, reports and budgets,
+        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>,
         <a href="arch-tools.html">Tool dispatch &amp; executors</a>,
         <a href="arch-cron.html">Cron / scheduled tasks</a>, the
         <a href="arch-ultracode.html">Ultracode workflow runtime</a> that backs detached and workflow tasks,

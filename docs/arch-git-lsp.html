@@ -111,8 +111,13 @@
         <tr><td><code>git_blame</code></td><td><code>git blame</code>, optionally scoped to a line range.</td></tr>
         <tr><td><code>git_branch_list</code></td><td><code>git branch</code>, optionally <code>-a</code> or <code>-r</code>.</td></tr>
         <tr><td><code>git_stash_list</code></td><td><code>git stash list</code>.</td></tr>
+        <tr><td><code>git_fetch</code></td><td><code>git fetch --prune</code> for one remote, or <code>--all</code>. Refreshes the remote-tracking branches and prunes the ones deleted upstream; working files are untouched.</td></tr>
       </tbody>
     </table></div>
+    <p><code>git_fetch</code> is read-only but not concurrent-safe, so it does not batch with other
+      reads, and it gets a 60-second budget because it talks to a remote. It runs outside the command
+      sandbox, on purpose: the sandbox carries no credentials, so a <code>git fetch</code> typed into a
+      sandboxed shell fails with a permission error, while the tool uses your own git credentials.</p>
     <p>Every one first calls <code>_get_git_cwd()</code>, which returns a friendly error when no
       workspace is connected or the workspace is not a repo, so the assistant gets clear feedback
       instead of a raw subprocess failure.</p>
@@ -135,9 +140,15 @@
         <tr><td><code>git_delete_branch</code></td><td>Delete a branch (<code>-d</code>, or <code>-D</code> when forced).</td></tr>
         <tr><td><code>git_merge</code></td><td>Merge a branch, optionally <code>--no-ff</code>.</td></tr>
         <tr><td><code>git_stash</code></td><td>push / pop / apply / drop.</td></tr>
+        <tr><td><code>git_pull</code></td><td>Pull a branch from its remote into the working tree. Fast-forward only (<code>--ff-only</code>) unless you ask for <code>rebase</code>.</td></tr>
         <tr><td><code>git_clone</code></td><td>Clone a URL and optionally connect it as the workspace.</td></tr>
       </tbody>
     </table></div>
+    <p><code>git_pull</code> is the counterpart to <code>git_fetch</code> and changes files, so it
+      asks. It refuses to invent a merge: without <code>rebase</code> it runs <code>--ff-only</code>, and
+      when the branch has diverged the failure says so and names the two ways forward, pulling again with
+      <code>rebase</code> or merging <code>origin/&lt;branch&gt;</code> with <code>git_merge</code>.
+      Remote and branch names are checked against a safe-ref pattern before they reach git.</p>
     <p>Two of these carry extra guardrails. <code>git_push_pr</code> refuses to run while you are on
       the default branch and tells you to make a feature branch first. <code>git_clone</code> is the
       one write tool that does not require a pre-existing workspace, so it validates the URL against a
@@ -160,6 +171,44 @@
         <a href="ref-security.html">security model</a> for what is a hard boundary versus a
         best-effort check.</p></div>
     </div>
+
+    <h2 id="github">GitHub through the gh CLI</h2>
+    <p>Anything beyond the repo itself (pull requests, issues, workflow runs, releases) goes through
+      your authenticated <code>gh</code> CLI rather than a second credential store. Three tools cover
+      it, and all three are deferred, so they are activated through <code>tool_search</code> rather than
+      advertised on every turn.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code>github</code></td><td>Runs a <code>gh</code> subcommand from argv with no leading <code>gh</code>, covering pr, issue, run, checks, release, repo, workflow, label, gist, project, and search. Argv only: no shell syntax, pipes, or redirects.</td></tr>
+        <tr><td><code>github_api</code></td><td>Reads any REST or GraphQL resource (GET and HEAD only). <code>{owner}</code> and <code>{repo}</code> resolve to the connected workspace repo.</td></tr>
+        <tr><td><code>github_api_write</code></td><td>POST, PATCH, PUT, or DELETE for anything no <code>gh</code> verb covers. Shows the request for approval, then verifies the result by re-reading the resource (a DELETE expects a 404).</td></tr>
+      </tbody>
+    </table></div>
+    <p>Which of those run freely is decided by a pure, table-driven classifier
+      (<code class="path">server/git/gh_classify.py</code>) that sorts an invocation into DENY,
+      REDIRECT, READ, WRITE, DANGER, or FORBIDDEN. Reads execute immediately. Mutations show the exact
+      command on an approval card and are re-classified against the approved payload before they run, so
+      the thing you approved is the thing that executes. An argv shape the table does not recognise
+      fails closed to an approval-gated WRITE, which means a new upstream subcommand degrades to "ask a
+      human" rather than slipping through as a read.</p>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Two hard blocks.</b> The <code>auth</code>, <code>config</code>,
+        <code>secret</code>, <code>extension</code>, and <code>alias</code> families are denied outright,
+        because they print or rewrite credentials and persistent behavior. And a small set of governance
+        actions is FORBIDDEN, meaning it never executes and is never even offered for approval: deleting
+        or transferring a repository, changing its visibility, and adding or removing collaborators or
+        teams. You do those on GitHub yourself. Separately, every GitHub mutation calls
+        <code>refuse_if_agent()</code> (<code class="path">server/approval/spec.py</code>) first: a
+        subagent auto-approves its own approval payloads, so without that check an unattended agent
+        could merge or close on its own. The refusal tells it to hand the action back to the top-level
+        session, where a human can approve it.</p></div>
+    </div>
+    <p>One more GitHub surface is not a <code>gh</code> wrapper at all: <code>github_actions</code>
+      (<code class="path">server/prompt_tools/github_actions.py</code>) walks you through adding Claude
+      to a repository's Actions CI, checking the <code>gh</code> CLI and its auth scopes and detecting
+      the repository as it goes.</p>
 
     <h2 id="worktrees">Worktrees</h2>
     <p>Git worktrees show up in two distinct shapes: a <b>session worktree</b> that pins a whole chat
@@ -253,7 +302,7 @@
       <dt><code class="path">GET /api/git/status</code></dt><dd>Branch, clean flag, and a per-file status list for indicators.</dd>
       <dt><code class="path">GET /api/git/changes</code></dt><dd>Combined status + diff in one round trip, behind a 1-second TTL LRU cache that absorbs the assistant's tool-loop and the panel's auto-poll.</dd>
       <dt><code class="path">GET /api/git/branch</code></dt><dd>Current branch, default branch, and whether they match.</dd>
-      <dt><code class="path">GET /api/git/file-diff</code></dt><dd>One file's diff against HEAD, shaped for the side-by-side viewer. The response's <code>mode</code> tells the client how to render: <code>full</code> ships both sides for whole-file alignment in the browser, <code>hunks</code> ships git's own parsed diff for files too large to align there, <code>binary</code> has nothing to show line by line.</dd>
+      <dt><code class="path">GET /api/git/file-diff</code></dt><dd>One file's diff against HEAD, shaped for the side-by-side viewer. The response's <code>mode</code> tells the client how to render: <code>full</code> ships both sides for whole-file alignment in the browser, <code>hunks</code> ships git's own parsed diff for files too large to align there, <code>binary</code> has nothing to show line by line, and <code>error</code> carries a reason the file could not be read. The side-by-side viewer in <code class="path">src/components/workspace/DiffViewer.tsx</code> renders whichever mode arrives.</dd>
       <dt><code class="path">POST /api/git/restore</code></dt><dd>Undo changes to a single tracked file, or remove an untracked one.</dd>
       <dt><code class="path">GET / POST /api/git/worktrees</code></dt><dd>List worktrees, or add one (path defaults to <code>../&lt;repo&gt;-&lt;branch&gt;</code> next to the main checkout).</dd>
       <dt><code class="path">POST /api/git/worktrees/remove</code></dt><dd>Remove a worktree; refuses to remove the active workspace.</dd>
@@ -320,6 +369,7 @@
       <dt><code class="path">server/git/core.py</code></dt><dd>Root discovery, cached state queries, the <code>_run_git</code> wrapper, remote-URL normalization.</dd>
       <dt><code class="path">server/git/executor.py</code></dt><dd>Read and write git tools; the <code>do_*</code> helpers approval runs after consent.</dd>
       <dt><code class="path">server/git/diff.py</code></dt><dd>Diff fetching and parsing with size limits and transient-state detection.</dd>
+      <dt><code class="path">server/git/file_diff.py</code></dt><dd>One file's diff shaped for the side-by-side viewer, and the choice of <code>full</code>, <code>hunks</code>, <code>binary</code>, or <code>error</code> mode.</dd>
       <dt><code class="path">server/git/security.py</code></dt><dd>The secret-file pattern list and <code>contains_secret_files()</code>.</dd>
       <dt><code class="path">server/git/worktree_session.py</code></dt><dd>Session worktrees: slug validation, the <code>.whisper/worktrees</code> conventions, enter/exit, and the persisted session pins.</dd>
       <dt><code class="path">server/git/worktree_harvest.py</code></dt><dd>Harvests a finished agent's worktree delta back into the spawning tree, uncommitted.</dd>

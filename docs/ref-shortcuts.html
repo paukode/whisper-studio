@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Keyboard shortcuts - Whisper Studio Docs</title>
-  <meta name="description" content="Keyboard shortcuts for Whisper Studio: sending chat, the ESC kill switch, global app keys, voice submit, and navigating these docs.">
+  <meta name="description" content="Keyboard shortcuts for Whisper Studio: sending chat, the ESC kill switch, global app keys, the workspace and terminal panes, voice submit, and navigating these docs.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -33,7 +33,8 @@
         <tr><td><kbd>Enter</kbd></td><td>Send the message.</td></tr>
         <tr><td><kbd>Shift</kbd> <kbd>Enter</kbd></td><td>Insert a newline without sending.</td></tr>
         <tr><td><kbd>Cmd</kbd> <kbd>Enter</kbd></td><td>Force-send now, even while the slash-command autocomplete is open. An explicit "send this" that is never captured as a menu selection.</td></tr>
-        <tr><td><kbd>/</kbd> <span class="badge badge--muted">at line start</span></td><td>Open the slash-command menu. Keep typing to filter it. See <a href="ref-slash-commands.html">Slash commands</a>.</td></tr>
+        <tr><td><kbd>/</kbd> <span class="badge badge--muted">at the start</span></td><td>Open the slash-command menu. It fires only when the slash is the first character of the message, so a slash inside a sentence stays a slash. Keep typing to filter, and after the command plus a space the menu offers that command's own options (models, effort levels, themes). See <a href="ref-slash-commands.html">Slash commands</a>.</td></tr>
+        <tr><td><kbd>@</kbd></td><td>Open the mention menu, anywhere in the message: files, skills, MCP tools, <code>@index</code>, <code>@docs</code>, and your other sessions.</td></tr>
       </tbody>
     </table></div>
 
@@ -54,12 +55,17 @@
       <thead><tr><th>Keys</th><th>Action</th></tr></thead>
       <tbody>
         <tr><td><kbd>Esc</kbd> <span class="badge badge--muted">while streaming</span></td><td>Kill the current stream and all running sub-agents (same as pressing Stop).</td></tr>
+        <tr><td><kbd>Esc</kbd> <span class="badge badge--muted">voice work pending</span></td><td>Cancel background work left over from a voice conversation.</td></tr>
       </tbody>
     </table></div>
+    <p>The same key covers voice. If nothing is streaming but work you started by voice is still
+      finishing in the background, <kbd>Esc</kbd> cancels that work instead, which is what the Stop
+      button beside the composer does at that moment.</p>
     <p>The kill switch is armed only while something is actually running, so <kbd>Esc</kbd> keeps its
       ordinary meaning everywhere else. Overlays and popups that already treat <kbd>Esc</kbd> as
-      "close me" always win: the first press dismisses the overlay, and a second press then stops the
-      stream. For the full teardown path (how the stop signal reaches sub-agents and the sandbox), see
+      "close me" always win: the first press dismisses the overlay (a composer dropdown, a dialog, the
+      command palette, an open autocomplete), and a second press then stops the stream. For the full
+      teardown path (how the stop signal reaches sub-agents and the sandbox), see
       <a href="arch-agents.html">Sub-agents &amp; the event bus</a>.</p>
 
     <div class="callout callout--warn">
@@ -83,11 +89,30 @@
     </table></div>
     <p>On Linux or Windows, substitute <kbd>Ctrl</kbd> for <kbd>Cmd</kbd> in the rows above. The
       command palette (<kbd>Cmd</kbd> <kbd>K</kbd>) is the fastest way to reach an action whose exact
-      key you do not remember, so it is worth making a habit of.</p>
+      key you do not remember, so it is worth making a habit of: type to filter, <kbd>Arrow Up</kbd> /
+      <kbd>Arrow Down</kbd> to move, <kbd>Enter</kbd> to run, <kbd>Esc</kbd> to close. It covers a new
+      conversation, connecting a workspace, the index explorer, the transcript and sidebar toggles, the
+      project memory editor, every Settings tab, and switching model, permission mode, effort, or
+      theme.</p>
+
+    <h2 id="workspace-terminal">Workspace &amp; terminal</h2>
+    <p>These belong to the panes rather than the chat, and only fire while that pane is present.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Keys</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td><kbd>Ctrl</kbd> <kbd>`</kbd></td><td>Collapse or expand the terminal panel. <kbd>Cmd</kbd> <kbd>`</kbd> does the same.</td></tr>
+        <tr><td><kbd>Ctrl</kbd> <kbd>Tab</kbd></td><td>Cycle forward through the open editor tabs.</td></tr>
+        <tr><td><kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Tab</kbd></td><td>Cycle backward through them.</td></tr>
+        <tr><td><kbd>Enter</kbd> <span class="badge badge--muted">file tree</span></td><td>On a folder, expand or collapse it; on a file, start renaming it (Finder behavior).</td></tr>
+        <tr><td><kbd>F2</kbd> <span class="badge badge--muted">file tree</span></td><td>Rename the selected file or folder.</td></tr>
+        <tr><td><kbd>Space</kbd> <span class="badge badge--muted">file tree</span></td><td>Open the file, or expand the folder.</td></tr>
+        <tr><td><kbd>Cmd</kbd> <span class="badge badge--muted">click</span></td><td>Modifier-click a file link in a reply to reveal it in Finder instead of opening it in the editor. On a localhost link, it opens a real browser tab instead of the preview pane.</td></tr>
+      </tbody>
+    </table></div>
 
     <h2 id="voice-submit">Voice submit (hands-free)</h2>
     <p>Dictation is not a key, but it is the closest thing to a hands-free "send". Click the microphone
-      icon between <b>Attach</b> and <b>Send</b> to dictate into the chat textarea; the transcript
+      icon between <b>Attach</b> and <b>Talk</b> to dictate into the chat textarea; the transcript
       appends as you speak. To submit without touching the keyboard, end a sentence with a spoken
       submit command like the examples below. The command words are stripped from the message before
       it is sent. A bare verb on its own (just "send") never fires, so a one-word mishear cannot
@@ -100,7 +125,10 @@
     </table></div>
     <p>The chat-input mic and the meeting <b>Record</b> button share one reference-counted audio stream,
       so you can dictate a message while a meeting is recording. See
-      <a href="tut-voice.html">Voice &amp; meetings</a> for dictation, diarization, and system-audio capture.</p>
+      <a href="tut-voice.html">Voice &amp; meetings</a> for dictation, diarization, and system-audio
+      capture. Dictation is not the same as a voice conversation: the <b>Talk</b> button beside the mic
+      opens one, and it has no keyboard shortcut either (see
+      <a href="tut-voice-mode.html">Voice conversations</a>).</p>
 
     <h2 id="docs-shortcuts">These docs</h2>
     <p>This documentation site has its own small helper: press <kbd>/</kbd> anywhere (as long as you are
@@ -115,9 +143,19 @@
       </tbody>
     </table></div>
 
+    <h2 id="mac-app">Mac app menu</h2>
+    <p>The Mac app adds the standard menu bar keys on top of everything above: <kbd>Cmd</kbd>
+      <kbd>R</kbd> reloads the view, <kbd>Cmd</kbd> <kbd>H</kbd> hides the app, <kbd>Cmd</kbd>
+      <kbd>Q</kbd> quits it, and the Edit menu carries the usual <kbd>Cmd</kbd> <kbd>Z</kbd>,
+      <kbd>Shift</kbd> <kbd>Cmd</kbd> <kbd>Z</kbd>, <kbd>Cmd</kbd> <kbd>X</kbd>, <kbd>Cmd</kbd>
+      <kbd>C</kbd>, <kbd>Cmd</kbd> <kbd>V</kbd>, and <kbd>Cmd</kbd> <kbd>A</kbd>. Open in Browser and
+      Show Logs sit in the Whisper Studio menu with no key of their own.</p>
+
     <h2 id="beyond-keys">Beyond keys</h2>
     <p>Whisper Studio deliberately keeps a small, memorable set of shortcuts rather than a large one.
-      Most actions are reachable two other ways that need nothing to memorize:</p>
+      Recording, the Talk button, the notifications bell, the right-hand dock, and the docs panel
+      behind the header's <b>?</b> button are all click-only on purpose. Most actions are reachable two
+      other ways that need nothing to memorize:</p>
     <div class="cols-2">
       <div class="card">
         <h3>Slash commands</h3>

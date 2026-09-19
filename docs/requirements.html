@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Requirements - Whisper Studio Docs</title>
-  <meta name="description" content="Everything you need before installing Whisper Studio: macOS, the four command-line tools, an Amazon Bedrock account, an optional Tavily key, and the disk and RAM each model mode asks for.">
+  <meta name="description" content="Everything you need before installing Whisper Studio: macOS, the four command-line tools for a source install, an Amazon Bedrock account, Nova 2 Sonic access for voice, an optional Tavily key, and the disk and RAM each model mode asks for.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,24 +15,40 @@
 <body>
   <main class="doc" data-page="requirements">
     <h1>Requirements</h1>
-    <p class="subtitle">Everything you need in place before installing: the operating system, four
-      command-line tools, an Amazon Bedrock account, an optional web-search key, and the disk and memory
-      each model mode asks for.</p>
+    <p class="subtitle">Everything you need in place before installing: the operating system, the
+      command-line tools a source install expects, an Amazon Bedrock account, model access for chat
+      and for voice, an optional web-search key, and the disk and memory each model mode asks for.</p>
 
-    <p class="lead">Whisper Studio targets macOS. Most of the heavy lifting (the venv, Node, ffmpeg,
-      ripgrep, the model weights) is done for you by <code class="path">setup.sh</code>, so this page
-      is short. Budget <b>15 to 25 minutes</b> for a first install, most of it spent downloading
-      dependencies and model weights.</p>
+    <p class="lead">Whisper Studio targets macOS. Which of the boxes below you have to tick depends on
+      how you install. The <b>Mac app</b> needs almost nothing: an Apple Silicon Mac on macOS 14 or
+      later, and an AWS account if you want cloud models. <b>From source</b>, most of the heavy lifting
+      (the venv, Node, ffmpeg, ripgrep, the serving runtime) is done for you by
+      <code class="path">setup.sh</code>. Budget <b>15 to 25 minutes</b> for a first install either
+      way, most of it spent downloading.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p><b>Platform.</b> Whisper Studio is a macOS app. Transcription uses
-        the MLX runtime (Apple Silicon), the sandbox is <code>sandbox-exec(5)</code>, and
-        <code class="path">setup.sh</code> leans on Homebrew for system packages. There is no supported
-        Windows or Linux path today, though the Python backend itself is largely portable.</p></div>
+      <div class="callout__body"><p><b>Platform.</b> Whisper Studio is a macOS app on Apple Silicon.
+        Transcription uses the MLX runtime, on-device chat uses llama.cpp with Metal or MLX, the
+        sandbox is <code>sandbox-exec(5)</code>, and <code class="path">setup.sh</code> leans on
+        Homebrew for system packages. There is no supported Windows or Linux path today, though the
+        Python backend itself is largely portable. Intel Macs are not supported.</p></div>
     </div>
 
-    <h2 id="required-tools">Required command-line tools</h2>
+    <h2 id="by-install-path">Prerequisites by install path</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th></th><th>Mac app (DMG)</th><th>From source (setup.sh)</th></tr></thead>
+      <tbody>
+        <tr><td>Hardware and OS</td><td>Apple Silicon (M1 or newer), macOS 14 or later. macOS 14.4 or later for native system-audio capture.</td><td>Apple Silicon, macOS 14 or later.</td></tr>
+        <tr><td>Python</td><td>None. CPython 3.13 ships inside the bundle.</td><td><b>Python 3.12 or newer</b> on your <code>PATH</code>.</td></tr>
+        <tr><td>Homebrew</td><td>Not needed.</td><td>Needed. The script installs the rest through it.</td></tr>
+        <tr><td>Git</td><td>Optional. Needed on the host only for the Git and GitHub tools.</td><td>Needed to clone (the script installs it if missing).</td></tr>
+        <tr><td>AWS CLI and credentials</td><td>Needed for cloud chat and for voice mode.</td><td>Same. The script installs the CLI; you still run <code>aws configure</code>.</td></tr>
+        <tr><td>Gatekeeper step</td><td>Yes, once: the build is not notarized. See <a href="installation.html#mac-app">Installation</a>.</td><td>No.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="required-tools">Required command-line tools (source install)</h2>
     <p>You need exactly four tools present before you run the setup script. Everything else the app
       depends on is installed for you (see <a href="#what-setup-installs">What setup.sh installs</a>
       below). Open Terminal and run each check command; if it prints a version, you are set.</p>
@@ -41,17 +57,19 @@
       <thead><tr><th>Tool</th><th>Why you need it</th><th>Check command</th></tr></thead>
       <tbody>
         <tr><td><b>Git</b></td><td>Clone the repository (and used at runtime for the workspace Git integration and skill/plugin cloning).</td><td><code>git --version</code></td></tr>
-        <tr><td><b>Python 3.10+</b></td><td>The FastAPI backend. It uses <code>match</code> statements, <code>asyncio.TaskGroup</code>, and modern type syntax, so 3.10 is a hard floor.</td><td><code>python3 --version</code></td></tr>
-        <tr><td><b>Homebrew</b></td><td>Installs the rest (ffmpeg, ripgrep, and Python or the AWS CLI if they are missing).</td><td><code>brew --version</code></td></tr>
-        <tr><td><b>AWS CLI</b></td><td>Authenticates to <a href="https://aws.amazon.com/bedrock/">Amazon Bedrock</a> for the Claude chat responses. You run <code>aws configure</code> once.</td><td><code>aws --version</code></td></tr>
+        <tr><td><b>Python 3.12 or newer</b></td><td>The FastAPI backend. The Bedrock bidirectional streaming SDK that voice mode needs installs only on 3.12 or newer, so 3.12 is a hard floor.</td><td><code>python3 --version</code></td></tr>
+        <tr><td><b>Homebrew</b></td><td>Installs the rest (ffmpeg, ripgrep, llama.cpp, and Git, Python or the AWS CLI if they are missing).</td><td><code>brew --version</code></td></tr>
+        <tr><td><b>AWS CLI</b></td><td>Authenticates to <a href="https://aws.amazon.com/bedrock/">Amazon Bedrock</a> for cloud chat and voice mode. You run <code>aws configure</code> once.</td><td><code>aws --version</code></td></tr>
       </tbody>
     </table></div>
 
-    <p>If Homebrew is installed but Python or the AWS CLI is not,
-      <code class="path">setup.sh</code> can install them for you. Python 3.10+ is the one gate the
-      script enforces up front: if your <code>python3</code> is older or missing, it offers to install
-      <code>python@3.12</code> via Homebrew (in an interactive terminal) and persists it on your
-      <code>PATH</code>. The fastest way to get all four in one line:</p>
+    <p>If Homebrew is installed but Git, Python, or the AWS CLI is not,
+      <code class="path">setup.sh</code> can install them for you. Python is the one gate the script
+      enforces up front, before it touches anything: if your <code>python3</code> is older than 3.12
+      or missing, it offers to install <code>python@3.12</code> via Homebrew (only in an interactive
+      terminal) and persists it on your <code>PATH</code>. Decline, or run it non-interactively, and
+      it exits rather than building a venv that cannot do voice. The fastest way to get all four in
+      one line:</p>
 
     <div class="code-block"><pre><code># Install Homebrew first if `brew --version` fails:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -71,23 +89,30 @@ brew install git python@3.12 awscli</code></pre></div>
       <code>venv/</code>, so your system Python and global toolchain stay untouched. On a fresh run it:</p>
     <ul>
       <li>Creates the <code>venv/</code> and installs the Python dependencies from
-        <code class="path">requirements.txt</code>.</li>
-      <li>Installs <b>ffmpeg</b> and <b>ripgrep</b> via Homebrew (ffmpeg decodes audio for Whisper;
-        ripgrep backs the workspace search tools).</li>
-      <li>Installs <b>Node.js</b> into the venv via <code>nodeenv</code> (the version is pinned in
+        <code class="path">requirements.txt</code>, preferring an extension-capable Homebrew Python so
+        vector search can use sqlite-vec (a numpy fallback covers the rest).</li>
+      <li>Installs <b>ffmpeg</b>, <b>ripgrep</b>, <b>git</b>, and the <b>AWS CLI</b> via Homebrew when
+        they are missing (ffmpeg decodes audio for Whisper; ripgrep backs the workspace search tools).</li>
+      <li>Installs <b>Node 22.16.0</b> into the venv via <code>nodeenv</code> (the version is pinned in
         <code class="path">.nvmrc</code>), then runs <code>npm install</code> and builds the frontend.
         You never install Node yourself.</li>
       <li>Fetches the Playwright Chromium build used by the live-preview browser tools.</li>
-      <li>Downloads the model weights for your <a href="#hardware">chosen model mode</a> into
-        <code>models/</code>.</li>
-      <li>For hybrid and local modes, installs the <b>llama.cpp</b> serving runtime
-        (<code>llama-server</code>) via Homebrew. It is the engine behind on-device chat, and the
-        script upgrades it when the installed build is too old.</li>
+      <li>Installs the <b>llama.cpp</b> serving runtime (<code>llama-server</code>) via Homebrew, in
+        <em>every</em> mode, so a model you install later from Discover serves without re-running
+        setup. It upgrades the install when the build is older than 10090, which is what current model
+        architectures need.</li>
+      <li>Fetches the three <b>always-on speech models</b> (about 190 MB): language ID plus the
+        ReDimNet2 and ECAPA speaker encoders. These are the same three the Mac app ships inside its
+        bundle, and every transcription path needs them.</li>
+      <li>Seeds a <code class="path">config.user.json</code> with the first-run defaults if you have no
+        config yet, then starts the backend on the first free port from 8000 and opens your browser.</li>
     </ul>
     <p>Homebrew is therefore doing double duty: it is one of the four things you install by hand, and
-      it is what the script reaches for to fill in ffmpeg, ripgrep, and (if needed) Python, Git, or the
-      AWS CLI. On a machine without Homebrew, the script warns and some of these steps are skipped.
-      See <a href="installation.html">Installation</a> for the full run-through and the setup flags.</p>
+      it is what the script reaches for to fill in ffmpeg, ripgrep, llama.cpp, and (if needed) Python,
+      Git, or the AWS CLI. On a machine without Homebrew, the script warns and some of these steps are
+      skipped; on-device chat in particular will not work, because <code>llama-server</code> has no
+      fallback. See <a href="installation.html">Installation</a> for the full run-through and the
+      setup flags.</p>
 
     <h2 id="aws-bedrock">Amazon Bedrock access</h2>
     <p>Cloud chat (Claude or GPT) runs on <a href="https://aws.amazon.com/bedrock/">Amazon
@@ -120,6 +145,27 @@ brew install git python@3.12 awscli</code></pre></div>
         AWS-credentials and Bedrock-connectivity check.</p></div>
     </div>
 
+    <h2 id="voice-access">Voice conversations: Amazon Nova 2 Sonic access</h2>
+    <p>Talking to the assistant out loud is a separate grant from chat. The voice stream runs on
+      <b>Amazon Nova 2 Sonic</b> (<code>amazon.nova-2-sonic-v1:0</code>), so you need that model
+      enabled in the Bedrock region voice uses, on the same credentials as chat. Three things decide
+      whether the <b>Talk</b> button is available:</p>
+    <ul>
+      <li><b>Model access.</b> Request access to Nova 2 Sonic in the Bedrock console, in the region
+        below.</li>
+      <li><b>The region.</b> Voice follows your <b>Bedrock Region</b> setting unless you override it
+        with the <code>voice.region</code> config key. The default is <code>us-east-1</code>. Nova 2
+        Sonic is offered in <code>us-east-1</code>, <code>us-west-2</code>, <code>eu-north-1</code>,
+        and <code>ap-northeast-1</code> only, so if your chat region is elsewhere, set
+        <code>voice.region</code> to one of these.</li>
+      <li><b>Python 3.12 or newer</b>, because the Bedrock bidirectional streaming SDK installs only
+        there. The Mac app bundles 3.13, so this only ever bites a source install.</li>
+    </ul>
+    <p>When any of these is missing the <b>Talk</b> button is disabled and its tooltip names the
+      actual reason, including the model id and region to check. Dictation (the microphone button) is
+      unaffected: it transcribes on-device and needs no Bedrock access at all. See
+      <a href="tut-voice-mode.html">Voice conversations</a>.</p>
+
     <h2 id="optional-tavily">Optional: a Tavily key for web search</h2>
     <p>The assistant's web-search tool is powered by <a href="https://tavily.com">Tavily</a>. It is
       entirely optional, and only <code>web_search</code> needs a provider: either a Tavily key, or
@@ -138,16 +184,16 @@ source ~/.zshrc</code></pre></div>
     <h2 id="hardware">Hardware, by model mode</h2>
     <p>The disk and memory you need depend on which <b>model mode</b> you run in. The mode decides
       where indexing and retrieval run and, with that, which model <b>weights</b> end up on your
-      machine as you use the app (nothing is downloaded at install time). It is separate from the
-      chat-model choice in the toolbar. You pick a mode with a flag at
-      install time (<code>--cloud</code>, <code>--hybrid</code>, <code>--local</code>) or change it any
-      time under Settings, so this is not a permanent commitment.</p>
+      machine as you use the app. It is separate from the chat-model choice in the composer. A fresh
+      install starts in <b>local</b> mode; you can pick a different one with a flag at install time
+      (<code>--cloud</code>, <code>--hybrid</code>, <code>--local</code>) or change it any time under
+      Settings, so this is not a permanent commitment.</p>
 
     <div class="table-wrap"><table>
       <thead><tr><th>Mode</th><th>What runs on-device</th><th>On-device weights (downloaded on demand)</th><th>Footprint</th></tr></thead>
       <tbody>
         <tr>
-          <td><b>Cloud</b> <span class="badge badge--muted">default</span></td>
+          <td><b>Cloud</b></td>
           <td>Only transcription. Embeddings, reranking, entity extraction, and chat all run on Bedrock.</td>
           <td>None beyond the transcription models.</td>
           <td>Lean. The smallest install.</td>
@@ -159,7 +205,7 @@ source ~/.zshrc</code></pre></div>
           <td>About 5 GB of index weights once you index a folder; you decide at runtime what actually runs.</td>
         </tr>
         <tr>
-          <td><b>Local</b></td>
+          <td><b>Local</b> <span class="badge badge--muted">first-run default</span></td>
           <td>Everything on-device: chat (a model you install from Discover), embeddings and reranking (Qwen3), entity extraction (GLiNER), and transcription. Fully offline.</td>
           <td>The same index stack and runtime as Hybrid (~5 GB). Chat models are installed per model from Settings &rarr; Models &rarr; Discover.</td>
           <td>~5 GB of index weights, plus several GB per chat model you install, plus the RAM to load the ones you run.</td>
@@ -167,11 +213,12 @@ source ~/.zshrc</code></pre></div>
       </tbody>
     </table></div>
 
-    <p>The rule of thumb: <b>nothing lands on disk at install time</b>. Every model downloads on
-      demand, exactly like the Mac app's first launch: the transcription engines on your first
-      recording, and in Hybrid and Local the same ~5 GB index stack (Qwen3 embed and rerank, GLiNER)
-      on your first index build. No mode pulls a chat model: a fresh install ships none, and
-      on-device chat models are chosen and downloaded per model (several GB each) from
+    <p>The rule of thumb: <b>install time pulls only the three always-on speech models</b> (about
+      190 MB: language ID and the two speaker encoders). Everything else downloads on demand, exactly
+      like the Mac app's first launch: the transcription engines on your first recording, and in
+      Hybrid and Local the same ~5 GB index stack (Qwen3 embed and rerank, GLiNER) on your first index
+      build. No mode pulls a chat model: a fresh install ships none, and on-device chat models are
+      chosen and downloaded per model (several GB each) from
       <b>Settings &rarr; Models &rarr; Discover</b>, so the total depends on which you install. The
       difference between Hybrid and Local is what you let run: Hybrid mixes per capability; Local
       commits to running everything locally.</p>
@@ -188,18 +235,20 @@ source ~/.zshrc</code></pre></div>
 
     <p>A few practical notes on the on-device weights:</p>
     <dl class="spec">
-      <dt><code class="path">models/</code></dt><dd>Where every weight lands when it is downloaded on demand. Downloads are idempotent and resume on first use if interrupted.</dd>
-      <dt>Memory</dt><dd>The ~5 GB figure is disk for the index stack. On-device chat with whichever model you install additionally needs enough free RAM to hold it while it runs. You do not have to guess: Discover grades every model against your machine's memory before you download, so you see whether it fits (and how much free RAM it needs) before committing. The smaller index models (Qwen3, GLiNER) are lighter.</dd>
-      <dt>Apple Silicon</dt><dd>The on-device runtimes (MLX for transcription, llama.cpp with Metal for chat models) are built for Apple Silicon. On-device chat is a macOS-arm64 feature.</dd>
+      <dt><code class="path">models/</code></dt><dd>Where every weight lands when it is downloaded on demand (at the repo root for a source install, under <code class="path">~/.whisper</code> for the Mac app). Downloads are idempotent and resume on first use if interrupted.</dd>
+      <dt>Memory</dt><dd>The ~5 GB figure is disk for the index stack. On-device chat with whichever model you install additionally needs enough free RAM to hold it while it runs. You do not have to guess: Discover grades every model against your machine's memory before you download, so you see whether it fits (and how much free RAM it needs) before committing. Only one on-device chat model is resident at a time, across both serving engines, because chat weights and the speech stack share the same unified memory. The smaller index models (Qwen3, GLiNER) are lighter.</dd>
+      <dt>Apple Silicon</dt><dd>The on-device runtimes (MLX for transcription, llama.cpp with Metal or MLX for chat models) are built for Apple Silicon. On-device chat is a macOS-arm64 feature.</dd>
     </dl>
 
     <h2 id="pick-a-mode">Not sure which mode?</h2>
-    <p>If you are just getting started, the first-run default <b>Hybrid</b> is a fine place to stay
-      (chat on Bedrock, index on-device once you build one). Pick <b>Cloud</b> for the leanest
-      footprint with everything on Bedrock. Reach for <b>Local</b> only when you want everything to
-      run offline and you have the disk and memory to spare, and for <b>Hybrid</b> when you want to
-      keep chat on Bedrock but run some of the index stack on-device. The full trade-offs, including
-      which backend handles what, are on the <a href="tut-model-modes.html">Model modes</a> page.</p>
+    <p>A fresh install starts in <b>Local</b>, so nothing leaves the machine until you decide
+      otherwise. That is a fine place to stay if you want everything offline and have the disk and
+      memory for an on-device chat model. Switch to <b>Hybrid</b> when you want cloud chat with some
+      of the index stack on-device, and to <b>Cloud</b> for the leanest footprint with everything on
+      Bedrock. Nothing is locked in: you change the mode in Settings at any time, and you can chat on
+      Bedrock from a Local-mode install without switching, because the picker never hides every model.
+      The full trade-offs, including which backend handles what, are on the
+      <a href="tut-model-modes.html">Model modes</a> page.</p>
 
     <div class="card-grid">
       <a class="card card--link" href="installation.html">

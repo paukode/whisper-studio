@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Whisper Studio - Documentation</title>
-  <meta name="description" content="Whisper Studio: a native Mac app, download and drag to Applications to install. Real-time speech transcription, chat with Claude or GPT on Amazon Bedrock (or fully on-device in local mode), and a full development environment in one browser tab.">
+  <meta name="description" content="Whisper Studio: a native Mac app, download and drag to Applications to install. Real-time speech transcription, spoken conversations, chat with Claude or GPT on Amazon Bedrock (or fully on-device), and a full development environment in one browser tab.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -19,19 +19,19 @@
         <span class="badge"><span class="dot"></span>A native Mac app</span>
         <h1>Whisper Studio</h1>
         <p class="lede">Download it, drag it into Applications, open it. That's the whole install.
-          Whisper Studio is a native Mac app for real-time transcription, chat with Claude or GPT
-          (or a fully on-device model), and a full development environment (file tree, editor,
-          terminal, Git, LSP), all behind one composer.</p>
+          Whisper Studio is a native Mac app for real-time transcription, chat (typed or spoken) with
+          Claude or GPT or a fully on-device model, and a full development environment (file tree,
+          editor, terminal, Git, LSP), all behind one composer.</p>
 
         <div class="callout callout--tip">
           <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span>
           <div class="callout__body"><p class="callout__title">Drag-and-drop install, no terminal
             needed</p>
             <p>Grab the DMG from <a href="https://github.com/paukode/whisper-studio/releases">the
-              Releases page</a>, drag <b>Whisper Studio</b> into <b>Applications</b>, and open it. On
-              first launch, right-click the app and choose <b>Open</b> (the build is not notarized).
-              Apple Silicon, macOS 14 or later. Prefer to build from source instead? See
-              <a href="installation.html">Installation</a>.</p></div>
+              Releases page</a>, drag <b>Whisper Studio</b> into <b>Applications</b>, and open it. The
+              build is not notarized, so the first launch needs one extra click in System Settings
+              (or one <code>xattr</code> command). Apple Silicon, macOS 14 or later. Prefer to build
+              from source instead? See <a href="installation.html">Installation</a>.</p></div>
         </div>
 
         <div class="hero__badges">
@@ -39,6 +39,7 @@
           <span class="badge badge--muted">FastAPI + React 19</span>
           <span class="badge badge--muted">Bedrock (Claude · GPT) or local</span>
           <span class="badge badge--muted">On-device Whisper + Parakeet + Canary</span>
+          <span class="badge badge--muted">Voice mode (Nova 2 Sonic)</span>
           <span class="badge badge--muted">No telemetry</span>
         </div>
         <div class="hero__cta">
@@ -61,8 +62,8 @@
     </figure>
 
     <h2 id="quick-guideline">Quick guideline</h2>
-    <p>If you already have Python 3.10+, Homebrew, Git, and the AWS CLI configured, you are four
-      steps from a running app. The setup script provisions everything else in an isolated
+    <p>If you already have Python 3.12 or newer, Homebrew, Git, and the AWS CLI configured, you are
+      four steps from a running app. The setup script provisions everything else in an isolated
       <code>venv/</code>.</p>
     <ol class="steps">
       <li>
@@ -77,13 +78,14 @@ cd whisper-studio</code></pre></div>
       </li>
       <li>
         <h4>Open the URL it prints</h4>
-        <p>Something like <code>http://127.0.0.1:8000</code>. Click the gear icon and set your
-          <b>Bedrock Region</b> and <b>Default Model</b>.</p>
+        <p>Something like <code>http://127.0.0.1:8000</code>; the script opens it for you. Click the
+          gear icon and set your <b>Bedrock Region</b> under Keys and permissions.</p>
       </li>
       <li>
-        <h4>Say hello</h4>
-        <p>Type <code>hello</code> in chat. If Claude responds, you are done. Transcription needs no
-          setup - the speech model auto-downloads on your first recording.</p>
+        <h4>Pick a model and say hello</h4>
+        <p>Choose a model from the chip in the composer toolbar, then type <code>hello</code> in chat.
+          If the answer streams back, you are done. Transcription needs no setup - the speech engine
+          downloads on your first recording.</p>
       </li>
     </ol>
     <div class="callout callout--tip">
@@ -115,8 +117,19 @@ cd whisper-studio</code></pre></div>
       <div class="card">
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg></div>
         <h3>Chat with Claude</h3>
-        <p>Streaming tokens, tool use, attachments, slash commands, and voice-submit, via Amazon Bedrock
-          (Claude or GPT), or an on-device model in local mode.</p>
+        <p>Streaming tokens, tool use, attachments, and slash commands, via Amazon Bedrock
+          (Claude or GPT), or an on-device model. Send a message while it is still working and it is
+          folded into the running turn; press Stop and the partial answer and every tool step you saw
+          stay in the transcript.</p>
+      </div>
+      <div class="card">
+        <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></svg></div>
+        <h3>Talk, don't type</h3>
+        <p>Hit <b>Talk</b> and have a spoken conversation. Amazon Nova 2 Sonic carries the voice while
+          your session's model does the work through the same tools as typed chat, approvals included.
+          Interrupt it any time; long jobs keep running in the background and it reports back when they
+          land. Everything spoken is written into the chat.
+          <a href="tut-voice-mode.html">How it works &rarr;</a></p>
       </div>
       <div class="card">
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 6-6 6 6 6M16 6l6 6-6 6"/></svg></div>
@@ -129,6 +142,34 @@ cd whisper-studio</code></pre></div>
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6Z"/></svg></div>
         <h3>Consent by design</h3>
         <p>A server-held approval pause and an OS sandbox gate every risky action. Reads run freely.</p>
+      </div>
+      <div class="card">
+        <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6M12 16v6M4.9 4.9l4.2 4.2M14.9 14.9l4.2 4.2"/><circle cx="12" cy="12" r="3.5"/></svg></div>
+        <h3>Agents that always report</h3>
+        <p>Every delegated agent is journaled to disk from its first round, so its findings survive a
+          restart or a stopped turn. Near a turn, time, or cost limit an agent gets one last round to
+          file a structured report; if it is cut off anyway, a salvage report is assembled from its
+          journal. Team cards show each agent's budget and a live pill (working, finishing up, hit
+          limit, salvaged), with an Extend button for 20 more rounds. Reports that land with nobody
+          reading wake the session, and the assistant answers from them.
+          <a href="arch-agent-recorder.html">How it works &rarr;</a></p>
+      </div>
+      <div class="card">
+        <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/></svg></div>
+        <h3>Search everything you ever said</h3>
+        <p>A full-text index over every session, transcripts included. Flip on <b>Search message
+          content</b> in the sidebar to find a conversation by what was in it, not just its title. The
+          assistant searches the same index, quotes the exact message, and reads around it, including
+          turns that were compacted away.</p>
+      </div>
+      <div class="card">
+        <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.8 7.2 17.3l.9-5.4L4.2 8.1l5.4-.8z"/></svg></div>
+        <h3>Skills it maintains itself</h3>
+        <p>When you correct it, or when the same workflow comes round again, a background review after
+          the turn turns that into a reusable skill or a memory, replaying the conversation from the
+          prompt cache. It can create, read, and patch its own skills, so the way you like a class of
+          task done is written down instead of re-explained.
+          <a href="tut-skills.html">Skills &rarr;</a></p>
       </div>
       <div class="card">
         <div class="card__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div>
@@ -179,6 +220,7 @@ cd whisper-studio</code></pre></div>
       <a class="card card--link" href="tut-first-chat.html"><h3>The question-asker</h3><p>Just wants to ask Claude and get a streamed answer. The simplest flow.</p><span class="card__meta">Tutorial: Your first chat →</span></a>
       <a class="card card--link" href="tut-documents.html"><h3>The document analyst</h3><p>Drops a contract or deck into chat and asks about it in plain English, or asks for a fresh .docx, .pptx, .xlsx, or .pdf back.</p><span class="card__meta">Tutorial: Documents →</span></a>
       <a class="card card--link" href="tut-voice.html"><h3>The meeting notetaker</h3><p>Records a call, gets a live diarized transcript, then a summary.</p><span class="card__meta">Tutorial: Voice &amp; meetings →</span></a>
+      <a class="card card--link" href="tut-voice-mode.html"><h3>The talker</h3><p>Would rather say it out loud than type it, and have the work happen while they talk.</p><span class="card__meta">Tutorial: Voice conversations →</span></a>
       <a class="card card--link" href="tut-research.html"><h3>The researcher</h3><p>Needs current information with citations, not training-time memory.</p><span class="card__meta">Tutorial: Web research →</span></a>
       <a class="card card--link" href="tut-workspace.html"><h3>The developer</h3><p>Connects a repo and lets Claude read, edit, run, and commit - gated by mode.</p><span class="card__meta">Tutorial: Workspace IDE →</span></a>
       <a class="card card--link" href="tut-cron.html"><h3>The automator</h3><p>Schedules recurring checks whose results land back in the conversation.</p><span class="card__meta">Tutorial: Scheduled tasks →</span></a>
@@ -195,14 +237,19 @@ cd whisper-studio</code></pre></div>
       </div>
       <div class="card">
         <h3>Tutorials</h3>
-        <p>Task-focused walk-throughs - chatting, recording meetings, analyzing documents, coding in
-          the workspace, scheduling jobs, and more.</p>
+        <p>Task-focused walk-throughs: <a href="tut-first-chat.html">your first chat</a>,
+          <a href="tut-voice-mode.html">voice conversations</a>,
+          <a href="tut-voice.html">recording meetings</a>,
+          <a href="tut-documents.html">analyzing documents</a>, coding in the
+          <a href="tut-workspace.html">workspace</a>,
+          <a href="tut-cron.html">scheduling jobs</a>, and more.</p>
       </div>
       <div class="card">
         <h3>Architecture</h3>
         <p>Start with the <a href="arch-overview.html">system overview</a>, then the
-          <a href="arch-chat-pipeline.html">chat pipeline</a>, then every subsystem - each with its
-          own interactive diagram.</p>
+          <a href="arch-chat-pipeline.html">chat pipeline</a>, the
+          <a href="arch-agent-recorder.html">agent flight recorder</a>, and every other subsystem -
+          each with its own interactive diagram.</p>
       </div>
       <div class="card">
         <h3>Reference</h3>

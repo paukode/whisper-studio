@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent flight recorder - Whisper Studio Docs</title>
+  <meta name="description" content="Every agent run is journaled on disk from its first round: events, message checkpoints, and a final report. Budgets reserve a reporting round, cancelled runs get a salvage report, and reports that land with no live turn wake the parent.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="arch-agent-recorder">
+    <h1>Agent flight recorder</h1>
+    <p class="subtitle">An agent's work used to live only in the tool result its parent read once. The
+      flight recorder makes the on-disk record primary: every run is journaled from its first round,
+      every run ends with a report, and a report that arrives with nobody waiting for it still reaches
+      you.</p>
+
+    <p>Three things would otherwise lose an agent's work. A tool result lives only as long as the
+      parent's context holds it. An in-memory registry does not survive a restart. A row written on a
+      normal return records nothing when a member is cancelled or crashes. The recorder answers all
+      three by writing the record while the run is alive, and by reserving the run's last round for a
+      report someone can act on.</p>
+
+    <p><b>Click a box</b> in the map below to follow one run from its first round to the answer in your
+      chat.</p>
+
+    <figure class="diagram-figure wide">
+      <div id="agent-recorder-diagram" class="diagram"></div>
+      <figcaption>The journal is written as the run happens, not assembled at the end. Whichever way the
+        run stops, the report on disk is what the parent, the card, and a later
+        <em>task_output</em> all read.</figcaption>
+    </figure>
+
+    <h2 id="the-journal">The journal directory</h2>
+    <p>Each run gets a directory under the app's storage root, keyed by session and agent id:</p>
+    <div class="code-block"><pre><code>&lt;storage&gt;/agents/&lt;session_id&gt;/&lt;agent_id&gt;/
+    meta.json       task, type, model, budgets, status, stop reason, usage
+    events.jsonl    every progress event as it happened
+    messages.json   the API message list, rewritten at every round start
+    report.md       the final report: the model's own, or a salvage one</code></pre></div>
+    <p>A team also gets <code>teams/&lt;team_id&gt;.json</code> in the same session directory: a manifest
+      of which agents made up the team, so a restart can find every member's journal from the team id
+      alone. Storage lives under the app data root, not
+      <code class="path">~/.whisper</code>, so a hand-edit in the user directory cannot destroy it. See
+      <a href="arch-persistence.html">Sessions &amp; persistence</a>.</p>
+
+    <h3 id="when-written">What is written, and when</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Moment</th><th>Written</th></tr></thead>
+      <tbody>
+        <tr><td><b>Open</b>, before the first model call</td><td><code>meta.json</code> with the task, agent type, model, turn cap and deadline, plus a <code>started</code> event. The background-task registry row is created here too, pointing at <code>events.jsonl</code>.</td></tr>
+        <tr><td><b>Every progress event</b></td><td>One JSON line appended to <code>events.jsonl</code>: <code>started</code>, <code>turn_start</code>, <code>text</code>, <code>tool_call</code>, <code>tool_result</code>, and the terminal phase. The same events feed the live report card.</td></tr>
+        <tr><td><b>Every round start</b></td><td><code>messages.json</code> is rewritten atomically with the full API message list. This checkpoint is what lets a killed run be resumed later with its context intact.</td></tr>
+        <tr><td><b>Finish</b>, however it ends</td><td><code>report.md</code>, and <code>meta.json</code> updated with the terminal status, the stop reason, the round count and token usage. The registry row is closed with the report as its result text.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The terminal write is idempotent: the first one wins. A cancelled run's salvage report can never
+      be overwritten by a later teardown. Every journal write is best-effort by contract, wrapped so it
+      can never take the run down, and a disk that cannot be written to simply means the run has no
+      journal rather than no run.</p>
+
+    <p>Because the registry row exists from the first round, <code>task_output &lt;agent_id&gt;</code>
+      tails a live agent's progress log and returns a finished one's report, regardless of how it ended
+      and regardless of whether the turn that launched it is still around.</p>
+
+    <h2 id="the-report">The report, and the round reserved for it</h2>
+    <p>An agent's last message is its return value, so the runtime makes sure the last message is a
+      report rather than the tail of a narration. The reminder that forces the final round carries a
+      fixed template: <b>findings</b> (most important first), <b>evidence</b> (file, URL, or command
+      output per finding), <b>not checked</b> (what remains open and why), <b>confidence</b> (high,
+      medium or low with a one-line reason), <b>touched</b> (files, artifacts, branches, PRs), and
+      <b>one line</b> the caller can quote. The template ends by telling the agent the caller has seen
+      nothing it wrote before that message.</p>
+
+    <p>That final round has to happen inside the budget, not after it. Three limits start it:</p>
+    <ul>
+      <li><b>The turn cap.</b> A wind-down reminder fires with five rounds left ("consolidate, do not open
+        new lines of work"), and on the last round the report template rides along with it. That round is sent
+        with tool choice set to none, so it genuinely produces an answer instead of another tool call.</li>
+      <li><b>Time.</b> The wall-clock deadline is reached at <b>90 percent</b> of the budget
+        (<code>SOFT_LIMIT_FRACTION</code>). The last tenth is reserved for writing the report, so the
+        report is written inside the budget rather than after it, where an outer limit could still kill
+        it unsaved.</li>
+      <li><b>Cost.</b> The session or daily cost cap is checked before every round, first at the hard
+        limit, then at 90 percent of it. The first trip forces one final no-tools round with the report
+        template; the second ends the run. The same soft check governs the main chat turn, so a capped
+        conversation also gets a last round to answer. See <a href="arch-costs.html">Cost tracking
+        &amp; budgets</a>.</li>
+    </ul>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
+      <div class="callout__body"><p>Reminders that force the final round are <b>appended to the last user
+        message</b>, not injected per request. A request-only injection would fork the token prefix
+        between rounds and break the moving cache checkpoint, so the wind-down text, the report
+        template, and any mid-turn message all become part of the persisted history.</p></div>
+    </div>
+
+    <h3 id="stop-reasons">Stop reasons</h3>
+    <p>Run status stays coarse (<code>completed</code>, <code>failed</code>, <code>stopped</code>) for
+      callers that branch on it. The stop reason names the limit that actually ended the run, and it is
+      what the cards and the parent's summary show:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Stop reason</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>completed</code></td><td>The agent finished its own task and wrote its report.</td></tr>
+        <tr><td><code>turn_limit</code></td><td>The round cap was reached. The capped round wrote the report.</td></tr>
+        <tr><td><code>deadline</code></td><td>The wall-clock budget hit its soft limit. The reserved round wrote the report.</td></tr>
+        <tr><td><code>cost_cap</code></td><td>The session or daily cost cap was reached. The final round wrote the report.</td></tr>
+        <tr><td><code>cancelled</code></td><td>The run was killed (Stop, the parent stream closing, a shutdown). The runtime assembled a salvage report.</td></tr>
+        <tr><td><code>error</code></td><td>The run raised. The runtime assembled a salvage report with the error in it.</td></tr>
+      </tbody>
+    </table></div>
+    <p>A turn or time limit still reports <code>status="completed"</code>, but it also sets an
+      <code>stopped_early</code> flag, and that flag is what gates the
+      <a href="tut-worktrees.html">worktree harvest</a>: partial work is kept in its worktree for
+      inspection rather than applied.</p>
+
+    <h3 id="salvage">Salvage reports</h3>
+    <p>When the model never got to write a report, the runtime writes one for it. A salvage report is
+      deterministic, built from the journal: an opening line saying plainly that the runtime assembled
+      it and after how many rounds, the error if there was one, the last three things the agent wrote
+      (tail-capped), a count of the tools it called, and a pointer to the full record
+      (<code>task_output &lt;agent_id&gt;</code>). It never pretends to be the agent's own conclusion.</p>
+    <p>A cancelled team gets a short grace period, five seconds, for its members to land their salvage
+      reports before their reports are collected and delivered.</p>
+
+    <h2 id="to-the-parent">Getting the report to the parent</h2>
+    <p>In the ordinary case the parent turn is still running and the report comes back as the tool
+      result. A <code>team_create</code> result carries <b>each member's full report</b> (bounded at
+      6,000 characters), not a trailing slice of it, with the member's stop reason, its round count and
+      a <code>task_output</code> pointer per member. Ahead of them sits the relay note, which tells the
+      assistant in as many words that these reports were not shown to the user, so it must relay what
+      matters, say how confident each report is, and point at <code>task_output</code> for the full
+      record.</p>
+
+    <h3 id="no-live-turn">When no turn is waiting</h3>
+    <p>Reports also arrive when nothing is listening: you pressed Stop, the app restarted, the agent ran
+      detached, or it was resumed after it had stopped. Those reports are persisted into the session as
+      an <b>agent report row</b> (role <code>agent_report</code>) and rendered as a report card, one
+      collapsible row per agent, the report as markdown and the stop reason named in words. A
+      notification is recorded alongside it, so it shows up in the bell panel even if you are looking at
+      another session.</p>
+    <p>The row is backend-owned rather than written by the SPA, and it is one of the few non-chat roles
+      the model is still shown: on the next turn <code>visible_chat_history</code> relabels it as a user
+      message carrying the same reports, the same per-agent headings and the same relay obligation. At
+      most <code>MAX_AGENT_REPORTS_PER_SESSION</code> (<b>20</b>) such rows are kept per session, oldest
+      dropped first. The full records stay on disk and in the task registry, so trimming the chat never
+      loses a report.</p>
+
+    <h2 id="wake">Waking the parent</h2>
+    <p>A row in the chat is not an answer. Once reports land, the parent gets its turn anyway:</p>
+    <ol class="steps">
+      <li><h4>A turn is still live</h4><p>The reports are pushed into the <b>mid-turn inbox</b>, exactly
+        like a message you type while the assistant is working, and folded into the running turn at its
+        next round. "Live" means the session's chat slot is held and its heartbeat is fresh, the same
+        pair that decides whether a typed message is queued mid-turn.</p></li>
+      <li><h4>No turn is running</h4><p>A <b>synthesis turn</b> starts: one round, no tools, on the model
+        the agents themselves ran on (resolved from a member's journal, falling back to the default chat
+        model). Its prompt is the original request, the assistant's last message before the agents
+        finished, and the reports. Its system hint says the turn was started by the runtime, not by you,
+        and that it must answer from the reports without calling tools or starting agents.</p></li>
+      <li><h4>The answer lands as an assistant bubble</h4><p>The reply is persisted as an
+        <code>agent_answer</code> row and rendered as a normal assistant message with a small label
+        reading <b>"Answered from the agents' reports"</b> plus the team name. A notification is recorded
+        too. On later turns the model reads the row back as its own previous assistant message, so the
+        conversation stays coherent.</p></li>
+    </ol>
+    <p>The guards are deliberate. Only <b>one wake per session at a time</b>. If the session cost budget
+      is already reached the wake is skipped and a notification says so, pointing out that the reports
+      are in the chat and your next message can use them. If the synthesis turn produces nothing, the row
+      still gets a plain line saying so rather than staying silent. And the whole behaviour is behind the
+      <code>wake_parent_on_reports</code> config key (default <b>true</b>); turn it off and reports still
+      land as rows, they just do not get answered on their own.</p>
+    <p><code>agent_answer</code> rows are capped per session at the same
+      <code>MAX_AGENT_REPORTS_PER_SESSION</code> limit as the report rows.</p>
+
+    <h2 id="resume-and-extend">Resuming and extending</h2>
+    <p>Because <code>messages.json</code> is checkpointed at every round start, a finished or interrupted
+      agent can be picked up where it stopped.</p>
+    <dl class="spec">
+      <dt><b>Resume</b> - <code>send_message</code> to a stopped agent</dt>
+      <dd>When <code>send_message</code> targets an agent that is not running but has a journal, the
+        runtime resumes it instead of dropping the message into a mailbox nobody drains. The agent keeps
+        its id and its record; the stored messages are replayed and the sender's text is appended as a
+        follow-up user turn. The resumed run is detached (the caller's turn does not wait), and its reply
+        comes back as an agent report row, which then wakes the parent like any other. The tool result
+        says so explicitly and names <code>task_output</code> for progress.</dd>
+      <dt><b>Extend</b> - more budget for a run that is still going</dt>
+      <dd>A run's cap and deadline are fixed when it starts, so a slow agent had to stop at the limit and
+        be resumed later with a cold context. <code>POST /api/agents/{agent_id}/extend</code> grants a
+        <em>running</em> agent extra rounds or seconds while its context is still hot. The turn engine
+        re-reads the extension dict at every round start, so a grant applies to the very next round. The
+        endpoint accepts at most 200 extra rounds and four extra hours per call, refuses a request with
+        neither, and returns 404 for an agent that is not running (a finished agent is resumed, not
+        extended). The <b>Extend</b> button on an agent row asks for <b>20 rounds</b>.</dd>
+    </dl>
+
+    <h2 id="budget-readout">The budget readout</h2>
+    <p>Every <code>turn_start</code> event is stamped with the run's budget state, computed by
+      <code>budget_readout</code> from values passed in rather than read from ambient state, so a
+      reloaded history renders exactly the same bars. The fields:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Field</th><th>What it carries</th></tr></thead>
+      <tbody>
+        <tr><td><code>max_turns</code></td><td>The round cap including any live extension.</td></tr>
+        <tr><td><code>elapsed_s</code></td><td>Seconds since the run started, to one decimal.</td></tr>
+        <tr><td><code>deadline_s</code></td><td>The wall-clock budget including any extension, or absent when the type has no time limit.</td></tr>
+        <tr><td><code>cost_usd</code></td><td>Estimated spend so far from the run's own token usage. Absent rather than zero when the model has no price entry.</td></tr>
+        <tr><td><code>budget_state</code></td><td><code>finishing</code> once the next round is the last one (the cap, 90 percent of the time budget, or a cost cap already tripped), otherwise <code>working</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The card turns those into one thin bar per dimension with the reserved final tenth drawn as a
+      hatched slice, and a pill that reads <b>working</b>, <b>finishing up</b>, <b>done</b>, <b>hit
+      limit</b>, <b>salvaged</b> or <b>failed</b>. Nothing in the pill or the bars is computed from the
+      browser's own clock.</p>
+
+    <h2 id="key-files">Key files</h2>
+    <div class="spec">
+      <dt><code class="path">server/agents/journal.py</code></dt><dd>The on-disk record: directory layout, the per-round checkpoint, the report template, the relay note, and <code>salvage_report</code>.</dd>
+      <dt><code class="path">server/agents/runtime.py</code></dt><dd><code>run_agent</code>: opens the journal before the first call, emits and journals every event, and writes the terminal report on every exit path.</dd>
+      <dt><code class="path">server/agents/runtime_support.py</code></dt><dd><code>budget_readout</code>: the rounds, time and cost stamped on every <code>turn_start</code>.</dd>
+      <dt><code class="path">server/chat/engine/runner.py</code></dt><dd>The soft limit, the reserved final round, and the live budget extension re-read at every round start.</dd>
+      <dt><code class="path">server/agents/extensions.py</code> and <code class="path">routes.py</code></dt><dd>The live grant store and the extend endpoint behind the Extend button.</dd>
+      <dt><code class="path">server/agents/wake.py</code></dt><dd>Mid-turn delivery, the one-round synthesis turn, and the guards around both.</dd>
+      <dt><code class="path">server/tasks/events.py</code></dt><dd><code>emit_agent_report</code>: persists the report row, publishes it live, triggers the wake, and records the notification.</dd>
+      <dt><code class="path">server/infrastructure/sessions.py</code></dt><dd>The report and answer row caps, and the prompt views that relabel both for the model.</dd>
+      <dt><code class="path">src/components/chat/TeamReportCard.tsx</code></dt><dd>Budget bars, the state pill, and the Extend button on a live run.</dd>
+      <dt><code class="path">src/components/chat/AgentReportCard.tsx</code></dt><dd>Reports delivered outside a live turn, one row per agent with its stop reason.</dd>
+    </div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="arch-agents.html">Sub-agents &amp; the event bus</a>
+        for the runtime that produces these records,
+        <a href="tut-subagents.html">Sub-agents &amp; teams</a> for what all of this looks like in the
+        chat, <a href="arch-costs.html">Cost tracking &amp; budgets</a> for the caps that reserve the
+        final round, and <a href="arch-persistence.html">Sessions &amp; persistence</a> for where the
+        rows and the storage root live.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/agent-recorder.js"></script>
+</body>
+</html>

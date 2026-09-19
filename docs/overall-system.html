@@ -82,14 +82,30 @@
         <code>ephemeral</code> options.</li>
       <li><b><code>visible_chat_history</code> filter.</b> Before building the Bedrock messages array,
         non-prompt rows (<code>cron_event</code> and <code>task_event</code> lifecycle rows) are
-        stripped; <code>session_message</code> is the one exception: UI-only in storage but translated
-        into a user turn. Cron and task output cards persist on disk and render in the chat, but they
-        never inflate the prompt or the token bill.</li>
+        stripped, so they persist on disk and render in the chat without inflating the prompt or the
+        token bill. Three roles are translated rather than dropped: <code>session_message</code> (a
+        message pushed in from another session) and <code>agent_report</code> (agent work that
+        finished with no live turn) both become user turns, and <code>agent_answer</code> becomes the
+        assistant's own previous message. Each of those roles carries a per-session row cap.</li>
       <li><b>Progressive tool disclosure.</b> With the <code>progressive_tools</code> flag on, a turn
         advertises a core set plus the tools this session has already activated; the rest are
         discoverable via <code>tool_search</code> from a compact index
         (<code class="path">server/chat/tool_partition.py</code>). The same partitioning applies to
         cron, subagent, and headless turns.</li>
+      <li><b>Register always, refuse at execution.</b> Plan mode, strict-RAG grounding, and workspace
+        connect or disconnect do not rewrite the advertised tools array. The catalogue stays
+        byte-stable across those flips and the restriction is applied when the call runs, because
+        rewriting the array invalidates the cached prompt prefix every time it changes.</li>
+      <li><b>One turn per session, and messages sent into it.</b> Every turn claims the session's
+        busy slot, approval continuations included. A message you send while the assistant is working
+        is queued into the running turn and folded in at its next round, not started as a second
+        turn. A heartbeat (every round, and every 30 seconds of silence) keeps the slot alive through
+        a long tool call; a slot with no sign of life for 900 seconds is reclaimed.</li>
+      <li><b>The turn cannot end on its own say-so.</b> The completion gate runs the Stop hooks,
+        verifies that files and artifact cards the reply claims actually exist, asks for a real test,
+        lint or build run when code was edited without one, and judges an active goal. Each block
+        re-injects feedback and continues the turn, bounded by
+        <code>goal_max_consecutive_blocks</code> (default 8).</li>
       <li><b>Approval flow.</b> The only legitimate path that bypasses <code>validate_command</code>:
         consent is a server-held pause, and the executor re-validates the payload itself rather than
         trusting the client. See <a href="#security-boundaries">Security boundaries</a>.</li>
@@ -111,6 +127,7 @@
         <tr><td><code>sandbox-exec(5)</code> / <code>bwrap</code></td><td>macOS/Linux sandbox profile around every shell + code execution path (including the terminal PTY)</td><td><b>Boundary</b> - the strongest layer; even if everything above is bypassed, code runs with the secret-store deny-list applied</td></tr>
         <tr><td><code>_AWS_READONLY_GUARD</code> in <code>executors/code.py</code></td><td>Monkey-patches <code>botocore</code> to reject non-read AWS calls</td><td><b>Defence-in-depth only</b> - user code in the same process can <code>del</code> the patch; the real container is <code>sandbox-exec</code></td></tr>
         <tr><td>Plugin loader (<code>enabled</code> allow-list)</td><td>Dropping a <code>.py</code> into <code>plugins/</code> does nothing until explicitly enabled</td><td><b>Boundary</b> for the drive-by-plugin vector</td></tr>
+        <tr><td>Credential environment denylist (<code class="path">server/security/sensitive_env.py</code>)</td><td>Strips GitHub tokens from sandboxed shells, and GitHub tokens plus cloud and API keys from every local MCP child process</td><td><b>Defence-in-depth</b> - exact variable names only, and the background-task shell path inherits the parent environment unscrubbed</td></tr>
       </tbody>
     </table>
 
@@ -124,6 +141,15 @@
       of SSH/GPG keys, cloud credentials (<code>~/.aws</code> is denied for generic commands but
       re-allowed per-call for the AWS tools), git credentials, browser cookies/keychains, shell
       history, and password-manager stores.</p>
+    <p>A second dimension sits on top of that deny-list: how much the command may <b>write</b>. Three
+      modes exist - write anywhere, write only inside the workspace and the temp directories, or
+      write nothing. The assistant picks between them with a <code>sandbox_permissions</code>
+      parameter (<code>workspace-write</code>, the default, <code>read-only</code>, or
+      <code>danger-full-access</code>), and asking for full access always raises an approval card
+      whatever the permission mode says. The secret deny rules are emitted last in the generated
+      profile, so a workspace that happens to be your home directory cannot re-expose
+      <code class="path">~/.ssh</code> through the writable-root allow-back. See
+      <a href="arch-sandbox.html#write-modes">Three write modes</a>.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p><b>Accepted residual.</b> Because the default is <em>allow</em>,

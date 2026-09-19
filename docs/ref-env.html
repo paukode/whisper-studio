@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Environment variables - Whisper Studio Docs</title>
-  <meta name="description" content="Environment variables that override config and control binding: HOST, PORT, BACKEND_PORT, WHISPER_TRUSTED_ORIGINS, TAVILY_API_KEY, and NO_OPEN.">
+  <meta name="description" content="Environment variables the server reads: binding (HOST, PORT, BACKEND_PORT, NO_OPEN), LAN access, AWS credentials, the Tavily key, the file-location variables, and the advanced tuning knobs.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -19,22 +19,14 @@
       server binds and starts. The environment is the highest-priority config layer, so anything set
       here wins over the project and user layers.</p>
 
-    <p>The environment variables below are the ones you are likely to set: variables
-      that steer <b>binding and startup</b> (<code>HOST</code>, <code>PORT</code>,
-      <code>BACKEND_PORT</code>, <code>NO_OPEN</code>), one that opens up <b>LAN access</b>
-      (<code>WHISPER_TRUSTED_ORIGINS</code>), and one that supplies a <b>secret</b>
-      (<code>TAVILY_API_KEY</code>). Everything else is configured through the Settings UI or
-      the user config file. A few lower-level knobs also read the environment
-      (<code>TZ</code> for cron scheduling; <code>WHISPER_RG_PATH</code>,
-      <code>WHISPER_SEARCH_TIMEOUT</code>, <code>WHISPER_GLOB_LIMIT</code>, and
-      <code>WHISPER_GREP_LIMIT</code> for the search tools; <code>WHISPER_HOME</code> to relocate the
-      app home for a packaged install; <code>WHISPER_USER_DIR</code> to relocate the user-data root
-      that defaults to <code class="path">~/.whisper</code>; and <code>WHISPER_DATA_DIR</code> to
-      override where app data lives, also settable as the <code>data_dir</code> config key), but the
-      defaults suit almost everyone. See <a href="configuration.html">Configuration</a> for how the
-      layers stack.</p>
+    <p>The variables below are grouped by what you would reach for them to do: <b>binding and
+      startup</b>, <b>credentials</b>, and <b>file locations</b>. Everything else is configured through
+      the Settings panel or the user config file. A long tail of tuning knobs also reads the
+      environment; those are collected in one <a href="#advanced">Advanced and internal</a> table at
+      the end, and their defaults suit almost everyone. See
+      <a href="configuration.html">Configuration</a> for how the layers stack.</p>
 
-    <h2 id="the-variables">The variables</h2>
+    <h2 id="the-variables">Binding and startup</h2>
     <div class="table-wrap"><table>
       <thead><tr><th>Name</th><th>Default</th><th>Effect</th></tr></thead>
       <tbody>
@@ -62,10 +54,10 @@
             rarely set it by hand.</td>
         </tr>
         <tr>
-          <td><code>TAVILY_API_KEY</code></td>
-          <td><span class="badge badge--muted">unset</span></td>
-          <td>Web-search key. Overrides the <code>tavily_api_key</code> config value. When both are set,
-            the env var wins, so key rotation is one <code>export</code> away.</td>
+          <td><code>NO_OPEN</code></td>
+          <td><code>0</code></td>
+          <td>Set <code>NO_OPEN=1</code> to skip auto-opening the browser at startup. Same effect as the
+            <code>--no-open</code> flag. Useful for SSH and headless sessions.</td>
         </tr>
         <tr>
           <td><code>WHISPER_TRUSTED_ORIGINS</code></td>
@@ -74,18 +66,92 @@
             <code>WHISPER_TRUSTED_ORIGINS=192.168.1.50,my-box</code>. Required when you bind
             <code>HOST=0.0.0.0</code> and browse from another device: the guard rejects any request whose
             <code>Host</code> is not localhost with a <code>403</code>, so set this to the host or origin
-            you actually type into the browser. See <a href="#binding-lan">Exposing on the LAN</a>.</td>
+            you actually type into the browser. Re-read on every request. See
+            <a href="#binding-lan">Exposing on the LAN</a>.</td>
         </tr>
         <tr>
-          <td><code>NO_OPEN</code></td>
+          <td><code>TZ</code></td>
           <td><span class="badge badge--muted">unset</span></td>
-          <td>Set <code>NO_OPEN=1</code> to skip auto-opening the browser at startup. Same effect as the
-            <code>--no-open</code> flag. Useful for SSH and headless sessions.</td>
+          <td>The host timezone wall-clock cron schedules fall back to: checked first, then the
+            <code class="path">/etc/localtime</code> symlink, then UTC. This is the one place the
+            environment loses to config: a non-blank <code>cron_timezone</code> wins over it, and a
+            per-job <code>schedule.tz</code> wins over both. See
+            <a href="tut-cron.html">Scheduled tasks</a>.</td>
         </tr>
       </tbody>
     </table></div>
 
-    <h2 id="binding-startup">Binding and startup</h2>
+    <h2 id="credentials">Credentials</h2>
+    <p>Whisper Studio never stores AWS credentials of its own. It authenticates to Amazon Bedrock the
+      way any AWS SDK does, so whichever of these your shell already exports is what chat, voice and
+      the AWS tools use.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Default</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>AWS_ACCESS_KEY_ID</code> / <code>AWS_SECRET_ACCESS_KEY</code></td>
+          <td><span class="badge badge--muted">unset</span></td>
+          <td>Static credentials for Bedrock. The <code>/doctor</code> check reports whether either
+            these or a profile is present. Stripped from the environment handed to MCP child processes.</td>
+        </tr>
+        <tr>
+          <td><code>AWS_PROFILE</code> / <code>AWS_DEFAULT_PROFILE</code></td>
+          <td><span class="badge badge--muted">unset</span></td>
+          <td>Named profile from <code class="path">~/.aws</code> to authenticate with, including an
+            SSO profile. The usual choice on a work machine.</td>
+        </tr>
+        <tr>
+          <td><code>TAVILY_API_KEY</code></td>
+          <td><span class="badge badge--muted">unset</span></td>
+          <td>Web-search key. Overrides the <code>tavily_api_key</code> config value. When both are set,
+            the env var wins, so key rotation is one <code>export</code> away. Stripped from MCP child
+            environments.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="locations">File locations</h2>
+    <p>Three roots decide where things land. In a dev checkout all three default to the repo root; in a
+      packaged install they split apart. Each can be relocated, which is mostly useful for tests and
+      for running two copies side by side.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Default</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>WHISPER_HOME</code></td>
+          <td>the repo root</td>
+          <td>The app home: where user-mutable state lives. The Mac app sets it to
+            <code class="path">~/Library/Application Support/WhisperStudio</code>, which then holds only
+            <code class="path">storage/</code> and <code class="path">logs/</code>. Setting it is also
+            what tells the app it is a packaged install, which moves the user root to
+            <code class="path">~/.whisper</code>.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_USER_DIR</code></td>
+          <td><code class="path">~/.whisper</code> when <code>WHISPER_HOME</code> is set, else the repo root</td>
+          <td>The user root: everything you browse, edit or delete by hand.
+            <code class="path">models/</code>, <code class="path">skills/</code>,
+            <code class="path">plugins/</code>, <code class="path">agents/</code>, the config layer, and
+            <code class="path">data/</code>.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_DATA_DIR</code></td>
+          <td><code class="path">&lt;user root&gt;/data</code></td>
+          <td>Where app data lives: the result cache, the JSON stores, the databases,
+            <code class="path">permissions.json</code>, <code class="path">voiceprints.json</code>. Wins
+            over the <code>data_dir</code> config key, which is the other way to set the same thing.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_DOCS_DIR</code></td>
+          <td>the <code class="path">docs/</code> folder beside the server</td>
+          <td>Where the bundled documentation site is read from: the pages served at
+            <code>/docs-site</code>, opened from the <b>?</b> dock panel, and searched by
+            <code>@docs</code>. Point it elsewhere to serve a different copy.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
+    <h2 id="how-binding-works">How binding works</h2>
     <p>The three binding variables shape how the process comes up. The most common way to set them is a
       one-line prefix in front of the launcher:</p>
     <div class="code-block"><pre><code>HOST=0.0.0.0 PORT=8080 bash setup.sh --no-open</code></pre></div>
@@ -144,14 +210,132 @@ source ~/.zshrc</code></pre></div>
       either path, web search is simply unavailable; chat, transcription, and the workspace tools all work
       as normal. See <a href="tut-research.html">Web research</a> for how the tool uses it.</p>
 
+    <h2 id="advanced">Advanced and internal</h2>
+    <p>These exist for tuning, for tests, and for the Mac app shell to tell the backend where its
+      bundled binaries are. You are unlikely to set any of them by hand, and the app works with all of
+      them unset.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Default</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>WHISPER_RG_PATH</code></td>
+          <td>resolved from <code>PATH</code>, then the pip wheel</td>
+          <td>Explicit path to the <code>ripgrep</code> binary the search tools shell out to.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_SEARCH_TIMEOUT</code></td>
+          <td><code>20</code> seconds</td>
+          <td>How long one ripgrep search may run before it is killed.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_GLOB_LIMIT</code></td>
+          <td><code>500</code></td>
+          <td>Maximum files one <code>ws_glob</code> call returns.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_GREP_LIMIT</code></td>
+          <td><code>200</code></td>
+          <td>Maximum matches one <code>ws_grep</code> call returns.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_LLAMA_SERVER_TIMEOUT</code> / <code>WHISPER_MLX_SERVER_TIMEOUT</code></td>
+          <td><code>600</code> seconds each</td>
+          <td>How long to wait for an on-device model server to come up and report healthy. Raise it if
+            a very large model loads slowly from a cold cache.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_LLAMA_SERVER_ARGS</code> / <code>WHISPER_MLX_SERVER_ARGS</code></td>
+          <td><span class="badge badge--muted">unset</span></td>
+          <td>Extra command-line arguments appended when the on-device server starts, split on
+            whitespace.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_LLAMA_ONESHOT_TIMEOUT</code></td>
+          <td><code>600</code> seconds</td>
+          <td>Timeout for a single non-streaming on-device completion, such as the map step of
+            transcript condensation.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_LOCAL_BUSY_WAIT_S</code></td>
+          <td><code>600</code> seconds</td>
+          <td>How long a request waits for the one resident on-device model when another request is
+            already using it.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_INDEX_*</code></td>
+          <td>see below</td>
+          <td>Twenty-one knobs on the indexing and retrieval pipeline
+            (<code class="path">server/index/config.py</code>): the embedding model
+            (<code>WHISPER_INDEX_EMBED_MODEL</code>, <code>WHISPER_INDEX_EMBED_BATCH</code>), the
+            reranker (<code>WHISPER_INDEX_RERANK_MODEL</code>,
+            <code>WHISPER_INDEX_RERANK_CANDIDATES</code>, <code>WHISPER_INDEX_RERANK_BATCH</code>,
+            <code>WHISPER_INDEX_RERANK_MAX_TOKENS</code>), the Bedrock side
+            (<code>WHISPER_INDEX_COHERE_EMBED_MODEL</code>,
+            <code>WHISPER_INDEX_COHERE_RERANK_MODEL</code>, <code>WHISPER_INDEX_COHERE_REGION</code>,
+            <code>WHISPER_INDEX_COHERE_EMBED_DIM</code>), entity extraction
+            (<code>WHISPER_INDEX_GLINER_MODEL</code>, <code>WHISPER_INDEX_GLINER2_MODEL</code>,
+            <code>WHISPER_INDEX_GLINER_CALL_THRESHOLD</code>,
+            <code>WHISPER_INDEX_GLINER2_REL_MIN_CONF</code>,
+            <code>WHISPER_INDEX_ENTITY_PROFILE</code>, <code>WHISPER_INDEX_SEMANTIC_MERGE</code>,
+            <code>WHISPER_INDEX_SEMANTIC_THRESHOLD</code>), and the quality floors
+            (<code>WHISPER_INDEX_SALIENCE_JUNK_FLOOR</code>,
+            <code>WHISPER_INDEX_SALIENCE_GRAPH_FLOOR</code>,
+            <code>WHISPER_INDEX_BOILERPLATE_DF_FRAC</code>,
+            <code>WHISPER_INDEX_GROUND_REL_FLOOR</code>). Each has a working default in that file; read
+            it before changing one. See <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</td>
+        </tr>
+        <tr>
+          <td><code>PLAYWRIGHT_BROWSERS_PATH</code></td>
+          <td>Playwright's own cache</td>
+          <td>Where the Chromium build the preview tools drive is installed. The Mac app points it
+            inside the bundle.</td>
+        </tr>
+        <tr>
+          <td><code>PYTHONPYCACHEPREFIX</code></td>
+          <td><span class="badge badge--muted">unset</span></td>
+          <td>Where <code class="path">.pyc</code> files are written. The Mac app points it at a cache
+            directory because the signed bundle is read-only.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_PARENT_PID</code></td>
+          <td><span class="badge badge--muted">unset</span></td>
+          <td>The Mac app shell sets this to its own process id so the backend exits when the app quits
+            rather than outliving it. A non-numeric value is ignored with a warning.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_BIN_DIR</code></td>
+          <td><span class="badge badge--muted">unset</span></td>
+          <td>A directory prepended to <code>PATH</code> at boot. The Mac app points it at the bundled
+            binaries so tools find them without touching your shell.</td>
+        </tr>
+        <tr>
+          <td><code>WHISPER_LLAMA_SERVER_PATH</code>, <code>WHISPER_FFMPEG_PATH</code>,
+            <code>WHISPER_FFPROBE_PATH</code>, <code>WHISPER_NODE_PATH</code></td>
+          <td>resolved from <code>PATH</code>, then Homebrew</td>
+          <td>Explicit paths to the four bundled binaries: llama-server, ffmpeg, ffprobe and Node. The
+            Mac app sets all four to its own pinned copies, which is why it needs nothing installed on
+            the machine. See the environment contract in
+            <code class="path">macapp/README.md</code>.</td>
+        </tr>
+        <tr>
+          <td><code>WS_OFFICE_INPUT</code> / <code>WS_OFFICE_OUTPUT</code></td>
+          <td>set per call</td>
+          <td>Set by the server, not by you: how an <code>office_script</code> run is told which Word,
+            Excel or PowerPoint file to open and where to write the result. Listed here only so the
+            variables are not a mystery if you see them in a script.</td>
+        </tr>
+      </tbody>
+    </table></div>
+
     <h2 id="precedence">Where the environment fits</h2>
     <p>Config resolves in five layers, highest priority first. The environment sits at the top, so a value
       exported in your shell overrides all four config layers below it:</p>
     <dl class="spec">
       <dt><code class="path">Environment</code></dt>
       <dd>Shell variables (<code>HOST</code>, <code>PORT</code>, <code>BACKEND_PORT</code>,
-        <code>WHISPER_TRUSTED_ORIGINS</code>, <code>TAVILY_API_KEY</code>, <code>NO_OPEN</code>). Highest
-        priority. Set per-launch or in your shell profile.</dd>
+        <code>NO_OPEN</code>, <code>WHISPER_TRUSTED_ORIGINS</code>, <code>TAVILY_API_KEY</code>,
+        <code>WHISPER_DATA_DIR</code>, <code>TZ</code>). Highest priority. Set per-launch or in your
+        shell profile.</dd>
       <dt><code class="path">&lt;workspace&gt;/.whisper/settings.json</code></dt>
       <dd>Project layer. Per-project model, region, and permission mode. Edited through the Settings UI.</dd>
       <dt><code class="path">config.user.json</code> (or legacy <code class="path">config.json</code>)</dt>
@@ -167,17 +351,21 @@ source ~/.zshrc</code></pre></div>
       <dd>Built-in fallbacks in <code class="path">server/infrastructure/config.py</code>, used only when
         the SYSTEM file cannot be read.</dd>
     </dl>
-    <p>Only the binding and secret keys have an environment override. Most settings (model, region, effort
-      level, permission mode, feature flags, cost caps) live only in the project, user, and system layers.
-      For the complete field-by-field list, see <a href="ref-settings.html">Settings &amp; config
-      keys</a>.</p>
+    <p>Only two config keys have a true environment override: the Tavily key
+      (<code>TAVILY_API_KEY</code> over <code>tavily_api_key</code>) and the data root
+      (<code>WHISPER_DATA_DIR</code> over <code>data_dir</code>). <code>TZ</code> is the exception
+      that runs the other way: <code>cron_timezone</code> wins over it. Everything else (model,
+      region, effort level, permission mode, feature flags, cost caps, voice, speakers) lives only in
+      the project, user, and system layers. For the complete key-by-key list, see
+      <a href="ref-settings.html">Settings &amp; config keys</a>.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
       <div class="callout__body"><p>The environment layer is shell-only. There is no field in the Settings
-        UI for <code>HOST</code>, <code>PORT</code>, <code>BACKEND_PORT</code>,
+        panel for <code>HOST</code>, <code>PORT</code>, <code>BACKEND_PORT</code>,
         <code>WHISPER_TRUSTED_ORIGINS</code>, or <code>NO_OPEN</code>. To change them, set the variable and
-        restart the server.</p></div>
+        restart the server. <code>WHISPER_TRUSTED_ORIGINS</code> is the one exception: it is re-read on
+        every request, so adding a host takes effect without a restart.</p></div>
     </div>
 
     <div class="callout callout--tip">

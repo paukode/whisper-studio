@@ -112,7 +112,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>Produces</th><th>You describe</th></tr></thead>
       <tbody>
-        <tr><td><code>create_docx</code></td><td>A Word document (<code>.docx</code>)</td><td>The document body; headings, paragraphs, lists, and tables all work.</td></tr>
+        <tr><td><code>create_docx</code></td><td>A Word document (<code>.docx</code>)</td><td>The document body as HTML. Headings, paragraphs, breaks, bold, italic, underline, strikethrough, inline and preformatted code, quotes, nested lists, text color, and tables with per-cell background color are all turned into native Word formatting; an unknown tag keeps its text.</td></tr>
         <tr><td><code>create_pptx</code></td><td>A PowerPoint deck (<code>.pptx</code>)</td><td>The slides: a title and bullet points per slide, in order.</td></tr>
         <tr><td><code>create_xlsx</code></td><td>An Excel workbook (<code>.xlsx</code>)</td><td>One or more sheets, each a name plus rows of cell values.</td></tr>
         <tr><td><code>create_pdf</code></td><td>A PDF (<code>.pdf</code>)</td><td>A title and paragraphs of text.</td></tr>
@@ -129,36 +129,36 @@
         <tr><td>docx</td><td>A4 page, 1-inch margins, Calibri 11pt body with 16/13/12pt headings.</td></tr>
         <tr><td>pptx</td><td>16:9 widescreen slides (not the ancient 4:3), Calibri theme, placeholders stretched to use the full width.</td></tr>
         <tr><td>xlsx</td><td>Bold header row, frozen top row, and column widths fitted to content (bounded so one long cell cannot blow a column out).</td></tr>
-        <tr><td>pdf</td><td>A4 page, 11pt body with comfortable line spacing.</td></tr>
+        <tr><td>pdf</td><td>A4 page, 1-inch margins, 11pt body with comfortable line spacing. Built on reportlab.</td></tr>
       </tbody>
     </table></div>
 
     <h2 id="office-script">Full control: formatting and editing</h2>
     <p>The standard layout is a good default and a hard ceiling. The four tools above take a fixed
-      description &mdash; a document body, a title and bullets, rows of values &mdash; so anything
-      outside that vocabulary has nowhere to go: cell shading and fills, merged cells, custom
-      borders, per-word fonts and colors, shapes, text boxes, images, charts, number formats,
-      speaker notes. Word documents come closest &mdash; headings, lists, tables, and even
-      per-cell background colors all work &mdash; but merged cells, set column widths, images, and
-      page breaks are still outside it. And none of the four can touch a file that already exists;
-      they only ever create a new one.</p>
-    <p>So when you ask for something specific &mdash; "shade the header row blue", "merge those
-      cells", "color these squares to make a shape", "add our logo to slide 1" &mdash; or when you
+      description (a document body as HTML, a title and bullets, rows of values, paragraphs of text),
+      so anything outside that vocabulary has nowhere to go: cell shading and fills, merged cells,
+      custom borders, per-word fonts and colors, shapes, text boxes, images, charts, number formats,
+      speaker notes, headers and footers, page breaks. Word documents come closest, since headings,
+      lists, tables, and even per-cell background colors all work, but merged cells, set column widths,
+      images, and page breaks are still outside it. And none of the four can touch a file that already
+      exists; they only ever create a new one.</p>
+    <p>So when you ask for something specific ("shade the header row blue", "merge those cells",
+      "color these squares to make a shape", "add our logo to slide 1"), or when you
       point at a document you already have and ask for a change, Claude switches to
       <code>office_script</code>: it writes real Python against your file using the same libraries
       Word, Excel, and PowerPoint tooling everywhere else uses (python-docx, python-pptx, openpyxl).
       Whatever those libraries can express, you can ask for. You do not need to name the tool; asking
       for the formatting is enough.</p>
     <p>Before editing, Claude usually calls <code>inspect_document</code> first. That is a read-only
-      look at the file's structure &mdash; which tables exist and how many rows and columns each has,
-      which sheet ranges are used and what is merged, what sits on each slide &mdash; so it colors
-      the cells you actually meant instead of guessing at coordinates.</p>
+      look at the file's structure: which tables exist and how many rows and columns each has, which
+      sheet ranges are used and what is merged, what sits on each slide. It is how the right cells get
+      colored instead of coordinates being guessed at.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p>What you approve here is <em>code</em>, so the card shows you the
         code rather than a summary, and nothing runs until you click. It then runs sandboxed, in a
-        throwaway directory, against a <em>copy</em> of your file &mdash; your original is never
-        opened for writing, so a script that goes wrong cannot damage it. Only after the script
+        throwaway directory, against a <em>copy</em> of your file, so your original is never opened
+        for writing and a script that goes wrong cannot damage it. Only after the script
         succeeds is the result written to the destination. This is its own permission category
         ("Word/Excel/PowerPoint scripts"), separate from file writes and shell commands, so
         approving one never quietly covers the others.</p></div>
@@ -193,13 +193,15 @@
     </div>
 
     <h2 id="one-file">One deliverable, one file</h2>
-    <p>Asking for changes to a file the assistant just saved &mdash; "make it fit one page",
-      "tighten the wording", another round of feedback &mdash; produces a new <em>version</em>, not a
-      new <em>file</em>. Each revision is written back to the same path, replacing the previous one,
-      even when the assistant takes several attempts to get there. Your folder ends up holding one
-      finished document, not a trail of <code>report v2.docx</code> and <code>report final.docx</code>
-      strays. If you actually want a separate copy kept alongside the original, say so &mdash; "save
-      it as a new version next to it" &mdash; and the assistant will pick a new name.</p>
+    <p>Asking for changes to a file the assistant just saved ("make it fit one page", "tighten the
+      wording", another round of feedback) produces a new <em>version</em>, not a new <em>file</em>.
+      Each revision is written back to the same path, replacing the previous one, even when the
+      assistant takes several attempts to get there. The replacement is atomic: the new bytes are
+      written beside the target and then moved over it, so the file at that path is either the old
+      document or the new one, never a half-written mix. Your folder ends up holding one finished
+      document, not a trail of <code>report v2.docx</code> and <code>report final.docx</code> strays.
+      If you actually want a separate copy kept alongside the original, say so ("save it as a new
+      version next to it") and the assistant will pick a new name.</p>
 
     <h2 id="troubleshooting">Troubleshooting</h2>
     <div class="table-wrap"><table>

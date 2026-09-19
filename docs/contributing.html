@@ -24,19 +24,27 @@
       served together by <code class="path">setup.sh</code>. Get a working install first (see
       <a href="installation.html">Installation</a>), then use the checks and map below to make changes.</p>
 
-    <h2 id="running-tests">Running tests &amp; checks</h2>
-    <p>Activate the virtualenv that <code class="path">setup.sh</code> created, then run the backend and
-      frontend checks. These four commands are the same gate CI runs:</p>
-    <div class="code-block"><pre><code>source venv/bin/activate
+    <h2 id="requirements">What you need</h2>
+    <p><code class="path">setup.sh</code> requires <b>Python 3.12 or newer</b> and refuses to continue on
+      anything older; in an interactive terminal it offers to install <code>python@3.12</code> through
+      Homebrew for you. The Mac app ships CPython 3.13, and the voice-mode SDK only installs on 3.12 or
+      newer, which is where the floor comes from. Node is pinned by
+      <code class="path">.nvmrc</code>. Run <code>bash setup.sh</code> once to provision
+      <code class="path">venv/</code> and the frontend bundle before anything below.</p>
 
-pytest tests/ -q      # backend unit + smoke tests
-npm run build         # tsc -b + vite build (catches type and build errors)
-npm run lint          # ESLint over src/
-npm test              # vitest frontend unit tests</code></pre></div>
-    <p>Python is linted and formatted with <b>Ruff</b>, a blocking CI gate. Run it before you push so the
-      pipeline stays green:</p>
-    <div class="code-block"><pre><code>ruff check .          # lint
-ruff format .         # format</code></pre></div>
+    <h2 id="running-tests">The local gate</h2>
+    <p>Run these before you push. They are the same checks CI runs, so a green local run means a green
+      pipeline. Run the pytest suite in the <b>default</b> environment, with no extra variables set.</p>
+    <div class="code-block"><pre><code>venv/bin/python -m pytest tests/    # backend suite
+venv/bin/ruff check .               # Python lint
+venv/bin/ruff format --check .      # Python formatting
+
+npx tsc --noEmit                    # TypeScript typecheck
+npm test                            # vitest frontend unit tests
+npm run lint                        # ESLint over src/
+npm run build                       # production build</code></pre></div>
+    <p>Gate on the exit code, not on the tail of the output: a piped <code>pytest | tail</code> reports
+      the exit status of <code>tail</code>, not of the suite.</p>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
       <div class="callout__body"><p>Run <code>/doctor</code> in the chat input for an automated
@@ -51,48 +59,54 @@ ruff format .         # format</code></pre></div>
     <div class="code-block"><pre><code>whisper-studio/
 ├── server/                 FastAPI backend
 │   ├── main.py             app init, router mounting, SPA fallback
+│   ├── chat/engine/        runner.py (the one turn loop), anthropic.py, openai.py, local.py
+│   ├── chat/               routes.py (turn assembly), compaction.py, tool_pool.py,
+│   │                       tool_partition.py, loop_hints.py, loop_guard.py
+│   ├── tool_executor.py    tool lifecycle: hooks, permissions, plan mode, loop guard
+│   ├── tool_router.py      name to handler dispatch, nothing else
 │   ├── agent_tools/        tool schemas sent to the model each turn
-│   ├── tool_router.py      tool-call dispatch
-│   ├── chat/               chat streaming + tool orchestration
+│   ├── executors/          pluggable tool implementations
+│   ├── goals/              completion gate: Stop hooks, deliverables, verification, evaluator
+│   ├── memory/             two-tier memory, extraction, dream consolidation, review fork
+│   ├── agents/             subagent runtime, event bus, journal.py, wake.py, extensions.py
+│   ├── tasks/              background-task registry (shell, agent, workflow, ci)
+│   ├── voice/              spoken conversations: protocol, routes, session, client, tools
+│   ├── costs/              per-turn cost tracking + budgets
 │   ├── workspace/          file browser, atomic writes, workspace tools
 │   ├── asr/                Whisper + Parakeet + Canary transcription backends, language ID
 │   ├── diarization/        speaker embedding + VAD
-│   ├── executors/          pluggable tool implementations
-│   ├── agents/             subagent runtime + event bus
 │   ├── approval/           approval registry + router (server-held pause)
 │   ├── security/           command validator, permission rules, egress policy
-│   ├── memory/             cross-session memory system
 │   ├── index/ · search/    GraphRAG indexing + semantic search
-│   ├── extract/            attachment → Markdown extraction
-│   ├── git/                Git command wrappers, worktree session + harvest
-│   ├── preview/            dev-server spawn + screenshots
-│   ├── costs/              per-turn cost tracking + budgets
-│   ├── local/              on-device model runtime
+│   ├── extract/            attachment to Markdown extraction
+│   ├── git/                Git command wrappers, worktree session + harvest, gh tools
+│   ├── preview/            dev-server spawn + Playwright + screenshots
+│   ├── local/              on-device model runtime (llama-server and MLX)
 │   ├── model_browser/      Discover: local-model catalog + memory-fit grading
 │   ├── openai_bedrock/     GPT-on-Bedrock provider
 │   ├── documents/          create_docx/pptx/xlsx/pdf + layout standards
-│   ├── tasks/              background-task registry (shell, agent, workflow, ci)
 │   ├── workflows/          ultracode runtime + Node vm harness
-│   ├── goals/              goal tracking + completion gate
 │   ├── hooks/              blocking Pre/Post/Stop hooks
 │   ├── exec/               headless turn entrypoint
 │   ├── onboarding/         import a Claude Code / Codex CLI project
-│   ├── prompts/            system prompt templates
-│   ├── infrastructure/     config, sessions (SQLite), Bedrock retry
-│   └── migrations/         SQLite schema migrations
+│   ├── prompts/            system prompt sections and their layers
+│   ├── skills.py           skill loader (skills_routes.py serves it over HTTP)
+│   ├── infrastructure/     config, sessions store, session_search, auxiliary models, one_shot
+│   └── migrations/         numbered SQLite schema migrations
 ├── src/                    Frontend (TypeScript + React 19)
 │   ├── components/         UI grouped by feature
-│   ├── hooks/              useChatStream, useChatInputMic, useTerminal, …
+│   ├── hooks/              useChatStream, useSlashCommands.tsx, useTerminal, …
 │   ├── stores/             Zustand stores (chat, session, ui, settings, …)
 │   ├── providers/          React context providers
 │   ├── services/           client-side services
 │   ├── api/                typed fetch + SSE clients
-│   ├── types/              shared types + Zod SSE schemas
+│   ├── types/              shared types; schemas/chat.schema.ts is the SSE contract
 │   ├── test/               frontend test setup + helpers
 │   └── utils/              sanitizeHtml, formatters, error helpers
+├── macapp/                 build_app.sh, then make_dmg.sh, package dist-app/
 ├── skills/                 skill definitions (Markdown)
 ├── plugins/                opt-in Python plugins
-├── tests/                  backend pytest suite
+├── tests/                  backend pytest suite, incl. golden_fixtures/
 ├── docs/                   this documentation site
 ├── setup.sh                install + run script
 └── requirements.txt        Python deps (ML libs pinned)</code></pre></div>
@@ -110,26 +124,104 @@ ruff format .         # format</code></pre></div>
         in <code class="path">src/types/</code>, so a malformed event fails loudly rather than corrupting
         state.</dd>
       <dt>Tools have three homes</dt>
-      <dd>Tool <b>schemas</b> live in <code class="path">server/agent_tools/</code>, <b>dispatch</b> in
-        <code class="path">server/tool_router.py</code>, and the <b>implementation</b> in
-        <code class="path">server/executors/</code>. Add a tool by touching all three.</dd>
+      <dd>Tool <b>schemas</b> live in <code class="path">server/agent_tools/</code> (and next to their
+        executors for a few subsystems), <b>dispatch</b> in
+        <code class="path">server/tool_router.py</code>, which is pure name-to-handler routing and
+        nothing else, and the <b>implementation</b> in <code class="path">server/executors/</code>.
+        Lifecycle (hooks, permissions, plan mode, the loop guard) belongs in
+        <code class="path">server/tool_executor.py</code>, never in the router.</dd>
       <dt>Never reinvent the approval flow</dt>
       <dd>Approval-gated server actions go through <code class="path">server/approval/registry.py</code>,
         which holds the paused turn and re-validates the payload at execute time. Do not build a
         parallel approval path - see <a href="arch-approval.html">Approval &amp; permissions</a> for
         why.</dd>
       <dt>Keep files under the size budget</dt>
-      <dd>CI fails any <code class="path">server/</code> or <code class="path">src/</code> file over 1200
-        lines. Split a growing module into a focused component rather than adding it to the allowlist.</dd>
+      <dd><code class="path">tests/test_file_size_budget.py</code> fails any
+        <code class="path">server/</code> or <code class="path">src/</code> file over 1200 lines. Split a
+        growing module along a topic rather than adding it to the allowlist.</dd>
+      <dt>No em dashes, no emoji</dt>
+      <dd>Not in code comments, prompts, docs, or commit messages. Use a comma, colon, period, or
+        parentheses.</dd>
     </dl>
+
+    <h2 id="invariants">Invariants to review every change against</h2>
+    <p>These are the load-bearing rules of the codebase. A change that breaks one usually still passes
+      its own test and then fails somewhere expensive, so check your diff against the list.</p>
+    <ol class="steps">
+      <li>
+        <h4>Register always, refuse at execution</h4>
+        <p>The tool catalog is byte-stable across plan mode, strict-RAG, and connecting or
+          disconnecting a workspace. Per-turn restrictions are enforced in
+          <code class="path">server/tool_executor.py</code> and the executors, never by rewriting the
+          tools array: rewriting it invalidates the prompt cache.</p>
+      </li>
+      <li>
+        <h4>Static before dynamic</h4>
+        <p>System-prompt sections at or below <code>PromptLayer.WORKSPACE</code> are cached. Anything
+          that varies per request belongs on <code>DYNAMIC</code> or later
+          (<code class="path">server/prompts/__init__.py</code>). Session-stable text parked on a
+          dynamic layer is re-billed on every round.</p>
+      </li>
+      <li>
+        <h4>Reminders are persisted, not injected per request</h4>
+        <p>Anything the model must see mid-turn is appended to the last user message
+          (<code>inject_reminder</code> in <code class="path">server/chat/loop_hints.py</code>), so the
+          token prefix never forks between rounds.</p>
+      </li>
+      <li>
+        <h4>Every tool result flows through the safety gate</h4>
+        <p>Providers yield neutral events. <code>execute_tool_batch</code> and
+          <code>process_tool_results</code> own hooks, permissions, approvals, budgeting, and the loop
+          guard. An adapter never reads tool output.</p>
+      </li>
+      <li>
+        <h4>SSE frames are pinned</h4>
+        <p><code class="path">tests/golden_fixtures/</code> pins the frame vocabulary; re-record on
+          purpose with <code>GOLDEN_RECORD=1</code>. The frontend Zod schema
+          (<code class="path">src/types/schemas/chat.schema.ts</code>) strips unknown fields, so a new
+          frame or field must be added there and in <code class="path">src/types/chat.ts</code> or the
+          UI silently drops it.</p>
+      </li>
+      <li>
+        <h4>Import boundaries</h4>
+        <p><code class="path">server/infrastructure/config.py</code> never imports through
+          <code>server.chat</code>.</p>
+      </li>
+      <li>
+        <h4>One deliverable, one file</h4>
+        <p>File-producing tools overwrite the same path atomically. Never create a
+          <code>_v2</code> or <code>_final</code> stray.</p>
+      </li>
+      <li>
+        <h4>User files live in ~/.whisper</h4>
+        <p>App storage sits under the data root. Tests pin <code>WHISPER_USER_DIR</code> and redirect
+          every import-time DB path (<code>_DB_MODULES</code> in
+          <code class="path">tests/conftest.py</code>). A new sqlite table needs three things: a
+          numbered migration in <code class="path">server/migrations/</code>, the same schema in the
+          module's own <code>_ensure_*</code> bootstrap, and the module listed in
+          <code>_DB_MODULES</code>.</p>
+      </li>
+    </ol>
+
+    <h2 id="test-conventions">Testing conventions</h2>
+    <ul>
+      <li><b>Behaviour contracts over snapshots.</b> Assert how two pieces of data relate; never freeze a
+        catalog count or a model list.</li>
+      <li><b>Patch where production reads.</b> Many modules import lazily inside functions, so
+        monkeypatch the attribute the call site actually resolves.</li>
+      <li><b>Mock <code>load_config</code> with the normalized shape</b> (rich <code>chat_models</code>
+        entries, <code>chat_model_meta</code> present), not the raw example JSON.</li>
+      <li><b>A new SSE field needs a golden refresh and a Zod schema entry</b>, or the UI silently drops
+        it.</li>
+    </ul>
 
     <h2 id="tech-stack">Tech stack</h2>
     <div class="table-wrap"><table>
       <thead><tr><th>Layer</th><th>Tech</th></tr></thead>
       <tbody>
         <tr><td>Backend</td><td>FastAPI, Uvicorn, SQLite (WAL), APScheduler</td></tr>
-        <tr><td>AI (cloud)</td><td>Amazon Bedrock - Claude Haiku 4.5, Sonnet 4.6/5, Opus 4.6 / 4.7 / 4.8 / 5, Fable 5.0 / 5.1, GPT-5.4 / 5.5 / 5.6, and GPT-6 Astra</td></tr>
-        <tr><td>AI (local)</td><td>On-device GGUF models (Llama, Gemma, Qwen, Ministral) via llama-server (local mode). None ship by default; they are installed in-app from Settings → Models → Discover</td></tr>
+        <tr><td>AI (cloud)</td><td>Amazon Bedrock - Claude Haiku 4.5, Sonnet 4.6, Sonnet 5, Opus 4.6 / 4.7 / 4.8 / 5, Fable 5.0 / 5.1, GPT-5.4, GPT-5.5, GPT-5.6 Sol / Terra / Luna, and GPT-6 Astra</td></tr>
+        <tr><td>AI (local)</td><td>On-device models: GGUF weights through llama-server, MLX snapshots through <code>mlx_lm server</code>. None ship by default; they are installed in-app from Settings &gt; Models &gt; Discover</td></tr>
         <tr><td>Transcription</td><td>mlx-whisper + Parakeet + Canary (vendored MLX port), SpeechBrain ECAPA, WebRTC VAD (all on-device); Apple on-device translation in the Mac app</td></tr>
         <tr><td>Retrieval</td><td>GraphRAG - embeddings, reranker, entity graph, sqlite-vec (see <a href="arch-index.html">Index / GraphRAG</a>)</td></tr>
         <tr><td>Frontend</td><td>React 19, TypeScript (strict), Vite 8, Zustand, Monaco Editor, xterm.js</td></tr>
@@ -142,6 +234,62 @@ ruff format .         # format</code></pre></div>
         <tr><td>Spreadsheets (viewer)</td><td>ExcelJS 4.4.0</td></tr>
       </tbody>
     </table></div>
+
+    <h2 id="ci">Continuous integration</h2>
+    <p>Three workflows live in <code class="path">.github/workflows/</code>.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Workflow</th><th>When it runs</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td><code class="path">ci.yml</code></td><td>Pushes to <code>main</code>, <code>v*</code> tags, every pull request, and manual dispatch.</td><td>Three jobs. <b>Backend</b> on Linux with Python 3.13: ruff check, ruff format check, then pytest. <b>Backend on macOS</b> for the tests that can only pass on a Mac (the open and reveal routes shell out to <code>open</code>, and the sandbox runs under <code>sandbox-exec</code>); it skips on pull requests, since macOS runners bill at ten times the rate, so dispatch it by hand when a change touches those paths. <b>Frontend</b> on Linux: <code>tsc --noEmit</code>, vitest, ESLint, production build.</td></tr>
+        <tr><td><code class="path">build-macapp.yml</code></td><td>Pushes to <code>main</code> and <code>v*</code> tags that touch the shipped app, and manual dispatch.</td><td>Runs <code class="path">macapp/build_app.sh</code> then <code class="path">macapp/make_dmg.sh</code> on an arm64 macOS runner, the same two scripts you would run locally. The DMG is a workflow artifact on every run; on a <code>v*</code> tag it also creates the GitHub release and attaches the DMG.</td></tr>
+        <tr><td><code class="path">pages.yml</code></td><td>Pushes to <code>main</code> that touch <code class="path">docs/</code>, and manual dispatch.</td><td>Uploads <code class="path">docs/</code> as-is and deploys it to GitHub Pages. There is no build step.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The backend jobs install a trimmed <code class="path">requirements.txt</code>: the Apple-silicon
+      and heavy ML pins are stripped, with torch constrained back to the version the app pins, so the
+      runner installs fast and still exercises the same torch. If a new test imports the transcription
+      stack, it belongs on the macOS job.</p>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
+      <div class="callout__body"><p>GitHub CI is a safety net, not the merge gate. Verify locally with
+        the commands above and merge when they are green. Branch, keep commits granular, open a PR,
+        merge, fast-forward local <code>main</code>, delete the branch. Commit messages stay short and
+        precise, and never end with a dash.</p></div>
+    </div>
+
+    <h2 id="release">Cutting a release</h2>
+    <p>An annotated <code>vX.Y.Z</code> tag is the whole release trigger. Pushing it runs
+      <code class="path">build-macapp.yml</code>, which builds the app and the DMG on a clean arm64
+      runner and creates the GitHub release with the DMG attached. Signing and notarization are
+      optional and driven by repository secrets; with none configured the build falls back to ad-hoc
+      signing, which works on the building machine but trips Gatekeeper elsewhere.</p>
+    <p>After a merge that touches the app, rebuild the DMG from the same <code>main</code> commit so a
+      source install and the Mac app stay in parity. The DMG filename comes from
+      <code>git describe</code> but its contents come from <code class="path">dist-app/</code>, so
+      verify the bundle, not the filename.</p>
+
+    <h2 id="docs-site">Working on these docs</h2>
+    <p>The site in <code class="path">docs/</code> is hand-built static HTML and CSS with a little
+      vanilla JavaScript: no build step, no dependencies, and no external network calls (the fonts are
+      self-hosted), so it renders correctly on an isolated network. Serve it with
+      <code>python3 -m http.server</code> from inside <code class="path">docs/</code> to preview.</p>
+    <ul>
+      <li><b>Adding a page:</b> create <code class="path">docs/&lt;name&gt;.html</code>, copy the
+        <code>&lt;head&gt;</code> and the script tags from an existing page, write your content inside
+        <code>&lt;main class="doc" data-page="..."&gt;</code>, and add an entry to
+        <code class="path">assets/nav.js</code>. The header, sidebar, breadcrumb, on-this-page table of
+        contents, and prev/next links are all injected by <code class="path">assets/site.js</code> from
+        that one navigation model.</li>
+      <li><b>Adding a diagram:</b> create <code class="path">assets/diagrams/&lt;name&gt;.js</code>
+        calling <code>WSDiagram.mount("&lt;name&gt;-diagram", { ... })</code> with grid
+        <code>col</code> and <code>row</code> coordinates, drop a
+        <code>&lt;div id="&lt;name&gt;-diagram" class="diagram"&gt;</code> into the page, and include
+        the config script after <code class="path">site.js</code>.</li>
+      <li><b>Theming:</b> every color is a CSS variable in <code class="path">assets/theme.css</code>,
+        defined for both light and dark. Use the existing variables; never hard-code a color.</li>
+    </ul>
+    <p>The same folder is served by the backend at <code>/docs-site</code> and opened from the
+      <b>?</b> dock panel, so a docs change ships with the app as well as to Pages.</p>
 
     <h2 id="contributing">Contributing</h2>
     <p>Small fixes: open a pull request. For anything larger, read the

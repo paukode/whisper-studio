@@ -60,6 +60,19 @@
       token itself is never stored in the server entry, only the variable name). Nothing goes over the
       network for a stdio server unless the server itself reaches out.</p>
 
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="M9 12l2 2 4-4"/></svg></span>
+      <div class="callout__body"><p><b>A stdio server does not inherit your credentials.</b> The child
+        process gets the app's environment with every credential-shaped variable removed first: the
+        GitHub tokens (<code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>,
+        <code>GH_ENTERPRISE_TOKEN</code>) and the cloud and API keys
+        (<code>AWS_ACCESS_KEY_ID</code>, <code>AWS_SECRET_ACCESS_KEY</code>,
+        <code>AWS_SESSION_TOKEN</code>, <code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code>,
+        <code>TAVILY_API_KEY</code>). A third-party server has no claim on the host app's credentials.
+        The per-server <code>env</code> entries you configure yourself are applied <em>after</em> that
+        scrub, so a key you deliberately hand to one server still reaches it, and only it.</p></div>
+    </div>
+
     <ol class="steps">
       <li>
         <h4>Open Settings and add a server</h4>
@@ -142,9 +155,11 @@
       <code>read_mcp_resource</code> to pull in what it needs.</p>
 
     <h2 id="plugins">Writing a plugin</h2>
-    <p>Plugins live in <code class="path">plugins/</code> at the repository root. A plugin is a single
-      Python file that declares a version and a description, then exposes a <code>register()</code>
-      function the backend calls at startup.</p>
+    <p>Plugins live in <code class="path">~/.whisper/plugins/</code> in the Mac app, or
+      <code class="path">plugins/</code> at the repository root in a source checkout. A plugin is a
+      single Python file (at most 512 KB, with a name of letters, digits and underscores) that declares
+      a version and a description, then exposes a <code>register()</code> function the backend calls
+      when the plugin is enabled.</p>
 
     <div class="code-block"><pre><code>__version__ = '1.0.0'
 __description__ = 'My custom plugin'
@@ -191,9 +206,9 @@ def register(app, executor_registry):
       </li>
       <li>
         <h4>Editing needs a restart</h4>
-        <p>This part has not changed: backend modules are imported once at startup, so changing the code
-          of an already-loaded plugin needs a restart to pick up the edit. Only enable/disable is live;
-          editing is not.</p>
+        <p>Backend modules are imported once at startup, so changing the code of an already-loaded
+          plugin needs a restart to pick up the edit. Only enable and disable are live; editing is
+          not.</p>
       </li>
     </ol>
 
@@ -206,12 +221,6 @@ def register(app, executor_registry):
         enable in Settings means nothing runs that you did not choose to run, live-loading or not. See
         <a href="arch-sandbox.html">Sandbox &amp; security</a> and the
         <a href="ref-security.html">security model</a>.</p></div>
-    </div>
-
-    <div class="callout">
-      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Migrating from the old opt-out behaviour is lossless: anything already
-        loaded stays loaded, and only <i>new</i> files stop auto-executing.</p></div>
     </div>
 
     <h3 id="pre-tool-hooks">Pre-tool hooks: inspecting and blocking calls</h3>
@@ -246,6 +255,25 @@ def register(app, executor_registry):
         <code>__description__</code>, a <code>register()</code> entry point, and an async hook that
         returns a block dict. Copy it as a starting point.</p></div>
     </div>
+
+    <h2 id="import-project">Importing a Claude Code or Codex project</h2>
+    <p>If you already set a project up for Claude Code or the Codex CLI, you do not have to redo that
+      work by hand. <b>Settings &gt; Import project</b> reads an existing project folder and translates
+      it into this app's own formats. The source project is only read, never modified.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>What it reads</th><th>Where it lands</th></tr></thead>
+      <tbody>
+        <tr><td><code class="path">CLAUDE.md</code> (Claude Code) or <code class="path">AGENTS.md</code> (Codex)</td><td><code class="path">WHISPER.md</code> in the workspace, the project instructions file.</td></tr>
+        <tr><td><code class="path">.claude/skills/</code>, or <code class="path">.codex/skills/</code> and <code class="path">.codex/.agents/skills/</code></td><td>The app's skills directory. Both tools use the same <code>SKILL.md</code> frontmatter convention, so the folders are copied as they are.</td></tr>
+        <tr><td><code class="path">.mcp.json</code> (Claude Code) or the <code>[mcp_servers.*]</code> tables in <code class="path">config.toml</code> (Codex)</td><td>The MCP server store, alongside anything you added by hand.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Give it the source project folder, and optionally a workspace to import into (leave that blank to
+      use the connected one). Pick the source type, or leave it on auto and let the layout decide.
+      Nothing is clobbered: an existing <code class="path">WHISPER.md</code>, a skill folder of the same
+      name, or an already-configured MCP server is skipped and reported in the summary rather than
+      overwritten. Nothing imported runs at import time either; instructions and skill bodies are inert
+      text until the normal chat or skill path reads them.</p>
 
     <h2 id="mcp-vs-plugins">MCP servers versus plugins, side by side</h2>
     <div class="table-wrap"><table>

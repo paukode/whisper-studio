@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>First run &amp; verify - Whisper Studio Docs</title>
-  <meta name="description" content="A short checklist to confirm chat, transcription, and the workspace all work after installing Whisper Studio: connect AWS, pick a model, send a first message, record, and run /doctor.">
+  <meta name="description" content="A short checklist to confirm chat, transcription, voice, and the workspace all work after installing Whisper Studio: set your region, pick a model, send a first message, record, and run /doctor.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,74 +15,100 @@
 <body>
   <main class="doc" data-page="first-run">
     <h1>First run &amp; verify</h1>
-    <p class="subtitle">You ran <code>bash setup.sh</code> and it printed a URL. This page is the short
-      checklist that confirms the three things you actually came for work: chat with Claude, on-device
-      transcription, and the workspace tools.</p>
+    <p class="subtitle">You opened the Mac app for the first time, or <code>bash setup.sh</code>
+      printed a URL. This page is the short checklist that confirms the things you actually came for
+      work: chat, on-device transcription, spoken conversations, and the workspace tools.</p>
 
     <p>Whisper Studio is one process serving one origin, so there is nothing to "connect" between a
-      frontend and a backend. What is left is telling the app which AWS region and model to use, then
-      exercising each subsystem once. Work through the steps in order; each one leaves you in a good
-      state for the next.</p>
+      frontend and a backend. What is left is telling the app which AWS region to use, picking a model,
+      then exercising each subsystem once. Work through the steps in order; each one leaves you in a
+      good state for the next.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p>New machine, nothing installed yet? Do the
         <a href="installation.html">Installation</a> walk-through first, then come back here. This page
-        assumes <code>setup.sh</code> has already finished and given you a URL.</p></div>
+        assumes the app is already open, whether that is the Mac app or the URL
+        <code>setup.sh</code> printed.</p></div>
     </div>
 
     <figure class="shot">
       <img src="assets/img/settings-api-keys.png" alt="The Settings dialog on Keys and permissions, API keys sub-tab">
-      <figcaption><strong>Settings → Keys and permissions → API keys on a fresh install.</strong> Only the Bedrock region is required for cloud chat, and it comes pre-filled with <code>us-east-1</code> from the seeded config; the Tavily key is optional, enables web search, and starts empty.</figcaption>
+      <figcaption><strong>Settings &rarr; Keys and permissions &rarr; API keys on a fresh install.</strong> Only the Bedrock region is required for cloud chat, and it comes pre-filled with <code>us-east-1</code> from the seeded config; the Tavily key is optional, enables web search, and starts empty.</figcaption>
     </figure>
 
+    <h2 id="mode-notice">First, the Local-mode notice</h2>
+    <p>The very first launch shows a one-time dialog headed <b>You're starting in Local mode</b>. It is
+      not an error. A fresh install is seeded with <code>model_mode: local</code>, so nothing leaves
+      your machine until you choose otherwise, and the dialog explains the three modes (Local, Hybrid,
+      Cloud) and where to change them. Dismiss it, or use its button to jump straight to
+      <b>Settings &rarr; Model mode</b>. It never appears again.</p>
+    <p>Local mode does <b>not</b> stop you using cloud models. The app ships no on-device chat model, so
+      the model picker would otherwise be empty; instead it falls back to showing every model. You can
+      chat on Bedrock from the first minute, switch the mode to Hybrid or Cloud whenever you like, and
+      install an on-device model from <b>Settings &rarr; Models &rarr; Discover</b> when you want to run
+      chat locally too. See <a href="tut-model-modes.html">Model modes</a>.</p>
+
     <h2 id="checklist">The healthy-install checklist</h2>
-    <p>Five steps. The first two are one-time configuration; the last three prove each subsystem is
-      alive. If all five pass, your install is healthy.</p>
+    <p>Six steps. The first two are one-time configuration; the rest prove each subsystem is alive. If
+      steps 3 and 4 pass, your install is healthy.</p>
 
     <ol class="steps">
       <li>
-        <h4>Open the URL setup.sh printed</h4>
-        <p>Look at the end of the terminal output for a line with an address, typically
-          <code>http://127.0.0.1:8000</code>. If port 8000 was busy, the script auto-increments, so
-          read the URL it actually printed rather than assuming 8000. Open it in a browser. You should
-          see the Whisper Studio interface, not a blank page. (A blank page usually means the frontend
-          bundle is missing; re-run <code>bash setup.sh</code>, or
-          <code>bash setup.sh --new</code> for a clean rebuild. Note that <code>--new</code> also resets
-          <code class="path">config.json</code> to the template after a timestamped backup, so you would
-          then need to re-add your Tavily key and any custom settings, or restore them from the backup.)</p>
+        <h4>Open the app</h4>
+        <p>From a source install, look at the end of the terminal output for a line with an address,
+          typically <code>http://127.0.0.1:8000</code>; the script also opens it for you unless you
+          passed <code>--no-open</code>. If port 8000 was busy, the script takes the next free one, so
+          read the URL it actually printed rather than assuming 8000. In <code>--dev</code> the address
+          you want is the Vite one (from 5173), not the backend. You should see the Whisper Studio
+          interface, not a blank page. (A blank page usually means the frontend bundle is missing;
+          re-run <code>bash setup.sh</code>, or <code>bash setup.sh --new</code> for a clean rebuild.
+          Note that <code>--new</code> backs up your config and reseeds it with the first-run defaults,
+          so you would then re-add your Tavily key and any custom settings, or restore them from the
+          backup.)</p>
       </li>
       <li>
-        <h4>Set your region and model in Settings</h4>
-        <p>Click the gear icon to open Settings, then fill in:</p>
+        <h4>Set your region, then pick a model</h4>
+        <p>Click the gear icon, then go to <b>Access and usage &rarr; Keys and permissions &rarr; API
+          keys</b>:</p>
         <ul>
-          <li><b>Bedrock Region</b> must match the region where your Claude model is enabled. This is
-            almost always the same region you used in <code>aws configure</code>. A mismatch here is
-            the single most common first-run error (see below).</li>
-          <li><b>Default Model</b> should start with <b>Sonnet</b>. It is the best balance of speed,
-            cost, and capability while you are confirming things work; you can switch to Opus or Haiku
-            later with the toolbar or <code>/model</code>.</li>
+          <li><b>Bedrock Region</b> must match the region where your model is enabled. This is almost
+            always the same region you used in <code>aws configure</code>. A mismatch here is the
+            single most common first-run error (see below). It is pre-filled with
+            <code>us-east-1</code>.</li>
           <li><b>Tavily API Key</b> only if you did not export <code>TAVILY_API_KEY</code> in your
             shell. If the env var is set, the app uses it and this field can stay empty (the env var
             wins if both are present). Skip this entirely if you do not need web search yet.</li>
         </ul>
-        <p>Click <b>Save</b>.</p>
+        <p>Click <b>Save</b>, close Settings, and pick a model from the <b>model chip</b> in the
+          composer toolbar. There is no default-model field in Settings. Sonnet 5 is a good balance of
+          speed, cost, and capability while you confirm things work; you can switch any time from the
+          chip or with <code>/model</code>.</p>
       </li>
       <li>
         <h4>Confirm chat: type "hello"</h4>
-        <p>In the chat input, type <code>hello</code> and send it. If Claude streams a reply back
+        <p>In the chat input, type <code>hello</code> and send it. If the reply streams back
           token by token, chat works and your AWS access is good. If you get an error instead, jump to
           <a href="#stumbles">Common first-run stumbles</a> below; the message text tells you which
           problem you have.</p>
       </li>
       <li>
         <h4>Confirm transcription: click Record</h4>
-        <p>Click <b>Record</b> in the top-right. The browser asks for microphone permission the first
-          time; grant it once. Speak a sentence or two. A live transcript should appear with speaker
-          labels attached. The first recording is slightly slower to start because the on-device speech
-          model (Whisper, Parakeet, or Canary) auto-downloads and loads into memory on first use; after that it
-          is warm. Transcription runs
+        <p>Click <b>Record</b> in the top-right. The browser (or macOS, in the Mac app) asks for
+          microphone permission the first time; grant it once. Speak a sentence or two. A live
+          transcript should appear with speaker labels attached. The first recording is slightly slower
+          to start because the on-device speech model (Parakeet by default, or Whisper or Canary)
+          downloads and loads into memory on first use; after that it is warm. Transcription runs
           entirely on your machine, so it needs no AWS setup and works even offline.</p>
+      </li>
+      <li>
+        <h4>Optional: confirm voice with the Talk button</h4>
+        <p>The waveform button between the microphone and Send starts a spoken conversation. If it is
+          greyed out, hover it: the tooltip names the reason, usually that Amazon Nova 2 Sonic is not
+          enabled in your Bedrock region, that no AWS credentials were found, or (source installs only)
+          that the backend's Python is older than 3.12. Click it and say something; the assistant
+          answers out loud and everything it says is written into the chat. See
+          <a href="tut-voice-mode.html">Voice conversations</a>.</p>
       </li>
       <li>
         <h4>Optional: connect a workspace folder</h4>
@@ -105,7 +131,7 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
       <div class="callout__body"><p>If steps 3 and 4 both succeed, you have a working install. Chat and
         transcription are the two independent subsystems, so passing both means AWS, the local model
-        runtime, and the browser permissions are all in order.</p></div>
+        runtime, and the microphone permission are all in order.</p></div>
     </div>
 
     <h2 id="doctor">Run /doctor for an automated check</h2>
@@ -160,9 +186,9 @@
         <tr>
           <td>Blank page in the browser</td>
           <td>The frontend bundle is missing. Re-run <code>bash setup.sh</code>, or
-            <code>bash setup.sh --new</code> for a clean rebuild. Note that <code>--new</code> resets
-            <code class="path">config.json</code> to the template (after a timestamped backup), so
-            re-add your keys and settings afterwards.</td>
+            <code>bash setup.sh --new</code> for a clean rebuild. Note that <code>--new</code> backs up
+            your config and reseeds it with the first-run defaults, so re-add your keys and settings
+            afterwards.</td>
         </tr>
         <tr>
           <td>The URL at 8000 does not load</td>
@@ -176,8 +202,23 @@
         </tr>
         <tr>
           <td>Recording misses system audio</td>
-          <td>The default mic does not capture what macOS is playing. Set up a virtual input device;
-            see <a href="tut-voice.html">Voice &amp; meetings</a>.</td>
+          <td>In the Mac app, open the headphones menu beside <b>Record</b> and arm <b>System audio</b>
+            or a single app; the first capture triggers the macOS System Audio Recording prompt
+            (macOS 14.4 or later). In a browser the microphone cannot hear what the Mac is playing:
+            share a Chrome tab, or route audio through a virtual device. See
+            <a href="tut-voice.html">Voice &amp; meetings</a>.</td>
+        </tr>
+        <tr>
+          <td>The Talk button is greyed out</td>
+          <td>Hover it for the actual reason. Usually Amazon Nova 2 Sonic is not enabled in your
+            Bedrock region, no AWS credentials were found, or the backend's Python is older than 3.12.
+            See <a href="requirements.html#voice-access">Requirements</a>.</td>
+        </tr>
+        <tr>
+          <td>The model picker shows no on-device models</td>
+          <td>Expected: a fresh install ships none. Install one from
+            <b>Settings &rarr; Models &rarr; Discover</b>, which grades each model against your
+            machine's memory first.</td>
         </tr>
       </tbody>
     </table></div>
@@ -191,13 +232,14 @@
       <a class="card card--link" href="tut-first-chat.html"><h3>Your first chat</h3><p>Models, effort levels, slash commands, streaming, and exporting a conversation.</p><span class="card__meta">Tutorial: Your first chat →</span></a>
       <a class="card card--link" href="tut-goals.html"><h3>Goals &amp; autopilot</h3><p>When to just prompt, when to set a goal that runs to completion, and when to run a parallel workflow.</p><span class="card__meta">Tutorial: Goals &amp; autopilot →</span></a>
       <a class="card card--link" href="tut-workspace.html"><h3>The workspace IDE</h3><p>Connect a repo and let Claude read, edit, run, and commit, gated by mode.</p><span class="card__meta">Tutorial: Workspace IDE →</span></a>
-      <a class="card card--link" href="tut-documents.html"><h3>Documents</h3><p>Ask for a .docx, .pptx, .xlsx, or .pdf and get one back in a standard layout, no setup needed.</p><span class="card__meta">Tutorial: Documents →</span></a>
+      <a class="card card--link" href="tut-voice-mode.html"><h3>Talk to it</h3><p>Hold a spoken conversation with the assistant while it uses the same tools as typed chat.</p><span class="card__meta">Tutorial: Voice conversations →</span></a>
     </div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> <a href="configuration.html">Configuration</a> for
-        the settings behind each field, <a href="tut-first-chat.html">Your first chat</a> and
+        the settings behind each field, <a href="tut-first-chat.html">Your first chat</a>,
+        <a href="tut-model-modes.html">Model modes</a> and
         <a href="tut-voice.html">Voice &amp; meetings</a> to go deeper, and
         <a href="installation.html">Installation</a> if something is still wrong.</p></div>
     </div>

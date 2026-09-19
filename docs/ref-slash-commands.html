@@ -44,17 +44,20 @@
         <tr><td><code>/plan</code></td><td>Toggle plan mode (a read-only, research-first Claude).</td></tr>
         <tr><td><code>/verbosity &lt;level&gt;</code></td><td>Set the response length (brief, normal, or detailed).</td></tr>
         <tr><td><code>/memory on|off|status</code></td><td>Toggle cross-session memory, or report its state.</td></tr>
-        <tr><td><code>/goal &lt;text&gt; | /goal clear</code></td><td>Set or clear a session goal the goal loop works toward.</td></tr>
+        <tr><td><code>/goal &lt;text&gt;</code></td><td>Set a session goal, send it as the first message, and work toward it.</td></tr>
+        <tr><td><code>/goal clear</code></td><td>End the active goal.</td></tr>
+        <tr><td><code>/goal gate [add|remove|clear]</code></td><td>List or edit the shell commands that must pass before the goal counts as done.</td></tr>
         <tr><td><code>/btw &lt;question&gt;</code></td><td>Ask a side question that never enters the transcript.</td></tr>
         <tr><td><code>/subagent &lt;task&gt;</code></td><td>Spawn a focused one-shot subagent in the background.</td></tr>
         <tr><td><code>/workflow &lt;saved-name&gt;</code></td><td>Launch a saved ultracode workflow run in this session.</td></tr>
         <tr><td><code>/file:&lt;path&gt; [question]</code></td><td>Reference a workspace file inline so Claude sees its contents.</td></tr>
-        <tr><td><code>/skills:</code></td><td>Browse and open available skills.</td></tr>
-        <tr><td><code>/mcp:</code></td><td>Browse connected MCP tools.</td></tr>
+        <tr><td><code>/skills</code></td><td>Open the Skills panel in Settings.</td></tr>
+        <tr><td><code>/skills:</code></td><td>Browse available skills in an inline picker.</td></tr>
+        <tr><td><code>/mcp:</code></td><td>Browse the tools of your connected MCP servers in an inline picker.</td></tr>
         <tr><td><code>/export</code></td><td>Download the visible conversation as a text file.</td></tr>
-        <tr><td><code>/clear</code></td><td>Wipe the visible chat (the stored session keeps its history).</td></tr>
+        <tr><td><code>/clear</code></td><td>Empty this session's chat (the next save persists it empty).</td></tr>
         <tr><td><code>/rename &lt;title&gt;</code></td><td>Rename the current session.</td></tr>
-        <tr><td><code>/workspace</code></td><td>Connect a workspace folder.</td></tr>
+        <tr><td><code>/workspace</code></td><td>Open the Connect Workspace dialog.</td></tr>
         <tr><td><code>/theme &lt;name&gt;</code></td><td>Switch the app theme.</td></tr>
         <tr><td><code>/notify</code></td><td>Request or check browser notification permission.</td></tr>
         <tr><td><code>/settings</code></td><td>Open the Settings panel.</td></tr>
@@ -71,11 +74,11 @@
 
     <h3 id="model">/model</h3>
     <p><code>/model &lt;name&gt;</code> switches the model for every subsequent turn in this session. The
-      valid names come from your configured model list, so they track whatever you have enabled, for
-      example <code>haiku</code>, <code>sonnet</code>, <code>opus</code>, or a pinned version like
-      <code>opus4.8</code>. On success you get a toast confirming the version label ("Model set to
-      Sonnet 4.6"). Pass an unknown name and the composer replies with the exact usage string listing
-      the models you can pick.</p>
+      valid names are the keys in your configured model list, so they track whatever you have enabled:
+      <code>haiku</code>, <code>sonnet</code>, <code>sonnet5</code>, <code>opus4.8</code>,
+      <code>opus5.0</code>, <code>fable5.1</code>, <code>gpt6-astra</code>, and the rest. On success you
+      get a toast confirming the version label ("Model set to Sonnet 4.6"), not the raw key. Pass an
+      unknown name and the composer replies with the usage string listing the models you can pick.</p>
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></svg></span>
       <div class="callout__body"><p>Switching to a model with a stricter data-retention policy routes
@@ -86,13 +89,16 @@
 
     <h3 id="effort">/effort</h3>
     <p><code>/effort &lt;level&gt;</code> sets thinking depth for models that expose it, which is every
-      cloud model except Haiku; the levels offered depend on the model's tier.
-      The accepted levels are <code>low</code>, <code>medium</code>, <code>high</code>,
-      <code>extra</code>, <code>max</code>, and <code>ultracode</code>. The raw API name
-      <code>xhigh</code> is accepted as an alias for <code>extra</code>. <code>ultracode</code> is the
-      top mode: it pairs the highest reasoning effort with dynamic-workflow orchestration (see
-      <a href="arch-ultracode.html">The ultracode workflow runtime</a>). Each model advertises its own
-      set of levels, so the validator is model-aware:</p>
+      cloud model except Haiku. The palette offers <code>low</code>, <code>medium</code>,
+      <code>high</code>, <code>extra</code>, <code>max</code>, and <code>ultracode</code>; the raw API
+      name <code>xhigh</code> is accepted as an alias for <code>extra</code>, and the GPT-5.x models
+      also take <code>none</code>. Which rungs a model actually has depends on its ladder:
+      <code>extra</code> exists on Opus 4.8 and up and on Fable, while Sonnet and the older Opus
+      versions go straight from <code>high</code> to <code>max</code>. <code>ultracode</code> is the
+      top mode: it pairs the model's highest reasoning rung with dynamic-workflow orchestration (see
+      <a href="arch-ultracode.html">The ultracode workflow runtime</a>), and it is offered only on
+      models that can drive a workflow. Because each model advertises its own set, the validator is
+      model-aware:</p>
     <ul>
       <li>Ask for a level the model supports and it is applied, with a toast naming the new level.</li>
       <li>Ask for a valid level the current model does <em>not</em> expose and it is
@@ -102,8 +108,10 @@
 
     <h3 id="plan">/plan</h3>
     <p><code>/plan</code> toggles <b>plan mode</b>: a read-only stance where Claude investigates and
-      proposes a plan without writing files, running commands, or taking other write actions. Run it
-      again to leave plan mode. It is the same dial described in
+      proposes a plan without writing files, running commands, or taking other write actions. The
+      write tools stay advertised and are refused when called, with a note steering the model to
+      <code>create_plan</code> instead. Run the command again to leave plan mode, which puts the
+      session in Auto. It is the same dial described in
       <a href="tut-permissions.html">Permissions &amp; approvals</a>, so any write step still surfaces
       an approval card once you leave plan mode.</p>
 
@@ -124,9 +132,24 @@
     <p><code>/goal &lt;text&gt;</code> sets a <b>session goal</b> that the goal loop keeps working toward:
       after each turn a cheap evaluator judges whether the goal is met, and if not the turn
       auto-continues (capped so it cannot run away). A goal banner appears above the composer while one
-      is active. <code>/goal clear</code> ends it. Both need an open session, and a bare
-      <code>/goal</code> just shows its usage hint. The loop is gated by the <code>goal_loop</code>
-      feature flag; see <a href="ref-settings.html#feature-flags">Feature flags</a>.</p>
+      is active. The goal text is also <b>sent as the first message</b>, so the work starts
+      immediately rather than leaving you with an empty composer; if a turn is already streaming, the
+      text is folded into that running turn instead of starting a second one. <code>/goal clear</code>
+      ends it. Both need an open session, and a bare <code>/goal</code> shows its usage hint. The loop
+      is gated by the <code>goal_loop</code> feature flag; see
+      <a href="ref-settings.html#feature-flags">Feature flags</a>.</p>
+    <p><b>Quality gates</b> are shell commands that must exit 0 before a goal can be judged done. They
+      run at every turn boundary, ahead of the judge, so "done" means the checks actually passed:</p>
+    <dl class="spec">
+      <dt><code>/goal gate add &lt;shell command&gt;</code></dt><dd>Add a check, for example
+        <code>npm test</code> or <code>venv/bin/pytest tests/</code>. The confirmation says how many
+        gates must now pass.</dd>
+      <dt><code>/goal gate remove &lt;N&gt;</code></dt><dd>Remove gate number N, counting from 1 in the
+        listed order.</dd>
+      <dt><code>/goal gate clear</code></dt><dd>Remove every gate.</dd>
+      <dt><code>/goal gate</code></dt><dd>List the gates, each with the number of times it has failed
+        so far. With none set, the reply says so and repeats the add syntax.</dd>
+    </dl>
 
     <h2 id="side-tasks">Side tasks &amp; agents</h2>
     <p>These run work alongside the main conversation without derailing it.</p>
@@ -143,16 +166,21 @@
       background with the full tool loop: web search and fetch, workspace access, code, and any enabled
       MCP tools. It does not block the composer, so you can keep chatting while it runs. Its live
       progress renders in a report card inside the chat, and its final answer is posted there when it
-      finishes. Press <b>Stop</b> on the card to cancel a run in flight. For coordinating several agents
-      at once, see <a href="tut-subagents.html">Sub-agents &amp; teams</a>.</p>
+      finishes. Press <b>Stop</b> on the card to cancel a run in flight, which marks any still-running
+      row stopped rather than leaving it spinning. It runs on the composer's current model and effort.
+      For coordinating several agents at once, see <a href="tut-subagents.html">Sub-agents &amp;
+      teams</a>.</p>
 
     <h3 id="workflow">/workflow</h3>
     <p><code>/workflow &lt;saved-name&gt;</code> launches a <b>saved workflow</b> by name: a deterministic
       script from the <a href="arch-ultracode.html">ultracode workflow runtime</a> that orchestrates
       agents in the current session. The run starts immediately and renders a workflow card in the chat
-      that tracks its phases, and it does not block the composer. It needs an <b>open session</b>, and if
-      no saved workflow matches the name you get an error toast prompting you to check that it is saved.
-      See <a href="arch-ultracode.html">The ultracode workflow runtime</a> for how workflows are authored,
+      that tracks its phases, and it does not block the composer. It launches on the composer's current
+      model and effort, so the same saved workflow behaves the same way however you start it. It needs
+      an <b>open session</b>. Two failures are told apart: a workflow that was saved but never approved
+      is refused until you run it once from chat and approve its preview card, and a name that matches
+      nothing asks you to check that it is saved. See
+      <a href="arch-ultracode.html">The ultracode workflow runtime</a> for how workflows are authored,
       previewed, and resumed.</p>
 
     <h2 id="files-tools">Files &amp; tools</h2>
@@ -170,21 +198,34 @@
         background, then the turn sends.</dd>
     </dl>
     <p>The same file reference is also available as an <code>@file:</code> mention from anywhere in the
-      message, alongside <code>@skills:</code> and <code>@mcp:</code>. A bare
-      <code>@&lt;session-slug&gt;</code> mention pulls another chat session in as context for the turn,
-      resolved server-side from the session's title. <code>@index</code> forces a search of your
-      indexed folders for this message (see
-      <a href="tut-index-search.html#ask-with-grounding">Index &amp; semantic search</a>); the marker
-      is stripped before the model sees the text. Documents are extracted to text
-      (large ones are capped) and images become vision blocks; see
-      <a href="arch-extraction.html">Attachment extraction</a> for the type-aware pipeline. Supported
-      inputs include images, PDF, Office docs, audio, video, code, and text.</p>
+      message. Typing <code>@</code> opens a picker with five fixed entries plus your own skills and
+      sessions:</p>
+    <dl class="spec">
+      <dt><code>@file:</code></dt><dd>Reference a workspace file, searchable by path as you type.</dd>
+      <dt><code>@skills:</code></dt><dd>Browse skills. A bare <code>@&lt;skill-name&gt;</code> works too
+        and forces that skill for the message; with no text of your own, the skill runs on the
+        conversation so far.</dd>
+      <dt><code>@mcp:</code></dt><dd>Browse the tools of your connected MCP servers.</dd>
+      <dt><code>@index</code></dt><dd>Force a search of your indexed folders for this message (see
+        <a href="tut-index-search.html#ask-with-grounding">Index &amp; semantic search</a>).</dd>
+      <dt><code>@docs</code></dt><dd>Answer from this manual: the matching passages are retrieved and
+        the answer is written from them, with the pages it used cited. The first use builds the
+        manual's index, which takes a moment.</dd>
+      <dt><code>@&lt;session-title&gt;</code></dt><dd>Pull another chat session in as context for the
+        turn, matched on its title.</dd>
+    </dl>
+    <p>The <code>@index</code> and <code>@docs</code> markers are stripped before the model sees the
+      text. Attached documents are extracted to text (large ones are capped) and images become vision
+      blocks; see <a href="arch-extraction.html">Attachment extraction</a> for the type-aware pipeline.
+      Supported inputs include images, PDF, Office docs, audio, video, code, and text.</p>
 
-    <h3 id="skills-mcp">/skills: and /mcp:</h3>
-    <p><code>/skills:</code> browses the available <a href="tut-skills.html">skills</a> and opens the
-      Skills view. <code>/mcp:</code> browses the tools exposed by your connected
+    <h3 id="skills-mcp">/skills, /skills: and /mcp:</h3>
+    <p><code>/skills:</code> browses the available <a href="tut-skills.html">skills</a> and
+      <code>/mcp:</code> browses the tools exposed by your connected
       <a href="tut-mcp-plugins.html">MCP servers</a>. Both open a searchable submenu as you type after
-      the colon, which is the discoverable way to see exactly what is wired up in the current session.</p>
+      the colon, which is the discoverable way to see exactly what is wired up in the current session.
+      <code>/skills</code> without the colon is a different command: it opens the <b>Skills</b> panel in
+      Settings, where you enable, disable, import, and edit them.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16v-4M12 8h.01"/><circle cx="12" cy="12" r="9"/></svg></span>
@@ -207,9 +248,12 @@
       <code class="path">server/infrastructure/sessions_routes.py</code>.</p>
 
     <h3 id="clear">/clear</h3>
-    <p><code>/clear</code> wipes the <b>visible</b> chat so you can start fresh in the same tab. It
-      clears the on-screen messages only; the stored session still holds its history in SQLite. To
-      remove a session for good, delete it from the sidebar instead.</p>
+    <p><code>/clear</code> empties the chat so you can start fresh in the same tab. It drops the
+      messages from the session's store, and because the session saves itself on a timer, the next save
+      writes that empty history to the session record: treat it as clearing the conversation, not just
+      the view. The session itself stays in the sidebar, keeping its title and its meeting transcript.
+      If you want the old messages back later, start a new session instead of clearing this one, and to
+      remove a session for good, delete it from the sidebar.</p>
 
     <h3 id="rename">/rename</h3>
     <p><code>/rename &lt;new title&gt;</code> sets a custom title for the current session and marks it as
@@ -217,8 +261,9 @@
       command word becomes the title. With no title, you get the usage hint.</p>
 
     <h3 id="workspace">/workspace</h3>
-    <p><code>/workspace</code> opens the native folder picker to connect a workspace directory, which is
-      what unlocks the file tree, editor, terminal, and the file-aware tools. The
+    <p><code>/workspace</code> opens the <b>Connect Workspace</b> dialog, where you type a path, browse
+      for a folder, or pick one from your indexed and recent lists. Connecting a folder is what unlocks
+      the file tree, editor, terminal, and the file-aware tools. The
       <a href="tut-workspace.html">workspace IDE</a> tutorial walks through what becomes available once
       a folder is connected.</p>
 

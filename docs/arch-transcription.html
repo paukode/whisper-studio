@@ -95,7 +95,11 @@
       <code>UtteranceBuffer</code> in <code class="path">server/audio_buffer.py</code>, which uses
       <code>webrtcvad</code> to find natural speech boundaries. The VAD is the <em>only</em> speech
       filter: energy (RMS) gates were tried and removed, because they silently ate quiet microphones.
-      An utterance settles into a <em>final</em> when two conditions hold:</p>
+      In front of it sits an upward-only gain rider that steers speech toward about
+      <b>-24&nbsp;dBFS</b> (at most <b>12x</b>), which is what rescues a soft talker a metre from a
+      laptop mic or a system-audio tap running at a third of full volume; frames below the noise floor
+      never steer the gain, so boosted room tone cannot manufacture an utterance. An utterance settles
+      into a <em>final</em> when two conditions hold:</p>
     <ol class="steps">
       <li><h4>Enough speech</h4><p>At least <b>400 ms</b> of voiced audio
         (<code>MIN_UTTERANCE_MS</code>). Shorter fragments (a cough, a stray syllable) are dropped
@@ -190,8 +194,12 @@
       (<code>PalabraAI/redimnet2</code>, 3.6M params, 0.57% EER on VoxCeleb1-O); <b>ECAPA-VoxCeleb</b>
       (<code>speechbrain/spkrec-ecapa-voxceleb</code>, ~1% EER) remains as the automatic fallback.
       Packaged builds ship both encoders (plus the VoxLingua107 language-ID model) inside the app and
-      install them into <code>~/.whisper/models</code> on first launch, so speaker labels work offline
-      from the first recording; both appear as normal cards in the Settings model panel. Vectors from the two encoders are not comparable, which is why
+      copy them into <code class="path">~/.whisper/models</code> on first launch; a source install
+      fetches the same three in <code class="path">setup.sh</code> (about 190&nbsp;MB, ReDimNet2 through
+      torch.hub into <code class="path">models/torch-hub</code>). Either way speaker labels work offline
+      from the first recording. All three are marked <code>bundled</code> in the model catalog, which
+      keeps them out of the Settings model lists while the recording gate can still heal a deleted copy
+      by key. Vectors from the two encoders are not comparable, which is why
       thresholds and stored voiceprints are both filed per encoder. This runs
       on its own <code>diarize</code> thread pool, off the event loop and off the decode thread.
       Windows under <b>1 second</b> (<code>MIN_EMBED_SAMPLES</code>) return no embedding: below that,
@@ -268,21 +276,40 @@
       "Speaker 2" to a name stores the centroid of every embedding that cluster has accumulated, so the
       same person is recognised by name in later recordings. Enrollment is therefore a side effect of a
       gesture the user already performs, built from real meeting audio rather than a separate ritual.</p>
-    <p>Matching is deliberately conservative: a hit needs both a high absolute similarity and a clear
-      margin over the runner-up, because putting the wrong name on somebody is worse than leaving them
-      as "Speaker 3". A recovered identity reaches the client as <code>speaker_named</code> and is
-      applied exactly like a manual rename. Set <code>speaker_voiceprints</code> to <code>false</code>
-      to keep everything session-scoped.</p>
+    <p>The gallery is one JSON file, <code class="path">voiceprints.json</code> in the data root
+      (<code class="path">~/.whisper/data</code> in a packaged install, <code class="path">data/</code>
+      at the repo root in a source checkout), written atomically and bucketed per encoder, so switching
+      <code>speaker_embedder</code> reads a different bucket rather than matching against vectors it
+      cannot compare. Matching is deliberately conservative: a hit needs both a high absolute similarity
+      and a clear margin over the runner-up, because putting the wrong name on somebody is worse than
+      leaving them as "Speaker 3". A recovered identity reaches the client as
+      <code>speaker_named</code> and is applied exactly like a manual rename. Set
+      <code>speaker_voiceprints</code> to <code>false</code> to keep everything session-scoped.</p>
 
     <h2 id="dictation">Dictation skips speaker ID</h2>
     <p>When the connection carries <code>dictation=1</code> (the chat-input microphone), speaker
       identification is skipped entirely: dictation is single-user, so diarization is pointless and its
-      compute would be wasted. Every utterance is simply labeled and returned; no ECAPA embedding, no
+      compute would be wasted. Every utterance is simply labeled and returned; no speaker embedding, no
       clustering. A dictation connection never owns speaker state, so it also never clears the meeting
       recorder's.</p>
 
+    <h2 id="voice-mode">Voice mode does not come through here</h2>
+    <p>A spoken conversation with the assistant is a separate stack, not another consumer of this
+      pipeline. It opens its own socket (<code>/ws/voice</code>) and its own
+      <code>getUserMedia</code> stream with echo cancellation on, because the reply is playing out of
+      the speakers, and the recognition happens at Amazon Bedrock rather than on-device: no
+      <code>UtteranceBuffer</code>, no ASR backend, no diarization. That is also why the two can run at
+      the same time without contending for the recorder's shared microphone.</p>
+    <p>The one real touch point is control: the voice model has a <code>control_recording</code> tool
+      that emits a <code>client_action</code> the browser turns into a Record start or stop, so a spoken
+      "start recording the meeting" drives exactly the pipeline described above, and the transcript it
+      produces is the on-device one. See <a href="tut-voice-mode.html">Talk: voice conversations</a>,
+      and note the privacy difference: recording keeps audio on the machine, a voice conversation
+      streams it.</p>
+
     <h2 id="summarization">From transcript to summary</h2>
-    <p>Once you have a transcript, three summary skills turn it into something you can act on.
+    <p>Once you have a transcript, three summarizers turn it into something you can act on: one
+      built-in tool and two bundled skills.
       <code>summarize_transcript</code> produces action items, meeting notes, key points, or a brief;
       <code>meeting_notes</code> writes a fuller polished record with an owner/action/deadline table;
       and <code>catch_up</code> gives a plain-language recap for someone who joined late. The server
@@ -307,7 +334,8 @@
       <div class="callout__body"><p><b>Audio never leaves the machine.</b> Recognition and speaker
         embedding both run on-device via MLX and SpeechBrain. Nothing is uploaded, and no telemetry is
         emitted. The only network access is a one-time model download into
-        <code class="path">models/</code> on first use.</p></div>
+        <code class="path">models/</code> on first use. This is the recording pipeline; a voice
+        conversation is the separate stack described above and does stream audio to Bedrock.</p></div>
     </div>
 
     <h2 id="messages">WebSocket message types</h2>
@@ -346,7 +374,8 @@
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> the hands-on <a href="tut-voice.html">Voice &amp; meetings</a>
-        tutorial, <a href="arch-frontend.html">Frontend architecture</a> for how the SPA renders the
+        tutorial, <a href="tut-voice-mode.html">Talk: voice conversations</a> for the spoken assistant,
+        <a href="arch-frontend.html">Frontend architecture</a> for how the SPA renders the
         live transcript, <a href="arch-backends.html">Model backends &amp; modes</a> for warming and
         unloading these models, <a href="arch-summarization.html">Transcript summarization &amp; condensation</a>
         for what happens after recording, and the <a href="arch-overview.html">System overview</a>.</p></div>

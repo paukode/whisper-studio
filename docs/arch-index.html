@@ -127,17 +127,21 @@
         <p><b>GLiNER</b> (zero-shot, local) is called at a deliberately low threshold
           (<code>GLINER_CALL_THRESHOLD</code>, 0.35) and its spans are then accepted against
           per-label floors (<code>LABEL_THRESHOLDS</code>: 0.55 for people and organizations up to
-          0.65 for metrics, locations, and events), after a salience pre-filter drops hard junk; a
-          workspace can opt into the heavier <b>GLiNER2</b> model instead from the Index
-          settings panel. In cloud mode, <b>Claude Haiku</b> extracts entities instead. The label set
+          0.65 for metrics, locations, and events), after a salience pre-filter drops hard junk.
+          <code>gliner_large-v2.5</code> is the default because it is the strongest multilingual
+          option; a workspace with an English-only corpus can set <code>ner_model</code> to
+          <b>GLiNER2</b> (fastino) in the Index settings panel. In cloud mode, <b>Claude Haiku</b>
+          extracts entities instead. The label set
           is no longer fixed: an entity-type profile (business vs code) is auto-picked per file from
           its extension, so a CV and a source file are asked for different kinds of entity. Names are
           stripped and deduped case-insensitively so one entity maps to one node.</p>
       </div>
       <div class="card">
         <h3>Typed relations (optional)</h3>
-        <p>When enabled per workspace, an LLM extracts typed edges (<code>works_at</code>,
-          <code>cites</code>, <code>depends_on</code>) via <b>Haiku</b> or <b>on-device Gemma</b>. The
+        <p>When enabled per workspace, an LLM extracts typed edges from a closed vocabulary
+          (<code>works_at</code>, <code>authored</code>, <code>depends_on</code>, and friends, with
+          inverse phrasings normalized so "A employs B" is stored as <code>works_at(B, A)</code>) via
+          <b>Haiku</b> or <b>on-device Gemma</b>. The
           LLM may only connect two names from the already-extracted entity list, so it cannot invent
           nodes, and each relation carries a 1 to 5 strength score.</p>
       </div>
@@ -151,10 +155,19 @@
     <h2 id="storage">Storage layout</h2>
     <p>Everything lives under <code class="path">storage/index/&lt;name&gt;-&lt;hash8&gt;/</code>, one
       readable directory per workspace, managed by <code class="path">server/index/store/</code>.
-      The index is keyed <em>per embedding backend</em>, so switching between the Qwen3 and Cohere
-      backends uses a separate DB and does not force a rebuild of the other. The schema holds files,
-      chunks, entity nodes, node-to-chunk links, typed relations, and a small <code>meta</code>
-      table.</p>
+      The <code>hash8</code> suffix is the first eight hex of a SHA1 of the absolute path, so two
+      folders with the same basename never collide while the directory stays recognizable. Indexes
+      sit under <code>storage_root()</code>, next to <code>sessions.db</code>, not under the user
+      root: they are derived data that a hand-edit in <code class="path">~/.whisper</code> must not
+      be able to corrupt.</p>
+    <p>The index is keyed <em>per embedding backend</em>, as sibling files inside that one directory:
+      <code class="path">index.db</code> for Qwen3 (and for any index built before the split, so
+      nothing is orphaned) and <code class="path">index-&lt;backend&gt;.db</code> for the others.
+      Switching between backends therefore uses a different file and never forces a rebuild of the
+      one you left. Each database holds files, chunks, entity nodes, node-to-chunk links, typed
+      relations (<code>relations2</code>, keyed by node id so an entity merge repoints rather than
+      strands them, and carrying verbatim evidence with line provenance), and a small
+      <code>meta</code> table.</p>
     <dl class="spec">
       <dt><code class="path">vec BLOB (in chunks)</code></dt>
       <dd>Vectors are stored as float32 BLOBs and are the source of truth. Because they are
@@ -227,6 +240,15 @@
         is the larger of that and a relative guard, <code>GROUND_REL_FLOOR</code> (0.55) times the
         top score, which adapts to each query's score spread. Keyword and entity hits are exempt from
         the floor by design.</p></li>
+      <li><h4>Off-topic mute</h4><p>A KNN search always returns something, so a per-backend
+        on-topic floor (<code>GROUND_ON_TOPIC_FLOORS</code>: 0.40 for Qwen3, 0.28 for Cohere) asks a
+        blunter question first: did the turn's <em>best</em> dense cosine clear the bar at all? Below
+        it, an unforced turn treats the corpus as off-topic for the question and the dense leg and
+        its graph hop contribute nothing; with no keyword or entity hits either, nothing is injected
+        and no chip is shown. The numbers are calibrated against the <code>docs_qa</code>
+        measurements (on-topic Qwen3 sections score 0.56 to 0.72, unrelated ones 0.34 and below), set
+        slightly looser than the manual's own floor because workspace corpora are messier.
+        <code>@index</code> ignores this floor.</p></li>
       <li><h4>Auto-merge</h4><p>Parent-document retrieval: once a small, focused file has a chunk in
         the top matches, its remaining chunks are spliced in (bounded by a budget, and never for a
         large document like a book), so a CV's full history grounds the answer rather than just its
@@ -260,6 +282,27 @@
         answers without grounding rather than blocking, and no chip is shown.</p></div>
     </div>
 
+    <h3 id="docs-qa">@docs: the same machinery over the manual</h3>
+    <p><code class="path">server/docs_qa.py</code> points retrieval at the app's own documentation
+      site (the <code class="path">docs/</code> tree, mounted at <code>/docs-site</code>). An explicit
+      <code>@docs</code> in a message retrieves the relevant manual sections and injects them as a
+      <b>strict</b> grounding block: answer only from these passages, cite pages with
+      <code>#docspage=</code> links the chat renderer opens in the right-pane viewer, and say the
+      manual does not cover it rather than guessing.</p>
+    <p>It is deliberately not the workspace pipeline with a different corpus:</p>
+    <ul>
+      <li>The unit is a heading-level section, not a token-budgeted chunk, and the whole index is
+        small enough to hold in one file pair per backend under
+        <code class="path">data_root()/docs-index</code>, keyed by a signature over the doc files so
+        a new app version rebuilds it automatically.</li>
+      <li>The cosine floor is higher (<code>_SCORE_FLOOR</code>, 0.45) than any workspace floor. The
+        manual is small and on-topic questions score well, so a high floor makes "no relevant
+        passages", and with it the honest "the docs do not cover this", the common miss outcome.</li>
+      <li>The first <code>@docs</code> of a session pays a cold build (embedding roughly 300
+        sections), which chat allows a longer budget for (<code>_DOCS_COLD_BUDGET_S</code>). A
+        timeout answers without the block rather than blocking the turn.</li>
+    </ul>
+
     <h2 id="endpoints">HTTP endpoints</h2>
     <p>The index is driven from <code class="path">server/index/routes.py</code>, mounted under
       <code>/api/workspace/index</code>:</p>
@@ -282,6 +325,7 @@
     <div class="spec">
       <dt><code class="path">server/index/pipeline.py</code></dt><dd>Build orchestration, query, and grounding assembly.</dd>
       <dt><code class="path">server/index/query_gate.py</code></dt><dd>The intent gate: the content-word stoplist and the <code>@index</code> trigger.</dd>
+      <dt><code class="path">server/docs_qa.py</code></dt><dd>The <code>@docs</code> path: section index over the bundled manual, its own cosine floor, and the strict cite-the-manual block.</dd>
       <dt><code class="path">server/infrastructure/grounding_store.py</code></dt><dd>Per-session persistence of each grounded turn's sources for the answer-sources panel.</dd>
       <dt><code class="path">server/index/embedder.py</code></dt><dd>Qwen3 / Cohere embeddings, batching, NaN guard.</dd>
       <dt><code class="path">server/index/extractor.py</code></dt><dd>GLiNER / Haiku entity extraction.</dd>

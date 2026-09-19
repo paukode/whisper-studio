@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Goals &amp; autopilot - Whisper Studio Docs</title>
-  <meta name="description" content="When to just prompt, when to set a goal that runs until it's done, and when to run a parallel workflow. How to give Whisper Studio a goal with /goal and let the completion gate keep it working until achieved.">
+  <meta name="description" content="When to just prompt, when to set a goal that runs until it's done, and when to run a parallel workflow. How /goal sets the goal and starts the work, how to add a must-pass check with /goal gate add, and how the completion gate keeps it going until achieved.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='16' cy='16' r='9'/%3E%3Ccircle cx='16' cy='16' r='4.5'/%3E%3Cpath d='M16 4v3M16 25v3M4 16h3M25 16h3'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -46,8 +46,8 @@
           <td><b>A goal</b></td>
           <td>A multi-step task you want run to completion ("keep going until this actually works") where
             the model might otherwise stop as soon as it has done <em>something</em>.</td>
-          <td><code>/goal &lt;text&gt;</code>. A completion gate checks each turn and continues until the goal
-            is met (capped). See below.</td>
+          <td><code>/goal &lt;text&gt;</code> sets the goal and starts the work in one step. A completion
+            gate checks each turn and continues until the goal is met (capped). See below.</td>
         </tr>
         <tr>
           <td><b>A workflow</b></td>
@@ -72,38 +72,59 @@
       view and, at the end of every turn, asks itself whether the goal is met yet.</p>
     <ol class="steps">
       <li>
-        <h4>Set the goal</h4>
+        <h4>Set the goal, and the work starts</h4>
         <p>Type <code>/goal</code> followed by the objective, for example
-          <code>/goal make the login page pass tsc, eslint, and its tests</code>. A goal banner appears
-          above the composer so you always see what it's working toward.</p>
+          <code>/goal make the login page pass tsc, eslint, and its tests</code>. That one command does
+          both halves: it arms the gate with your text as the goal, <b>and</b> sends the same text as your
+          first message, so the work begins immediately. A goal banner appears above the composer so you
+          always see what it's working toward, with a chip reading <b>working…</b>, <b>achieved</b> or
+          <b>blocked</b>. If a turn is already running when you type it, the goal text is folded into that
+          turn rather than starting a second one.</p>
       </li>
       <li>
-        <h4>Give it the first instruction</h4>
-        <p>Then prompt as normal ("start on the failing test") or just say "go". The goal is context for
-          every turn, not a replacement for your first message.</p>
+        <h4>Optional: name a check it must pass</h4>
+        <p><code>/goal gate add &lt;command&gt;</code> attaches a shell command that must exit 0 before the
+          goal can count as done, for example <code>/goal gate add npm test</code>. A red gate is proof,
+          not opinion: its output is handed straight back as the reason to keep working, and the evaluator
+          is not even consulted. <code>/goal gate</code> lists them,
+          <code>/goal gate remove &lt;N&gt;</code> drops one by its number, and
+          <code>/goal gate clear</code> removes them all.</p>
       </li>
       <li>
         <h4>It keeps going until it's done</h4>
-        <p>When the model stops, the <a href="arch-goals.html">completion gate</a> runs a quick check
-          instead of ending the turn: a cheap evaluator (and any <a href="arch-hooks.html">Stop hooks</a>)
-          decide whether the goal is achieved. If not, it feeds back what's missing and the turn continues,
-          so you don't have to keep typing "keep going".</p>
+        <p>When the model stops, the <a href="arch-goals.html">completion gate</a> runs a set of checks
+          instead of ending the turn: any <a href="arch-hooks.html">Stop hooks</a>, then whether the files
+          the reply claims to have written actually exist, then whether anything green ran after the last
+          code edit, then your gate commands, and only then a cheap evaluator. If something is missing it
+          feeds back what, and the turn continues, so you don't have to keep typing "keep going".</p>
       </li>
       <li>
         <h4>Clear it when you're done</h4>
-        <p><code>/goal clear</code> ends the goal, and so does an achieved verdict - those are the only
-          two ways it clears. The consecutive-block cap (default 8) and a confident "can't do this"
-          verdict stop the loop from forcing more turns right now, but the goal itself stays set and
-          resumes gating on your very next message.</p>
+        <p><code>/goal clear</code> ends the goal, and so does an achieved verdict. The consecutive-block
+          cap (default 8) and a confident "can't do this" verdict stop the loop from forcing more turns
+          right now, but the goal itself stays set and resumes gating on your very next message. A gate
+          command that has failed three times in a row pauses the goal instead of looping, and tells you to
+          fix it, remove the gate, or set the goal again.</p>
       </li>
     </ol>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>Two of those checks run whether or not you set a goal.</b> If a reply
+        tells you a file was saved or points at an artifact card, the file has to be there and non-empty,
+        and the artifact call has to have happened in that turn; and if code was edited with no test, lint,
+        typecheck or build run green afterwards, the assistant is asked to run one or say plainly what
+        stops it. That is why you sometimes see a turn continue itself with no goal set.</p></div>
+    </div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
       <div class="callout__body"><p>Goals shine when "done" is <em>checkable</em>. "Make the build pass" or
         "all tests green" gives the evaluator a real signal: the built-in <code>verify_change</code> tool
         runs the actual gate and reports <code>VERIFY PASS</code> / <code>VERIFY FAIL</code>, which the evaluator
-        weighs above any confident-sounding summary. Phrase your goal as an outcome it can verify.</p></div>
+        weighs above any confident-sounding summary. Phrase your goal as an outcome it can verify, and when
+        you can name the exact command, add it with <code>/goal gate add</code> so nothing is left to
+        judgement at all.</p></div>
     </div>
 
     <h2 id="full-stack">Full-stack &amp; UI work</h2>

@@ -129,7 +129,7 @@
     <p>Images take their own branch in the upload endpoint. Two things happen to every uploaded image:</p>
     <ul>
       <li><b>OCR to text.</b> <code>ocr_image_bytes</code> (<code class="path">server/extract/image.py</code>)
-        runs the same OCR path as scanned PDFs, so text-only models (the local Gemma build) get readable
+        runs the same OCR path as scanned PDFs, so a text-only on-device model gets readable
         text pulled out of the image. Vision-capable models still receive the raw image block alongside it.</li>
       <li><b>Sizing for vision.</b> <code>_prepare_image</code> in
         <code class="path">server/attachments.py</code> caps the image's long edge and re-encodes it once, at
@@ -149,8 +149,8 @@
 
     <h2 id="audio-video">Audio and video</h2>
     <p>Audio and video are never sent to the model as media. The upload endpoint routes them by extension
-      (<code>is_media_ext</code> - MP3, WAV, M4A, FLAC, OGG on the audio side; MP4, MOV, WebM, MKV, AVI,
-      M4V on the video side) to <code>extract_media</code> in <code class="path">server/extract/media.py</code>,
+      (<code>is_media_ext</code> - MP3, WAV, M4A, FLAC, OGG, AAC, AIFF, Opus and WMA on the audio side;
+      MP4, MOV, WebM, MKV, AVI and M4V on the video side) to <code>extract_media</code> in <code class="path">server/extract/media.py</code>,
       which turns them into a Markdown transcript entirely <b>on-device</b> - no Bedrock call. Only that
       transcript (plus, for video, a bounded set of frames) is kept; the original media bytes are discarded,
       which is why audio and video get the higher <a href="#size-gates">size cap</a>.</p>

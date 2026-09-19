@@ -9,9 +9,10 @@ live in `PROMPT_RULES.md`. This file is about how to change the code safely.
 A local, single-user AI workstation for macOS: a FastAPI backend (`server/`),
 a React + TypeScript + Vite frontend (`src/`), a Swift app shell (`macapp/`),
 and an on-device ASR stack. Cloud models run on Amazon Bedrock (Claude and
-OpenAI on mantle); on-device chat runs through llama-server or MLX. One turn
-engine (`server/chat/engine/runner.py`) serves chat, subagents, cron, and
-headless runs.
+OpenAI on mantle); on-device chat runs through llama-server or MLX; voice mode
+streams Amazon Nova Sonic while the session model does the work. One turn
+engine (`server/chat/engine/runner.py`) serves chat, subagents, cron, voice,
+and headless runs.
 
 ## Invariants (review every change against these)
 
@@ -33,8 +34,11 @@ headless runs.
    tool output.
 5. **SSE frames are pinned.** `tests/golden_fixtures` pins the frame
    vocabulary (`GOLDEN_RECORD=1` re-records on purpose). The frontend Zod
-   schema (`src/types/schemas/chat.schema.ts`) strips unknown fields, so a
-   new frame or field must be added there and in `src/types/chat.ts`.
+   schema (`src/types/schemas/chat.schema.ts`) is `.passthrough()` at the top
+   level, so a brand-new frame survives unvalidated, but every nested
+   `z.object` drops keys it does not declare. A new field inside an existing
+   frame is therefore invisible to the UI until it is added there and in
+   `src/types/chat.ts`.
 6. **Import boundaries.** `server/infrastructure/config.py` never imports
    through `server.chat`. `server/tool_router.py` is pure dispatch; lifecycle
    lives in `tool_executor.py`.
@@ -62,7 +66,12 @@ server/goals/            completion gate: Stop hooks, deliverables, verification
 server/memory/           two-tier memory, extraction, dream consolidation, review fork
 server/agents/           subagent runtime, agent types, tool filtering, journal.py
                          (on-disk record of every run: events, message checkpoints,
-                         report; the task registry row exists from the first round)
+                         report; the task registry row exists from the first round),
+                         extensions.py (grant a running agent more rounds),
+                         wake.py (parent answers when reports land with no live turn)
+server/tasks/            task registry, session events, detached agent runs
+server/voice/            Nova Sonic bidirectional stream, voice tools, approvals aloud
+server/costs/            per-turn cost log, budgets, the soft cap that reserves a round
 server/infrastructure/   config, sessions store, session_search, auxiliary models, one_shot
 server/skills.py         skill loader; skills_routes.py (HTTP); agent_tools/ (model tools)
 src/hooks/useSlashCommands.tsx   slash commands; src/types/schemas/chat.schema.ts SSE schema
@@ -72,19 +81,22 @@ macapp/                  build_app.sh then make_dmg.sh (packages dist-app/)
 ## Development
 
 ```bash
-bash setup.sh            # provisions venv/ and the frontend bundle
+bash setup.sh            # provisions venv/, the frontend bundle, the speech models
 bash setup.sh --dev      # Vite dev server with HMR; the backend serves /static CSS
 venv/bin/python -m pytest tests/        # backend suite (default env, no extra vars)
 venv/bin/ruff check . && venv/bin/ruff format --check .
 npx tsc --noEmit && npm test && npm run lint && npm run build
 ```
 
-- Only Node 24 is installed locally; do not assume other versions.
+- Python 3.12 is the floor (the voice SDK pins it); the packaged app ships
+  3.13. Only Node 24 is installed locally; do not assume other versions.
 - Run the full pytest suite with the DEFAULT environment. Two local-model
   resolver tests are known red on some Macs regardless of code; gate on the
   exit code, and never trust a piped `pytest | tail` exit status.
-- The live runtime config is the gitignored `config.json` at the repo root,
-  merged over `config.example.json` and `DEFAULTS`.
+- The live runtime config is the gitignored `config.user.json` (or the legacy
+  `config.json`) at the repo root, merged over `config.example.json` and
+  `DEFAULTS`. A fresh install is seeded from `FIRST_RUN_USER_CONFIG`, which is
+  local mode, for the packaged app and `setup.sh` alike.
 - Several sessions may share this checkout and hold ports. Never kill
   processes by name; find the owner by port with `lsof -i :PORT`. Ship from a
   scratchpad worktree, never by switching branches in a shared tree.
@@ -110,4 +122,7 @@ mention an AI assistant, and never end with a dash. Do not wait for GitHub CI
 as a merge gate; verify locally. After a merge that touches the app, rebuild
 the DMG from the same main commit so `setup.sh` installs and the Mac app stay
 in parity (the DMG is named by `git describe` but packages `dist-app/`; verify
-the bundle contents, not the filename).
+the bundle contents, not the filename). Parity is a two-sided contract: what
+`macapp/build_app.sh` bundles, `setup.sh` must fetch, so moving or renaming a
+model helper means editing both. `setup.sh` runs under `set -e`, so a failing
+step there silently costs the user the whole install.

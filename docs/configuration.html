@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Configuration - Whisper Studio Docs</title>
-  <meta name="description" content="Whisper Studio's five config layers, environment variables, the Settings-UI fields, first-run config.json, and secrets hygiene.">
+  <meta name="description" content="Whisper Studio's five config layers, environment variables, the Settings panel tab by tab, the first-run config.user.json, voice settings, and secrets hygiene.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -16,9 +16,9 @@
   <main class="doc" data-page="configuration">
     <h1>Configuration</h1>
     <p class="subtitle">Whisper Studio reads settings from five layers, merged into one effective
-      config that runs your session. This page covers those layers, the environment variables, every
-      Settings-UI field, the first-run <code class="path">config.json</code>, and how to keep your
-      secrets safe.</p>
+      config that runs your session. This page covers those layers, the environment variables, the
+      Settings panel tab by tab, the first-run <code class="path">config.user.json</code>, and how to
+      keep your secrets safe.</p>
 
     <p>Almost everything is optional. A fresh install runs out of the box with sensible defaults, and
       you tune it either through the in-app Settings panel (the gear icon) or, for secrets and
@@ -51,7 +51,7 @@
       <tbody>
         <tr><td>Environment</td><td><code>TAVILY_API_KEY</code>, <code>HOST</code>, <code>PORT</code></td><td>Highest</td><td>Secrets and deployment overrides</td></tr>
         <tr><td>Project</td><td><code class="path">&lt;workspace&gt;/.whisper/settings.json</code></td><td>High</td><td>Per-project model, region, permission mode</td></tr>
-        <tr><td>User</td><td><code class="path">config.user.json</code> in the app home (repo root for a source install); an older checkout that still has a legacy <code class="path">config.json</code> keeps that as its user layer until migrated</td><td>Middle</td><td>Your deltas: keys, region, added models, per-field overrides, a hide-list</td></tr>
+        <tr><td>User</td><td><code class="path">config.user.json</code>, under <code class="path">~/.whisper</code> for the Mac app and at the repo root for a source install; an older checkout that still has a legacy <code class="path">config.json</code> keeps that as its user layer until migrated</td><td>Middle</td><td>Your deltas: keys, region, added models, per-field overrides, a hide-list</td></tr>
         <tr><td>System</td><td><code class="path">config.example.json</code> (read-only, ships with the app, read live)</td><td>Low</td><td>The app-owned model catalog and shipped defaults</td></tr>
         <tr><td>Code defaults</td><td><code>DEFAULTS</code> in <code class="path">server/infrastructure/config.py</code></td><td>Lowest</td><td>Built-in fallbacks you never edit</td></tr>
       </tbody>
@@ -79,13 +79,33 @@
 
     <h2 id="first-run-config">First-run user config</h2>
     <p>Your user config (<code class="path">config.user.json</code>, or a legacy
-      <code class="path">config.json</code> on older installs) lives at the repo root and is
-      gitignored, because it holds your Tavily key and any other per-machine settings. It is never a
-      copy of the template: <code class="path">config.example.json</code> is the read-only SYSTEM
-      layer, and the user file holds only your deltas. On a fresh install, <code>setup.sh</code> and
-      the packaged app both seed a <code class="path">config.user.json</code> with the same first-run
-      defaults (hybrid mode with the on-device index capabilities). After that, change values either
-      through the Settings UI (gear icon) or by editing the file directly.</p>
+      <code class="path">config.json</code> on older installs) is gitignored, because it holds your
+      Tavily key and any other per-machine settings. It is never a copy of the template:
+      <code class="path">config.example.json</code> is the read-only SYSTEM layer, and the user file
+      holds only your deltas.</p>
+    <p>On a fresh install, <code>setup.sh</code> and the packaged app run the same seeding code and
+      write the same two keys:</p>
+    <div class="code-block"><pre><code>{
+  "model_mode": "local",
+  "backends": {
+    "embed": "qwen3",
+    "rerank": "qwen3",
+    "ner": "gliner",
+    "index_llm": "haiku"
+  }
+}</code></pre></div>
+    <p>So a new install starts in <b>local</b> mode: nothing leaves the machine until you switch to
+      hybrid or cloud, and a one-time notice in the app explains the three modes and points at
+      <b>Settings &rarr; Model mode</b>. The <code>backends</code> map is dormant in local mode and
+      takes effect the moment you switch to hybrid. Note that the shipped
+      <code class="path">config.example.json</code> carries <code>"model_mode": "cloud"</code>, but it
+      is the lower SYSTEM layer, so the seeded user value wins on a fresh install. The file is written
+      once and never overwritten: from the second launch on, your own settings win. After that, change
+      values either through the Settings panel (gear icon) or by editing the file directly.</p>
+    <p>Because the app ships no on-device chat model, a fresh local-mode install has nothing to chat
+      with locally. The picker handles that by never leaving itself empty: when the mode filter would
+      hide every model it shows them all, so you can talk to Bedrock straight away and install an
+      on-device model from <b>Settings &rarr; Models &rarr; Discover</b> whenever you want.</p>
     <p>A fresh install has no <code>tavily_api_key</code>. Without a key,
       <code>web_search</code> falls back to an Amazon Bedrock AgentCore browser MCP server if you
       have enabled one; <code>web_fetch</code> and everything else (chat, transcription, and the
@@ -135,7 +155,7 @@
         <tr><td><code>HOST</code></td><td><code>127.0.0.1</code></td><td>Bind address. Set <code>HOST=0.0.0.0</code> to expose the app on your LAN. Localhost-only is the default for a reason (see <a href="ref-security.html">Security model</a>).</td></tr>
         <tr><td><code>PORT</code></td><td><code>8000</code></td><td>Backend port. Auto-incremented to the next free port if 8000 is in use, so read the URL the script actually prints.</td></tr>
         <tr><td><code>BACKEND_PORT</code></td><td><code>8000</code></td><td>Read by <code class="path">vite.config.ts</code> so the dev proxy targets the real backend port. <code>setup.sh</code> sets it from <code>$PORT</code> automatically, so the dev server and backend stay in sync even when the port shifted.</td></tr>
-        <tr><td><code>TAVILY_API_KEY</code></td><td><em>(unset)</em></td><td>Overrides <code>config.json:tavily_api_key</code>. An empty value is ignored, so the config falls back to whatever is stored. If both are set, the env var wins.</td></tr>
+        <tr><td><code>TAVILY_API_KEY</code></td><td><em>(unset)</em></td><td>Overrides <code>tavily_api_key</code> in the user config. An empty value is ignored, so the config falls back to whatever is stored. If both are set, the env var wins.</td></tr>
         <tr><td><code>WHISPER_HOME</code></td><td><em>(unset)</em></td><td>The app home for a packaged install: when set, the app keeps only <code class="path">storage/</code> (the session history) and <code class="path">logs/</code> under it, everything user-editable (<code class="path">config.user.json</code>, <code class="path">pricing.json</code>, <code class="path">PROMPT_RULES.md</code>, <code class="path">models/</code>, <code class="path">skills/</code>, <code class="path">plugins/</code>, <code class="path">agents/</code>, <code class="path">data/</code> with memory and workflows) lives at <code class="path">~/.whisper</code>, and the code tree stays read-only. Unset means a dev checkout, with everything at the repo root as before.</td></tr>
         <tr><td><code>WHISPER_USER_DIR</code></td><td><em>(unset)</em></td><td>Overrides the user-data root (<code class="path">~/.whisper</code> in a packaged install). Rarely needed; tests use it for isolation.</td></tr>
         <tr><td><code>WHISPER_DATA_DIR</code></td><td><em>(unset)</em></td><td>Relocates app data (result cache, config stores, DBs) on its own; beats the <code>data_dir</code> config key and the app-home default.</td></tr>
@@ -147,26 +167,103 @@
 source ~/.zshrc</code></pre></div>
     <p>The full lookup table lives in <a href="ref-env.html">Environment variables</a>.</p>
 
-    <h2 id="settings-ui-fields">Settings-UI fields</h2>
-    <p>Click the gear icon to open Settings. These fields write to the user layer. You do not need to
-      touch <code class="path">config.json</code> by hand for any of them. (A per-project override
-      goes in a hand-authored <code class="path">.whisper/settings.json</code> instead; the UI never
-      writes that file.)</p>
+    <h2 id="settings-ui-fields">The Settings panel</h2>
+    <p>Click the gear icon to open Settings. A left rail groups the panels into three sections, and
+      most panels have their own sub-tabs. Everything here writes to the user layer, so you never need
+      to touch the config file by hand. (A per-project override goes in a hand-authored
+      <code class="path">.whisper/settings.json</code> instead; the UI never writes that file.)</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Group</th><th>Panel</th><th>Sub-tabs</th><th>What lives there</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="2"><b>Chat and models</b></td><td>Model mode</td><td>-</td><td>The <code>cloud</code> / <code>hybrid</code> / <code>local</code> dial and, in hybrid, one backend picker per capability.</td></tr>
+        <tr><td>Models</td><td>Chat, Discover, Transcription, Indexing</td><td>The chat-model catalog and its visibility toggles, the on-device model browser, and the speech and index weights you have on disk.</td></tr>
+        <tr><td rowspan="4"><b>Tools and automation</b></td><td>MCP servers</td><td>-</td><td>Local stdio and remote HTTP MCP servers.</td></tr>
+        <tr><td>Import project</td><td>-</td><td>Migrate a Claude Code or Codex CLI project (see below).</td></tr>
+        <tr><td>Skills and plugins</td><td>Skills, Plugins</td><td>Your skill folders and opt-in Python plugins.</td></tr>
+        <tr><td>Tasks and hooks</td><td>Scheduled tasks, Hooks</td><td>Cron jobs and the Pre/Post/Stop tool hooks.</td></tr>
+        <tr><td rowspan="2"><b>Access and usage</b></td><td>Keys and permissions</td><td>API keys, Permissions</td><td>The fields listed below, plus permission rules, per-category defaults, and the sandbox network policy.</td></tr>
+        <tr><td>Usage and advanced</td><td>Stats, Costs, Feature flags, Live preview</td><td>Token and cost history, spend caps, gated features, and the preview browser.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 id="api-keys-tab">Keys and permissions &rarr; API keys</h3>
+    <p>This is the tab you fill in on first run. Its fields, top to bottom:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Field</th><th>Values</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td>Bedrock Region</td><td>e.g. <code>us-east-1</code></td><td>The AWS region for Claude. Must match a region where the model is enabled, or chat returns an access error. Never stored blank.</td></tr>
-        <tr><td>Default Model</td><td>Haiku 4.5 · Sonnet 4.6 · Sonnet 5 · Opus 4.6/4.7/4.8 · Opus 5 · Fable 5.0/5.1 · GPT-5.4/5.5 · GPT-5.6 Sol/Terra/Luna · GPT-6 Astra · on-device models</td><td>The model a new session starts with. GPT models run through the OpenAI-on-Bedrock path; Fable 5.0/5.1 need the data-retention consent flow first; installed on-device models appear only in local mode (a fresh install ships none; add them from Models &rarr; Discover). See <a href="arch-backends.html">Model backends &amp; modes</a>.</td></tr>
-        <tr><td>Model Mode</td><td><code>cloud</code> / <code>hybrid</code> / <code>local</code></td><td>Where indexing and retrieval run (<code>config.json:model_mode</code>, plus <code>backends</code> in hybrid). Distinct from the chat-model choice in the toolbar.</td></tr>
-        <tr><td>Feature Flags</td><td>toggles</td><td>Turn gated features on or off (<code>feature_flags</code>) from the UI without editing the file. The panel lives under <b>Settings &rarr; Usage and advanced &rarr; Feature flags</b>; <code>progressive_tools</code> (progressive tool disclosure) is one example, with the companion <code>progressive_tools_core_extra</code> / <code>progressive_tools_defer_extra</code> config keys for tuning the split.</td></tr>
-        <tr><td>Effort Level</td><td><code>low</code> / <code>medium</code> / <code>high</code> / <code>extra</code> (alias <code>xhigh</code>) / <code>max</code> / <code>ultracode</code></td><td>The reasoning budget for a turn. Higher means deeper thinking and more tokens. Which levels are offered depends on the model (Opus 4.8, Opus 5, and Fable reach <code>ultracode</code>; Sonnet and older Opus cap at <code>max</code>; GPT-5.5 and 5.6 run <code>none</code>-<code>ultracode</code>, GPT-6 Astra <code>low</code>-<code>ultracode</code>; Haiku and local models have none), and the value is clamped to the nearest supported level when you switch models. <code>ultracode</code> is a session mode that adds workflow orchestration; the old <code>auto</code> value is retired.</td></tr>
-        <tr><td>Permission Mode</td><td><code>default</code> / <code>auto</code> / <code>plan</code> / <code>acceptEdits</code> / <code>bypassPermissions</code> / <code>dontAsk</code></td><td>How risky tool calls are gated. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
-        <tr><td>Permissions panel</td><td>rules, category defaults, network policy</td><td>Under <b>Access and usage &rarr; Keys and permissions</b>: per-rule justification notes, a dry-run tester (<code>POST /api/permissions/rules/test</code>), per-category approval defaults (<code>category_modes</code>), and the sandbox network egress policy (<code>network_policy</code>, tiers <code>restrictive</code> / <code>curated</code> / <code>permissive</code>; <code>permissive</code> is the default, meaning no restriction).</td></tr>
-        <tr><td>Import project</td><td>a Claude Code or Codex CLI project</td><td>Migrates CLAUDE.md/AGENTS.md to WHISPER.md, copies skills, and translates <code>.mcp.json</code>. Source files are never modified. See <a href="installation.html#import-project">Installation</a>.</td></tr>
-        <tr><td>Tavily API Key</td><td>a key, or blank</td><td>Enables the web-search skill. Only needed if you did not set the <code>TAVILY_API_KEY</code> env var; the env var wins if both are present.</td></tr>
-        <tr><td>Cost Limits</td><td>USD caps</td><td>Per-session (<code>max_session_cost_usd</code>) and per-day (<code>max_daily_cost_usd</code>) Bedrock spend caps. <code>0</code> means unlimited. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td></tr>
+        <tr><td>Tavily API Key (for web search)</td><td>a key, or blank</td><td>Enables <code>web_search</code>. Only needed if you did not set the <code>TAVILY_API_KEY</code> env var; the env var wins if both are present. The field shows a masked hint once saved, never the key.</td></tr>
+        <tr><td>Whisper Language</td><td>blank, one code, or a comma-separated list</td><td>Blank auto-detects. One code pins the language; a list such as <code>pl,en</code> keeps detection but limits it to those languages, so short utterances in a mixed-language meeting are not misdetected (<code>whisper_language</code>).</td></tr>
+        <tr><td>Transcription Model</td><td>Whisper Large v3 · Canary · Parakeet (live)</td><td>The same selector as the transcript header, applied live (<code>transcription_backend</code>; Parakeet is the default).</td></tr>
+        <tr><td>Translation Model</td><td>Off · Canary · Apple</td><td>Adds a translation line under speech in another language (<code>translate_mode</code>). Canary covers its 25 European languages with English always on one side; Apple translates between any two of its languages on-device, and exists only in the Mac app on macOS 15 or later.</td></tr>
+        <tr><td>Translate To</td><td>a language</td><td>Shown only when translation is on (<code>translate_target</code>).</td></tr>
+        <tr><td>Bedrock Region</td><td>e.g. <code>us-east-1</code></td><td>The AWS region for cloud chat. Must match a region where your model is enabled, or chat returns an access error. Never stored blank.</td></tr>
       </tbody>
     </table></div>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>There is no "default model" field in Settings.</b> The chat model
+        is chosen from the <b>model chip</b> in the composer toolbar (or with <code>/model</code>), and
+        the choice sticks for new sessions. Settings &rarr; Models &rarr; Chat is where you hide models
+        from that chip or add your own; Discover is where you install on-device ones. The stored key is
+        <code>default_chat_model</code>, whose shipped value is <code>opus5.0</code> (Opus 5).</p></div>
+    </div>
+
+    <h3 id="session-controls">Controls that live in the composer, not in Settings</h3>
+    <p>Three per-session dials sit under the chat input rather than in the Settings panel, because you
+      change them mid-conversation. All three persist as config keys.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Control</th><th>Values</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>Model chip</td><td>the models your mode exposes</td><td>The model that answers. Rows carry a <b>Local</b> badge for on-device models and a <b>Mythos</b> badge for models that need the data-retention consent flow (Fable 5.0 and 5.1). Key: <code>default_chat_model</code>.</td></tr>
+        <tr><td>Effort</td><td><code>none</code> / <code>low</code> / <code>medium</code> / <code>high</code> / <code>extra</code> (alias <code>xhigh</code>) / <code>max</code> / <code>ultracode</code></td><td>The reasoning budget for a turn (<code>effort_level</code>, default <code>high</code>). Levels are per-model and the value is clamped to the nearest supported one when you switch. See the table below.</td></tr>
+        <tr><td>Response length</td><td><code>brief</code> / <code>normal</code> / <code>detailed</code></td><td>How long the answer runs. Mirrors <code>/verbosity</code>.</td></tr>
+      </tbody>
+    </table></div>
+    <p>Which effort levels a model offers comes from two independent properties: the reasoning ladder
+      the provider accepts, and whether the model can drive workflow orchestration
+      (<code>ultracode</code>). As shipped:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Models</th><th>Levels offered</th></tr></thead>
+      <tbody>
+        <tr><td>Opus 4.8, Opus 5, Fable 5.0, Fable 5.1</td><td>low, medium, high, extra, max, ultracode</td></tr>
+        <tr><td>Sonnet 5</td><td>low, medium, high, max, ultracode</td></tr>
+        <tr><td>Sonnet 4.6, Opus 4.6, Opus 4.7, GPT-5.4</td><td>low, medium, high, max</td></tr>
+        <tr><td>GPT-5.5, GPT-5.6 Sol / Terra / Luna</td><td>none, low, medium, high, max, ultracode</td></tr>
+        <tr><td>GPT-6 Astra</td><td>low, medium, high, max, ultracode</td></tr>
+        <tr><td>Haiku 4.5 and every on-device model</td><td>none offered; the Effort and Response-length chips are hidden</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 id="other-settings">Other settings worth knowing</h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Setting</th><th>Where</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>Permission Mode</td><td>the Mode chip in the composer</td><td><code>default</code> / <code>auto</code> / <code>plan</code> / <code>acceptEdits</code> / <code>bypassPermissions</code> / <code>dontAsk</code>. How risky tool calls are gated. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
+        <tr><td>Permissions panel</td><td>Keys and permissions &rarr; Permissions</td><td>Per-rule justification notes, a dry-run tester, per-category approval defaults (<code>category_modes</code>), and the sandbox network egress policy (<code>network_policy</code>, tiers <code>restrictive</code> / <code>curated</code> / <code>permissive</code>; <code>permissive</code> is the default, meaning no restriction).</td></tr>
+        <tr><td>Feature Flags</td><td>Usage and advanced &rarr; Feature flags</td><td>Turn gated features on or off (<code>feature_flags</code>) without editing the file. <code>progressive_tools</code> (progressive tool disclosure) is one example, with companion <code>progressive_tools_core_extra</code> / <code>progressive_tools_defer_extra</code> keys for tuning the split.</td></tr>
+        <tr><td>Cost Limits</td><td>Usage and advanced &rarr; Costs</td><td>Per-session (<code>max_session_cost_usd</code>) and per-day (<code>max_daily_cost_usd</code>) Bedrock spend caps. <code>0</code> means unlimited. Reaching a cap leaves the turn one final round to answer. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td></tr>
+        <tr><td>Import project</td><td>Tools and automation &rarr; Import project</td><td>Migrates CLAUDE.md or AGENTS.md to WHISPER.md, copies skills, and translates <code>.mcp.json</code>. Source files are never modified. See <a href="installation.html#import-project">Installation</a>.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3 id="voice-settings">Voice conversations</h3>
+    <p>Spoken conversations (the <b>Talk</b> button in the composer) are configured through the
+      <code>voice</code> block rather than a Settings tab. The voice bar shows the active voice and its
+      locale on the right, under the label <em>Voice and language</em>, so you can see what is in
+      effect while you talk.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Key</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>voice.enabled</code></td><td><code>true</code></td><td>Master switch. Off disables the Talk button, and the tooltip says so.</td></tr>
+        <tr><td><code>voice.model_id</code></td><td><code>amazon.nova-2-sonic-v1:0</code></td><td>The Bedrock model that carries the voice.</td></tr>
+        <tr><td><code>voice.region</code></td><td><code>""</code></td><td>Blank follows <code>bedrock_region</code>. Nova 2 Sonic exists in <code>us-east-1</code>, <code>us-west-2</code>, <code>eu-north-1</code>, and <code>ap-northeast-1</code> only, so set this when your chat region is elsewhere.</td></tr>
+        <tr><td><code>voice.voice_id</code></td><td><code>tiffany</code></td><td>One of sixteen voices. Tiffany and Matthew are polyglot; the rest are tied to one locale (English, French, Italian, German, Spanish, Portuguese).</td></tr>
+        <tr><td><code>voice.endpointing</code></td><td><code>MEDIUM</code></td><td><code>LOW</code>, <code>MEDIUM</code>, or <code>HIGH</code>: how long a pause has to be before the assistant takes it as your turn ending.</td></tr>
+      </tbody>
+    </table></div>
+    <p>An unknown voice id or endpointing level falls back to the default rather than failing. See
+      <a href="tut-voice-mode.html">Voice conversations</a> for the walk-through and
+      <a href="requirements.html#voice-access">Requirements</a> for the model access it needs.</p>
 
     <h3 id="model-mode-and-flags">Model Mode and Feature Flags</h3>
     <p>These two deserve a note because they behave a little differently from the rest.</p>
@@ -177,7 +274,7 @@ source ~/.zshrc</code></pre></div>
         anything you leave unset falls back to the cloud backend. Each embedder keeps its own index, so
         switching mode never rebuilds the other one. See <a href="tut-model-modes.html">Model modes</a>.</li>
       <li><b>Feature Flags</b> toggle features such as hybrid search, the reranker, query rewrite, and
-        prompt caching without editing <code class="path">config.json</code>. A toggle is written
+        prompt caching without editing <code class="path">config.user.json</code>. A toggle is written
         surgically (only that one boolean changes) and persists immediately, so aligned formatting and
         the rich <code>chat_models</code> shape in your config file are preserved.</li>
     </ul>
@@ -185,7 +282,7 @@ source ~/.zshrc</code></pre></div>
     <h2 id="secrets-hygiene">Secrets hygiene</h2>
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
-      <div class="callout__body"><p><b>Treat <code class="path">config.json</code> like a credential
+      <div class="callout__body"><p><b>Treat <code class="path">config.user.json</code> like a credential
         store.</b> It is gitignored, but it still sits on disk in plain JSON with your Tavily key inside.
         Do not sync it to untrusted backups, and prefer the env-var path for the Tavily key so the
         secret lives in your shell profile rather than in a project file. Rotate keys after sharing your
@@ -196,8 +293,8 @@ source ~/.zshrc</code></pre></div>
       change the <code>export</code> line, run <code>source ~/.zshrc</code> in the shell that started
       the server, and the new key is live on the next request. No restart, no config edit.</p>
 
-    <h2 id="editing-safely">Editing config.json by hand</h2>
-    <p>You can edit <code class="path">config.json</code> directly, but a few habits keep it healthy:</p>
+    <h2 id="editing-safely">Editing the user config by hand</h2>
+    <p>You can edit <code class="path">config.user.json</code> directly, but a few habits keep it healthy:</p>
     <ol class="steps">
       <li><h4>Keep it valid JSON</h4><p>If the file fails to parse, the loader treats the user layer
         as empty rather than crashing, so the effective config falls back to the shipped defaults

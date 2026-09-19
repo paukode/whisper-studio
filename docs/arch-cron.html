@@ -105,7 +105,10 @@
         to a configured Anthropic Bedrock id (validated by <code>_validate_job_model()</code>, accepted by
         <code>cron_create</code> / <code>cron_update</code> and <code>PUT /api/cron/{id}</code>), that model
         runs; otherwise the run falls back to the configured Haiku model, then Sonnet, then the first
-        configured model. Both Anthropic and OpenAI-on-Bedrock models work via the provider adapters.
+        configured model. A run does <em>not</em> inherit the originating session's model. The
+        per-job override is Anthropic-only on purpose: broadening it to OpenAI-on-Bedrock is a
+        separate decision, not a side effect of the engine migration, so a non-Anthropic key is
+        rejected at create time and an unavailable one logs a warning and falls back.
         The system prompt tells the model it is running an unattended scheduled task with no user to
         prompt and should act autonomously, and passes the
         global prompt rules through <code>append_rules()</code>. Tool rounds are capped by the
@@ -128,6 +131,26 @@
         still marked <code>running</code> is reconciled to <code>failed (interrupted)</code> regardless
         of age - the scheduler was down, so no live run can own a lease.</p></div>
     </div>
+
+    <h3 id="misfire">Missed fires and the grace window</h3>
+    <p>Every trigger is armed with <code>coalesce=True</code>, <code>max_instances=1</code> and a
+      <code>misfire_grace_time</code> read from <code>cron_misfire_grace_sec</code> (default 3600),
+      so a burst of missed fires collapses into one and a fire older than the grace window is dropped
+      rather than replayed late.</p>
+    <p>That covers a running scheduler. Downtime needs one more step, and the two schedule kinds
+      differ:</p>
+    <ul>
+      <li><b>Interval jobs self-heal.</b> Their trigger carries a past <code>start_date</code>
+        anchored on <code>last_run</code>, so APScheduler's own coalesce plus grace fires one
+        catch-up run at boot.</li>
+      <li><b>Wall-clock jobs do not.</b> A rebuilt <code>cron</code> trigger only knows future fires,
+        so the missed one would vanish. At boot only, <code>cron_catch_up_due()</code> asks whether
+        the most recent fire before now falls inside the grace window and is newer than
+        <code>last_run</code>; if so the run is spawned once <em>before</em> the trigger is armed
+        (whose next fire is strictly future, so there is no double-fire). It is gated on a
+        <code>catch_up</code> flag, so creating or editing a job never fires retroactively, and a job
+        that has never run gets no catch-up, mirroring the interval case exactly.</li>
+    </ul>
 
     <h2 id="unified-engine">One engine for chat, cron, agents, and headless</h2>
     <p>Cron no longer has its own tool-use loop. <code class="path">server/cron_run.py</code> ports the

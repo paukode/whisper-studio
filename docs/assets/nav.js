@@ -23,8 +23,9 @@ window.WS_NAV = [
     title: "Tutorials",
     items: [
       { t: "Your first chat", h: "tut-first-chat.html", d: "Models, effort, slash commands, streaming, export." },
-      { t: "Goals & autopilot", h: "tut-goals.html", d: "Prompt vs a goal that runs to completion vs a parallel workflow — and how to set a goal." },
+      { t: "Goals & autopilot", h: "tut-goals.html", d: "Prompt vs a goal that runs to completion vs a parallel workflow, and how to set a goal." },
       { t: "Voice & meetings", h: "tut-voice.html", d: "Dictation, diarization, speaker rename, system audio." },
+      { t: "Talk: voice conversations", h: "tut-voice-mode.html", d: "Hold a spoken conversation with the assistant; approvals by voice, background work." },
       { t: "Working with documents", h: "tut-documents.html", d: "Drag-drop attachments, extraction, follow-ups." },
       { t: "Saving files & documents", h: "tut-save-files.html", d: "The never-ask save flow, and creating docx/pptx/xlsx/pdf." },
       { t: "Web research", h: "tut-research.html", d: "Tavily web search & fetch, citations." },
@@ -50,6 +51,7 @@ window.WS_NAV = [
       { t: "Chat & tool orchestration", h: "arch-chat-pipeline.html", d: "The core streaming state machine and tool loop." },
       { t: "Tool dispatch & executors", h: "arch-tools.html", d: "Routing, concurrent-safe batching, hooks." },
       { t: "Sub-agents & the event bus", h: "arch-agents.html", d: "Agent runtime, teams, per-session pub/sub." },
+      { t: "Agent flight recorder", h: "arch-agent-recorder.html", d: "Every agent run journaled on disk: reports, salvage, resume, budgets, waking the parent." },
       { t: "Ultracode workflow runtime", h: "arch-ultracode.html", d: "Model-authored JS workflows in a Node vm harness; agent(), budgets, resume, CI autofix." },
       { t: "Blocking hooks", h: "arch-hooks.html", d: "PreToolUse deny/rewrite, PostToolUse context, and the Stop gate across every path." },
       { t: "Goal loop & completion gate", h: "arch-goals.html", d: "Set a goal; an end-of-turn gate runs Stop hooks + a cheap evaluator until it's met." },
