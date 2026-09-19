@@ -27,7 +27,14 @@ def test_family_default_anthropic_and_fallback():
     assert context_window("mystery", {}) == 200_000
 
 
-def test_local_defers_to_runtime():
+def test_local_defers_to_runtime(monkeypatch):
+    # "Defers to runtime" means: nothing resident, no sticky request, no ctx
+    # in the meta, so the window is unknown. Both live sources are pinned
+    # because they are process globals any earlier test can leave set (and a
+    # developer with a local model server running would otherwise get its
+    # real n_ctx here).
+    monkeypatch.setattr("server.local.serving.resident_n_ctx", lambda: None)
+    monkeypatch.setattr("server.local.runtime.requested_n_ctx", lambda: None)
     assert context_window("local_gemma", {"is_local": True}) is None
 
 

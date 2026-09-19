@@ -27,7 +27,13 @@ def test_provider_selection_uses_the_latched_meta_not_a_global_lookup():
 # ── #14: workflow model overrides are validated, not silently swallowed ─────
 
 
-def _resolve(opts, default_id="global.anthropic.claude-opus-5", models=None, monkeypatch=None):
+def _resolve(
+    opts,
+    default_id="global.anthropic.claude-opus-5",
+    models=None,
+    monkeypatch=None,
+    tool_capable=False,
+):
     from server.workflows import agent_adapter
 
     cfg = {
@@ -36,6 +42,10 @@ def _resolve(opts, default_id="global.anthropic.claude-opus-5", models=None, mon
         else {"sonnet": "global.anthropic.claude-sonnet-5"}
     }
     monkeypatch.setattr("server.infrastructure.config.load_config", lambda *a, **k: cfg)
+    # The local branch of the resolver asks the live on-device registry whether
+    # the model can call tools. Pin it, or a machine with a tool-capable local
+    # model downloaded honours the override these cases expect to be refused.
+    monkeypatch.setattr("server.local.runtime.supports_tools", lambda key: tool_capable)
     return agent_adapter._resolve_model(opts, default_id)
 
 

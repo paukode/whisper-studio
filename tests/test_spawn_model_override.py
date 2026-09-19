@@ -62,10 +62,28 @@ def test_resolver_local_key_is_refused(monkeypatch):
         "server.infrastructure.config.load_config",
         lambda *a, **k: _cfg({"local_gemma": "local:gemma-4-12b"}),
     )
+    # Chat-only, per the live registry gate the resolver consults. Pinned, so
+    # the refusal is asserted on every machine rather than only on one with no
+    # tool-capable local model downloaded.
+    monkeypatch.setattr("server.local.runtime.supports_tools", lambda key: False)
     model_id, key, warning = resolve_model_override("local_gemma", "session-model-id")
     assert model_id == "session-model-id"
     assert key == ""
     assert "on-device" in warning
+
+
+def test_resolver_tool_capable_local_key_is_honoured(monkeypatch):
+    from server.agents.model_resolve import resolve_model_override
+
+    monkeypatch.setattr(
+        "server.infrastructure.config.load_config",
+        lambda *a, **k: _cfg({"local_gemma": "local:gemma-4-12b"}),
+    )
+    monkeypatch.setattr("server.local.runtime.supports_tools", lambda key: True)
+    model_id, key, warning = resolve_model_override("local_gemma", "session-model-id")
+    assert model_id == "local:gemma-4-12b"
+    assert key == "local_gemma"
+    assert warning == ""
 
 
 # ── spawn_agent threads the resolution through ───────────────────────────────

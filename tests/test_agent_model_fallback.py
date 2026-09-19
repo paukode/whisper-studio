@@ -1,12 +1,19 @@
-"""Fallback model resolution must never hand an agent an on-device model.
+"""Fallback model resolution must never hand an agent a model it cannot drive.
 
 get_adapter has no local branch, so a ``local:*`` id resolved from
 default_chat_model routes to the Bedrock adapter and fails at invoke. That
 silently broke background memory agents (extraction claims its cursor slice
 before the run, so skipped messages leave no visible symptom) in hybrid mode
 whenever the user's default chat model was local. Fallback resolution must
-skip local entries; when every configured chat model is local, run_agent must
-fail early instead of erroring at the provider call.
+skip a local entry that cannot call tools; when no configured chat model can
+drive a loop, run_agent must fail early instead of erroring at the provider
+call.
+
+The tool-support gate reads the LIVE on-device registry (built-in models found
+on disk, merged with the user's gitignored config.json), so every case here
+pins it. Without that pin these assertions flip on any machine where a
+tool-capable local model has been downloaded, which is what made this file one
+of the "known red on some Macs" ones.
 """
 
 import asyncio
@@ -14,6 +21,7 @@ import asyncio
 from server.agents.config import AGENT_TYPES
 from server.agents.runtime import _resolve_agent_model, run_agent
 from server.infrastructure import config as config_mod
+from server.local import runtime as local_runtime
 
 LOCAL_GEMMA = "local:gemma-4-12b-it-qat-q4_0"
 LOCAL_CODER = "local:gemma-4-12b-coder"
@@ -23,9 +31,14 @@ CLOUD_HAIKU = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 GENERAL = AGENT_TYPES["general"]
 
 
-def _patch_config(monkeypatch, chat_models, default_chat_model=None):
+def _patch_config(monkeypatch, chat_models, default_chat_model=None, *, tool_capable=False):
     cfg = {"chat_models": chat_models, "default_chat_model": default_chat_model}
     monkeypatch.setattr(config_mod, "load_config", lambda: cfg)
+    # _resolve_agent_model imports supports_tools inside the function, so patch
+    # the attribute the call site resolves. tool_capable states whether the
+    # local entries in THIS case can call tools; the live registry never
+    # decides, which is what kept these assertions machine dependent.
+    monkeypatch.setattr(local_runtime, "supports_tools", lambda key: tool_capable)
 
 
 def test_local_default_falls_back_to_non_local(monkeypatch):
@@ -53,6 +66,20 @@ def test_explicit_override_is_returned_verbatim(monkeypatch):
     _patch_config(monkeypatch, {"sonnet": CLOUD_SONNET}, default_chat_model="sonnet")
     assert _resolve_agent_model(CLOUD_HAIKU, GENERAL) == CLOUD_HAIKU
     assert _resolve_agent_model(LOCAL_GEMMA, GENERAL) == LOCAL_GEMMA
+
+
+def test_tool_capable_local_default_is_accepted(monkeypatch):
+    # The gate is tool support, not locality: a local model that can call
+    # tools drives an agent loop fine, and interactive chat uses the same
+    # registry gate. Pinned true so this half of the contract is asserted on
+    # every machine, not only on one with such a model downloaded.
+    _patch_config(
+        monkeypatch,
+        {"local_gemma": LOCAL_GEMMA, "sonnet": CLOUD_SONNET},
+        default_chat_model="local_gemma",
+        tool_capable=True,
+    )
+    assert _resolve_agent_model(None, GENERAL) == LOCAL_GEMMA
 
 
 def test_all_local_config_resolves_to_none(monkeypatch):
