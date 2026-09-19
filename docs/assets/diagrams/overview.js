@@ -30,7 +30,7 @@ WSDiagram.mount("overview-diagram", {
     { id: "sse", group: "transport", col: 1, row: 1, label: "SSE", sub: "tokens + events", desc: "Server-Sent Events carry streamed chat tokens and per-session agent/cron events." },
     { id: "ws", group: "transport", col: 1, row: 2, label: "WebSocket", sub: "audio · PTY · LSP", desc: "Binary PCM16 audio in, plus the terminal PTY and the LSP proxy channel." },
 
-    { id: "chatR", group: "server", col: 2, row: 0, label: "chat", sub: "chat/routes.py", desc: "The streaming state machine: builds the prompt, invokes the model, and drives the agentic tool loop." },
+    { id: "chatR", group: "server", col: 2, row: 0, label: "chat", sub: "chat/routes.py", desc: "The streaming state machine: builds the prompt, invokes the model, and drives the agentic tool loop. It also owns the session busy slot, so a message sent while the turn runs is queued into that turn instead of starting a second one." },
     { id: "sessR", group: "server", col: 3, row: 0, label: "sessions", sub: "infrastructure/sessions.py", desc: "List, load, rename, delete, and persist sessions (routes in sessions_routes.py); the per-session UPSERT with merge." },
     { id: "wsR", group: "server", col: 2, row: 1, label: "workspace", sub: "workspace/routes/", desc: "Connect a folder and serve the file tree, reads, and validated writes." },
     { id: "gitR", group: "server", col: 3, row: 1, label: "git", sub: "git/router.py", desc: "Status, diff, log, blame, branches, and PR helpers over the connected repo." },
@@ -38,7 +38,7 @@ WSDiagram.mount("overview-diagram", {
     { id: "cronR", group: "server", col: 3, row: 2, label: "cron + tasks", sub: "schedulers", desc: "Cron scheduling and the background task tracker. config, plugins, and the LSP proxy mount here too." },
 
     { id: "trouter", group: "tools", col: 4, row: 0, label: "tool_router", sub: "dispatch", desc: "Pure dispatch: maps each tool call to its executor." },
-    { id: "texec", group: "tools", col: 4, row: 1, label: "tool_executor", sub: "SSE + result shaping", desc: "Runs the batch (read-safe tools in parallel, writes serialized), emits side-effect events, and shapes results." },
+    { id: "texec", group: "tools", col: 4, row: 1, label: "tool_executor", sub: "SSE + result shaping", desc: "Runs the batch (read-safe tools in parallel, writes serialized), applies permissions, hooks and the loop guard, emits side-effect events, and shapes results." },
     { id: "agents", group: "agents", col: 4, row: 2, label: "agent runtime", sub: "spawn · teams", desc: "spawn_agent and team_create run parallel sub-agents, each with its own tool loop." },
     { id: "ebus", group: "agents", col: 4, row: 3, label: "event bus", sub: "per-session pub/sub", desc: "Fans sub-agent and team activity out to the browser over SSE." },
 
@@ -48,22 +48,22 @@ WSDiagram.mount("overview-diagram", {
     { id: "ex_git", group: "tools", col: 5, row: 3, label: "git", sub: "status · diff · commit", desc: "Git operations against the workspace repo." },
     { id: "ex_mem", group: "tools", col: 5, row: 4, label: "memory", sub: "recall · write", desc: "Reads and writes the cross-session memory store. content, search, and other executors sit alongside these." },
 
-    { id: "validator", group: "security", col: 6, row: 0, label: "command validator", sub: "deny-list", desc: "Regex + AST deny-list in front of the sandbox: catches rm -rf /, mkfs, sensitive reads." },
+    { id: "validator", group: "security", col: 6, row: 0, label: "command validator", sub: "deny-list", desc: "Deny-list in front of the sandbox: catches rm -rf /, mkfs, sensitive reads, hidden command substitution and in-place edits. It also flags any deleting command so it always raises an approval card." },
     { id: "apprReg", group: "security", col: 6, row: 1, label: "approval registry", sub: "action to executor", desc: "Maps each approval action name to its ApprovalSpec and executor. The executor re-validates the payload at execute time, since the endpoint could in principle be POSTed directly." },
-    { id: "sandbox", group: "security", col: 6, row: 2, label: "sandbox", sub: "sandbox-exec / bwrap", desc: "The OS jail around every shell and code path, with a secret-store deny-list. The boundary trusted last and most." },
+    { id: "sandbox", group: "security", col: 6, row: 2, label: "sandbox", sub: "sandbox-exec / bwrap", desc: "The OS jail around every shell and code path, with a secret-store deny-list and three write modes (anywhere, workspace only, nothing). The boundary trusted last and most." },
 
     { id: "whisper", group: "local", col: 6, row: 3, label: "On-device ASR", sub: "3 engines", desc: "Whisper, Parakeet, or Canary transcribes on-device, with optional live translation. Audio bytes never leave the machine." },
-    { id: "diarize", group: "local", col: 6, row: 4, label: "Resemblyzer", sub: "diarization", desc: "Speaker embeddings and clustering, applied on the orchestrator side." },
+    { id: "diarize", group: "local", col: 6, row: 4, label: "Speaker encoder", sub: "ReDimNet2 / ECAPA", desc: "Speaker embeddings and clustering on-device (server/diarization/embedder.py). ReDimNet2 is the default, ECAPA the fallback; named voices are remembered across sessions as voiceprints." },
     { id: "index", group: "index", col: 6, row: 5, label: "index + search", sub: "embeddings · GraphRAG", desc: "Workspace embeddings, reranking, entities, and retrieval grounding." },
     { id: "sched", group: "local", col: 6, row: 6, label: "APScheduler", sub: "cron jobs", desc: "Fires scheduled jobs, which run a chat turn in the background." },
-    { id: "localchat", group: "local", col: 6, row: 7, label: "On-device chat model", sub: "llama-server", desc: "In local mode, chat runs entirely on your machine through the same turn engine - no Bedrock call at all." },
+    { id: "localchat", group: "local", col: 6, row: 7, label: "On-device chat model", sub: "llama-server / MLX", desc: "In local mode, chat runs entirely on your machine through the same turn engine - GGUF weights through llama-server, or an MLX model through mlx-lm. No Bedrock call at all." },
 
     { id: "db", group: "persist", kind: "store", col: 7, row: 0, label: "SQLite (WAL)", sub: "sessions · costs · cron", desc: "The single database for sessions, the cost log, and cron runs." },
     { id: "wsfs", group: "persist", kind: "store", col: 7, row: 1, label: "Workspace files", sub: "+ WHISPER.md", desc: "Your connected project files and the project WHISPER.md." },
     { id: "cfg", group: "persist", kind: "store", col: 7, row: 2, label: "config.json", sub: "+ env overlay", desc: "Per-machine config: at the repo root in a dev checkout, under the app home (WHISPER_HOME) in a packaged install, with the TAVILY_API_KEY env overlay on top." },
     { id: "memdir", group: "persist", kind: "store", col: 7, row: 3, label: "data/memory", sub: "two-tier", desc: "The two-tier memory store (global + project), injected into later prompts." },
 
-    { id: "bedrock", group: "external", kind: "external", col: 7, row: 4, label: "Amazon Bedrock", sub: "Claude · GPT-5", desc: "The only cloud LLM call, made only when you submit a chat message and a cloud model is selected. Bedrock hosts both the Claude and the GPT-5.x models offered in the picker." },
+    { id: "bedrock", group: "external", kind: "external", col: 7, row: 4, label: "Amazon Bedrock", sub: "Claude · GPT · Sonic", desc: "The only cloud LLM call, made only when you submit a chat message and a cloud model is selected. Bedrock hosts the Claude and GPT models in the picker, and carries the Amazon Nova 2 Sonic voice stream." },
     { id: "mcp", group: "external", kind: "external", col: 7, row: 5, label: "MCP servers", sub: "stdio or HTTP, optional", desc: "External tool providers: local child processes over stdio, or remote HTTP servers you explicitly configure (URL plus optional bearer-token env var). Per-server approval_mode and tool allow/deny lists gate what they expose." },
     { id: "tavily", group: "external", kind: "external", col: 7, row: 6, label: "Tavily", sub: "web search", desc: "Optional web-search provider for the research tools." }
   ],

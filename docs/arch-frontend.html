@@ -38,13 +38,14 @@
       right-side dock) and it owns the one-time boot sequence. There is no separate layout engine: every
       visible split is a ratio-flex <code>Splitter</code>, so no pane is ever pinned to a pixel width and
       surviving panes redistribute through flexbox when you open or close one.</p>
-    <p>The layout is always fully mounted, even when a pane is hidden. <code>Splitter</code> used to be
-      rendered conditionally around the workspace panel, which put the chat pane's subtree at two
-      different structural positions and made React unmount and remount it (and every component inside
-      it) on each workspace connect or disconnect - silently wiping local component state like an
-      in-progress composer draft. The fix keeps both children always rendered and collapses the hidden
-      one visually and interactively via a <code>hideFirstPane</code> flag instead of removing it from the
-      tree (<code class="path">Splitter.test.tsx</code> pins the regression).</p>
+    <p>The layout is always fully mounted, even when a pane is hidden. Rendering
+      <code>Splitter</code> conditionally around the workspace panel would put the chat pane's subtree
+      at two different structural positions, so React unmounts and remounts it, and every component
+      inside it, on each workspace connect or disconnect - silently wiping local component state such
+      as an in-progress composer draft. So both children are always rendered and the hidden one is
+      collapsed visually and interactively through a <code>hideFirstPane</code> or
+      <code>hideSecondPane</code> flag instead of being removed from the tree
+      (<code class="path">Splitter.test.tsx</code> pins the regression).</p>
     <p>The shell also mounts a persistent bottom status strip,
       <code class="path">src/components/layout/AppStatusBar.tsx</code> (WS-H), that reads only from
       existing stores to show the active model, effort, permission mode, git branch with dirty and
@@ -59,7 +60,7 @@
         actually pick a local model. See <a href="arch-backends.html">Model backends &amp; modes</a>.</li>
       <li><b>Load data retention, skills, and MCP servers.</b> <code>loadDataRetention()</code>,
         <code>loadSkills()</code>, and <code>loadMCP()</code> populate the settings store, which is also
-        where the skill and MCP catalogue used to filter the composer's autocomplete lives.</li>
+        where the skill and MCP catalogue behind the composer's autocomplete lives.</li>
       <li><b>Restore sessions.</b> <code>loadSessions()</code> lists saved sessions, then the persisted
         <code>currentSessionId</code> is restored and rehydrated through
         <code>switchSession()</code>. A stale persisted id is dropped so the next session prompt starts
@@ -69,6 +70,24 @@
         connected repo after a refresh, flipping the UI back to the connected state and reopening the
         workspace panel.</li>
     </ul>
+    <h3 id="dock-terminal">The dock and the terminal</h3>
+    <p>The right-side dock is a stack of panels rather than a fixed inspector. <code>AppShell</code>
+      owns only its outer width; the panel list lives in
+      <code class="path">src/stores/dockStore.ts</code> and the chrome in
+      <code class="path">src/components/preview/RightDock.tsx</code>. Five kinds of panel can be
+      open: a <b>live preview</b> of a running dev server (titled <code>Live &middot; &lt;name&gt;</code>, or
+      <b>Live preview</b> when a localhost link in the chat routed into it), a <b>plan</b>, a
+      workspace <b>file</b> opened from a citation link, <b>Tasks</b>, and <b>Documentation</b>.
+      Panels stack vertically with their own drag handles, each header carries a colored dot for its
+      kind and a close button, and closing the live panel leaves a <b>Live preview</b> chip in the
+      corner to bring it back.</p>
+    <p>Below the chat, when a workspace is connected, sits the terminal panel
+      (<code class="path">src/components/terminal/TerminalPanel.tsx</code>). Collapsed it is a bar
+      reading <b>Terminal</b>, with a branch chip and, when the session is pinned into a worktree, a
+      worktree chip. Its buttons are <b>Refit terminal to panel</b>, <b>New Terminal</b>,
+      <b>Branches and worktrees</b>, and <b>Close Panel</b>. It keeps its height however long the
+      conversation gets, because the chat and transcript split above it flexes from a zero basis
+      rather than from its content.</p>
     <p>The shell also wires the global keyboard shortcuts (<kbd>Cmd/Ctrl</kbd>+<kbd>,</kbd> for Settings,
       <kbd>Cmd/Ctrl</kbd>+<kbd>B</kbd> to toggle the sidebar, <kbd>Cmd/Ctrl</kbd>+<kbd>K</kbd> for the
       command palette) and the <a href="arch-approval.html">ESC kill switch</a>, which is armed only
@@ -125,6 +144,7 @@
         <tr><td><code>uiStore</code>, <code>layoutStore</code>, <code>dockStore</code></td><td>singleton</td><td>Panel visibility, persisted split fractions, and the right-side dock panels.</td></tr>
         <tr><td><code>settingsStore</code></td><td>singleton</td><td>Config, model list, selected model, effort level, verbosity, data retention, and the skill/MCP catalogue (<code>loadSkills</code> / <code>loadMCP</code>).</td></tr>
         <tr><td><code>taskStore</code>, <code>recordingStore</code>, <code>cronUnreadStore</code>, <code>subagentStore</code></td><td>singleton</td><td>The live task list, the shared mic, cron badges, and running subagents.</td></tr>
+        <tr><td><code>voiceStore</code></td><td>singleton</td><td>Voice-mode state for the Talk bar: off, connecting, listening, thinking, speaking, ending, plus the draining flag that keeps background work running after you hang up.</td></tr>
         <tr><td><code>indexSearchStore</code></td><td>singleton</td><td>Per-session selection of which indexed workspaces a turn should search (<code>selected_search_indexes</code>), persisted to <code>localStorage</code> so a session's choice survives a reload.</td></tr>
         <tr><td><code>backgroundTaskStore</code>, <code>workflowStore</code>, <code>ciStore</code>, <code>goalStore</code></td><td>singleton</td><td>The background-task registry + <code>runningCount</code> (WS-A), <a href="arch-ultracode.html">workflow</a> runs keyed by <code>run_id</code> (WS-D), CI watches keyed by <code>task_id</code> (WS-J), and the active goal + last verdict per session (WS-E).</td></tr>
       </tbody>
@@ -154,20 +174,48 @@
         body carries the question, transcript, model, effort level, verbosity, session id, attachment
         ids, and the selected search indexes.</p></li>
       <li><h4>POST and consume</h4><p>A <code>fetch('/api/chat')</code> streams the response into
-        <code>readSSEStream</code>. A <code>409</code> means the server's same-session guard is holding
-        the slot; the hook surfaces the server's guidance as a toast instead of stacking two streams.</p></li>
+        <code>readSSEStream</code>. A <code>409</code> means the server refused the turn; the hook
+        surfaces the server's guidance as a toast instead of stacking two streams.</p></li>
       <li><h4>Commit atomically</h4><p>On stream end, streaming state is cleared and the final assistant
         message (text, tool traces, team reports, usage, any artifact or plan) is added in a single store
         update, so there is never a frame with neither the streaming bubble nor the final message.</p></li>
     </ol>
 
+    <h3 id="mid-turn">Sending into a running turn</h3>
+    <p>While the session is streaming, the composer's Send does not open a second stream. It calls
+      <code>sendMidTurn</code>, which POSTs a minimal
+      <code>{question, session_id, midturn: true}</code> to the same <code>/api/chat</code> and waits
+      for a JSON answer. The composer only clears on a confirmed success, so the text is never lost:
+      a success says the message was added to the running turn and will be taken into account as it
+      continues, and a failure (the turn ended in the gap) says plainly that nothing was sent and
+      offers to send it again as a new message. The queueing and fold-in happen server side; see
+      <a href="arch-chat-turn.html#mid-turn">Sending while it works</a>.</p>
+
     <h3 id="routing-events">Routing SSE events</h3>
     <p><code class="path">src/hooks/chatStream/sseStream.ts</code> holds
       <code>readSSEStream</code>, the parser. It reads the response body, splits on newlines, strips the
       <code>data: </code> prefix, and validates each payload against a Zod schema
-      (<code>SSEEventDataSchema</code>) before dispatching it to the owning session's store. Validation
-      failure logs loudly but still passes the raw payload through, because some event types are
-      intentionally loose. The last 200 events are kept on <code>window.__lastSSE</code> for DevTools.</p>
+      (<code>SSEEventDataSchema</code>, <code class="path">src/types/schemas/chat.schema.ts</code>)
+      before dispatching it to the owning session's store. Validation failure logs loudly but still
+      passes the raw payload through, because some event types are intentionally loose. Lines that do
+      not start with <code>data: </code> are skipped, which is how the server's keepalive comment
+      frames are ignored. The last 200 events are kept on <code>window.__lastSSE</code> for DevTools.</p>
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>A whole new frame survives; a new field inside a known frame
+        does not.</b> <code>SSEEventDataSchema</code> ends in <code>.passthrough()</code>, so a frame
+        the client has never heard of reaches the reducer untouched. Every <em>nested</em> object in
+        that schema is a plain <code>z.object</code>, which silently drops keys it does not declare.
+        That asymmetry has already cost real behaviour once: <code>workflow_preview.model_id</code>
+        was stripped, so every approved workflow ran, and was billed, on the config default instead of
+        the session's model. Two tests in
+        <code class="path">src/types/schemas/schemas.test.ts</code> pin it now. The rule to work by:
+        <b>adding a field to an existing frame means adding it to
+        <code class="path">chat.schema.ts</code> and to
+        <code class="path">src/types/chat.ts</code></b>, or the UI never sees it. The server half of
+        the same contract is <code class="path">tests/golden_fixtures/</code>, which pins the exact
+        frames six representative turns emit.</p></div>
+    </div>
     <p>Each event type routes to a store action. This is a representative selection, not the full list -
       <code class="path">sseStream.ts</code> and the declarative-card helper
       <code class="path">sseEventCards.ts</code> route several more:</p>
@@ -197,7 +245,11 @@
         <tr><td><code>auto_mode_breaker</code></td><td>Raises a persistent banner (not a toast) when auto mode's rolling-denial circuit breaker trips and falls back to asking, with a one-click resume.</td></tr>
         <tr><td><code>security_blocked</code></td><td>Renders a card for a tool call the egress/security policy refused outright.</td></tr>
         <tr><td><code>error</code></td><td>Logs the backend's error text and appends it inline to the response instead of losing the partial answer.</td></tr>
-        <tr><td><code>hook_blocked</code> / <code>stop_hook_feedback</code> / <code>stop_hook_block</code></td><td>Surfaces a <a href="arch-tools.html">blocking hook</a>'s veto (a Pre/Post/Stop gate) and its feedback into the turn.</td></tr>
+        <tr><td><code>hook_blocked</code> / <code>stop_hook_block</code></td><td>Surfaces a <a href="arch-tools.html">blocking hook</a>'s veto and the completion gate's reason for continuing the turn.</td></tr>
+        <tr><td><code>skill_progress</code></td><td>A tool call's arguments are still streaming; the running step shows how much has arrived (<code>7.3 KB</code>, then <code>143 KB</code>) next to its spinner.</td></tr>
+        <tr><td><code>budget_warning</code></td><td>The session or daily cost cap tripped. The first one announces the reserved final round; the second ends the turn.</td></tr>
+        <tr><td><code>turn_downgrade</code></td><td>This turn is not running on what the composer shows, so the UI says so rather than letting the picker lie.</td></tr>
+        <tr><td><code>viz_artifact</code></td><td>A rendered chart or diagram, attached to the settled message as its own card.</td></tr>
         <tr><td><code>goal_eval</code> / <code>goal_cap_reached</code></td><td>Updates <code>goalStore</code> with the completion-gate verdict and attempt counter for the active goal.</td></tr>
         <tr><td><code>workflow_preview</code> / <code>workflow_started</code></td><td>Renders the ultracode <a href="arch-ultracode.html">workflow</a> phase-preview approval card, then its inline run card.</td></tr>
         <tr><td><code>ci_started</code> / <code>ci_diagnosis</code></td><td>Renders a CI-watch status card and, on failure, autofix findings above the fix preview. These are chat-stream frames, distinct from the <code>ci_progress</code> / <code>ci_result</code> events the per-session <code>EventSource</code> carries below.</td></tr>
@@ -213,13 +265,28 @@
         never reaches this card at all: the file-saving tools resolve their own destination from the
         user's words (or a Documents default) and go straight to a normal approval card - see
         <a href="arch-tools.html#results-back">Results back to the loop</a> for that staged-then-move
-        flow. The old picker card that also asked <em>where</em> to save a file is gone.</p></div>
+        flow. No card ever asks you <em>where</em> to save a file.</p></div>
     </div>
-    <p>Three more frames route on a different channel. <code>task_event</code>, <code>ci_progress</code>,
-      and <code>ci_result</code> arrive on the per-session <code>EventSource</code> in
-      <code class="path">src/stores/sessionRuntimes.ts</code> - not the chat POST stream - and feed
-      <code>backgroundTaskStore</code> and <code>ciStore</code>, so a detached job keeps updating even
-      when its session is not the one on screen.</p>
+    <h3 id="other-channel">Frames that never touch the chat stream</h3>
+    <p>Anything that can happen while a session is <em>not</em> streaming cannot ride the chat POST
+      response. Those frames arrive instead on the per-session <code>EventSource</code> opened in
+      <code class="path">src/stores/sessionRuntimes.ts</code>
+      (<code>/api/sessions/{id}/events</code>), so they reach a session you are not looking at:
+      <code>cron_event</code>, <code>task_event</code>, <code>memory_event</code>,
+      <code>session_message</code>, <code>team_progress</code>, <code>ci_progress</code>,
+      <code>ci_result</code>, and the two agent-report frames below. A frame that does not parse as
+      JSON is dropped, which is how the channel's own heartbeats are ignored.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Event</th><th>Effect</th></tr></thead>
+      <tbody>
+        <tr><td><code>agent_report</code></td><td>Agent work finished with no live turn to carry it (you pressed Stop, the app restarted, a detached or resumed agent ended). The reports are appended as an <code>AgentReportCard</code> row so the work is not lost twice.</td></tr>
+        <tr><td><code>agent_answer</code></td><td>The answer a one-round wake turn wrote from those reports, appended as an assistant bubble labelled "Answered from the agents' reports".</td></tr>
+      </tbody>
+    </table></div>
+    <p>Both are stored as real session rows (<code>role: 'agent_report'</code> and
+      <code>role: 'agent_answer'</code>), so they survive a reload and are translated for the model's
+      context on the next turn. See <a href="arch-agent-recorder.html">the agent flight
+      recorder</a>.</p>
     <p>An approval is not a dead end, and there are two entry points onto the same resume channel. A full
       <a href="arch-approval.html">approval card</a>'s accept/deny buttons call
       <code>sendApprovalContinuation</code>, which POSTs a single
@@ -237,6 +304,42 @@
       <a href="arch-approval.html">ESC kill switch</a> stops the viewed session's stream and every running
       subagent synchronously, and a <code>wasKillFinalized</code> guard stops the read loop from
       resurrecting an answer after a kill.</p>
+
+    <h2 id="readable-transcript">A readable transcript</h2>
+    <p>A long agentic turn can produce dozens of tool calls. Rendered one bubble per step, the
+      answer disappears into the machinery, so three rules shape what you actually see.</p>
+    <div class="spec">
+      <dt>Tool steps collapse into one activity row</dt><dd>Consecutive tool calls are folded by
+        <code>groupForActivity</code> into a single <code>ActivityRow</code>
+        (<code class="path">src/components/chat/ActivityRow.tsx</code>): a collapsed header reading
+        <b>Activity</b>, the step count, and a badge summarising the run (a tick and a count when
+        everything succeeded, or a count of running, errored or stopped steps). Expanding it lists
+        each step with its tool name, a one-line detail, and a toggle for the full output;
+        <b>Expand all</b> opens every output at once. A row that contains an error opens by default.
+        The same grouping constant is shared by the live streaming view and the committed
+        transcript, so the row you watched does not jump or vanish when the turn ends or when you
+        reload the session.</dd>
+      <dt>Prose before a tool call gets its own bubble</dt><dd>Text the model writes <em>before</em>
+        it acts is a finished thought, so the stream commits it as a standalone message and starts a
+        new one for whatever comes after the tool work. Concatenating both produced replies like
+        "No. ... Yes, it's saved now." in a single bubble. Tool-only stretches are left to
+        accumulate, and runs of bare tool-only rows are re-folded into one entry at the display layer
+        (<code class="path">src/components/chat/groupToolOnlyRuns.ts</code>) while keeping the real
+        store indices, so edit, delete and regenerate still address the right message.</dd>
+      <dt>Agent work gets a card, not a transcript</dt><dd>Consecutive agent-orchestration calls
+        become an <code>AgentCard</code>, or a <code>TeamReportCard</code> when matching team results
+        arrived. Each agent row carries a state pill (<b>working</b>, <b>finishing up</b>,
+        <b>done</b>, <b>hit limit</b>, <b>salvaged</b>, <b>failed</b>) and budget bars for rounds,
+        time and estimated cost, with the last tenth of each bar hatched: that is the slice reserved
+        for the agent to write its report. While an agent is running, <b>Extend +20 rounds</b> grants
+        it more room (<code>POST /api/agents/{id}/extend</code>) without losing its loaded context.
+        See <a href="arch-agent-recorder.html">the agent flight recorder</a>.</dd>
+    </div>
+    <p>Beyond the two chat roles, <code class="path">src/components/chat/ChatMessage.tsx</code>
+      renders five card roles that short-circuit the normal bubble: <code>cron_event</code>,
+      <code>task_event</code>, <code>session_message</code>, <code>agent_report</code>, and
+      <code>agent_answer</code> (an assistant bubble labelled "Answered from the agents' reports",
+      with the team name appended when there is one).</p>
 
     <h2 id="rendering-safety">Rendering safety</h2>
     <p>All Markdown passes through <code class="path">src/utils/sanitizeHtml.ts</code> before it reaches
@@ -315,6 +418,12 @@
       <dt><code class="path">src/utils/sanitizeHtml.ts</code></dt><dd>Safe Markdown rendering (marked + DOMPurify).</dd>
       <dt><code class="path">src/utils/wsFileLinks.ts</code></dt><dd>Delegated click handling for citation, created-file, and localhost links in rendered messages.</dd>
       <dt><code class="path">src/components/chat/WorkspacePromptCard.tsx</code></dt><dd>The workspace-connect-only prompt card and its answers-array resume.</dd>
+      <dt><code class="path">src/components/chat/ChatMessage.tsx</code></dt><dd>The seven message roles and the two grouping passes that produce the readable transcript.</dd>
+      <dt><code class="path">src/components/chat/ActivityRow.tsx</code></dt><dd>The collapsed activity row: step list, per-step output, and the streaming size readout.</dd>
+      <dt><code class="path">src/components/chat/TeamReportCard.tsx</code></dt><dd>Team and agent rows, the budget bars with their reserved reporting slice, and the Extend button.</dd>
+      <dt><code class="path">src/components/chat/AgentReportCard.tsx</code></dt><dd>Reports that arrived with no live turn, with each agent's stop reason and a pointer to its full record.</dd>
+      <dt><code class="path">src/hooks/chatStream/agentBudget.ts</code></dt><dd>Rounds, time and cost read off the agent's own events, plus the state pill labels.</dd>
+      <dt><code class="path">src/types/schemas/chat.schema.ts</code></dt><dd>The Zod schema every SSE payload is validated against; the client half of the frame contract.</dd>
     </div>
 
     <div class="callout callout--tip">

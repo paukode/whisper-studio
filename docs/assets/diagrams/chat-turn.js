@@ -11,10 +11,11 @@ WSDiagram.mount("chat-turn-diagram", {
   nodes: [
     { id: "user", group: "browser", col: 0, row: 0, label: "User types + Send", desc: "The SPA adds the user bubble, marks the session streaming, and opens a fetch to the chat endpoint." },
     { id: "post", group: "transport", col: 1, row: 0, label: "POST /api/chat", sub: "SSE response", desc: "Body carries question, capped history, model, effort, session_id, and attachment_ids. The response is a Server-Sent Events stream, not one JSON body." },
-    { id: "build", group: "server", col: 2, row: 0, label: "Build prompt", sub: "history · WHISPER.md · memory", desc: "The endpoint filters visible_chat_history (drops cron_event rows), latches the session config, and assembles the system prompt from workspace context, WHISPER.md, and memory." },
+    { id: "build", group: "server", col: 2, row: 0, label: "Build prompt", sub: "history · WHISPER.md · memory", desc: "The endpoint filters visible_chat_history (drops cron_event and task_event rows; translates session_message, agent_report and agent_answer rows into turns the model can read), latches the session config, and assembles the system prompt from workspace context, WHISPER.md, and memory." },
     { id: "invoke", group: "external", kind: "external", col: 3, row: 0, label: "Invoke model", sub: "Bedrock or local", desc: "Claude or GPT-5.x on Amazon Bedrock, or an on-device model in local mode. GPT-on-Bedrock and on-device turns run the identical loop shown here; this trace shows the Anthropic-on-Bedrock path as one example: invoke_model_with_response_stream opens the upstream SSE and content blocks arrive as they are generated." },
     { id: "text", group: "server", col: 4, row: 0, label: "Stream tokens", desc: "Each text chunk is yielded to the client as a token; the SPA appends it to the live bubble." },
     { id: "done", group: "transport", col: 5, row: 0, label: "[DONE]", desc: "The stream terminates. The SPA commits the final assistant message atomically with clearing the streaming state." },
+    { id: "midturn", group: "transport", col: 1, row: 1, label: "Mid-turn message", sub: "midturn: true", desc: "A message sent while this turn is still running is queued into the session's mid-turn inbox (server/chat/engine/midturn_inbox.py) and folded into the live history at the next round, so the same turn takes it into account. No second stream opens. If the turn has already ended the request is refused with 409 and the composer keeps the text." },
     { id: "tooluse", group: "server", col: 4, row: 1, label: "tool_use?", sub: "stop reason", desc: "A tool_use stop reason means the model wants to act. The engine routes each call before continuing." },
     { id: "approve", group: "security", col: 3, row: 2, label: "Approval?", sub: "pause + resume", desc: "A tool that needs consent pauses the turn, stashes state in the unified pause store (server/chat/engine/pause.py), and emits an approval_request over SSE. The client's decision resumes it; the executor re-validates the action before running it." },
     { id: "exec", group: "tools", col: 4, row: 2, label: "Execute tool", desc: "The validated action runs via its executor. The tool_result is fed back so the model can continue." },
@@ -22,6 +23,8 @@ WSDiagram.mount("chat-turn-diagram", {
   ],
   edges: [
     { from: "user", to: "post" },
+    { from: "user", to: "midturn", label: "sent while working" },
+    { from: "midturn", to: "invoke", label: "next round" },
     { from: "post", to: "build" },
     { from: "build", to: "invoke" },
     { from: "invoke", to: "text" },

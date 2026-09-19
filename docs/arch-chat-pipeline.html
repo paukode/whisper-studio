@@ -37,10 +37,46 @@
     <h2 id="the-request">The request</h2>
     <p>A turn is a <code>POST /api/chat</code> whose body carries the <code>question</code>, prior
       <code>history</code>, the selected <code>model</code> and <code>effort_level</code>, the
-      <code>session_id</code>, and any <code>attachment_ids</code>. The response is an SSE stream, not
-      a single JSON body - tokens and tool activity arrive as they happen. An approval continuation
-      re-enters the same endpoint with an <code>approved_tool_result</code> instead of a fresh
-      question.</p>
+      <code>session_id</code>, any <code>attachment_ids</code>, and the
+      <code>session_approvals</code> map (the categories you have already pre-approved this session,
+      for example <code>{"write": "allow"}</code>). The response is an SSE stream, not a single JSON
+      body - tokens and tool activity arrive as they happen. An approval continuation re-enters the
+      same endpoint with an <code>approved_tool_result</code> instead of a fresh question.</p>
+
+    <h2 id="busy-slot">The busy slot and mid-turn messages</h2>
+    <p>A session may have only one turn in flight. The endpoint claims that slot
+      <em>synchronously</em>, at the top of <code>chat_endpoint()</code>, before any of the turn's own
+      setup work (transcript condensation, attachment analysis, index grounding, hooks) runs, which
+      can take seconds on a heavy turn. Every turn claims it, approval continuations included.</p>
+    <p>What happens to a second request depends on what it is:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Request</th><th>Outcome</th></tr></thead>
+      <tbody>
+        <tr><td>A new message while the slot is live</td><td>It is pushed into the session's
+          <b>mid-turn inbox</b> (<code class="path">server/chat/engine/midturn_inbox.py</code>) and the
+          endpoint answers <code>{"queued_into_running_turn": true}</code>. No second stream opens.</td></tr>
+        <tr><td>A message flagged <code>midturn</code> when nothing is running</td><td>Refused with a
+          JSON <code>409</code> carrying <code>{"queued_into_running_turn": false, "error":
+          "no_running_turn"}</code>, so the composer can keep the text and tell you nothing was
+          sent instead of silently starting a second answer.</td></tr>
+        <tr><td>Anything else</td><td>The slot is claimed and the turn runs.</td></tr>
+      </tbody>
+    </table></div>
+    <p><code>run_turn</code> drains the inbox once per round, at the same checkpoint that injects
+      wind-down reminders, and folds each queued message into the live message list wrapped in a
+      <code>&lt;user_message_mid_turn&gt;</code> block that tells the model this is not a separate
+      request. The model addresses it before its next tool call, in the same turn.</p>
+    <h3 id="heartbeat">Keeping the slot honest</h3>
+    <p>A slot nobody releases would 409 the session until a restart, so staleness is tracked
+      separately from ownership. <code>_active_chat_streams</code> holds the claim token;
+      <code>_stream_heartbeat</code> holds the time of the last observed progress. The engine beats
+      once per round, and <code>_with_heartbeat</code> wraps the whole stream so it also beats on
+      every chunk and every <b>30 seconds</b> of silence
+      (<code>_HEARTBEAT_KEEPALIVE_S</code>) - a single tool call can outlast a round, so a team of
+      agents working for an hour must not look abandoned. A slot whose last heartbeat is older than
+      <b>900 seconds</b> (<code>_STREAM_STALE_AFTER_S</code>, above a single Bedrock read timeout) is
+      presumed abandoned and reclaimed by the next turn. The pulse lives exactly as long as the
+      stream generator, so Stop or a closed connection stops it immediately.</p>
 
     <h2 id="building-the-turn">Building the turn</h2>
     <p>Before the model is ever called, the endpoint assembles everything the model will read:</p>
@@ -48,11 +84,26 @@
       <li><b>Latch the session config.</b> On the first turn, the model, effort level, and related
         settings are snapshotted so mid-session Settings changes never disrupt an in-flight conversation.</li>
       <li><b>Assemble the system prompt.</b> Base rules, the workspace <code>WHISPER.md</code>,
-        selected <a href="arch-memory.html">memories</a>, and per-session memory are composed with
-        cache-aligned static/dynamic splits (see <a href="ref-settings.html">prompt caching</a>).
-        A third, <em>moving</em> cache checkpoint is placed on the last message each round
+        selected <a href="arch-memory.html">memories</a>, and per-session memory are registered as
+        named sections on a <code>PromptLayer</code>
+        (<code class="path">server/prompts/__init__.py</code>): <code>IDENTITY</code>,
+        <code>MODE</code>, <code>WORKSPACE</code>, <code>DYNAMIC</code>,
+        <code>TOOL_GUIDANCE</code>, <code>EXTENSION</code>. The split is exactly one line -
+        everything at or below <code>WORKSPACE</code> is the <b>static</b>, cacheable block;
+        everything above it is the per-request tail. So anything that varies within a session (live
+        git status, recalled memory, tool guidance) must sit on <code>DYNAMIC</code> or later, and
+        session-stable text parked on a dynamic layer is re-billed on every round. Plan mode rides
+        <code>DYNAMIC</code> on purpose: it is about a hundred fixed tokens in the uncached tail,
+        against invalidating the whole cached prefix twice per planning session. A third,
+        <em>moving</em> cache checkpoint is placed on the last message each round
         (<code>annotate_messages_cache</code>, <code class="path">server/chat/caching.py</code>), so
         the conversation history caches round-over-round instead of being re-billed as uncached input.</li>
+      <li><b>Build the tool catalogue.</b> The catalogue is deliberately <em>stable</em> across the
+        per-turn state flips that would otherwise rewrite it: plan mode, strict-RAG grounding, and
+        workspace connect or disconnect do not strip tools. The rule is <b>register always, refuse at
+        execution</b> - a blocked write still has its schema, and the executor explains why it will
+        not run. Rewriting the tools array instead would invalidate the prompt cache on every flip.
+        See <a href="arch-tools.html#progressive-disclosure">progressive tool disclosure</a>.</li>
       <li><b>Resolve <code>@file</code> mentions</b> inline into the user message.</li>
       <li><b>Expand attachments</b> - documents are capped (around 150K characters) and images become
         vision blocks. See <a href="arch-extraction.html">attachment extraction</a>.</li>
@@ -76,7 +127,7 @@
       <tbody>
         <tr><td>Claude (Haiku / Sonnet / Opus)</td><td>Anthropic adapter</td><td>Bedrock streaming; the engine loop below.</td></tr>
         <tr><td>GPT</td><td><code class="path">server/openai_bedrock/</code></td><td>OpenAI Responses format over bedrock-mantle; same engine via its adapter.</td></tr>
-        <tr><td>On-device Gemma</td><td><code class="path">server/local/</code></td><td>llama-server subprocess; same engine via the LocalAdapter (offline policy).</td></tr>
+        <tr><td>On-device models</td><td><code class="path">server/local/</code></td><td>GGUF weights through a llama-server subprocess, or an MLX model through mlx-lm; same engine via the LocalAdapter (offline policy).</td></tr>
       </tbody>
     </table></div>
     <p>See <a href="arch-backends.html">Model backends &amp; modes</a> for the full picture.</p>
@@ -85,27 +136,81 @@
     <p>The engine enters a loop of up to <b>50 rounds</b> (the CHAT policy; the same loop serves
       every provider, and other consumers bring their own <code>TurnPolicy</code>). A policy can also
       carry a <code>deadline_seconds</code> wall-clock brake - agents set per-type deadlines (for
-      example 900s for <code>general</code>) - and at the round cap or deadline the engine forces one
-      final no-tools best-effort round instead of truncating. Each round:</p>
+      example 900s for <code>general</code>) - and at the deadline the engine forces one final
+      no-tools best-effort round instead of truncating. The cap and the deadline are re-read at
+      the top of every round, so an <b>Extend</b> granted to a running agent
+      (<code class="path">server/agents/extensions.py</code>) applies from the next round on. Each
+      round:</p>
     <ol class="steps">
-      <li><h4>Check the budget</h4><p>If the session or daily <a href="arch-costs.html">cost cap</a>
-        is exceeded, emit an error and finish.</p></li>
+      <li><h4>Wind down near the cap</h4><p>With five rounds left
+        (<code>WIND_DOWN_AT</code>) the engine appends a wind-down reminder, and on the last round
+        (<code>FINAL_ROUND_AT</code>) the consumer's <code>final_round_hint</code>, if it set one.
+        Interactive chat sets none; an agent sets the fixed report template
+        (<code>REPORT_TEMPLATE</code>, <code class="path">server/agents/journal.py</code>). The
+        reminder is <em>persisted</em> onto the last user message by
+        <code>inject_reminder</code> (<code class="path">server/chat/loop_hints.py</code>) rather
+        than injected request-only, because a request-only injection forks the token prefix between
+        rounds and destroys the moving cache checkpoint.</p></li>
+      <li><h4>Drain the mid-turn inbox</h4><p>Anything you sent while the turn was running is folded
+        into the live message list at this same checkpoint.</p></li>
+      <li><h4>Heartbeat and checkpoint</h4><p>The round beats the session's busy slot, and the
+        <code>on_round</code> callback writes the message list to the agent journal, so a killed run
+        resumes from here.</p></li>
+      <li><h4>Check the budget</h4><p><code>check_budget</code> is the hard session or daily
+        <a href="arch-costs.html">cost cap</a>; below it, <code>check_budget_soft</code> trips at
+        <code>SOFT_LIMIT_FRACTION</code> (<b>0.9</b>) of the cap. The first trip does not end the
+        turn: it turns tools off, injects a "this is the final round, answer with what you have"
+        reminder, and lets the model write its answer inside the budget. Only the second trip ends
+        the turn. A wall-clock deadline works the same way, starting its final round at 90 percent of
+        the time budget so the report is written inside the budget rather than after it.</p></li>
       <li><h4>Invoke the model, streaming</h4><p><code>invoke_model_with_response_stream</code> is
         wrapped in <code class="path">server/infrastructure/bedrock_retry.py</code> - exponential
-        backoff on throttling, and reactive compaction if the prompt is too long.</p></li>
+        backoff on throttling, and reactive compaction if the prompt is too long. A transient mid-stream
+        provider fault surfaces as a retryable <code>RoundError</code> and the round re-runs, up to
+        <code>_ROUND_RETRIES_MAX</code> (2) times with linear backoff, instead of ending the turn.
+        Each retry still consumes a round from the budget, so a flapping provider is doubly
+        bounded.</p></li>
       <li><h4>Parse content blocks</h4><p>Chunks are parsed into <code>text</code>,
         <code>thinking</code>, and <code>tool_use</code> blocks and streamed onward.</p></li>
       <li><h4>Act on the stop reason</h4><p><code>tool_use</code> runs the tools, appends the
         results, and loops again. Any other stop reason (such as <code>end_turn</code>), when the
-        policy enables the gate (interactive cloud chat), no longer
-        ends the turn on its own: the non-tool-use branch first runs the <b>completion gate</b>
-        (<code>run_completion_gate</code>, <code class="path">server/goals/gate.py</code>). Phase 1
-        always runs the WS-I Stop hooks; phase 2 runs a Haiku goal evaluator when the
-        <code>goal_loop</code> flag is on and the session has an active goal. A Stop-hook block or an
-        unmet goal re-injects <code>[completion gate]</code> feedback as a user message and loops
-        again, bounded by <code>goal_max_consecutive_blocks</code> (default 8). See
-        <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</p></li>
+        policy enables the gate, does not end the turn on its own: the non-tool-use branch first
+        runs the <b>completion gate</b> (see below).</p></li>
     </ol>
+    <p>Every round also writes a request snapshot - the exact tools, messages, and provider envelope
+      it sent - through <code class="path">server/chat/request_snapshots.py</code>, so any past
+      request is reconstructable from disk.</p>
+
+    <h3 id="completion-gate">The completion gate</h3>
+    <p><code>run_completion_gate</code> (<code class="path">server/goals/gate.py</code>) is the one
+      decision function every loop calls at end of turn. It runs four phases in order, and the first
+      block wins:</p>
+    <ol class="steps">
+      <li><h4>Stop hooks</h4><p>The blocking <code>Stop</code> hooks always run, whatever the goal
+        state. A block re-injects the hook's reason and the turn continues.</p></li>
+      <li><h4>Claimed deliverables</h4><p><code class="path">server/goals/deliverables.py</code>
+        reads the final assistant text, pulls out every file path it presents as a finished
+        deliverable, and checks the file exists and is non-empty. A claim about an artifact card is
+        checked against a real <code>create_artifact</code> call in the same turn. "Saved to
+        report.docx" with no file is a block, not an answer.</p></li>
+      <li><h4>Verification evidence</h4><p><code class="path">server/goals/verification.py</code> is
+        passive and deterministic: it never runs a suite itself. It reads the turn's messages and
+        asks which code files were edited and whether a test, lint, typecheck, or build command ran
+        green <em>afterwards</em>. Stopping right after editing code with no fresh passing evidence
+        becomes a bounded nudge (at most <code>MAX_VERIFY_NUDGES</code>, 2, per turn) to run the
+        check or say plainly what blocks it. Prose-only edits (markdown, text, data files) never
+        trigger it.</p></li>
+      <li><h4>Goal gates, then the goal evaluator</h4><p>With the <code>goal_loop</code> flag on and
+        an active goal, any quality gates you named with <code>/goal gate add &lt;command&gt;</code>
+        run first: a red gate is deterministic proof the goal is not met, its output tail becomes the
+        feedback, and the evaluator is not consulted. A gate that fails
+        <code>GATE_MAX_RETRIES</code> (3) times in a row pauses the goal instead of looping. Only
+        when the gates are green does an auxiliary model judge the goal.</p></li>
+    </ol>
+    <p>A block re-injects <code>[completion gate]</code> feedback as a user message and the loop
+      continues, bounded by <code>goal_max_consecutive_blocks</code> (default 8). The local preset
+      turns the gate off entirely, so an on-device turn stays fully offline. See
+      <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</p>
 
     <h2 id="executing-tools">Executing tools</h2>
     <p>When the model asks for tools, <code>execute_tool_batch()</code>
@@ -133,33 +238,110 @@
       implementations live in <code class="path">server/executors/</code>. See
       <a href="arch-tools.html">Tool dispatch &amp; executors</a>.</p>
 
+    <h3 id="loop-guard">The loop guard</h3>
+    <p>Rounds and the completion-gate cap bound how long a turn runs; they notice nothing about a
+      model calling the same tool with the same arguments over and over. That is
+      <code class="path">server/chat/loop_guard.py</code>, a pure per-turn tracker the executor
+      consults before and after every dispatch. It refuses a call (returning a synthetic result, with
+      no dispatch) in four situations:</p>
+    <ul>
+      <li><b>An identical call that already returned an identical result twice in a row</b>
+        (<code>IDENTICAL_STREAK_LIMIT</code>, 3). The second identical result already gets a short
+        notice appended, so the model has a chance to change course before the refusal.</li>
+      <li><b>An identical call that keeps failing</b>, unchanged, three times
+        (<code>FAILURE_STREAK_LIMIT</code>).</li>
+      <li><b>A repeating cycle</b> of up to four distinct calls (<code>MAX_CYCLE_PERIOD</code>)
+        repeated three times over (<code>CYCLE_REPEATS</code>).</li>
+      <li><b>A per-turn cap</b> for a runaway-prone tool. The defaults are
+        <code>web_search</code> 50, <code>spawn_agent</code> 50, and <code>team_create</code> 20,
+        overridable with the <code>tool_loop_caps</code> config key.</li>
+    </ul>
+    <p>Polling is legitimate repetition, so <code>task_status</code>, <code>task_output</code>,
+      <code>sleep</code>, <code>ci_status</code>, <code>git_status</code> and their kind are exempt
+      from the streak and cycle checks; the caps still apply. A byte-identical large payload (512
+      characters or more) coming back a second time is replaced by a stub pointing at the earlier
+      result, so a repeated read does not re-enter the context in full.</p>
+
     <h2 id="streaming-back">Streaming back to the client</h2>
     <p>Throughout the turn, the endpoint yields typed SSE frames the SPA folds into the UI:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Event</th><th>Meaning</th></tr></thead>
       <tbody>
         <tr><td><code>text</code></td><td>A streamed text chunk.</td></tr>
-        <tr><td><code>thinking</code></td><td>An adaptive thinking block (all providers; the local path routes its reasoning here too).</td></tr>
-        <tr><td><code>skill</code> / <code>skill_input</code></td><td>A tool call started, with its parsed input.</td></tr>
+        <tr><td><code>thinking</code> / <code>thinking_start</code> / <code>thinking_stop</code></td><td>An adaptive thinking block and its boundaries (all providers; the local path routes its reasoning here too).</td></tr>
+        <tr><td><code>skill</code> / <code>skill_input</code> / <code>skill_result</code></td><td>A tool call started, its parsed input, and a truncated preview of its output.</td></tr>
+        <tr><td><code>skill_progress</code></td><td>How many characters of a still-streaming tool call's arguments have arrived. A whole HTML app can take minutes to stream, so the running step shows the size so far next to its spinner.</td></tr>
         <tr><td><code>usage</code></td><td>Token counters, cost estimate, and remaining context (<code>context_used</code>/<code>context_max</code>).</td></tr>
-        <tr><td><code>team_progress</code></td><td>Sub-agent and team events (spawn, progress, completion).</td></tr>
+        <tr><td><code>tool_pool</code></td><td>Progressive-disclosure telemetry: how many tools were advertised, how many deferred, and the estimated token cost of the deferred index.</td></tr>
+        <tr><td><code>team_progress</code> / <code>team_results</code></td><td>Sub-agent and team events (spawn, progress, completion) and the final per-agent reports.</td></tr>
         <tr><td><code>grounding</code></td><td>Index-search metadata (folders searched, passages retrieved, and the id of the persisted sources behind the expandable chip).</td></tr>
-        <tr><td><code>status</code></td><td>Coarse turn-setup stage (<code>preparing</code> / <code>searching</code> / <code>connecting</code>). The stream opens from byte zero, so these frames replace the old silent wait while condensation, grounding, and dispatch run.</td></tr>
-        <tr><td><code>user_question</code></td><td>The turn paused on an approval or an <code>ask_user_question</code>.</td></tr>
+        <tr><td><code>status</code></td><td>Coarse turn-setup stage. The stream opens from byte zero, so these frames replace a silent wait while condensation, grounding, and dispatch run. Every turn starts <code>preparing</code> then <code>connecting</code>.</td></tr>
+        <tr><td><code>approval_request</code> / <code>user_question</code></td><td>The turn paused on an approval, or on an <code>ask_user_question</code>.</td></tr>
+        <tr><td><code>stop_hook_block</code> / <code>goal_eval</code> / <code>goal_cap_reached</code></td><td>Completion-gate decisions: a block and its reason, a goal verdict, or the consecutive-block cap being reached.</td></tr>
+        <tr><td><code>budget_warning</code></td><td>The session or daily cost cap tripped, carrying <code>budget_kind</code>, <code>budget_limit</code>, and <code>budget_current</code>. The first one announces the reserved final round; the second ends the turn.</td></tr>
+        <tr><td><code>tool_result_truncated</code></td><td>A tool's output was trimmed before it reached the model; the full text stays in the result cache for <code>read_cached_result</code>.</td></tr>
+        <tr><td><code>error</code></td><td>A mid-stream failure, appended inline so a partial answer is not lost.</td></tr>
         <tr><td><code>[DONE]</code></td><td>The stream is complete.</td></tr>
       </tbody>
     </table></div>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>The frame vocabulary is pinned by tests.</b>
+        <code class="path">tests/golden_fixtures/</code> holds six recorded turns (plain text, thinking
+        then text, a tool round, an <code>ask_user_question</code> pause and its resume, and a
+        mid-stream error) as the full ordered list of frames each one emits, payloads included, with
+        only the cost estimate and the tool-pool counts scrubbed. A change to the frame order or shape
+        fails <code class="path">tests/test_engine_golden.py</code>; when the change is intended, you
+        re-record with <code>GOLDEN_RECORD=1 pytest tests/test_engine_golden.py</code>. The client
+        half of the contract is <code class="path">src/types/schemas/chat.schema.ts</code>, described
+        on the <a href="arch-frontend.html#routing-events">frontend page</a>.</p></div>
+    </div>
+    <p>Some session-scoped frames never ride the chat stream at all. Cron runs, background-task
+      lifecycle events, memory writes, and agent reports that arrive with no live turn are published
+      on a separate long-lived <code>EventSource</code> per session
+      (<code>/api/sessions/{id}/events</code>), so they reach a session you are not currently
+      watching. See <a href="arch-frontend.html">Frontend architecture</a>.</p>
 
     <h2 id="compaction-persistence">Compaction &amp; persistence</h2>
-    <p>If a prompt grows too long mid-stream, <b>reactive compaction</b> drops the oldest message
-      pairs (or summarizes them via the session's own model through <code>one_shot</code>) and
-      retries. When even that cannot fit, the engine runs one final no-tools <b>salvage round</b> on
-      a hard-trimmed tail, so a long agentic session ends with a synthesized answer instead of an
-      error. When the turn ends, the assistant message is appended and the session is
-      UPSERTed into SQLite under a per-session lock, so background <code>cron_event</code> rows are
-      never clobbered. Those cron rows render in the chat but are filtered by
-      <code>visible_chat_history</code> before the next prompt, so they never inflate the token bill.
-      See <a href="arch-persistence.html">Persistence</a> and <a href="arch-cron.html">Cron</a>.</p>
+    <p>If a prompt grows too long mid-stream, <b>reactive compaction</b>
+      (<code class="path">server/chat/compaction.py</code>) works down a ladder: first a local
+      pre-pass that truncates older <code>tool_result</code> blocks by age, then the session's own
+      accumulated memory as the summary when there is enough of it, then a real summarisation call,
+      and only then blunt truncation. The summary model is the
+      <code>auxiliary_models.compaction</code> entry when set, otherwise the session's own model.
+      Thresholds are per model: 95 percent of its usable input budget triggers compaction, 98 percent
+      is the ceiling. When even that cannot fit, the engine runs one final no-tools <b>salvage
+      round</b> on a hard-trimmed tail, so a long agentic session ends with a synthesized answer
+      instead of an error.</p>
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>A summary paraphrases; two things must not be paraphrased.</b>
+        Whatever summary compaction produces, <code class="path">server/chat/compaction_anchors.py</code>
+        appends two deterministic blocks to it. Your own messages from the summarized region ride
+        along <b>verbatim</b>, newest first, within a budget (up to 800 characters each, 4,000
+        characters in total), because a summary that turns "use the existing retry helper, do not add
+        a new one" into "discussed retries" is how an agent confidently does the forbidden thing six
+        turns later. Synthetic user rows the loop itself wrote (reminders, gate feedback, mid-turn
+        wrappers) are excluded. Alongside them goes an <b>anchor index</b>: file paths, PR and issue
+        numbers, commit SHAs, URLs, and error strings extracted mechanically, exactly as they
+        appeared. A recovery pointer says the rest is not lost: the full history is still on disk and
+        <code>session_search</code> can pull any message back verbatim.</p></div>
+    </div>
+    <p>When the turn ends, the assistant message is appended and the session is
+      UPSERTed into SQLite under a per-session lock, so background rows written by other subsystems
+      are never clobbered. <code>visible_chat_history</code>
+      (<code class="path">server/infrastructure/sessions.py</code>) decides what the <em>next</em>
+      prompt sees of those rows. A <code>cron_event</code> or <code>task_event</code> row renders in
+      the chat and is dropped before the prompt, so it never inflates the token bill. Three roles are
+      translated rather than dropped: a <code>session_message</code> from another session becomes a
+      user turn; an <code>agent_report</code> becomes a user turn that names the team, the reason the
+      reports arrived with no turn running, each agent's stop reason and rounds used, and the
+      <code>task_output &lt;id&gt;</code> pointer to its full record, with an instruction to relay what
+      matters and how confident each report is; an <code>agent_answer</code> becomes the assistant's
+      own previous message, so the conversation stays coherent. Each of these roles is capped per
+      session, oldest dropped first. See <a href="arch-persistence.html">Persistence</a>,
+      <a href="arch-agent-recorder.html">the agent flight recorder</a>, and
+      <a href="arch-cron.html">Cron</a>.</p>
 
     <h2 id="key-files">Key files</h2>
     <div class="spec">
@@ -169,7 +351,11 @@
       <dt><code class="path">server/chat/caching.py</code></dt><dd>System-prompt resolution with cache-aligned splits, plus the moving <code>annotate_messages_cache</code> checkpoint on conversation history.</dd>
       <dt><code class="path">server/hooks/</code></dt><dd>The blocking hook engine: <code>run_hooks</code> (Pre/PostToolUse) and the <code>check_stop_hooks</code> end-of-turn gate.</dd>
       <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate</code>: Stop hooks plus the optional goal evaluator that can refuse to end the turn.</dd>
-      <dt><code class="path">server/chat/compaction.py</code></dt><dd>History compaction when the prompt is too long.</dd>
+      <dt><code class="path">server/chat/engine/midturn_inbox.py</code></dt><dd>The per-session queue for a message sent while a turn is already running.</dd>
+      <dt><code class="path">server/chat/loop_hints.py</code></dt><dd><code>inject_reminder</code>, the near-cap wind-down text, and the token-accurate context meter.</dd>
+      <dt><code class="path">server/chat/loop_guard.py</code></dt><dd>Repeated-call, repeated-failure, and cycle detection, plus the per-turn tool caps.</dd>
+      <dt><code class="path">server/prompts/__init__.py</code></dt><dd><code>PromptLayer</code> and the static/dynamic split that keeps the cached prefix stable.</dd>
+      <dt><code class="path">server/chat/compaction.py</code></dt><dd>History compaction when the prompt is too long, with <code class="path">compaction_anchors.py</code> for the verbatim user messages and the anchor index.</dd>
       <dt><code class="path">server/tool_router.py</code></dt><dd>Pure tool dispatch.</dd>
       <dt><code class="path">server/tool_executor.py</code></dt><dd>Batching, permissions, approvals, hooks, result shaping.</dd>
     </div>
