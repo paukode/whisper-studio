@@ -263,6 +263,18 @@ def _agent_report_prompt_view(msg: dict) -> dict:
     }
 
 
+def _agent_answer_prompt_view(msg: dict) -> dict:
+    """An agent_answer row is the assistant's own reply, written by the wake
+    turn after agent reports landed with no live turn; the model reads it as
+    its previous assistant message so the conversation stays coherent."""
+    payload = msg.get("agentAnswer") or {}
+    return {
+        "role": "assistant",
+        "content": str(payload.get("text") or "").strip() or "(no answer was produced)",
+        "timestamp": msg.get("timestamp"),
+    }
+
+
 def visible_chat_history(history: list[dict]) -> list[dict]:
     """Drop non-prompt roles before building a Bedrock request.
 
@@ -283,6 +295,8 @@ def visible_chat_history(history: list[dict]) -> list[dict]:
             out.append(_session_message_prompt_view(m))
         elif role == "agent_report":
             out.append(_agent_report_prompt_view(m))
+        elif role == "agent_answer":
+            out.append(_agent_answer_prompt_view(m))
     return out
 
 
@@ -302,6 +316,7 @@ def _enforce_backend_row_caps(history: list[dict]) -> list[dict]:
     """Apply every backend-owned row's cap (cron_event, session_message)."""
     history = _enforce_row_cap(history, "cron_event", MAX_CRON_EVENTS_PER_SESSION)
     history = _enforce_row_cap(history, "agent_report", MAX_AGENT_REPORTS_PER_SESSION)
+    history = _enforce_row_cap(history, "agent_answer", MAX_AGENT_REPORTS_PER_SESSION)
     history = _enforce_row_cap(history, "session_message", MAX_SESSION_MESSAGES_PER_SESSION)
     return history
 

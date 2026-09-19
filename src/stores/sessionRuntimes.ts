@@ -26,7 +26,7 @@ import type {
   CronEventPayload,
   SessionMessagePayload,
   TaskEventPayload,
-  TeamProgressEvent, AgentReportPayload } from '@/types/chat';
+  TeamProgressEvent, AgentReportPayload, AgentAnswerPayload } from '@/types/chat';
 
 /** Backs `currentSessionId === null` (welcome screen, pre-first-session).
  *  Never saved, never evicted, never event-sourced. */
@@ -250,6 +250,7 @@ function openEventStream(sid: string, entry: RuntimeEntry): void {
       memory_event?: MemoryEventPayload;
       task_event?: TaskEventPayload;
       agent_report?: AgentReportPayload;
+      agent_answer?: AgentAnswerPayload;
       session_message?: SessionMessagePayload;
       team_progress?: TeamProgressEvent;
       ci_progress?: Record<string, unknown>;
@@ -261,6 +262,7 @@ function openEventStream(sid: string, entry: RuntimeEntry): void {
         memory_event?: MemoryEventPayload;
         task_event?: TaskEventPayload;
         agent_report?: AgentReportPayload;
+        agent_answer?: AgentAnswerPayload;
         session_message?: SessionMessagePayload;
         team_progress?: TeamProgressEvent;
         ci_progress?: Record<string, unknown>;
@@ -298,6 +300,18 @@ function openEventStream(sid: string, entry: RuntimeEntry): void {
     }
     if (parsed?.memory_event) {
       toastMemoryEvent(sid, parsed.memory_event);
+      return;
+    }
+    if (parsed?.agent_answer) {
+      // The wake turn's answer to the reports above: shown as an assistant
+      // bubble, kept as a backend-owned row so the next save keeps it.
+      const payload = parsed.agent_answer;
+      entry.chat.getState().addMessage({
+        role: 'agent_answer',
+        content: '',
+        timestamp: payload.timestamp ?? new Date().toISOString(),
+        agentAnswer: payload,
+      });
       return;
     }
     if (parsed?.agent_report) {

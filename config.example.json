@@ -169,5 +169,6 @@
   "cron_misfire_grace_sec": 3600,
   "goal_max_consecutive_blocks": 8,
   "auxiliary_models": {},
-  "tool_loop_caps": {}
+  "tool_loop_caps": {},
+  "wake_parent_on_reports": true
 }
