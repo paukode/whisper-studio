@@ -33,14 +33,52 @@ export const MODEL_OPTIONS = [
   { value: 'streaming', label: 'Parakeet (live)', backend: 'streaming' },
 ] as const;
 
+/** What Apple's translator needs before it can produce anything: the Swift
+ *  shell's Translation bridge, which exists only in the packaged Mac app on
+ *  macOS 15 or later. Shown verbatim in both pickers. */
+export const APPLE_TRANSLATE_REQUIREMENT = 'needs the Mac app on macOS 15 or later';
+
+export interface TranslatorOption {
+  value: string;
+  label: string;
+  /** Rendered as a disabled <option>: visible, with the reason on the label,
+   *  but not selectable. */
+  disabled?: boolean;
+}
+
 /** The Translate dropdown, identical for every transcription model: the two
  *  translators are standalone (Canary re-decodes the audio server-side,
- *  Apple translates the finished text on-device in the Mac app). */
-export const TRANSLATOR_OPTIONS = [
+ *  Apple translates the finished text on-device in the Mac app).
+ *
+ *  Derived per render rather than frozen as a constant, because Apple is only
+ *  real where the native bridge is. Without it the server's resolve_translator
+ *  returns no translator at all (it never falls back to Canary), so an Apple
+ *  selection outside the Mac app produced no translation line and no
+ *  explanation. The entry stays in the list, disabled and self-describing, so
+ *  a config already saved as `translate_mode: "apple"` still renders its own
+ *  selected value instead of silently displaying some other translator. */
+export const translatorOptions = (appleAvailable: boolean): TranslatorOption[] => [
   { value: 'off', label: 'Translate: off' },
   { value: 'canary', label: 'Canary (25 langs ↔ EN)' },
-  { value: 'apple', label: 'Apple (any pair)' },
-] as const;
+  appleAvailable
+    ? { value: 'apple', label: 'Apple (any pair)' }
+    : { value: 'apple', label: `Apple (${APPLE_TRANSLATE_REQUIREMENT})`, disabled: true },
+];
+
+/** True when the saved translator cannot run here, so the UI owes the user an
+ *  explicit message. Apple is the only translator with a host requirement;
+ *  Canary runs server-side for every client. */
+export const isTranslatorUnavailable = (mode: string, appleAvailable: boolean): boolean =>
+  mode === 'apple' && !appleAvailable;
+
+/** The full explanation, shown under the Settings picker and as the transcript
+ *  badge's tooltip. */
+export const TRANSLATOR_UNAVAILABLE_NOTICE =
+  `Apple translation ${APPLE_TRANSLATE_REQUIREMENT}, so no translation line appears here. ` +
+  'Pick Canary to translate everywhere, including this browser.';
+
+/** The compact form of the same message, for the transcript header row. */
+export const TRANSLATOR_UNAVAILABLE_BADGE = 'Apple translation unavailable here';
 
 /** Target languages for translation lines: the union of what Canary and
  *  Apple's on-device translator support (Whisper always targets English and
@@ -306,6 +344,11 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
   const transcriptAreaRef = useRef<HTMLDivElement>(null);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
 
+  // The native bridge is injected at documentStart and never appears later,
+  // so probe it once on mount rather than on every render.
+  const [appleAvailable] = useState(() => isNativeTranslationAvailable());
+  const translatorUnavailable = isTranslatorUnavailable(translateMode, appleAvailable);
+
   // One-time teaching tile: the transcript's power features (quote in chat,
   // explain, translate, search workspace, …) hide behind select+right-click
   // and nothing else in the UI reveals they exist. Dismissal is persisted.
@@ -489,20 +532,27 @@ export const TranscriptionPanel = forwardRef<HTMLDivElement, TranscriptionPanelP
             ))}
           </select>
           <select
-            className={`transcript-engine-select translate-select${translateMode !== 'off' ? ' on' : ''}`}
+            className={`transcript-engine-select translate-select${
+              translateMode !== 'off' && !translatorUnavailable ? ' on' : ''
+            }${translatorUnavailable ? ' unavailable' : ''}`}
             id="transcriptTranslateSelect"
             title="Show a translation line under speech in other languages. Canary translates between its 25 languages and English (best quality, works with every transcription model); Apple translates between any of its ~20 languages, on-device (Mac app only)."
             aria-label="Translation model"
             value={translateMode}
             onChange={(e) => handleTranslateChange(e.target.value, translateTarget)}
           >
-            {TRANSLATOR_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+            {translatorOptions(appleAvailable).map((o) => (
+              <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>
             ))}
           </select>
+          {translatorUnavailable && (
+            <span className="translate-unavailable" role="status" title={TRANSLATOR_UNAVAILABLE_NOTICE}>
+              {TRANSLATOR_UNAVAILABLE_BADGE}
+            </span>
+          )}
           {translateMode !== 'off' && (
             <select
-              className="transcript-engine-select translate-select on"
+              className={`transcript-engine-select translate-select${translatorUnavailable ? '' : ' on'}`}
               id="transcriptTranslateTarget"
               title="Language of the translation line. Canary reaches its non-English languages from English speech only (English is always one side of its pair); Apple reaches any of its languages from anything."
               aria-label="Translate to language"
