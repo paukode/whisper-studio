@@ -62,7 +62,7 @@ _install_python_312() {
 # ── Vector-search Python ──────────────────────────────────────────────────
 # sqlite-vec needs an interpreter whose stdlib sqlite3 can load extensions. The
 # python.org macOS framework build can't; Homebrew's can. We build the venv from
-# an extension-capable interpreter, referenced by ABSOLUTE PATH only — the user's
+# an extension-capable interpreter, referenced by ABSOLUTE PATH only, so the user's
 # default python3 and shell config are left untouched. Falls back gracefully to
 # the active python3 (the index then uses its numpy vector search).
 VENV_PYTHON=""
@@ -83,7 +83,7 @@ _select_venv_python() {
         return 0
     fi
     if ! command -v brew >/dev/null 2>&1; then
-        echo "Note: this Python can't load SQLite extensions and Homebrew isn't present — vector search will use the numpy fallback (still works)."
+        echo "Note: this Python can't load SQLite extensions and Homebrew isn't present. Vector search will use the numpy fallback (still works)."
         VENV_PYTHON="$(command -v python3)"
         return 0
     fi
@@ -99,7 +99,7 @@ _select_venv_python() {
         VENV_PYTHON="$(brew --prefix)/opt/python@3.13/bin/python3.13"
     fi
     if [ ! -x "$VENV_PYTHON" ] || ! _python_loads_extensions "$VENV_PYTHON"; then
-        echo "Note: couldn't get an extension-capable Python — vector search will use the numpy fallback."
+        echo "Note: couldn't get an extension-capable Python. Vector search will use the numpy fallback."
         VENV_PYTHON="$(command -v python3)"
     fi
 }
@@ -141,7 +141,7 @@ require_python_312() {
 require_python_312
 
 # Runs a noisy install command. Output goes to $SETUP_LOG on success
-# (terminal stays clean — just the one-line progress message). On
+# (terminal stays clean, just the one-line progress message). On
 # failure, surface the failing step *and* the tail of the log on the
 # terminal so the user doesn't have to know to open setup.log first.
 #
@@ -188,7 +188,7 @@ check_prod_prerequisites() {
     # capture the version string for the success report).
     versions+=("Python:    $(python3 --version 2>&1)")
 
-    # Homebrew — macOS only. The other deps below have brew install
+    # Homebrew, macOS only. The other deps below have brew install
     # paths that won't work without it.
     if [ "$is_mac" -eq 1 ]; then
         if command -v brew >/dev/null 2>&1; then
@@ -199,12 +199,12 @@ check_prod_prerequisites() {
         fi
     fi
 
-    # Git and AWS CLI are intentionally not checked here — setup.sh
+    # Git and AWS CLI are intentionally not checked here, because setup.sh
     # auto-installs them (see the venv block below) so requiring them
     # up front would double-gate. AWS CLI still needs ``aws configure``
     # from the user; that's a separate step we can't automate.
 
-    # ffmpeg — mlx-whisper uses it to decode audio. Whisper itself won't start
+    # ffmpeg: mlx-whisper uses it to decode audio. Whisper itself won't start
     # without it on the path. Auto-install via Homebrew on macOS; on Linux or
     # without brew, report it as missing.
     if command -v ffmpeg >/dev/null 2>&1; then
@@ -218,7 +218,7 @@ check_prod_prerequisites() {
         missing+=("ffmpeg not found. Install with: apt-get install ffmpeg")
     fi
 
-    # ripgrep — search backend used by the workspace tools. Auto-install via
+    # ripgrep: search backend used by the workspace tools. Auto-install via
     # Homebrew on macOS; on Linux or without brew, report it as missing.
     if command -v rg >/dev/null 2>&1; then
         versions+=("ripgrep:   $(rg --version 2>&1 | head -n 1)")
@@ -231,23 +231,23 @@ check_prod_prerequisites() {
         missing+=("ripgrep not found. Install with: apt-get install ripgrep")
     fi
 
-    # curl — used by this script for backend/Vite health checks.
+    # curl: used by this script for backend/Vite health checks.
     if command -v curl >/dev/null 2>&1; then
         versions+=("curl:      $(curl --version 2>&1 | head -n 1)")
     else
         if [ "$is_mac" -eq 1 ]; then
-            missing+=("curl not found. Install with: brew install curl  (pre-installed on macOS — check your PATH)")
+            missing+=("curl not found. Install with: brew install curl  (pre-installed on macOS, check your PATH)")
         else
             missing+=("curl not found. Install with: apt-get install curl")
         fi
     fi
 
-    # lsof — used by this script to find an available port.
+    # lsof: used by this script to find an available port.
     if command -v lsof >/dev/null 2>&1; then
         versions+=("lsof:      installed")
     else
         if [ "$is_mac" -eq 1 ]; then
-            missing+=("lsof not found. Pre-installed on macOS — check your PATH.")
+            missing+=("lsof not found. Pre-installed on macOS, check your PATH.")
         else
             missing+=("lsof not found. Install with: apt-get install lsof")
         fi
@@ -290,7 +290,7 @@ PROD=1
 ENV_FLAG=""   # tracks an explicit --dev/--prod so passing both is rejected
 # Model mode: where indexing/RAG runs (cloud / hybrid / local). Only persisted
 # when a flag is given, so a plain re-run honors the existing config; a fresh
-# install gets the server-seeded first-run default (hybrid), same as the Mac app.
+# install gets the server-seeded first-run default (local), same as the Mac app.
 MODE_FLAG=""
 # Auto-open the app in the default browser once everything is ready.
 # Can also be disabled via NO_OPEN=1 env var (useful for SSH sessions
@@ -349,9 +349,10 @@ for arg in "$@"; do
             echo "models download on your first recording, index models on your first index"
             echo "build, and chat models are installed on demand from Settings > Models > Discover."
             echo "Without a mode flag, an existing config is honored; a fresh install starts in"
-            echo "hybrid mode (on-device index, cloud chat) — the Mac app's first-run default."
+            echo "local mode, the Mac app's first-run default: nothing leaves the machine until"
+            echo "you switch to hybrid or cloud in Settings."
             echo ""
-            echo "Default: production — builds the frontend and serves it from the backend,"
+            echo "Default: production, builds the frontend and serves it from the backend,"
             echo "then opens the app in your default browser. Use --dev for the Vite HMR server."
             exit 0
             ;;
@@ -375,7 +376,7 @@ if [ "$FRESH" -eq 1 ]; then
     # a timestamped backup (it holds the user's Tavily key + per-machine
     # settings), then REMOVE it so the first-run seeding below recreates
     # config.user.json with the same defaults a fresh Mac-app install gets.
-    # Both files are gitignored, so the backup is the only copy — never delete
+    # Both files are gitignored, so the backup is the only copy, so never delete
     # without backing up first.
     for cfg_file in config.json config.user.json; do
         if [ -f "$cfg_file" ]; then
@@ -385,7 +386,7 @@ if [ "$FRESH" -eq 1 ]; then
             echo "Backed up $cfg_file to $config_backup and reset it."
         fi
     done
-    echo "  Config will be re-seeded with first-run defaults (hybrid mode)."
+    echo "  Config will be re-seeded with first-run defaults (local mode)."
     echo "  Re-add your Tavily API key and any custom settings in Settings (gear icon)."
     # pricing.json gets the same treatment (gitignored per-key rate overrides;
     # defaults live in pricing.example.json). Back up any existing one and reseed
@@ -409,7 +410,7 @@ if [ "$FRESH" -eq 1 ]; then
     fi
     # Also wipe the Vite build output. Without this, a --new run will
     # still serve a stale compiled bundle from static/dist/ even after
-    # node_modules has been reinstalled — so frontend code changes
+    # node_modules has been reinstalled, so frontend code changes
     # made since the last build won't take effect until the user
     # remembers to rerun `npm run build`. Forcing a clean slate is
     # what "fresh install" should actually mean.
@@ -424,8 +425,9 @@ fi
 # exactly what used to shadow shipped model/pricing updates after first run.
 # Instead, once the venv exists, the first-run seeding below calls the same
 # migrate_user_config() the packaged Mac app runs on boot, which creates a
-# config.user.json holding only the first-run defaults (hybrid mode with the
-# on-device index capabilities; weights download on demand).
+# config.user.json holding only the first-run defaults (local mode, with the
+# on-device index capabilities parked for a later switch to hybrid; weights
+# download on demand).
 
 # NOTE: new template models need no sync step. load_config merges
 # DEFAULTS -> config.example.json -> the user layer additively, so a model
@@ -454,7 +456,7 @@ else
 
     # Live-preview browser: the Playwright pip package (requirements.txt) does
     # not bundle the browser binary, so fetch the Chromium build it expects.
-    # Idempotent — Playwright skips the download if the build is already cached
+    # Idempotent: Playwright skips the download if the build is already cached
     # under ms-playwright, so re-running setup.sh is cheap.
     run_quiet "Installing Playwright Chromium (live preview)" python -m playwright install chromium
 
@@ -490,7 +492,7 @@ else
     fi
 
     # Install AWS CLI. Required for Bedrock-backed Claude inference;
-    # the install does NOT configure credentials — the user still has
+    # the install does NOT configure credentials, so the user still has
     # to run ``aws configure`` once with their access keys and the
     # Bedrock region.
     if command -v aws >/dev/null 2>&1; then
@@ -522,13 +524,14 @@ fi
 # ── First-run config seeding (Mac-app parity) ────────────────────────────────
 # A fresh checkout has no user config layer. The packaged app's boot creates one
 # via migrate_user_config() (bootstrap_home only runs when WHISPER_HOME is set),
-# seeding the first-run defaults: hybrid mode with the on-device index
-# capabilities, every weight downloading on demand. Run the exact same code path
+# seeding the first-run defaults: local mode, with the on-device index
+# capabilities parked for a later switch to hybrid and every weight downloading
+# on demand. Run the exact same code path
 # here so a setup.sh install starts identically to the Mac app's first launch.
-# An existing config (either layer) is left alone — the user's settings win.
+# An existing config (either layer) is left alone, the user's settings win.
 if [ ! -f config.json ] && [ ! -f config.user.json ]; then
     if python -c "from server.infrastructure.config import migrate_user_config; migrate_user_config()" >>"$SETUP_LOG" 2>&1 && [ -f config.user.json ]; then
-        echo "Seeded config.user.json with first-run defaults (hybrid mode, on-device index) — the Mac app's first-launch config."
+        echo "Seeded config.user.json with first-run defaults (local mode) matching the Mac app's first launch."
     else
         echo "WARNING: could not seed the first-run config; the backend will run on shipped defaults (see $SETUP_LOG)."
     fi
@@ -536,7 +539,7 @@ fi
 
 # ── Persist an explicit model-mode flag ──────────────────────────────────────
 # Only when a flag was passed: write it into the ACTIVE user layer
-# (config.user.json once it exists — including the one just seeded — else the
+# (config.user.json once it exists, including the one just seeded, else the
 # legacy config.json; mirrors config._active_user_config_path). Without a flag
 # the existing config, or the seeded first-run default, decides the mode.
 if [ -n "$MODE_FLAG" ]; then
@@ -566,7 +569,7 @@ fi
 #
 # Installed in EVERY mode, matching the Mac app (which bundles the binary): a
 # model installed later from Settings > Models > Discover must serve without the
-# user re-running setup. It is a small runtime — no model weights come with it.
+# user re-running setup. It is a small runtime, no model weights come with it.
 #
 # Build matters: gemma4 (and newer architectures) need >= LLAMA_MIN_BUILD. Older
 # builds load fine and then fail with "unknown model architecture", so we upgrade
@@ -584,13 +587,13 @@ llama_server_build() {
 LLAMA_BUILD="$(llama_server_build || true)"
 if [ -z "$LLAMA_BUILD" ]; then
     if command -v brew >/dev/null 2>&1; then
-        echo "Installing llama.cpp via Homebrew — provides the llama-server binary (logs → $SETUP_LOG)..."
+        echo "Installing llama.cpp via Homebrew, which provides the llama-server binary (logs → $SETUP_LOG)..."
         if brew install llama.cpp >>"$SETUP_LOG" 2>&1; then
             LLAMA_BUILD="$(llama_server_build || true)"
             echo "  ✓ llama-server installed (build ${LLAMA_BUILD:-unknown}) at $(command -v llama-server)."
         else
             echo "  ✗ llama.cpp install FAILED (see $SETUP_LOG)."
-            echo "    On-device chat will not work until this succeeds — there is no"
+            echo "    On-device chat will not work until this succeeds, there is no"
             echo "    fallback runtime. Retry with: brew install llama.cpp"
         fi
     else
@@ -638,11 +641,11 @@ except Exception as e:  # network or hub failure: first use downloads it
 PYEOF
 # Everything else downloads ON DEMAND with an in-app progress banner, into
 # ./models (idempotent, resumable):
-#   * transcription engines — on your first recording (or pre-pull them from
+#   * transcription engines, on your first recording (or pre-pull them from
 #     Settings > Models > Transcription),
-#   * on-device index weights (Qwen3 embed/rerank, GLiNER) — on your first index
+#   * on-device index weights (Qwen3 embed/rerank, GLiNER), on your first index
 #     build in hybrid/local mode,
-#   * on-device chat models — installed from Settings > Models > Discover
+#   * on-device chat models, installed from Settings > Models > Discover
 #     (the app ships with none).
 echo ""
 echo "Other model weights download on demand: transcription engines on your"
@@ -709,7 +712,7 @@ else
     APP_URL="http://127.0.0.1:$PORT"
 fi
 
-# In dev mode, Vite has just been spawned in the background — wait for
+# In dev mode, Vite has just been spawned in the background, so wait for
 # it to actually start serving before we tell the browser to open it.
 # Otherwise the browser races Vite and shows "site can't be reached".
 # 15s ceiling is generous; Vite typically responds within ~2s.
@@ -739,7 +742,7 @@ echo ""
 
 # Auto-open the right URL in the default browser. Only opens on systems
 # where ``open`` exists (macOS, plus some Linux setups that alias it).
-# Silently skipped on systems without it — the URL is already printed.
+# Silently skipped on systems without it, the URL is already printed.
 if [ "$NO_OPEN" -eq 0 ]; then
     if command -v open >/dev/null 2>&1; then
         echo "Opening $APP_URL in your default browser..."
