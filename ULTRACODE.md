@@ -11,13 +11,13 @@ reviewed properly.
 
 ## Setup
 
-1. **Pick a model with Ultracode.** Click the model chip in the composer. Opus 5,
-   Sonnet 5, Fable and the GPT-5.x models expose Ultracode. Haiku has no effort
-   levels at all, and the pre-5 models (Sonnet 4.5, Opus 4.7 and below) top out
-   at Max.
+1. **Pick a model with Ultracode.** Click the model chip in the composer. Opus
+   4.8 and above, Fable, Sonnet 5, and the GPT models from 5.5 on (GPT-6 Astra
+   included) expose Ultracode. Haiku has no effort levels at all, and the older
+   models (Sonnet 4.6, Opus 4.7 and below, GPT-5.4) top out at Max.
 
    Ultracode is orchestration, not a reasoning value, so it does not require a
-   model with the deepest reasoning rung — it rides whatever each model's top
+   model with the deepest reasoning rung: it rides whatever each model's top
    rung is. That is why Sonnet 5 has it even though its ladder stops one step
    below Opus's.
 2. **Set the effort chip to Ultracode.** This is the switch. Nothing else in the
@@ -29,10 +29,13 @@ permission mode (Settings, Keys and permissions):
 
 | Mode for the `workflow` category | What happens on launch |
 | --- | --- |
-| `auto` (the default) | Runs immediately, no card, while the run's budget is within 600k output tokens |
+| `default` (what you get out of the box) | Shows a preview card with the full script; you click Run |
+| `auto` | Runs immediately, no card, while the run's budget is within 600k output tokens |
 | `bypassPermissions` | Runs immediately, any budget |
-| anything else | Shows a preview card with the full script; you click Run |
 | `dontAsk` | Declines, and tells the assistant why |
+
+Out of the box that means your first run of a new script shows a card. Trusted
+saved workflows and resumes skip this gate entirely.
 
 ## Ask for the review
 
@@ -57,17 +60,27 @@ Runs are capped at 600k agent output tokens by default. The assistant can raise
 that, but a bigger budget is exactly what the approval card exists for, so
 expect one click if you ask for something enormous.
 
+If you ask for files, say so plainly ("write the report to `review.md`"). A
+script that produces files lists their paths in its result, and the server
+checks each one exists and is non-empty **before** the run counts as completed.
+A file that was promised but never written fails the run and names it, instead
+of a green card over a missing report.
+
 ## What you will see
 
 1. The assistant thinks, writes the script, and calls `workflow_run`.
-2. A workflow card appears in the chat with the run id, its phases, live agent
-   count and running cost.
+2. A workflow card appears in the chat with the workflow's name, its status,
+   the phase it is in, the live agent count and the running cost. (The phase
+   list itself is on the preview card, not this one.)
 3. **The turn ends there.** The assistant does not sit and wait for the swarm.
 
 Watch it from two places:
 
-- **The chat card**, live, with a Stop button.
-- **The Background Tasks panel**, alongside detached agents and shell commands.
+- **The chat card**, live, with a **Stop** button while it runs and a
+  **Refresh** button once it has ended.
+- **The Background Tasks panel**, alongside detached agents and shell commands:
+  a workflow run is an ordinary background task there, and its finish posts the
+  same kind of task card into the session.
 
 ## Keep chatting while it runs
 
@@ -99,7 +112,11 @@ a preview from then on, including via the slash command:
   errors inside the script rather than dying silently.
 - Stop a run from its card in chat.
 - Workflows do not nest more than one level: a script can call a saved workflow,
-  but that workflow cannot call another.
+  but that workflow cannot call another. A nested run inherits whatever budget
+  the parent has left, and spends back into the parent's total.
+- A run can be resumed: ask the assistant to resume it by run id and every agent
+  call that already completed replays from the run's journal, free and instant,
+  so only the unfinished part costs anything.
 
 ## If it does not fan out
 
@@ -109,7 +126,10 @@ a preview from then on, including via the slash command:
 - **A preview card on the first run.** Either the run's budget is above 600k,
   or the `workflow` category is not on `auto`. Approving the card covers the
   rest of the session for that exact script, and trusts a saved workflow
-  durably — one approval, no repeat cards.
+  durably: one approval, no repeat cards.
 - **Nothing about workflows in Settings.** By design: approval and management
   happen in chat (ask the assistant, or `workflow_list` / `workflow_delete`).
   Runs live on their chat card and in the Background Tasks panel.
+- **A run says failed but the agents all worked.** Check whether the script
+  promised a file it did not write: a missing deliverable fails the run, and the
+  error names the path.

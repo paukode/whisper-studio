@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sub-agents &amp; teams - Whisper Studio Docs</title>
-  <meta name="description" content="Spawn a focused one-shot subagent, run a team of agents in parallel, and watch their progress stream into a live team report card.">
+  <meta name="description" content="Spawn a focused one-shot subagent, run a team of agents in parallel, read the live team report card with its budget bars and Extend button, and pick up a finished agent's report later.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -22,9 +22,10 @@
     <p>Most work is fine as a single conversation. But some tasks are naturally parallel: "search these
       five directories," "draft it, then have another agent verify it," "audit each service." For those,
       Whisper Studio can run <b>sub-agents</b> - independent worker agents, each with its own tool loop,
-      sharing your session and its selected model (Claude, or OpenAI GPT-on-Bedrock when that is the
-      session model). This tutorial covers the two ways to start them, the agent types you can pick, and
-      how to read the progress card that streams back.</p>
+      sharing your session and its selected model (Claude, OpenAI GPT-on-Bedrock, or an on-device model
+      that can call tools). This tutorial covers the two ways to start them, the agent types you can
+      pick, how to read the progress card that streams back, and how to get an agent's work back after
+      the turn that launched it is gone.</p>
 
     <figure class="diagram-figure wide">
       <div id="subagent-flow-diagram" class="diagram"></div>
@@ -42,26 +43,48 @@
           for a self-contained side task you do not want cluttering the main thread.</p>
       </div>
       <div class="card">
-        <h3>Let Claude spawn them - multi-agent work</h3>
-        <p>Just describe the parallel work in plain language. Claude decides when to call
+        <h3>Let the assistant spawn them - multi-agent work</h3>
+        <p>Just describe the parallel work in plain language. The assistant decides when to call
           <code>spawn_agent</code> (one independent agent) or <code>team_create</code> (a whole team at
-          once) rather than doing everything sequentially. You do not call these tools yourself; Claude
-          does, and asks approval like any other tool.</p>
+          once) rather than doing everything sequentially. You do not call these tools yourself, and
+          starting an agent is not itself approval-gated: each agent's own tool calls are what pass
+          through your <a href="tut-permissions.html">permission mode</a>.</p>
       </div>
+    </div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>How many, and how expensive.</b> At most 16 agents run at once in
+        one session; past that the assistant is told to wait or shrink the team. Your session cost cap
+        is also checked <em>before</em> each agent starts, so once the combined spend has cleared the cap
+        no further agent is launched, rather than each one discovering the problem after paying for its
+        own startup. Agents can spawn agents, bounded at five levels deep.</p></div>
     </div>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
       <div class="callout__body"><p><b>Detached (background) agents.</b> Both entry points above run inline
-        and report within the same turn. Claude can instead call <code>spawn_agent</code> with
+        and report within the same turn. The assistant can instead call <code>spawn_agent</code> with
         <code>detach: true</code>: it returns a task id right away, runs <b>read-only by default</b> (or
         writes safely with <code>isolation: 'worktree'</code>), and shows up in the background-tasks panel
-        while it works. Its result is folded into a later turn, and you or Claude can check on it with
-        <code>task_status</code> / <code>task_output</code> or stop it with <code>task_cancel</code>.
-        When a worktree-isolated agent finishes, its clean changes are automatically applied back to the
-        spawning branch as <em>uncommitted</em> edits (they show up in <code>git status</code> for you to
-        review) and the worktree is removed; an agent stopped early keeps its worktree instead. See
+        while it works. Its result is folded into a later turn, and you or the assistant can check on it
+        with <code>task_status</code> / <code>task_output</code> or stop it with <code>task_cancel</code>.
+        When a worktree-isolated agent finishes its work, its changes are automatically applied back to
+        the spawning branch as <em>uncommitted</em> edits (they show up in <code>git status</code> for you
+        to review) and the worktree is removed; an agent stopped early, or one whose files clash with
+        edits you made meanwhile, keeps its worktree and says where it is. See
         <a href="tut-worktrees.html">Branches &amp; worktrees</a>.</p></div>
+    </div>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg></span>
+      <div class="callout__body"><p><b>Which model an agent runs on.</b> By default every agent inherits
+        your session's selected model and effort, so a team is one model working in parallel rather than
+        a mix. The assistant can override it per agent with a model key (for example a cheaper model for
+        a mechanical subtask); a key it gets wrong falls back to your session model and the tool result
+        says so instead of failing quietly. On-device models can run agents as long as the model supports
+        tool calling. A chat-only local model is refused with a plain reason, so pick a tool-capable one
+        before delegating in local mode. See <a href="tut-model-modes.html">Model modes</a>.</p></div>
     </div>
 
     <div class="callout">
@@ -75,9 +98,9 @@
 
     <h2 id="agent-types">Agent types</h2>
     <p>Every agent has a <b>type</b> that shapes its tools, its turn budget, and its instructions.
-      Claude picks a type when it spawns an agent (or you can name one in a team brief). The read-only
-      types can search and read but never write or run commands, which makes them fast and safe to
-      parallelize.</p>
+      The assistant picks a type when it spawns an agent (or you can name one in a team brief). The
+      read-only types can search and read but never write or run commands, which makes them fast and
+      safe to parallelize.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Type</th><th>Tools</th><th>Turn limit</th><th>Time limit</th><th>Best for</th></tr></thead>
       <tbody>
@@ -89,9 +112,11 @@
       </tbody>
     </table></div>
     <p>The turn limit is a runaway backstop and the time limit a wall-clock budget; whichever trips
-      first ends the run. Both are overridable per deployment through an <code>agent_limits</code>
-      block in <code class="path">config.json</code>, per type or under a <code>"default"</code> key
-      (a <code>null</code> deadline disables the time limit for that type).</p>
+      first ends the run, and your session cost cap can end it too. Whichever it is, the agent gets a
+      last round to write a report rather than being cut off mid-sentence. Both limits are overridable
+      through an <code>agent_limits</code> block in <code class="path">config.json</code>, per type or
+      under a <code>"default"</code> key (a <code>null</code> deadline disables the time limit for that
+      type).</p>
     <p>The read-only guarantee is enforced, not just requested: the runtime strips every write tool
       (file writes, <code>ws_run_command</code>, git commits, <code>config_set</code>, memory writes,
       and so on) from an <code>explore</code> or <code>plan</code> agent's tool pool. A coordinator gets
@@ -107,39 +132,51 @@
     </div>
 
     <h2 id="custom-types">Custom agent types</h2>
-    <p>The built-in types are not the whole menu. You can define your own presets, and Claude can even
+    <p>The built-in types are not the whole menu. You can define your own presets, and the assistant can
       invent one on the fly:</p>
     <ul>
-      <li><b>Persistent custom types</b> are Markdown files at
-        <code class="path">.whisper/agents/&lt;name&gt;.md</code>: YAML frontmatter (name, description,
-        tool access, limits) followed by the agent's system prompt as the body. They can live in the
-        project (<code class="path">&lt;workspace&gt;/.whisper/agents/</code>) or in your user config
-        directory; on a name collision the project file wins. Once the file exists, the type is
-        spawnable by name like any built-in.</li>
-      <li><b>Ephemeral types</b> are built in memory when Claude passes an inline
+      <li><b>Persistent custom types</b> are Markdown files: YAML frontmatter followed by the agent's
+        system prompt as the body. The frontmatter keys that are read are <code>name</code>,
+        <code>tools</code>, <code>read_only</code>, <code>model</code> and <code>max_turns</code>. They
+        live in your user directory (<code class="path">~/.whisper/agents/&lt;name&gt;.md</code>) or in
+        the project (<code class="path">&lt;workspace&gt;/.whisper/agents/&lt;name&gt;.md</code>); on a
+        name collision the project file wins, and either can shadow a built-in name. Once the file
+        exists, the type is spawnable by name like any built-in.</li>
+      <li><b>Ephemeral types</b> are built in memory when the assistant passes an inline
         <code>agent_definition</code> to <code>spawn_agent</code> instead of a registered type name.
         Nothing touches disk; the definition lives only for the session.</li>
       <li><b>Promotion</b> turns an ephemeral type into a persistent one: the
-        <code>promote_agent_type</code> tool writes the definition out as a
-        <code class="path">.whisper/agents/&lt;name&gt;.md</code> file so later sessions can reuse it.</li>
+        <code>promote_agent_type</code> tool writes the definition out as an agent file, re-validating
+        it on the way, into the project by default or into your user directory when asked.</li>
     </ul>
     <p>Custom and ephemeral types pass through the same write-tool filtering as the built-ins, so a
-      read-only custom type is enforced read-only, not merely asked to behave.</p>
+      read-only custom type is enforced read-only, not merely asked to behave. A type that both declares
+      itself read-only and whitelists a write tool has the write tool stripped.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M9 13h6M9 17h6"/></svg></span>
+      <div class="callout__body"><p><b>Agents do not read your project instructions.</b> An agent runs on
+        its type's own system prompt; the repo's <code>WHISPER.md</code> (and the
+        <code>AGENTS.md</code> that is honoured live alongside it) is part of the main chat turn's
+        prompt, not an agent's. Anything an agent must know belongs in its task brief or in the custom
+        type file you spawn it with. See <a href="tut-workspace.html">the workspace IDE</a>.</p></div>
+    </div>
 
     <h2 id="a-team-run">Running a team</h2>
-    <p>When Claude uses <code>team_create</code>, it names the team and lists the members, each with a
-      name, a task, and an agent type. All members then run <b>in parallel</b>, sharing your
+    <p>When the assistant uses <code>team_create</code>, it names the team and lists the members, each
+      with a name, a task, and an agent type. All members then run <b>in parallel</b>, sharing your
       session-selected model. Here is what a run looks like end to end.</p>
     <ol class="steps">
       <li>
         <h4>Describe the parallel work</h4>
         <p>For example: "Look at the auth, billing, and notifications modules in parallel and tell me
-          which ones lack tests." Claude proposes a team with one agent per module.</p>
+          which ones lack tests." The assistant proposes a team with one agent per module.</p>
       </li>
       <li>
-        <h4>Approve the tool call</h4>
-        <p><code>team_create</code> is a normal tool call, so it passes through your current
-          <a href="tut-permissions.html">permission mode</a>. Approve it and the team starts.</p>
+        <h4>The team starts</h4>
+        <p>Starting a team is not itself an approval card. What each agent then does is: its writes and
+          commands go through your <a href="tut-permissions.html">permission mode</a> like any other
+          tool call, and a read-only agent type physically cannot reach the write tools at all.</p>
       </li>
       <li>
         <h4>Watch the card fill in</h4>
@@ -149,8 +186,10 @@
       </li>
       <li>
         <h4>Read the results</h4>
-        <p>When every member finishes, the card flips to done and Claude folds the combined summary back
-          into its own answer. Expand any row to see that agent's full event log and final output.</p>
+        <p>When every member finishes, the card flips to done and the assistant relays what the reports
+          say. It is handed each member's full report, not a fragment, and reminded that you have not
+          seen any of it, so a good answer names the findings and how confident each agent was. Expand
+          any row to see that agent's full event log and final output.</p>
       </li>
     </ol>
 
@@ -164,15 +203,37 @@
         <code>3/3 done</code> or <code>1/3 done · 2 running</code>, plus elapsed time. A green check
         means all completed; a red mark means at least one failed.</li>
       <li><b>Agent rows</b> - each shows the agent name, its role badge (team or orchestrator), its
-        <b>type</b> badge (<code>explore</code>, <code>verify</code>, and so on), and a live status like
-        <code>running · turn 3</code> or <code>done · 5 turns · 2 tools</code>. A running or failed row
-        opens automatically so you see it without clicking.</li>
+        <b>type</b> badge (<code>explore</code>, <code>verify</code>, and so on), the model it is running
+        on, a state pill, and a live status like <code>running · turn 3</code> or
+        <code>done · 5 turns · 2 tools</code>. A running or failed row opens automatically so you see it
+        without clicking. When a run ended at a limit the status says which:
+        <code>stopped at the turn limit · report written</code>,
+        <code>stopped at the time limit · report written</code>,
+        <code>stopped at the cost cap · report written</code>, or
+        <code>cancelled · report salvaged</code>.</li>
+      <li><b>The state pill</b> - one word for where the run stands: <b>working</b>, <b>finishing up</b>
+        (the next round is its last, so it is writing its report), <b>done</b>, <b>hit limit</b>,
+        <b>salvaged</b> (it was cut off and the runtime assembled the report from its record), or
+        <b>failed</b>.</li>
+      <li><b>Budget bars</b> - inside an expanded row, one thin bar each for <b>rounds</b>
+        (<code>7/30</code>), <b>time</b> (<code>2m10s/10m</code>) and <b>cost</b> (<code>$0.42</code>).
+        The last tenth of each bar is drawn as a hatched <b>reserved slice</b>: that is the part of the
+        budget held back for the agent to write its report, which is why a run "finishes up" a little
+        before the bar is full. A row with no time limit simply has no time bar.</li>
+      <li><b>Extend</b> - while an agent is still running, its budget panel has an
+        <b>Extend +20 rounds</b> button. It grants the running agent 20 more rounds while its context is
+        still loaded, which is cheaper and better than letting it stop and picking it up cold. A toast
+        confirms the grant, or explains why it failed. A finished agent has no Extend button; you resume
+        it instead.</li>
       <li><b>Expanded row</b> - the agent's task, a real-time <b>event log</b> (each tool call and its
         result, click a line to expand the full input or output), and the agent's <b>final output</b>
         once it is done.</li>
       <li><b>Child agents</b> - if an agent spawns its own sub-agent, that child appears as its own row
         badged <code>&#8629; child</code>, so a nested tree stays visible in one card.</li>
     </ul>
+    <p>Nothing in the bars or the pill is guessed by the browser. Each figure is stamped on the agent's
+      own progress events as they arrive, so reopening an old session shows the same numbers it showed
+      live.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M3 9h6"/></svg></span>
@@ -205,8 +266,9 @@
     </dl>
     <p>This is the pattern a <code>coordinator</code> agent uses: it spawns workers, messages them, and
       calls <code>complete_coordination</code> when the work is done, without ever touching a file
-      itself. Agents can spawn agents up to a bounded nesting depth, so a coordinator can build a small
-      tree without runaway recursion.</p>
+      itself. Agents can spawn agents up to five levels deep, so a coordinator can build a small tree
+      without runaway recursion. A message to an agent that has already finished does something
+      different: it resumes that agent (see <a href="#follow-ups">follow-ups</a> above).</p>
 
     <h2 id="stopping">Stopping a run</h2>
     <p>While any agent is still working, a <b>Stop</b> button sits in the team card header. Click it to
@@ -216,6 +278,44 @@
       Stop control also tears down in-flight agents along with the streaming turn. See
       <a href="tut-permissions.html">Permissions &amp; approvals</a> for the broader kill-switch
       behavior.</p>
+    <p>Stopping does not throw the work away. Every agent's record is written to disk as it runs, so a
+      cancelled agent still leaves a report: the runtime assembles one from what it last wrote and what
+      it ran, marked plainly as assembled rather than written by the agent.</p>
+
+    <h2 id="after-the-turn">When results arrive after the turn</h2>
+    <p>Sometimes the reports come back with nothing listening: you pressed Stop, you closed the app and
+      reopened it, or the agent was running in the background all along. Those results land in the chat
+      on their own.</p>
+    <ul>
+      <li><b>A report card</b> appears in the conversation, titled <code>Agent reports:</code> with the
+        team or agent name, a line saying why it arrived this way, and one collapsible row per agent
+        showing its report and how it ended (<code>finished</code>,
+        <code>stopped at the time limit, report written</code>,
+        <code>cancelled, report salvaged by the runtime</code>, and so on). Each row ends with
+        <code>Full record: task_output &lt;id&gt;</code>.</li>
+      <li><b>A notification</b> is recorded at the same time, so the bell in the header tells you
+        results are ready even if you are in another session.</li>
+      <li><b>An answer follows.</b> If a turn happens to be running, the reports are folded straight
+        into it, the same way a message you type mid-turn is. If nothing is running, the assistant takes
+        one round to read the reports and answer your original question. That answer appears as a normal
+        assistant message with a small label reading <b>"Answered from the agents' reports"</b> and the
+        team name, so you can tell it was written without you prompting for it.</li>
+    </ul>
+    <p>The answer is skipped, with a notification explaining why, when your session cost cap is already
+      reached; the reports stay in the chat and your next message can use them. Turn the whole behaviour
+      off with <code>wake_parent_on_reports: false</code> in settings, and reports will still land as
+      cards, just without an answer written for them.</p>
+
+    <h3 id="follow-ups">Asking a finished agent a follow-up</h3>
+    <p>An agent that has finished or been stopped is not gone. Ask the assistant to follow up with it by
+      id ("ask the auth agent whether it checked the refresh path") and it picks the run up with its full
+      context intact: the same agent id, the same transcript, your question appended as the next message.
+      The follow-up runs in the background, and its reply comes back as a report card just like the
+      ones above. An agent that is still running gets a plain message in its mailbox instead, which it
+      reads on its next round.</p>
+    <p>To read an agent's record yourself at any time, ask for <code>task_output</code> with its id. It
+      tails a live agent's progress log and returns a finished one's report, whether it finished an hour
+      ago or before the last restart.</p>
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
@@ -245,9 +345,10 @@
         when to set a goal versus spawn a helper, and <a href="arch-ultracode.html">the ultracode workflow
         runtime</a> for fanning out many subagents from a script;
         <a href="tut-cron.html">Scheduled tasks (cron)</a> for work that runs on a timer,
-        <a href="arch-agents.html">Sub-agents &amp; the event bus</a> for the runtime internals, and
-        <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for how a turn drives the tool
-        loop that spawns them.</p></div>
+        <a href="arch-agents.html">Sub-agents &amp; the event bus</a> for the runtime internals,
+        <a href="arch-agent-recorder.html">Agent flight recorder</a> for the records, reports and budgets
+        behind the card, and <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for how a
+        turn drives the tool loop that spawns them.</p></div>
     </div>
   </main>
 

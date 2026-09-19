@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>The goal loop &amp; completion gate - Whisper Studio Docs</title>
-  <meta name="description" content="Whisper Studio's goal loop: set a session goal and an end-of-turn completion gate runs Stop hooks then a cheap Haiku evaluator, re-injecting feedback until the goal is achieved, capped so it can't loop forever.">
+  <meta name="description" content="Whisper Studio's goal loop: an end-of-turn completion gate runs Stop hooks, checks claimed deliverables and verification evidence, runs the goal's quality gates, then asks a cheap evaluator, re-injecting feedback until the goal is achieved, capped so it can't loop forever.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='16' cy='16' r='9'/%3E%3Ccircle cx='16' cy='16' r='4.5'/%3E%3Cpath d='M16 4v3M16 25v3M4 16h3M25 16h3'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -16,11 +16,15 @@
   <main class="doc" data-page="arch-goals">
     <h1>The goal loop &amp; completion gate</h1>
     <p class="subtitle">Give the assistant a goal and it keeps working until the goal is met. An end-of-turn
-      <em>completion gate</em> checks whether the work is actually done, with hooks and a cheap evaluator,
-      and, if not, feeds back what's missing and lets the turn continue, capped so it can never loop forever.</p>
+      <em>completion gate</em> checks whether the work is actually done, with hooks, deterministic checks
+      and a cheap evaluator, and, if not, feeds back what's missing and lets the turn continue, capped so
+      it can never loop forever.</p>
 
     <p>The loop lives in <code class="path">server/goals/</code>: <code class="path">store.py</code> (the goal
-      on the session), <code class="path">tail.py</code> (the transcript the evaluator reads),
+      and its quality gates on the session), <code class="path">deliverables.py</code> (did the files it
+      claimed actually get written), <code class="path">verification.py</code> (did anything green run after
+      the last code edit), <code class="path">gates.py</code> (the must-pass shell commands),
+      <code class="path">tail.py</code> (the transcript the evaluator reads),
       <code class="path">evaluator.py</code> (the verdict), <code class="path">gate.py</code> (the gate that
       ties it together), <code class="path">cron_verify.py</code> (the same idea for cron), and
       <code class="path">routes.py</code> (the goal REST endpoints, under <code>/api/sessions</code>).
@@ -29,51 +33,109 @@
     <figure class="diagram-figure wide">
       <div id="goals-diagram" class="diagram"></div>
       <figcaption>When the model stops, the engine runs <em>run_completion_gate</em> instead of ending the
-        turn: Phase 1 always runs the Stop hooks; Phase 2 (behind the goal flag) asks a Haiku evaluator
-        whether the goal is achieved. A block re-injects feedback and the turn continues, bounded by a
-        consecutive-block cap.</figcaption>
+        turn. Deterministic checks come first and an evaluator only last. A block re-injects feedback and
+        the turn continues, bounded by a consecutive-block cap.</figcaption>
     </figure>
 
     <h2 id="why">Why a gate</h2>
     <p>Left alone, a model tends to stop as soon as it has produced <em>something</em>, often before the
       task actually holds up. The completion gate turns "the model emitted <code>end_turn</code>" from an
-      unconditional stop into a <em>decision</em>: is the stated goal met, and did any Stop hook object? If
-      the answer is no, the turn is not over: the gate re-injects what's missing and the model keeps going.
-      It is opt-in per session (you set a goal), fails open on any error, and is capped so a stubborn
-      evaluator can't trap you.</p>
+      unconditional stop into a <em>decision</em>: did any Stop hook object, do the deliverables the reply
+      claims actually exist, did anything green run after the last code edit, do the goal's own gate
+      commands pass, and is the stated goal met? If the answer is no, the turn is not over: the gate
+      re-injects what's missing and the model keeps going. Only the goal half is opt-in (you set a goal);
+      the deliverable and verification checks run on every turn. Every check fails open on an error, and
+      one shared cap means a stubborn evaluator or an always-blocking hook cannot trap you.</p>
 
-    <h2 id="the-gate">run_completion_gate: two phases</h2>
+    <h2 id="the-gate">run_completion_gate: the order of checks</h2>
     <p>The engine calls <code>run_completion_gate(ctx)</code> at end of turn and acts on the returned
       <code>GateDecision</code>, but only on the interactive cloud-chat policy: that is the one policy whose
       <code>TurnPolicy.completion_gate</code> is on. Every unattended consumer runs with the gate off
       entirely: <a href="arch-agents.html">sub-agents</a> (so a child can never trip the parent turn's
       evaluator), <a href="arch-cron.html">cron</a>, headless turns, and local chat. Cron instead verifies
       its own runs with a separate step (see <a href="#cron-verify">Verified cron</a> below). Where the gate
-      does run, it has two phases with different flags:</p>
+      does run, the checks are deliberately ordered cheapest and most deterministic first, so a model call
+      only happens when nothing definite has already settled the question. The first block wins and returns
+      immediately.</p>
     <ol class="steps">
-      <li><h4>Phase 1 - Stop hooks (always)</h4><p><code>check_stop_hooks()</code> from the
+      <li><h4>Stop hooks (always)</h4><p><code>check_stop_hooks()</code> from the
         <a href="arch-hooks.html">hooks engine</a> runs regardless of the goal flag. A block re-injects the
-        hook's reason and the turn continues. The <code>goal_loop</code> flag gates <em>only</em> Phase 2, so
-        turning goals off never disables your Stop hooks.</p></li>
-      <li><h4>Phase 2 - the goal evaluator (flagged)</h4><p>When <code>goal_loop</code> is on and the session
-        has an active goal, a cheap Haiku call judges the turn: <code>{achieved | not_achieved | blocked,
-        feedback, confidence}</code>. <code>achieved</code> ends the turn; <code>not_achieved</code>
-        re-injects the feedback and loops; a <em>confident</em> <code>blocked</code> (confidence ≥ 0.7) ends
-        the turn rather than looping on something the model genuinely can't do.</p></li>
+        hook's reason and the turn continues. The <code>goal_loop</code> flag gates <em>only</em> the
+        evaluator phase, so turning goals off never disables your Stop hooks.</p></li>
+      <li><h4>Claimed deliverables (always)</h4><p>Behind the <code>deliverable_check</code> flag, and with
+        or without a goal. If the turn's last reply tells you a file was saved, or points at an artifact
+        card, the gate checks that the file exists and is non-empty, and that a
+        <code>create_artifact</code> or <code>edit_artifact</code> call actually happened in this turn. A
+        miss names the missing items and tells the model to produce them or correct the reply, never to
+        report a deliverable it has not verified.</p></li>
+      <li><h4>Verification evidence (always)</h4><p>Behind the <code>verify_on_stop</code> flag. Purely
+        deterministic, no model call: if the turn edited code but no test, lint, typecheck or build ran
+        green <em>after the last edit</em>, the gate asks for the run, or for an honest statement of what
+        blocks it. A green suite followed by another edit is stale evidence and does not count. Bounded to
+        two nudges per turn on top of the shared cap.</p></li>
+      <li><h4>The goal's quality gates (when a goal is active)</h4><p>Any commands added with
+        <code>/goal gate add</code> run at this point, on a worker thread, in the workspace. A red gate is
+        deterministic proof the goal is not met, so its exit code and output tail become the continuation
+        feedback and the evaluator is not consulted at all. See <a href="#quality-gates">Quality gates</a>
+        below.</p></li>
+      <li><h4>The goal evaluator (last)</h4><p>When <code>goal_loop</code> is on, a goal is set and active,
+        and every gate above is green, a cheap non-streaming call judges the turn:
+        <code>{achieved | not_achieved | blocked, feedback, confidence}</code>. <code>achieved</code> ends
+        the turn and deactivates the goal; <code>not_achieved</code> re-injects the feedback and loops; a
+        <em>confident</em> <code>blocked</code> (confidence at or above 0.7) ends the turn rather than
+        looping on something the model genuinely cannot do.</p></li>
     </ol>
-    <p>Both phases fail <b>open</b>: the evaluator is wrapped so a transport error or malformed reply lets the
-      turn end normally rather than trapping it. And the whole thing is bounded by a consecutive-block cap
-      (<code>goal_max_consecutive_blocks</code>, default 8): hit it and the gate gives up, records
-      <code>not_achieved</code>, and lets the turn end.</p>
+    <p>Every phase fails <b>open</b>: a checker that raises is logged and skipped, and the evaluator is
+      wrapped so a transport error or a malformed reply lets the turn end normally rather than trapping it.
+      The whole thing is bounded by one shared consecutive-block cap
+      (<code>goal_max_consecutive_blocks</code>, default 8). At the cap every phase gives up and emits a
+      <code>goal_cap_reached</code> frame naming which check was asking, and the turn is allowed to end.
+      The counter resets at the start of each new user turn, so the cap counts blocks within one continuous
+      stretch of work, not across a conversation.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p>Three of these checks run whether or not a goal is set, and all of them
+        surface in the UI through the same <code>stop_hook_block</code> frame, which the transcript labels
+        <b>Continuing (Stop hook)</b>. So a turn that keeps going with no Stop hook configured at all is
+        normal: the decision's <code>source</code> field (<code>stop_hook</code>, <code>deliverable</code>,
+        <code>verify</code>, <code>gate</code> or <code>evaluator</code>) is what says which check spoke.</p></div>
+    </div>
+
+    <h2 id="quality-gates">Quality gates</h2>
+    <p>A gate is a shell command that must exit 0 before the goal can be judged done. The evaluator reads
+      prose; a gate is stronger, and it is the one part of the loop you control directly. Gates are stored
+      on the session's goal state, managed with <code>/goal gate add &lt;command&gt;</code>,
+      <code>/goal gate list</code>, <code>/goal gate remove &lt;N&gt;</code> and
+      <code>/goal gate clear</code>, and served by
+      <code>GET / POST / DELETE /api/sessions/{session_id}/goal/gates</code>.</p>
+    <ul>
+      <li>Each gate runs in the workspace with a <b>300 second</b> timeout; a timeout counts as a failure
+        with no exit code.</li>
+      <li>On failure the feedback embeds the exit code and the last 3,000 characters of output for the
+        first two failing gates, then names how many more also failed, and ends by saying the gate re-runs
+        at the next turn boundary. So a gate whose input the model just repaired passes next time.</li>
+      <li>Failure counters are per gate: a pass resets one to zero. A gate that fails
+        <b>three times in a row</b> stops looping and <em>pauses the goal</em> instead, with a verdict
+        saying to fix it manually, remove the gate, or set the goal again.</li>
+    </ul>
 
     <h2 id="evaluator">The evaluator and the transcript</h2>
-    <p>The evaluator (<code class="path">server/goals/evaluator.py</code>) is a single non-streaming Haiku
-      call, cheap enough to run at the end of every turn. It reads the goal plus a rendered <em>tail</em> of
-      the turn from <code class="path">server/goals/tail.py</code>, a provider-neutral renderer that flattens
-      recent activity (Anthropic content blocks, OpenAI Responses items, and top-level
-      <code>function_call</code> / <code>function_call_output</code> items) into text, head-and-tail sliced to
-      a 12&nbsp;KB cap so a huge turn can't blow the prompt. The verdict JSON is extracted with a
-      balanced-brace scan and one retry.</p>
+    <p>The evaluator (<code class="path">server/goals/evaluator.py</code>) is a single non-streaming call,
+      cheap enough to run at the end of every turn. Which model makes it is the
+      <code>goal_evaluator</code> entry in the <code>auxiliary_models</code> config map, Haiku by default,
+      so the judge is deliberately cheaper than the session's own model and can judge a GPT session just as
+      well as a Claude one. It reads the goal plus a rendered <em>tail</em> of the turn from
+      <code class="path">server/goals/tail.py</code>, a provider-neutral renderer that flattens the last 15
+      messages (Anthropic content blocks, OpenAI Responses items, and top-level
+      <code>function_call</code> / <code>function_call_output</code> items) into text, tool results sliced
+      head and tail, capped at 12,000 characters so a huge turn can't blow the prompt. The verdict JSON is
+      extracted with a balanced-brace scan and one retry; near-miss verdicts are coerced and the confidence
+      clamped. With no model configured, or an output that will not parse, it returns
+      <code>achieved</code> at confidence 0 so the turn ends rather than hanging on a broken judge.</p>
+    <p>Its instructions are strict by design: it is told to weigh a <code>verify_change</code> result's
+      <code>VERIFY PASS</code> or <code>VERIFY FAIL</code> above any prose, and to be skeptical of "done!"
+      with no supporting tool output.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
@@ -98,10 +160,14 @@
     <h2 id="store">Where the goal lives</h2>
     <p>The goal is stored on the session itself. <code class="path">server/goals/store.py</code> adds two
       additive columns to the <code>sessions</code> row, <code>goal</code> (the text) and
-      <code>goal_state</code> (JSON, including the consecutive-block counter), via the migration that also
-      carried the workflow tables (see <a href="arch-persistence.html">Persistence</a>). The block counter
-      resets on each new <em>user</em> turn, so the cap counts blocks within one continuous stretch of work,
-      not across a whole conversation.</p>
+      <code>goal_state</code> (JSON: whether the goal is active, the consecutive-block counter, the total
+      evaluation count, the last verdict and feedback, when it was set, and the quality gates with their
+      failure counts). See <a href="arch-persistence.html">Persistence</a>.</p>
+    <p>The store keys on whatever id it is handed, and the engine hands it
+      <code>turn_scope_id</code> when a caller set one. That is what keeps a sub-agent's inner turn (scoped
+      <code>agent:&lt;id&gt;</code>) or a cron run (<code>cron:&lt;job&gt;</code>) from resetting the parent
+      session's in-flight goal tracking while it runs. A goal set on a brand-new session that has not been
+      written yet inserts a placeholder row rather than being silently dropped.</p>
 
     <h2 id="cron-verify">Verified cron</h2>
     <p>The same idea guards scheduled work. <code class="path">server/goals/cron_verify.py</code> lets a
@@ -114,23 +180,36 @@
       <code>cron_verify</code> is not a variant of the gate, it is the substitute for it.</p>
 
     <h2 id="ui">Setting a goal</h2>
-    <p><code>/goal &lt;text&gt;</code> sets the session goal; <code>/goal clear</code> ends it. The active goal
-      shows in a <code>GoalBanner</code> above the composer (hydrated from the session on load), and the
-      gate's decisions surface as <code>goal_eval</code> and <code>goal_cap_reached</code> frames. The REST
-      surface is small: <code>GET / POST / DELETE /api/sessions/{session_id}/goal</code>.</p>
+    <p><code>/goal &lt;text&gt;</code> does two things at once: it arms the gate with that text as the goal,
+      and it <b>sends the same text as the first message</b>. Arming the gate alone left the composer empty
+      with nothing running, which read as a swallowed message. If a turn is already streaming, the text is
+      folded into it as a mid-turn message instead of starting a second one.
+      <code>/goal clear</code> ends the goal. The active goal shows in a <code>GoalBanner</code> above the
+      composer (hydrated from the session on load) with a verdict chip reading <b>achieved</b>,
+      <b>working…</b> or <b>blocked</b>, an attempts counter, and a clear button. The gate's decisions
+      surface as <code>goal_eval</code>, <code>goal_cap_reached</code> and <code>stop_hook_block</code>
+      frames, which the transcript renders as <b>Goal check</b>,
+      <b>Goal check paused (cap reached)</b> and <b>Continuing (Stop hook)</b> rows.</p>
+    <p>The REST surface is small, all under <code>/api/sessions/{session_id}</code>:
+      <code>GET / POST / DELETE /goal</code> for the goal itself, and
+      <code>GET / POST /goal/gates</code> plus <code>DELETE /goal/gates/{index}</code> (1-based) and
+      <code>DELETE /goal/gates</code> for the quality gates.</p>
     <div class="spec">
-      <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate(GateContext) → GateDecision</code>; the two-phase logic and the cap. Callers build their own <code>GateContext</code>.</dd>
-      <dt><code class="path">server/goals/evaluator.py</code></dt><dd>The Haiku verdict; note <code>provider</code> is keyword-only.</dd>
-      <dt><code class="path">server/goals/store.py</code> · <code class="path">tail.py</code></dt><dd>The goal on the sessions row; the provider-neutral transcript renderer.</dd>
+      <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate(GateContext) → GateDecision</code>; the ordered phases and the shared cap. Callers build their own <code>GateContext</code>.</dd>
+      <dt><code class="path">server/goals/deliverables.py</code></dt><dd>Which file claims and artifact claims count, and whether they hold up this turn.</dd>
+      <dt><code class="path">server/goals/verification.py</code></dt><dd>The passive ledger: which tools edit code, which commands verify it, and whether the evidence is fresh.</dd>
+      <dt><code class="path">server/goals/gates.py</code></dt><dd>Running a goal's quality-gate commands, the retry budget, and the failure text.</dd>
+      <dt><code class="path">server/goals/evaluator.py</code></dt><dd>The verdict; note <code>provider</code> is keyword-only.</dd>
+      <dt><code class="path">server/goals/store.py</code> · <code class="path">tail.py</code></dt><dd>The goal, its state and its gates on the sessions row; the provider-neutral transcript renderer.</dd>
       <dt><code class="path">server/goals/cron_verify.py</code></dt><dd>Verify-before-report for scheduled runs.</dd>
-      <dt><code class="path">server/goals/routes.py</code></dt><dd>The goal REST endpoints, under <code>/api/sessions</code>.</dd>
+      <dt><code class="path">server/goals/routes.py</code></dt><dd>The goal and gate REST endpoints, under <code>/api/sessions</code>.</dd>
     </div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
       <div class="callout__body"><p><b>Related:</b> for a hands-on walk-through and when to use a goal versus a
-        plain prompt, see the <a href="tut-goals.html">Goals &amp; autopilot</a> tutorial. Phase 1 rides the
-        <a href="arch-hooks.html">blocking-hooks engine</a>; the gate sits at the end of the
+        plain prompt, see the <a href="tut-goals.html">Goals &amp; autopilot</a> tutorial. The first check
+        rides the <a href="arch-hooks.html">blocking-hooks engine</a>; the gate sits at the end of the
         <a href="arch-chat-pipeline.html">chat &amp; tool orchestration</a> loop; and the
         <a href="arch-ultracode.html">ultracode workflow runtime</a> uses the same verify skill to prove a
         generated fix holds.</p></div>
