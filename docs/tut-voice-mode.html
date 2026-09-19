@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Talk: voice conversations - Whisper Studio Docs</title>
+  <meta name="description" content="Hold a spoken conversation with the assistant: Amazon Nova 2 Sonic carries the voice while your chat model does the work with the same tools, approvals are asked out loud and shown as the usual card, and long tasks keep running in the background.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/theme.css">
+  <link rel="stylesheet" href="assets/site.css">
+  <link rel="stylesheet" href="assets/prose.css">
+  <link rel="stylesheet" href="assets/diagram.css">
+  <script>(function(){try{var t=localStorage.getItem('ws-docs-theme');if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+</head>
+<body>
+  <main class="doc" data-page="tut-voice-mode">
+    <h1>Talk: voice conversations</h1>
+    <p class="subtitle">Speak to the assistant and hear it answer. It uses the same tools, the same
+      workspace and the same approvals as typed chat, so a spoken "pull the branch" runs exactly the
+      checks a typed one would.</p>
+
+    <p>This is a conversation, not dictation. You talk, the assistant talks back, and anything you ask
+      for is actually done: files read, commands run, branches listed, documents written. Dictation
+      (speaking a message into the chat box) and meeting recording are a different feature and stay on
+      your machine; see <a href="tut-voice.html">Voice &amp; meetings</a> for those.</p>
+
+    <div class="callout callout--warn">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg></span>
+      <div class="callout__body"><p><b>Your audio leaves the machine here.</b> While a voice
+        conversation is open, your microphone is streamed to Amazon Bedrock, and the spoken replies come
+        back from there. That is the opposite of transcription and dictation, which run on-device and
+        send no audio anywhere. Nothing is streamed when the conversation is off.</p></div>
+    </div>
+
+    <figure class="diagram-figure wide">
+      <div id="voice-mode-diagram" class="diagram"></div>
+      <figcaption>Sonic is the voice; your chat model is the worker. Click a box to follow one spoken
+        turn from the microphone to the two bubbles it leaves in the chat.</figcaption>
+    </figure>
+
+    <h2 id="start">Start and end a conversation</h2>
+    <p>The <b>Talk</b> button is the small equalizer icon in the chat composer, between the dictation
+      microphone and <b>Send</b>. Hover it and it says "Talk with the assistant hands-free. Your audio
+      goes to Amazon Bedrock (Nova 2 Sonic) while this is on." Click it to start and grant the
+      microphone permission if the browser asks. The composer is then replaced by the <b>voice bar</b>
+      for as long as the conversation lasts.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>In the voice bar</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>A level orb, a state and a hint</td><td>The state is <b>Connecting</b>,
+          <b>Listening</b>, <b>Thinking</b>, <b>Speaking</b> or <b>Ending</b>. The hint below says what
+          you can do right now, and shows the error text if something goes wrong.</td></tr>
+        <tr><td>The current voice, on the right</td><td>The voice and its locale, for example
+          <code>Tiffany · en-US</code>, under the tooltip <b>Voice and language</b>. See
+          <a href="#voice-language">Voice and language</a>.</td></tr>
+        <tr><td><b>Type instead (voice stays on)</b></td><td>Brings the text box back without hanging
+          up. See <a href="#typing">Type without hanging up</a>.</td></tr>
+        <tr><td><b>Mute microphone</b> / <b>Unmute microphone</b></td><td>Stops sending your audio. The
+          hint changes to "Microphone muted. Unmute to keep talking."</td></tr>
+        <tr><td><b>End voice conversation</b></td><td>Hangs up. The square stop button on the right of
+          the bar.</td></tr>
+      </tbody>
+    </table></div>
+    <p>While a conversation is open the header shows a <b>Voice</b> pill with the elapsed time, and the
+      chat toolbar shows a <b>Voice on</b> chip you can click to switch between talking and typing.</p>
+    <p>You can also end it by voice: say <em>stop</em>, <em>goodbye</em>, that you are done, or ask to go
+      back to typing, and it says a short goodbye and hangs up.</p>
+
+    <div class="callout">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
+      <div class="callout__body"><p><b>Hanging up never cancels work.</b> Requests still running keep
+        going, their cards and activity stay on screen, and their answers still land in the chat. To
+        stop them as well, use the <b>Stop</b> button that replaces <b>Send</b> while background work is
+        finishing.</p></div>
+    </div>
+
+    <h2 id="how-it-works">How it works</h2>
+    <p>Two models share the conversation, and the split is the whole design:</p>
+    <ul>
+      <li><b>Amazon Nova 2 Sonic</b> carries the voice. It hears you and speaks back over a single
+        bidirectional stream on Amazon Bedrock. It answers greetings and small talk itself, keeps its
+        replies to a sentence or two, and never reads lists, paths, file names or command output
+        aloud.</li>
+      <li><b>The chat model selected in the toolbar</b> does the work. Anything concrete is handed to it
+        as one written request, and it runs a normal turn with the full tool set, the connected
+        workspace, your permission mode and this session's approvals. An on-device model cannot run
+        these turns, so a local selection falls back to the default cloud model.</li>
+    </ul>
+    <p>That is why a spoken request behaves exactly like a typed one: the same tools, the same
+      approval cards, the same cost tracking, the same agents. Sonic only relays your words and speaks
+      the gist of the answer.</p>
+    <p>You can talk over it at any time: the reply stops playing the moment you start speaking. If you
+      say something while it is working, it keeps listening and catches up. Spelled-out names survive
+      the trip, so "m l dash o p s" reaches the assistant as <code>ml-ops</code>, and for anything that
+      changes or deletes something the assistant confirms the exact operation before running it, because
+      speech recognition confuses pull with push and delete with delegate.</p>
+
+    <h2 id="transcript">What lands in the chat</h2>
+    <p>The conversation writes itself into the session you started it in, as ordinary chat messages you
+      can scroll, copy and export later.</p>
+    <ul>
+      <li><b>One bubble per utterance.</b> What you said and what it said arrive as separate bubbles,
+        each marked <b>spoken</b> next to its timestamp. Your speech is transcribed in pieces and merged
+        back into a single bubble per turn; each thing the assistant says is committed once, when it has
+        finished saying it.</li>
+      <li><b>The written answer is its own bubble.</b> What you hear is a short spoken summary; the
+        assistant's full written answer, with its tool activity, agent cards and any team report,
+        arrives separately and is not marked spoken. If you ask to see the details, they are already on
+        screen.</li>
+      <li><b>A live bubble while it works.</b> It shows the words being spoken right now, headed
+        <b>Speaking</b> with the voice name or <b>Thinking</b>, plus the running steps.</li>
+    </ul>
+
+    <h2 id="approvals">Approvals and questions</h2>
+    <p>When the assistant needs you, its turn pauses exactly as it would in typed chat. Sonic tells you
+      what it wants in one sentence and asks, and the usual card appears in the chat at the same
+      time:</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Card</th><th>Answer by voice</th><th>Answer by clicking</th></tr></thead>
+      <tbody>
+        <tr><td><b>Approval needed</b> (with the risk badge, the command or path)</td><td>Say yes or
+          no</td><td><b>Yes</b> or <b>No</b></td></tr>
+        <tr><td><b>Question for you</b></td><td>Say your answer in your own words</td><td>One button per
+          offered option</td></tr>
+        <tr><td><b>Folder needed</b></td><td>Say the folder name or path</td><td>-</td></tr>
+      </tbody>
+    </table></div>
+    <p>Either way answers the same pending request, and only once: a spoken "yes" and a tap on the card
+      arriving together cannot run the action twice. Once you answer, the paused turn resumes where it
+      stopped.</p>
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 5.3L20 8.5l-4 4.1.9 5.9L12 15.8l-4.9 2.7.9-5.9-4-4.1 5.6-1.2z"/></svg></span>
+      <div class="callout__body"><p><b>A refusal always wins.</b> Any refusal word in what you say is
+        read as no, even mixed with a yes ("okay, no" and "yes but don't" both deny), and an approval
+        needs a clear approval word. A wrongly denied action costs one more question; a wrongly approved
+        one can cost a file. An "uh huh" while it is still working is not an approval, and it never
+        approves on your behalf. See <a href="tut-permissions.html">Permissions &amp; approvals</a> for
+        what gets asked in the first place.</p></div>
+    </div>
+
+    <h2 id="background">Long tasks keep running</h2>
+    <p>A quick request comes back while you wait. Anything slower keeps going in the background after
+      about twenty seconds: it tells you it is running and stays available for whatever you ask next.
+      Up to three requests can run at once.</p>
+    <ul>
+      <li>Hang up while something is still running and the chat toolbar shows a <b>Working in
+        background</b> chip until it lands, with a <b>Stop</b> button in place of <b>Send</b>.</li>
+      <li>When the result lands, it summarises it in a sentence or two and the full written answer
+        appears in the chat.</li>
+      <li>Ask what is happening ("what is it doing?", "how far along is it?") and it reports the real
+        requests in flight, how long they have been going, and any agents they spawned, rather than
+        guessing.</li>
+      <li>A request that has run for 30 minutes is stopped, and whatever it produced is delivered with a
+        note. Work is never silently dropped.</li>
+      <li>A background run can pause for an approval too. The card appears and you answer it the same
+        way, by voice while the conversation is open or by clicking after you have hung up.</li>
+    </ul>
+
+    <h2 id="folders">Opening a folder by name</h2>
+    <p>Say "open the ml-ops folder in Documents" and the assistant looks the name up instead of guessing
+      a path. Spoken punctuation is folded first ("dash", "underscore", "dot"), matching ignores case
+      and punctuation, so <code>ml-ops</code>, <code>ML_OPS</code> and "m l dash o p s" all find the same
+      directory. It searches the folder you named, the usual home folders (Documents, Desktop,
+      Downloads, Developer, Projects and friends) and the parents of workspaces you opened recently.</p>
+    <p>One confident match is opened. When several folders could be it, you are offered the real names
+      that exist and asked which one; a name that matches nothing is never invented. Connecting a
+      workspace this way switches the app to it exactly as the workspace picker would.</p>
+
+    <h2 id="typing">Type without hanging up</h2>
+    <p>Press <b>Type instead (voice stays on)</b> in the voice bar, or the <b>Voice on</b> chip in the
+      toolbar, and the text box comes back with the conversation still open. What you type is heard by
+      the conversation as if you had said it, so you can paste an exact command or a long path instead
+      of spelling it out. Press the chip again (or the Talk button) to return to the voice bar.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM5 11a7 7 0 0 0 14 0M12 18v4"/></svg></span>
+      <div class="callout__body"><p><b>Recording, hands-free.</b> Ask it to start or stop recording the
+        meeting and it drives the <b>Record</b> button for you, so a call can be captured without
+        touching the keyboard. The transcript itself is still produced on-device.</p></div>
+    </div>
+
+    <h2 id="voice-language">Voice and language</h2>
+    <p>The voice bar shows which voice is speaking and the locale it belongs to. There are sixteen Nova 2
+      Sonic voices: <b>Tiffany</b> (the default) and <b>Matthew</b> are polyglot and speak every
+      supported language, while the rest are tied to one locale - Amy (en-GB), Olivia (en-AU), Kiara and
+      Arjun (en-IN), Ambre and Florian (fr-FR), Beatrice and Lorenzo (it-IT), Tina and Lennart (de-DE),
+      Lupe and Carlos (es-US), Carolina and Leo (pt-BR).</p>
+    <p>There is no picker in the window. Change the voice in the config editor (Settings, then the
+      config.json dialog) by setting <code>voice.voice_id</code>, and set <code>voice.endpointing</code>
+      to change how long a pause has to be before it takes your turn as finished. Both apply to the next
+      conversation you start.</p>
+
+    <h2 id="requirements">Before you start</h2>
+    <ol class="steps">
+      <li>
+        <h4>Enable the model in Amazon Bedrock</h4>
+        <p>Your account needs access to <code>amazon.nova-2-sonic-v1:0</code> in the region voice mode
+          uses. That region is <code>voice.region</code>, and when it is blank (the default) it follows
+          <code>bedrock_region</code>, which itself defaults to <code>us-east-1</code>. Nova 2 Sonic is
+          offered in <code>us-east-1</code>, <code>us-west-2</code>, <code>eu-north-1</code> and
+          <code>ap-northeast-1</code> only, so a chat region outside that list needs
+          <code>voice.region</code> set explicitly.</p>
+      </li>
+      <li>
+        <h4>Check your credentials</h4>
+        <p>Voice mode uses the same AWS credentials as the rest of the app (<code>aws configure</code>,
+          <code>AWS_PROFILE</code>, or SSO). A Bedrock API key
+          (<code>AWS_BEARER_TOKEN_BEDROCK</code>) is not accepted by this API: it requires signed
+          requests.</p>
+      </li>
+      <li>
+        <h4>Python 3.12 or newer, for a source install</h4>
+        <p>The bidirectional stream needs the <code>aws-sdk-bedrock-runtime</code> package with its
+          <code>awscrt</code> transport, which installs only on Python 3.12 or newer.
+          <code>setup.sh</code> requires that version anyway and installs the package for you. The Mac
+          app ships its own Python and the SDK inside the bundle, so there is nothing to install
+          there.</p>
+      </li>
+      <li>
+        <h4>Allow the microphone</h4>
+        <p>The first conversation asks for the microphone, as recording does. Voice mode opens its own
+          stream with echo cancellation, because the reply is playing out of the same speakers.
+          Headphones still help in a noisy room.</p>
+      </li>
+    </ol>
+
+    <h2 id="config">Settings</h2>
+    <p>Everything lives in the top-level <code>voice</code> block of your config.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Key</th><th>Default</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>voice.enabled</code></td><td><code>true</code></td><td>Master switch. With it off the Talk button is disabled and says voice mode is disabled in config.</td></tr>
+        <tr><td><code>voice.model_id</code></td><td><code>"amazon.nova-2-sonic-v1:0"</code></td><td>The speech model to stream.</td></tr>
+        <tr><td><code>voice.region</code></td><td><code>""</code></td><td>Bedrock region for the voice stream. Blank follows <code>bedrock_region</code>.</td></tr>
+        <tr><td><code>voice.voice_id</code></td><td><code>"tiffany"</code></td><td>Which voice speaks. An unknown id falls back to the default.</td></tr>
+        <tr><td><code>voice.endpointing</code></td><td><code>"MEDIUM"</code></td><td><code>LOW</code>, <code>MEDIUM</code> or <code>HIGH</code>: how eagerly it decides your turn has ended.</td></tr>
+      </tbody>
+    </table></div>
+    <p>See the <a href="ref-settings.html#voice">Settings reference</a> for every key and
+      <a href="configuration.html">Configuration</a> for how the layers merge.</p>
+
+    <h2 id="privacy">What leaves your machine</h2>
+    <p>While the conversation is open, your microphone audio goes to Amazon Bedrock and the spoken
+      replies come back from it, together with the text of the conversation. The assistant's own work
+      runs where it always does: on your chat model, with the tools reading your files locally. Meeting
+      transcription and chat dictation are unaffected and still never send audio anywhere, so the
+      honest summary is: recording stays local, talking does not. End the conversation and the stream is
+      closed.</p>
+
+    <h2 id="troubleshooting">Troubleshooting</h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>What you see</th><th>What it means</th></tr></thead>
+      <tbody>
+        <tr><td>The Talk button is greyed out</td><td>Hover it: the tooltip reads "Voice mode
+          unavailable" plus the reason. The reasons are voice mode disabled in config, Python older than
+          3.12, the streaming SDK (or its <code>awscrt</code> transport) not installed, or no AWS
+          credentials found.</td></tr>
+        <tr><td><b>Voice could not start</b>, naming the model and the region</td><td>The first stream
+          was refused. The message names the exact model id and region to check, for example
+          <code>amazon.nova-2-sonic-v1:0</code> in <code>us-east-1</code>. Open Bedrock model access in
+          that region and confirm the Nova 2 Sonic model is enabled for the account, then check that
+          your credentials belong to that account and that nothing between you and
+          <code>bedrock-runtime</code> blocks the connection.</td></tr>
+        <tr><td>An error toast mid-conversation</td><td>The same text also replaces the hint in the
+          voice bar, so you can read it after the toast goes.</td></tr>
+        <tr><td>Nothing, after several minutes of talking</td><td>Bedrock closes a voice stream after
+          eight minutes, and again after a long quiet stretch. The conversation renews it at a quiet
+          moment and carries the history over, so it continues without a break. A stream that fails
+          later is reopened the same way; only a stream that never answered at all is reported as a
+          start failure.</td></tr>
+        <tr><td>It repeats itself, or asks you to say yes again</td><td>Answer on the card instead. The
+          card and the spoken question are the same request, and clicking it tells the conversation the
+          decision was already made.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-voice.html">Voice &amp; meetings</a>
+        for dictation and meeting transcripts, <a href="tut-permissions.html">Permissions &amp;
+        approvals</a> for what needs a yes, <a href="arch-transcription.html">Transcription &amp;
+        diarization</a> for the on-device pipeline, and the
+        <a href="ref-settings.html">Settings reference</a>.</p></div>
+    </div>
+  </main>
+
+  <script src="assets/nav.js"></script>
+  <script src="assets/diagram.js"></script>
+  <script src="assets/site.js"></script>
+  <script src="assets/diagrams/voice-mode.js"></script>
+</body>
+</html>

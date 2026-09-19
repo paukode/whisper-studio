@@ -19,10 +19,19 @@
       box, or record a meeting and get a live, speaker-labelled transcript you can turn into a
       summary. Everything is transcribed on your own machine.</p>
 
-    <p>Whisper Studio has two independent voice features. <b>Dictation</b> types your speech into the
+    <p>This page covers the two on-device voice features. <b>Dictation</b> types your speech into the
       chat composer (and can even submit it hands-free). <b>Meeting recording</b> captures a whole
       conversation into a separate transcript panel with speaker labels. They can run at the same
       time, because both share one microphone under the hood.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+      <div class="callout__body"><p><b>Looking for a spoken conversation?</b> Talking <em>with</em> the
+        assistant and hearing it answer is a separate feature, the <b>Talk</b> button in the chat
+        composer. It streams your audio to Amazon Bedrock rather than transcribing on-device, so it has
+        its own page: <a href="tut-voice-mode.html">Talk: voice conversations</a>. Dictation and meeting
+        recording below never send audio anywhere.</p></div>
+    </div>
 
     <figure class="diagram-figure wide">
       <div id="voice-flow-diagram" class="diagram"></div>
@@ -37,10 +46,11 @@
     </figure>
 
     <h2 id="dictation">Dictate a message</h2>
-    <p>The microphone icon sits between <b>Attach</b> and <b>Send</b> in the chat input. Click it and
-      start talking: the chat textarea auto-focuses and transcripts append as they arrive, word by
-      word for the sentence in progress and then committed as each sentence settles. Click the icon
-      again (or press it while it is active) to stop.</p>
+    <p>The microphone icon sits in the chat input, between <b>Attach</b> and the <b>Talk</b> button.
+      Click it and start talking: the chat textarea auto-focuses and transcripts append as they arrive,
+      word by word for the sentence in progress and then committed as each sentence settles. A hint
+      under the box lists the spoken submit phrases while you dictate. Click the icon again to
+      stop.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM5 11a7 7 0 0 0 14 0M12 18v4"/></svg></span>
@@ -53,10 +63,10 @@
     </div>
 
     <p>Dictation is tuned for low latency rather than long recordings. It always uses the streaming
-      Parakeet engine and short (roughly a third of a second) audio chunks, so trailing words (and
-      your spoken submit command) reach the server quickly. It also runs without speaker identification, which is what
-      lets it operate alongside a meeting recording without the two fighting over the same speaker
-      profiles.</p>
+      Parakeet engine and half-second audio chunks (the meeting recorder sends larger ones), so
+      trailing words and your spoken submit command reach the server quickly. It also runs without
+      speaker identification, which is what lets it operate alongside a meeting recording without the
+      two fighting over the same speaker profiles.</p>
 
     <h2 id="recording">Record a meeting</h2>
     <p>The <b>Record</b> button lives at the top right of the window. Click it to start capturing your
@@ -114,11 +124,22 @@
           Canary translates between its 25 languages and English (either direction), whichever model
           is transcribing. Apple uses macOS's on-device translator (Mac app only) and handles any
           language pair; language packs download once on first use.</td></tr>
-        <tr><td>Speakers</td><td><b>auto</b> or <b>1</b>&ndash;<b>8</b></td><td>A hint for diarization.
+        <tr><td>Speakers</td><td><b>auto</b>, or <b>1</b> to <b>8</b></td><td>A hint for diarization.
           Auto estimates the count from the audio; telling it the real number makes speaker labels far
           more accurate, because clustering cuts at exactly that many speakers.</td></tr>
       </tbody>
     </table></div>
+
+    <h3 id="languages">Mixed-language meetings</h3>
+    <p>By default the language is worked out for you, sentence by sentence: Whisper detects it with its
+      own head, Canary leans on a small on-device language classifier, and Parakeet simply transcribes
+      its 25 languages without deciding anything. Short or accented utterances are where automatic
+      detection goes wrong, and a wrong guess can quietly translate a line instead of transcribing
+      it.</p>
+    <p>The <b>Whisper Language</b> field in Settings is the fix. Leave it blank for full auto-detection,
+      put one code in it (<code>pl</code>) to pin the language outright, or list the languages actually
+      spoken in the room (<code>pl,en</code>) to keep detection but stop it wandering outside them. The
+      same list constrains Canary.</p>
 
     <h2 id="translation">Translate as you record</h2>
     <p>With a translator selected, each finalized segment grows a second line: the translation, tagged
@@ -144,8 +165,33 @@
       one growing segment. As the recording continues, diarization can re-cluster and correct labels
       it assigned earlier.</p>
     <p>Click a speaker label to rename it. Type a real name (Maya, Bob) and it applies everywhere that
-      speaker appears; the rename persists for the session, so every past and future line from that
-      speaker shows the friendly name.</p>
+      speaker appears; every past and future line from that speaker shows the friendly name.</p>
+
+    <h3 id="voiceprints">Name a speaker once</h3>
+    <p>A rename is also an introduction. The app stores a voiceprint for that speaker, so the same
+      person is recognised by name in later recordings instead of coming back as "Speaker 3". Nothing
+      else is needed: no enrolment step, no reading a sample sentence. A recovered name appears exactly
+      like a rename you typed, and recognition is deliberately cautious, because putting the wrong name
+      on somebody is worse than leaving them numbered. Set <code>speaker_voiceprints</code> to
+      <code>false</code> to keep names inside the recording that created them.</p>
+
+    <h3 id="handovers">When two people talk over each other</h3>
+    <p>An utterance ends on silence, not on a change of speaker, so a fast handover ("...that's my
+      point." / "Right, but-") can land inside one utterance. Whisper Studio cuts it at the handover
+      and gives each half its own speaker, so the second person's words are not filed under the first.
+      A cut with no clean gap between the two voices is marked as an <b>overlapping turn</b> in the
+      transcript: hover the marker and it says the first words may belong to either speaker. Splitting
+      needs word timings, which Whisper and Parakeet report and Canary does not, so a Canary recording
+      simply labels the whole utterance once. Set <code>speaker_split_turns</code> to <code>false</code>
+      to turn splitting off.</p>
+
+    <div class="callout callout--tip">
+      <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 5.3L20 8.5l-4 4.1.9 5.9L12 15.8l-4.9 2.7.9-5.9-4-4.1 5.6-1.2z"/></svg></span>
+      <div class="callout__body"><p><b>Quiet microphone?</b> Speech is levelled automatically before the
+        speech detector sees it, so a distant laptop mic or a soft speaker is lifted toward a normal
+        speaking level instead of being mistaken for silence. The gain only ever goes up, and room tone
+        never drives it, so silence stays silence.</p></div>
+    </div>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 5.3L20 8.5l-4 4.1.9 5.9L12 15.8l-4.9 2.7.9-5.9-4-4.1 5.6-1.2z"/></svg></span>
@@ -168,7 +214,10 @@
       and transcribed by an on-device engine. None of it goes to the cloud. Claude is only involved
       when you deliberately send a chat message, and even then Claude receives the <b>text</b>
       transcript, never the audio. See
-      <a href="arch-transcription.html">Transcription &amp; diarization</a> for the full pipeline.</p>
+      <a href="arch-transcription.html">Transcription &amp; diarization</a> for the full pipeline. The
+      one feature that does stream audio off the machine is a spoken conversation with the assistant,
+      which is opt-in per conversation and covered in
+      <a href="tut-voice-mode.html">Talk: voice conversations</a>.</p>
 
     <h2 id="summarize">Turn a recording into a summary</h2>
     <p>Once you have a transcript, ask Claude about it in chat. Because the transcript already lives in
@@ -213,23 +262,38 @@
     <h2 id="system-audio">Capturing system audio (Zoom, Meet, and calls)</h2>
     <p>The Record button captures your default <b>microphone</b>. That records your side of a call and
       anything your mic picks up from the room, but not the audio the other participants send to your
-      speakers. There are three ways to add that other side. In the Mac app, the headphones button's
-      <b>This Mac</b> section captures system audio or a single running app (Zoom, for example) natively,
-      with no setup at all. Also built into the app: add a <b>Chrome tab</b> as a second source, with no
-      system setup. For a system-wide capture that covers every app and browser at once regardless of
-      platform, route mic and system audio into one virtual input device with
-      <a href="https://existential.audio/blackhole/">BlackHole</a>.</p>
+      speakers. The <b>headphones</b> button next to Record opens <b>Audio sources</b>, where you add
+      that other side. What the menu offers depends on where you are running Whisper Studio: the Mac app
+      captures the Mac's own output natively, a browser captures a <b>Chrome tab</b>, and a virtual
+      input device covers every app at once on any setup. Sources are armed before you start, so stop
+      the recording if you want to change them.</p>
 
-    <h3 id="tab-audio">In the app: add a Chrome tab (no setup)</h3>
-    <p>Whisper Studio can capture the audio of a single browser tab and mix it into the same stream as
-      your microphone, so both your voice and the call land in one transcript. It works in
-      <b>Chrome</b> and <b>Edge</b>. Wear headphones so the tab's sound is not picked up a second time
-      by your mic.</p>
+    <h3 id="this-mac">In the Mac app: System audio or one app</h3>
+    <p>The Mac app can record what the Mac is playing, with no setup and no virtual device. Open
+      <b>Audio sources</b> and use the <b>This Mac</b> section:</p>
+    <ul>
+      <li><b>System audio</b> captures everything the Mac plays. Press <b>Use</b> to arm it and
+        <b>Stop</b> to drop it.</li>
+      <li>Below it, every app currently playing audio is listed by name (Zoom, a browser, a music
+        player). Arm one to record just that app. The list is rescanned each time you open the menu, so
+        start the call first, then open it.</li>
+      <li>The microphone row gains a <b>Turn off</b> button while a Mac source is armed. Turning it off
+        records the call only, with no room noise at all.</li>
+    </ul>
+    <p>While recording, the armed source shows a small level meter and the header shows the mix, for
+      example <b>Mic + System audio</b> or <b>Mic + Zoom</b>. Your choice is remembered for the next
+      recording.</p>
+
+    <h3 id="tab-audio">In a browser: add a Chrome tab</h3>
+    <p>Outside the Mac app, <b>Audio sources</b> offers <b>Chrome tab audio</b> instead: the audio of a
+      single browser tab, mixed into the same stream as your microphone, so both your voice and the call
+      land in one transcript. It works in <b>Chrome</b> and <b>Edge</b>. Wear headphones so the tab's
+      sound is not picked up a second time by your mic.</p>
 
     <ol class="steps">
       <li>
         <h4>Open Audio sources</h4>
-        <p>Click the <b>headphones</b> button next to <b>Record</b>. The picker lists your microphone,
+        <p>Click the <b>headphones</b> button next to <b>Record</b>. The menu lists your microphone,
           which is always on, and <b>Chrome tab audio</b>.</p>
       </li>
       <li>
@@ -300,8 +364,9 @@
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
-      <div class="callout__body"><p><b>Related:</b> <a href="tut-first-chat.html">Your first chat</a>,
-        <a href="arch-transcription.html">Transcription &amp; diarization</a>,
+      <div class="callout__body"><p><b>Related:</b> <a href="tut-voice-mode.html">Talk: voice
+        conversations</a> for speaking with the assistant, <a href="tut-first-chat.html">Your first
+        chat</a>, <a href="arch-transcription.html">Transcription &amp; diarization</a>,
         <a href="tut-documents.html">Working with documents</a>, and the
         <a href="ref-shortcuts.html">keyboard shortcuts</a>.</p></div>
     </div>
