@@ -8,19 +8,20 @@ SETUP_LOG="setup.log"
 # default. .nvmrc lets us bump Node without editing this script.
 NODE_VERSION="$( [ -f .nvmrc ] && tr -d ' \n' < .nvmrc || echo 22.16.0 )"
 
-# Ensure Python 3.10+ (the backend uses match statements, asyncio.TaskGroup,
-# and `dict[str, dict]` syntax, none of which work below 3.10). If the active
-# Python is older or missing, offer to install Python 3.12 via Homebrew, persist
-# it on PATH in ~/.zshrc, and use it for the rest of this run.
+# Ensure Python 3.12+. The Mac app ships CPython 3.13, and the voice-mode SDK
+# (aws-sdk-bedrock-runtime in requirements.txt) only installs on 3.12 or newer,
+# so an older interpreter would silently produce an app without voice mode. If
+# the active Python is older or missing, offer to install Python 3.12 via
+# Homebrew, persist it on PATH in ~/.zshrc, and use it for the rest of this run.
 _py_minor_ok() {
-    # Args: <major> <minor>. True when version >= 3.10 (or major > 3).
-    [ "$1" -gt 3 ] || { [ "$1" -eq 3 ] && [ "$2" -ge 10 ]; }
+    # Args: <major> <minor>. True when version >= 3.12 (or major > 3).
+    [ "$1" -gt 3 ] || { [ "$1" -eq 3 ] && [ "$2" -ge 12 ]; }
 }
 
 _install_python_312() {
     # Need an interactive terminal to ask, and Homebrew to install.
     if [ ! -t 0 ]; then
-        echo "Re-run in an interactive terminal to auto-install, or install Python 3.10+ yourself. Exiting."
+        echo "Re-run in an interactive terminal to auto-install, or install Python 3.12+ yourself. Exiting."
         exit 1
     fi
     if ! command -v brew >/dev/null 2>&1; then
@@ -32,7 +33,7 @@ _install_python_312() {
     read -r reply
     case "$reply" in
         [Yy] | [Yy][Ee][Ss]) ;;
-        *) echo "Cannot continue without Python 3.10 or newer. Exiting."; exit 1 ;;
+        *) echo "Cannot continue without Python 3.12 or newer. Exiting."; exit 1 ;;
     esac
 
     echo "Installing Python 3.12 via Homebrew (this can take a few minutes)..."
@@ -88,7 +89,7 @@ _select_venv_python() {
     fi
     echo "Building the venv from a Homebrew Python so vector search can use sqlite-vec (your default python3 is untouched)..."
     local v cand
-    for v in 3.13 3.12 3.11; do
+    for v in 3.13 3.12; do
         cand="$(brew --prefix)/opt/python@$v/bin/python3.$v"
         if [ -x "$cand" ]; then VENV_PYTHON="$cand"; break; fi
     done
@@ -103,7 +104,7 @@ _select_venv_python() {
     fi
 }
 
-require_python_310() {
+require_python_312() {
     local ver="" major=0 minor=0
     if command -v python3 >/dev/null 2>&1; then
         ver=$(python3 -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')
@@ -116,9 +117,9 @@ require_python_310() {
     fi
 
     if [ -n "$ver" ]; then
-        echo "Python $ver detected; this project requires Python 3.10 or newer."
+        echo "Python $ver detected; this project requires Python 3.12 or newer."
     else
-        echo "Python 3 was not found; this project requires Python 3.10 or newer."
+        echo "Python 3 was not found; this project requires Python 3.12 or newer."
     fi
 
     _install_python_312
@@ -137,7 +138,7 @@ require_python_310() {
     fi
     echo "Using Python $ver for this setup."
 }
-require_python_310
+require_python_312
 
 # Runs a noisy install command. Output goes to $SETUP_LOG on success
 # (terminal stays clean — just the one-line progress message). On
@@ -183,7 +184,7 @@ check_prod_prerequisites() {
     echo "Checking production prerequisites..."
     echo ""
 
-    # Python 3.10+ (already validated by require_python_310; we just
+    # Python 3.12+ (already validated by require_python_312; we just
     # capture the version string for the success report).
     versions+=("Python:    $(python3 --version 2>&1)")
 
@@ -342,10 +343,11 @@ for arg in "$@"; do
             echo "  --no-open   Don't auto-open the app in the default browser."
             echo "              Also honored via NO_OPEN=1 env var."
             echo ""
-            echo "No model weights are downloaded by this script. Exactly like the Mac app's"
-            echo "first launch: transcription models download on your first recording, index"
-            echo "models on your first index build, and chat models are installed on demand"
-            echo "from Settings > Models > Discover."
+            echo "The only weights this script fetches are the always-on speech models the"
+            echo "Mac app ships inside its bundle (language ID and the speaker encoders)."
+            echo "Everything else behaves like the Mac app's first launch: transcription"
+            echo "models download on your first recording, index models on your first index"
+            echo "build, and chat models are installed on demand from Settings > Models > Discover."
             echo "Without a mode flag, an existing config is honored; a fresh install starts in"
             echo "hybrid mode (on-device index, cloud chat) — the Mac app's first-run default."
             echo ""
@@ -609,22 +611,30 @@ else
     echo "  ✓ llama-server present (build $LLAMA_BUILD) at $(command -v llama-server)."
 fi
 
-# ── Model weights: only the two always-on speech models are fetched ─────────
-# Language ID (VoxLingua107) and the ECAPA speaker encoder are bundled
-# infrastructure (~170MB total): every transcription path needs them, they are
-# hidden from the Settings model lists, and the Mac app ships them inside the
-# bundle. Fetch them here so a source install matches the app. Idempotent —
+# ── Model weights: only the always-on speech models are fetched ─────────────
+# Language ID (VoxLingua107) and the two speaker encoders (ReDimNet2, the
+# default, and ECAPA, the fallback) are bundled infrastructure (~190MB total):
+# every transcription path needs them, they are hidden from the Settings model
+# lists, and the Mac app ships them inside the bundle (build_app.sh stages the
+# same three). Fetch them here so a source install matches the app. Idempotent:
 # the ensure functions check their sentinel files and return instantly when
-# the models are already on disk.
+# the models are already on disk. ReDimNet2 comes through torch.hub, and like
+# the app build a hub hiccup must not fail the install (it then downloads on
+# first use).
 echo ""
-echo "Fetching the always-on speech models (language ID + speaker encoder, ~170MB)..."
+echo "Fetching the always-on speech models (language ID + speaker encoders, ~190MB)..."
 "$VENV_DIR/bin/python" - <<'PYEOF'
 from server.asr.lid import _ensure_model
-from server.diarization.speakers import _ensure_speaker_model
+from server.diarization.embedder import _ensure_ecapa_files, _ensure_redimnet_files
 
 _ensure_model()
-_ensure_speaker_model()
-print("Speech models present.")
+_ensure_ecapa_files()
+print("Language ID and ECAPA speaker encoder present.")
+try:
+    _ensure_redimnet_files()
+    print("ReDimNet2 speaker encoder present.")
+except Exception as e:  # network or hub failure: first use downloads it
+    print(f"Note: ReDimNet2 was not fetched ({e}); it downloads on first use.")
 PYEOF
 # Everything else downloads ON DEMAND with an in-app progress banner, into
 # ./models (idempotent, resumable):
