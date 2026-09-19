@@ -78,8 +78,9 @@
     <ol class="steps">
       <li>
         <h4>Open the Workspace panel</h4>
-        <p>The panel header reads <b>Workspace</b> and carries three buttons: refresh the file tree,
-          disconnect, and collapse. Connect the folder you want to work in.</p>
+        <p>The panel header reads <b>Workspace</b> and carries buttons to refresh the file tree,
+          disconnect, and collapse the panel, plus an <b>Explore index</b> button once the folder has
+          been indexed. Connect the folder you want to work in.</p>
       </li>
       <li>
         <h4>Browse or search for a file</h4>
@@ -126,6 +127,10 @@ share a helper with @file:src/components/workspace/WorkspacePanel.tsx</code></pr
         <tr><td><code>ws_create_file</code></td><td>Create a new file. Without a connected workspace it saves via the <a href="tut-save-files.html">direct save flow</a> instead of failing.</td><td>write</td></tr>
         <tr><td><code>ws_delete_file</code></td><td>Delete a file.</td><td>write</td></tr>
         <tr><td><code>ws_run_command</code></td><td>Run a shell command in the workspace. Long tasks auto-background.</td><td>command</td></tr>
+        <tr><td><code>terminal_run</code></td><td>Run a one-shot command without a workspace, or when the command is not about the project.</td><td>command</td></tr>
+        <tr><td><code>terminal_send</code></td><td>Drive a persistent interactive terminal: REPLs, database shells, installers that ask a question.</td><td>command</td></tr>
+        <tr><td><code>terminal_close</code></td><td>Close that persistent terminal and kill its process tree.</td><td>command</td></tr>
+        <tr><td><code>run_tool_script</code></td><td>Run a short JavaScript program that calls read-only tools in a loop and returns one value.</td><td>read</td></tr>
         <tr><td><code>git_*</code></td><td>Full Git: status, diff, log, blame, commit, branch, merge, push, PR.</td><td>read / write</td></tr>
         <tr><td><code>lsp_*</code></td><td>Diagnostics, hover, and references from the language servers.</td><td>read</td></tr>
       </tbody>
@@ -150,8 +155,32 @@ share a helper with @file:src/components/workspace/WorkspacePanel.tsx</code></pr
         kernel-level filesystem and network policy. This is not a courtesy check; it is the real
         boundary (see <a href="arch-sandbox.html">Sandbox &amp; security</a>).</li>
     </ul>
+    <p>When there is no workspace connected, or the command is not about the project,
+      <code>terminal_run</code> does the same job. It defaults to a hidden throwaway shell whose writes
+      the OS confines to the working directory and temp, with a 30-second budget you can raise to 300.
+      Commands that would sit waiting for input (<code>vim</code>, <code>less</code>, <code>top</code>,
+      <code>watch</code>) are refused before they run, since nobody would be there to type. Ask to watch
+      a command and it can instead type into your own open terminal. Writing outside the working
+      directory needs a second, explicit run with a one-line justification, and that always asks you,
+      even in a session where commands are already approved.</p>
+    <p>Something that genuinely needs a conversation, a <code>python3</code> REPL, a database shell, an
+      installer asking yes or no, goes through <code>terminal_send</code> instead. That opens one
+      persistent terminal for the chat, keeps its variables, working directory and history between
+      calls, and returns as soon as the program is ready for more input, saying why it stopped: the
+      program is blocked reading input, output simply went quiet, the read budget ran out, or the shell
+      exited. <code>terminal_close</code> ends it and kills the process tree; the next
+      <code>terminal_send</code> just opens a fresh one.</p>
+    <p>A read-heavy job does not have to cost a round trip per file. <code>run_tool_script</code> runs a
+      short JavaScript program that calls read-only tools (<code>ws_read_file</code>,
+      <code>ws_glob</code>, <code>ws_grep</code>, <code>web_fetch</code> and friends) in a loop and
+      returns one final value. Intermediate results stay in the program's variables and never enter the
+      conversation, which is where the token saving comes from.</p>
     <p>You can also just use the terminal pane yourself. It is a genuine PTY, so an interactive REPL,
-      a watch process, or a one-off command all behave the way they would in Terminal.app.</p>
+      a watch process, or a one-off command all behave the way they would in Terminal.app. The pane sits
+      below the chat, collapses to a single <b>Terminal</b> bar when you do not need it, and carries a
+      chip for the current branch and, if the session is pinned to one, its worktree. Drag its top edge
+      to resize it; the drag stops before the chat composer would be squeezed out of view. Its height is
+      its own, so a conversation that grows long does not push the terminal down or shrink it.</p>
 
     <h2 id="autonomy">How much Claude does on its own</h2>
     <p>The <b>Mode</b> dropdown in the chat input sets how much autonomy Claude has over your files.

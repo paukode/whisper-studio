@@ -10,7 +10,7 @@ WSDiagram.mount("research-flow-diagram", {
     { id: "decide", group: "server", col: 1, row: 0.5, label: "Claude decides", sub: "search needed?", desc: "Claude judges whether its own knowledge is enough or whether the web is required." },
     { id: "search", group: "external", kind: "external", col: 2, row: 0, label: "web_search", sub: "Tavily", desc: "web_search queries Tavily for current results. Only available when a Tavily API key is set." },
     { id: "read", group: "external", kind: "external", col: 3, row: 0, label: "web_fetch pages", sub: "readable text", desc: "web_fetch pulls the readable text of the most promising pages (and any URL you paste)." },
-    { id: "answer", group: "browser", col: 4, row: 0.5, label: "Cited answer", sub: "footnoted links", desc: "Claude streams a normal answer with footnoted links back to its sources." }
+    { id: "answer", group: "browser", col: 4, row: 0.5, label: "Answer with sources", sub: "linked pages", desc: "Claude streams a normal answer with links back to the pages it read. Expand the turn's Activity row to see the query and the results behind it." }
   ],
   edges: [
     { from: "ask", to: "decide" },

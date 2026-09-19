@@ -154,9 +154,13 @@
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></span>
       <div class="callout__body"><p>Two honest limits. The check only runs when the preview tools are
         <em>available</em>, gated by the <code>preview_tools</code> flag and a live capability probe
-        (<code>preview_capability_ok()</code> = Playwright importable + Chromium installed); if either is
-        missing, the tools hide themselves and verify-change falls back to the CI gate (tsc, tests, build)
-        only. (Under <a href="arch-tools.html">progressive tool disclosure</a> the preview tools are also
+        (<code>preview_capability_ok()</code> in <code class="path">server/preview/capability.py</code>:
+        Playwright importable, and Chromium installed). "Installed" means Playwright's own
+        <code>INSTALLATION_COMPLETE</code> marker is present for both builds a headless launch needs, at
+        the revisions this Playwright version pins, so a stale browser cache cannot report ready and then
+        fail at launch. The probe runs on every call, so deleting the browsers makes the tools disappear
+        from the catalog without a restart; if either check fails, the tools hide themselves and
+        verify-change falls back to the CI gate (tsc, tests, build) only. (Under <a href="arch-tools.html">progressive tool disclosure</a> the preview tools are also
         not in the core set, so they are advertised in the deferred index and activated via
         <code>tool_search</code>.) And in a <a href="arch-ultracode.html">parallel workflow</a>, each agent
         that verifies UI spins <em>its own</em> dev server on a distinct port, fine for a few, but fanning
@@ -191,6 +195,12 @@
           CDP session, so multiple watchers and the agent coexist.</p>
       </div>
     </div>
+    <p>The pane finds its session by polling <code>GET /api/preview/sessions</code> and following the
+      latest server that is still alive, so starting a new one switches the pane to it and a crashed one
+      is skipped instead of shown as a dead frame. The cadence adapts
+      (<code class="path">src/hooks/useDockLiveWatcher.ts</code>): every 2 seconds while a preview is live
+      or the dock is open, every 15 seconds otherwise, and not at all while the window is hidden. Coming
+      back to the foreground polls immediately, so the pane is current the moment you look at it.</p>
     <p>The path lives under <code>/ws/...</code> deliberately: Vite's dev proxy upgrades only <code>/ws</code>
       as a WebSocket, while <code>/api</code> stays plain HTTP. A session that does not exist gets an
       accept-then-close with code <code>4404</code>, so the browser sees a clean close rather than a

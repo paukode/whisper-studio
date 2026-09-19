@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Model backends &amp; modes - Whisper Studio Docs</title>
-  <meta name="description" content="How Whisper Studio picks and runs a chat backend: on-device Gemma, OpenAI GPT over Bedrock, and the default Anthropic Claude path, plus retry, compaction, and the separate model-mode concept.">
+  <meta name="description" content="How Whisper Studio picks and runs a chat backend: on-device models through llama-server or MLX, OpenAI GPT over Bedrock, and the default Anthropic Claude path, plus retry, context budgets, compaction, and the separate model-mode concept.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c4841d'/%3E%3Cg stroke='white' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M7 16h1'/%3E%3Cpath d='M12 11v10'/%3E%3Cpath d='M16 7v18'/%3E%3Cpath d='M20 11v10'/%3E%3Cpath d='M24 16h1'/%3E%3C/g%3E%3C/svg%3E">
   <link rel="stylesheet" href="assets/theme.css">
   <link rel="stylesheet" href="assets/site.css">
@@ -15,9 +15,10 @@
 <body>
   <main class="doc" data-page="arch-backends">
     <h1>Model backends &amp; modes</h1>
-    <p class="subtitle">Whisper Studio can send a chat turn to three very different runtimes: on-device
-      Gemma, OpenAI GPT over Bedrock, or the default Anthropic Claude path. The choice is made from
-      one thing (the model key you picked in the toolbar) and it happens before any tokens stream.</p>
+    <p class="subtitle">Whisper Studio can send a chat turn to three very different runtimes: an
+      on-device model server, OpenAI GPT over Bedrock, or the default Anthropic Claude path. The choice
+      is made from one thing (the model key you picked in the toolbar) and it happens before any tokens
+      stream.</p>
 
     <p>Every chat turn enters the same endpoint in <code class="path">server/chat/routes.py</code>, but
       not every turn talks to the same provider. Only the on-device branch returns its own response
@@ -69,8 +70,39 @@
         is what gave those paths local-model support.</p></div>
     </div>
 
+    <h2 id="context-budgets">Context windows and compaction budgets</h2>
+    <p>Before the engine can decide when to compact, it needs to know how large a prompt this model
+      accepts. <code class="path">server/chat/engine/windows.py</code> answers that for every provider,
+      in this order: the <code>context_window</code> on the model's <code>chat_models</code> entry, then
+      a per-family default, and for on-device models the live context size the model server is actually
+      running at.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Model</th><th>Input cap</th></tr></thead>
+      <tbody>
+        <tr><td>Fable 5.1, Fable 5.0, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6</td><td>1,000,000 tokens</td></tr>
+        <tr><td>Haiku 4.5</td><td>200,000 tokens</td></tr>
+        <tr><td>GPT-6 Astra</td><td>922,000 tokens</td></tr>
+        <tr><td>GPT-5.6 Sol, Terra, Luna, GPT-5.5, GPT-5.4</td><td>278,528 tokens (the cap the mantle deployments enforce)</td></tr>
+        <tr><td>Any other Claude id</td><td>200,000 tokens (the Anthropic family default)</td></tr>
+        <tr><td>On-device models</td><td>The running context size, then the size you last asked for, then the registry <code>ctx</code></td></tr>
+      </tbody>
+    </table></div>
+    <p>The 1M figure is applied by model id rather than trusted from config: a Claude entry left at
+      <code>200000</code> by an older config is lifted to 1,000,000 on read when its id belongs to a
+      1M-context family, because any other explicit value is treated as a deliberate override.</p>
+    <p>From the window the engine derives the usable prompt budget. The Claude window is <em>total</em>
+      (prompt plus answer), so the answer allowance is reserved out of it: 64K tokens for Haiku, 128K for
+      every other Claude tier, matching the adapter's own <code>max_tokens</code> clamp. The GPT
+      deployments enforce a separate prompt-only cap, so nothing is reserved there. Local models reserve
+      their <code>max_output</code>, defaulting to 4096. The result is floored at a quarter of the window
+      so a misconfigured output reserve can never starve the prompt. Proactive compaction fires at 95
+      percent of that budget and the last-resort truncation at 98 percent, estimated at four characters
+      per token. When a deployment rejects a prompt anyway, the engine reads the real cap straight out of
+      the rejection text and budgets against that number from then on.</p>
+
     <h2 id="anthropic-path">The Anthropic adapter (default)</h2>
-    <p>This is the adapter most turns use, running Claude Haiku, Sonnet, or Opus. The engine loop from
+    <p>This is the adapter most turns use, running the Claude models in your config: Fable 5.1 and 5.0,
+      Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6, and Haiku 4.5. The engine loop from
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> drives it, so the
       backend-specific parts are the Bedrock client, the request body (prompt-cache checkpoints,
       effort/thinking), and the resilience wrappers around each round.</p>
@@ -106,6 +138,16 @@
       conversation is still too long after that, it surfaces an error asking you to start a new session.
       (Reactive compaction is the mid-stream safety net; the endpoint also compacts pre-emptively when
       history grows large. See <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a>.)</p>
+    <p>That wrapper only covers the <em>request</em>. A stream that has already returned HTTP 200 and
+      then dies (Bedrock raises <code>ModelStreamErrorException</code> or
+      <code>InternalServerException</code> as a non-chunk event; the OpenAI path sees a
+      <code>server_error</code> or a bare transport timeout) never reaches it, so the engine handles
+      those itself: the adapter reports the fault as a retryable round error and
+      <code class="path">server/chat/engine/runner.py</code> re-runs that round, up to twice, with a
+      linear two-second backoff. It retries only while no answer text has streamed yet, since a retry
+      would duplicate it, and only while a round is left in the turn budget, because each retry spends
+      one. A round that completes resets the allowance, so one early blip cannot consume a long turn.
+      Completed tool rounds are kept across the retry rather than thrown away.</p>
 
     <h3 id="cost">Cost tracking</h3>
     <p>Cost tracking runs in the engine for every provider. Each round logs input, output, and
@@ -115,27 +157,46 @@
       error. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</p>
 
     <h2 id="local">On-device models</h2>
-    <p>The local backend (<code class="path">server/local/</code>) runs a quantized GGUF model entirely
-      offline, through <code>llama-server</code>: upstream llama.cpp's own HTTP server, run as a
-      subprocess. The app starts it, speaks its OpenAI-compatible
-      <code>/v1/chat/completions</code> endpoint, and stops it on shutdown. There is no in-process
-      engine and no fallback, so if the binary is missing or too old a local turn fails loudly with the
-      command that fixes it.</p>
-    <p>The subprocess is the point. llama.cpp's server owns the chat template plus the tool-call and
-      reasoning parsers for every model family it supports, so a GGUF added to config gets parsed
+    <p>The local backend (<code class="path">server/local/</code>) runs a model entirely offline, in a
+      subprocess the app starts, speaks to over an OpenAI-compatible
+      <code>/v1/chat/completions</code> endpoint, and stops on shutdown. There are two such engines and
+      the model's registry entry picks which one it belongs to:</p>
+    <ul>
+      <li><b>llama-server</b> for GGUF weights. This is upstream llama.cpp's own HTTP server and the
+        only thing in the app that runs a GGUF. It is a real binary, found on <code>PATH</code> and then
+        in the Homebrew locations, so if it is missing or too old a local turn fails loudly with the
+        command that fixes it.</li>
+      <li><b>MLX</b> for MLX-format weights, served by <code>mlx_lm server</code> running inside the
+        app's own Python interpreter. Availability is therefore an import check, not a <code>PATH</code>
+        lookup, and the error names the fix (<code>venv/bin/pip install mlx-lm</code>, or
+        <code>bash setup.sh --local</code>).</li>
+    </ul>
+    <p>The subprocess is the point. Each server owns the chat template plus the tool-call and
+      reasoning parsers for the model families it supports, so a model added to config gets parsed
       <code>tool_calls</code> and a separate reasoning channel with no per-family marker code in this
-      repo. Nothing under <code class="path">server/local/</code> contains model-specific tokens.</p>
+      repo. Nothing under <code class="path">server/local/</code> contains model-specific tokens. Both
+      engines speak the same SSE shape, so the adapter, the stream parser, and the turn engine above
+      them are engine-agnostic.</p>
     <dl class="spec">
       <dt><code class="path">server/local/route.py</code></dt>
       <dd>The bridge the endpoint calls. Detects a local key, then returns
         the unified engine with the <code>LocalAdapter</code>
         (<code class="path">server/chat/engine/local.py</code>) under the offline LOCAL policy. It also
         builds the lean system prompt and threads the composer's context-size request.</dd>
+      <dt><code class="path">server/local/serving.py</code></dt>
+      <dd>The engine facade every other module calls. It is the one place that knows which engine a
+        model key belongs to, and it owns the cross-engine residency rule. It also holds the
+        non-streaming <code>complete(...)</code> used by the workspace index and the on-device session
+        summariser, which deliberately sends no tools.</dd>
       <dt><code class="path">server/local/llama_server.py</code></dt>
-      <dd>The subprocess lifecycle: locating the binary (PATH, then Homebrew) and checking its build,
-        <code>ensure_serving(key, n_ctx)</code> to start / reuse / restart it, the <code>/health</code>
-        wait, <code>stop()</code>, orphan reaping, and a non-streaming <code>complete(...)</code> for
-        non-chat callers. It knows nothing about chat, tools, or SSE.</dd>
+      <dd>The GGUF subprocess lifecycle: locating the binary (PATH, then Homebrew) and checking its
+        build, starting / reusing / restarting it, the <code>/health</code> wait, <code>stop()</code>,
+        and orphan reaping. It knows nothing about chat, tools, or SSE.</dd>
+      <dt><code class="path">server/local/mlx_server.py</code></dt>
+      <dd>The same lifecycle for <code>mlx_lm server</code>. Its weights are a whole-repo snapshot
+        directory rather than one file, it loads them lazily on the first request (so the facade fires a
+        one-token warmup, otherwise "loaded" would lie until the first real turn), and it has no
+        context-size flag at all.</dd>
       <dt><code class="path">server/local/server_stream.py</code></dt>
       <dd>llama-server protocol helpers the LocalAdapter builds on: the
         <code>/v1/chat/completions</code> SSE parser, the streamed <code>tool_calls</code> accumulator,
@@ -151,15 +212,27 @@
         <code>build_local_system_prompt(...)</code>.</dd>
     </dl>
 
-    <h3 id="llama-server">The model server</h3>
-    <p><code>ensure_serving(key, n_ctx)</code> is the whole entry contract: guarantee this model is
-      being served at this context size, and return its base URL. It reuses the running process when it
-      already matches, and otherwise stops it and starts a new one, because <b>only one model is
-      resident at a time</b> (the on-device build targets a memory-constrained machine, for example an
-      M3 with 18GB). Weights are fetched before the process is spawned, so a missing GGUF is not an
-      opaque subprocess exit, and the call is blocking, so both the chat path and the load endpoint run
-      it in a thread executor rather than on the event loop.</p>
-    <p>The process is started on an ephemeral port with four flags that carry the design:</p>
+    <h3 id="llama-server">Loading and unloading a model</h3>
+    <p><code>ensure_serving(key, n_ctx)</code> in <code class="path">server/local/serving.py</code> is
+      the whole entry contract: guarantee this model is being served at this context size, and return
+      its base URL. It reuses the running process when it already matches, and otherwise stops what is
+      running and starts a new one, because <b>only one local model is resident at a time, across both
+      engines</b>. Chat weights and the speech stack already share unified memory on the machines the
+      on-device build targets (for example an M3 with 18GB), so loading an MLX model evicts a running
+      GGUF one and the other way round.</p>
+    <p>The order inside a transition matters and is fixed: validate that the engine is usable, then
+      fetch the weights, and only then evict whatever is resident. A doomed request (mlx-lm not
+      installed, an unknown key) or a first download that takes minutes must never leave the machine
+      with nothing loaded. The whole transition runs under one lock so two concurrent loads for
+      different engines cannot both end up resident, or SIGTERM each other's freshly started server.</p>
+    <p>A load that would displace the resident server <b>waits for live chat turns to drain</b> instead
+      of stopping a model mid-answer, which is what used to kill an in-flight reply when you switched
+      models in the composer. The wait gives up with a readable error after ten minutes
+      (<code>WHISPER_LOCAL_BUSY_WAIT_S</code>), and the model-load endpoint can cancel out of it. A turn
+      on the already-resident model skips all of this on a lock-free fast path, so it never queues
+      behind another model's download. The call is blocking either way, so both the chat path and the
+      load endpoint run it in a thread executor rather than on the event loop.</p>
+    <p>A GGUF process is started on an ephemeral port with four flags that carry the design:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Flag</th><th>Why</th></tr></thead>
       <tbody>
@@ -170,14 +243,24 @@
       </tbody>
     </table></div>
     <p><code>WHISPER_LLAMA_SERVER_ARGS</code> appends extra arguments for anything else you want to
-      pass. The subprocess logs to <code class="path">models/.logs/llama-server-&lt;key&gt;.log</code>,
-      and a failed start raises with that log's tail, so a load error names its own cause.</p>
+      pass (<code>WHISPER_MLX_SERVER_ARGS</code> does the same for the MLX engine). The subprocess logs
+      to <code class="path">models/.logs/</code>, and a failed start raises with that log's tail, so a
+      load error names its own cause. Each engine has its own startup timeout,
+      <code>WHISPER_LLAMA_SERVER_TIMEOUT</code> and <code>WHISPER_MLX_SERVER_TIMEOUT</code>, both ten
+      minutes by default, because a cold start reads gigabytes off disk.</p>
+    <p>Three things work differently on the MLX engine, and the facade hides all three. There is no
+      context-size flag, so the window is whatever the model's own config carries and the size you pick
+      is recorded only to give the context meter a number. The request's <code>model</code> field must be
+      the literal <code>default_model</code> sentinel, because any other name makes <code>mlx_lm</code>
+      try to download that name from the Hub. And <code>tool_choice</code> is ignored, so the final
+      round's "no more tools" rule is enforced by sending no tools list at all rather than by asking for
+      one.</p>
     <p>The child runs in its own session, so a signal aimed at the app cannot take the model down
       mid-turn. The flip side is that <code>SIGKILL</code> on the app (force quit, OOM killer) skips
       the shutdown hook and orphans a process holding its port and gigabytes of RAM, so startup calls
-      <code>reap_orphans()</code>. Matching is deliberately narrow: only processes whose
-      <code>--model</code> path is inside our <code class="path">models/</code> directory, never a
-      <code>llama-server</code> the user runs for their own purposes.</p>
+      <code>reap_orphans()</code>, which sweeps leftovers from both engines. Matching is deliberately
+      narrow: only processes whose model path is inside our <code class="path">models/</code> directory,
+      never a <code>llama-server</code> or <code>mlx_lm</code> the user runs for their own purposes.</p>
 
     <h3 id="local-choices">What a local turn does differently</h3>
     <ul>
@@ -193,8 +276,10 @@
         mid-download; the effective list merges config entries over the recommended catalog, config
         winning per key. Adding a model is a one-place change: an entry carrying <code>repo_id</code>,
         <code>filename</code>, and <code>dir</code> alongside the picker fields becomes downloadable,
-        loadable, and selectable with no code change. An entry still missing a weight field after the
-        merge is dropped with a warning rather than failing later at load time.</li>
+        loadable, and selectable with no code change. An MLX entry adds <code>engine: "mlx"</code> and
+        needs only <code>repo_id</code> and <code>dir</code>, because its weights are a whole-repo
+        snapshot rather than a single file. An entry still missing a weight field after the merge is
+        dropped with a warning rather than failing later at load time.</li>
       <li><b>A lean system prompt.</b> The cloud system prompt is tool-heavy and workspace-heavy (roughly
         2 to 2.5K tokens the local model cannot act on), so <code>build_local_system_prompt(...)</code>
         drops it and keeps a short identity plus project and memory context. This speeds prefill and
@@ -213,7 +298,8 @@
         (<code>local_context_window</code> in the request body, clamped server-side to 2048 through
         262144 in <code class="path">server/local/route.py</code>), so a lazy server start can never run
         at a stale size, and it is recorded via <code>set_requested_n_ctx</code> so non-chat callers
-        reuse it.</li>
+        reuse it. On the MLX engine the slider only labels the context meter: <code>mlx_lm</code> has no
+        context-size flag, so the window is the one baked into the model's own config.</li>
       <li><b>The full tool pool, always.</b> There are no user-facing gates: like the cloud paths, a
         tool-capable local model always gets the full pool, and a thinking-capable one always thinks.
         The old per-turn toggles (<code>local_tools</code> / <code>local_tool_scope</code> /
@@ -309,10 +395,12 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Config key</th><th>What it holds</th></tr></thead>
       <tbody>
-        <tr><td><code>chat_models</code></td><td>Map of model key to the Bedrock model id.</td></tr>
-        <tr><td><code>chat_model_meta</code></td><td>Per-model metadata: label, thinking mode, <code>supports_tools</code>, <code>is_local</code>, <code>provider</code>, and effort levels.</td></tr>
+        <tr><td><code>chat_models</code></td><td>Map of model key to its entry. A plain string is read as the model id; the usual form is an object carrying the id plus its metadata.</td></tr>
+        <tr><td><code>chat_model_meta</code></td><td>The metadata half of that map after normalization: label, <code>context_window</code>, thinking mode, <code>supports_tools</code>, <code>is_local</code>, <code>engine</code>, <code>provider</code>, <code>effort_tier</code>, and <code>verbosity</code>.</td></tr>
+        <tr><td><code>chat_models_disabled</code></td><td>Keys hidden from the composer picker. A disabled on-device model stays manageable in Models, so its weights can still be deleted.</td></tr>
         <tr><td><code>default_chat_model</code></td><td>The key used when no model is selected.</td></tr>
         <tr><td><code>bedrock_region</code></td><td>The AWS region for the shared Bedrock client.</td></tr>
+        <tr><td><code>model_fallback_enabled</code></td><td>Off by default. Turns on the automatic downgrade described below.</td></tr>
       </tbody>
     </table></div>
     <p>On-device models sit in the same <code>chat_models</code> map, marked <code>is_local</code> and
@@ -332,6 +420,30 @@
       permanently: acknowledging the screen enables it, and switching back to a non-retention model
       offers to return the account to zero retention (mode <code>none</code>).</p>
 
+    <h3 id="model-fallback">Falling back to a cheaper model</h3>
+    <p>Settings &gt; Costs has a checkbox, <b>Enable model fallback (downgrade model when approaching
+      budget)</b>. It is off by default. With it on, the chat endpoint resolves the session's model
+      through <code class="path">server/infrastructure/model_fallback.py</code> before the turn starts:
+      once the session or daily spend reaches 80 percent of its cap, the turn runs on the next cheaper
+      model instead.</p>
+    <p>"Next cheaper" is computed rather than hardcoded. The chain is derived from the authoritative
+      price table in <code class="path">server/costs/tracker.py</code>, so it tracks the live catalog
+      instead of drifting, and the pick is the most expensive model whose list price is strictly below
+      the current one, which is the smallest capability drop that still relieves the pressure. If that
+      model is not configured in this install, the resolver keeps walking down rather than silently
+      skipping the downgrade. A model with no price entry is never downgraded, since it bills at zero
+      already. With the checkbox off, the model you selected is the model that runs, and a cap is
+      enforced by stopping the turn instead. See <a href="arch-costs.html">Cost tracking &amp;
+      budgets</a>.</p>
+
+    <h3 id="model-aliases">Family aliases for agent overrides</h3>
+    <p>Catalog keys are versioned (<code>opus4.8</code>, <code>sonnet5</code>), but a spawned agent or a
+      workflow script often asks for a family name instead (<code>opus</code>, <code>sonnet</code>,
+      <code>haiku</code>). <code class="path">server/agents/model_resolve.py</code> resolves that to the
+      newest configured key in the family and reports the substitution in the run's warning, rather than
+      failing silently back to the default model. An override that still does not resolve, or that names
+      an on-device model without tool support, falls back to the default and says why.</p>
+
     <h2 id="modes-vs-models">Model backend is not model mode</h2>
     <p>This is the distinction that trips people up. The <b>chat model</b> (which backend runs your turn)
       is one setting, chosen in the toolbar. The <b>model mode</b> (cloud / hybrid / local) is a
@@ -340,17 +452,18 @@
     <div class="cols-2">
       <div class="card">
         <h3>Chat model (toolbar)</h3>
-        <p>Selects the backend for the conversation itself: Claude, GPT, or on-device Gemma. This is
-          the decision chain on this page.</p>
+        <p>Selects the backend for the conversation itself: Claude, GPT, or an on-device model. This
+          is the decision chain on this page.</p>
       </div>
       <div class="card">
         <h3>Model mode (cloud / hybrid / local)</h3>
         <p>Selects where the RAG stack runs: embeddings, the reranker, and entity extraction for the
-          <a href="arch-index.html">workspace index</a>. It does not change your chat model.</p>
+          <a href="arch-index.html">workspace index</a>. It does not change your chat model. A fresh
+          install starts in <b>local</b> mode.</p>
       </div>
     </div>
     <p>So you can, for example, chat with cloud Claude while your index embeddings run locally, or run
-      on-device Gemma while nothing about your indexing changes. The two settings are independent. For a
+      an on-device model while nothing about your indexing changes. The two settings are independent. For a
       hands-on tour of the mode dial, see the <a href="tut-model-modes.html">Model modes</a> tutorial;
       for what each capability actually runs in each mode, see
       <a href="arch-index.html">Index / GraphRAG &amp; search</a>.</p>
