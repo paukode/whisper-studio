@@ -2,7 +2,14 @@ import React, { useCallback, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { get, put } from '@/api/client';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { MODEL_OPTIONS, TRANSLATOR_OPTIONS, targetsFor } from '@/components/transcription/TranscriptionPanel';
+import {
+  MODEL_OPTIONS,
+  TRANSLATOR_UNAVAILABLE_NOTICE,
+  isTranslatorUnavailable,
+  targetsFor,
+  translatorOptions,
+} from '@/components/transcription/TranscriptionPanel';
+import { isNativeTranslationAvailable } from '@/services/nativeTranslation';
 
 interface ConfigData {
   tavily_api_key?: string;
@@ -25,6 +32,9 @@ export const APISettings: React.FC = () => {
   const [regionError, setRegionError] = useState('');
   const [modelValue, setModelValue] = useState('streaming');
   const [translateMode, setTranslateMode] = useState('off');
+  // Probed once: the shell injects its bridge at documentStart, so this can
+  // never flip while the settings tab is open.
+  const [appleAvailable] = useState(() => isNativeTranslationAvailable());
   const [translateTarget, setTranslateTarget] = useState('en');
   const [saveStatus, setSaveStatus] = useState('');
 
@@ -158,15 +168,29 @@ export const APISettings: React.FC = () => {
       <select
         className="settings-input"
         id="cfgTranslateMode"
+        aria-describedby={
+          isTranslatorUnavailable(translateMode, appleAvailable)
+            ? 'cfgTranslateModeWarning'
+            : undefined
+        }
         value={translateMode}
         onChange={(e) => setTranslateMode(e.target.value)}
       >
-        {TRANSLATOR_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
+        {translatorOptions(appleAvailable).map((o) => (
+          <option key={o.value} value={o.value} disabled={o.disabled}>
             {o.value === 'off' ? 'Off' : o.label}
           </option>
         ))}
       </select>
+      {isTranslatorUnavailable(translateMode, appleAvailable) && (
+        <span
+          className="settings-hint settings-hint--warn"
+          id="cfgTranslateModeWarning"
+          role="status"
+        >
+          {TRANSLATOR_UNAVAILABLE_NOTICE}
+        </span>
+      )}
       <span className="settings-hint">
         Shows a translation line under speech in other languages, whichever
         model is transcribing. Canary translates between its 25 European
