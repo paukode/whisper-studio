@@ -530,9 +530,11 @@ body {
     box-shadow: 0 4px 12px rgba(224,64,64,0.35);
     transform: translateY(-1px);
 }
+/* Spread capped at 3px, same reason as mic-pulse: Stop now sits next to Send
+ * in the 8px-gap button row, and a 6px halo bled over its neighbour. */
 @keyframes stopPulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(224,64,64,0.3); }
-    50% { box-shadow: 0 0 0 6px rgba(224,64,64,0); }
+    50% { box-shadow: 0 0 0 3px rgba(224,64,64,0); }
 }
 
 /* ================================================================
