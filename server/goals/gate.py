@@ -110,6 +110,43 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
                 source="deliverable",
             )
 
+    # ── Phase 1.6: requested deliverable (every turn, goal or not) ─────────
+    # The mirror of phase 1.5: the user asked for a file and the turn produced
+    # none. A real session answered "update the diagram and save it to
+    # Downloads" with a revised description in chat and no file, and the user
+    # only found out by asking. One nudge per turn, since the ask is read out
+    # of prose. Plan mode is exempt: writing is refused there by design.
+    if _flag_on("requested_file_check"):
+        from server.goals.requested_files import requested_file_feedback
+
+        try:
+            file_feedback = requested_file_feedback(
+                ctx.messages, ctx.workspace, plan_mode=ctx.plan_mode
+            )
+        except Exception as e:  # noqa: BLE001 - a checker bug must never abort a turn
+            log.warning("requested-file check failed (%s); skipping", e)
+            file_feedback = None
+        if file_feedback:
+            if ctx.attempt >= cap:
+                return GateDecision(
+                    block=False,
+                    frame={
+                        "goal_cap_reached": {
+                            "attempt": ctx.attempt,
+                            "cap": cap,
+                            "source": "requested_file",
+                        }
+                    },
+                    source="cap",
+                )
+            log.info("completion gate: a requested file was not produced; continuing the turn")
+            return GateDecision(
+                block=True,
+                feedback=file_feedback,
+                frame={"stop_hook_block": {"reason": file_feedback, "attempt": ctx.attempt + 1}},
+                source="requested_file",
+            )
+
     # ── Phase 1.7: verification evidence (every turn, goal or not) ──────────
     # Code was edited this turn but no test/lint/typecheck/build command ran
     # green afterwards: ask for the run (or an honest blocker) instead of

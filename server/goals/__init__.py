@@ -54,6 +54,9 @@ class GateContext:
     model_id: str = ""
     workspace: str | None = None
     last_text: str = ""
+    # Plan mode refuses every write, so the checks that ask for a file must
+    # stay quiet when it is on.
+    plan_mode: bool = False
     # How many times the gate has already blocked this turn (the caller owns the
     # per-turn counter; goal_state owns the cross-turn one).
     attempt: int = 0
