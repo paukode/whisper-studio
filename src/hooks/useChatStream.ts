@@ -432,7 +432,18 @@ export function useChatStream(): UseChatStreamReturn {
   // delivered, so the composer only clears the input on confirmed success.
   const sendMidTurn = useCallback(async (question: string): Promise<boolean> => {
     const activeSessionId = useSessionStore.getState().currentSessionId;
-    if (!activeSessionId) return false;
+    if (!activeSessionId) {
+      // The one path that used to return false without saying anything: from
+      // the composer that looks exactly like a dead Enter key, which is how
+      // this was reported. Every outcome of a send attempt now tells the user
+      // what happened.
+      useUIStore.getState().addToast({
+        type: 'error',
+        message: 'Not delivered: this window has no active session to add the message to.',
+        duration: 5000,
+      });
+      return false;
+    }
 
     let delivered = false;
     try {
