@@ -7,6 +7,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { TerminalTab, type TerminalTabHandle } from './TerminalTab';
 import { measureCellGrid } from '@/hooks/useTerminal';
+import { useGitChanged } from '@/hooks/useGitChanged';
 
 let nextLabel = 1;
 
@@ -89,19 +90,11 @@ export const TerminalPanel: React.FC = () => {
     [queryClient, currentSessionId],
   );
 
-  // Listen for the same SSE git-changed signal the GitChangesPanel uses
-  // — when branch/HEAD/worktree state changes externally, refetch.
-  useEffect(() => {
-    if (collapsed) return;
-    const es = new EventSource('/api/git/events');
-    es.onmessage = (e) => {
-      try {
-        const parsed = JSON.parse(e.data) as { type?: string };
-        if (parsed.type === 'git-changed') void refreshGit();
-      } catch { /* ignore malformed event */ }
-    };
-    return () => es.close();
-  }, [collapsed, refreshGit]);
+  // Listen for the same git-changed signal the GitChangesPanel uses — when
+  // branch/HEAD/worktree state changes externally, refetch. Shares the one
+  // /api/git/events connection; inactive while the panel is collapsed.
+  const onGitChanged = useCallback(() => void refreshGit(), [refreshGit]);
+  useGitChanged(onGitChanged, !collapsed);
 
   // When an approval lands an enter/exit_worktree, the SSE watcher won't
   // fire (the worktree session lives in-memory, not in .git files). The

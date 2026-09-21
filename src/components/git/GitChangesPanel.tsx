@@ -6,6 +6,7 @@ import { GitFileStatus } from './GitFileStatus';
 import { GitDiffViewer } from './GitDiffViewer';
 import { useUIStore, dialogConfirm } from '@/stores/uiStore';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
+import { useGitChanged } from '@/hooks/useGitChanged';
 import { toError } from '@/utils/toError';
 
 const STORAGE_KEY = 'whisper_git_expanded';
@@ -65,24 +66,12 @@ export const GitChangesPanel: React.FC<GitChangesPanelProps> = ({ onFileOpen }) 
     }, 150);
   }, [queryClient]);
 
-  // Subscribe to /api/git/events SSE — the backend GitFileWatcher pushes
-  // a `git-changed` event within ~1s of any .git/HEAD, config, or branch
-  // ref change. Replaces the old 15s polling loop entirely: zero traffic
-  // when idle, instant update when something changes.
-  useEffect(() => {
-    const es = new EventSource('/api/git/events');
-    es.onmessage = (e) => {
-      try {
-        const parsed = JSON.parse(e.data) as { type?: string };
-        if (parsed.type === 'git-changed') {
-          refreshDebounced();
-        }
-      } catch {
-        // Malformed event — ignore
-      }
-    };
-    return () => es.close();
-  }, [refreshDebounced]);
+  // Subscribe to the shared /api/git/events SSE — the backend GitFileWatcher
+  // pushes a `git-changed` event within ~1s of any .git/HEAD, config, or
+  // branch ref change. Replaces the old 15s polling loop entirely: zero
+  // traffic when idle, instant update when something changes. One connection
+  // is shared with the status bar and terminal panel.
+  useGitChanged(refreshDebounced);
 
   // User-initiated refresh signals (discard file, approval applied,
   // etc.) still flow through the debounced refetch. These are
