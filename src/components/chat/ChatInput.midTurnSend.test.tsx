@@ -1,11 +1,9 @@
 /**
- * The composer stays sendable while a turn is running.
+ * A message still reaches the running turn while one is streaming.
  *
- * Mid-turn messages are folded into the running turn (sendMidTurn), but the
- * composer used to SWAP Send for Stop while streaming, so the only button on
- * screen was an abort: the composer read as locked, Enter was the sole
- * undocumented way through, and the natural "that must be send" click killed
- * the turn. Stop and Send now sit side by side.
+ * The button row keeps one button with one meaning: Stop while a turn runs,
+ * Send otherwise. Sending mid-turn is Enter, and the placeholder says so,
+ * which is what was missing when this read as a locked composer.
  */
 import { render, act, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -53,29 +51,14 @@ describe('ChatInput while a turn is streaming', () => {
     h.abort.mockClear();
   });
 
-  it('keeps Send on screen next to Stop', async () => {
+  it('shows one button, Stop, and no Send', async () => {
     streaming(true);
     const { container } = renderChatInput();
-    expect(container.querySelector('#chatSendBtn')).toBeTruthy();
     expect(container.querySelector('.btn-chat-stop')).toBeTruthy();
+    expect(container.querySelector('#chatSendBtn')).toBeNull();
   });
 
-  it('clicking Send adds the message to the running turn, and does not abort it', async () => {
-    streaming(true);
-    const { container } = renderChatInput();
-    const ta = container.querySelector('#chatInput') as HTMLTextAreaElement;
-    await type(ta, 'also save it as a png');
-
-    const sendBtn = container.querySelector('#chatSendBtn') as HTMLButtonElement;
-    expect(sendBtn.disabled).toBe(false);
-    await act(async () => { fireEvent.click(sendBtn); });
-
-    expect(h.sendMidTurn).toHaveBeenCalledWith('also save it as a png');
-    expect(h.send).not.toHaveBeenCalled();
-    expect(h.abort).not.toHaveBeenCalled();
-  });
-
-  it('Stop still aborts, and does not send', async () => {
+  it('Stop aborts, and does not send', async () => {
     streaming(true);
     const { container } = renderChatInput();
     const ta = container.querySelector('#chatInput') as HTMLTextAreaElement;
@@ -87,7 +70,7 @@ describe('ChatInput while a turn is streaming', () => {
     expect(h.sendMidTurn).not.toHaveBeenCalled();
   });
 
-  it('Enter goes to the running turn too', async () => {
+  it('Enter goes into the running turn, not a second turn', async () => {
     streaming(true);
     const { container } = renderChatInput();
     const ta = container.querySelector('#chatInput') as HTMLTextAreaElement;
@@ -97,11 +80,22 @@ describe('ChatInput while a turn is streaming', () => {
     expect(h.send).not.toHaveBeenCalled();
   });
 
-  it('says in the placeholder where a message will go', async () => {
+  it('says in the placeholder where a typed message will go', async () => {
+    // The only cue that Enter still works while a turn runs, so it is a
+    // contract, not decoration.
     streaming(true);
     const { container } = renderChatInput();
     const ta = container.querySelector('#chatInput') as HTMLTextAreaElement;
     expect(ta.placeholder).toMatch(/running turn/i);
+  });
+
+  it('typing does not conjure a Send button next to Stop', async () => {
+    streaming(true);
+    const { container } = renderChatInput();
+    const ta = container.querySelector('#chatInput') as HTMLTextAreaElement;
+    await type(ta, 'also save it as a png');
+    expect(container.querySelector('#chatSendBtn')).toBeNull();
+    expect(container.querySelectorAll('.btn-chat-stop')).toHaveLength(1);
   });
 
   it('shows no Stop button, and sends normally, when nothing is running', async () => {
