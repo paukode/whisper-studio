@@ -39,6 +39,7 @@ def test_flags_registry_holds_only_live_flags():
         "goal_loop",
         "cron_verify",
         "deliverable_check",
+        "requested_file_check",
         # Hermes adoptions: each is read by is_enabled/_flag_on at its call site.
         "learning_review_fork",
         "skill_self_improvement",

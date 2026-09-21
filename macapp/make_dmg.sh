@@ -28,7 +28,11 @@ DMG_PATH="$DIST_DIR/WhisperStudio-${VERSION}.dmg"
 echo "==> Staging DMG contents"
 rm -rf "$STAGING"
 mkdir -p "$STAGING"
-cp -R "$APP_DIR" "$STAGING/"
+# Clone rather than copy: the bundle is several GB (a full Python runtime
+# plus the speech models), and a real copy needs that much free space again
+# just to stage it. APFS clones cost nothing until something is written.
+# Fall back to a plain copy if the volume cannot clone.
+cp -Rc "$APP_DIR" "$STAGING/" 2>/dev/null || cp -R "$APP_DIR" "$STAGING/"
 ln -s /Applications "$STAGING/Applications"
 # First-launch instructions for recipients of an ad-hoc / un-notarized build
 # (how to clear the Gatekeeper warning). Shipped inside the disk image.

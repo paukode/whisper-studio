@@ -71,6 +71,17 @@ def turn_messages(messages: list) -> list:
     return list(messages)
 
 
+def last_user_prompt(messages: list) -> str:
+    """Text of the real user prompt this turn is answering, gate feedback and
+    tool results excluded. Mid-turn messages are appended onto that same
+    message (loop_hints.inject_reminder), so what the user asked for while the
+    turn ran is part of it."""
+    for i in range(len(messages) - 1, -1, -1):
+        if _is_user_prompt(messages[i]):
+            return _render_blocks(messages[i].get("content"))
+    return ""
+
+
 def last_assistant_text(messages: list) -> str:
     for m in reversed(messages):
         if isinstance(m, dict) and m.get("role") == "assistant":
@@ -95,7 +106,9 @@ def claimed_paths(text: str) -> list[str]:
     return out
 
 
-def _exists_non_empty(path: str, workspace: str | None) -> bool:
+def exists_non_empty(path: str, workspace: str | None) -> bool:
+    """True when the path resolves to a file with content (workspace-relative
+    paths resolve against the workspace)."""
     resolved = os.path.expanduser(path)
     if not os.path.isabs(resolved) and workspace:
         resolved = os.path.join(workspace, resolved)
@@ -131,7 +144,7 @@ def check_claims(messages: list, workspace: str | None) -> str | None:
     text = last_assistant_text(messages)
     if not text:
         return None
-    missing = [p for p in claimed_paths(text) if not _exists_non_empty(p, workspace)]
+    missing = [p for p in claimed_paths(text) if not exists_non_empty(p, workspace)]
     artifact_missing = bool(_ARTIFACT_CLAIM_RE.search(text)) and not artifact_created(messages)
     if not missing and not artifact_missing:
         return None

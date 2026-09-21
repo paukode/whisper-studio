@@ -16,6 +16,7 @@ import { useChatStream } from './useChatStream';
 import { dropRuntime, getActiveChatStore, getChatStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSubagentStore } from '@/stores/subagentStore';
+import { useUIStore } from '@/stores/uiStore';
 
 function emptySSEResponse(): Response {
   const stream = new ReadableStream<Uint8Array>({
@@ -119,8 +120,12 @@ describe('useChatStream', () => {
       expect(s.messages.some((m) => m.role === 'user' && m.content === 'are you still there')).toBe(false);
     });
 
-    it('does nothing when there is no active session', async () => {
+    it('sends nothing when there is no active session, and says so', async () => {
+      // The one outcome that used to be silent. From the composer a silent
+      // false is indistinguishable from a dead Enter key, which is how this
+      // reached us as "I cannot send and the button seems locked".
       useSessionStore.setState({ currentSessionId: null, liveSessions: {}, sessions: [] });
+      useUIStore.setState({ toasts: [] });
       const fetchSpy = vi.spyOn(globalThis, 'fetch');
       const { result } = renderHook(() => useChatStream());
       let delivered: boolean | undefined;
@@ -128,7 +133,15 @@ describe('useChatStream', () => {
         delivered = await result.current.sendMidTurn('hello?');
       });
       expect(delivered).toBe(false);
-      expect(fetchSpy).not.toHaveBeenCalled();
+      // The toast records itself server-side, so assert on the turn instead
+      // of on fetch as a whole: nothing was sent to the chat endpoint.
+      expect(
+        fetchSpy.mock.calls.filter((c) => String(c[0]).includes('/api/chat')),
+      ).toHaveLength(0);
+      const shown = useUIStore.getState().toasts;
+      expect(shown).toHaveLength(1);
+      expect(shown[0].type).toBe('error');
+      expect(shown[0].message).toMatch(/not delivered/i);
     });
   });
 

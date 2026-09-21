@@ -721,7 +721,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
           aria-haspopup="listbox"
           aria-expanded={acVisible && acItems.length > 0}
           aria-activedescendant={acVisible && acItems.length > 0 ? `ac-item-${acIndex}` : undefined}
-          placeholder="Fix a bug, build a feature, ask anything..."
+          placeholder={isStreaming ? 'Add to the running turn...' : 'Fix a bug, build a feature, ask anything...'}
           rows={2}
           value={text}
           onChange={handleTextChange}
@@ -834,26 +834,37 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="7" x2="8" y2="17"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="8" x2="16" y2="16"/><line x1="20" y1="11" x2="20" y2="13"/></svg>
         </button>
-        {/* Item 5: Stop button during streaming (or while voice work is still
-         *  finishing after a hang-up), send button otherwise */}
-        {isStreaming || (voiceWorking && !text.trim()) ? (
+        {/* Stop, shown while a turn streams (or while voice work is still
+         *  finishing after a hang-up). It sits BESIDE Send rather than
+         *  replacing it: a running turn accepts a message that is folded
+         *  into it (submitMessage -> sendMidTurn), and swapping the two
+         *  controls made the only visible button an abort, so the composer
+         *  read as locked and the natural "send" click killed the turn. */}
+        {(isStreaming || voiceWorking) && (
           <button
             className="btn btn-chat-stop"
             type="button"
             title={isStreaming ? 'Stop' : 'Stop the background work'}
+            aria-label={isStreaming ? 'Stop the turn' : 'Stop the background work'}
             onClick={isStreaming ? handleAbort : () => voiceController.cancelRuns()}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>
             </svg>
           </button>
-        ) : (
-          <button className="btn btn-send" type="submit" id="chatSendBtn" aria-label="Send message" disabled={!text.trim()}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
-            </svg>
-          </button>
         )}
+        <button
+          className="btn btn-send"
+          type="submit"
+          id="chatSendBtn"
+          aria-label={isStreaming ? 'Send into the running turn' : 'Send message'}
+          title={isStreaming ? 'Send into the running turn' : 'Send'}
+          disabled={!text.trim()}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
       </div>
       )}
 

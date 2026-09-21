@@ -222,6 +222,17 @@ register_flag(
 )
 
 register_flag(
+    "requested_file_check",
+    description=(
+        "When the user asked for a file this turn and none was produced, the completion "
+        "gate asks for it once before the turn ends, so a request for a document, diagram "
+        "or export cannot be answered in chat and quietly dropped"
+    ),
+    default=True,
+    category="agent",
+)
+
+register_flag(
     "dream_consolidation",
     description="Cross-session memory distillation after 24h and 5 sessions",
     default=True,

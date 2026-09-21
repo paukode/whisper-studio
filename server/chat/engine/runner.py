@@ -75,6 +75,22 @@ def strip_partial_tool_use(content: list[dict]) -> list[dict]:
     return kept or [{"type": "text", "text": "(continuing)"}]
 
 
+def _continuable_assistant(content: list[dict]) -> list[dict]:
+    """The round's assistant content, shaped so the turn can carry on after it.
+
+    Used wherever the loop decides an apparent end-of-turn is not the end (a
+    completion-gate block, a mid-turn message that landed after the last
+    drain). Partial tool_use blocks go, and a turn with no usable text gets a
+    placeholder: some providers reject an assistant turn that is empty or
+    text-less, which would kill the very turn we are trying to continue."""
+    assistant = strip_partial_tool_use(content)
+    has_text = isinstance(assistant, list) and any(
+        isinstance(b, dict) and b.get("type") == "text" and (b.get("text") or "").strip()
+        for b in assistant
+    )
+    return assistant if has_text else [{"type": "text", "text": "(continuing)"}]
+
+
 @dataclass
 class TurnContext:
     """Everything a turn needs, pre-assembled by the route (or agent/cron
@@ -324,8 +340,16 @@ async def run_turn(ctx: TurnContext):
                 "answer a quick question, or stop early if they asked you to)"
                 f":\n\n{_mid_msg}</user_message_mid_turn>"
             )
-            if inject_reminder(messages, _wrapped):
-                log.info("Injected mid-turn user message (session %s)", session_id)
+            if not inject_reminder(messages, _wrapped):
+                # inject_reminder only appends to a user-role tail, and the
+                # tail is an assistant turn whenever the loop has just decided
+                # to continue past an apparent end-of-turn. drain() has
+                # already emptied the inbox by this point, so skipping here
+                # would lose the message for good: carry it as its own user
+                # turn instead. A string body is what the completion gate
+                # appends too, and every provider accepts it.
+                messages.append({"role": "user", "content": _wrapped})
+            log.info("Injected mid-turn user message (session %s)", session_id)
 
         # Deadline enforcement: the FIRST round observed past the wall-clock
         # deadline gets a "finalize now" reminder, exactly once (a later
@@ -683,6 +707,36 @@ async def run_turn(ctx: TurnContext):
             # stop_sequence, refusal) or an unknown stop reason we conservatively
             # treat as terminal rather than risk an unbounded resubmit loop.
             if stop_reason != "tool_use" or not tool_uses:
+                # A message the user sent mid-turn lands in the inbox at any
+                # moment, but the inbox is drained at the TOP of a round. One
+                # that arrives after the last drain would be accepted by the
+                # route (the composer clears and says it will be answered when
+                # the turn finishes) and then silently dropped here. Run one
+                # more round instead: the drain above folds it in and the model
+                # answers it. Bounded by the round cap like everything else,
+                # and the drain empties the inbox whatever happens, so this
+                # cannot spin.
+                from server.chat.engine.midturn_inbox import has_pending as _has_midturn
+
+                if _has_midturn(session_id):
+                    if not is_last_round:
+                        log.info(
+                            "Mid-turn message arrived after the last drain; "
+                            "continuing the turn to answer it (session %s)",
+                            session_id,
+                        )
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": _continuable_assistant(result_content),
+                            }
+                        )
+                        continue
+                    # No round left to spend. Say so rather than letting the
+                    # promise go quiet; the text stays queued and the next
+                    # turn's round-zero drain picks it up.
+                    yield f"data: {ndjson_dumps({'status': 'Your message arrived as this turn was ending. It will be picked up on the next turn.'})}\n\n"
+
                 # Completion gate (WS-E): Stop hooks + goal evaluator. A block
                 # injects the feedback and loops again, bounded by the cap.
                 if (
@@ -701,6 +755,7 @@ async def run_turn(ctx: TurnContext):
                             provider=ctx.adapter.provider,
                             model_id=ctx.model_id,
                             workspace=ctx.ws_path,
+                            plan_mode=ctx.plan_mode,
                             attempt=stop_blocks_used,
                             max_consecutive_blocks=_goal_cap,
                         )
@@ -709,16 +764,12 @@ async def run_turn(ctx: TurnContext):
                         yield f"data: {ndjson_dumps(_gate.frame)}\n\n"
                     if _gate.block:
                         stop_blocks_used += 1
-                        _assistant = strip_partial_tool_use(result_content)
-                        _has_text = isinstance(_assistant, list) and any(
-                            isinstance(b, dict)
-                            and b.get("type") == "text"
-                            and (b.get("text") or "").strip()
-                            for b in _assistant
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": _continuable_assistant(result_content),
+                            }
                         )
-                        if not _has_text:
-                            _assistant = [{"type": "text", "text": "(continuing)"}]
-                        messages.append({"role": "assistant", "content": _assistant})
                         messages.append(
                             {
                                 "role": "user",
