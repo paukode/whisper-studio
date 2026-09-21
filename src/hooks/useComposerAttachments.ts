@@ -1,5 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { useUIStore } from '@/stores/uiStore';
+import {
+  useComposerAttachmentsStore,
+  EMPTY_ATTACHMENTS,
+} from '@/stores/composerAttachmentsStore';
+import { DRAFT_SESSION } from '@/stores/sessionRuntimes';
 
 /**
  * Owns the chat composer's attachment chips and every way a file gets onto
@@ -31,8 +36,14 @@ export interface UseComposerAttachmentsResult {
   waitForUploads: () => Promise<boolean>;
 }
 
-export function useComposerAttachments(): UseComposerAttachmentsResult {
-  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+export function useComposerAttachments(sessionId: string | null): UseComposerAttachmentsResult {
+  // Chips live in a per-session store so a file attached in one session never
+  // leaks into another's composer. A null session (welcome / pre-first-turn)
+  // uses the draft key; submit reads and clears these before chatStream.send
+  // creates the real session, so draft attachments still ride the first turn.
+  const key = sessionId ?? DRAFT_SESSION;
+  const attachments = useComposerAttachmentsStore((s) => s.bySession[key] ?? EMPTY_ATTACHMENTS);
+  const update = useComposerAttachmentsStore((s) => s.update);
 
   // Abort controllers for in-flight uploads, keyed by placeholder chip id, so
   // clicking × on a chip mid-upload cancels the network request, not just the
@@ -45,6 +56,13 @@ export function useComposerAttachments(): UseComposerAttachmentsResult {
   const attachmentsRef = useRef(attachments);
   useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
 
+  // setAttachments keeps the exact React setState signature (a value or a
+  // functional updater) but writes to the current session's slice.
+  const setAttachments = useCallback<React.Dispatch<React.SetStateAction<ComposerAttachment[]>>>(
+    (value) => update(key, value),
+    [update, key],
+  );
+
   // Upload File objects to the composer as attachment chips. Each starts as an
   // instant placeholder (id prefixed `_uploading_`) that the chip renders with
   // an "uploading…" badge, then gets swapped for the real attachment id when
@@ -52,6 +70,9 @@ export function useComposerAttachments(): UseComposerAttachmentsResult {
   // context-menu "Add to Chat", and the /file: workspace flow.
   const uploadFilesAsChips = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
+    // Bind the session that started this upload so the result lands on the
+    // right composer even if the user switches sessions while it is in flight.
+    const startKey = key;
     const stamp = Date.now();
     const placeholders = files.map((f, i) => ({
       // The filename stays clean (no suffix); the chip renders a separate,
@@ -59,7 +80,7 @@ export function useComposerAttachments(): UseComposerAttachmentsResult {
       id: `_uploading_${stamp}_${i}`,
       filename: f.name,
     }));
-    setAttachments((prev) => [...prev, ...placeholders]);
+    update(startKey, (prev) => [...prev, ...placeholders]);
 
     const controller = new AbortController();
     for (const p of placeholders) uploadControllers.current.set(p.id, controller);
@@ -81,14 +102,14 @@ export function useComposerAttachments(): UseComposerAttachmentsResult {
       }
       const data = (await response.json()) as { attachments: ComposerAttachment[] };
       const items = data.attachments ?? [];
-      setAttachments((prev) => [
+      update(startKey, (prev) => [
         ...prev.filter((a) => !placeholders.some((p) => p.id === a.id)),
         ...items,
       ]);
     } catch (err) {
       // Drop the placeholders. An AbortError is a user-initiated cancel via the
       // × button, so it stays silent; anything else is a real failure.
-      setAttachments((prev) => prev.filter((a) => !placeholders.some((p) => p.id === a.id)));
+      update(startKey, (prev) => prev.filter((a) => !placeholders.some((p) => p.id === a.id)));
       if (!(err instanceof DOMException && err.name === 'AbortError')) {
         console.warn('File upload failed:', err);
         // A TypeError from fetch means the server was unreachable (e.g. the
@@ -101,7 +122,7 @@ export function useComposerAttachments(): UseComposerAttachmentsResult {
     } finally {
       for (const p of placeholders) uploadControllers.current.delete(p.id);
     }
-  }, []);
+  }, [update, key]);
 
   // Fetch a workspace file's raw bytes and wrap them in a File so it can go
   // through the same /api/upload path as a user-picked file.
@@ -157,8 +178,8 @@ export function useComposerAttachments(): UseComposerAttachmentsResult {
     if (target?.id.startsWith('_uploading_')) {
       uploadControllers.current.get(target.id)?.abort();
     }
-    setAttachments((prev) => prev.filter((_, i) => i !== idx));
-  }, []);
+    update(key, (prev) => prev.filter((_, i) => i !== idx));
+  }, [update, key]);
 
   // Resolve once no chip is mid-upload (placeholder ids cleared) or after a
   // safety timeout. uploadFilesAsChips always either swaps a placeholder for
