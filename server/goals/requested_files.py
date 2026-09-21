@@ -34,21 +34,31 @@ from server.goals.deliverables import (
 MAX_REQUEST_NUDGES = 1
 REQUEST_MARKER = "[file]"
 
-# Tools that put a real file (or an artifact card, which the user can save)
-# in front of the user. A turn that called any of them produced something.
-_FILE_TOOLS = frozenset(
+# Tools that write a real file to disk.
+_DISK_TOOLS = frozenset(
     {
         "save_file",
         "ws_write_file",
         "ws_create_file",
         "ws_edit_file",
-        "create_artifact",
-        "edit_artifact",
-        "create_visual",
-        "create_chart",
-        "create_program",
         "notebook_edit",
     }
+)
+# Plus the ones that hand the user something in the chat itself. Enough for
+# "make me a diagram", not for "save it to Downloads".
+_FILE_TOOLS = _DISK_TOOLS | {
+    "create_artifact",
+    "edit_artifact",
+    "create_visual",
+    "create_chart",
+    "create_program",
+}
+
+# The user named somewhere on disk, so only a written file will do.
+_LOCATION_RE = re.compile(
+    r"\b(?:downloads?|desktop|documents folder|on disk|to disk|locally"
+    r"|as a file|to a file|in a file)\b|~/|(?<![\w.])/(?:Users|home|tmp|var)/",
+    re.IGNORECASE,
 )
 
 _FILE_EXTS = (
@@ -121,12 +131,14 @@ def requested_clause(prompt: str) -> str | None:
     return None
 
 
-def produced_a_file(messages: list, workspace: str | None) -> bool:
+def produced_a_file(messages: list, workspace: str | None, *, on_disk: bool = False) -> bool:
     """True when this turn actually put a file (or artifact) in front of the
     user: a file tool ran, or the reply names a path that really exists.
 
     The second arm matters for the skill path, where a document is written by
-    a script rather than by a file tool."""
+    a script rather than by a file tool. With ``on_disk`` an artifact card
+    does not count: the user asked for a file somewhere they can open it."""
+    accepted = _DISK_TOOLS if on_disk else _FILE_TOOLS
     for m in turn_messages(messages):
         if not isinstance(m, dict) or m.get("role") != "assistant":
             continue
@@ -136,7 +148,7 @@ def produced_a_file(messages: list, workspace: str | None) -> bool:
         for b in content:
             if not isinstance(b, dict):
                 continue
-            if b.get("type") in ("tool_use", "function_call") and b.get("name") in _FILE_TOOLS:
+            if b.get("type") in ("tool_use", "function_call") and b.get("name") in accepted:
                 return True
     return any(exists_non_empty(p, workspace) for p in claimed_paths(last_assistant_text(messages)))
 
@@ -175,7 +187,7 @@ def requested_file_feedback(
     clause = requested_clause(last_user_prompt(messages))
     if not clause:
         return None
-    if produced_a_file(messages, workspace):
+    if produced_a_file(messages, workspace, on_disk=bool(_LOCATION_RE.search(clause))):
         return None
     if request_nudges_used(messages) >= max_attempts:
         return None

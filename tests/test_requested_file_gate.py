@@ -116,6 +116,34 @@ def test_no_feedback_once_the_file_exists(tmp_path):
     assert rf.requested_file_feedback(msgs, None) is None
 
 
+def test_a_chat_artifact_does_not_satisfy_a_request_to_save_somewhere():
+    # "save it in downloads" is not answered by a card in the chat: the user
+    # asked for a file they can open, which is the miss that started this.
+    asked_for_disk = [
+        {"role": "user", "content": "update the diagram and save a new version in downloads"},
+        _tool("create_artifact"),
+        {"role": "assistant", "content": "Here is the updated diagram."},
+    ]
+    assert rf.requested_file_feedback(asked_for_disk, None) is not None
+
+    # With no location named, a card is a real answer to "make me a diagram".
+    asked_for_anything = [
+        {"role": "user", "content": "make me a diagram of the pipeline"},
+        _tool("create_artifact"),
+        {"role": "assistant", "content": "Here it is."},
+    ]
+    assert rf.requested_file_feedback(asked_for_anything, None) is None
+
+
+def test_a_written_file_satisfies_a_request_to_save_somewhere():
+    msgs = [
+        {"role": "user", "content": "update the diagram and save a new version in downloads"},
+        _tool("save_file", {"destination_path": "~/Downloads/flow.png"}),
+        {"role": "assistant", "content": "Saved."},
+    ]
+    assert rf.requested_file_feedback(msgs, None) is None
+
+
 def test_plan_mode_is_exempt():
     msgs = [
         {"role": "user", "content": "make me a pdf of the plan"},
@@ -184,8 +212,6 @@ def test_gate_stays_out_of_plan_mode(_gate_env):
         {"role": "assistant", "content": "Here is the plan."},
     ]
     decision = asyncio.run(
-        _gate_env.run_completion_gate(
-            GateContext(session_id="s", messages=msgs, plan_mode=True)
-        )
+        _gate_env.run_completion_gate(GateContext(session_id="s", messages=msgs, plan_mode=True))
     )
     assert decision.block is False
