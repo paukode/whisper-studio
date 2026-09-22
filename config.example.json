@@ -4,7 +4,7 @@
   "transcription_backend": "streaming",
   "speaker_embedder": "redimnet",
   "speaker_split_turns": true,
-  "speaker_voiceprints": true,
+  "speaker_voiceprints": false,
   "bedrock_region": "us-east-1",
   "chat_models": {
     "fable5.1": {

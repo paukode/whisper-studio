@@ -1,9 +1,15 @@
-"""Named voiceprints that outlive the session.
+"""Named voiceprints that outlive the session. Off by default.
 
 Session-scoped labels answer "who spoke when" inside one recording and
 reset to "Speaker 1" the next morning. This gallery answers the other
 half: a person who spoke in an earlier recording is recognised in this
 one and gets their name back.
+
+Gated on the ``speaker_voiceprints`` config flag, which defaults to false:
+recognising a voice across recordings is not reliable enough to put a name
+on somebody unattended, and a wrong name is worse than "Speaker 3". With the
+flag off nothing is matched and nothing is enrolled, so every recording
+starts from "Speaker 1" again.
 
 Enrollment is a side effect of the rename the user already does. Clicking
 "Speaker 2" and typing "Anna" stores the centroid of every embedding that
@@ -60,8 +66,7 @@ def _store_path() -> str:
 def enabled() -> bool:
     from server.infrastructure.config import get as config_get
 
-    value = config_get("speaker_voiceprints")
-    return True if value is None else bool(value)
+    return bool(config_get("speaker_voiceprints"))
 
 
 def _load() -> dict:
