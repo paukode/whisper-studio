@@ -103,6 +103,22 @@ def test_frame_helper_maps_background_events_and_skips_agent_progress():
     assert _session_event_frame({"type": "workflow_event"}) is None
 
 
+def test_agent_reports_and_answers_reach_an_idle_session():
+    """Nothing else delivers these live.
+
+    The chat SSE drainer only exists while a turn is running, so a report that
+    lands with no live turn (a cancelled team, a background or resumed agent)
+    and the wake turn's answer to it were published to the bus and then
+    dropped here, surfacing only on the next hydrate.
+    """
+    assert _session_event_frame({"type": "agent_report", "agentReport": {"a": 1}}) == {
+        "agent_report": {"a": 1}
+    }
+    assert _session_event_frame({"type": "agent_answer", "agentAnswer": {"a": 1}}) == {
+        "agent_answer": {"a": 1}
+    }
+
+
 def test_missing_payload_key_yields_an_empty_envelope_not_a_crash():
     assert _session_event_frame({"type": "cron_event"}) == {"cron_event": {}}
 
