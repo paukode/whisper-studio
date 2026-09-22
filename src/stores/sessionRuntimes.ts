@@ -40,8 +40,6 @@ export const MAX_LIVE_RUNTIMES = 3;
 export interface RuntimeEntry {
   chat: StoreApi<ChatState>;
   transcription: StoreApi<TranscriptionState>;
-  /** Long-lived cron/notification SSE for this session. */
-  events: EventSource | null;
   /** In-flight /api/chat stream for this session, if any. */
   abort: AbortController | null;
   unsubs: Array<() => void>;
@@ -71,7 +69,6 @@ export function getRuntime(sessionId: string | null): RuntimeEntry {
     entry = {
       chat: createChatStore(),
       transcription: createTranscriptionStore(),
-      events: null,
       abort: null,
       unsubs: [],
       lastUsed: Date.now(),
@@ -81,7 +78,7 @@ export function getRuntime(sessionId: string | null): RuntimeEntry {
     runtimes.set(key, entry);
     if (key !== DRAFT_SESSION) {
       attachRuntimeSubscriptions(key, entry);
-      openEventStream(key, entry);
+      ensureSharedEventStream();
       syncIndex();
     }
   }
@@ -240,37 +237,53 @@ function toastMemoryEvent(sid: string, ev: MemoryEventPayload): void {
   });
 }
 
-function openEventStream(sid: string, entry: RuntimeEntry): void {
-  if (typeof EventSource === 'undefined') return; // vitest/jsdom
-  const es = new EventSource(`/api/sessions/${encodeURIComponent(sid)}/events`);
+/** The single multiplexed SSE channel carrying every session's out-of-band
+ *  events. One connection, not one per session: browsers cap concurrent
+ *  connections per origin (~6 on HTTP/1.1), and a stream per session plus the
+ *  chat stream exhausted that budget, so a file upload or a second session's
+ *  first request sat queued in the browser until a running turn released its
+ *  socket. Each frame carries `session_id`; it is routed to that session's
+ *  runtime here, and dropped when the session has no live runtime (which is
+ *  exactly who used to have a stream at all). */
+let sharedEvents: EventSource | null = null;
+
+function hasLiveRuntimes(): boolean {
+  for (const key of runtimes.keys()) if (key !== DRAFT_SESSION) return true;
+  return false;
+}
+
+/** One frame off the multiplexed channel. `session_id` says which session it
+ *  belongs to; exactly one payload key is set. */
+interface SessionEventFrame {
+  session_id?: string;
+  cron_event?: CronEventPayload;
+  memory_event?: MemoryEventPayload;
+  task_event?: TaskEventPayload;
+  agent_report?: AgentReportPayload;
+  agent_answer?: AgentAnswerPayload;
+  session_message?: SessionMessagePayload;
+  team_progress?: TeamProgressEvent;
+  ci_progress?: Record<string, unknown>;
+  ci_result?: Record<string, unknown>;
+}
+
+function ensureSharedEventStream(): void {
+  if (sharedEvents || typeof EventSource === 'undefined') return; // vitest/jsdom
+  const es = new EventSource('/api/sessions/events');
   es.onmessage = (event) => {
     if (!event.data) return;
-    let parsed: {
-      cron_event?: CronEventPayload;
-      memory_event?: MemoryEventPayload;
-      task_event?: TaskEventPayload;
-      agent_report?: AgentReportPayload;
-      agent_answer?: AgentAnswerPayload;
-      session_message?: SessionMessagePayload;
-      team_progress?: TeamProgressEvent;
-      ci_progress?: Record<string, unknown>;
-      ci_result?: Record<string, unknown>;
-    } | null = null;
+    let parsed: SessionEventFrame | null = null;
     try {
-      parsed = JSON.parse(event.data) as {
-        cron_event?: CronEventPayload;
-        memory_event?: MemoryEventPayload;
-        task_event?: TaskEventPayload;
-        agent_report?: AgentReportPayload;
-        agent_answer?: AgentAnswerPayload;
-        session_message?: SessionMessagePayload;
-        team_progress?: TeamProgressEvent;
-        ci_progress?: Record<string, unknown>;
-        ci_result?: Record<string, unknown>;
-      };
+      parsed = JSON.parse(event.data) as SessionEventFrame;
     } catch {
       return; // heartbeats / malformed frames
     }
+    const sid = parsed?.session_id ?? '';
+    const entry = sid ? runtimes.get(sid) : undefined;
+    // No runtime means this session was never open (or was evicted); the
+    // events are durable in chat_history and replay on the next hydrate.
+    if (!entry) return;
+
     if (parsed?.ci_progress) {
       const ev = parsed.ci_progress;
       const taskId = String(ev.task_id ?? '');
@@ -388,11 +401,17 @@ function openEventStream(sid: string, entry: RuntimeEntry): void {
   // recreated on the next recycle instead of lingering as a dead connection
   // that still holds one of the browser's ~6 per-host slots.
   es.onerror = () => {
-    if (es.readyState === EventSource.CLOSED && runtimes.get(sid) === entry) {
-      entry.events = null;
+    if (es.readyState === EventSource.CLOSED && sharedEvents === es) {
+      sharedEvents = null;
     }
   };
-  entry.events = es;
+  sharedEvents = es;
+}
+
+function closeSharedEventStream(): void {
+  if (!sharedEvents) return;
+  try { sharedEvents.close(); } catch { /* already closed */ }
+  sharedEvents = null;
 }
 
 /** Close and reopen stale cron streams. After a laptop wake, tab refocus, or
@@ -404,14 +423,11 @@ function openEventStream(sid: string, entry: RuntimeEntry): void {
  *  offline); otherwise only non-OPEN streams are recycled so a routine tab
  *  refocus doesn't churn healthy connections. */
 function recycleEventStreams(force: boolean): void {
-  for (const [sid, entry] of runtimes) {
-    if (sid === DRAFT_SESSION) continue;
-    const es = entry.events;
-    if (!force && es && es.readyState === EventSource.OPEN) continue;
-    if (es) { try { es.close(); } catch { /* already closed */ } }
-    entry.events = null;
-    openEventStream(sid, entry);
-  }
+  if (!hasLiveRuntimes()) return;
+  const es = sharedEvents;
+  if (!force && es && es.readyState === EventSource.OPEN) return;
+  closeSharedEventStream();
+  ensureSharedEventStream();
 }
 
 if (typeof window !== 'undefined') {
@@ -429,9 +445,9 @@ export function dropRuntime(sessionId: string): void {
   const entry = runtimes.get(sessionId);
   if (!entry) return;
   entry.abort?.abort();
-  entry.events?.close();
   for (const unsub of entry.unsubs) unsub();
   runtimes.delete(sessionId);
+  if (!hasLiveRuntimes()) closeSharedEventStream();
   syncIndex();
 }
 
