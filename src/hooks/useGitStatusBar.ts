@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useCallback, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { getGitStatus, type GitStatusBar } from '@/api/git';
+import { useGitChanged } from './useGitChanged';
 
 /** Live git status for the app status bar.
  *
@@ -28,19 +29,9 @@ export function useGitStatusBar(enabled: boolean): GitStatusBar | null {
     }, 200);
   }, [queryClient]);
 
-  useEffect(() => {
-    if (!enabled || typeof EventSource === 'undefined') return;
-    const es = new EventSource('/api/git/events');
-    es.onmessage = (e) => {
-      try {
-        const parsed = JSON.parse(e.data) as { type?: string };
-        if (parsed.type === 'git-changed') refresh();
-      } catch {
-        /* malformed frame — ignore */
-      }
-    };
-    return () => es.close();
-  }, [enabled, refresh]);
+  // Shares one /api/git/events connection with the changes and terminal
+  // panels; only active while a workspace is connected.
+  useGitChanged(refresh, enabled);
 
   return data ?? null;
 }

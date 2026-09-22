@@ -56,7 +56,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     uploadWorkspaceFile,
     removeAttachment,
     waitForUploads,
-  } = useComposerAttachments();
+  } = useComposerAttachments(sessionId);
   const [modeOpen, setModeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [wsDropdownOpen, setWsDropdownOpen] = useState(false);

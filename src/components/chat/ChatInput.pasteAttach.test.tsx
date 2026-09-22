@@ -22,6 +22,7 @@ vi.mock('@/hooks/useChatStream', () => ({
 
 import { ChatInput } from './ChatInput';
 import { ThemeProvider } from '@/providers/ThemeProvider';
+import { useComposerAttachmentsStore } from '@/stores/composerAttachmentsStore';
 
 const renderChatInput = () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -38,6 +39,9 @@ describe('ChatInput paste-to-attach', () => {
   let resolveUpload: (chips: { id: string; filename: string }[]) => void;
 
   beforeEach(() => {
+    // Composer chips now live in a module-level per-session store, so reset
+    // it between cases (both render sessionId "s1") for a clean composer.
+    useComposerAttachmentsStore.setState({ bySession: {} });
     globalThis.fetch = vi.fn((input: RequestInfo | URL) => {
       if (String(input).includes('/api/upload')) {
         return new Promise((resolve) => {

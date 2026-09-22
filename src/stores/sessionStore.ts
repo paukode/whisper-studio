@@ -15,6 +15,7 @@ import { useRecordingStore } from './recordingStore';
 import { useWorkspaceStore } from './workspaceStore';
 import { useUIStore } from './uiStore';
 import { useIndexSearchStore } from './indexSearchStore';
+import { useComposerAttachmentsStore } from './composerAttachmentsStore';
 import { useCronUnreadStore } from './cronUnreadStore';
 
 /** Seed a reopened session's token/cost readout from the spend the server
@@ -306,6 +307,7 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
     dropRuntime(id);
     get().dropLiveSession(id);
     useIndexSearchStore.getState().clearSession(id);
+    useComposerAttachmentsStore.getState().clearSession(id);
 
     const wasActive = get().currentSessionId === id;
     const filtered = get().sessions.filter((s) => s.id !== id);
@@ -348,6 +350,7 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
       dropRuntime(sid);
       get().dropLiveSession(sid);
       useIndexSearchStore.getState().clearSession(sid);
+      useComposerAttachmentsStore.getState().clearSession(sid);
     }
 
     const wasActive = toDelete.has(get().currentSessionId ?? '');
