@@ -161,6 +161,102 @@ def _load_session(session_id: str) -> dict | None:
     return data
 
 
+def _session_event_frame(ev: dict) -> dict | None:
+    """Map an event-bus event to the SSE frame the UI renders, or None when it
+    is not background-flavoured.
+
+    Shared by the per-session channel and the multiplexed one below so the two
+    can never drift. Agent runtime progress travels through the chat SSE while
+    a turn is in flight and is skipped here so we do not double-render
+    team_progress rows.
+    """
+    kind = ev.get("type")
+    if kind == "cron_event":
+        return {"cron_event": ev.get("cronEvent") or {}}
+    if kind == "memory_event":
+        # Memory recall fires pre-stream and extraction fires after the chat
+        # SSE closed, so this long-lived channel is the only path that can
+        # surface them.
+        return {"memory_event": ev.get("memoryEvent") or {}}
+    if kind == "task_event":
+        # Background-task lifecycle (shell/agent/workflow rows in the unified
+        # registry), delivered here so completion cards land without an
+        # in-flight chat turn.
+        return {"task_event": ev.get("taskEvent") or {}}
+    if kind == "cron_progress":
+        # Live cron-run turn/tool frames. Forwarded in the team_progress
+        # envelope so the existing TeamReportCard fold renders a running cron
+        # job with zero card changes.
+        return {"team_progress": ev.get("event") or {}}
+    if kind == "ci_progress":
+        # Live CI-watch ticks (WS-J), delivered detached so the CI card
+        # updates without an in-flight turn.
+        return {"ci_progress": ev}
+    if kind == "ci_result":
+        # Terminal CI-watch outcome, a LIVE flip for the rich card. Durability
+        # is separate: _finish also emits a task_event that persists a chat
+        # row, so the outcome survives with no client.
+        return {"ci_result": ev.get("ciResult") or {}}
+    if kind == "session_message":
+        # Cross-session message (server/agent_tools/cross_session.py). This is
+        # the ONLY delivery path when the target session has no turn in
+        # flight, so a message sent to an idle (but open) session must land
+        # here or it never appears live.
+        return {"session_message": ev.get("sessionMessage") or {}}
+    return None
+
+
+@router.get("/api/sessions/events")
+async def all_session_events(request: Request):
+    """One multiplexed SSE channel carrying every session's events.
+
+    Declared before /api/sessions/{session_id} so the literal path wins the
+    match. Each frame carries ``session_id`` and the client routes it to the
+    right session itself.
+
+    This replaces one stream per open session. Browsers cap concurrent
+    connections per origin (about 6 on HTTP/1.1), and a stream per session
+    plus the chat stream exhausted that budget: a file upload or a second
+    session's first request then sat queued in the browser until a running
+    turn released its socket, which silently defeated the app's own limit on
+    parallel sessions.
+
+    Sends a comment heartbeat every 15s so proxies do not time out.
+    """
+    from server.agents.event_bus import event_bus
+    from server.utils import ndjson_dumps
+
+    queue = event_bus.subscribe_all()
+
+    async def stream():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    return
+                try:
+                    session_id, ev = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+                    continue
+                frame = _session_event_frame(ev)
+                if frame is None:
+                    continue
+                frame["session_id"] = session_id
+                yield f"data: {ndjson_dumps(frame)}\n\n"
+        finally:
+            event_bus.unsubscribe_all(queue)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
 @router.get("/api/sessions/{session_id}")
 async def get_session(session_id: str):
     # A long session is megabytes of JSON; reading and decoding it stays off
@@ -711,47 +807,9 @@ async def session_events(session_id: str, request: Request):
                     # firing a real event on the frontend.
                     yield ": heartbeat\n\n"
                     continue
-                if ev.get("type") == "cron_event":
-                    payload = ev.get("cronEvent") or {}
-                    yield f"data: {ndjson_dumps({'cron_event': payload})}\n\n"
-                elif ev.get("type") == "memory_event":
-                    # Memory recall fires pre-stream and extraction fires
-                    # after the chat SSE closed, so this long-lived channel
-                    # is the only path that can surface them.
-                    payload = ev.get("memoryEvent") or {}
-                    yield f"data: {ndjson_dumps({'memory_event': payload})}\n\n"
-                elif ev.get("type") == "task_event":
-                    # Background-task lifecycle (shell/agent/workflow rows in
-                    # the unified registry) — delivered here so completion
-                    # cards land without an in-flight chat turn.
-                    payload = ev.get("taskEvent") or {}
-                    yield f"data: {ndjson_dumps({'task_event': payload})}\n\n"
-                elif ev.get("type") == "cron_progress":
-                    # Live cron-run turn/tool frames. Forwarded in the
-                    # team_progress envelope so the existing TeamReportCard
-                    # fold renders a running cron job with zero card changes.
-                    payload = ev.get("event") or {}
-                    yield f"data: {ndjson_dumps({'team_progress': payload})}\n\n"
-                elif ev.get("type") == "ci_progress":
-                    # Live CI-watch ticks (WS-J), delivered detached so the CI
-                    # card updates without an in-flight turn.
-                    yield f"data: {ndjson_dumps({'ci_progress': ev})}\n\n"
-                elif ev.get("type") == "ci_result":
-                    # Terminal CI-watch outcome — a LIVE flip for the rich card.
-                    # Durability is separate: _finish also emits a task_event that
-                    # persists a chat row, so the outcome survives with no client.
-                    payload = ev.get("ciResult") or {}
-                    yield f"data: {ndjson_dumps({'ci_result': payload})}\n\n"
-                elif ev.get("type") == "session_message":
-                    # Cross-session message (server/agent_tools/cross_session.py).
-                    # This is the ONLY delivery path when the target session has
-                    # no turn in flight — the chat SSE drainer only exists while
-                    # a turn is actively running, so a message sent to an idle
-                    # (but open) session must land here or it never appears live.
-                    payload = ev.get("sessionMessage") or {}
-                    yield f"data: {ndjson_dumps({'session_message': payload})}\n\n"
-                # else: agent progress — handled by the chat SSE drainer,
-                # skip here so we don't double-render team_progress rows.
+                frame = _session_event_frame(ev)
+                if frame is not None:
+                    yield f"data: {ndjson_dumps(frame)}\n\n"
         finally:
             event_bus.unsubscribe(session_id, queue)
 

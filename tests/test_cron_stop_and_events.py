@@ -108,14 +108,17 @@ def test_stop_endpoint_running_job(cron_client):
 
 def test_session_events_forwards_cron_progress_as_team_progress():
     """The long-lived SSE forwards cron_progress inside the team_progress
-    envelope (the frontend folds it with the existing team logic)."""
-    import inspect
+    envelope (the frontend folds it with the existing team logic).
 
-    from server.infrastructure import sessions_routes as SR
+    Asserted on the mapping itself rather than the route's source text: the
+    per-session and multiplexed channels now share one helper, so this pins
+    the behaviour both of them render.
+    """
+    from server.infrastructure.sessions_routes import _session_event_frame
 
-    src = inspect.getsource(SR.session_events)
-    assert "cron_progress" in src
-    assert "team_progress" in src
+    assert _session_event_frame({"type": "cron_progress", "event": {"agent_id": "cron:r1"}}) == {
+        "team_progress": {"agent_id": "cron:r1"}
+    }
 
 
 def test_chat_drainer_skips_cron_progress():
@@ -187,15 +190,13 @@ def test_session_events_yields_session_message():
 
 
 def test_session_events_forwards_session_message():
-    """Source-level parity check, matching the style of the cron_progress
-    test above: the branch and payload key exist in the route source."""
-    import inspect
+    """Parity check matching the cron_progress test above: the cross-session
+    message keeps its envelope, asserted on the shared mapping."""
+    from server.infrastructure.sessions_routes import _session_event_frame
 
-    from server.infrastructure import sessions_routes as SR
-
-    src = inspect.getsource(SR.session_events)
-    assert '"session_message"' in src
-    assert "sessionMessage" in src
+    assert _session_event_frame({"type": "session_message", "sessionMessage": {"text": "hi"}}) == {
+        "session_message": {"text": "hi"}
+    }
 
 
 def test_stop_endpoint_reaches_deleted_but_running_job(cron_client):

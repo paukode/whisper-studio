@@ -27,12 +27,19 @@ class AgentEventBus:
     ``loop.call_soon_threadsafe``. Kept general on purpose — cron runs as a
     native asyncio task today (same loop as its subscribers), but this must
     stay correct for any future caller that publishes from a worker thread.
+
+    ``subscribe_all`` adds a wildcard subscriber that receives every
+    session's events as ``(session_id, event)``. One SSE connection can then
+    serve every open session, instead of one connection per session eating
+    the browser's per-origin connection budget.
     """
 
     def __init__(self) -> None:
         # Each subscriber is (queue, loop) so cross-thread publishes
         # can hand the put off to the right event loop.
         self._subscribers: dict[str, list[tuple[asyncio.Queue, asyncio.AbstractEventLoop]]] = {}
+        # Wildcard subscribers receive (session_id, event) for every session.
+        self._wildcard: list[tuple[asyncio.Queue, asyncio.AbstractEventLoop]] = []
         self._lock = threading.Lock()
 
     def subscribe(self, session_id: str) -> asyncio.Queue:
@@ -51,25 +58,45 @@ class AgentEventBus:
             if not entries:
                 self._subscribers.pop(session_id, None)
 
+    def subscribe_all(self) -> asyncio.Queue:
+        """Subscribe to EVERY session. The queue yields ``(session_id, event)``
+        tuples rather than bare events, so one consumer can route frames."""
+        q: asyncio.Queue = asyncio.Queue(maxsize=_MAX_QUEUE)
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            self._wildcard.append((q, loop))
+        return q
+
+    def unsubscribe_all(self, queue: asyncio.Queue) -> None:
+        with self._lock:
+            self._wildcard[:] = [
+                (q, listener) for (q, listener) in self._wildcard if q is not queue
+            ]
+
     def publish(self, session_id: str, event: dict) -> None:
         """Non-blocking publish — drops the event if any subscriber is full.
 
         Safe to call from threads other than the subscriber's loop;
         delivery is scheduled via ``call_soon_threadsafe`` when needed.
+        Per-session subscribers get the bare event; wildcard subscribers get
+        ``(session_id, event)`` so one stream can serve every session.
         """
         with self._lock:
-            entries = list(self._subscribers.get(session_id, ()))
-        if not entries:
+            targets: list[tuple[asyncio.Queue, asyncio.AbstractEventLoop, object]] = [
+                (q, loop, event) for (q, loop) in self._subscribers.get(session_id, ())
+            ]
+            targets += [(q, loop, (session_id, event)) for (q, loop) in self._wildcard]
+        if not targets:
             return
-        for q, loop in entries:
-            try:
-                running = asyncio.get_running_loop()
-            except RuntimeError:
-                running = None
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        for q, loop, payload in targets:
             if running is loop:
                 # Same loop — direct put is fine and avoids a hop.
                 try:
-                    q.put_nowait(event)
+                    q.put_nowait(payload)
                 except asyncio.QueueFull:
                     log.warning(
                         "event_bus: dropped event for session=%s (queue full)",
@@ -77,9 +104,9 @@ class AgentEventBus:
                     )
             else:
                 # Cross-thread (or no loop) — hop into the subscriber's loop.
-                def _deliver(q=q, event=event, sid=session_id):
+                def _deliver(q=q, payload=payload, sid=session_id):
                     try:
-                        q.put_nowait(event)
+                        q.put_nowait(payload)
                     except asyncio.QueueFull:
                         log.warning(
                             "event_bus: dropped event for session=%s (queue full)",
