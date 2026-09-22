@@ -9,6 +9,10 @@ import pytest
 
 from server.diarization import embedder, voiceprints
 
+# Captured at import, before the autouse fixture below pins it to True, so the
+# default-off tests exercise the real gate rather than the fixture's stub.
+_REAL_ENABLED = voiceprints.enabled
+
 
 @pytest.fixture(autouse=True)
 def _isolated_store(tmp_path, monkeypatch):
@@ -83,3 +87,20 @@ def test_corrupt_store_is_survivable(tmp_path):
     assert voiceprints.match(ANNA) is None
     assert voiceprints.enroll("Anna", [ANNA, ANNA]) is True
     assert voiceprints.match(ANNA) == "Anna"
+
+
+def test_gallery_is_off_by_default():
+    """Cross-session recognition is opt-in. Putting a name on the wrong person
+    is worse than leaving them as "Speaker 3", so out of the box every
+    recording starts from "Speaker 1" again."""
+    from server.infrastructure.config import DEFAULTS
+
+    assert DEFAULTS["speaker_voiceprints"] is False
+
+
+def test_absent_config_key_reads_as_off(monkeypatch):
+    """A missing key must not fall back to on: no silent enable."""
+    from server.infrastructure import config as config_mod
+
+    monkeypatch.setattr(config_mod, "get", lambda key, default=None: None)
+    assert _REAL_ENABLED() is False

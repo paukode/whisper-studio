@@ -178,6 +178,16 @@ def _session_event_frame(ev: dict) -> dict | None:
         # SSE closed, so this long-lived channel is the only path that can
         # surface them.
         return {"memory_event": ev.get("memoryEvent") or {}}
+    if kind == "agent_report":
+        # A report that landed with no live turn to carry it (a cancelled
+        # team, a background or resumed agent). Nothing else forwards this:
+        # the chat SSE drainer only exists while a turn is running, so
+        # without this branch the row only appears on the next hydrate.
+        return {"agent_report": ev.get("agentReport") or {}}
+    if kind == "agent_answer":
+        # The wake turn's reply to those reports. Same story: this is the
+        # only live path to a session that is open but idle.
+        return {"agent_answer": ev.get("agentAnswer") or {}}
     if kind == "task_event":
         # Background-task lifecycle (shell/agent/workflow rows in the unified
         # registry), delivered here so completion cards land without an

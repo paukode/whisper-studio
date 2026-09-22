@@ -270,9 +270,11 @@
     <p>Word timestamps are required, and a backend that cannot report them simply never splits: a wrong
       text cut is worse than a single label. Whisper and Parakeet report them; Canary does not.</p>
 
-    <h2 id="voiceprints">Voiceprints across sessions</h2>
+    <h2 id="voiceprints">Voiceprints across sessions (off by default)</h2>
     <p>Session labels answer "who spoke when" inside one recording and reset the next morning.
-      <code class="path">server/diarization/voiceprints.py</code> answers the other half. Renaming
+      <code class="path">server/diarization/voiceprints.py</code> answers the other half, and is
+      opt-in: <code>speaker_voiceprints</code> defaults to <code>false</code>, so out of the box every
+      recording starts from "Speaker 1" and nothing is matched or enrolled. Renaming
       "Speaker 2" to a name stores the centroid of every embedding that cluster has accumulated, so the
       same person is recognised by name in later recordings. Enrollment is therefore a side effect of a
       gesture the user already performs, built from real meeting audio rather than a separate ritual.</p>
@@ -284,7 +286,8 @@
       and a clear margin over the runner-up, because putting the wrong name on somebody is worse than
       leaving them as "Speaker 3". A recovered identity reaches the client as
       <code>speaker_named</code> and is applied exactly like a manual rename. Set
-      <code>speaker_voiceprints</code> to <code>false</code> to keep everything session-scoped.</p>
+      <code>speaker_voiceprints</code> to <code>true</code> to turn any of this on; left at its
+      default everything stays session-scoped.</p>
 
     <h2 id="dictation">Dictation skips speaker ID</h2>
     <p>When the connection carries <code>dictation=1</code> (the chat-input microphone), speaker

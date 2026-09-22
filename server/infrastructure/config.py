@@ -145,7 +145,10 @@ DEFAULTS = {
     "speaker_split_turns": True,
     # Remember named speakers across recordings. Renaming "Speaker 2" to a
     # name stores that cluster's voiceprint; later sessions recognise them.
-    "speaker_voiceprints": True,
+    # Opt-in: matching a voice across sessions is not reliable enough to put
+    # a name on somebody by default, so speakers start as "Speaker 1/2" every
+    # recording unless this is turned on explicitly.
+    "speaker_voiceprints": False,
     "bedrock_region": "us-east-1",
     # Hands-free voice mode (Amazon Nova 2 Sonic over Bedrock). region "" follows
     # bedrock_region; Sonic is only in us-east-1, us-west-2, eu-north-1 and
