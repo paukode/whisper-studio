@@ -8,16 +8,16 @@ Also home to:
 - execute_ws_open_folder: the public bridge used by chat.py / tool_router.py
 - _normalize_quotes + _replace_with_normalization: quote-tolerant matching
   used by ws_edit_file
-- _is_read_only_command: classifier that decides whether ws_run_command
-  bypasses the approval dialog
 - _WORKTREES: in-memory registry shared with the worktree route handlers
+
+ws_run_command asks read_only._is_read_only_command whether a command may skip
+the approval card.
 """
 
 import base64
 import json
 import logging
 import os
-import re
 import subprocess
 
 from server import file_state
@@ -38,6 +38,7 @@ from .paths import (
     _ws_validate_path,
     stage_file_bytes,
 )
+from .read_only import _is_read_only_command
 from .state import (
     _workspace_prompt_payload,
     get_workspace_path,
@@ -579,119 +580,6 @@ def _exec_ws_delete_file(tool_input, transcript, current_attachments):
         original = "(binary or unreadable)"
     payload = json.dumps({"action": "delete", "path": path, "original": original})
     return f"[WS_APPROVAL]{payload}"
-
-
-_READ_ONLY_COMMAND_PREFIXES = frozenset(
-    {
-        "git status",
-        "git diff",
-        "git log",
-        "git show",
-        "git branch",
-        "git tag",
-        "git remote",
-        "git stash list",
-        "git rev-parse",
-        "git describe",
-        "git shortlog",
-        "git blame",
-        "git ls-files",
-        "git ls-tree",
-        "ls",
-        "cat",
-        "head",
-        "tail",
-        "wc",
-        "file",
-        "stat",
-        "du",
-        "df",
-        "find",
-        "grep",
-        "egrep",
-        "fgrep",
-        "rg",
-        "ag",
-        "echo",
-        "printf",
-        "date",
-        "whoami",
-        "hostname",
-        "uname",
-        "pwd",
-        "which",
-        "where",
-        "type",
-        "env",
-        "printenv",
-        "diff",
-        "cmp",
-        "sort",
-        "uniq",
-        "tr",
-        "cut",
-        "sed -n",
-        "tree",
-        "readlink",
-        "realpath",
-        "basename",
-        "dirname",
-    }
-)
-
-# `find` action predicates that write or execute — their presence turns an
-# otherwise read-only `find` into a mutation/arbitrary-exec path.
-_FIND_WRITE_ACTIONS = frozenset(
-    {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf", "-fls"}
-)
-
-
-def _segment_is_read_only(seg: str) -> bool:
-    """True only if a single (unpiped) command segment is provably read-only.
-
-    Fails closed: rejects output redirection to a real file and, for ``find``,
-    any action predicate that writes or executes. Interpreters like
-    ``python -c`` / ``node -e`` / ``awk`` are deliberately NOT in the allowlist
-    because they run arbitrary code (``python3 -c "shutil.rmtree(...)"``).
-    """
-    seg = seg.strip()
-    if not seg:
-        return False
-    # Strip quoted content so a quoted '>' or metacharacter does not count,
-    # then allow only harmless stderr merges / /dev/null sinks; any remaining
-    # '>' is a real file write and forces approval.
-    unquoted = re.sub(r"'[^']*'|\"[^\"]*\"", "", seg)
-    safe_redirs = re.sub(r"\d*>&\d+|\d*>>?\s*/dev/null", "", unquoted)
-    if ">" in safe_redirs:
-        return False
-    if seg == "find" or seg.startswith("find ") or seg.startswith("find\t"):
-        if any(tok in _FIND_WRITE_ACTIONS for tok in unquoted.split()):
-            return False
-    for prefix in _READ_ONLY_COMMAND_PREFIXES:
-        if seg == prefix or seg.startswith(prefix + " ") or seg.startswith(prefix + "\t"):
-            return True
-    return False
-
-
-def _is_read_only_command(command: str) -> bool:
-    """Check if a shell command is read-only (safe to execute without approval).
-
-    A command is read-only only if EVERY pipe segment is independently
-    read-only, so a read-only head piped into an interpreter
-    (``cat script | bash``, ``echo payload | sh``) does NOT bypass approval.
-    """
-    # Strip leading cd ... && or cd ... ;
-    cmd = command.strip()
-    # Handle "cd /path && actual_command" pattern
-    if cmd.startswith("cd "):
-        for sep in (" && ", "; "):
-            idx = cmd.find(sep)
-            if idx != -1:
-                cmd = cmd[idx + len(sep) :].strip()
-                break
-    # Every pipe segment must be read-only (empty segments, e.g. from `||`,
-    # fail closed and force approval).
-    return all(_segment_is_read_only(seg) for seg in cmd.split("|"))
 
 
 @register_executor("ws_run_command", read_only=False, concurrent_safe=False)

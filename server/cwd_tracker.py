@@ -1,8 +1,8 @@
 """
 Working directory persistence across shell commands per session.
 
-Appends `; pwd` to commands to capture the final working directory,
-then stores it per session so the next command starts from there.
+Appends a marker and `pwd` to commands to capture the final working
+directory, then stores it per session so the next command starts from there.
 """
 
 import contextvars
@@ -169,11 +169,13 @@ def clear_scope(session_id: str, scope: str) -> None:
 
 
 def wrap_command_for_cwd(command: str) -> str:
-    """Append pwd capture to a command.
+    """Append pwd capture to a command, keeping the command's exit status.
 
-    The last line of stdout will be the final working directory.
+    The last line of stdout will be the final working directory. The status
+    is saved before the marker runs and restored at the end; otherwise every
+    command would report pwd's status (0).
     """
-    return f"{command}\necho __CWD_MARKER__; pwd"
+    return f"{command}\n__ws_rc=$?; echo __CWD_MARKER__; pwd; exit $__ws_rc"
 
 
 def extract_cwd_from_output(output: str) -> tuple[str, str]:

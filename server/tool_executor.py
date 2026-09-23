@@ -405,7 +405,9 @@ async def _execute_ws_approval_inline(ws_parsed: dict, *, agent: bool = False) -
         return f"Error executing {action}: {e}"
     if outcome.ok:
         return outcome.output or f"[OK] {action}"
-    return f"Error: {outcome.error or 'unknown error'}"
+    # A command that ran and failed carries its output next to the exit code.
+    error = f"Error: {outcome.error or 'unknown error'}"
+    return f"{error}\n\n{outcome.output}" if outcome.output else error
 
 
 async def process_tool_results(

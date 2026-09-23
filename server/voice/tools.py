@@ -697,7 +697,8 @@ async def _execute_approval(action: str, payload: dict[str, Any]) -> tuple[bool,
             invalidate_changes_cache()
     if outcome.ok:
         return True, outcome.output or ""
-    return False, outcome.error or outcome.output or "unknown error"
+    detail = "\n\n".join(part for part in (outcome.error, outcome.output) if part)
+    return False, detail or "unknown error"
 
 
 async def _resolve_request(decision: str, ctx: ToolContext) -> str:
