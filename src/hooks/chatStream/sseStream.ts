@@ -965,7 +965,8 @@ export async function sendApprovalContinuation(
       const detail = outcome.output ? `\n\n${outcome.output}` : '';
       content = `[User approved] ${approval.action}: ${target}. The action succeeded.${detail}`;
     } else {
-      const detail = outcome.error ?? outcome.output ?? 'unknown error';
+      // A command that ran and failed carries its output next to the exit code.
+      const detail = [outcome.error, outcome.output].filter(Boolean).join('\n\n') || 'unknown error';
       content = `[User approved but the operation FAILED] ${approval.action}: ${target}. Error: ${detail}`;
     }
   } else {

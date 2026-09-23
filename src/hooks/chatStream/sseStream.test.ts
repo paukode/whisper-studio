@@ -390,6 +390,26 @@ describe('sendApprovalContinuation', () => {
     expect(content).not.toContain('filesystem');
   });
 
+  it('keeps a failed command’s output next to its exit code', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(sseResponse([{ text: 'done' }]));
+
+    await sendApprovalContinuation(approval, 'sess-resume', true, undefined, {
+      ok: false,
+      error: 'exit code 1',
+      output: '2 tests failed',
+    });
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0][1]!.body)) as {
+      approved_tool_result: { content: string };
+    };
+    const content = body.approved_tool_result.content;
+    expect(content).toContain('FAILED');
+    expect(content).toContain('exit code 1');
+    expect(content).toContain('2 tests failed');
+  });
+
   it('reports the server’s own reason when the continuation request is rejected', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ error: 'This session already has a response in progress.' }), {
