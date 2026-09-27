@@ -78,13 +78,14 @@ def _spawn_extraction(
 ) -> None:
     """Fire-and-forget auto-memory extraction after a local turn.
 
-    The extraction agent runs through the cloud agent runtime (run_agent
-    resolves the memory_extractor model itself; the local model id passed here
-    is ignored), so it only fires when cloud access is allowed: in "local"
-    model mode the app is fully offline and extraction skips gracefully, while
-    hybrid/cloud modes get the same two-tier extraction the cloud paths spawn
-    (see chat/routes.py and openai_bedrock/stream.py). Throttle + cursor +
-    feature-flag gates all live inside ``maybe_extract_memory``.
+    The extraction agent runs on a cloud model (run_agent resolves the
+    memory_extractor model itself; the local model id passed here is ignored),
+    so it only runs when cloud access is allowed. Local mode records no
+    memories, and says so: the auto_memory flag's ``local_mode_note`` is shown
+    in the Feature flags panel and on the Memory row. Hybrid and Cloud modes
+    get the same two-tier extraction the cloud paths spawn. The Local-mode,
+    throttle, cursor and feature-flag gates all live inside
+    ``maybe_extract_memory``.
     """
     if not messages:
         return
@@ -92,11 +93,6 @@ def _spawn_extraction(
         from server.infrastructure.feature_flags import is_enabled
 
         if not is_enabled("auto_memory"):
-            return
-        from server.infrastructure.model_mode import current_mode
-
-        if current_mode() == "local":
-            log.debug("Skipping auto-memory extraction: fully offline (model_mode=local)")
             return
         from server.infrastructure.async_tasks import spawn
         from server.local.runtime import local_model_meta
@@ -121,20 +117,17 @@ def _spawn_dream(model_key: str, ws_path: str | None) -> None:
 
     Mirrors the cloud paths (chat/routes.py and openai_bedrock/stream.py):
     record the session against each memory tier and consolidate any tier that
-    is due. The consolidator agent runs on a cloud model, so — like
-    ``_spawn_extraction`` above — this skips gracefully when the app is fully
-    offline (model_mode=local). Cadence + feature-flag gates also live inside
+    is due. The consolidator agent runs on a cloud model, so the
+    dream_consolidation flag is off in Local mode with a visible reason
+    (``local_mode_off``). Cadence and feature-flag gates also live inside
     ``record_and_maybe_dream``.
     """
     try:
         from server.infrastructure.feature_flags import is_enabled
 
+        # Off in Local mode through the flag itself (local_mode_off), which
+        # the Feature flags panel shows with its reason.
         if not is_enabled("dream_consolidation"):
-            return
-        from server.infrastructure.model_mode import current_mode
-
-        if current_mode() == "local":
-            log.debug("Skipping dream consolidation: fully offline (model_mode=local)")
             return
         from server.infrastructure.async_tasks import spawn
         from server.local.runtime import local_model_meta

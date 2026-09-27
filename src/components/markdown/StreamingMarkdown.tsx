@@ -8,6 +8,7 @@ import {
 import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
 import { attachWsFileHandlers } from '@/utils/wsFileLinks';
 import { toStepNarration } from '@/utils/stepNarration';
+import { useHtmlProp } from '@/hooks/useHtmlProp';
 
 // Local Marked instance with `breaks: true` so newlines become <br> during
 // streaming. Scoped here so it never mutates the global marked config shared
@@ -65,6 +66,7 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
       markedOptions: { renderer },
     });
   }, [content, isStreaming, instanceId]);
+  const finalInnerHtml = useHtmlProp(finalHtml);
 
   // Capture per-block scroll state before innerHTML replaces the DOM.
   // Used as a snapshot so the post-replace restore step can decide
@@ -221,7 +223,7 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     <div
       ref={containerRef}
       className={containerClassName}
-      dangerouslySetInnerHTML={{ __html: finalHtml }}
+      dangerouslySetInnerHTML={finalInnerHtml}
     />
   );
 };

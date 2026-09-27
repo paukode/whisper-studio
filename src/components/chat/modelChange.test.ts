@@ -9,18 +9,31 @@ vi.mock('@/api/localModel', () => ({
   loadLocalModel: loadLocalModelMock,
   unloadLocalModel: unloadLocalModelMock,
 }));
-// Only used on the data-retention (cloud Mythos) paths, not exercised here.
-vi.mock('@/api/client', () => ({ put: vi.fn(async () => ({})), get: vi.fn() }));
+// The data-retention PUT (cloud Mythos paths): enables retention by default.
+const { putMock } = vi.hoisted(() => ({
+  putMock: vi.fn(async (): Promise<unknown> => ({ mode: 'provider_data_share', enabled: true })),
+}));
+vi.mock('@/api/client', () => ({ put: putMock, get: vi.fn() }));
 
 import { requestModelChange } from './dataRetentionConsent';
 import { useSettingsStore, type ModelEntry } from '@/stores/settingsStore';
+import { useUIStore } from '@/stores/uiStore';
 
 const cloud = (key: string): ModelEntry => ({ key, name: key });
 const local = (key: string): ModelEntry => ({ key, name: key, is_local: true });
 
-const MODELS: ModelEntry[] = [cloud('opus4.8'), local('local_gemma'), local('local_coder')];
+const gated = (key: string): ModelEntry => ({ key, name: key, requires_data_retention: true });
+
+const MODELS: ModelEntry[] = [
+  cloud('opus4.8'),
+  gated('fable5.1'),
+  local('local_gemma'),
+  local('local_coder'),
+];
 
 beforeEach(() => {
+  putMock.mockClear();
+  useUIStore.setState({ dialogStack: [], toasts: [] });
   loadLocalModelMock.mockClear();
   loadLocalModelMock.mockResolvedValue(true);
   unloadLocalModelMock.mockClear();
@@ -78,5 +91,43 @@ describe('requestModelChange — lazy on-device load', () => {
     const ok = await requestModelChange('opus4.8');
     expect(ok).toBe(false);
     expect(loadLocalModelMock).not.toHaveBeenCalled();
+  });
+});
+
+/** Answer the consent screen the switch opens (true = confirm, false = decline). */
+async function answerConsent(value: boolean): Promise<void> {
+  await vi.waitFor(() => expect(useUIStore.getState().dialogStack.length).toBe(1));
+  const { id } = useUIStore.getState().dialogStack[0];
+  useUIStore.getState().resolveDialog(id, value);
+}
+
+describe('requestModelChange: leaving a local model for a retention-gated one', () => {
+  beforeEach(() => {
+    useSettingsStore.setState({ selectedModel: 'local_gemma', loadedLocalModel: 'local_gemma' });
+  });
+
+  it('keeps the local model loaded when the consent screen is declined', async () => {
+    const pending = requestModelChange('fable5.1');
+    await answerConsent(false);
+    expect(await pending).toBe(false);
+    expect(unloadLocalModelMock).not.toHaveBeenCalled();
+    expect(useSettingsStore.getState().selectedModel).toBe('local_gemma');
+  });
+
+  it('keeps the local model loaded when enabling retention fails', async () => {
+    putMock.mockRejectedValueOnce(new Error('No AWS credentials'));
+    const pending = requestModelChange('fable5.1');
+    await answerConsent(true);
+    expect(await pending).toBe(false);
+    expect(unloadLocalModelMock).not.toHaveBeenCalled();
+    expect(useSettingsStore.getState().selectedModel).toBe('local_gemma');
+  });
+
+  it('frees the local model once the switch commits', async () => {
+    const pending = requestModelChange('fable5.1');
+    await answerConsent(true);
+    expect(await pending).toBe(true);
+    expect(useSettingsStore.getState().selectedModel).toBe('fable5.1');
+    expect(unloadLocalModelMock).toHaveBeenCalledTimes(1);
   });
 });

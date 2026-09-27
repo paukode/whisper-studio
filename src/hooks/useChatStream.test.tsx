@@ -12,11 +12,13 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { useChatStream } from './useChatStream';
+import { killSessionStream, useChatStream } from './useChatStream';
 import { dropRuntime, getActiveChatStore, getChatStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSubagentStore } from '@/stores/subagentStore';
 import { useUIStore } from '@/stores/uiStore';
+import { useSettingsStore } from '@/stores/settingsStore';
+import { registerStreamController } from './chatStream/streamControl';
 
 function emptySSEResponse(): Response {
   const stream = new ReadableStream<Uint8Array>({
@@ -39,7 +41,7 @@ describe('useChatStream', () => {
     // leak activity into this one.
     for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
     useSessionStore.setState({ currentSessionId: null, liveSessions: {}, sessions: [] });
-    useSubagentStore.setState({ stops: {} });
+    useSubagentStore.setState({ stops: {}, owners: {} });
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => emptySSEResponse());
   });
 
@@ -55,6 +57,24 @@ describe('useChatStream', () => {
 
     const s = getActiveChatStore().getState();
     expect(s.messages.some((m) => m.role === 'user' && m.content === 'hello world')).toBe(true);
+  });
+
+  it("refreshes the session readout after a turn, so a GPT turn's cost carries its note", async () => {
+    const NOTE = 'Estimate at list rates. AWS billed GPT on Bedrock at $0 for this account as of 2026-09-23.';
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).includes('/api/costs/session/')) {
+        return new Response(
+          JSON.stringify({ prompt_tokens: 900, output_tokens: 30, cost_usd: 0.2, note: NOTE, estimated_rounds: 0 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return emptySSEResponse();
+    });
+    const { result } = renderHook(() => useChatStream());
+    await act(async () => {
+      await result.current.send('hello');
+    });
+    await vi.waitFor(() => expect(getActiveChatStore().getState().sessionCostNote).toBe(NOTE));
   });
 
   it('exposes a stable {send, sendMidTurn, abort} shape', () => {
@@ -120,6 +140,74 @@ describe('useChatStream', () => {
       expect(s.messages.some((m) => m.role === 'user' && m.content === 'are you still there')).toBe(false);
     });
 
+    it('a JSON 200 that does not confirm the queue is not delivered', async () => {
+      useSessionStore.setState({ currentSessionId: 'unconfirmed-sess', liveSessions: {}, sessions: [] });
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ queued_into_running_turn: false }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const { result } = renderHook(() => useChatStream());
+      let delivered: boolean | undefined;
+      await act(async () => {
+        delivered = await result.current.sendMidTurn('still there?');
+      });
+
+      expect(delivered).toBe(false);
+      const s = getChatStore('unconfirmed-sess').getState();
+      expect(s.messages.some((m) => m.role === 'user' && m.content === 'still there?')).toBe(false);
+    });
+
+    it('a slow confirmation never queues the same message twice', async () => {
+      // Reported as "not sent, then it showed up five times": the server
+      // answered late, every extra Enter posted the text again, and each copy
+      // was queued. Presses while the first delivery is open send nothing.
+      useSessionStore.setState({ currentSessionId: 'slow-sess', liveSessions: {}, sessions: [] });
+      useUIStore.setState({ toasts: [] });
+      let answer: (r: Response) => void = () => {};
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+        (input) => String(input).includes('/api/chat')
+          ? new Promise<Response>((resolve) => { answer = resolve; })
+          : Promise.resolve(new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })),
+      );
+      const store = getChatStore('slow-sess');
+      store.getState().setStreaming(true);
+      const chatCalls = () => fetchSpy.mock.calls.filter((c) => String(c[0]).includes('/api/chat'));
+
+      const { result } = renderHook(() => useChatStream());
+      let first: Promise<boolean> = Promise.resolve(false);
+      const retries: boolean[] = [];
+      await act(async () => {
+        first = result.current.sendMidTurn('did you push the branch?');
+        for (let i = 0; i < 4; i++) retries.push(await result.current.sendMidTurn('did you push the branch?'));
+      });
+      expect(chatCalls()).toHaveLength(1);
+      expect(retries).toEqual([false, false, false, false]);
+      expect(useUIStore.getState().toasts.some((t) => /still delivering/i.test(t.message))).toBe(true);
+
+      let delivered: boolean | undefined;
+      await act(async () => {
+        answer(new Response(JSON.stringify({ queued_into_running_turn: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }));
+        delivered = await first;
+      });
+      expect(delivered).toBe(true);
+      const bubbles = store.getState().messages.filter(
+        (m) => m.role === 'user' && m.content === 'did you push the branch?',
+      );
+      expect(bubbles).toHaveLength(1);
+
+      // The next message goes out once the first one has landed.
+      await act(async () => {
+        void result.current.sendMidTurn('and open the MR');
+      });
+      expect(chatCalls()).toHaveLength(2);
+    });
+
     it('sends nothing when there is no active session, and says so', async () => {
       // The one outcome that used to be silent. From the composer a silent
       // false is indistinguishable from a dead Enter key, which is how this
@@ -142,6 +230,98 @@ describe('useChatStream', () => {
       expect(shown).toHaveLength(1);
       expect(shown[0].type).toBe('error');
       expect(shown[0].message).toMatch(/not delivered/i);
+    });
+  });
+
+  // A JSON body is never an SSE stream. Fed to the SSE reader it parsed zero
+  // events, so the send ended with the user's bubble and nothing else.
+  describe('send() JSON replies', () => {
+    function chatJson(status: number, body: unknown): void {
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        if (!String(input).includes('/api/chat')) return new Response('{}', { status: 200 });
+        return new Response(JSON.stringify(body), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      });
+    }
+
+    it('a reply queued into the running turn keeps the bubble and says where it went', async () => {
+      useSessionStore.setState({ currentSessionId: 'queued-sess', liveSessions: {}, sessions: [] });
+      useUIStore.setState({ toasts: [] });
+      chatJson(200, { queued_into_running_turn: true });
+
+      const { result } = renderHook(() => useChatStream());
+      await act(async () => {
+        await result.current.send('are you there?');
+      });
+
+      const s = getChatStore('queued-sess').getState();
+      expect(s.messages.some((m) => m.role === 'user' && m.content === 'are you there?')).toBe(true);
+      expect(s.isStreaming).toBe(false);
+      // The same notice the composer's steer path shows for a delivered text.
+      const queuedToast = useUIStore.getState().toasts.find((t) => t.key === 'midturn-queued');
+      expect(queuedToast?.type).toBe('info');
+    });
+
+    // The race the plain queued case cannot show: this send aborts the
+    // session's own reply first, and the server, which frees that turn's slot
+    // only once it notices the disconnect, queues the text into it.
+    it('a reply queued into the turn this send just replaced is not reported as delivered', async () => {
+      useSessionStore.setState({ currentSessionId: 'replace-sess', liveSessions: {}, sessions: [] });
+      useUIStore.setState({ toasts: [] });
+      const liveReply = new AbortController();
+      registerStreamController('replace-sess', liveReply);
+      getChatStore('replace-sess').getState().setStreaming(true);
+      chatJson(200, { queued_into_running_turn: true });
+
+      const { result } = renderHook(() => useChatStream());
+      await act(async () => {
+        await result.current.send('summarize this line');
+      });
+
+      expect(liveReply.signal.aborted).toBe(true);
+      const s = getChatStore('replace-sess').getState();
+      // The text stays on screen so it can be sent again.
+      expect(s.messages.some((m) => m.role === 'user' && m.content === 'summarize this line')).toBe(true);
+      expect(s.isStreaming).toBe(false);
+      const toasts = useUIStore.getState().toasts;
+      expect(toasts.some((t) => t.key === 'midturn-queued')).toBe(false);
+      const notAnswered = toasts.find((t) => t.key === 'queued-into-replaced-turn');
+      expect(notAnswered?.type).toBe('error');
+      expect(notAnswered?.message).toMatch(/not answered/i);
+    });
+
+    it('a JSON refusal shows the server reason instead of going silent', async () => {
+      useSessionStore.setState({ currentSessionId: 'refused-sess', liveSessions: {}, sessions: [] });
+      chatJson(400, { error: 'This model is not available in Local mode.' });
+
+      const { result } = renderHook(() => useChatStream());
+      await act(async () => {
+        await result.current.send('hello');
+      });
+
+      const s = getChatStore('refused-sess').getState();
+      const last = s.messages[s.messages.length - 1];
+      expect(last.role).toBe('assistant');
+      expect(last.content).toContain('This model is not available in Local mode.');
+      expect(s.isStreaming).toBe(false);
+    });
+
+    it('a 200 JSON body that is not a queue confirmation is reported, not swallowed', async () => {
+      useSessionStore.setState({ currentSessionId: 'odd-sess', liveSessions: {}, sessions: [] });
+      useUIStore.setState({ toasts: [] });
+      chatJson(200, { queued_into_running_turn: false });
+
+      const { result } = renderHook(() => useChatStream());
+      await act(async () => {
+        await result.current.send('hello');
+      });
+
+      const s = getChatStore('odd-sess').getState();
+      expect(s.messages[s.messages.length - 1].role).toBe('assistant');
+      expect(s.messages[s.messages.length - 1].content).toMatch(/Error/);
+      expect(useUIStore.getState().toasts.some((t) => t.key === 'midturn-queued')).toBe(false);
     });
   });
 
@@ -206,6 +386,72 @@ describe('useChatStream', () => {
     expect(messages[2].toolUse?.[0].toolName).toBe('workflow_preview');
     expect(messages[3].toolUse?.[0].toolName).toBe('cron_create');
     expect(messages.some((m) => /No text response|without text/.test(m.content))).toBe(false);
+  });
+
+  it('an approval card remembers the model and effort its turn was sent with', async () => {
+    useSettingsStore.setState({ selectedModel: 'cloud-opus', effortLevel: 'high' });
+    chatStreamOf([
+      {
+        approval_request: {
+          tool_use_id: 'tu_run',
+          action: 'terminal_run',
+          category: 'cli',
+          preview: 'command',
+          summary: 'npm run build',
+          payload: { command: 'npm run build' },
+        },
+      },
+    ]);
+
+    const { result } = renderHook(() => useChatStream());
+    await act(async () => {
+      await result.current.send('build it');
+    });
+    const sent = (globalThis.fetch as unknown as { mock: { calls: Array<[unknown, RequestInit]> } })
+      .mock.calls.find((c) => String(c[0]).includes('/api/chat'))!;
+    const body = JSON.parse(String(sent[1].body)) as { model: string; effort_level: string };
+
+    // Another session picks a different model while the card waits.
+    useSettingsStore.setState({ selectedModel: 'local_gemma', effortLevel: 'low' });
+
+    const card = getActiveChatStore().getState().currentApproval;
+    expect(card?.turnSettings.model).toBe(body.model);
+    expect(card?.turnSettings.effort_level).toBe(body.effort_level);
+  });
+
+  // Question and folder-prompt cards pause the turn the same way an approval
+  // does, and their answer is the resumed half of it: it must not pick up a
+  // model chosen elsewhere while the card waited.
+  describe('an answered card resumes on its own turn\'s settings', () => {
+    function bodies(): Array<{ model: string; effort_level: string }> {
+      const mock = globalThis.fetch as unknown as { mock: { calls: Array<[unknown, RequestInit]> } };
+      return mock.mock.calls
+        .filter((c) => String(c[0]).includes('/api/chat'))
+        .map((c) => JSON.parse(String(c[1].body)) as { model: string; effort_level: string });
+    }
+
+    it.each([
+      ['a question', { user_question: { question: 'Which DB?', options: ['sqlite', 'pg'], tool_use_id: 'tu_card' } }],
+      ['a folder prompt', { ws_workspace_prompt: { reason: 'no_workspace', suggested: '', recent: [], tool_use_id: 'tu_card' } }],
+    ])('%s', async (_label, frame) => {
+      useSessionStore.setState({ currentSessionId: 'card-sess', liveSessions: {}, sessions: [] });
+      useSettingsStore.setState({ selectedModel: 'cloud-opus', effortLevel: 'high' });
+      chatStreamOf([frame]);
+      const { result } = renderHook(() => useChatStream());
+      await act(async () => {
+        await result.current.send('set it up');
+      });
+
+      // Another session picks an on-device model while the card waits.
+      useSettingsStore.setState({ selectedModel: 'local_gemma', effortLevel: 'low' });
+      await act(async () => {
+        await result.current.send('', { approvedToolResult: [{ tool_use_id: 'tu_card', content: 'sqlite' }] });
+      });
+
+      const [first, resumed] = bodies();
+      expect(resumed.model).toBe(first.model);
+      expect(resumed.effort_level).toBe(first.effort_level);
+    });
   });
 
   it('continuation send (approvedToolResult) does not append a user message', async () => {
@@ -381,19 +627,71 @@ describe('useChatStream', () => {
     expect(s.messages.filter((m) => m.role === 'assistant')).toHaveLength(0);
   });
 
-  it('abort stops and clears every registered subagent', () => {
+  it('abort stops only the subagents the viewed session started', () => {
     const stopA = vi.fn();
     const stopB = vi.fn();
-    useSubagentStore.getState().register('team-a', stopA);
-    useSubagentStore.getState().register('team-b', stopB);
+    useSubagentStore.getState().register('team-a', 'sess-A', stopA);
+    useSubagentStore.getState().register('team-b', 'sess-B', stopB);
 
     const { result } = renderHook(() => useChatStream());
     act(() => {
-      result.current.abort(); // no main stream running — subagents alone
+      useSessionStore.setState({ currentSessionId: 'sess-B' });
+      result.current.abort(); // no main stream running: subagents alone
     });
 
-    expect(stopA).toHaveBeenCalledTimes(1);
+    // Session B's run is stopped and gone; session A's keeps working.
     expect(stopB).toHaveBeenCalledTimes(1);
-    expect(useSubagentStore.getState().stops).toEqual({});
+    expect(useSubagentStore.getState().stops['team-b']).toBeUndefined();
+    expect(stopA).not.toHaveBeenCalled();
+    expect(useSubagentStore.getState().stops['team-a']).toBe(stopA);
+
+    act(() => {
+      useSessionStore.setState({ currentSessionId: 'sess-A' });
+      result.current.abort();
+    });
+    expect(stopA).toHaveBeenCalledTimes(1);
+    expect(useSubagentStore.getState().stops['team-a']).toBeUndefined();
+  });
+
+  // Stop scopes its kill to the start of the running TURN. An answered
+  // question card resumes the turn that asked, so work that turn began before
+  // the card (a background dev server it launched) stays in reach; only a new
+  // message starts a new turn.
+  it('an answered card keeps the turn start that Stop sends; a new message resets it', async () => {
+    const stopSince: number[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes('/shell/tasks/stop')) {
+        stopSince.push(JSON.parse(String(init?.body)).since);
+        return new Response('{}', { status: 200 });
+      }
+      if (!url.includes('/api/chat')) return new Response('{}', { status: 200 });
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('data: {"text": "working"}\n\n'));
+          // Never closes: each Stop lands mid-stream.
+        },
+      });
+      return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    });
+    const now = vi.spyOn(Date, 'now');
+    const { result } = renderHook(() => useChatStream());
+    const sendAt = async (at: number, ...args: Parameters<typeof result.current.send>) => {
+      now.mockReturnValue(at);
+      await act(async () => {
+        void result.current.send(...args);
+        await new Promise((r) => setTimeout(r, 30));
+      });
+    };
+
+    await sendAt(7_000_000, 'set up the app and ask me which port');
+    const sid = useSessionStore.getState().currentSessionId!;
+    await sendAt(7_120_000, '', { approvedToolResult: { tool_use_id: 'q1', content: '5173' } });
+    act(() => killSessionStream(sid));
+    expect(stopSince[stopSince.length - 1]).toBe(7_000);
+
+    await sendAt(7_200_000, 'now something else');
+    act(() => killSessionStream(sid));
+    expect(stopSince[stopSince.length - 1]).toBe(7_200);
   });
 });

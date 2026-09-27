@@ -250,16 +250,28 @@ class ParakeetSession:
                 if self._has_words(text):
                     events.append({"kind": "final", "text": text, "audio": audio, "words": words})
             # An utterance just closed; the next interim starts a fresh window.
-            self._last_interim = ""
-            return events
+            return self._close_draft(events)
 
         # No boundary this chunk — re-decode the growing in-flight utterance.
         pending = self._buf.pending()
+        if self._last_interim and not pending:
+            # The VAD discarded the utterance the draft belonged to (too
+            # little voiced audio): it closed without a final.
+            return self._close_draft(events)
         if len(pending) >= _MIN_INTERIM_BYTES:
             text, _, _ = self._decode(pending)
             if self._has_words(text) and text != self._last_interim:
                 self._last_interim = text
                 events.append({"kind": "interim", "text": text})
+        return events
+
+    def _close_draft(self, events: list[dict]) -> list[dict]:
+        """End the in-flight utterance's draft. When the utterance produced
+        no final (no words, or too little voiced audio for the VAD), an empty
+        interim withdraws the draft still on screen."""
+        if self._last_interim and not events:
+            events.append({"kind": "interim", "text": ""})
+        self._last_interim = ""
         return events
 
     def finish(self) -> list[dict]:
@@ -270,10 +282,9 @@ class ParakeetSession:
                 text, audio, words = self._decode(tail)
                 if self._has_words(text):
                     events.append({"kind": "final", "text": text, "audio": audio, "words": words})
-            self._last_interim = ""
         except Exception as e:
             log.debug("Parakeet finish flush failed: %s", e)
-        return events
+        return self._close_draft(events)
 
     def close(self) -> None:
         # No stateful decoder context to release; the VAD buffer is plain RAM.

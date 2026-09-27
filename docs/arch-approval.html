@@ -122,10 +122,17 @@
         parses the command with <code>shlex</code> rather than matching a substring, so it sees
         through wrappers (<code>sudo</code>, <code>env</code>, <code>command</code>,
         <code>nice</code>, <code>exec</code>, <code>doas</code>, <code>xargs</code>,
-        <code>parallel</code>) and catches <code>rm</code>, <code>rmdir</code>, <code>unlink</code>,
-        <code>shred</code>, <code>srm</code>, and <code>find ... -delete</code> /
-        <code>find ... -exec rm</code>. A command it cannot parse is treated as rm-like, so it fails
-        toward asking. Note that this check does not <em>block</em> anything: it forces the card.</p></li>
+        <code>parallel</code>, <code>nohup</code>, <code>time</code>, <code>timeout</code> and a few
+        more, and reserved words such as <code>then</code>; behind one every later word is checked,
+        so an option's value cannot hide the verb), reads a shell's <code>-c</code> script (<code>sh -c "rm -rf build"</code>,
+        <code>bash -lc '...'</code>) and an <code>eval</code> as commands of their own, and catches
+        <code>rm</code>, <code>rmdir</code>, <code>unlink</code>, <code>shred</code>,
+        <code>srm</code>, and <code>find ... -delete</code> / <code>find ... -exec rm</code>. A
+        command it cannot parse is treated as rm-like, so it fails toward asking. Note that this
+        check does not <em>block</em> anything: it forces the card. A <code>preview_start</code>
+        that names a launch config carries no command of its own, so the check also reads the
+        command <code class="path">.whisper/launch.json</code> resolves it to and the one pinned into
+        the call, each joined with spaces, plus any script it hands a shell with <code>-c</code>.</p></li>
       <li><h4>A request to leave the sandbox</h4><p>A call asking for
         <code>sandbox_permissions: "danger-full-access"</code> always returns ask. That parameter is
         a request to drop the sandbox's write confinement for one command, so it can never be covered
@@ -148,6 +155,23 @@
         <code>permissions.json</code> rules; the first matching rule's action wins. A rule matches by
         <code>tool</code> (or <code>*</code>) plus a glob <code>pattern</code> or a
         <code>prefix</code> against a per-tool field.</p></li>
+      <li><h4>An approved named preview config</h4><p>A <code>preview_start</code> that names a
+        <code class="path">.whisper/launch.json</code> config (no <code>runtimeExecutable</code> in
+        the input, and any <code>cwd</code> inside the workspace) returns allow when a person has
+        approved its command once, so it starts in every mode, including plan,
+        <code>dontAsk</code>, and <code>auto</code> without a classifier call. Trust is the SHA-256
+        of the resolved argv per workspace (<code class="path">server/preview/launch_trust.py</code>),
+        recorded only by a person's answer to the card (<code>execute_approved_by_human</code> in
+        <code class="path">server/approval/spec.py</code>, used by the Yes button and a spoken yes);
+        a config nobody approved, or one whose command changed, skips this step and follows the
+        mode. It sits below the checks above on purpose: outside bypass a deny rule or a session "No
+        for all" on <code>preview</code> still refuses it, and the rm-class floor is checked against
+        the command the config resolves to. It also requires the config pinned into the call at
+        dispatch to match the file, and the executor runs that pin, so what was decided and shown is
+        what runs. An ad-hoc preview command skips this step. The predicates live in
+        <code class="path">server/preview/start_policy.py</code>; the per-tool denial counter in
+        <code>execute_tool_batch</code> reads <code>never_prompts</code>, which also requires no
+        floor and no asking rule, so a named start that still shows a card keeps counting.</p></li>
       <li><h4>Mode fallbacks</h4><p><code>dontAsk</code> returns deny; <code>acceptEdits</code>
         returns allow for the <code>write</code> category; <code>auto</code> returns
         <code>None</code> (defer to the classifier); otherwise the default is ask.</p></li>

@@ -1,9 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { get, post, put } from '@/api/client';
 import { dialogConfirm } from '@/stores/uiStore';
+import { useSettingsStore } from '@/stores/settingsStore';
 import { pickFact } from '@/components/common/buddyFacts';
 
 const AI_FACTS_KEY = 'buddy_ai_facts';
+
+/** Why fresh AI facts are off while the app is in Local mode (they come from a
+ *  cloud model; the curated pack stays on this Mac). */
+const LOCAL_MODE_FACTS_REASON =
+  'Fresh facts use Amazon Bedrock, and Local mode keeps everything on this Mac. ' +
+  'Switch to Hybrid or Cloud in Settings > Model mode to use them.';
 
 /* ── Backend shape (GET/POST /api/buddy) ── */
 interface Bones {
@@ -148,6 +155,16 @@ export const BuddyWidget: React.FC = () => {
   const [aiFacts, setAiFacts] = useState(() => {
     try { return localStorage.getItem(AI_FACTS_KEY) === '1'; } catch { return false; }
   });
+  // Fresh facts are off in Local mode (and when the server says so, if this
+  // window has not seen the mode switch yet): the pack serves the fact, and the
+  // toggle is disabled with the reason. The saved opt-in is kept for later.
+  // A server refusal is remembered with the mode this window showed at the
+  // time, so a later mode switch clears it.
+  const modelMode = useSettingsStore((s) => s.config.modelMode);
+  const [serverRefusal, setServerRefusal] = useState<{ mode: string; reason: string } | null>(null);
+  const freshFactsOff = modelMode === 'local'
+    ? LOCAL_MODE_FACTS_REASON
+    : serverRefusal?.mode === modelMode ? serverRefusal.reason : null;
   // companion feature flag, null until resolved; the widget is dormant when false.
   const [companionEnabled, setCompanionEnabled] = useState<boolean | null>(null);
   const [position, setPosition] = useState<{ right: number; bottom: number }>(() => {
@@ -258,17 +275,18 @@ export const BuddyWidget: React.FC = () => {
     petTimer.current = setTimeout(() => setPetting(false), 500);
 
     let fact = pickFact(lastFact.current);
-    if (aiFacts) {
+    if (aiFacts && !freshFactsOff) {
       try {
-        const res = await get<{ fact?: string }>('/api/buddy/fact');
-        if (res?.fact) fact = res.fact;
+        const res = await get<{ fact?: string; reason?: string }>('/api/buddy/fact');
+        if (res?.reason) setServerRefusal({ mode: modelMode, reason: res.reason });
+        else if (res?.fact) fact = res.fact;
       } catch { /* fall back to the curated pack */ }
     }
     if (!mountedRef.current) return;
     lastFact.current = fact;
     setSpeech({ text: fact, fact: true });
     scheduleClose(8000);
-  }, [buddy, aiFacts, scheduleClose]);
+  }, [buddy, aiFacts, freshFactsOff, modelMode, scheduleClose]);
 
   /* Begin a fact-bubble resize from the corner grip. Seeds from the live box
    *  so it works even before any size has been persisted. */
@@ -437,13 +455,17 @@ export const BuddyWidget: React.FC = () => {
                 </svg>
                 Click to pet (fact)
               </div>
-              <label className="buddy-card-toggle">
+              <label className="buddy-card-toggle" title={freshFactsOff ?? undefined}>
                 <input
                   type="checkbox"
-                  checked={aiFacts}
+                  checked={aiFacts && !freshFactsOff}
+                  disabled={!!freshFactsOff}
                   onChange={(e) => setAiFacts(e.target.checked)}
                 />
-                Fresh facts <span className="buddy-card-toggle-hint">(AI)</span>
+                Fresh facts{' '}
+                <span className="buddy-card-toggle-hint">
+                  {freshFactsOff ? '(AI, off in Local mode)' : '(AI)'}
+                </span>
               </label>
             </div>
           )}

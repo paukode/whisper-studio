@@ -1,29 +1,27 @@
-"""Cost tracking system — persists per-turn token usage and USD costs to SQLite.
+"""The cost log: one SQLite row per billed model call, priced when read.
 
 Provides:
-  - Per-turn recording with model breakdown
-  - Session-level aggregation
-  - Daily/weekly summaries
-  - Dashboard API endpoints
-  - Cost export (CSV/JSON)
+  - the rate table (pricing.example.json overlaid by the user's pricing.json)
+  - estimate_cost / prompt_token_total, the one pricing and normalization rule
+  - record_turn, the only writer of session_costs
+  - get_session_usage, the composer readout and the session budget cap
+
+Rows store token counts and their provenance, never a dollar figure: every
+reader prices the stored counts with the current rate table, so a rate
+correction re-rates history everywhere at once. The ranged report, the
+export and the daily cap live in server.costs.usage; the HTTP routes in
+server.costs.routes.
 """
 
-import csv
-import io
 import json
 import logging
 import os
 import sqlite3
 from contextlib import contextmanager
 
-from fastapi import APIRouter
-from fastapi.responses import Response
-
 from server.infrastructure.paths import config_dir, repo_root, storage_root
 
 log = logging.getLogger("whisper-studio")
-
-router = APIRouter(prefix="/api/costs", tags=["costs"])
 
 STORAGE_DIR = storage_root()
 DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
@@ -31,19 +29,23 @@ DB_PATH = os.path.join(STORAGE_DIR, "sessions.db")
 # ── Model pricing (USD per 1M tokens) ────────────────────────────────
 # Sourced from JSON, not code: ``pricing.example.json`` (committed, at the repo
 # root next to config.example.json) holds the authoritative default rates, and
-# an optional gitignored ``pricing.json`` overlays them PER KEY — the same
-# example→override split as config.example.json → config.json. Adding or
-# repricing a model is a JSON edit, no code change. Loaded once at import;
-# changes apply on server restart.
+# an optional gitignored ``pricing.json`` of the user's own overrides overlays
+# them PER KEY. Adding or repricing a model is a JSON edit, no code change.
+# Loaded once at import; changes apply on server restart.
 #
 # Keyed by chat_models KEY (e.g. "opus5.0"), not the Bedrock model id. Every
 # rate is explicit and there is NO fallback bucket: a model with no entry bills
 # $0 and logs loudly (see get_model_pricing) rather than inheriting another
 # model's rate. Entry shape:
-#   input / output          — required, USD per 1M tokens
-#   cache_read / cache_write — optional (default 0.0); prompt-cache read/write
-#   cached_in_input          — optional bool; OpenAI convention where
-#                              input_tokens already includes the cached portion
+#   input / output          : required, USD per 1M tokens
+#   cache_read / cache_write : optional (default 0.0); prompt-cache read/write
+#   cached_in_input          : optional bool; OpenAI convention where
+#                              input_tokens already includes the cached and
+#                              the cache-written portions
+#   long_context             : optional {"above": N, input, output, cache_read,
+#                              cache_write}; a call whose prompt is above N
+#                              tokens bills ALL its tokens at these rates
+#                              (the GPT cards' 272K break)
 PRICING_EXAMPLE_PATH = os.path.join(repo_root(), "pricing.example.json")
 PRICING_PATH = os.path.join(config_dir(), "pricing.json")
 
@@ -52,25 +54,42 @@ PRICING_PATH = os.path.join(config_dir(), "pricing.json")
 _RATE_FIELDS = ("input", "output", "cache_read", "cache_write")
 
 
-def _coerce_pricing_entry(val: object) -> dict | None:
-    """Validate/normalize one raw pricing entry. Returns a clean dict, or None
-    for anything malformed (missing/non-numeric input|output) so a typo in the
-    file can't take pricing down — the model just bills $0 and logs."""
+def _coerce_rates(val: object) -> dict | None:
     if not isinstance(val, dict) or "input" not in val or "output" not in val:
         return None
     try:
-        entry = {f: float(val.get(f, 0.0)) for f in _RATE_FIELDS}
+        return {f: float(val.get(f, 0.0)) for f in _RATE_FIELDS}
     except (TypeError, ValueError):
+        return None
+
+
+def _coerce_pricing_entry(val: object) -> dict | None:
+    """Validate/normalize one raw pricing entry. Returns a clean dict, or None
+    for anything malformed (missing/non-numeric input|output, a long_context
+    tier without its rates or a positive ``above``) so a typo in the file
+    can't take pricing down; the model just bills $0 and logs."""
+    entry = _coerce_rates(val)
+    if entry is None:
         return None
     if val.get("cached_in_input"):
         entry["cached_in_input"] = True
+    if "long_context" in val:
+        raw = val["long_context"]
+        tier = _coerce_rates(raw)
+        try:
+            above = int(raw.get("above")) if isinstance(raw, dict) else 0
+        except (TypeError, ValueError):
+            above = 0
+        if tier is None or above <= 0:
+            return None
+        entry["long_context"] = {"above": above, **tier}
     return entry
 
 
 def _read_pricing_file(path: str) -> dict:
-    """Parse one pricing JSON file into {key: entry}. Missing file → {} (the
+    """Parse one pricing JSON file into {key: entry}. Missing file gives {} (the
     overlay is optional). Keys starting with "_" or "$" are annotations and are
-    skipped. Unreadable/malformed file → {} and a loud log (never crashes)."""
+    skipped. Unreadable/malformed file gives {} and a loud log (never crashes)."""
     try:
         with open(path) as f:
             raw = json.load(f)
@@ -94,31 +113,125 @@ def _read_pricing_file(path: str) -> dict:
 def _load_pricing() -> dict:
     """Default rates from pricing.example.json, overlaid PER KEY by pricing.json
     (user entries win). A missing example file degrades to {} (all models bill
-    $0 and log) rather than crashing the cost tracker."""
+    $0 and log) rather than crashing the cost tracker.
+
+    An override entry equal to a rate some release shipped for that key is a
+    stale seeded copy of an old template, not a user decision: it is skipped
+    (and logged) so a later rate correction is never shadowed."""
+    from server.costs.pricing_history import is_shipped
+
     table = _read_pricing_file(PRICING_EXAMPLE_PATH)
-    table.update(_read_pricing_file(PRICING_PATH))
+    for key, entry in _read_pricing_file(PRICING_PATH).items():
+        if is_shipped(key, entry):
+            if entry != table.get(key):
+                log.info(
+                    "pricing.json entry for %r equals a rate an earlier release shipped; "
+                    "using the current default instead",
+                    key,
+                )
+            continue
+        log.info("pricing.json overrides the rates for %r", key)
+        table[key] = entry
     return table
 
 
 _MODEL_PRICING = _load_pricing()
 
+# Keys already reported as unpriced: readers price history on every request,
+# so one ERROR line per key and process is loud enough.
+_reported_unpriced: set[str] = set()
+
+
+def is_expected_free(model_key: str) -> bool:
+    """On-device models cost $0 by design; so does the placeholder key a
+    call with no resolvable model records. Neither is a missing cloud rate."""
+    return model_key.startswith("local_") or model_key in ("unknown", "")
+
 
 def get_model_pricing(model_key: str) -> dict | None:
-    """Exact per-model pricing. Returns None (and logs) for an unknown key —
+    """Exact per-model pricing. Returns None (and logs) for an unknown key:
     there is no fallback to another model's rate."""
     pricing = _MODEL_PRICING.get(model_key)
-    if pricing is None:
-        # On-device models cost $0 by design and the placeholder key
-        # 'unknown' is a subagent row with no model; neither is a missing
-        # cloud rate, so neither belongs at ERROR (they were the only ERROR
-        # lines in an otherwise clean log).
-        expected_free = model_key.startswith("local_") or model_key in ("unknown", "")
+    if pricing is None and model_key not in _reported_unpriced:
+        _reported_unpriced.add(model_key)
         log.log(
-            logging.DEBUG if expected_free else logging.ERROR,
-            "No pricing entry for model %r — billing $0. Add it to _MODEL_PRICING.",
+            logging.DEBUG if is_expected_free(model_key) else logging.ERROR,
+            "No pricing entry for model %r: billing $0. Add it to pricing.example.json.",
             model_key,
         )
     return pricing
+
+
+def rates_for(model_key: str, long_context: bool = False) -> dict | None:
+    """The rates one tier of a model bills at: its long-context rates when
+    asked for and the entry has them, else its standard rates."""
+    pricing = get_model_pricing(model_key)
+    if pricing is None:
+        return None
+    if long_context and pricing.get("long_context"):
+        return pricing["long_context"]
+    return pricing
+
+
+def is_long_context(
+    model_key: str, input_tokens: int, cache_read_tokens: int = 0, cache_creation_tokens: int = 0
+) -> bool:
+    """True when ONE call's prompt is above its model's long-context
+    threshold, so all of that call's tokens bill at the long-context rates.
+    Never ask it about a sum of calls: many short prompts add up to a long
+    one."""
+    tier = (_MODEL_PRICING.get(model_key) or {}).get("long_context")
+    if not tier:
+        return False
+    return (
+        prompt_tokens_for(model_key, input_tokens, cache_read_tokens, cache_creation_tokens)
+        > tier["above"]
+    )
+
+
+def call_cost(
+    model_key: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+) -> float:
+    """USD cost of ONE model call, at the tier its own prompt falls in. A
+    running total is the sum of its calls' call_cost, never the price of the
+    summed counts."""
+    return estimate_cost(
+        model_key,
+        input_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        long_context=is_long_context(
+            model_key, input_tokens, cache_read_tokens, cache_creation_tokens
+        ),
+    )
+
+
+def long_context_sql() -> tuple[str, list]:
+    """``(expression, params)``: SQL over one session_costs row, 1 when that
+    call's prompt was above its model's long-context threshold (the test
+    is_long_context makes), else 0. Readers group by it, so each group sums
+    calls of one tier and prices linearly."""
+    whens: list[str] = []
+    params: list = []
+    for key, entry in _MODEL_PRICING.items():
+        tier = entry.get("long_context")
+        if not tier:
+            continue
+        prompt = (
+            "MAX(input_tokens, cache_read_tokens + cache_creation_tokens)"
+            if entry.get("cached_in_input")
+            else "(input_tokens + cache_read_tokens + cache_creation_tokens)"
+        )
+        whens.append(f"WHEN ? THEN ({prompt} > ?)")
+        params += [key, tier["above"]]
+    if not whens:
+        return "0", []
+    return f"(CASE model {' '.join(whens)} ELSE 0 END)", params
 
 
 def estimate_cost(
@@ -127,28 +240,42 @@ def estimate_cost(
     output_tokens: int,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
-    cached_in_input: bool = False,
+    *,
+    long_context: bool = False,
 ) -> float:
-    """Estimate USD cost for a model call, including prompt-cache reads/writes.
+    """USD cost of these token counts at ONE tier of the model's rates (its
+    long-context rates when ``long_context``), including prompt-cache reads
+    and writes. Use call_cost for a single call: it picks the tier.
 
-    cached_in_input distinguishes the two provider conventions:
-      * Anthropic (False, default): input / cache_read / cache_creation are
+    The provider convention comes from the model's pricing entry
+    (``cached_in_input``), never from the caller, so no call site can drop it:
+      * Anthropic (flag absent): input / cache_read / cache_creation are
         disjoint token buckets, each billed once.
-      * OpenAI (True): cache_read_tokens are a SUBSET of input_tokens, so the
-        cached portion is billed once at the cache_read rate and the remainder
-        at the input rate — never both. OpenAI has no cache-creation charge.
+      * OpenAI (flag set): cache_read_tokens and cache_creation_tokens are
+        SUBSETS of input_tokens, so the cached and the written portions are
+        billed once, at the cache_read and cache_write rates, and only the
+        remainder at the input rate, never both.
+
+    Linear in every count, so pricing the token sums of calls of one tier
+    equals summing their call_cost.
     """
     pricing = get_model_pricing(model_key)
     if pricing is None:
         return 0.0
-    billable_input = input_tokens - cache_read_tokens if cached_in_input else input_tokens
+    cached_in_input = bool(pricing.get("cached_in_input"))
+    rates = rates_for(model_key, long_context)
+    billable_input = (
+        input_tokens - cache_read_tokens - cache_creation_tokens
+        if cached_in_input
+        else input_tokens
+    )
     if billable_input < 0:
         billable_input = 0
     return (
-        (billable_input / 1_000_000 * pricing["input"])
-        + (output_tokens / 1_000_000 * pricing["output"])
-        + (cache_read_tokens / 1_000_000 * pricing["cache_read"])
-        + (cache_creation_tokens / 1_000_000 * pricing["cache_write"])
+        (billable_input / 1_000_000 * rates["input"])
+        + (output_tokens / 1_000_000 * rates["output"])
+        + (cache_read_tokens / 1_000_000 * rates["cache_read"])
+        + (cache_creation_tokens / 1_000_000 * rates["cache_write"])
     )
 
 
@@ -163,20 +290,67 @@ def prompt_token_total(
     Providers disagree on what ``input_tokens`` counts, so it is never the
     prompt size on its own:
       * Anthropic (cached_in_input False): input / cache_read / cache_creation
-        are disjoint buckets — a fully cached prompt reports a handful of
+        are disjoint buckets; a fully cached prompt reports a handful of
         input tokens and the rest as cache reads. Sum all three.
-      * OpenAI (True): cache_read is a SUBSET of input_tokens, which is
-        already the whole prompt. Adding the cached portion would double it.
+      * OpenAI (True): cache_read and cache_creation are SUBSETS of
+        input_tokens, which is already the whole prompt. Adding either
+        would double it.
 
     Same flag semantics as estimate_cost, from the same two sources: the
-    adapter attribute live, the pricing entry for recorded rows.
+    adapter attribute live, the pricing entry for recorded rows
+    (prompt_tokens_for).
     """
     if cached_in_input:
-        return max(input_tokens, cache_read_tokens) + cache_creation_tokens
+        return max(input_tokens, cache_read_tokens + cache_creation_tokens)
     return input_tokens + cache_read_tokens + cache_creation_tokens
 
 
+def cached_in_input_for(model_key: str) -> bool:
+    """The OpenAI convention flag of a recorded model key, from its rates."""
+    return bool((_MODEL_PRICING.get(model_key) or {}).get("cached_in_input"))
+
+
+def prompt_tokens_for(
+    model_key: str, input_tokens: int, cache_read_tokens: int, cache_creation_tokens: int
+) -> int:
+    """prompt_token_total for recorded rows of one model key."""
+    return prompt_token_total(
+        input_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        cached_in_input=cached_in_input_for(model_key),
+    )
+
+
 # ── Database operations ───────────────────────────────────────────────
+
+
+# The current session_costs shape. Migrations 001, 021 and 022 build it on a
+# database the app owns; this bootstrap creates it where no migration ran yet
+# (tests, a fresh file), the same split as grounding_store._ensure_table.
+_TABLE_DDL = """
+    CREATE TABLE IF NOT EXISTS session_costs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        turn_number INTEGER NOT NULL,
+        model TEXT NOT NULL,
+        input_tokens INTEGER NOT NULL DEFAULT 0,
+        output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+        api_duration_ms INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        source TEXT NOT NULL DEFAULT '',
+        count_source TEXT NOT NULL DEFAULT 'reported',
+        estimated_fields TEXT NOT NULL DEFAULT '',
+        count_detail TEXT NOT NULL DEFAULT ''
+    )
+"""
+_INDEX_DDL = (
+    "CREATE INDEX IF NOT EXISTS idx_session_costs_session ON session_costs(session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_session_costs_created ON session_costs(created_at)",
+)
+_ensured: set[str] = set()
 
 
 @contextmanager
@@ -184,10 +358,29 @@ def _get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
+        if DB_PATH not in _ensured:
+            conn.execute(_TABLE_DDL)
+            for ddl in _INDEX_DDL:
+                conn.execute(ddl)
+            _ensured.add(DB_PATH)
         yield conn
         conn.commit()
     finally:
         conn.close()
+
+
+class CostLogUnreadable(RuntimeError):
+    """The cost log could not be read. Readers raise it instead of reading
+    as empty or $0: a spend that silently reads as nothing would disarm the
+    caps and blank the Costs tab with no reason given."""
+
+    def __init__(self, what: str, error: Exception):
+        super().__init__(f"Could not read {what} from the cost log: {error}")
+
+
+# Token fields an adapter can report as estimated (characters / 4 of the
+# posted body or of the received content, because the payload carried none).
+ESTIMATABLE_FIELDS = ("input", "output", "cache_read", "cache_write")
 
 
 def record_turn(
@@ -196,31 +389,52 @@ def record_turn(
     model: str,
     input_tokens: int,
     output_tokens: int,
-    cost_usd: float,
     api_duration_ms: int = 0,
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
+    *,
+    source: str,
+    estimated: tuple[str, ...] | list[str] = (),
+    detail: dict | None = None,
 ) -> None:
-    """Persist a single turn's cost data."""
+    """Persist one billed model call: its token counts, never a price.
+
+    ``source`` names the caller (server.costs.sources); an unknown one raises,
+    so no spend lands unlabelled. ``estimated`` lists the token fields the
+    adapter estimated instead of reading them from the provider's payload
+    (the row is then ``count_source`` 'estimated'); ``detail`` holds both
+    reported sources when they disagreed (the row carries the authoritative
+    one)."""
+    from server.costs.sources import require_source
+
+    require_source(source)
+    bad = [f for f in estimated if f not in ESTIMATABLE_FIELDS]
+    if bad:
+        raise ValueError(f"unknown estimated fields {bad!r}")
+    fields = ",".join(f for f in ESTIMATABLE_FIELDS if f in estimated)
     try:
         with _get_conn() as conn:
             conn.execute(
                 """
                 INSERT INTO session_costs
                     (session_id, turn_number, model, input_tokens, output_tokens,
-                     cache_read_tokens, cache_creation_tokens, cost_usd, api_duration_ms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     cache_read_tokens, cache_creation_tokens, api_duration_ms,
+                     source, count_source, estimated_fields, count_detail)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     session_id,
                     turn_number,
                     model,
-                    input_tokens,
-                    output_tokens,
-                    cache_read_tokens,
-                    cache_creation_tokens,
-                    cost_usd,
-                    api_duration_ms,
+                    int(input_tokens or 0),
+                    int(output_tokens or 0),
+                    int(cache_read_tokens or 0),
+                    int(cache_creation_tokens or 0),
+                    int(api_duration_ms or 0),
+                    source,
+                    "estimated" if fields else "reported",
+                    fields,
+                    json.dumps(detail, sort_keys=True) if detail else "",
                 ),
             )
     except Exception as e:
@@ -228,11 +442,11 @@ def record_turn(
 
 
 def get_session_costs(session_id: str) -> list[dict]:
-    """Get per-turn cost breakdown for a session."""
+    """Every recorded call of one session, oldest first (raw token rows)."""
     try:
         with _get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM session_costs WHERE session_id = ? ORDER BY turn_number",
+                "SELECT * FROM session_costs WHERE session_id = ? ORDER BY id",
                 (session_id,),
             ).fetchall()
         return [dict(r) for r in rows]
@@ -244,318 +458,43 @@ _EMPTY_USAGE = {"prompt_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "rounds
 
 
 def get_session_usage(session_id: str) -> dict:
-    """Running token/cost totals for one session, as the live readout shows them.
+    """Running token/cost totals for one session, as the live readout shows
+    them, priced with the current rate table. Raises CostLogUnreadable when
+    the log cannot be read.
 
     Grouped by model because the cache convention (and so what ``input_tokens``
     means) is per-model: each group is normalized with prompt_token_total before
-    summing, so a session that mixed Claude and GPT turns still adds up.
+    summing, so a session that mixed Claude and GPT turns still adds up. And by
+    long-context tier, so each group prices at one tier.
     """
+    long_ctx, long_params = long_context_sql()
     try:
         with _get_conn() as conn:
             rows = conn.execute(
-                """
-                SELECT model,
+                f"""
+                SELECT model, {long_ctx} AS long_ctx,
                     COUNT(*) as rounds,
                     COALESCE(SUM(input_tokens), 0) as input_tokens,
                     COALESCE(SUM(output_tokens), 0) as output_tokens,
                     COALESCE(SUM(cache_read_tokens), 0) as cache_read,
-                    COALESCE(SUM(cache_creation_tokens), 0) as cache_write,
-                    COALESCE(SUM(cost_usd), 0.0) as cost_usd
-                FROM session_costs WHERE session_id = ? GROUP BY model
+                    COALESCE(SUM(cache_creation_tokens), 0) as cache_write
+                FROM session_costs WHERE session_id = ? GROUP BY model, long_ctx
                 """,
-                (session_id,),
+                (*long_params, session_id),
             ).fetchall()
-    except Exception:
-        return dict(_EMPTY_USAGE)
+    except Exception as e:
+        log.error("Cost session usage query failed: %s", e)
+        raise CostLogUnreadable("this session's spend", e) from e
 
     out = dict(_EMPTY_USAGE)
     for r in rows:
-        pricing = _resolve_pricing(r["model"])
-        out["prompt_tokens"] += prompt_token_total(
-            r["input_tokens"] or 0,
-            r["cache_read"] or 0,
-            r["cache_write"] or 0,
-            cached_in_input=bool(pricing and pricing.get("cached_in_input")),
-        )
+        model = r["model"]
+        inp, rd, wr = r["input_tokens"] or 0, r["cache_read"] or 0, r["cache_write"] or 0
+        out["prompt_tokens"] += prompt_tokens_for(model, inp, rd, wr)
         out["output_tokens"] += r["output_tokens"] or 0
-        out["cost_usd"] += r["cost_usd"] or 0.0
+        out["cost_usd"] += estimate_cost(
+            model, inp, r["output_tokens"] or 0, rd, wr, long_context=bool(r["long_ctx"])
+        )
         out["rounds"] += r["rounds"] or 0
     out["cost_usd"] = round(out["cost_usd"], 6)
     return out
-
-
-def get_session_summary(session_id: str) -> dict:
-    """Get aggregated cost summary for a session."""
-    try:
-        with _get_conn() as conn:
-            row = conn.execute(
-                """
-                SELECT
-                    COUNT(*) as turns,
-                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                    COALESCE(SUM(cache_read_tokens), 0) as total_cache_read,
-                    COALESCE(SUM(cache_creation_tokens), 0) as total_cache_creation,
-                    COALESCE(SUM(cost_usd), 0.0) as total_cost_usd,
-                    COALESCE(SUM(api_duration_ms), 0) as total_duration_ms
-                FROM session_costs WHERE session_id = ?
-            """,
-                (session_id,),
-            ).fetchone()
-        if not row:
-            return {}
-        return dict(row)
-    except Exception:
-        return {}
-
-
-def get_model_breakdown(session_id: str = "") -> list[dict]:
-    """Get per-model token usage and cost totals. If session_id is empty, returns global."""
-    try:
-        with _get_conn() as conn:
-            if session_id:
-                rows = conn.execute(
-                    """
-                    SELECT model,
-                        COUNT(*) as turns,
-                        SUM(input_tokens) as input_tokens,
-                        SUM(output_tokens) as output_tokens,
-                        SUM(cache_read_tokens) as cache_read_tokens,
-                        SUM(cost_usd) as cost_usd
-                    FROM session_costs WHERE session_id = ?
-                    GROUP BY model ORDER BY cost_usd DESC
-                """,
-                    (session_id,),
-                ).fetchall()
-            else:
-                rows = conn.execute("""
-                    SELECT model,
-                        COUNT(*) as turns,
-                        SUM(input_tokens) as input_tokens,
-                        SUM(output_tokens) as output_tokens,
-                        SUM(cache_read_tokens) as cache_read_tokens,
-                        SUM(cost_usd) as cost_usd
-                    FROM session_costs
-                    GROUP BY model ORDER BY cost_usd DESC
-                """).fetchall()
-        return [dict(r) for r in rows]
-    except Exception:
-        return []
-
-
-def get_daily_costs(days: int = 30) -> list[dict]:
-    """Get daily cost totals for the last N days."""
-    try:
-        with _get_conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT
-                    DATE(created_at) as date,
-                    COUNT(*) as turns,
-                    SUM(input_tokens) as input_tokens,
-                    SUM(output_tokens) as output_tokens,
-                    SUM(cost_usd) as cost_usd
-                FROM session_costs
-                WHERE created_at >= datetime('now', ?)
-                GROUP BY DATE(created_at)
-                ORDER BY date DESC
-            """,
-                (f"-{days} days",),
-            ).fetchall()
-        return [dict(r) for r in rows]
-    except Exception:
-        return []
-
-
-def get_cache_stats(session_id: str = "") -> dict:
-    """Aggregate prompt-cache telemetry, globally or for one session.
-
-    ``est_savings_usd`` is what the cached reads would have cost at full input
-    rate minus what they actually cost at the cache-read rate, summed per
-    model (pricing differs); models without pricing contribute tokens but no
-    savings estimate. This is the live "is caching actually working" surface
-    the cloud-prompt-caching work was missing.
-    """
-    try:
-        with _get_conn() as conn:
-            where = "WHERE session_id = ?" if session_id else ""
-            params = (session_id,) if session_id else ()
-            rows = conn.execute(
-                f"""
-                SELECT model,
-                    COALESCE(SUM(input_tokens), 0) as input_tokens,
-                    COALESCE(SUM(cache_read_tokens), 0) as cache_read,
-                    COALESCE(SUM(cache_creation_tokens), 0) as cache_write
-                FROM session_costs {where} GROUP BY model
-                """,
-                params,
-            ).fetchall()
-    except Exception:
-        return {"read_tokens": 0, "write_tokens": 0, "hit_rate": 0.0, "est_savings_usd": 0.0}
-
-    read_total = write_total = input_total = 0
-    savings = 0.0
-    for r in rows:
-        pricing = _resolve_pricing(r["model"])
-        inp = r["input_tokens"] or 0
-        rd = r["cache_read"] or 0
-        # OpenAI rows record input INCLUSIVE of cached tokens (the
-        # cached_in_input convention); normalize so the denominator is
-        # uniformly "total prompt tokens" and GPT rows don't deflate the
-        # hit rate by double-counting their cached portion.
-        if pricing and pricing.get("cached_in_input"):
-            inp = max(inp - rd, 0)
-        read_total += rd
-        write_total += r["cache_write"] or 0
-        input_total += inp
-        if pricing and rd:
-            savings += (rd / 1_000_000) * (pricing["input"] - pricing["cache_read"])
-    denominator = read_total + write_total + input_total
-    hit_rate = (read_total / denominator) if denominator else 0.0
-    return {
-        "read_tokens": read_total,
-        "write_tokens": write_total,
-        "hit_rate": round(hit_rate, 4),
-        "est_savings_usd": round(savings, 4),
-    }
-
-
-def _resolve_pricing(model: str) -> dict | None:
-    """Pricing rows are keyed by model key; recorded models may carry
-    suffixes (e.g. "opus4.8_subagent") — fall back to the LONGEST prefix
-    match so "sonnet5_subagent" resolves to sonnet5, never sonnet."""
-    if model in _MODEL_PRICING:
-        return _MODEL_PRICING[model]
-    if model:
-        matches = [k for k in _MODEL_PRICING if model.startswith(k)]
-        if matches:
-            return _MODEL_PRICING[max(matches, key=len)]
-    return None
-
-
-def get_today_total_cost() -> float:
-    """Get total cost for today (UTC)."""
-    try:
-        with _get_conn() as conn:
-            row = conn.execute("""
-                SELECT COALESCE(SUM(cost_usd), 0.0) as total
-                FROM session_costs
-                WHERE DATE(created_at) = DATE('now')
-            """).fetchone()
-        return float(row["total"]) if row else 0.0
-    except Exception:
-        return 0.0
-
-
-def get_all_costs_for_export() -> list[dict]:
-    """Get all cost records for export."""
-    try:
-        with _get_conn() as conn:
-            rows = conn.execute("""
-                SELECT session_id, turn_number, model, input_tokens, output_tokens,
-                       cache_read_tokens, cache_creation_tokens, cost_usd,
-                       api_duration_ms, created_at
-                FROM session_costs ORDER BY created_at
-            """).fetchall()
-        return [dict(r) for r in rows]
-    except Exception:
-        return []
-
-
-# ── API Endpoints ─────────────────────────────────────────────────────
-
-
-@router.get("/summary")
-async def api_cost_summary(session_id: str = ""):
-    """Global cost summary across all sessions.
-
-    With ``session_id``: adds that session's live context usage
-    (context_used/context_max, from the loop's real per-round token counts)
-    so the Stats panel's context bar reflects the active conversation.
-    """
-    daily = get_daily_costs(30)
-    models = get_model_breakdown()
-    total = sum(d["cost_usd"] for d in daily) if daily else 0.0
-    total_turns = sum(d.get("turns", 0) for d in daily) if daily else 0
-    today = get_today_total_cost()
-    out = {
-        "total_cost_usd": round(total, 4),
-        "session_cost_usd": round(total, 4),
-        "today_total_usd": round(today, 4),
-        "total_turns": total_turns,
-        "daily": daily,
-        "models": models,
-        "cache": get_cache_stats(),
-        "pricing": {k: v for k, v in _MODEL_PRICING.items()},
-    }
-    if session_id:
-        from server.chat.loop_hints import context_estimate
-
-        used, cap = context_estimate(session_id)
-        if used is not None:
-            out["context_used"] = used
-            out["context_max"] = cap
-    return out
-
-
-@router.get("/session/{session_id}")
-async def api_session_usage(session_id: str):
-    """One session's running token/cost totals, for the composer readout.
-
-    The live numbers arrive on the chat stream's usage frames; this rehydrates
-    them when a session is reopened (or the app reloaded) so the readout keeps
-    counting the whole session instead of restarting at the next turn.
-    """
-    return get_session_usage(session_id)
-
-
-@router.get("/models")
-async def api_model_costs():
-    """Per-model token usage and cost totals."""
-    return {
-        "models": get_model_breakdown(),
-        "pricing": {k: v for k, v in _MODEL_PRICING.items()},
-    }
-
-
-@router.get("/daily")
-async def api_daily_costs(days: int = 30):
-    """Daily cost totals for the bar chart."""
-    return {"days": get_daily_costs(days)}
-
-
-@router.post("/reset-daily")
-async def api_reset_daily():
-    """Delete today's cost records (manual reset)."""
-    try:
-        with _get_conn() as conn:
-            conn.execute("DELETE FROM session_costs WHERE DATE(created_at) = DATE('now')")
-            conn.commit()
-        return {"status": "ok"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-
-@router.get("/export")
-async def api_export_costs(format: str = "json"):
-    """Export all cost data as JSON or CSV."""
-    records = get_all_costs_for_export()
-
-    if format == "csv":
-        output = io.StringIO()
-        if records:
-            writer = csv.DictWriter(output, fieldnames=records[0].keys())
-            writer.writeheader()
-            writer.writerows(records)
-        content = output.getvalue()
-        return Response(
-            content=content,
-            media_type="text/csv",
-            headers={"Content-Disposition": "attachment; filename=whisper_costs.csv"},
-        )
-
-    return {
-        "records": records,
-        "total_records": len(records),
-        "total_cost_usd": round(sum(r.get("cost_usd", 0) for r in records), 4),
-    }

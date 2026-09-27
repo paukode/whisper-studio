@@ -22,6 +22,7 @@ class _FakeTool:
 class _FakeToolsResult:
     def __init__(self):
         self.tools = [_FakeTool("ping")]
+        self.nextCursor = None
 
 
 class _FakeSession:
@@ -39,10 +40,10 @@ class _FakeSession:
     async def initialize(self):
         pass
 
-    async def list_tools(self):
+    async def list_tools(self, params=None):
         return _FakeToolsResult()
 
-    async def list_resources(self):
+    async def list_resources(self, params=None):
         raise RuntimeError("no resources")
 
 
@@ -65,7 +66,7 @@ def _install_fakes(monkeypatch, record):
     monkeypatch.setattr(
         mcp,
         "ClientSession",
-        lambda r, w, elicitation_callback=None: _FakeSession(record),
+        lambda r, w, elicitation_callback=None, message_handler=None: _FakeSession(record),
         raising=False,
     )
     monkeypatch.setattr(

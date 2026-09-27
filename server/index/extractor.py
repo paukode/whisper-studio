@@ -132,8 +132,9 @@ def _extract_via_haiku(snippet: str, labels: list[str]) -> list[dict]:
                 "messages": [{"role": "user", "content": snippet}],
             }
         )
-        resp = _get_bedrock_client().invoke_model(modelId=model_id, body=body)
-        payload = json.loads(resp["body"].read())
+        from server.costs.calls import invoke_claude
+
+        payload = invoke_claude(_get_bedrock_client(), model_id=model_id, body=body, source="index")
         out_text = "".join(
             b.get("text", "") for b in payload.get("content", []) if b.get("type") == "text"
         )
@@ -166,7 +167,7 @@ def ensure_gliner_model() -> str:
     GLiNER loads its transformer backbone's tokenizer/config by HF repo id (the
     snapshot bundles the backbone *weights* but not the tokenizer), so we also
     pre-cache those small files on first download. That lets the model load
-    fully offline afterwards (``local_files_only=True`` in ``_load``) instead of
+    fully offline afterwards (the loading thread is held offline in ``_load``) instead of
     hitting the Hub for a cache-freshness check on every single load.
     """
     import json
@@ -231,6 +232,29 @@ def _quiet_spurious_tokenizer_warning() -> None:
         pass
 
 
+class _OfflineOnThisThread:
+    """Stands in for ``huggingface_hub.constants.HF_HUB_OFFLINE`` during one
+    load: true on the thread that is loading, the previous setting on every
+    other thread. Every reader tests the flag for truth (huggingface_hub's
+    request hook and ``is_offline_mode()``, which transformers calls), so the
+    loading thread cannot reach the Hub while a download another thread has
+    in flight (a catalog model, a first language-ID fetch) is untouched.
+    Inert once ``done`` is set, in case anything kept a reference to it."""
+
+    def __init__(self, outside) -> None:
+        self._outside = outside
+        self._thread = threading.get_ident()
+        self.done = False
+
+    def __bool__(self) -> bool:
+        if not self.done and threading.get_ident() == self._thread:
+            return True
+        return bool(self._outside)
+
+    def __repr__(self) -> str:
+        return repr(bool(self))
+
+
 def _load():
     global _model
     if _model is not None:
@@ -242,21 +266,24 @@ def _load():
     log.info("Loading GLiNER model ...")
     # GLiNER loads its backbone tokenizer/config by HF repo id, and transformers
     # makes a cache-freshness HEAD call to the Hub for those on every load even
-    # when they're cached — slow, rate-limited (unauthenticated), and broken
+    # when they're cached: slow, rate-limited (unauthenticated), and broken
     # offline. `local_files_only` isn't plumbed through to the backbone config
-    # load, so force Hub-offline for the duration of this load instead (scoped:
-    # it does not affect other models' loads). Restored in `finally`.
+    # load, so this thread is held offline for the duration of the load
+    # instead. Only this thread: a process-wide flip would fail any other
+    # thread's Hub download that overlaps the load. Restored in `finally`.
     import huggingface_hub.constants as _hfc
 
     _prev_offline = _hfc.HF_HUB_OFFLINE
+    _offline = _OfflineOnThisThread(_prev_offline)
     try:
-        _hfc.HF_HUB_OFFLINE = True
+        _hfc.HF_HUB_OFFLINE = _offline
         _model = GLiNER.from_pretrained(GLINER_MODEL_DIR)
     except Exception as e:  # noqa: BLE001 — cache miss (first run): fetch once online
         _hfc.HF_HUB_OFFLINE = _prev_offline
         log.info("GLiNER backbone not cached (%s); fetching from the Hub once.", e)
         _model = GLiNER.from_pretrained(GLINER_MODEL_DIR)
     finally:
+        _offline.done = True
         _hfc.HF_HUB_OFFLINE = _prev_offline
     _model.eval()
     log.info("GLiNER model loaded.")

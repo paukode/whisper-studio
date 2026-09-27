@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { rawFileUrl } from '@/api/workspace';
 import { toError } from '@/utils/toError';
 import { sanitizeHtml } from '@/utils/sanitizeHtml';
+import { useHtmlProp } from '@/hooks/useHtmlProp';
 
 export interface WordViewerProps {
   filePath: string;
@@ -85,5 +86,6 @@ const WordHtmlContent: React.FC<{ html: string }> = ({ html }) => {
   // dangerouslySetInnerHTML is intentional: `html` is the controlled subset
   // mammoth emits from docx XML. (No react/no-danger rule is configured here,
   // so no disable directive is needed.)
-  return <div className="ws-word-content markdown-body" style={{ flex: 1, overflow: 'auto', padding: 16 }} dangerouslySetInnerHTML={{ __html: html }} />;
+  const innerHtml = useHtmlProp(html);
+  return <div className="ws-word-content markdown-body" style={{ flex: 1, overflow: 'auto', padding: 16 }} dangerouslySetInnerHTML={innerHtml} />;
 };

@@ -122,6 +122,7 @@ export const RightDock: React.FC = () => {
                 name={String(p.meta?.name ?? p.id)}
                 url={(p.meta?.url as string | null | undefined) ?? null}
                 port={(p.meta?.port as number | null | undefined) ?? null}
+                owner={(p.meta?.owner as string | null | undefined) ?? null}
               />
             )}
             {p.kind === 'tasks' && <TasksPanel />}

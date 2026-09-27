@@ -5,11 +5,20 @@
  * on a warm prompt cache.
  */
 import { render } from '@testing-library/react';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+const api = vi.hoisted(() => ({ get: vi.fn() }));
+vi.mock('@/api/client', () => api);
 
 import { TokenCounter, formatTokenCount } from './TokenCounter';
 import { getChatStore } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
+import { refreshSessionUsage } from '@/stores/sessionUsage';
+
+// As the server words it (server/costs/usage.py GPT_MIXED_NOTE).
+const GPT_MIXED_NOTE =
+  'Includes GPT on Bedrock, estimated at list rates. AWS billed GPT on Bedrock at $0 for this ' +
+  'account as of 2026-09-23.';
 
 const SID = 'tc-test-session';
 
@@ -22,6 +31,8 @@ function primeActiveSession() {
     sessionInputTokens: 0,
     sessionOutputTokens: 0,
     sessionCost: 0,
+    sessionCostNote: '',
+    sessionEstimatedRounds: 0,
     contextUsed: 0,
     contextMax: 0,
   });
@@ -86,5 +97,61 @@ describe('TokenCounter', () => {
     const { container } = render(<TokenCounter />);
     expect(container.querySelector('.tc-ctx-track')).toBeNull();
     expect(container.textContent).toContain('1.0K in');
+  });
+
+  it('says on hover that the dollar figure is an estimate at list rates', () => {
+    // The app never sees the AWS bill, so the cost must not read as billed.
+    const store = primeActiveSession();
+    store.getState().setUsage(1000, 200, 0.05);
+    const { container } = render(<TokenCounter />);
+    const title = container.querySelector('.token-counter')?.getAttribute('title') ?? '';
+    expect(title).toContain('$0.0500 estimated at list rates');
+  });
+
+  it("marks a GPT session's cost with the dated list-rate note, as the Costs tab row does", async () => {
+    // The real session behind the finding: 257 GPT-6 Astra rounds, 7 Opus 5.
+    primeActiveSession();
+    api.get.mockResolvedValue({
+      prompt_tokens: 47_978_890,
+      output_tokens: 306_118,
+      cost_usd: 116.2235,
+      rounds: 264,
+      gpt_rounds: 257,
+      estimated_rounds: 0,
+      note: GPT_MIXED_NOTE,
+    });
+    await refreshSessionUsage(SID);
+    const { container } = render(<TokenCounter />);
+    expect(api.get).toHaveBeenCalledWith(`/api/costs/session/${SID}`);
+    const note = container.querySelector('#tokenCounterNote');
+    expect(note).toHaveTextContent('GPT at list rates');
+    expect(note?.getAttribute('aria-label')).toBe(GPT_MIXED_NOTE);
+    const title = container.querySelector('.token-counter')?.getAttribute('title') ?? '';
+    expect(title).toContain('AWS billed GPT on Bedrock at $0 for this account as of 2026-09-23');
+    expect(container.querySelector('.tc-cost')).not.toHaveClass('usage-est');
+  });
+
+  it('shows a Claude-only session without the GPT note', async () => {
+    primeActiveSession();
+    api.get.mockResolvedValue({ prompt_tokens: 1000, output_tokens: 10, cost_usd: 0.01, note: '' });
+    await refreshSessionUsage(SID);
+    const { container } = render(<TokenCounter />);
+    expect(container.querySelector('#tokenCounterNote')).toBeNull();
+  });
+
+  it('reads as estimated when some rounds had no token count from the provider', async () => {
+    primeActiveSession();
+    api.get.mockResolvedValue({
+      prompt_tokens: 1000,
+      output_tokens: 10,
+      cost_usd: 0.01,
+      note: '',
+      estimated_rounds: 3,
+    });
+    await refreshSessionUsage(SID);
+    const { container } = render(<TokenCounter />);
+    expect(container.querySelector('.tc-cost')).toHaveClass('usage-est');
+    const title = container.querySelector('.token-counter')?.getAttribute('title') ?? '';
+    expect(title).toContain('3 of its rounds had no token count from the provider');
   });
 });

@@ -40,9 +40,12 @@ def _rerank_backend() -> str:
 def _rerank_cohere(query: str, passages: list[str]) -> list[float]:
     """Cohere Rerank 3.5 on Bedrock (us-east-1). Returns a relevance score per
     passage aligned to input order; [] on any failure so the caller keeps the
-    fused order."""
+    fused order. Each call is billed, so each is in the cost log (source
+    ``index``)."""
     try:
         import json
+
+        from server.costs.calls import invoke_input_billed
 
         from . import embedder_cohere
 
@@ -55,8 +58,9 @@ def _rerank_cohere(query: str, passages: list[str]) -> list[float]:
                 "api_version": 2,
             }
         )
-        resp = client.invoke_model(modelId=COHERE_RERANK_MODEL_ID, body=body)
-        payload = json.loads(resp["body"].read())
+        payload = invoke_input_billed(
+            client, model_id=COHERE_RERANK_MODEL_ID, body=body, source="index"
+        )
         scores = [0.0] * len(passages)
         for r in payload.get("results", []):
             idx = r.get("index")

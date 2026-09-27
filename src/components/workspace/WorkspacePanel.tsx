@@ -1,6 +1,6 @@
 import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useWorkspaceStore } from '@/stores/workspaceStore';
+import { inConnectedRoot, useWorkspaceStore } from '@/stores/workspaceStore';
 import { useUIStore } from '@/stores/uiStore';
 import { indexStatus, queryFile, type BinaryFileInfo } from '@/api/workspace';
 import { getLangForPath } from '@/utils/languageDetection';
@@ -19,6 +19,7 @@ import { NotebookViewer } from '@/components/viewers/NotebookViewer';
 import { DiffViewer } from './DiffViewer';
 import { WorkspaceContextMenu, type ContextMenuState } from './WorkspaceContextMenu';
 import { GitChangesPanel } from '@/components/git/GitChangesPanel';
+import { disconnectWorkspace } from '@/services/workspaceConnection';
 import { toError } from '@/utils/toError';
 
 /** Extensions handled as CSV/TSV table view */
@@ -74,13 +75,15 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
       const ws = useWorkspaceStore.getState();
       for (const tab of ws.editorTabs) {
         if (tab.isDirty) continue; // Don't overwrite user edits
+        // A tab kept from another root is not this workspace's file of that path.
+        if (!inConnectedRoot(tab)) continue;
         if (tab.viewerType === 'image' || tab.viewerType === 'pdf' || tab.viewerType === 'binary' || tab.viewerType === 'diff') continue;
         queryFile(tab.path)
           .then((data) => {
             if ('content' in data && typeof data.content === 'string') {
               // Only update if content actually changed
               const current = useWorkspaceStore.getState().editorTabs.find(t => t.path === tab.path);
-              if (current && !current.isDirty && current.originalContent !== data.content) {
+              if (current && !current.isDirty && inConnectedRoot(current) && current.originalContent !== data.content) {
                 useWorkspaceStore.getState().refreshTabContent(tab.path, data.content);
               }
             }
@@ -149,10 +152,12 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
    */
   const handleFileSelect = useCallback(
     async (path: string) => {
-      // Check if already open
+      // Check if already open. A tab of the same path kept from another root
+      // is a different file: openTab replaces it, or keeps it when it holds
+      // unsaved edits and says why.
       const existing = useWorkspaceStore.getState().editorTabs.find((t) => t.path === path);
-      if (existing) {
-        useWorkspaceStore.getState().setActiveTab(path);
+      if (existing && (inConnectedRoot(existing) || existing.isDirty)) {
+        useWorkspaceStore.getState().openTab(path, existing.content, existing.language);
         return;
       }
 
@@ -262,12 +267,11 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
     [setViewerType],
   );
 
-  /** Disconnect workspace — matching vanilla wsDisconnectBtn behavior. */
-  const handleDisconnect = useCallback(async () => {
-    try {
-      await fetch('/api/workspace/disconnect', { method: 'POST' });
-    } catch { /* ignore */ }
-    useUIStore.getState().setWsConnected(false);
+  /** Disconnect the workspace. Instant and optimistic: the panel goes away on
+   *  the click and the request follows; a running turn keeps going and a
+   *  failure comes back as a toast (services/workspaceConnection.ts). */
+  const handleDisconnect = useCallback(() => {
+    void disconnectWorkspace();
   }, []);
 
   /** Context menu handler for file tree. */
@@ -391,6 +395,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
         <MonacoEditor
           key={activeTab.path}
           filePath={activeTab.path}
+          workspaceRoot={activeTab.root ?? null}
           content={activeTab.content}
           language={activeTab.language}
           onContentChange={handleContentChange}
@@ -456,7 +461,7 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
           <button
             className="btn btn-sm"
             id="wsDisconnectBtn"
-            onClick={() => void handleDisconnect()}
+            onClick={handleDisconnect}
             // A bare ✕ sitting next to the collapse chevron reads as "close
             // this panel", so it got clicked when the user meant to hide the
             // tree — and disconnecting is not a view toggle: it drops the

@@ -156,6 +156,7 @@ def run_chat_turn(monkeypatch, fake_client, body):
     import server.chat.engine.anthropic as engine_anthropic_mod
     import server.chat.routes as routes_mod
     import server.local.route as local_route
+    from server.chat import stream_slot
 
     # Patch every module-level binding of the client getter — the route, the
     # compaction summarizer, and the engine's Anthropic adapter. Missing one
@@ -187,7 +188,7 @@ def run_chat_turn(monkeypatch, fake_client, body):
     if hasattr(routes_mod, "spawn"):
         monkeypatch.setattr(routes_mod, "spawn", _swallow)
 
-    routes_mod._active_chat_streams.clear()
+    stream_slot.active_streams.clear()
 
     app = FastAPI()
     app.include_router(routes_mod.router)
@@ -226,8 +227,6 @@ def _scrub(obj):
         for k, v in obj.items():
             if k in _SCRUB_KEYS:
                 out[k] = _SCRUB_KEYS[k]
-            elif k == "tool_pool" and isinstance(v, dict):
-                out[k] = {kk: 0 for kk in v}
             else:
                 out[k] = _scrub(v)
         return out

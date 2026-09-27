@@ -163,6 +163,7 @@ async def classify_tool_call(
     tool_input: dict,
     config: dict,
     recent_messages: list[dict] | None = None,
+    session_id: str = "",
 ) -> dict:
     """
     Classify a tool call as 'allow' or 'confirm'.
@@ -193,6 +194,12 @@ async def classify_tool_call(
         models=chat_models,
         config=cfg,
     )
+    if not haiku:
+        # No cloud model resolves here (Local mode): ask, and send nothing.
+        from server.infrastructure.cloud_guard import cloud_refusal
+
+        reason = cloud_refusal("The auto-mode classifier", cfg) or "classifier unavailable"
+        return {"decision": "confirm", "reason": reason}
 
     context = _build_turn_context(recent_messages)
     user_msg = (
@@ -214,8 +221,12 @@ async def classify_tool_call(
         )
 
         def _invoke():
-            resp = bedrock.invoke_model(modelId=haiku, body=body)
-            return json.loads(resp["body"].read())["content"][0]["text"].strip()
+            from server.costs.calls import invoke_claude
+
+            payload = invoke_claude(
+                bedrock, model_id=haiku, body=body, source="classifier", session_id=session_id
+            )
+            return payload["content"][0]["text"].strip()
 
         text = await asyncio.get_running_loop().run_in_executor(None, _invoke)
         # Parse JSON response

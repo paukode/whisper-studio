@@ -9,6 +9,7 @@ each adapter converts at the wire and nothing else changes.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -33,12 +34,17 @@ class TurnUsage:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    # Each call priced at its own tier (tracker.call_cost) when it was made:
+    # the summed counts above can cross a long-context threshold no single
+    # call did, so they are never priced again.
+    cost_usd: float = 0.0
 
     def add(self, other: TurnUsage) -> None:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
         self.cache_read_tokens += other.cache_read_tokens
         self.cache_creation_tokens += other.cache_creation_tokens
+        self.cost_usd += other.cost_usd
 
     def as_dict(self) -> dict:
         return {
@@ -46,7 +52,35 @@ class TurnUsage:
             "output_tokens": self.output_tokens,
             "cache_read_tokens": self.cache_read_tokens,
             "cache_creation_tokens": self.cache_creation_tokens,
+            "cost_usd": self.cost_usd,
         }
+
+    @classmethod
+    def from_counts(cls, counts: dict, model_key: str) -> TurnUsage:
+        """One call's usage from a server.costs.capture count dict (reported
+        or estimated), priced for ``model_key``."""
+        from server.costs.tracker import call_cost
+
+        return cls(
+            input_tokens=counts["input_tokens"],
+            output_tokens=counts["output_tokens"],
+            cache_read_tokens=counts["cache_read_tokens"],
+            cache_creation_tokens=counts["cache_write_tokens"],
+            cost_usd=call_cost(
+                model_key,
+                counts["input_tokens"],
+                counts["output_tokens"],
+                counts["cache_read_tokens"],
+                counts["cache_write_tokens"],
+            ),
+        )
+
+
+# Called once per billed call with its server.costs.capture counts: the
+# payload's, or characters / 4 of what was posted and received. It runs where
+# the call ends (the worker thread for invoke_model), so a call its awaiting
+# coroutine was cancelled on is still reported.
+CountsHook = Callable[[dict], None]
 
 
 @dataclass
@@ -80,6 +114,7 @@ class ModelAdapter(Protocol):
         max_tokens: int,
         effort_label: str | None = None,
         force_structured: dict | None = None,
+        on_counts: CountsHook | None = None,
     ) -> ProviderTurn: ...
 
 

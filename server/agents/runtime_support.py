@@ -56,6 +56,21 @@ def _enter_agent_worktree(agent_id: str, session_id: str, repo_root: str | None 
         return None
 
 
+def _spawned_by_released_turn(workspace_path: str | None) -> bool:
+    """True when an agent with no pinned root is spawned by a turn whose
+    workspace the user let go of (a disconnect, or a switch in the UI).
+
+    Such an agent inherits that turn's latch, so its workspace tools are
+    refused. It must not fork a worktree either: the fork runs on a worker
+    thread that cannot see the latch, so it would fork, and later harvest
+    into, whatever folder the user connected in its place."""
+    if workspace_path:
+        return False
+    from server.workspace.state import workspace_lost_message
+
+    return workspace_lost_message() is not None
+
+
 def _agent_finished(result: AgentResult) -> bool:
     """True only when the agent genuinely completed its goal — so its worktree
     work is applied. A turn/deadline limit reports status='completed' (kept that
@@ -84,13 +99,40 @@ async def _harvest_worktree(wt_session, agent_id: str, apply_changes: bool) -> s
     return outcome.get("note", "")
 
 
-async def _distill_structured(adapter, system, messages, schema, config, total_usage):
-    """One forced-structured call over the finished transcript, with a single
-    schema-repair retry. jsonschema is a hard dependency of the venv (via mcp)
-    but validation failing twice returns None rather than raising — callers
-    decide whether an unstructured fallback is acceptable."""
-    from server.agents.providers.base import TurnUsage as _TU
+def _record_distill_call(counts: dict, *, session_id: str, model_key: str, source: str) -> None:
+    """One structured-output call in the cost log: the only agent spend the
+    turn engine never sees, so it is recorded here, once per attempt, with
+    the counts server.costs.capture took from its payload (or estimated as
+    characters / 4, and marked so)."""
+    try:
+        from server.costs.calls import record_counts
 
+        record_counts(
+            counts, model_key=model_key or "unknown", source=source, session_id=session_id
+        )
+    except Exception as e:  # noqa: BLE001 - a cost write never breaks the run
+        log.error("Cost log: could not record a structured-output call: %s", e)
+
+
+async def _distill_structured(
+    adapter, system, messages, schema, config, total_usage, *, session_id, model_key, source
+):
+    """One forced-structured call over the finished transcript, with a single
+    schema-repair retry, each attempt recorded in the cost log under the run's
+    ``source`` by the adapter's counts hook (so an attempt that breaks after
+    the request was accepted is recorded too). jsonschema is a hard dependency
+    of the venv (via mcp) but validation failing twice returns None rather
+    than raising; callers decide whether an unstructured fallback is
+    acceptable."""
+    from functools import partial
+
+    from server.agents.providers.base import TurnUsage as _TU
+    from server.costs.sources import require_source
+
+    require_source(source)  # an unlabelled source is a programming error
+    record = partial(
+        _record_distill_call, session_id=session_id, model_key=model_key, source=source
+    )
     ask = {
         "role": "user",
         "content": (
@@ -108,6 +150,7 @@ async def _distill_structured(adapter, system, messages, schema, config, total_u
             max_tokens=config.max_tokens,
             effort_label=None,
             force_structured=schema,
+            on_counts=record,
         )
         if isinstance(turn.usage, _TU):
             total_usage.add(turn.usage)
@@ -135,6 +178,57 @@ async def _distill_structured(adapter, system, messages, schema, config, total_u
         if attempt == 0:
             continue
     return None
+
+
+async def distill_run_output(
+    *,
+    model_key: str,
+    model_id: str,
+    system: str,
+    messages: list[dict],
+    final_text: str,
+    stopped_early: bool,
+    schema: dict,
+    config,
+    usage: dict,
+    session_id: str,
+    source: str,
+) -> tuple[dict | None, dict]:
+    """The structured result of a finished agent or headless run, and the
+    run's usage with the distillation calls added.
+
+    The calls go through the old provider adapters (server.agents.providers):
+    a one-shot forced-tool call the chat/engine adapters have no equivalent
+    for. A run that stopped on a limit already ends with its last tool
+    result; a natural finish gets its final answer appended as one more
+    assistant turn first."""
+    from server.agents.providers import TurnUsage, get_adapter
+
+    total = TurnUsage(
+        input_tokens=usage["input_tokens"],
+        output_tokens=usage["output_tokens"],
+        cache_read_tokens=usage["cache_read_tokens"],
+        cache_creation_tokens=usage["cache_creation_tokens"],
+        cost_usd=usage["cost_usd"],
+    )
+    if not stopped_early:
+        answer = {
+            "role": "assistant",
+            "content": [{"type": "text", "text": final_text or "(done)"}],
+        }
+        messages = [*messages, answer]
+    structured = await _distill_structured(
+        get_adapter(model_key, model_id),
+        system,
+        messages,
+        schema,
+        config,
+        total,
+        session_id=session_id,
+        model_key=model_key,
+        source=source,
+    )
+    return structured, total.as_dict()
 
 
 def _with_session_id(tool_input: dict, session_id: str) -> dict:
@@ -168,20 +262,26 @@ def _resolve_agent_model(model_id_override: str | None, config: AgentConfig) -> 
     threaded the session-selected model through it). Without one, fall back to
     the user's configured default chat model. An on-device (``local:*``)
     candidate is accepted only when the model supports tool calling (the same
-    registry gate interactive chat uses) — a chat-only local model cannot
+    registry gate interactive chat uses): a chat-only local model cannot
     drive an agent loop, and letting one through is how background memory
-    agents broke in hybrid mode. Returns None when no configured chat model
-    can run agents; run_agent fails the run early instead of erroring at the
-    provider call.
+    agents broke in hybrid mode. Local mode keeps everything on this Mac, so
+    there only an on-device model runs: a cloud override is refused instead of
+    being sent to Bedrock, and the fallback skips cloud entries. Returns None
+    when nothing can run the agent (``no_agent_model_reason`` says why);
+    run_agent fails the run early instead of erroring at the provider call.
     """
-    if model_id_override:
-        return model_id_override
-
     from server.agents.providers import model_key_for_id
     from server.infrastructure.config import load_config
+    from server.infrastructure.model_mode import current_mode
     from server.local.runtime import is_local_model_id, supports_tools
 
     cfg = load_config()
+    on_device_only = current_mode(cfg) == "local"
+    if model_id_override:
+        if on_device_only and not is_local_model_id(model_id_override):
+            return None
+        return model_id_override
+
     chat_models = cfg.get("chat_models", {})
     default_key = cfg.get("default_chat_model")
     candidates = [
@@ -192,10 +292,38 @@ def _resolve_agent_model(model_id_override: str | None, config: AgentConfig) -> 
     for candidate in candidates:
         if not candidate:
             continue
+        if on_device_only and not is_local_model_id(candidate):
+            continue
         if is_local_model_id(candidate) and not supports_tools(model_key_for_id(candidate)):
             continue
         return candidate
     return None
+
+
+def no_agent_model_reason(model_id_override: str | None) -> str:
+    """Why ``_resolve_agent_model`` returned None, in words the user reads."""
+    from server.agents.providers import model_key_for_id
+    from server.infrastructure.config import load_config
+    from server.infrastructure.model_mode import (
+        NO_LOCAL_AGENT_MODEL_REASON,
+        current_mode,
+        turn_model_refusal,
+    )
+    from server.local.runtime import is_local_model_id
+
+    cfg = load_config()
+    if current_mode(cfg) != "local":
+        return (
+            "No agent-capable chat model configured: every chat_models entry is an "
+            "on-device model without tool support."
+        )
+    if model_id_override and not is_local_model_id(model_id_override):
+        key = model_key_for_id(model_id_override) or model_id_override
+        label = ((cfg.get("chat_model_meta") or {}).get(key) or {}).get("label", "")
+        refusal = turn_model_refusal(key, on_device=False, label=label, mode="local")
+        if refusal:
+            return refusal
+    return NO_LOCAL_AGENT_MODEL_REASON
 
 
 def budget_readout(
@@ -205,12 +333,13 @@ def budget_readout(
     next_turn: int,
     elapsed: float,
     usage: dict,
-    model_key: str,
     cost_capped: bool,
 ) -> dict:
     """Turns, time and estimated cost so far, plus whether the next round is
     the final one. Stamped on every turn_start event; the card's budget bars
-    and state pill read it. Pure: every input is passed in."""
+    and state pill read it. The cost is the engine's own (each round priced
+    at its tier), never the summed counts priced again. Pure: every input is
+    passed in."""
     from server.chat.engine.runner import SOFT_LIMIT_FRACTION
 
     ext = extension or {}
@@ -220,19 +349,6 @@ def budget_readout(
         if config.deadline_seconds is not None
         else None
     )
-    try:
-        from server.costs.tracker import estimate_cost
-
-        cost = estimate_cost(
-            model_key,
-            int(usage.get("input_tokens", 0)),
-            int(usage.get("output_tokens", 0)),
-            int(usage.get("cache_read_tokens", 0)),
-            int(usage.get("cache_creation_tokens", 0)),
-        )
-        cost_usd: float | None = round(float(cost), 4)
-    except Exception:  # noqa: BLE001 - a missing price is not a reason to drop the event
-        cost_usd = None
     finishing = (
         next_turn >= cap
         or (deadline_s is not None and elapsed >= SOFT_LIMIT_FRACTION * deadline_s)
@@ -242,6 +358,6 @@ def budget_readout(
         "max_turns": cap,
         "elapsed_s": round(elapsed, 1),
         "deadline_s": deadline_s,
-        "cost_usd": cost_usd,
+        "cost_usd": round(float(usage["cost_usd"]), 4),
         "budget_state": "finishing" if finishing else "working",
     }

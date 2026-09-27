@@ -83,6 +83,25 @@ def test_ask_assistant_returns_answer_and_forwards_steps(monkeypatch):
     assert steps == [("git_branch_list", "running"), ("git_branch_list", "ok")]
 
 
+def test_a_delegated_run_owns_the_commands_it_starts(monkeypatch):
+    """Its tools run under the chat session id, so a typed chat Stop in that
+    session must be able to tell its commands apart (server/tasks/owner.py)."""
+    from server.tasks import owner
+
+    seen = []
+
+    async def fake(prompt, **kw):
+        seen.append(owner.current())
+        yield {"type": "text", "text": "done"}
+        yield {"type": "done", "status": "completed", "session_id": "x"}
+
+    monkeypatch.setattr("server.exec.headless.run_headless_turn", fake)
+    out = asyncio.run(run_tool("ask_assistant", {"request": "run the tests"}, _ctx([])))
+    assert out == "done"
+    assert seen and seen[0].startswith("voice:voice-s1-")
+    assert owner.current() == ""
+
+
 def test_ask_assistant_parks_an_approval_and_resolve_resumes_it(monkeypatch):
     calls, events = [], []
     pending = {}

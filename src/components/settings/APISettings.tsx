@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { get, put } from '@/api/client';
 import { useSettingsStore } from '@/stores/settingsStore';
 import {
@@ -11,6 +11,22 @@ import {
 } from '@/components/transcription/TranscriptionPanel';
 import { isNativeTranslationAvailable } from '@/services/nativeTranslation';
 
+/** Read-only view of what the transcription language setting resolves to
+ *  (server/asr/languages.py::summary, GET /api/config). */
+interface TranscriptionLanguages {
+  /** What a blank setting means for Canary: English plus the Mac's languages. */
+  auto: string[];
+  mac: string[];
+  mac_error: string | null;
+  /** What Canary decodes with for the saved value; empty when the value
+   *  names nothing Canary decodes, and Canary then refuses to transcribe. */
+  canary: string[];
+  canary_source: 'setting' | 'auto';
+  /** What live Whisper is limited to; empty means its own detection. */
+  whisper: string[];
+  dropped: { canary: string[]; whisper: string[] };
+}
+
 interface ConfigData {
   tavily_api_key?: string;
   tavily_api_key_masked?: string;
@@ -19,6 +35,66 @@ interface ConfigData {
   transcription_backend?: string;
   translate_mode?: string;
   translate_target?: string;
+  _transcription_languages?: TranscriptionLanguages;
+}
+
+const languageNames = (() => {
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'language' });
+  } catch {
+    return null;
+  }
+})();
+
+function nameList(codes: string[]): string {
+  return codes
+    .map((code) => {
+      try {
+        return languageNames?.of(code) ?? code;
+      } catch {
+        return code;
+      }
+    })
+    .join(', ');
+}
+
+/** The languages each engine uses for the SAVED value, in words. */
+function languagesInUse(info: TranscriptionLanguages, saved: string): string {
+  const parts: string[] = [];
+  const typed = saved.trim() !== '';
+  const dropped = info.dropped.canary.join(', ');
+  if (typed && info.canary.length === 0) {
+    // Canary refuses rather than decode speech as a language nobody named.
+    parts.push(
+      `Canary cannot transcribe ${dropped}, so it will not transcribe with this value. ` +
+        "Add a language Canary transcribes, or clear the field for English plus your Mac's languages.",
+    );
+  } else if (typed) {
+    parts.push(`Canary uses ${nameList(info.canary)}.`);
+    if (dropped) parts.push(`Canary cannot transcribe ${dropped}, so it is left out.`);
+  } else if (info.canary.length > 1) {
+    parts.push(`Canary uses ${nameList(info.canary)} (English plus your Mac's languages).`);
+  } else {
+    if (info.mac_error) parts.push("Your Mac's language list could not be read.");
+    // Suggest the pair, not a single code: one code pins that language, so a
+    // bilingual speaker who typed just pl would get their English as Polish.
+    parts.push(
+      'Auto: English only. To transcribe Polish as well, enter en,pl. A single code such as pl ' +
+        'pins that language, so English speech would come out as Polish.',
+    );
+  }
+  if (!typed && dropped) {
+    parts.push(`Your Mac also lists ${dropped}, which Canary cannot transcribe.`);
+  }
+  parts.push(
+    info.whisper.length
+      ? `Whisper uses ${nameList(info.whisper)}.`
+      : 'Whisper detects the language itself.',
+  );
+  if (info.dropped.whisper.length) {
+    parts.push(`Whisper does not know ${info.dropped.whisper.join(', ')}.`);
+  }
+  return parts.join(' ');
 }
 
 /**
@@ -37,6 +113,7 @@ export const APISettings: React.FC = () => {
   const [appleAvailable] = useState(() => isNativeTranslationAvailable());
   const [translateTarget, setTranslateTarget] = useState('en');
   const [saveStatus, setSaveStatus] = useState('');
+  const queryClient = useQueryClient();
 
   // Load config on mount via TanStack Query
   const { data: configData } = useQuery({
@@ -85,6 +162,8 @@ export const APISettings: React.FC = () => {
         body.tavily_api_key = tavilyKey;
       }
       await put('/api/config', body);
+      // Refetch so the languages-in-use line reflects what was just saved.
+      void queryClient.invalidateQueries({ queryKey: ['config'] });
       // Keep the shared store (and so the transcript header) in sync, and
       // apply to a live recording exactly like the header controls do.
       useSettingsStore.getState().updateConfig({
@@ -115,7 +194,9 @@ export const APISettings: React.FC = () => {
     } catch {
       setSaveStatus('Save failed');
     }
-  }, [tavilyKey, whisperLang, bedrockRegion, modelValue, translateMode, translateTarget]);
+  }, [tavilyKey, whisperLang, bedrockRegion, modelValue, translateMode, translateTarget, queryClient]);
+
+  const languageInfo = configData?._transcription_languages;
 
   return (
     <div className="settings-form" style={{ maxWidth: 480 }}>
@@ -130,19 +211,30 @@ export const APISettings: React.FC = () => {
       />
       <span className="settings-hint" id="cfgTavilyHint">{tavilyHint}</span>
 
-      <label htmlFor="cfgWhisperLang">Whisper Language (blank = auto-detect)</label>
+      <label htmlFor="cfgWhisperLang">Transcription Languages</label>
       <input
         type="text"
         className="settings-input"
         id="cfgWhisperLang"
-        placeholder="e.g. pl — or pl,en for mixed-language sessions"
+        placeholder={languageInfo ? `Auto: ${nameList(languageInfo.auto)}` : 'e.g. pl, or pl,en'}
+        aria-describedby={languageInfo ? 'cfgWhisperLangInUse' : undefined}
         value={whisperLang}
         onChange={(e) => setWhisperLang(e.target.value)}
       />
+      {languageInfo && (
+        <span className="settings-hint" id="cfgWhisperLangInUse" role="status">
+          In use: {languagesInUse(languageInfo, configData?.whisper_language ?? '')}
+        </span>
+      )}
       <span className="settings-hint">
-        One code pins the language. A comma-separated list (e.g. pl,en) keeps
-        auto-detection but limits it to those languages, so short utterances in
-        a mixed-language meeting are never misdetected or auto-translated.
+        Canary: blank means English plus your Mac&apos;s preferred languages
+        (System Settings &gt; General &gt; Language &amp; Region). Whisper: blank
+        lets Whisper detect the language itself. For both, one code pins the
+        language and a comma list such as pl,en limits detection to those, so a
+        short utterance is never decoded, or translated, as a language nobody
+        speaks. When Canary translates a Parakeet line, it detects the spoken
+        language within a typed list, or among all its languages when the
+        field is blank. Parakeet and chat dictation have no language setting.
       </span>
 
       <label htmlFor="cfgTranscriptionModel">Transcription Model</label>
@@ -159,8 +251,8 @@ export const APISettings: React.FC = () => {
       <span className="settings-hint">
         Same selector as the transcript header; applies live. Whisper Large
         v3: most accurate, 99 languages. Canary: fastest, best translation,
-        25 European languages, detects the language per sentence (limited to
-        the list above when one is set). Parakeet: words appear live as you
+        25 European languages, detects the language per sentence among the
+        Transcription Languages above. Parakeet: words appear live as you
         speak, lowest latency.
       </span>
 

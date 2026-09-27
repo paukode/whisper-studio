@@ -17,7 +17,10 @@
 import { describe, it, expect } from 'vitest';
 
 /** Variables set from JS at runtime rather than in a stylesheet. */
-const RUNTIME_DEFINED = new Set<string>([]);
+const RUNTIME_DEFINED = new Set<string>([
+  // A chat picture's dragged width (src/components/chat/MediaResize.tsx).
+  '--media-w',
+]);
 
 // static/dist is deliberately excluded — it's the built bundle.
 const sheets = import.meta.glob<string>(

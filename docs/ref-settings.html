@@ -41,10 +41,10 @@
     <h2 id="fields">Settings-panel fields</h2>
     <p>Open the panel with the gear icon in the top bar. The panels sit in a grouped rail rather than
       one flat list: <b>Chat and models</b> (Model mode; Models, with Chat / Discover / Transcription /
-      Indexing sub-tabs), <b>Tools and automation</b> (MCP servers; Import project; Skills and plugins;
+      Indexing sub-tabs), <b>Tools and automation</b> (MCP servers; Import project; Code tools; Skills and plugins;
       Tasks and hooks, holding Scheduled tasks and Hooks), and <b>Access and usage</b> (Keys and
-      permissions, holding API keys and Permissions; Usage and advanced, holding Stats, Costs, Feature
-      flags and Live preview). Each row below is one control:</p>
+      permissions, holding API keys and Permissions; Usage and advanced, holding Costs, Feature flags
+      and Live preview). Each row below is one control:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Setting</th><th>Panel</th><th>What it does</th></tr></thead>
       <tbody>
@@ -65,12 +65,15 @@
             <a href="#tavily">Tavily key</a>).</td>
         </tr>
         <tr>
-          <td><b>Whisper Language</b></td>
+          <td><b>Transcription Languages</b></td>
           <td>API keys</td>
-          <td>Language allowlist for the Whisper engine: blank auto-detects, one code
+          <td>Language list for the Canary and Whisper engines: one code
             (<code>pl</code>) pins the language, a comma list (<code>pl,en</code>) keeps detection but
             constrains it to those candidates - the fix for short accented utterances landing on a
-            neighbor language.</td>
+            neighbor language. Blank means English plus your Mac's preferred languages for Canary,
+            and Whisper's own detection for Whisper; the field shows the set in use. A value Canary
+            cannot transcribe at all (such as <code>ja</code>) stops Canary transcribing instead of
+            falling back to other languages.</td>
         </tr>
         <tr>
           <td><b>Transcription Model</b></td>
@@ -129,10 +132,11 @@
         <tr>
           <td><b>Budget Settings</b></td>
           <td>Costs</td>
-          <td>Three controls: <b>Max Session Cost (USD)</b>, <b>Max Daily Cost (USD)</b> and
+          <td>Three controls: <b>Max Session Cost (USD)</b>, <b>Max Daily Cost (USD, UTC day)</b> and
             <b>Enable model fallback</b>. A blank or <code>0</code> cap means unlimited (the default for
-            both). Fallback steps the model down a cheaper chain once spend reaches 80 percent of a cap.
-            See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td>
+            both). The daily cap counts the UTC day and resets itself at 00:00 UTC; the hint under it
+            shows today's spend so far. Fallback steps the model down a cheaper chain once spend reaches
+            80 percent of a cap. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td>
         </tr>
         <tr>
           <td><b>Permissions</b></td>
@@ -164,11 +168,12 @@
           <td><b>Model</b> dropdown</td>
           <td><code>default_chat_model</code></td>
           <td>The model this session runs on: Haiku 4.5, Sonnet 4.6, Sonnet 5, Opus 4.6 / 4.7 / 4.8,
-            Opus 5, Fable 5.0 / 5.1, GPT-5.4 / 5.5, GPT-5.6 Sol / Terra / Luna, GPT-6 Astra, or an
+            Opus 5 / 5.5, Fable 5.0 / 5.1, GPT-5.4 / 5.5, GPT-5.6 Sol / Terra / Luna, GPT-6 Astra /
+            Sol / Luna, or an
             on-device model you installed. The picker only shows models valid for the current model
-            mode. The shipped default is <code>opus5.0</code> (set in
+            mode. The shipped default is <code>gpt6-luna</code> (set in
             <code class="path">config.example.json</code>, the SYSTEM layer every install reads);
-            <code>opus4.8</code> is only the code-level fallback used if that file is unreadable.
+            the code-level fallback used if that file is unreadable is the same key.
             Fable 5.0 / 5.1 require the data-retention consent flow before they can be selected.
             Full catalog on <a href="arch-backends.html">Model backends</a>.</td>
         </tr>
@@ -181,7 +186,7 @@
             trades latency and cost for deeper thinking. The levels a model exposes depend on its tier:
             Opus and Fable expose the full ladder <code>low</code> to <code>max</code>; Sonnet and the
             standard tier skip <code>extra</code>; GPT-5.4 / 5.5 / 5.6 run <code>none</code> to
-            <code>max</code>, GPT-6 Astra <code>low</code> to <code>max</code>; Haiku and the local
+            <code>max</code>, GPT-6 Astra / Sol / Luna <code>low</code> to <code>max</code>; Haiku and the local
             models have no effort control. <code>ultracode</code> is appended for any model that can
             orchestrate a workflow, and is a session mode rather than a plain level: it sends the
             model's own top reasoning rung plus dynamic-workflow orchestration. The value is clamped to
@@ -220,7 +225,7 @@
       <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Written by</th></tr></thead>
       <tbody>
         <tr><td><code>bedrock_region</code></td><td>string</td><td><code>"us-east-1"</code></td><td>Bedrock Region</td></tr>
-        <tr><td><code>default_chat_model</code></td><td>string</td><td><code>"opus4.8"</code> code fallback; shipped value <code>"opus5.0"</code></td><td>Model dropdown (per session)</td></tr>
+        <tr><td><code>default_chat_model</code></td><td>string</td><td><code>"gpt6-luna"</code> (shipped value and code fallback)</td><td>Model dropdown (per session)</td></tr>
         <tr><td><code>chat_models</code></td><td>object</td><td>the catalog in <code class="path">config.example.json</code></td><td>Models &gt; Chat, config.json (the catalog behind the picker)</td></tr>
         <tr><td><code>chat_models_disabled</code></td><td>array</td><td><code>[]</code></td><td>Models &gt; Chat visibility toggles (hides shipped models without deleting them)</td></tr>
         <tr><td><code>model_mode</code></td><td>string</td><td><code>"cloud"</code> in code and in the shipped file; a fresh install is seeded <code>"local"</code></td><td>Model mode &gt; Mode</td></tr>
@@ -231,7 +236,7 @@
         <tr><td><code>auxiliary_models</code></td><td>object</td><td><code>{}</code></td><td>No field. See <a href="#auxiliary">Auxiliary models</a></td></tr>
         <tr><td><code>model_fallback_enabled</code></td><td>boolean</td><td><code>false</code></td><td>Costs &gt; Enable model fallback. Steps the model down a cheaper chain once spend reaches 80 percent of a cost cap</td></tr>
         <tr><td><code>max_session_cost_usd</code></td><td>number</td><td><code>0.0</code> (unlimited)</td><td>Costs &gt; Max Session Cost</td></tr>
-        <tr><td><code>max_daily_cost_usd</code></td><td>number</td><td><code>0.0</code> (unlimited)</td><td>Costs &gt; Max Daily Cost</td></tr>
+        <tr><td><code>max_daily_cost_usd</code></td><td>number</td><td><code>0.0</code> (unlimited)</td><td>Costs &gt; Max Daily Cost (the UTC day, reset at 00:00 UTC)</td></tr>
         <tr><td><code>feature_flags</code></td><td>object</td><td><code>{}</code></td><td>Feature flags. See <a href="#feature-flags">Feature flags</a></td></tr>
       </tbody>
     </table></div>
@@ -257,7 +262,7 @@
       <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Written by</th></tr></thead>
       <tbody>
         <tr><td><code>transcription_backend</code></td><td>string</td><td><code>"streaming"</code> (Parakeet)</td><td>Transcription Model, and the transcript panel header (<code>whisper</code> / <code>canary</code> / <code>streaming</code>)</td></tr>
-        <tr><td><code>whisper_language</code></td><td>string or null</td><td><code>null</code> (auto-detect)</td><td>Whisper Language (one code pins, a comma list constrains detection)</td></tr>
+        <tr><td><code>whisper_language</code></td><td>string or null</td><td><code>null</code> (Canary: English plus the Mac's languages; Whisper: auto-detect)</td><td>Transcription Languages (one code pins, a comma list constrains detection)</td></tr>
         <tr><td><code>translate_mode</code></td><td>string</td><td><code>"off"</code></td><td>Translation Model (<code>off</code> / <code>canary</code> / <code>apple</code>; legacy <code>auto</code> and <code>model</code> read as <code>canary</code>)</td></tr>
         <tr><td><code>translate_target</code></td><td>string</td><td><code>"en"</code></td><td>Translate To</td></tr>
         <tr><td><code>speaker_embedder</code></td><td>string</td><td><code>"redimnet"</code></td><td>No field. The speaker encoder behind "Speaker N": <code>redimnet</code> (ReDimNet2-B2) or <code>ecapa</code>. ReDimNet2 downloads on first use and falls back to ECAPA if it cannot. Changing it hides stored voiceprints, which are filed per encoder, because vectors from different encoders are not comparable</td></tr>
@@ -351,7 +356,7 @@
       <thead><tr><th>Task</th><th>Historical default</th><th>What it does</th></tr></thead>
       <tbody>
         <tr><td><code>memory_recall</code></td><td>Haiku</td><td>Picks which stored memories are relevant to the turn.</td></tr>
-        <tr><td><code>goal_evaluator</code></td><td>Haiku</td><td>Judges whether a session goal is achieved yet.</td></tr>
+        <tr><td><code>goal_evaluator</code></td><td>Haiku</td><td>Judges whether a cloud-model session's goal is achieved yet. An on-device session is always judged by its own model, in every mode, and ignores this key.</td></tr>
         <tr><td><code>title</code></td><td>Haiku</td><td>Names a session from its first exchange.</td></tr>
         <tr><td><code>auto_mode_classifier</code></td><td>Haiku</td><td>Decides allow or ask for each tool call in <code>auto</code> permission mode.</td></tr>
         <tr><td><code>permission_explainer</code></td><td>Haiku</td><td>Writes the risk level and explanation on an approval card.</td></tr>
@@ -398,11 +403,11 @@
         <tr><td><code>strict_rag</code></td><td><code>true</code></td><td>When index grounding is injected, withhold the workspace file/search tools so the model answers from the retrieved passages instead of re-crawling files.</td></tr>
         <tr><td><code>rag_hybrid_search</code></td><td><code>true</code></td><td>Fuse keyword/BM25 (SQLite FTS5) results with dense vector search via reciprocal-rank fusion.</td></tr>
         <tr><td><code>rag_reranker</code></td><td><code>false</code></td><td>Cross-encoder reranking of fused retrieval candidates before grounding's top-k (Cohere Rerank 3.5 in cloud mode, Qwen3-Reranker-0.6B in local mode). Off by default: the local model adds seconds per grounded turn and can OOM on memory-pressured machines, for a modest gain on top of hybrid retrieval.</td></tr>
-        <tr><td><code>rag_query_rewrite</code></td><td><code>false</code></td><td>Use a fast LLM (Haiku) to rewrite a follow-up question into a standalone search query before grounding. Adds one model call per grounded turn.</td></tr>
+        <tr><td><code>rag_query_rewrite</code></td><td><code>false</code></td><td>Use a fast LLM (Haiku) to rewrite a follow-up question into a standalone search query before grounding. Adds one model call per grounded turn. Off in Local mode, since the rewrite runs on a cloud model; the Feature flags panel says so.</td></tr>
         <tr><td><code>auto_memory</code></td><td><code>true</code></td><td>Two-tier auto memory with extraction and recall: global (cross-workspace) plus project (workspace-scoped). Also gates whether the <code>memory_*</code> tools appear in the catalog.</td></tr>
         <tr><td><code>session_memory</code></td><td><code>true</code></td><td>Per-session structured summaries injected into the prompt.</td></tr>
         <tr><td><code>session_search</code></td><td><code>true</code></td><td>Full-text search over past sessions: the <code>session_search</code> tool and the sidebar's content search share one SQLite FTS5 index, with no model call. Also puts a recovery pointer in every compaction summary so summarized-away messages can be read back verbatim.</td></tr>
-        <tr><td><code>goal_loop</code></td><td><code>true</code></td><td>Goal loop + completion gate: a session goal (set with <code>/goal</code>) auto-continues the turn until a cheap evaluator judges it achieved, capped by <code>goal_max_consecutive_blocks</code> (8). See <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</td></tr>
+        <tr><td><code>goal_loop</code></td><td><code>true</code></td><td>Goal loop + completion gate: a session goal (set with <code>/goal</code>) auto-continues the turn until a judge says it is achieved (the <code>goal_evaluator</code> model for a cloud session, the session's own model on-device), capped by <code>goal_max_consecutive_blocks</code> (8). See <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</td></tr>
         <tr><td><code>deliverable_check</code></td><td><code>true</code></td><td>Before a turn ends, verify that every file path the reply claims was saved exists and is not empty, and that an artifact card it mentions was really created. Otherwise the turn continues with the missing items named.</td></tr>
         <tr><td><code>verify_on_stop</code></td><td><code>true</code></td><td>When a turn edited code files but no test, lint, typecheck or build command ran successfully afterwards, the completion gate asks for a real verification or an honest blocker before the turn ends. At most two nudges per turn; prose-only edits never trigger it.</td></tr>
         <tr><td><code>tool_loop_guard</code></td><td><code>true</code></td><td>Refuse a tool call that repeats the same arguments after two identical results, one that already failed three times unchanged, or a repeating cycle of calls; cap runaway web searches and delegation per turn. See <a href="#loop-caps">Loop-guard caps</a>.</td></tr>
@@ -624,7 +629,7 @@
         <code>bedrock_region</code> at another produces an access error. If chat fails with an access
         or model-ID error, this mismatch is the usual cause.</li>
       <li><b>Unknown default model falls back.</b> If <code>default_chat_model</code> names a key that
-        is not in the catalog, the loader falls back to <code>opus4.8</code> (or the first available
+        is not in the catalog, the loader falls back to <code>gpt6-luna</code> (or the first available
         model), so resolution never dead-ends.</li>
       <li><b>Prefer the UI or a surgical edit for the model catalog.</b> The rich
         <code>chat_models</code> shape carries per-model metadata; a naive re-save can flatten it. To

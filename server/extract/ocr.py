@@ -5,10 +5,16 @@ Engine selection, in order:
      always tried first. Zero model download, ~0 RAM, fast on printed text,
      fully on-device and private. No Bedrock cost.
   2. Bedrock Claude Haiku vision, only as a fallback when Apple Vision fails or
-     is unavailable AND AWS credentials resolve.
+     is unavailable AND AWS credentials resolve AND the app is not in Local
+     mode.
 
-We never call Bedrock without working credentials, and never before Apple
-Vision has had a chance, so the normal path is fully on-device.
+We never call Bedrock without working credentials, never before Apple
+Vision has had a chance, and never in Local mode (server/infrastructure/
+cloud_guard.py): there an image Apple Vision cannot read stays unread, and
+``local_mode_note`` gives the chat context a line saying so while the mode
+lasts (server/chat/attachment_context.py renders it; it is never stored as the
+image's text). This covers chat images, indexed images and scanned PDFs alike,
+since all of them come through ``ocr_images``.
 """
 
 import base64
@@ -77,8 +83,9 @@ def _ocr_with_haiku(images) -> str:
             "messages": [{"role": "user", "content": content}],
         }
     )
-    resp = client.invoke_model(modelId=model_id, body=body)
-    payload = json.loads(resp["body"].read())
+    from server.costs.calls import invoke_claude
+
+    payload = invoke_claude(client, model_id=model_id, body=body, source="ocr")
     parts = [b.get("text", "") for b in payload.get("content", []) if b.get("type") == "text"]
     return "\n".join(p for p in parts if p).strip()
 
@@ -98,14 +105,29 @@ def _ocr_with_apple_vision(images) -> str:
     return "\n\n".join(p for p in out if p).strip()
 
 
+_CLOUD_READER = "The cloud OCR reader"
+
+
+def local_mode_note() -> str:
+    """For an image whose OCR came back empty: a bracketed line telling the
+    reader that Local mode keeps the image off the cloud reader, else ``""``
+    (outside Local mode an empty result means no reader found text). Read at
+    context-build time, so it follows the current mode."""
+    from server.infrastructure.cloud_guard import cloud_refusal
+
+    refusal = cloud_refusal(_CLOUD_READER)
+    return f"[No text was recognized on this Mac. {refusal}]" if refusal else ""
+
+
 def ocr_images(images) -> str:
     """OCR a list of PIL images into Markdown text.
 
     Apple Vision (native, on-device) runs first and is the default. Haiku is
-    only tried as a fallback when Apple Vision fails or is unavailable, and only
-    when AWS creds resolve. A successful-but-empty Apple Vision pass also falls
-    through to Haiku deliberately: Apple Vision frequently returns nothing for
-    images that do contain text, so Haiku is a second reader (see
+    only tried as a fallback when Apple Vision fails or is unavailable, only
+    when AWS creds resolve, and never in Local mode. A successful-but-empty
+    Apple Vision pass also falls through to Haiku deliberately: Apple Vision
+    frequently returns nothing for images that do contain text, so Haiku is a
+    second reader (see
     tests/test_attachment_extraction.py::test_haiku_fallback_when_apple_vision_empty).
     Returns an empty string if no path yields text.
     """
@@ -119,6 +141,13 @@ def ocr_images(images) -> str:
             return text
     except Exception as e:
         log.warning("Apple Vision OCR failed (%s); trying Haiku fallback", e)
+    # Local mode: the image never leaves this Mac, whatever Apple Vision found.
+    # Checked before the credential lookup, so nothing about AWS is touched.
+    from server.infrastructure.cloud_guard import cloud_allowed
+
+    if not cloud_allowed():
+        log.info("image OCR: Apple Vision found no text; Local mode skips the Haiku reader")
+        return ""
     # Fallback: Bedrock Haiku, only when credentials are present.
     if _aws_available():
         try:

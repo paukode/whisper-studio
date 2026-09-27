@@ -23,13 +23,6 @@ export type ExplorerTarget =
   | { kind: 'entity'; name: string; label?: string }
   | { kind: 'file'; file: string };
 
-export interface ToolPoolStats {
-  advertised: number;
-  deferred: number;
-  total: number;
-  deferred_tokens_est: number;
-}
-
 export interface Toast {
   id: string;
   type: 'success' | 'error' | 'warning' | 'info';
@@ -84,9 +77,6 @@ export interface DialogEntry {
 }
 
 export interface UIState {
-  /** Progressive tool disclosure telemetry from the latest turn. */
-  toolPoolStats: ToolPoolStats | null;
-  setToolPoolStats: (stats: ToolPoolStats) => void;
   sidebarCollapsed: boolean;
   /* Per-date-window collapse state for the session list (keyed by group
    * name, e.g. "Last week"). Missing key = the group's default (expanded
@@ -119,6 +109,16 @@ export interface UIState {
   /* Workspace connected state */
   wsConnected: boolean;
   wsPath: string;
+  /** Bumped by every setWsConnected. A /api/workspace/status answer that was
+   *  requested before the workspace last changed is stale and is dropped
+   *  (services/workspaceConnection.ts syncWorkspaceStatus). */
+  wsEpoch: number;
+
+  /** The terminal panel has open PTYs. It stays mounted while this is true,
+   *  even with no workspace connected: its shells (a dev server, a build)
+   *  belong to the session, and unmounting the panel kills them. */
+  terminalLive: boolean;
+  setTerminalLive: (live: boolean) => void;
 
   /* Workspace panel collapsed (still connected but hidden) */
   workspacePanelCollapsed: boolean;
@@ -255,14 +255,17 @@ export const useUIStore = create<UIState>()((set) => ({
   settingsOpen: false,
   settingsTab: 'general',
   toasts: [],
-  toolPoolStats: null,
-  setToolPoolStats: (stats) => set({ toolPoolStats: stats }),
   toastQueue: [],
   transcriptVisible: false,
   workspaceConnectOpen: false,
   indexExplorer: null,
   wsConnected: false,
   wsPath: '',
+  wsEpoch: 0,
+  terminalLive: false,
+  setTerminalLive: (live) => {
+    set((s) => (s.terminalLive === live ? s : { terminalLive: live }));
+  },
   workspacePanelCollapsed: false,
   memoryEditorOpen: false,
   memoryViewerOpen: false,
@@ -416,7 +419,7 @@ export const useUIStore = create<UIState>()((set) => ({
   },
 
   setWsConnected: (connected, path) => {
-    set({ wsConnected: connected, wsPath: path ?? '' });
+    set((s) => ({ wsConnected: connected, wsPath: path ?? '', wsEpoch: s.wsEpoch + 1 }));
   },
 
   collapseWorkspacePanel: () => {

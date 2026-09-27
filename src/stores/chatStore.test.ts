@@ -86,6 +86,8 @@ describe('chatStore — approval queue', () => {
     summary: `Write /tmp/${id}`,
     payload: { path: '/tmp/' + id },
     sessionId: 'sess1',
+    alwaysAsks: false,
+    turnSettings: { model: 'm', effort_level: 'normal', verbosity: 'medium', brief_mode: false },
   });
 
   it('first enqueued approval becomes the current; siblings queue', () => {

@@ -111,7 +111,6 @@ class WorkflowRun:
         args=None,
         session_id: str = "",
         model_id: str = "",
-        model_key: str = "",
         effort_label: str | None = None,
         workspace_path: str | None = None,
         budget_tokens: int | None = None,
@@ -127,7 +126,6 @@ class WorkflowRun:
         self.args = args
         self.session_id = session_id
         self.model_id = model_id
-        self.model_key = model_key or "sonnet"
         self.effort_label = effort_label
         # The canonical workspace root every agent this run spawns resolves
         # against, frozen at launch (server.workflows.manager.
@@ -433,15 +431,7 @@ class WorkflowRun:
             )
             result = await self._agent_runner(prompt, opts)
 
-        # Price with the model the agent ACTUALLY ran on. The runner reports
-        # it back as `model_key` (empty when it used the run's own model),
-        # because an unknown or on-device `opts.model` is rejected and falls
-        # back — pricing the raw opts.model would then charge the work to a
-        # model that never ran, at best mis-priced and at worst $0.
-        self._account(
-            result.get("usage") or {},
-            model_key=result.get("model_key") or self.model_key,
-        )
+        self._account(result.get("usage") or {})
         self.journal.agent_call(
             {
                 "seq": seq,
@@ -498,32 +488,15 @@ class WorkflowRun:
 
     # ── ledger ───────────────────────────────────────────────────────────────
 
-    def _account(self, usage: dict, model_key: str | None = None) -> None:
-        ti = int(usage.get("input_tokens", 0) or 0)
-        to = int(usage.get("output_tokens", 0) or 0)
-        self.tokens_in += ti
-        self.tokens_out += to
-        try:
-            from server.costs.tracker import estimate_cost
-
-            # run_agent reports these as *_tokens (server/agents/runtime.py);
-            # reading the un-suffixed names silently scored every cache
-            # read/write as zero, so a run's displayed cost omitted the cache
-            # charges entirely. The bare names are still accepted as a
-            # fallback so any other producer keeps working.
-            self.cost_usd += estimate_cost(
-                model_key or self.model_key,
-                ti,
-                to,
-                cache_read_tokens=int(
-                    usage.get("cache_read_tokens") or usage.get("cache_read") or 0
-                ),
-                cache_creation_tokens=int(
-                    usage.get("cache_creation_tokens") or usage.get("cache_creation") or 0
-                ),
-            )
-        except Exception:
-            pass
+    def _account(self, usage: dict) -> None:
+        """Add one agent call to the ledger. Its cost is the one run_agent
+        reports: the engine priced each round under the model that actually
+        ran, at the round's own tier, so the ledger never prices summed
+        counts again. An empty usage (a failed or replayed call) adds
+        nothing."""
+        self.tokens_in += int(usage.get("input_tokens", 0) or 0)
+        self.tokens_out += int(usage.get("output_tokens", 0) or 0)
+        self.cost_usd += float(usage.get("cost_usd", 0.0) or 0.0)
 
     # ── io ───────────────────────────────────────────────────────────────────
 

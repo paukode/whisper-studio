@@ -28,6 +28,7 @@ import { useRecordingStore } from '@/stores/recordingStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
+import { answerStopLikeServer } from '@/test/mocks/asrServer';
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const native = () => window.__whisperNativeAudio!;
@@ -35,7 +36,15 @@ const native = () => window.__whisperNativeAudio!;
 interface TrackedWS {
   _getSentMessages(): (string | ArrayBuffer)[];
   _receiveMessage(data: string | object): void;
+  close(): void;
   readyState: number;
+  url: string;
+}
+interface MockSocket {
+  readyState: number;
+  send(data: string | ArrayBuffer): void;
+  close(): void;
+  _receiveMessage(data: object): void;
 }
 
 let wsInstances: TrackedWS[] = [];
@@ -45,6 +54,18 @@ const setBackend = (backend: string) =>
   useSettingsStore.setState({
     config: { ...useSettingsStore.getState().config, transcriptionBackend: backend },
   });
+
+/** The engine a recording socket asked for when it connected. */
+const connectedOn = (w: TrackedWS) => new URL(w.url).searchParams.get('backend');
+
+/** Hold the next model gate open until the test settles it. */
+function holdGate(): (result: 'ready' | 'cancelled') => void {
+  let settle: (result: 'ready' | 'cancelled') => void = () => {};
+  (ensureRecordingModels as ReturnType<typeof vi.fn>).mockImplementationOnce(
+    () => new Promise((resolve) => { settle = resolve; }),
+  );
+  return (result) => settle(result);
+}
 
 const relayedBackends = () =>
   wsInstances
@@ -81,10 +102,14 @@ beforeEach(() => {
   };
 
   RealWS = globalThis.WebSocket;
-  class TrackingWS extends (RealWS as unknown as { new (url: string): object }) {
+  class TrackingWS extends (RealWS as unknown as { new (url: string): MockSocket }) {
     constructor(url: string) {
       super(url);
       wsInstances.push(this as unknown as TrackedWS);
+    }
+    send(data: string | ArrayBuffer): void {
+      super.send(data);
+      answerStopLikeServer(this, data);
     }
   }
   globalThis.WebSocket = TrackingWS as unknown as typeof WebSocket;
@@ -104,6 +129,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   if (useRecordingStore.getState().isRecording) {
     recordingController.stop();
     await sleep(300);
@@ -197,5 +223,79 @@ describe('recordingController — live engine switch gating', () => {
 
     expect(ensureRecordingModels).not.toHaveBeenCalled();
     expect(relayedBackends()).toEqual([]);
+  });
+
+  it('a reconnect during the gate reopens on the engine in use, and a cancel leaves it there', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    await recordingController.start('switch-reconnect-session');
+    await sleep(10);
+    const settleGate = holdGate();
+
+    setBackend('whisper');
+    window.dispatchEvent(
+      new CustomEvent('whisper-set-model', { detail: { backend: 'whisper' } }),
+    );
+    // The socket drops while Whisper downloads; the watchdog reconnects.
+    wsInstances[0].close();
+    vi.advanceTimersByTime(3000);
+    await sleep(10);
+    expect(wsInstances).toHaveLength(2);
+    expect(connectedOn(wsInstances[1])).toBe(connectedOn(wsInstances[0]));
+    expect(connectedOn(wsInstances[1])).toBe('streaming');
+
+    settleGate('cancelled');
+    await sleep(10);
+    expect(relayedBackends()).toEqual([]);
+    expect(useSettingsStore.getState().config.transcriptionBackend).toBe('streaming');
+  });
+
+  it('a switch picked while the socket is down still waits for the gate', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    await recordingController.start('switch-while-down-session');
+    await sleep(10);
+    wsInstances[0].close();
+    (ensureRecordingModels as ReturnType<typeof vi.fn>).mockClear();
+    const settleGate = holdGate();
+
+    setBackend('whisper');
+    window.dispatchEvent(
+      new CustomEvent('whisper-set-model', { detail: { backend: 'whisper' } }),
+    );
+    vi.advanceTimersByTime(3000);
+    await sleep(10);
+    expect(ensureRecordingModels).toHaveBeenCalledTimes(1);
+    expect(connectedOn(wsInstances[1])).toBe('streaming');
+
+    // Weights on disk: the open socket switches, and a later reconnect
+    // opens on the new engine directly.
+    settleGate('ready');
+    await sleep(10);
+    expect(relayedBackends()).toEqual(['whisper']);
+    wsInstances[1].close();
+    vi.advanceTimersByTime(3000);
+    await sleep(10);
+    expect(connectedOn(wsInstances[2])).toBe('whisper');
+  });
+
+  it('a gate that finishes while the reconnect is still connecting switches that socket', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    await recordingController.start('switch-connecting-session');
+    await sleep(10);
+    const settleGate = holdGate();
+    setBackend('whisper');
+    window.dispatchEvent(
+      new CustomEvent('whisper-set-model', { detail: { backend: 'whisper' } }),
+    );
+    wsInstances[0].close();
+    vi.advanceTimersByTime(3000);
+    expect(wsInstances[1].readyState).toBe(WebSocket.CONNECTING);
+
+    settleGate('ready');
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(wsInstances[1].readyState).toBe(WebSocket.CONNECTING);
+    await sleep(10);
+
+    expect(connectedOn(wsInstances[1])).toBe('streaming');
+    expect(relayedBackends()).toEqual(['whisper']);
   });
 });

@@ -84,5 +84,10 @@ async def import_external_project(request: Request):
 
     _sk.SKILLS = _sk.load_skills()
     _sk.rebuild_tools()
+    # Start the imported MCP servers now; the change event updates every
+    # window's server list.
+    from server.mcp import mcp_manager
+
+    await mcp_manager.reconcile()
 
     return {"source_type": source_type, **summary}

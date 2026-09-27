@@ -312,17 +312,39 @@
 
     <h2 id="lsp">Code intelligence: two LSP surfaces</h2>
     <p>Whisper Studio exposes language-server features in two distinct ways, which is worth keeping
-      straight.</p>
+      straight. Both take their commands from one module,
+      <code class="path">server/code_tools/commands.py</code>, so what Settings shows is what runs.</p>
 
     <h3 id="lsp-tools">Assistant tools</h3>
-    <p><code class="path">server/lsp.py</code> (prefix <code>/api/lsp</code>) backs the tools
-      <code>lsp_diagnostics</code>, <code>lsp_hover</code>, and <code>lsp_references</code>. These are
-      pragmatic static-analysis helpers rather than a live language server: diagnostics run
-      <code>pyflakes</code> (falling back to <code>py_compile</code>) for Python and ESLint for
-      JS/TS, hover extracts the symbol under a line and column and shows surrounding context, and
-      references do a bounded workspace grep (capped at 100 matches). They work with nothing
-      installed and get richer as you add tools, which suits the assistant's needs without spinning
-      up a server per call.</p>
+    <p><code class="path">server/lsp.py</code> backs the tools <code>lsp_diagnostics</code>,
+      <code>lsp_hover</code>, and <code>lsp_references</code>. These are pragmatic static-analysis
+      helpers rather than a live language server. Diagnostics run ruff on Python
+      (<code>python -P -m ruff check</code> with the app's own interpreter, in the workspace, so the
+      project's ruff config applies; <code>-P</code> keeps the workspace off <code>sys.path</code>, so
+      a project file named <code>ruff.py</code> or <code>logging.py</code> never runs in its place) and the workspace's own ESLint on JS/TS (its
+      <code class="path">node_modules/eslint</code>, run with the app's node and the json
+      formatter, never npx). A workspace without ESLint, or an ESLint that fails to start, comes back
+      as the tool's status, never as findings about the file. Hover extracts the symbol under a line
+      and column and shows surrounding context, and references do a bounded workspace grep (capped
+      at 100 matches).</p>
+
+    <h3 id="ruff-after-write">Ruff after every Python write</h3>
+    <p>Every successful assistant write, create or edit of a Python file runs through one of two
+      approval executors on every approval path (<code class="path">server/approval/executors.py</code>):
+      <code>_do_write</code> for a workspace-relative path, and <code>_do_save_to_path</code> for a file
+      saved to an absolute path (<code>save_file</code>, <code>ws_create_file</code> with a
+      destination or with no workspace connected). Both run ruff on it
+      (<code class="path">server/code_tools/ruff.py</code>). Ruff always checks the file and its
+      findings join the tool result. A file saved outside the connected workspace is only checked.
+      Only when the workspace configures ruff (<code class="path">pyproject.toml</code> with a <code>[tool.ruff]</code> table,
+      <code class="path">ruff.toml</code> or <code class="path">.ruff.toml</code>) does it also run
+      <code>check --fix</code> and <code>ruff format</code>; the result then says what changed and
+      that the model must re-read the file before editing it again. Everything runs off the event
+      loop within a 20-second budget, with <code>--no-cache</code> and <code>--force-exclude</code>,
+      and a ruff that cannot run is said so in the result. Every check that is not the fix step
+      passes <code>--no-fix</code>: ruff otherwise applies fixes whenever the config it resolves sets
+      <code>fix = true</code>, and that config may sit above the workspace or be the user's global
+      one, so <code>lsp_diagnostics</code> (read-only, allowed in plan mode) never edits a file.</p>
 
     <h3 id="lsp-proxy">The LSP proxy (editor)</h3>
     <p>The Monaco editor in the workspace is a real language-server client, so
@@ -333,16 +355,19 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Language</th><th>Server</th><th>Command</th></tr></thead>
       <tbody>
-        <tr><td>Python</td><td>python-lsp-server</td><td><code>pylsp</code></td></tr>
-        <tr><td>JavaScript / TypeScript</td><td>typescript-language-server</td><td><code>typescript-language-server --stdio</code></td></tr>
+        <tr><td>Python</td><td>python-lsp-server</td><td><code>&lt;the app's python&gt; -P -m pylsp</code> (bundled in the Mac app, the venv in a source install; <code>-P</code> keeps workspace modules from shadowing its imports)</td></tr>
+        <tr><td>JavaScript / TypeScript</td><td>typescript-language-server</td><td><code>typescript-language-server --stdio</code>, found on PATH (neither install ships it)</td></tr>
       </tbody>
     </table></div>
-    <p>The proxy accepts the connection first (after the origin check), then checks whether the language
-      and its binary are available; if not, it sends an error over the now-open socket and closes with a
-      helpful install hint. On disconnect it terminates the child (then kills it
-      after a 3-second grace) so no orphaned language server lingers. If the servers are not
-      installed, the editor still works; you just do not get inline diagnostics, hovers, or
-      completions there.</p>
+    <p>The proxy accepts the connection first (after the origin check), then checks whether the
+      language server can start. If it cannot, or if it exits on its own with an error, the proxy
+      sends a JSON-RPC <code>window/showMessage</code> error with the reason (the stderr tail for a
+      crash) and closes the socket with code 1011. That notification carries
+      <code>source: "whisper-studio"</code> in its params, so the editor tells it apart from a live
+      server's own error popups, which never end the connection. On disconnect it terminates the child (then kills
+      it after a 3-second grace) so no orphaned language server lingers. If a server is not
+      available, the editor still works; you just do not get inline diagnostics, hovers, or
+      completions there, and the editor says why.</p>
     <p>On the browser side, the <code class="path">useLsp</code> hook
       (<code class="path">src/hooks/useLsp.ts</code>) is the language client. When a Python, TypeScript,
       or JavaScript file is open in a connected workspace it opens the WebSocket, runs the
@@ -352,16 +377,24 @@
       registers completion and hover providers backed by <code>textDocument/completion</code> and
       <code>textDocument/hover</code>, translating the 0-based LSP positions to Monaco's 1-based
       coordinates in both directions. A small status dot in the editor's top-right corner shows
-      whether the server is connecting, connected, or unavailable. Everything is torn down on file
+      whether the server is connecting, connected, or unavailable; when the proxy gave a reason, the
+      dot carries it as its tooltip and opens Settings &gt; Tools and automation &gt; Code tools. Everything is torn down on file
       switch, language change, or disconnect: providers disposed, markers cleared, and the socket
       closed after a <code>shutdown</code>/<code>exit</code>. For unsupported languages or when no
       workspace is connected, the client is a no-op and no socket is opened.</p>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>Want the full editor experience? Install the servers with
-        <code>pip install python-lsp-server</code> and
-        <code>npm install -g typescript-language-server</code>. The proxy picks them up on the next
-        connection.</p></div>
+      <div class="callout__body"><p>Settings &gt; Tools and automation &gt; Code tools lists every code
+        tool with what it powers, whether it works for the connected workspace, its version, and why
+        not (<code>GET /api/code-tools/status</code>, checked against the same commands the features
+        run). The app's own tools answer <code>--version</code>, and ruff also checks an empty file
+        through the workspace's own config, so a config it rejects shows as not working, with its
+        first error line. The workspace's ESLint is never run there: its version comes from its
+        <code class="path">package.json</code>, so opening the page executes nothing from the
+        workspace.
+        pylsp ships with both installs. For JS/TS in the editor, install the TypeScript server with
+        <code>npm install -g typescript-language-server typescript</code>; the proxy picks it up on the
+        next connection.</p></div>
     </div>
 
     <h2 id="key-files">Key files</h2>
@@ -377,6 +410,7 @@
       <dt><code class="path">server/git/watcher.py</code></dt><dd>The one-second <code>.git</code> watcher and its lazy cache.</dd>
       <dt><code class="path">server/git/router.py</code></dt><dd>The <code>/api/git</code> REST routes and the SSE change stream.</dd>
       <dt><code class="path">server/lsp.py</code></dt><dd>Static-analysis LSP tools for the assistant.</dd>
+      <dt><code class="path">server/code_tools/</code></dt><dd>How each code tool is launched (<code>commands.py</code>), ruff diagnostics and the post-write check (<code>ruff.py</code>), the workspace's ESLint (<code>eslint.py</code>), and the Code tools status route (<code>status.py</code>).</dd>
       <dt><code class="path">server/lsp_proxy.py</code></dt><dd>The WebSocket-to-stdio language-server tunnel for the editor.</dd>
       <dt><code class="path">src/hooks/useLsp.ts</code></dt><dd>The browser-side Monaco language client: handshake, text sync, diagnostics, completion, and hover over the proxy socket.</dd>
     </div>

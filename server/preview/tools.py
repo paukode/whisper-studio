@@ -13,7 +13,10 @@ _SESSION_NAME = {
 READ_ONLY_TOOLS: list[dict] = [
     {
         "name": "preview_list",
-        "description": "List all running preview sessions (dev server + browser) with their status.",
+        "description": (
+            "List running preview sessions (dev server + browser) with their status: this "
+            "chat's own, and other chats' as metadata you may inspect but not control."
+        ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
     {
@@ -123,13 +126,19 @@ APPROVAL_GATED_TOOLS: list[dict] = [
             ".whisper/launch.json) or with an ad-hoc command. This is how the user SEES a "
             "running app, site, or dev server: it renders in the right-side Live pane. Use it "
             "instead of terminal_run for anything that serves a page, and never just print a "
-            "localhost URL for the user to open themselves. terminal_run cannot do this — its "
+            "localhost URL for the user to open themselves. terminal_run cannot do this: its "
             "sandbox mode kills the server on timeout and either mode is invisible to the Live "
             "pane. Does not load a page yet: call preview_navigate next, then "
             "preview_screenshot / preview_snapshot / preview_console_logs to inspect it. Reuse a "
-            "running session rather than starting a duplicate, and preview_stop when done. Prefer "
-            "a named config in .whisper/launch.json (same shape as .claude/launch.json), adding "
-            "one if the project has none, over passing runtimeExecutable/runtimeArgs ad hoc."
+            "running session this chat started rather than starting a duplicate, and "
+            "preview_stop it when done; a preview another chat started can be inspected but "
+            "never stopped, replaced or driven from here. Prefer a named config in "
+            ".whisper/launch.json (same shape as .claude/launch.json): the first start of a new "
+            "or changed config's command follows the permission mode, and once the user approves "
+            "that card, starting it by name (cwd omitted or inside the workspace) needs no "
+            "approval in any permission mode. An ad-hoc runtimeExecutable/runtimeArgs command "
+            "follows the permission mode every time, like any other command. If the project has "
+            "no config, add one (an ordinary file edit) and start it by name from then on."
         ),
         "input_schema": {
             "type": "object",
@@ -162,7 +171,10 @@ APPROVAL_GATED_TOOLS: list[dict] = [
     },
     {
         "name": "preview_stop",
-        "description": "Stop a preview session's dev server and close its browser.",
+        "description": (
+            "Stop a preview session's dev server and close its browser. Only a preview this "
+            "chat started can be stopped."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {"session_name": _SESSION_NAME},

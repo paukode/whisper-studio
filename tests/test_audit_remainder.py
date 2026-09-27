@@ -2,7 +2,8 @@
 
 - #14: the workflow ledger read cache token counts under keys the agent
   runtime never emits, so every workflow's displayed cost omitted cache
-  charges entirely.
+  charges entirely. The ledger now adds the cost run_agent reports, which the
+  engine priced round by round with every cache term.
 - #16: reasoning-tier inference read only the config KEY, so a renamed or
   dotless entry silently lost its ladder's top rung.
 - #11: a budget fallback swaps the model before effort is resolved, so the
@@ -19,48 +20,27 @@ from server.infrastructure.effort import (
 # ── #14: workflow cache-cost accounting ─────────────────────────────────────
 
 
-def _run_with_usage(usage: dict, model_key: str = "sonnet"):
+def _run_with_usage(usage: dict):
     from server.workflows.runtime import WorkflowRun
 
-    run = WorkflowRun("r1", "", model_key=model_key)
-    run._account(usage, model_key=model_key)
+    run = WorkflowRun("r1", "")
+    run._account(usage)
     return run
 
 
-def test_workflow_ledger_reads_the_keys_agents_actually_emit(monkeypatch):
-    seen = {}
-
-    def _fake_estimate(model_key, ti, to, cache_read_tokens=0, cache_creation_tokens=0):
-        seen.update(
-            {"read": cache_read_tokens, "creation": cache_creation_tokens, "in": ti, "out": to}
-        )
-        return 0.0
-
-    monkeypatch.setattr("server.costs.tracker.estimate_cost", _fake_estimate)
-    # Exactly the shape server/agents/runtime.py reports.
-    _run_with_usage(
+def test_workflow_ledger_takes_the_cost_the_agent_run_reports():
+    # Exactly the shape server/agents/runtime.py reports: its cost_usd is the
+    # engine's, cache reads and writes included.
+    run = _run_with_usage(
         {
             "input_tokens": 100,
             "output_tokens": 50,
             "cache_read_tokens": 4000,
             "cache_creation_tokens": 700,
+            "cost_usd": 0.0123,
         }
     )
-    assert seen["read"] == 4000
-    assert seen["creation"] == 700
-
-
-def test_workflow_ledger_still_accepts_the_bare_key_names(monkeypatch):
-    seen = {}
-
-    def _fake_estimate(model_key, ti, to, cache_read_tokens=0, cache_creation_tokens=0):
-        seen.update({"read": cache_read_tokens, "creation": cache_creation_tokens})
-        return 0.0
-
-    monkeypatch.setattr("server.costs.tracker.estimate_cost", _fake_estimate)
-    _run_with_usage({"input_tokens": 1, "output_tokens": 1, "cache_read": 11, "cache_creation": 22})
-    assert seen["read"] == 11
-    assert seen["creation"] == 22
+    assert run.cost_usd == 0.0123
 
 
 def test_workflow_ledger_still_totals_plain_tokens():
@@ -139,13 +119,16 @@ def test_bedrock_client_uses_adaptive_retries(monkeypatch):
     the report's explicit condition for increasing the executor."""
     captured = {}
 
-    def _fake_client(service, **kwargs):
+    def _fake_client(_session, service, **kwargs):
         captured["config"] = kwargs.get("config")
         return object()
 
+    import boto3.session
+
     import server.chat.infra as infra
 
-    monkeypatch.setattr(infra.boto3, "client", _fake_client)
+    # Patched where the cache helper builds clients (server/infrastructure/aws_clients.py).
+    monkeypatch.setattr(boto3.session.Session, "client", _fake_client)
     infra._reset_bedrock_client_cache()
     infra._get_bedrock_client()
     infra._reset_bedrock_client_cache()

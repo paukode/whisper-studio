@@ -16,17 +16,19 @@ traffic on the account, not only the model that triggered it. The consent screen
 the UI exists to make that explicit before flipping it on.
 """
 
+import asyncio
 import logging
 import threading
 import time
 
-import boto3
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from server.infrastructure.aws_clients import cached_client
 from server.infrastructure.config import load_config
+from server.infrastructure.model_mode import current_mode
 
 log = logging.getLogger("whisper-studio")
 
@@ -49,20 +51,19 @@ _clients_lock = threading.Lock()
 
 def _get_control_plane_client():
     region = load_config().get("bedrock_region", "us-east-1")
-    with _clients_lock:
-        client = _clients.get(region)
-        if client is None:
-            client = boto3.client(
-                "bedrock",
-                region_name=region,
-                config=BotoConfig(
-                    connect_timeout=10,
-                    read_timeout=30,
-                    retries={"max_attempts": 2},
-                ),
-            )
-            _clients[region] = client
-        return client
+    # Cached only once credentials resolve, so adding them later takes effect.
+    return cached_client(
+        _clients,
+        _clients_lock,
+        region,
+        "bedrock",
+        region_name=region,
+        config=BotoConfig(
+            connect_timeout=10,
+            read_timeout=30,
+            retries={"max_attempts": 2},
+        ),
+    )
 
 
 def get_mode() -> str:
@@ -224,11 +225,29 @@ def _transport_error_response(e: BotoCoreError, *, read_only: bool) -> JSONRespo
     return JSONResponse(status_code=503, content={"error": message})
 
 
+# Local mode makes no AWS calls at all, the control plane included: the probe
+# reports the state as unavailable (so the consent flow treats it as unknown and
+# asks) and a change is refused with a reason.
+_LOCAL_MODE_MESSAGE = (
+    "Local mode keeps everything on this Mac, so Bedrock data retention is not "
+    "checked or changed. Switch Settings > Model mode to Hybrid or Cloud first."
+)
+
+
 @router.get("")
 async def get_data_retention():
     """Report the account's current retention mode."""
+    if current_mode() == "local":
+        return {
+            "mode": "unavailable",
+            "enabled": False,
+            "available": False,
+            "error": _LOCAL_MODE_MESSAGE,
+        }
     try:
-        mode = get_mode()
+        # Off the event loop: credential resolution and the control-plane round
+        # trip (connect timeouts, retries) would otherwise stall every request.
+        mode = await asyncio.to_thread(get_mode)
         return {"mode": mode, "enabled": mode == SHARING_MODE}
     except ClientError as e:
         return _error_response(e)
@@ -241,8 +260,10 @@ async def put_data_retention(request: Request):
     """Enable (provider_data_share) or disable (restore prior mode) retention."""
     body = await request.json()
     enabled = bool(body.get("enabled", False))
+    if current_mode() == "local":
+        return JSONResponse(status_code=409, content={"error": _LOCAL_MODE_MESSAGE})
     try:
-        mode = set_enabled(enabled)
+        mode = await asyncio.to_thread(set_enabled, enabled)
         log.info("Account data retention updated: enabled=%s mode=%s", enabled, mode)
         return {"mode": mode, "enabled": mode == SHARING_MODE}
     except ClientError as e:

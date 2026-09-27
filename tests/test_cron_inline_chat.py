@@ -172,9 +172,6 @@ def test_upsert_session_preserves_backend_cron_events(temp_sessions_db):
         segments=json.dumps([]),
         chat_history_frontend=frontend_history,
         speaker_names=json.dumps({}),
-        workspace_path="",
-        compaction_count=0,
-        latched_config=json.dumps({}),
     )
 
     with S._get_conn() as conn:
@@ -318,9 +315,6 @@ def test_upsert_session_deduplicates_already_known_rows(temp_sessions_db):
         segments=json.dumps([]),
         chat_history_frontend=frontend_history,
         speaker_names=json.dumps({}),
-        workspace_path="",
-        compaction_count=0,
-        latched_config=json.dumps({}),
     )
 
     with S._get_conn() as conn:

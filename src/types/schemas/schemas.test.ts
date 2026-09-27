@@ -112,17 +112,43 @@ describe('PermissionsResponseSchema', () => {
 // ── MCPServersResponseSchema ──
 
 describe('MCPServersResponseSchema', () => {
-  it('parses servers map', () => {
-    const input = {
-      servers: {
-        myServer: { command: 'node', args: ['server.js'], status: 'running' },
-      },
-    };
-    const result = MCPServersResponseSchema.safeParse(input);
+  const server = {
+    command: 'node',
+    args: ['server.js'],
+    env: {},
+    enabled: true,
+    status: 'connected',
+    tools: ['mcp__myServer__ping'],
+    error: null,
+    url: '',
+    bearer_token_env_var: '',
+    approval_mode: 'auto',
+    tool_overrides: {},
+    enabled_tools: [],
+    disabled_tools: [],
+  };
+
+  it('parses the server list with its revision and pending elicitations', () => {
+    const result = MCPServersResponseSchema.safeParse({
+      servers: { myServer: server },
+      revision: 4,
+      config_error: null,
+      pending_elicitations: [],
+    });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.servers.myServer.status).toBe('running');
+      expect(result.data.servers.myServer.tools).toEqual(['mcp__myServer__ping']);
+      expect(result.data.revision).toBe(4);
     }
+  });
+
+  it('rejects a response without the revision the live updates rely on', () => {
+    const result = MCPServersResponseSchema.safeParse({
+      servers: { myServer: server },
+      config_error: null,
+      pending_elicitations: [],
+    });
+    expect(result.success).toBe(false);
   });
 });
 
@@ -132,7 +158,6 @@ describe('SkillsResponseSchema', () => {
   it('parses skills list', () => {
     const input = {
       skills: [{ name: 'test-skill', enabled: true }],
-      mcpTools: [{ name: 'tool1', description: 'A tool', server: 'srv' }],
     };
     const result = SkillsResponseSchema.safeParse(input);
     expect(result.success).toBe(true);
@@ -225,6 +250,17 @@ describe('SSEEventDataSchema', () => {
     if (result.success) {
       expect(result.data.workflow_preview?.effort_label).toBe('ultracode');
     }
+  });
+
+  it('validates every goal_eval verdict, not_checked included', () => {
+    for (const verdict of ['achieved', 'not_achieved', 'blocked', 'not_checked']) {
+      const result = SSEEventDataSchema.safeParse({
+        goal_eval: { verdict, feedback: 'why', confidence: 0, attempt: 1, cap: 8 },
+      });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.goal_eval?.verdict).toBe(verdict);
+    }
+    expect(SSEEventDataSchema.safeParse({ goal_eval: { verdict: 'maybe' } }).success).toBe(false);
   });
 
   // Same trap again: without workspace_path in the schema, the card shows no

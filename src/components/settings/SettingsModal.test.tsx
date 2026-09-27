@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { SettingsModal } from './SettingsModal';
 import { useUIStore } from '@/stores/uiStore';
+import { STORAGE_KEYS } from '@/utils/storageKeys';
 
 // The modal renders one tab panel at a time; every panel talks to the backend
 // through TanStack Query. Stub them all so this suite exercises only the modal
@@ -16,7 +17,6 @@ vi.mock('./CostsPanel', () => ({ CostsPanel: () => <div>CostsPanel</div> }));
 vi.mock('./HooksPanel', () => ({ HooksPanel: () => <div>HooksPanel</div> }));
 vi.mock('./CronPanel', () => ({ CronPanel: () => <div>CronPanel</div> }));
 vi.mock('./PluginsPanel', () => ({ PluginsPanel: () => <div>PluginsPanel</div> }));
-vi.mock('./StatsPanel', () => ({ StatsPanel: () => <div>StatsPanel</div> }));
 vi.mock('./ModelModePanel', () => ({ ModelModePanel: () => <div>ModelModePanel</div> }));
 vi.mock('./ModelsPanel', () => ({ ModelsPanel: () => <div>ModelsPanel</div> }));
 vi.mock('./FeatureFlagsPanel', () => ({ FeatureFlagsPanel: () => <div>FeatureFlagsPanel</div> }));
@@ -106,6 +106,22 @@ describe('SettingsModal — deep-link routing', () => {
     expect(screen.getByRole('tab', { name: 'Costs' })).toHaveAttribute('aria-selected', 'true');
   });
 
+  it('the retired id "stats" is not routed: it opens the default, API keys', () => {
+    // Stats was folded into Costs; no alias keeps the old id alive.
+    openAt('stats');
+    expect(screen.getByText('APISettings')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Keys and permissions/i }),
+    ).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('Usage and advanced opens on Costs and has no Stats sub-tab', () => {
+    openAt('usage-advanced');
+    expect(screen.getAllByRole('tab')[0]).toHaveTextContent('Costs');
+    expect(screen.getByText('CostsPanel')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Stats' })).toBeNull();
+  });
+
   it('old id "hooks" opens Tasks and hooks → Hooks', () => {
     openAt('hooks');
     expect(screen.getByText('HooksPanel')).toBeInTheDocument();
@@ -168,5 +184,41 @@ describe('SettingsModal — deep-link routing', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Plugins' }));
     expect(screen.getByText('PluginsPanel')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Plugins' })).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
+describe('SettingsModal: resizing', () => {
+  const saved = () => JSON.parse(localStorage.getItem(STORAGE_KEYS.SETTINGS_GEOMETRY)!);
+  const dragFrom = (el: Element, dx: number, dy: number) => {
+    fireEvent.pointerDown(el, { clientX: 500, clientY: 400 });
+    fireEvent.pointerMove(window, { clientX: 500 + dx, clientY: 400 + dy });
+    fireEvent.pointerUp(window);
+  };
+
+  beforeEach(() => localStorage.clear());
+
+  it('resizes from its edges, remembers the size, and a header double-click puts it back', () => {
+    const { container } = render(<SettingsModal />);
+    const dialog = screen.getByRole('dialog');
+    expect(container.querySelectorAll('.settings-container > .ws-rz')).toHaveLength(8);
+    expect(dialog.style.width).toBe('960px');
+
+    dragFrom(container.querySelector('.ws-rz-e')!, -100, 0);
+    expect(dialog.style.width).toBe('860px');
+    expect(saved()).toMatchObject({ w: 860 });
+
+    fireEvent.doubleClick(container.querySelector('.settings-header')!);
+    expect(dialog.style.width).toBe('960px');
+    expect(saved()).toEqual({ w: 960, h: null, x: 0, y: 0 });
+  });
+
+  it('moves by its header, but a press on Close never drags it', () => {
+    render(<SettingsModal />);
+    dragFrom(screen.getByRole('button', { name: 'Close settings' }), 100, 60);
+    expect(saved()).toMatchObject({ x: 0, y: 0 });
+
+    // jsdom's window is 1024 wide, so a 960px dialog has 16px of room either way.
+    dragFrom(screen.getByRole('heading', { name: 'Settings' }), 12, 60);
+    expect(saved()).toMatchObject({ x: 12, y: 60 });
   });
 });

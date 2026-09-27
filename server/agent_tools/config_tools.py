@@ -39,14 +39,20 @@ def execute_config_set(tool_input: dict) -> str:
     # overlay. Persisting that would destroy the rich chat_models shape on disk
     # (label/thinking/provider/effort_tier/is_local/requires_data_retention),
     # bake chat_model_meta into the file, and write an env secret to disk.
-    from server.infrastructure.config import DEFAULTS, _load_user_config, save_config
+    from server.infrastructure.config import (
+        DEFAULTS,
+        USER_CONFIG_LOCK,
+        _load_user_config,
+        save_config,
+    )
 
     updates = tool_input.get("updates", {})
-    raw = _load_user_config()
-    changed = []
-    for key, val in updates.items():
-        if key in DEFAULTS:
-            raw[key] = val
-            changed.append(key)
-    save_config(raw)
+    with USER_CONFIG_LOCK:  # one read-modify-write, no writer in between
+        raw = _load_user_config()
+        changed = []
+        for key, val in updates.items():
+            if key in DEFAULTS:
+                raw[key] = val
+                changed.append(key)
+        save_config(raw)
     return json.dumps({"updated": changed, "ignored": [k for k in updates if k not in DEFAULTS]})

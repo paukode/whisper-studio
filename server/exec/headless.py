@@ -24,14 +24,14 @@ Two differences from ``_run_agent_loop``, both deliberate:
     complete_coordination): those are agent-hierarchy concepts a standalone
     headless run has no use for.
   - On-device (``local:...``) models are refused outright rather than wired
-    up: ``_distill_structured`` below (reused unmodified, per its own "not
-    migrated" docstring in runtime.py) goes through the OLD
-    ``server.agents.providers.get_adapter``, which has no local branch — the
-    exact reason ``_resolve_agent_model`` already excludes local candidates
-    from its own fallback chain. Full local support additionally needs the
-    llama-server cold-start dance (see server/local/route.py) and capability
-    probing (supports_tools/supports_thinking) that is a materially separate
-    piece of work, out of this primitive's scope.
+    up: the structured-output distillation (``distill_run_output``) goes
+    through the OLD ``server.agents.providers.get_adapter``, which has no
+    local branch: the exact reason ``_resolve_agent_model`` already excludes
+    local candidates from its own fallback chain. Full local support
+    additionally needs the llama-server cold-start dance (see
+    server/local/route.py) and capability probing
+    (supports_tools/supports_thinking) that is a materially separate piece of
+    work, out of this primitive's scope.
 
 Event vocabulary
 -----------------
@@ -63,16 +63,17 @@ golden-fixture pinning; those frames can reshape independently of this one):
         batch is still running, so they land between that round's "tool_call"
         and "tool_result" events, in publish order.
     {"type": "usage", "input_tokens": int, "output_tokens": int,
-     "cache_read_tokens": int, "cache_creation_tokens": int}
-        Cumulative usage totals as of the latest completed round. Emitted
+     "cache_read_tokens": int, "cache_creation_tokens": int, "cost_usd": float}
+        Cumulative usage totals as of the latest completed round, with the
+        cost the engine priced round by round (each at its own tier). Emitted
         once per round, and once more at the end if ``output_schema`` added
         an extra structured-output call — the LAST usage event is always the
         authoritative running total.
     {"type": "error", "message": str}
         A terminal round-level error surfaced by the engine, or a pre-flight
-        failure (unknown model_key, no cloud model configured, local model
-        requested). Always followed by a "done" event with status="failed"
-        for pre-flight failures.
+        failure (Local mode, unknown model_key, no cloud model configured,
+        local model requested). Always followed by a "done" event with
+        status="failed" for pre-flight failures.
     {"type": "structured", "output": dict}
         Present only when ``output_schema`` was given and the one-shot
         distillation call (_distill_structured) produced a schema-valid
@@ -184,6 +185,7 @@ async def run_headless_turn(
     system_hint: str | None = None,
     scope_id: str | None = None,
     event_channel: str | None = None,
+    cost_source: str = "headless",
 ) -> AsyncIterator[dict]:
     """Run one full agentic turn headlessly and yield progress/result events.
 
@@ -200,7 +202,7 @@ async def run_headless_turn(
             (skips on-device candidates). An on-device model, explicit or
             resolved, is refused — see the module docstring.
         output_schema: When given, one extra one-shot structured-output call
-            runs after the turn via server.agents.runtime._distill_structured
+            runs after the turn via server.agents.runtime_support.distill_run_output
             (with its own single schema-repair retry).
         ephemeral: When True, this run's session id is never written to
             sessions.db — no row is created, no message is appended. When
@@ -239,13 +241,17 @@ async def run_headless_turn(
             costs and tool activations all stay keyed by session_id) while
             each pauses and resumes independently. None keeps the historical
             f"exec:{session_id}" key, so existing callers are unaffected.
+        cost_source: The ``source`` recorded on this run's cost rows
+            (server.costs.sources): voice delegation passes "voice", the
+            agent-report wake "wake".
 
     Yields:
         Event dicts per the vocabulary documented in this module's docstring.
     """
     from server.agents.config import get_agent_config
     from server.agents.providers import model_key_for_id
-    from server.agents.runtime import _distill_structured, _resolve_agent_model
+    from server.agents.runtime import _resolve_agent_model
+    from server.agents.runtime_support import distill_run_output
     from server.chat.infra import _get_chat_model_meta
     from server.chat.tool_activation import activate_from_history
     from server.chat.tool_index import build_deferred_index
@@ -259,6 +265,20 @@ async def run_headless_turn(
     # Pause isolation is per run: a caller running several turns against one
     # session_id passes a distinct scope_id so their paused slots never collide.
     turn_scope_id = f"exec:{scope_id or session_id}"
+
+    # ── Local mode ────────────────────────────────────────────────────────
+    # This runner serves cloud models only, and Local mode keeps every call on
+    # this Mac: refuse before a model is resolved, so no caller (voice, the
+    # agent wake, anything later) can reach the cloud default through it. A
+    # paused run's stashed state is left in place for when the mode allows it.
+    from server.infrastructure.cloud_guard import cloud_refusal
+
+    refusal = cloud_refusal("A background assistant turn")
+    if refusal:
+        log.info("run_headless_turn: refused in Local mode")
+        yield {"type": "error", "message": refusal}
+        yield {"type": "done", "status": "failed", "session_id": session_id}
+        return
 
     # ── Model resolution ──────────────────────────────────────────────────
     cfg = load_config()
@@ -315,6 +335,14 @@ async def run_headless_turn(
 
         register_override(workspace_path)
     try:
+        # An unpinned run (voice, the agent wake) works under a latch like a
+        # chat turn's: once the user disconnects (or switches away from) the
+        # workspace it started in, its workspace tools are refused instead of
+        # pausing on a folder picker or acting on the folder connected in its
+        # place. A pinned run keeps its own root and needs none.
+        from server.workspace.state import latch_workspace
+
+        ws_latch = latch_workspace(get_workspace_path) if workspace_path is None else None
         ws_path = get_workspace_path()
 
         from server.chat.engine.pause import paused_sessions
@@ -436,6 +464,7 @@ async def run_headless_turn(
             ),
             loop=loop,
             executor=_HEADLESS_EXECUTOR,
+            cost_source=cost_source,
             tool_exec_model_id=model_id,
             # Agents this run spawns inherit the same level.
             effort_label=_effort_label,
@@ -448,6 +477,7 @@ async def run_headless_turn(
             session_config=cfg if attended else {},
             turn_scope_id=turn_scope_id,
             tool_catalog=_tool_catalog,
+            ws_latch=ws_latch,
         )
 
         # ── Drain run_turn: an async generator yielding SSE-format ndjson
@@ -463,6 +493,7 @@ async def run_headless_turn(
             "output_tokens": 0,
             "cache_read_tokens": 0,
             "cache_creation_tokens": 0,
+            "cost_usd": 0.0,
         }
 
         def _flush_round_text() -> str | None:
@@ -495,6 +526,7 @@ async def run_headless_turn(
                             "output_tokens": u.get("total_output", 0),
                             "cache_read_tokens": u.get("total_cache_read", 0),
                             "cache_creation_tokens": u.get("total_cache_creation", 0),
+                            "cost_usd": u.get("estimated_cost_usd", 0.0),
                         }
                         rounds_used += 1
                         flushed = _flush_round_text()
@@ -577,28 +609,19 @@ async def run_headless_turn(
 
         structured = None
         if output_schema is not None:
-            from server.agents.providers import TurnUsage as _OldTurnUsage
-            from server.agents.providers import get_adapter as _get_old_adapter
-
-            _old_adapter = _get_old_adapter(resolved_model_key, model_id)
-            _old_usage = _OldTurnUsage(**final_usage)
-            if stopped_early:
-                # Matches _run_agent_loop's capped-exit path: no synthetic
-                # assistant turn appended, ctx.messages already ends with the
-                # last tool result.
-                _distill_messages = ctx.messages
-            else:
-                _distill_messages = [
-                    *ctx.messages,
-                    {
-                        "role": "assistant",
-                        "content": [{"type": "text", "text": collected_text or "(done)"}],
-                    },
-                ]
-            structured = await _distill_structured(
-                _old_adapter, system, _distill_messages, output_schema, _agent_cfg, _old_usage
+            structured, final_usage = await distill_run_output(
+                model_key=resolved_model_key,
+                model_id=model_id,
+                system=system,
+                messages=ctx.messages,
+                final_text=collected_text,
+                stopped_early=stopped_early,
+                schema=output_schema,
+                config=_agent_cfg,
+                usage=final_usage,
+                session_id=session_id,
+                source=cost_source,
             )
-            final_usage = _old_usage.as_dict()
             yield {"type": "usage", **final_usage}
             if structured is not None:
                 yield {"type": "structured", "output": structured}

@@ -45,6 +45,7 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
   indexes, selectedIndexes, toggleIndex, wsConnected, onInsertSkill,
 }) => {
   const autoMemory = useSettingsStore((s) => s.autoMemory);
+  const autoMemoryNote = useSettingsStore((s) => s.autoMemoryNote);
   const setAutoMemory = useSettingsStore((s) => s.setAutoMemory);
   const skills = useSettingsStore((s) => s.skills);
   const openSettings = useUIStore((s) => s.openSettings);
@@ -90,7 +91,7 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
           type="button"
           className={`more-row${autoMemory ? ' on' : ''}`}
           onClick={() => setAutoMemory(!autoMemory)}
-          title={`Auto memory, two tiers.\nGlobal: cross-project facts (preferences, feedback), works in every chat, no workspace needed.\nProject: workspace-scoped facts, active when a workspace is open.\nWhen on, the assistant records and recalls memories automatically.`}
+          title={`Auto memory, two tiers.\nGlobal: cross-project facts (preferences, feedback), works in every chat, no workspace needed.\nProject: workspace-scoped facts, active when a workspace is open.\nWhen on, the assistant records and recalls memories automatically.${autoMemoryNote ? `\n${autoMemoryNote}` : ''}`}
         >
           <span className="more-row-label">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -98,7 +99,7 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
             </svg>
             Memory
           </span>
-          <span className="more-row-state">{autoMemory ? 'On' : 'Off'}</span>
+          <span className="more-row-state">{autoMemory ? (autoMemoryNote ? 'Recall only' : 'On') : 'Off'}</span>
         </button>
 
         {/* Browse/edit the auto-memory store (global + project tiers). */}

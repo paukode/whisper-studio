@@ -111,7 +111,7 @@
         <tr><td>Saving files outside the workspace</td><td>The "save this to my Documents" flow. Its own category, so a blanket yes to workspace writes never covers it.</td></tr>
         <tr><td>Folder access</td><td>Reading a folder outside the connected workspace. You are asked once per folder and the grant covers everything inside it.</td></tr>
         <tr><td>Worktrees</td><td>Entering and leaving an isolated git worktree.</td></tr>
-        <tr><td>Live preview</td><td>Starting, driving and stopping a dev-server preview session.</td></tr>
+        <tr><td>Live preview</td><td>Starting, driving and stopping a dev-server preview session. Starting a named config from <code class="path">.whisper/launch.json</code> whose command you have approved once never waits on this row; see <a href="#preview-named-configs">below</a>.</td></tr>
         <tr><td>Word/Excel/PowerPoint scripts</td><td>The <code>office_script</code> tool, which writes real Python against your documents.</td></tr>
         <tr><td>GitHub / GitHub (destructive)</td><td>Ordinary GitHub mutations, and the irreversible ones. The destructive row is fixed and reads "Always asks (cannot be overridden)".</td></tr>
         <tr><td>Workflow runs</td><td>Launching a new ultracode workflow script. See below.</td></tr>
@@ -143,6 +143,46 @@
       runtime's own ceilings: the concurrency semaphore, the agent cap, and the token budget hold
       regardless. See <a href="arch-ultracode.html#approval">Approval and trust</a> for the full
       flow.</p>
+
+    <h3 id="preview-named-configs">Previews from launch.json start in every mode</h3>
+    <p>A live preview that Claude starts <em>by name</em> from the workspace's
+      <code class="path">.whisper/launch.json</code> needs your approval once for each command it
+      runs. The first time a config's command comes up, its start follows your mode like any other
+      command; where that shows a card, the card shows the exact command and says that approving it
+      lets it start without asking from now on. Once you click Yes, that command starts with no card
+      whichever mode is selected:
+      Default, Auto (no classifier call), Plan, Accept edits, Bypass and Don't ask alike, and whatever
+      the <b>Live preview</b> category row says. So the one-time step is approving the first start;
+      every preview of that config after that just starts, in this chat and in later ones.</p>
+    <p>The approval belongs to the command, not the file. <code class="path">launch.json</code> can
+      arrive with a repository you clone or pull, or be written by an edit your mode applied with no
+      card, so a config nobody approved never skips the card. The approval is remembered per
+      workspace, for that exact command: if the entry's program or arguments change, the next start
+      asks again, and the same command in another workspace asks there too. Only your own answer to a
+      card (a click, or a spoken yes in voice mode) records it; a start that Bypass, a "Yes for all
+      preview", or the Auto classifier let through records nothing. The approvals are kept in
+      <code class="path">launch_trust.json</code> in the app's data folder; deleting that file makes
+      every config ask once more. What runs is always what was checked: if
+      <code class="path">launch.json</code> changes while a card waits, Yes runs the command the
+      card showed, not the new one, and a start that would skip the card falls back to your mode if
+      the file changed after Claude asked for it.</p>
+    <p>Everything else about a preview still follows the mode:</p>
+    <ul>
+      <li>An <b>ad-hoc command</b> (Claude passing the program and its arguments directly instead of a
+        name) asks, is classified, or is declined exactly as your mode says, every time.</li>
+      <li>In <b>Don't ask</b>, a config you have not approved yet is declined like any other action;
+        approve its first start once in another mode.</li>
+      <li>A <code>cwd</code> outside the connected workspace makes a named start follow the mode too.</li>
+      <li>A name that is not in <code class="path">launch.json</code> is not covered; it fails with an
+        error saying so.</li>
+    </ul>
+    <p>Your explicit choices still win over the exemption, outside Bypass. A custom rule for
+      <code>preview_start</code> that denies (or asks) keeps doing so, and <b>Block preview</b> on an
+      approval card refuses named starts for the rest of the session. Bypass allows everything, as it
+      does for every other action. The hard floors hold in every mode, checked against the command
+      the config resolves to: a <code class="path">launch.json</code> entry that deletes files (for
+      example one that runs <code>rm</code>, directly or inside <code>sh -c</code>) always shows a
+      card, however often you approved it.</p>
 
     <h2 id="approval-cards">Approval cards: what "ask" looks like</h2>
     <p>When a call resolves to <b>ask</b>, the turn pauses and an approval card appears inline in the
@@ -235,6 +275,8 @@
         write confinement - then an MCP server you marked as needing approval &rarr; the per-category
         mode, if set, replaces the global mode &rarr; <code>bypassPermissions</code> &rarr; a trusted
         skill script &rarr; your session-wide "all this session" choice &rarr; your custom rules
+        &rarr; a preview started by name from <code class="path">launch.json</code> with a
+        command you approved once (it starts)
         &rarr; the mode's own default. So <code>bypassPermissions</code> overrides even a
         <code>deny</code> rule, but a stricter per-category mode overrides it, the three absolutes
         override everything, and every other mode respects your rules first.</p></div>

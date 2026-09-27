@@ -34,6 +34,14 @@ class FeatureFlag:
     description: str
     default: bool = False
     category: str = "general"
+    # Set when the feature has no on-device path: Local mode keeps it off
+    # whatever the flag says (nothing leaves this Mac), and this is the reason
+    # the Feature flags panel shows. Empty for a feature that runs in every mode.
+    local_mode_off: str = ""
+    # Set when part of the feature has no on-device path: the flag still
+    # decides, and this says what Local mode leaves out (shown by the Feature
+    # flags panel and the toolbar row that mirrors the flag).
+    local_mode_note: str = ""
 
 
 # Central registry of all feature flags with their metadata.
@@ -48,9 +56,18 @@ def register_flag(
     description: str,
     default: bool = False,
     category: str = "general",
+    local_mode_off: str = "",
+    local_mode_note: str = "",
 ) -> FeatureFlag:
     """Register a feature flag. Idempotent — re-registering with the same name updates the definition."""
-    flag = FeatureFlag(name=name, description=description, default=default, category=category)
+    flag = FeatureFlag(
+        name=name,
+        description=description,
+        default=default,
+        category=category,
+        local_mode_off=local_mode_off,
+        local_mode_note=local_mode_note,
+    )
     with _lock:
         _FLAG_DEFINITIONS[name] = flag
     return flag
@@ -60,6 +77,7 @@ def is_enabled(name: str) -> bool:
     """Check if a feature flag is enabled.
 
     Resolution order:
+    0. Off in Local mode for a feature with no on-device path (inactive_reason)
     1. config.json feature_flags.<name> (user override)
     2. Registered default value
     3. False (unknown flags are off)
@@ -67,14 +85,35 @@ def is_enabled(name: str) -> bool:
     from server.infrastructure.config import load_config
 
     config = load_config()
+    with _lock:
+        defn = _FLAG_DEFINITIONS.get(name)
+    if defn and inactive_reason(defn, config):
+        return False
     flags_config = config.get("feature_flags", {})
     if name in flags_config:
         return bool(flags_config[name])
-    with _lock:
-        defn = _FLAG_DEFINITIONS.get(name)
     if defn:
         return defn.default
     return False
+
+
+def inactive_reason(defn: FeatureFlag, config: dict) -> str | None:
+    """Why ``defn``'s feature is off in the active mode whatever the flag says,
+    or None when the flag decides."""
+    if not defn.local_mode_off:
+        return None
+    from server.infrastructure.model_mode import current_mode
+
+    return defn.local_mode_off if current_mode(config) == "local" else None
+
+
+def local_mode_note(defn: FeatureFlag, config: dict) -> str | None:
+    """What Local mode leaves out of ``defn``'s feature, or None."""
+    if not defn.local_mode_note:
+        return None
+    from server.infrastructure.model_mode import current_mode
+
+    return defn.local_mode_note if current_mode(config) == "local" else None
 
 
 def get_flag(name: str) -> FeatureFlag | None:
@@ -86,7 +125,10 @@ def get_flag(name: str) -> FeatureFlag | None:
 def get_flag_states() -> dict[str, dict[str, Any]]:
     """Return all flags with their current resolved state.
 
-    Returns a dict of {name: {enabled, default, description, category, source}}.
+    Returns a dict of {name: {enabled, default, description, category, source,
+    inactive_reason, local_mode_note}}. ``enabled`` is the flag's own setting;
+    a non-null ``inactive_reason`` says the feature is off anyway in the active
+    mode, and a non-null ``local_mode_note`` says what part of it is.
     """
     from server.infrastructure.config import load_config
 
@@ -108,6 +150,8 @@ def get_flag_states() -> dict[str, dict[str, Any]]:
                 "description": defn.description,
                 "category": defn.category,
                 "source": source,
+                "inactive_reason": inactive_reason(defn, config),
+                "local_mode_note": local_mode_note(defn, config),
             }
     return result
 
@@ -174,6 +218,11 @@ register_flag(
     description="Tier 3 retrieval: use a fast LLM (Haiku) to rewrite a follow-up question into a standalone, context-complete search query before grounding. When on, this replaces the default heuristic contextualization + dual-query fusion. Adds one cheap model call per grounded turn; default off",
     default=False,
     category="chat",
+    local_mode_off=(
+        "Off in Local mode: the rewrite runs on a cloud model, so grounding uses the "
+        "on-device heuristic query instead. Switch Settings > Model mode to Hybrid or "
+        "Cloud to use it."
+    ),
 )
 
 register_flag(
@@ -184,6 +233,10 @@ register_flag(
     ),
     default=True,
     category="memory",
+    local_mode_note=(
+        "Local mode recalls saved memories but records no new ones: recording runs on "
+        "a cloud model. Switch Settings > Model mode to Hybrid or Cloud to record them."
+    ),
 )
 
 register_flag(
@@ -197,7 +250,8 @@ register_flag(
     "goal_loop",
     description=(
         "Goal loop + completion gate: a session goal auto-continues the turn "
-        "until a cheap evaluator judges it achieved (capped at 8 blocks)"
+        "until a judge says it is achieved (the goal_evaluator model for a cloud "
+        "session, the session's own model on-device), capped at 8 blocks"
     ),
     default=True,
     category="agent",
@@ -237,6 +291,10 @@ register_flag(
     description="Cross-session memory distillation after 24h and 5 sessions",
     default=True,
     category="memory",
+    local_mode_off=(
+        "Off in Local mode: consolidation runs on a cloud model. Switch Settings > "
+        "Model mode to Hybrid or Cloud to use it."
+    ),
 )
 
 register_flag(

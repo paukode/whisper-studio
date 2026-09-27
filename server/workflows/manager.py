@@ -314,7 +314,6 @@ def start_run(
         args=args,
         session_id=session_id,
         model_id=model_id,
-        model_key=model_key,
         effort_label=effort_label,
         workspace_path=workspace_path,
         budget_tokens=budget_tokens,
@@ -327,7 +326,10 @@ def start_run(
         on_event=lambda ev: _publish(run_id, session_id, ev),
     )
     _live[run_id] = run
-    _schedule(_drive(run), run_id, spawn)
+    from server.tasks.owner import run_owned
+
+    # The workflow's agents run their own commands: a chat Stop spares them.
+    _schedule(run_owned(f"workflow:{run_id}", _drive(run)), run_id, spawn)
     return run_id
 
 
@@ -440,7 +442,6 @@ def _make_nested_runner(session_id, model_key, model_id, effort_label, workspace
             args=args,
             session_id=session_id,
             model_id=model_id,
-            model_key=model_key,
             effort_label=effort_label,
             # A nested workflow() call is not a new user instruction naming a
             # folder — it inherits the SAME pinned root as its parent.

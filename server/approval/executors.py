@@ -4,14 +4,24 @@ Split out of bootstrap.py (which keeps register_defaults and the spec
 declarations) so both stay under the repo's per-file line budget. Each function
 delegates to the sibling executor/endpoint logic; the frontend never knows which
 one runs — it POSTs {action, payload} to /api/approval/execute.
+
+Bodies that can block for long (commands, git, gh, python, aws, worktrees,
+a tree delete, a cross-volume move) run in a worker thread (asyncio.to_thread), so
+one session's approved action never freezes the others. Stop reaches only the approved
+ws_run_command (_do_command), which runs through the per-session foreground
+tracking in server/tasks/handoff.py. The git, gh, run_python and aws_cli
+actions are deliberately left to finish once approved, bounded by their own
+timeouts (a clone 300 s, run_python 90 s): killing a commit, merge, checkout,
+stash or push midway can leave an index.lock or a half-applied tree behind, so
+a Stop pressed while one runs ends the turn and the action reports its outcome.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shlex
 import shutil
-import subprocess
 
 from .spec import ApprovalOutcome, refuse_if_agent, refuse_if_agent_rm
 
@@ -40,13 +50,23 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
     from server.index.citations import created_file_link
 
     link = created_file_link(path, full)
-    return ApprovalOutcome(
-        ok=True,
-        output=(
-            f"Wrote {path} ({len(content)} bytes). "
-            f"To reference this file for the user, copy this link verbatim: {link}"
-        ),
+    output = (
+        f"Wrote {path} ({len(content)} bytes). "
+        f"To reference this file for the user, copy this link verbatim: {link}"
     )
+    # An assistant write, create or edit of a Python file in the workspace
+    # lands here on every approval path (inline, the card's Yes, a spoken yes,
+    # an unattended agent); one saved to an absolute path lands in
+    # _do_save_to_path, which runs the same check. The note rides in the tool
+    # result the gate budgets. Bounded, and off the event loop.
+    from server.code_tools.commands import PYTHON_EXTENSIONS
+
+    if os.path.splitext(path)[1].lower() in PYTHON_EXTENSIONS:
+        from server.code_tools import ruff
+
+        note = await asyncio.to_thread(ruff.after_write, ws, full, path)
+        output = f"{output}\n\n{note}"
+    return ApprovalOutcome(ok=True, output=output)
 
 
 async def _do_folder_access(payload: dict) -> ApprovalOutcome:
@@ -118,18 +138,24 @@ async def _do_delete(payload: dict) -> ApprovalOutcome:
     if not workspace._ws_validate_path(full, ws) or not os.path.exists(full):
         return ApprovalOutcome(ok=False, error="Path not found")
     try:
-        if os.path.isfile(full):
-            try:
-                with open(full, errors="replace") as f:
-                    workspace.WORKSPACE_BACKUPS[path] = f.read()
-            except Exception:
-                pass
-            os.remove(full)
-        elif os.path.isdir(full):
-            shutil.rmtree(full)
+        # A large tree (node_modules) takes seconds to remove.
+        await asyncio.to_thread(_delete_path, workspace, path, full)
     except Exception as e:
         return ApprovalOutcome(ok=False, error=f"Delete failed: {e}")
     return ApprovalOutcome(ok=True, output=f"Deleted {path}")
+
+
+def _delete_path(workspace, path: str, full: str) -> None:
+    """Keep a file's text for undo, then remove the file or the whole tree."""
+    if os.path.isfile(full):
+        try:
+            with open(full, errors="replace") as f:
+                workspace.WORKSPACE_BACKUPS[path] = f.read()
+        except Exception:
+            pass
+        os.remove(full)
+    elif os.path.isdir(full):
+        shutil.rmtree(full)
 
 
 async def _do_save_to_path(payload: dict) -> ApprovalOutcome:
@@ -148,8 +174,6 @@ async def _do_save_to_path(payload: dict) -> ApprovalOutcome:
     particular, staged_path MUST be inside the staging root: without that
     gate a forged payload could 'move' any readable file on disk into a
     user-visible folder."""
-    import shutil
-
     from server.security.sensitive_paths import is_sensitive_path
     from server.workspace.paths import is_staged_path
     from server.workspace.state import record_save_location
@@ -174,7 +198,8 @@ async def _do_save_to_path(payload: dict) -> ApprovalOutcome:
     size = os.path.getsize(real_staged)
     try:
         os.makedirs(os.path.dirname(real_dest), exist_ok=True)
-        shutil.move(real_staged, real_dest)
+        # A move to another volume copies the bytes.
+        await asyncio.to_thread(shutil.move, real_staged, real_dest)
     except Exception as e:
         return ApprovalOutcome(ok=False, error=f"Move failed: {e}")
     # Best-effort cleanup of the now-empty per-file staging subdirectory.
@@ -187,14 +212,25 @@ async def _do_save_to_path(payload: dict) -> ApprovalOutcome:
     from server.workspace.state import REVISION_HINT
 
     link = created_file_link(os.path.basename(real_dest), real_dest)
-    return ApprovalOutcome(
-        ok=True,
-        output=(
-            f"Saved {os.path.basename(real_dest)} to {real_dest} ({size} bytes). "
-            f"To reference this file for the user, copy this link verbatim: {link} "
-            f"{REVISION_HINT}"
-        ),
+    output = (
+        f"Saved {os.path.basename(real_dest)} to {real_dest} ({size} bytes). "
+        f"To reference this file for the user, copy this link verbatim: {link} "
+        f"{REVISION_HINT}"
     )
+    # A Python file saved here (save_file, ws_create_file with a destination
+    # or with no workspace) is the assistant's Python like any other: ruff
+    # checks it, and fixes and formats it when it lands in a connected
+    # workspace that configures ruff (user decision 3).
+    from server.code_tools.commands import PYTHON_EXTENSIONS
+
+    if os.path.splitext(real_dest)[1].lower() in PYTHON_EXTENSIONS:
+        from server import workspace
+        from server.code_tools import ruff
+
+        ws = workspace.get_workspace_path() or None
+        note = await asyncio.to_thread(ruff.after_save, real_dest, ws)
+        output = f"{output}\n\n{note}"
+    return ApprovalOutcome(ok=True, output=output)
 
 
 async def _do_create_document(payload: dict) -> ApprovalOutcome:
@@ -252,7 +288,8 @@ async def _do_enter_worktree(payload: dict) -> ApprovalOutcome:
     except ValueError as e:
         return ApprovalOutcome(ok=False, error=str(e))
     try:
-        session = enter_worktree(ws, slug, session_id)
+        # `git worktree add` (up to 30 s, retried once) runs off the loop.
+        session = await asyncio.to_thread(enter_worktree, ws, slug, session_id)
     except Exception as e:
         return ApprovalOutcome(ok=False, error=str(e))
     return ApprovalOutcome(
@@ -269,7 +306,7 @@ async def _do_exit_worktree(payload: dict) -> ApprovalOutcome:
         return ApprovalOutcome(ok=False, error="session_id is required")
     force = bool(payload.get("force"))
     try:
-        session = exit_worktree(session_id, force=force)
+        session = await asyncio.to_thread(exit_worktree, session_id, force=force)
     except Exception as e:
         return ApprovalOutcome(ok=False, error=str(e))
     return ApprovalOutcome(
@@ -284,7 +321,7 @@ async def _do_exit_worktree(payload: dict) -> ApprovalOutcome:
 async def _do_git_clone(payload: dict) -> ApprovalOutcome:
     from server.git.executor import do_git_clone
 
-    ok, output = do_git_clone(payload)
+    ok, output = await asyncio.to_thread(do_git_clone, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
@@ -371,49 +408,49 @@ async def _do_preview_resize(payload: dict) -> ApprovalOutcome:
 async def _do_git_add_commit(payload: dict) -> ApprovalOutcome:
     from server.git.executor import do_git_add_commit
 
-    ok, output = do_git_add_commit(payload)
+    ok, output = await asyncio.to_thread(do_git_add_commit, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
 async def _do_git_push(payload: dict) -> ApprovalOutcome:
     from server.git.executor import do_git_push
 
-    ok, output = do_git_push(payload)
+    ok, output = await asyncio.to_thread(do_git_push, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
 async def _do_git_pull(payload: dict) -> ApprovalOutcome:
     from server.git.executor import do_git_pull
 
-    ok, output = do_git_pull(payload)
+    ok, output = await asyncio.to_thread(do_git_pull, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
 async def _do_git_create_branch(payload: dict) -> ApprovalOutcome:
     from server.git.executor import do_git_create_branch
 
-    ok, output = do_git_create_branch(payload)
+    ok, output = await asyncio.to_thread(do_git_create_branch, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
 async def _do_git_push_pr(payload: dict) -> ApprovalOutcome:
     from server.git.executor import do_git_push_pr
 
-    ok, output = do_git_push_pr(payload)
+    ok, output = await asyncio.to_thread(do_git_push_pr, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
 async def _do_github(payload: dict) -> ApprovalOutcome:
     from server.git.gh_executor import do_github
 
-    ok, output = do_github(payload)
+    ok, output = await asyncio.to_thread(do_github, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
 async def _do_github_api_write(payload: dict) -> ApprovalOutcome:
     from server.git.gh_executor import do_github_api_write
 
-    ok, output = do_github_api_write(payload)
+    ok, output = await asyncio.to_thread(do_github_api_write, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
@@ -439,60 +476,60 @@ def _gh_api_render(p: dict) -> str:
 async def _do_git_checkout(payload: dict) -> ApprovalOutcome:
     from server.git.executor import do_git_checkout
 
-    ok, output = do_git_checkout(payload)
+    ok, output = await asyncio.to_thread(do_git_checkout, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
 async def _do_git_delete_branch(payload: dict) -> ApprovalOutcome:
     from server.git.executor import do_git_delete_branch
 
-    ok, output = do_git_delete_branch(payload)
+    ok, output = await asyncio.to_thread(do_git_delete_branch, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
 async def _do_git_merge(payload: dict) -> ApprovalOutcome:
     from server.git.executor import do_git_merge
 
-    ok, output = do_git_merge(payload)
+    ok, output = await asyncio.to_thread(do_git_merge, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
 async def _do_git_stash(payload: dict) -> ApprovalOutcome:
     from server.git.executor import do_git_stash
 
-    ok, output = do_git_stash(payload)
+    ok, output = await asyncio.to_thread(do_git_stash, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
 async def _do_run_python(payload: dict) -> ApprovalOutcome:
     from server.executors.code import do_run_python
 
-    ok, output = do_run_python(payload)
+    ok, output = await asyncio.to_thread(do_run_python, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
 async def _do_aws_cli(payload: dict) -> ApprovalOutcome:
     from server.executors.code import do_aws_cli
 
-    ok, output = do_aws_cli(payload)
+    ok, output = await asyncio.to_thread(do_aws_cli, payload)
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
 async def _do_command(payload: dict) -> ApprovalOutcome:
-    """Run a shell command in the workspace. Mirrors ws_shell_endpoint but
-    without the request/response plumbing. user_approved is implicit — the
-    user just approved via the banner."""
+    """Run an approved workspace command. user_approved is implicit: the user
+    (or the session's standing approval) just said yes.
+
+    Executes through the same path as a read-only ws_run_command
+    (server.workspace.executors.run_workspace_command): run_in_background
+    starts a session-owned background task, and a command still running at the
+    foreground budget (a dev server, a long build) is handed off as one instead
+    of being killed at a hard timeout. Runs off the event loop so a long command
+    never freezes other sessions."""
     refusal = refuse_if_agent_rm(payload)
     if refusal:
         return refusal
     from server import workspace
-    from server.cwd_tracker import (
-        extract_cwd_from_output,
-        get_cwd,
-        update_cwd,
-        wrap_command_for_cwd,
-    )
-    from server.sandbox import run_sandboxed
+    from server.workspace.executors import run_workspace_command
 
     ws = workspace.get_workspace_path()
     if not ws:
@@ -506,35 +543,27 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
     warning = workspace._validate_command(command)
     if warning:
         return ApprovalOutcome(ok=False, error=warning)
-    session_id = payload.get("session_id", "")
-    effective_cwd = get_cwd(session_id, ws) if session_id else ws
-    redirected = (
-        workspace._apply_stdin_redirect(command)
-        if workspace._needs_stdin_redirect(command)
-        else command
-    )
-    exec_command = wrap_command_for_cwd(redirected)
     try:
-        result = run_sandboxed(exec_command, cwd=effective_cwd, timeout=120)
-    except subprocess.TimeoutExpired:
-        return ApprovalOutcome(ok=False, error="Command timed out")
+        run = await asyncio.to_thread(
+            run_workspace_command,
+            command,
+            ws,
+            session_id=str(payload.get("session_id") or ""),
+            run_in_background=bool(payload.get("run_in_background")),
+        )
     except Exception as e:
         return ApprovalOutcome(ok=False, error=str(e))
-
-    output = ""
-    if result.stdout:
-        output += result.stdout
-    if result.stderr:
-        output += ("\n" if output else "") + result.stderr
-    clean_output, new_cwd = extract_cwd_from_output(output.strip())
-    if session_id and new_cwd and os.path.isdir(new_cwd):
-        update_cwd(session_id, new_cwd)
-    output = clean_output or ("Done." if result.returncode == 0 else "(no output)")
-    output = workspace._truncate_shell_output(output)
+    if run.background:
+        return ApprovalOutcome(ok=True, output=run.text)
+    if run.stopped:
+        return ApprovalOutcome(
+            ok=False, output=run.text, error="stopped before it finished", stopped=True
+        )
+    ok = run.returncode == 0
     return ApprovalOutcome(
-        ok=result.returncode == 0,
-        output=output,
-        error=None if result.returncode == 0 else f"exit code {result.returncode}",
+        ok=ok,
+        output=run.text,
+        error=None if ok else f"exit code {run.returncode}",
     )
 
 

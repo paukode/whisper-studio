@@ -58,9 +58,12 @@
         <code>loadModels()</code> fetches the model list only. On-device weights are deliberately
         <em>not</em> eager-loaded at startup, so launch stays fast and memory stays free until you
         actually pick a local model. See <a href="arch-backends.html">Model backends &amp; modes</a>.</li>
-      <li><b>Load data retention, skills, and MCP servers.</b> <code>loadDataRetention()</code>,
-        <code>loadSkills()</code>, and <code>loadMCP()</code> populate the settings store, which is also
-        where the skill and MCP catalogue behind the composer's autocomplete lives.</li>
+      <li><b>Load data retention and skills, and open the event channel.</b>
+        <code>loadDataRetention()</code> and <code>loadSkills()</code> populate the settings store, which
+        is also where the skill catalogue behind the composer's autocomplete lives.
+        <code>openEventChannel()</code> opens the app-wide <code>/api/sessions/events</code> stream;
+        each time it opens it loads the MCP server list into <code>mcpStore</code>, and its
+        <code>mcp_changed</code> frames keep that list live.</li>
       <li><b>Restore sessions.</b> <code>loadSessions()</code> lists saved sessions, then the persisted
         <code>currentSessionId</code> is restored and rehydrated through
         <code>switchSession()</code>. A stale persisted id is dropped so the next session prompt starts
@@ -142,7 +145,8 @@
         <tr><td><code>sessionStore</code></td><td>singleton</td><td>The session list, <code>currentSessionId</code>, switching, titling, and saves.</td></tr>
         <tr><td><code>workspaceStore</code></td><td>singleton</td><td>File tree, editor tabs, and dirty state for the connected repo.</td></tr>
         <tr><td><code>uiStore</code>, <code>layoutStore</code>, <code>dockStore</code></td><td>singleton</td><td>Panel visibility, persisted split fractions, and the right-side dock panels.</td></tr>
-        <tr><td><code>settingsStore</code></td><td>singleton</td><td>Config, model list, selected model, effort level, verbosity, data retention, and the skill/MCP catalogue (<code>loadSkills</code> / <code>loadMCP</code>).</td></tr>
+        <tr><td><code>settingsStore</code></td><td>singleton</td><td>Config, model list, selected model, effort level, verbosity, data retention, and the skill catalogue (<code>loadSkills</code>).</td></tr>
+        <tr><td><code>mcpStore</code></td><td>singleton</td><td>The one MCP server list, with live status, tool counts and pending elicitations. Settings &gt; MCP, the composer's <code>/mcp:</code> and <code>@mcp:</code> menus and the import panel all read it; the backend's <code>mcp_changed</code> events refetch it.</td></tr>
         <tr><td><code>taskStore</code>, <code>recordingStore</code>, <code>cronUnreadStore</code>, <code>subagentStore</code></td><td>singleton</td><td>The live task list, the shared mic, cron badges, and running subagents.</td></tr>
         <tr><td><code>voiceStore</code></td><td>singleton</td><td>Voice-mode state for the Talk bar: off, connecting, listening, thinking, speaking, ending, plus the draining flag that keeps background work running after you hang up.</td></tr>
         <tr><td><code>indexSearchStore</code></td><td>singleton</td><td>Per-session selection of which indexed workspaces a turn should search (<code>selected_search_indexes</code>), persisted to <code>localStorage</code> so a session's choice survives a reload.</td></tr>
@@ -238,7 +242,6 @@
         <tr><td><code>session_message</code></td><td>Appends a live <code>SessionMessageCard</code> for a message pushed in from another session while this one is streaming; renders identically to the persisted, resumed row.</td></tr>
         <tr><td><code>notify_user</code></td><td>Surfaces the tool's declared status (success / warning / error) as a toast, alongside the durable row it also writes to the notification log.</td></tr>
         <tr><td><code>todo_update</code></td><td>Replaces the session's task list wholesale in <code>taskStore</code>, so the Tasks pane and the in-chat task row stay a single live source of truth.</td></tr>
-        <tr><td><code>tool_pool</code></td><td>Progressive-disclosure telemetry: how many tools were advertised in the core set versus deferred, recorded on <code>uiStore</code>.</td></tr>
         <tr><td><code>plan_generated</code> / <code>plan_blocked</code></td><td>Opens a plan in the dock as <code>create_plan</code> saves it, or renders a card explaining why plan mode blocked the turn.</td></tr>
         <tr><td><code>program_artifact</code></td><td>Stashes a generated mini-app/report so it attaches to the bottom of the settled assistant message as an artifact card.</td></tr>
         <tr><td><code>tool_result_truncated</code></td><td>Toasts that a tool's output was trimmed to a head+tail slice before reaching the model, linking to the full output in the result cache.</td></tr>

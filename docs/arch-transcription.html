@@ -140,17 +140,34 @@
         hallucination filters on.</li>
       <li><b>Canary</b> has no language head at all - every decode needs an explicit source language
         - so it leans on a separate on-device classifier: <b>VoxLingua107</b> (an ECAPA language-ID
-        model, ~86&nbsp;MB, ~40-60&nbsp;ms per utterance on CPU). Detection is <b>sticky and
-        confidence-gated</b>: a result only sets or switches the session language when the clip is at
-        least 1.5&nbsp;s long and wins with at least 0.6 relative confidence; weaker detections
-        inherit the previous utterance's language. A single-entry allowlist pins the language and
-        skips detection entirely.</li>
+        model, ~86&nbsp;MB, ~40-60&nbsp;ms per utterance on CPU). Canary follows the language it is
+        given rather than the audio, so a wrong pick comes out as a fluent translation. Detection
+        therefore only chooses among the <b>Transcription Languages</b> (the same
+        <code>whisper_language</code> list); when that is blank, among English plus the Mac's
+        preferred languages that Canary decodes (System Settings &gt; General &gt; Language &amp;
+        Region), never all 25. A list that names nothing Canary decodes (such as <code>ja</code>,
+        which only Whisper knows) makes Canary refuse to transcribe, with the reason under the
+        Settings field, rather than decode the speech as some other language. It is <b>sticky and
+        confidence-gated</b> per recording: a result
+        settles the language only when the clip is at least 1.5&nbsp;s long with at least 0.6 of the
+        candidates' share, and switching away from a settled language needs 0.9. Weaker detections
+        inherit the settled language; before one settles, a weak utterance decodes with its own pick
+        without settling anything. Live drafts show only a language the tracker trusts, and an
+        utterance that produced no text never moves it. The settled language survives a reconnect
+        of the same recording and resets on Stop, and a new recording starts unsettled even when
+        the last one's Stop never reached the server. A single candidate pins the language and skips
+        detection entirely.</li>
       <li><b>Parakeet</b> does no language identification; its multilingual decoder just transcribes.
         When translation needs a source language for a Parakeet utterance, detection happens
-        downstream (Canary's classifier, or Apple's auto-detect).</li>
+        downstream (Canary's classifier, or Apple's auto-detect). Canary looks within a typed
+        Transcription Languages list, or among all 25 of its languages when the field is blank:
+        the translation target, not the pick, decides the output language, so a wrong pick can
+        only skip a line.</li>
     </ul>
-    <p>Both Whisper and Canary share the same hallucination defenses: a phrase blocklist of
-      known Whisper artifacts and a repetition detector, applied before a final is emitted.</p>
+    <p>Whisper filters its finals with a phrase blocklist of known Whisper artifacts and a
+      repetition detector. Canary applies that English blocklist only to English finals; every other
+      language, and every translation line, keeps just the language-neutral repetition check, so a
+      real Polish "No." is never dropped as filler.</p>
 
     <h2 id="translation">Live translation</h2>
     <p>The transcript panel can translate every settled utterance as it lands. The translator is a

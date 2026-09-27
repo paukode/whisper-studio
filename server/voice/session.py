@@ -38,7 +38,8 @@ from datetime import datetime
 from typing import Any
 
 from server.voice import protocol
-from server.voice.sonic_client import SonicUnavailable, open_stream
+from server.voice.cost_log import SonicUsageMeter
+from server.voice.sonic_client import SonicUnavailable, local_mode_refusal, open_stream
 from server.voice.tools import VOICE_TOOLS, WORKING_PREFIX, ToolContext, run_tool
 
 log = logging.getLogger(__name__)
@@ -136,6 +137,8 @@ class _Live:
     # Model events received on this stream. Zero when it dies means Bedrock
     # never answered: the failure is reported as a start failure, not retried.
     events: int = 0
+    # Sonic's own usage on this stream, for the cost log (see cost_log.py).
+    meter: SonicUsageMeter | None = None
 
 
 @dataclass
@@ -468,6 +471,11 @@ class VoiceSession:
     # ── stream management ────────────────────────────────────────────────
 
     async def _open(self, *, first: bool) -> None:
+        refusal = local_mode_refusal()
+        if refusal:
+            # Every stream open asks, the first and each renewal: no Sonic
+            # stream opens in Local mode, whoever calls.
+            raise SonicUnavailable(refusal)
         opener = self._open_stream or open_stream
         stream = await opener(self.config.model_id, self.config.region)
         if self._stopping:
@@ -485,6 +493,7 @@ class VoiceSession:
             audio_name=audio_name,
             opened_at=now,
             last_input_at=now,
+            meter=SonicUsageMeter(model_id=self.config.model_id, session_id=self.session_id),
         )
         preamble = [
             protocol.session_start(
@@ -556,6 +565,8 @@ class VoiceSession:
                 await live.pump
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+        if live.meter is not None:
+            live.meter.flush()  # the stream's usage since its last completion
 
     async def _send(self, live: _Live, event_json: str, *, activity: bool = True) -> None:
         """``activity`` says whether Sonic counts this event as input (text, tool
@@ -574,10 +585,16 @@ class VoiceSession:
 
     async def _renew_loop(self) -> None:
         """Swap streams before Bedrock's 8-minute cut, and before Sonic's idle
-        cut when the input has been silent, at a quiet moment."""
+        cut when the input has been silent, at a quiet moment. Each tick also
+        checks the model mode: a switch to Local mode ends the conversation
+        within a second, whatever the browser does."""
         try:
             while not self._stopping:
                 await asyncio.sleep(1.0)
+                refusal = local_mode_refusal()
+                if refusal:
+                    await self._end_for_local_mode(refusal)
+                    return
                 live = self._live
                 if live is None or live.closing:
                     continue
@@ -597,6 +614,10 @@ class VoiceSession:
 
     async def _reopen(self, old: _Live, *, why: str) -> None:
         if self._stopping or old is not self._live or old.closing:
+            return
+        refusal = local_mode_refusal()
+        if refusal:
+            await self._end_for_local_mode(refusal)
             return
         if self._reopens >= MAX_REOPENS:
             detail = f" ({self._last_stream_error})" if self._last_stream_error else ""
@@ -625,6 +646,14 @@ class VoiceSession:
         log.error("voice: %s", message)
         await self.emit({"type": "error", "message": message})
         await self.stop("error")
+
+    async def _end_for_local_mode(self, refusal: str) -> None:
+        """The app switched to Local mode mid-conversation. Nothing may reach
+        Bedrock now: close the stream, cancel the delegated runs (they run on a
+        cloud model) and say why."""
+        log.info("voice: ending the conversation, the app is in Local mode")
+        await self.emit({"type": "error", "message": refusal})
+        await self.stop("unavailable", cancel_runs=True)
 
     # ── output pump ──────────────────────────────────────────────────────
 
@@ -765,10 +794,14 @@ class VoiceSession:
             self._tool_tasks.add(task)
             task.add_done_callback(self._tool_tasks.discard)
         elif kind == "turn_end":
+            if live.meter is not None:
+                live.meter.flush()
             await self._end_utterance("turn_end")
         elif kind == "turn_start":
             await self._end_utterance("turn_start")
         elif kind == "usage":
+            if live.meter is not None:
+                live.meter.observe(ev)
             await self.emit({"type": "usage", **{k: v for k, v in ev.items() if k != "kind"}})
         elif kind == "error":
             await self.emit({"type": "error", "message": ev.get("message", "stream error")})

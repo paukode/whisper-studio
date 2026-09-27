@@ -23,6 +23,7 @@ def _ctx(effort_label: str | None) -> TurnContext:
     """A chat TurnContext exactly as server/chat/routes.py builds one: no
     ``tool_catalog`` override, so the engine assembles the round's tools."""
     return TurnContext(
+        cost_source="chat",
         session_id="sess-ultracode",
         model_key="opus5.0",
         model_id="test-model",

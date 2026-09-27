@@ -1,5 +1,11 @@
-"""Content search across the workspace: per-file git history and ripgrep/grep."""
+"""Content search across the workspace: per-file git history and ripgrep/grep.
 
+Every subprocess runs on a worker thread (asyncio.to_thread). Run inline in
+these async handlers, a slow grep or git log stalled the whole event loop, so
+other sessions' streams and a Disconnect click waited behind it.
+"""
+
+import asyncio
 import json
 import os
 import subprocess
@@ -32,7 +38,8 @@ async def ws_file_history(request: Request):
             media_type="application/json",
         )
     try:
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             ["git", "log", f"--max-count={limit}", "--format=%H|%an|%ar|%s", "--", path],
             cwd=ws,
             capture_output=True,
@@ -92,7 +99,8 @@ async def ws_grep_endpoint(request: Request):
             rg_bin = get_rg_path()
         except RuntimeError as e:
             raise FileNotFoundError(str(e)) from e  # -> the grep fallback below
-        result = subprocess.run(
+        result = await asyncio.to_thread(
+            subprocess.run,
             [rg_bin, "--json", "--max-count", "3", "-m", str(limit), "-i", pattern, search_dir],
             capture_output=True,
             text=True,
@@ -120,7 +128,8 @@ async def ws_grep_endpoint(request: Request):
     except FileNotFoundError:
         # rg not installed, fall back to grep
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["grep", "-rn", "-i", "--include=*", pattern, search_dir],
                 capture_output=True,
                 text=True,

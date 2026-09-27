@@ -28,6 +28,8 @@ import {
 import { NativeAudioMixer } from '@/services/nativeAudioMixer';
 import { isNativeTranslationAvailable, translateNative } from '@/services/nativeTranslation';
 import { countActiveSessions, getTranscriptionStore } from '@/stores/sessionRuntimes';
+import { nextChunkId, type TranscriptionState } from '@/stores/transcriptionStore';
+import type { StoreApi } from 'zustand/vanilla';
 import { MAX_ACTIVE_SESSIONS } from '@/hooks/useChatStream';
 
 const SAMPLE_RATE = 16000;
@@ -58,10 +60,103 @@ let chunkSamples = WHISPER_CHUNK_SAMPLES;
 let speakerCount = 0;
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
-/** The session that owns the live recording. Single source of truth is
- *  recordingStore.recordingSessionId; this mirror avoids store reads in
- *  the per-chunk hot path. */
-let owningSessionId: string | null = null;
+
+/** One recording take, bound at start(). Every socket the take opens (a
+ *  watchdog reconnect included) writes into this store, and a result that
+ *  lands late (an Apple translation) still reaches it: nothing is routed by
+ *  whichever session owns the mic when the frame arrives. The session is
+ *  also mirrored in recordingStore.recordingSessionId for the UI. */
+interface Take {
+  sessionId: string;
+  /** Names this recording (one press of Record) for the server. Every
+   *  watchdog reconnect repeats it, so the server hands a dropped socket's
+   *  in-flight sentence to a reconnect of this take only, never to the next
+   *  take. */
+  takeId: string;
+  store: StoreApi<TranscriptionState>;
+  /** Added to every wire chunk_id. The server numbers a session's chunks on
+   *  across reconnects, but from 0 again after an explicit stop or a restart
+   *  of its process, so without it a later take's (or a restarted server's)
+   *  translations and speaker corrections would land on older segments. */
+  chunkBase: number;
+  /** One past the highest store-level chunk id this store has used. */
+  nextId: number;
+  /** Set once the take's first transcript opened its own segment. Speaker
+   *  labels restart with the server's numbering, so a new "Speaker 1" must
+   *  not grow the previous take's last "Speaker 1" segment. */
+  opened: boolean;
+}
+let take: Take | null = null;
+/** Per session, what the last finished take left: one past the highest chunk
+ *  id it used, covering ids the store no longer shows (the transcript was
+ *  cleared), and its chunk base. A take whose stop never reached the server
+ *  leaves it counting on, and the next take keeps that base so a speaker
+ *  correction for one of the earlier chunks still finds it. */
+const finishedTakes = new Map<string, { nextId: number; chunkBase: number }>();
+
+/** The store-level id of a wire chunk id of take `t`. */
+function storeChunkId(t: Take, wireId: number): number {
+  const id = wireId + t.chunkBase;
+  if (id >= t.nextId) t.nextId = id + 1;
+  return id;
+}
+
+/** Called with the first wire chunk id a socket reports. A server that kept
+ *  counting numbers it at or past what this store has used, and the base
+ *  stays. A lower id means its counter restarted (an explicit stop, or the
+ *  backend restarted under a watchdog reconnect): the base moves so that
+ *  numbering starts on fresh store ids, and since its speaker labels
+ *  restarted too, its first line opens a new segment. */
+function followNumbering(t: Take, wireId: number): void {
+  if (wireId + t.chunkBase >= t.nextId) return;
+  t.chunkBase = t.nextId - wireId;
+  t.opened = false;
+}
+
+function endTake(t: Take): void {
+  const prev = finishedTakes.get(t.sessionId);
+  finishedTakes.set(t.sessionId, {
+    nextId: Math.max(prev?.nextId ?? 0, t.nextId),
+    chunkBase: t.chunkBase,
+  });
+  if (take === t) take = null;
+}
+
+/** How long stop() waits for the server's `session_ended`. The server sends
+ *  it once the final decode, the speaker embed and the translation drain are
+ *  done, which is normally well under a second; the deadline only covers a
+ *  server that never answers. */
+export const STOP_SETTLE_DEADLINE_MS = 10_000;
+/** Per socket, the chunk ids it announced as translating on the server whose
+ *  line has not arrived. A socket that goes away owing them never delivers
+ *  them (the server cancels its decodes), so their markers are dropped rather
+ *  than left spinning, and the user is told the lines are missing. Apple
+ *  translations run here and are not owed. */
+const owedTranslations = new WeakMap<WebSocket, Set<number>>();
+
+function abandonOwed(t: Take, sock: WebSocket): void {
+  const owed = owedTranslations.get(sock);
+  if (!owed || owed.size === 0) return;
+  const lost = owed.size;
+  t.store.getState().abandonPendingTranslations([...owed]);
+  owed.clear();
+  useUIStore.getState().addToast({
+    type: 'warning',
+    message:
+      `${lost === 1 ? 'A translation' : `${lost} translations`} did not arrive before the ` +
+      'connection to the transcription server closed, so the transcript is missing ' +
+      `${lost === 1 ? 'that line' : 'those lines'}.`,
+    duration: 8000,
+    key: 'recording-translations-lost',
+    source: 'recording',
+  });
+}
+
+/** A stopped take whose socket has not settled yet. It keeps the recording
+ *  slot until then; a start() in the meantime waits for `stopSettled`. */
+let stopping: { sock: WebSocket; settle: () => void } | null = null;
+let stopSettled: Promise<void> | null = null;
+
 /** True while the pre-recording model gate downloads weights. A second
  *  record click during the wait must not start a second gate — the
  *  banner's Cancel is the way out. */
@@ -88,8 +183,6 @@ let nativeMixer: NativeAudioMixer | null = null;
 /** True while the shell's process-tap capture is live. */
 let nativeCaptureRunning = false;
 
-const ownerStore = () => getTranscriptionStore(owningSessionId).getState();
-
 function flushPcmBuffer(): void {
   if (pcmBufferLen === 0) return;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -110,6 +203,7 @@ function flushPcmBuffer(): void {
 }
 
 function onTranscriptResult(
+  t: Take,
   text: string,
   speaker: string,
   chunkId?: number,
@@ -117,10 +211,12 @@ function onTranscriptResult(
   overlap?: boolean,
 ): void {
   if (!text) return;
-  const store = ownerStore();
+  const store = t.store.getState();
   const segs = store.segments;
   const lastSeg = segs.length > 0 ? segs[segs.length - 1] : null;
-  if (lastSeg && lastSeg.speaker === speaker) {
+  const grow = t.opened && lastSeg !== null && lastSeg.speaker === speaker;
+  t.opened = true;
+  if (lastSeg && grow) {
     // Same speaker still talking: grow the existing segment. The chunk id
     // is recorded so diarization corrections can split this merge later.
     store.appendSegmentText(lastSeg.id, text, chunkId, translating);
@@ -261,17 +357,24 @@ function startPing(): void {
   }, WS_PING_INTERVAL);
 }
 
-function connectWS(): void {
+function connectWS(t: Take): void {
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   // The OWNING session id rides the URL — the backend keys its speaker
   // profiles by it, and a watchdog reconnect must come back to the same
-  // session even if the user is viewing a different one by then.
-  const wsUrl = owningSessionId
-    ? `${protocol}//${window.location.host}/ws?session_id=${encodeURIComponent(owningSessionId)}`
-    : `${protocol}//${window.location.host}/ws`;
+  // session even if the user is viewing a different one by then. So does
+  // the engine the recording actually runs: config already names the engine
+  // a live switch is still downloading, and a reconnect that followed config
+  // would load it past the download gate. The take id marks a reconnect of
+  // this recording rather than a new one.
+  const openedOn = activeBackend;
+  const wsUrl =
+    `${protocol}//${window.location.host}/ws?session_id=${encodeURIComponent(t.sessionId)}` +
+    `&backend=${encodeURIComponent(openedOn)}&take=${encodeURIComponent(t.takeId)}`;
   const newWs = new WebSocket(wsUrl);
   ws = newWs;
+  const owed = new Set<number>();
+  owedTranslations.set(newWs, owed);
   // Sticky source language for Apple translation: talk is overwhelmingly
   // mono-language, so a chunk that arrives without a language ID (Parakeet
   // never has one; low-confidence LID omits it) reuses the last identified
@@ -280,6 +383,7 @@ function connectWS(): void {
   // download sheet mid-recording. Scoped per connection: a new recording
   // starts fresh.
   let lastLanguage = '';
+  let numbered = false;
   newWs.onopen = () => {
     useRecordingStore.getState().setConnected(true);
     startPing();
@@ -298,15 +402,25 @@ function connectWS(): void {
     if (speakerCount > 0) {
       newWs.send(JSON.stringify({ type: 'set_speakers', count: speakerCount }));
     }
+    // A live switch whose gate finished while this socket was connecting.
+    if (engineOf(activeBackend) !== engineOf(openedOn)) {
+      newWs.send(JSON.stringify({ type: 'set_model', backend: activeBackend }));
+    }
   };
   newWs.onmessage = (event: MessageEvent) => {
     try {
       const msg: Record<string, unknown> = JSON.parse(event.data as string);
       if (msg.type === 'transcript') {
-        // A finalized sentence: commit it and clear the live draft.
-        const chunkId = typeof msg.chunk_id === 'number' ? msg.chunk_id : undefined;
+        // A finalized sentence: commit it and clear the live draft. A
+        // socket's first one tells whether the server kept its numbering.
+        if (typeof msg.chunk_id === 'number' && !numbered) {
+          numbered = true;
+          followNumbering(t, msg.chunk_id);
+        }
+        const chunkId = typeof msg.chunk_id === 'number' ? storeChunkId(t, msg.chunk_id) : undefined;
         const language = typeof msg.language === 'string' ? msg.language : undefined;
         onTranscriptResult(
+          t,
           String(msg.text ?? ''),
           String(msg.speaker ?? 'Speaker 1'),
           chunkId,
@@ -321,37 +435,60 @@ function connectWS(): void {
         // any language was ever identified, and the shell then detects it
         // on-device rather than letting the OS prompt.
         if (language) lastLanguage = language;
+        if (msg.translating === true && msg.translate_via !== 'apple' && chunkId !== undefined) {
+          owed.add(chunkId);
+        }
         if (msg.translate_via === 'apple' && chunkId !== undefined) {
           const target = typeof msg.translate_target === 'string' ? msg.translate_target : 'en';
           void translateNative(String(msg.text ?? ''), language ?? lastLanguage, target).then(
-            (t) => ownerStore().applyTranslation(chunkId, t, target),
+            (line) => {
+              // Bound to this take, not to whoever records when the promise
+              // settles: the first request can wait on the OS model download,
+              // long after stop. The runtime autosave only watches segment
+              // count and speaker names, so the late line saves itself.
+              t.store.getState().applyTranslation(chunkId, line, target);
+              useSessionStore.getState().debouncedSave(t.sessionId);
+            },
           );
         }
-        ownerStore().setInterimText('');
+        t.store.getState().setInterimText('');
       } else if (msg.type === 'translation') {
         // Translation companion line for an earlier chunk (a model decode on
         // the server). Empty text still clears that chunk's pending marker.
         if (typeof msg.chunk_id === 'number') {
-          ownerStore().applyTranslation(
-            msg.chunk_id,
+          const chunkId = storeChunkId(t, msg.chunk_id);
+          owed.delete(chunkId);
+          t.store.getState().applyTranslation(
+            chunkId,
             String(msg.text ?? ''),
             typeof msg.target === 'string' ? msg.target : 'en',
           );
         }
+      } else if (msg.type === 'session_ended') {
+        // The server's answer to stop: every final and translation it had
+        // for this take has been sent.
+        if (stopping?.sock === newWs) stopping.settle();
       } else if (msg.type === 'speaker_update') {
         // Diarization re-clustered and corrected some earlier labels.
-        const updates = Array.isArray(msg.updates) ? msg.updates : [];
-        ownerStore().applySpeakerUpdates(updates as { chunk_id: number; speaker: string }[]);
+        const updates = (Array.isArray(msg.updates) ? msg.updates : []) as {
+          chunk_id: number;
+          speaker: string;
+        }[];
+        t.store.getState().applySpeakerUpdates(
+          updates
+            .filter((u) => typeof u?.chunk_id === 'number')
+            .map((u) => ({ chunk_id: storeChunkId(t, u.chunk_id), speaker: u.speaker })),
+        );
       } else if (msg.type === 'speaker_named') {
         // The voiceprint gallery recognised somebody who has been recorded
         // before: apply their stored name the same way a manual rename does.
         const names = (msg.names ?? {}) as Record<string, string>;
         for (const [label, name] of Object.entries(names)) {
-          if (label && name) ownerStore().renameSpeaker(label, name);
+          if (label && name) t.store.getState().renameSpeaker(label, name);
         }
       } else if (msg.type === 'interim') {
         // Parakeet's growing word-by-word draft of the utterance in progress.
-        ownerStore().setInterimText(String(msg.text ?? ''));
+        t.store.getState().setInterimText(String(msg.text ?? ''));
       } else if (msg.type === 'model_loading') {
         // Local mode (or after a live switch's download): the selected engine
         // is loading into memory. Drive the banner; 'ready' auto-hides.
@@ -393,9 +530,14 @@ function connectWS(): void {
     } catch { /* ignore */ }
   };
   newWs.onclose = () => {
-    useRecordingStore.getState().setConnected(false);
-    if (ws === newWs) ws = null;
-    stopPing();
+    abandonOwed(t, newWs);
+    // An old socket closing late must not mark a newer one disconnected.
+    if (ws === newWs) {
+      ws = null;
+      useRecordingStore.getState().setConnected(false);
+      stopPing();
+    }
+    if (stopping?.sock === newWs) stopping.settle();
   };
   newWs.onerror = () => { newWs.close(); };
 }
@@ -407,12 +549,15 @@ function stopWatchdog(): void {
 function startWatchdog(): void {
   stopWatchdog();
   watchdogTimer = setInterval(() => {
-    if (!useRecordingStore.getState().isRecording) return;
-    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) connectWS();
+    if (!useRecordingStore.getState().isRecording || !take) return;
+    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) connectWS(take);
   }, WATCHDOG_INTERVAL);
 }
 
 async function start(sessionId: string): Promise<void> {
+  // A stopped take keeps the slot until the server has sent its last final
+  // (normally well under a second): start right after it, not never.
+  if (stopSettled) await stopSettled;
   const rec = useRecordingStore.getState();
   if (rec.recordingSessionId) return; // one mic, one recording
   if (modelGateActive) return; // already downloading the models for a start
@@ -446,7 +591,20 @@ async function start(sessionId: string): Promise<void> {
   // The wait can be minutes long — make sure nothing else grabbed the mic.
   if (useRecordingStore.getState().recordingSessionId) return;
 
-  owningSessionId = sessionId;
+  const transcript = getTranscriptionStore(sessionId);
+  const prev = finishedTakes.get(sessionId);
+  const nextId = Math.max(nextChunkId(transcript.getState()), prev?.nextId ?? 0);
+  // Start on the previous take's numbering; the socket's first transcript
+  // moves the base on if the server restarted it (see followNumbering).
+  const t: Take = {
+    sessionId,
+    takeId: crypto.randomUUID(),
+    store: transcript,
+    chunkBase: prev?.chunkBase ?? nextId,
+    nextId,
+    opened: false,
+  };
+  take = t;
   rec.setRecordingSession(sessionId);
 
   pcmBuffer = [];
@@ -460,7 +618,7 @@ async function start(sessionId: string): Promise<void> {
 
   useUIStore.getState().showTranscript();
   rec.setRecording(true);
-  connectWS();
+  connectWS(t);
 
   try {
     // ── Source plan ──────────────────────────────────────────────────
@@ -640,15 +798,16 @@ async function start(sessionId: string): Promise<void> {
     store.setRecording(false);
     store.setRecordingSession(null);
     store.setActiveSourceLabel(null);
-    owningSessionId = null;
+    endTake(t);
     void store.releaseMic('header-recorder');
     store.releaseTabAudio();
   }
 }
 
 function stop(): void {
+  if (stopping) return; // already stopped, waiting for the server's last final
   const rec = useRecordingStore.getState();
-  const owner = owningSessionId;
+  const owner = take;
   rec.setRecording(false);
   stopWatchdog();
   stopPing();
@@ -682,28 +841,45 @@ function stop(): void {
   // mic), so tear it down here — the next recording re-arms it.
   rec.releaseTabAudio();
 
-  // Settle the transcript before closing the socket: Parakeet's stop
-  // handler emits one last transcript for the in-flight sentence, and
-  // Whisper may drain its VAD buffer. Wait for session_ended OR 200ms of
-  // quiet (1.5s hard deadline), then commit any leftover interim text and
-  // save the OWNING session.
+  // Settle the transcript before closing the socket. On stop the server
+  // decodes the in-flight utterance (Canary and Whisper take hundreds of ms
+  // for a long tail, plus the speaker embed), drains queued translations,
+  // then answers `session_ended` and closes. Quiet on the socket proves
+  // nothing while that runs, so the take waits for the answer itself (or
+  // the socket closing, or the deadline) before it commits and saves.
   const sock = ws;
+  let resolveSettled = () => {};
   const finishUp = () => {
-    const tStore = getTranscriptionStore(owner).getState();
-    const pending = (tStore.interimText || '').trim();
-    if (pending) {
-      const lastSeg = tStore.segments[tStore.segments.length - 1];
-      const speaker = lastSeg?.speaker ?? 'Speaker 1';
-      const now = Date.now();
-      tStore.addSegment({
-        id: crypto.randomUUID(),
-        text: pending,
-        speaker,
-        timestamp: now,
-        edited: false,
-      });
+    if (owner) {
+      const tStore = owner.store.getState();
+      const draft = (tStore.interimText || '').trim();
+      // A final replaces the draft and a backend withdraws a draft whose
+      // utterance closed without one (an empty interim), so a draft still
+      // showing here is words whose final was lost: the server never
+      // answered, the socket closed first, or its final decode failed even
+      // though it still sent session_ended. Keep the draft and flag it.
+      if (draft) {
+        const lastSeg = tStore.segments[tStore.segments.length - 1];
+        const now = Date.now();
+        tStore.addSegment({
+          id: crypto.randomUUID(),
+          text: draft,
+          speaker: lastSeg?.speaker ?? 'Speaker 1',
+          timestamp: now,
+          edited: false,
+        });
+        useUIStore.getState().addToast({
+          type: 'warning',
+          message:
+            'The transcription server did not finish the last sentence, so its ' +
+            'live draft was saved instead. Check it for mistakes.',
+          duration: 8000,
+          source: 'recording',
+        });
+      }
+      tStore.setInterimText('');
+      if (sock) abandonOwed(owner, sock);
     }
-    tStore.setInterimText('');
 
     if (sock) {
       try { sock.close(); } catch { /* ignore */ }
@@ -712,39 +888,30 @@ function stop(): void {
     const store = useRecordingStore.getState();
     store.setConnected(false);
     store.setRecordingSession(null);
-    owningSessionId = null;
+    stopping = null;
+    stopSettled = null;
+    if (owner) endTake(owner);
 
-    // Synchronous save of the session that OWNS this recording — durable
-    // the moment the mic icon goes off, wherever the user is looking.
+    // Synchronous save of the session that OWNS this recording, with every
+    // final and translation line the server sent for it.
     try {
-      if (owner) useSessionStore.getState().saveSession(owner);
+      if (owner) useSessionStore.getState().saveSession(owner.sessionId);
     } catch { /* best-effort */ }
+    resolveSettled();
   };
 
-  if (sock && sock.readyState === WebSocket.OPEN) {
+  if (owner && sock && sock.readyState === WebSocket.OPEN) {
     let done = false;
-    let quietTimer = 0;
+    let deadline = 0;
     const settle = () => {
       if (done) return;
       done = true;
-      clearTimeout(hardDeadline);
-      clearTimeout(quietTimer);
-      sock.removeEventListener('message', onMsg);
+      clearTimeout(deadline);
       finishUp();
     };
-    const onMsg = (ev: MessageEvent) => {
-      // Reset the quiet timer on every frame so a burst of late
-      // transcripts all land before we close.
-      clearTimeout(quietTimer);
-      quietTimer = window.setTimeout(settle, 200);
-      try {
-        const msg = JSON.parse(ev.data as string) as Record<string, unknown>;
-        if (msg.type === 'session_ended') settle();
-      } catch { /* not JSON — ignore */ }
-    };
-    quietTimer = window.setTimeout(settle, 200);
-    const hardDeadline = window.setTimeout(settle, 1500);
-    sock.addEventListener('message', onMsg);
+    stopping = { sock, settle };
+    stopSettled = new Promise<void>((resolve) => { resolveSettled = resolve; });
+    deadline = window.setTimeout(settle, STOP_SETTLE_DEADLINE_MS);
     try {
       sock.send(JSON.stringify({ type: 'stop' }));
     } catch {
@@ -776,12 +943,15 @@ async function switchBackendLive(backend: string): Promise<void> {
       revertBackend(previous);
       return;
     }
-    // Recording may have stopped during a long download; only relay onto a
-    // still-open socket.
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    // Recording may have stopped during a long download (the next start
+    // reads config itself).
+    if (!useRecordingStore.getState().isRecording) return;
     chunkSamples = chunkSamplesForBackend(backend);
     activeBackend = backend;
-    ws.send(JSON.stringify({ type: 'set_model', backend }));
+    // A socket that is down right now reconnects on activeBackend.
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'set_model', backend }));
+    }
   } finally {
     liveSwitchActive = false;
   }
@@ -824,10 +994,12 @@ export function initRecordingControllerEvents(): void {
   // Live model switch from the transcript panel or Settings (same event).
   window.addEventListener('whisper-set-model', (e: Event) => {
     const backend = (e as CustomEvent<{ backend?: string }>).detail?.backend ?? 'whisper';
-    // Idle (no live socket): the model just changed in config; the next
+    // Idle (not recording): the model just changed in config; the next
     // start() gates its weights with the download banner. Keep the chunk
-    // cadence and the tracked model in sync for that start.
-    if (!(ws && ws.readyState === WebSocket.OPEN)) {
+    // cadence and the tracked model in sync for that start. A recording whose
+    // socket is momentarily down is not idle: its reconnect opens on
+    // activeBackend, so the switch still goes through the gate.
+    if (!useRecordingStore.getState().isRecording) {
       activeBackend = backend;
       chunkSamples = chunkSamplesForBackend(backend);
       return;

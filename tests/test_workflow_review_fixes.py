@@ -42,16 +42,12 @@ def _mk(source, **kw):
 
 async def _noop_agent(prompt, opts):
     # Mirrors the real runner's contract (server/workflows/agent_adapter.py):
-    # it reports back the model key the work ACTUALLY ran on, empty when it
-    # used the run's own model. The ledger prices from this rather than from
-    # the raw opts.model, since an unknown or on-device override is refused
-    # and falls back — pricing the raw value would charge a model that never
-    # ran.
+    # the usage run_agent reported, whose cost the engine priced round by
+    # round under the model that actually ran.
     return {
         "text": "ok",
-        "usage": {},
+        "usage": {"cost_usd": 0.75 if opts.get("model") else 0.25},
         "status": "completed",
-        "model_key": opts.get("model") or "",
     }
 
 
@@ -94,24 +90,14 @@ def test_date_prototype_constructor_guarded():
     assert "date" in out.get("error", "").lower()
 
 
-# ── LOW: per-agent opts.model prices against that model, not the run default ────
-def test_per_agent_model_costed_separately(monkeypatch):
-    import server.costs.tracker as T
-
-    seen = []
-
-    def fake_cost(model_key, *a, **kw):
-        seen.append(model_key)
-        return 1.0
-
-    monkeypatch.setattr(T, "estimate_cost", fake_cost)
-
-    run = _mk("", agent_runner=_noop_agent, model_key="sonnet")
-    # Default model call, then an opts.model override — the ledger must price
-    # each against the model that actually ran.
+# ── LOW: per-agent opts.model is costed as that model, not the run default ─────
+def test_per_agent_model_costed_separately():
+    run = _mk("", agent_runner=_noop_agent)
+    # Default model call, then an opts.model override: the ledger adds what
+    # each run reports, so each is costed as the model that actually ran.
     _run(run._handle_agent("1", {"prompt": "a", "opts": {}}))
     _run(run._handle_agent("2", {"prompt": "b", "opts": {"model": "gpt5.6"}}))
-    assert seen == ["sonnet", "gpt5.6"]
+    assert run.cost_usd == 1.0
 
 
 # ── HIGH: parallel budget overshoot bounded by concurrency, not the agent cap ──
@@ -131,7 +117,7 @@ def test_parallel_budget_overshoot_bounded():
         "agent('a'+i).then(()=>1).catch(()=>0)));\n"
         "return r.reduce((s,x)=>s+x,0);\n"  # how many actually ran
     )
-    run = _mk(src, agent_runner=one_token_agent, budget_tokens=1, model_key="sonnet")
+    run = _mk(src, agent_runner=one_token_agent, budget_tokens=1)
     out = _run(run.run())
     assert out["status"] == "done"
     assert out["result"] < 50, (
@@ -141,7 +127,7 @@ def test_parallel_budget_overshoot_bounded():
 
 # ── HIGH: nested run spend/agents/cap fold into the parent ledger ──────────────
 def test_absorb_child_merges_ledger():
-    parent = _mk("", model_key="sonnet")
+    parent = _mk("")
     parent.agents_spawned = 2
     parent.cost_usd = 3.0
     parent.tokens_in = 10

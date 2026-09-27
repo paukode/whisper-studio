@@ -1,8 +1,11 @@
 import { useCallback, useMemo, useRef } from 'react';
 import { useUIStore } from '@/stores/uiStore';
 import { useDismiss, useFocusTrap } from '@/hooks/useDismiss';
+import { useResizableDialog, type ResizeEdges } from '@/hooks/useResizableDialog';
+import { STORAGE_KEYS } from '@/utils/storageKeys';
 import { APISettings } from './APISettings';
 import { MCPSettings } from './MCPSettings';
+import { CodeToolsPanel } from './CodeToolsPanel';
 import { ImportPanel } from './ImportPanel';
 import { SkillsPanel } from './SkillsPanel';
 import { PermissionsPanel } from './PermissionsPanel';
@@ -10,16 +13,16 @@ import { CostsPanel } from './CostsPanel';
 import { HooksPanel } from './HooksPanel';
 import { CronPanel } from './CronPanel';
 import { PluginsPanel } from './PluginsPanel';
-import { StatsPanel } from './StatsPanel';
 import { ModelModePanel } from './ModelModePanel';
 import { ModelsPanel } from './ModelsPanel';
 import { FeatureFlagsPanel } from './FeatureFlagsPanel';
 import { PreviewSettings } from './PreviewSettings';
 
-/** The original 14 flat tab ids. They stay valid `settingsTab` values forever:
- *  every `openSettings(<id>)` caller (ChatPanel, MoreMenu, the command palette,
- *  slash commands, tests) keeps working because {@link TAB_ROUTE} maps each one
- *  to its new rail item + sub-tab. */
+/** The flat tab ids. Each is a valid `settingsTab` value: every
+ *  `openSettings(<id>)` caller (ChatPanel, MoreMenu, the command palette,
+ *  slash commands, tests) lands on its rail item + sub-tab through
+ *  {@link TAB_ROUTE}. A retired panel's id is removed, not aliased: 'stats'
+ *  went with the Stats tab, and an unknown id opens the default. */
 export type SettingsTabId =
   | 'apikeys'
   | 'model-mode'
@@ -30,9 +33,9 @@ export type SettingsTabId =
   | 'import'
   | 'permissions'
   | 'hooks'
+  | 'code-tools'
   | 'cron'
   | 'plugins'
-  | 'stats'
   | 'costs'
   | 'preview';
 
@@ -54,9 +57,9 @@ export const SETTINGS_TABS: SettingsTab[] = [
   { id: 'import', label: 'Import project' },
   { id: 'permissions', label: 'Permissions' },
   { id: 'hooks', label: 'Hooks' },
+  { id: 'code-tools', label: 'Code tools' },
   { id: 'cron', label: 'Scheduled tasks' },
   { id: 'plugins', label: 'Plugins' },
-  { id: 'stats', label: 'Stats' },
   { id: 'costs', label: 'Costs' },
   { id: 'preview', label: 'Live preview' },
 ];
@@ -73,6 +76,7 @@ type RailItemId =
   | 'models'
   | 'mcp'
   | 'import'
+  | 'code-tools'
   | 'skills-plugins'
   | 'workflows-tasks'
   | 'keys-permissions'
@@ -153,6 +157,12 @@ const RAIL_GROUPS: RailGroup[] = [
         subTabs: [{ id: 'import', label: 'Import project', render: () => <ImportPanel /> }],
       },
       {
+        id: 'code-tools',
+        label: 'Code tools',
+        icon: icon(<><path d="M8 7l-5 5 5 5" /><path d="M16 7l5 5-5 5" /><path d="M14 4l-4 16" /></>),
+        subTabs: [{ id: 'code-tools', label: 'Code tools', render: () => <CodeToolsPanel /> }],
+      },
+      {
         id: 'skills-plugins',
         label: 'Skills and plugins',
         icon: icon(<><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.8 7.2 17.3l.9-5.4L4.2 8.1l5.4-.8z" /></>),
@@ -189,7 +199,6 @@ const RAIL_GROUPS: RailGroup[] = [
         label: 'Usage and advanced',
         icon: icon(<><path d="M3 3v18h18" /><path d="M7 14l3-3 3 3 5-6" /></>),
         subTabs: [
-          { id: 'stats', label: 'Stats', render: () => <StatsPanel /> },
           { id: 'costs', label: 'Costs', render: () => <CostsPanel /> },
           { id: 'feature-flags', label: 'Feature flags', render: () => <FeatureFlagsPanel /> },
           { id: 'preview', label: 'Live preview', render: () => <PreviewSettings /> },
@@ -203,8 +212,8 @@ const ALL_RAIL_ITEMS: RailItem[] = RAIL_GROUPS.flatMap((g) => g.items);
 
 /** Resolve any `settingsTab` value to its rail item + sub-tab. Built from the
  *  rail so it can never drift: every rail id and every sub-tab id (which
- *  include all 14 legacy ids) is routable. Unknown values fall back to the
- *  first destination — API keys — preserving the pre-restructure default. */
+ *  include every flat tab id) is routable. Unknown values fall back to the
+ *  first destination (API keys), preserving the pre-restructure default. */
 export const TAB_ROUTE: Record<string, { rail: RailItemId; sub: string }> = (() => {
   const map: Record<string, { rail: RailItemId; sub: string }> = {};
   for (const item of ALL_RAIL_ITEMS) {
@@ -219,12 +228,38 @@ export const TAB_ROUTE: Record<string, { rail: RailItemId; sub: string }> = (() 
 
 const DEFAULT_ROUTE = TAB_ROUTE['apikeys'];
 
+/** Every edge and corner resizes the dialog; corners sit above the edges. */
+const RESIZE_HANDLES: ReadonlyArray<{ side: string; edges: ResizeEdges }> = [
+  { side: 'n', edges: { n: true } },
+  { side: 'e', edges: { e: true } },
+  { side: 's', edges: { s: true } },
+  { side: 'w', edges: { w: true } },
+  { side: 'ne', edges: { n: true, e: true } },
+  { side: 'se', edges: { s: true, e: true } },
+  { side: 'sw', edges: { s: true, w: true } },
+  { side: 'nw', edges: { n: true, w: true } },
+];
+
+/** A press on the header's own buttons (Close) must not move the dialog. */
+const onHeaderButton = (e: React.SyntheticEvent) =>
+  (e.target as HTMLElement).closest('button') !== null;
+
 export const SettingsModal: React.FC = () => {
   const settingsOpen = useUIStore((s) => s.settingsOpen);
   const settingsTab = useUIStore((s) => s.settingsTab);
   const closeSettings = useUIStore((s) => s.closeSettings);
   const openSettings = useUIStore((s) => s.openSettings);
-  const modalRef = useRef<HTMLDivElement>(null);
+  // Resizable from every edge and movable by the header, like the other
+  // resizable dialogs; the size and place persist, and a double-click on the
+  // header puts it back. The Costs tab needs the room most.
+  const {
+    dialogRef: modalRef,
+    style: dialogStyle,
+    onMoveStart,
+    onResizeStart,
+    reset: resetDialog,
+    sized,
+  } = useResizableDialog(STORAGE_KEYS.SETTINGS_GEOMETRY, { defaultW: 960, minW: 640, minH: 420 });
   const railRef = useRef<HTMLElement>(null);
   const subTabsRef = useRef<HTMLDivElement>(null);
 
@@ -296,13 +331,22 @@ export const SettingsModal: React.FC = () => {
   return (
     <div className="settings-overlay" role="presentation">
       <div
-        className="settings-container settings-container--rail"
+        className={`settings-container settings-container--rail${sized ? ' is-sized' : ''}`}
         ref={modalRef}
+        style={dialogStyle}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
       >
-        <div className="settings-header">
+        <div
+          className="settings-header"
+          onPointerDown={(e) => {
+            if (!onHeaderButton(e)) onMoveStart(e);
+          }}
+          onDoubleClick={(e) => {
+            if (!onHeaderButton(e)) resetDialog();
+          }}
+        >
           <h2 id="settings-title">Settings</h2>
           <button
             className="btn-icon settings-close"
@@ -387,6 +431,15 @@ export const SettingsModal: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {RESIZE_HANDLES.map((h) => (
+          <div
+            key={h.side}
+            className={`ws-rz ws-rz-${h.side}`}
+            onPointerDown={onResizeStart(h.edges)}
+            aria-hidden="true"
+          />
+        ))}
       </div>
     </div>
   );

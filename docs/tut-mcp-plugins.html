@@ -62,8 +62,11 @@
 
     <div class="callout callout--warn">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="M9 12l2 2 4-4"/></svg></span>
-      <div class="callout__body"><p><b>A stdio server does not inherit your credentials.</b> The child
-        process gets the app's environment with every credential-shaped variable removed first: the
+      <div class="callout__body"><p><b>A stdio server gets your shell environment, minus your
+        credentials.</b> It starts from your login shell's environment, the same one a terminal gives
+        Claude Code, so <code>AWS_PROFILE</code>, <code>AWS_REGION</code> and the tool settings you
+        export in <code>~/.zshrc</code> reach it even when you open the app from the Dock. Every
+        credential-shaped variable is removed first: the
         GitHub tokens (<code>GH_TOKEN</code>, <code>GITHUB_TOKEN</code>,
         <code>GH_ENTERPRISE_TOKEN</code>) and the cloud and API keys
         (<code>AWS_ACCESS_KEY_ID</code>, <code>AWS_SECRET_ACCESS_KEY</code>,
@@ -78,14 +81,20 @@
         <h4>Open Settings and add a server</h4>
         <p>Click the gear icon, go to the <b>MCP</b> tab, and add a server entry: either a command the
           backend runs to start the server (an executable plus its arguments, the same shape you would
-          put in an MCP client config elsewhere), or a <code>url</code> for a remote server.</p>
+          put in an MCP client config elsewhere), or a <code>url</code> for a remote server. You can
+          also ask the assistant to add one, import it with a project, or edit
+          <code class="path">mcp_servers.json</code> in the data folder yourself. However it is added,
+          the backend notices within a second and starts it, with no restart, and Settings, the
+          <code>/mcp:</code> menu and <code>@mcp:</code> all show the same list straight away.</p>
       </li>
       <li>
         <h4>Let the backend connect</h4>
         <p>On enable, the backend either spawns the command as a stdio child process or opens a
           streamable-HTTP connection to the url, then performs the MCP handshake to discover the tools
-          and resources the server offers. If the connection fails, the server shows as unavailable
-          rather than silently doing nothing.</p>
+          and resources the server offers (every page of them). A server that registers tools later
+          and says so gets its list re-read, so they appear without a restart. If the connection fails,
+          the server shows the error under its name rather than silently doing nothing; it is retried
+          when you press <b>Restart</b> or change its launch settings.</p>
       </li>
       <li>
         <h4>Enable it in Settings &gt; MCP</h4>
@@ -100,8 +109,9 @@
         <p>Once enabled, the server's tools appear alongside the built-ins and the model can call them
           during the tool loop, gated by the same <a href="tut-permissions.html">permission mode</a> as
           everything else (unless you have set a per-server approval mode, below). You can also mention
-          a server directly in the composer by typing <code>@mcp:</code> and its name to browse its
-          tools.</p>
+          a server directly in the composer by typing <code>@mcp:</code> and its name. The
+          <code>/mcp:</code> and <code>@mcp:</code> menus show each server's state and how many tools it
+          offers, so a server that connected with nothing callable is easy to spot.</p>
       </li>
     </ol>
 

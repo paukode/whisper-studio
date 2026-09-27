@@ -69,11 +69,10 @@ export interface VoiceState {
    *  each team belongs to. Rendered with the chat's TeamReportCard. */
   teamReports: Record<string, TeamReportData>;
   teamRuns: Record<string, string>;
-  /** Sockets still delivering background runs after the user hung up. */
+  /** Sockets still delivering background runs after the user hung up. Which
+   *  chat session each run belongs to is the controller's per-socket record
+   *  (voiceController.runSession). */
   draining: number;
-  /** The chat session the run work on screen belongs to; other sessions
-   *  must not show it. */
-  runSessionId: string | null;
   /** Tool activity for the utterance in progress (ask_assistant + Claude's steps). */
   steps: VoiceStep[];
   pendingTools: number;
@@ -135,7 +134,6 @@ const INITIAL = {
   teamReports: {} as Record<string, TeamReportData>,
   teamRuns: {} as Record<string, string>,
   draining: 0,
-  runSessionId: null as string | null,
   steps: [] as VoiceStep[],
   pendingTools: 0,
   pendingRequest: null as VoicePendingRequest | null,
@@ -163,8 +161,6 @@ export const useVoiceStore = create<VoiceState>((set, get) => ({
       ...INITIAL,
       ...keepRunState(s),
       sessionId,
-      // Run work of a conversation belongs to the session it started in.
-      runSessionId: s.draining > 0 && s.runSessionId ? s.runSessionId : sessionId,
       status: 'connecting',
       startedAt: Date.now(),
     })),
@@ -299,7 +295,6 @@ function keepRunState(s: VoiceState) {
     teamRuns: s.teamRuns,
     pendingRequest: s.pendingRequest,
     draining: s.draining,
-    runSessionId: s.runSessionId,
   };
 }
 

@@ -4,8 +4,9 @@ For each changed file, ask an LLM to extract typed entity↔entity relations
 (works_at, cites, depends_on, …) from the file text given its already-extracted
 GLiNER entities. This (local) build can use EITHER engine, chosen per workspace
 in that folder's ⋯ menu and passed to ``extract_relations(..., engine=...)``:
-  - "haiku" — Bedrock Claude Haiku (cloud, faster; needs AWS creds).
-  - "local" — the on-device Gemma model (private, runs offline; slower).
+  - "haiku": Bedrock Claude Haiku (cloud, faster; needs AWS creds; never in
+    Local mode, where it extracts nothing).
+  - "local": the on-device Gemma model (private, runs offline; slower).
 Endpoints are validated against the known entity list so the LLM can't invent
 nodes, and anything that fails returns [] so indexing never breaks.
 """
@@ -55,6 +56,13 @@ def extract_relations(
     if local_key:
         return _extract_via_local(user, names, local_key)
     if engine == "haiku":
+        from server.infrastructure.cloud_guard import cloud_allowed
+
+        if not cloud_allowed():
+            # Local mode never calls Bedrock; the build already skips this pass
+            # (wssettings.settings_for_build), and a direct caller does too.
+            log.debug("typed relations: Local mode, Haiku engine skipped")
+            return []
         return _extract_via_haiku(user, names)
     return []  # "none" / unknown — nothing to extract
 
@@ -76,8 +84,9 @@ def _extract_via_haiku(user: str, names: list[str]) -> list[tuple[str, str, str]
                 "messages": [{"role": "user", "content": user}],
             }
         )
-        resp = client.invoke_model(modelId=model_id, body=body)
-        payload = json.loads(resp["body"].read())
+        from server.costs.calls import invoke_claude
+
+        payload = invoke_claude(client, model_id=model_id, body=body, source="index")
         out = "".join(
             b.get("text", "") for b in payload.get("content", []) if b.get("type") == "text"
         )

@@ -247,9 +247,14 @@ Version comes from `git describe --tags --always`, falling back to `0.1.0`.
 
 ## Known v1 limitations
 
-- Only `bin/node` is bundled (no npm), so `nodeenv`-provisioned helpers like
-  the TypeScript language server and eslint degrade gracefully or are
-  unavailable; Python linting (pyflakes/pylsp) still works.
+- Only `bin/node` is bundled (no npm). The assistant's JS/TS checks run the
+  workspace's own ESLint with it, so a workspace without ESLint gets none. The
+  code editor's TypeScript language server ships with neither install; install
+  it on the host with `npm install -g typescript-language-server typescript`.
+  ruff and pylsp run from the bundled Python (`python -P -m ruff`,
+  `python -P -m pylsp`, so a workspace module never shadows them), and `bin/ruff` links to the bundled ruff so the
+  assistant's shell finds it too. Settings > Tools and automation > Code tools
+  shows what works and why not.
 - `gh` and `git` tooling is not bundled; those features need Command Line
   Tools / Homebrew installs on the host.
 - Chrome-tab capture stays in the browser: use "Open in Browser" from the

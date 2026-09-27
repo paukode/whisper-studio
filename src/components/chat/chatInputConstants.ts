@@ -218,6 +218,23 @@ export const AT_ROOT_ENTRIES: ACItem[] = [
   { icon: '📖', name: '@docs', desc: 'Ask the app documentation (answers cite pages)', insert: '@docs' },
 ];
 
+/* ── Autocomplete popup heading ── */
+const SUBMENU_HEADINGS: Partial<Record<string, string>> = {
+  'file:': 'Files',
+  'skills:': 'Skills',
+  'mcp:': 'MCP servers',
+};
+
+/** Name what the open autocomplete menu lists, for the popup's heading.
+ *
+ *  `subCmd` is the open submenu: a colon submenu (`file:`, or `@file:` when it
+ *  was opened from an @ mention) or a slash command whose options are showing
+ *  (`effort `). With no submenu open the popup lists commands or mentions. */
+export function autocompleteHeading(mode: 'slash' | 'at' | null, subCmd: string | null): string {
+  if (subCmd) return SUBMENU_HEADINGS[subCmd.replace(/^@/, '')] ?? 'Options';
+  return mode === 'at' ? 'Mentions' : 'Commands';
+}
+
 /* Structural shapes the autocomplete hook reads off the settings store.
  * Declared here (rather than imported) so the hook stays decoupled from
  * the store's internal interfaces — the store's richer types remain
@@ -231,6 +248,17 @@ export interface SkillLike {
 export interface McpServerLike {
   name: string;
   status: string;
+  enabled: boolean;
+  tools: string[];
+}
+
+/** Row description for an MCP server in the `/mcp:` and `@mcp:` menus: its
+ *  state and, once connected, how many tools it offers, so a server with
+ *  nothing callable is visible where it is picked. */
+export function mcpServerDesc(s: McpServerLike): string {
+  if (!s.enabled) return 'MCP server (off)';
+  if (s.status !== 'connected') return `MCP server (${s.status})`;
+  return `MCP server (connected, ${s.tools.length} ${s.tools.length === 1 ? 'tool' : 'tools'})`;
 }
 
 export interface SessionLike {

@@ -213,12 +213,17 @@ def _session_event_frame(ev: dict) -> dict | None:
         # flight, so a message sent to an idle (but open) session must land
         # here or it never appears live.
         return {"session_message": ev.get("sessionMessage") or {}}
+    if kind == "mcp_changed":
+        # App-wide, published with no session id: the MCP server list
+        # changed (server/mcp.py::_bump), so every window refetches it.
+        return {"mcp_changed": {"revision": ev.get("revision", 0)}}
     return None
 
 
 @router.get("/api/sessions/events")
 async def all_session_events(request: Request):
-    """One multiplexed SSE channel carrying every session's events.
+    """One multiplexed SSE channel carrying every session's events, plus the
+    app-wide ones (``mcp_changed``), whose ``session_id`` is empty.
 
     Declared before /api/sessions/{session_id} so the literal path wins the
     match. Each frame carries ``session_id`` and the client routes it to the
@@ -292,9 +297,11 @@ async def get_answer_grounding(session_id: str, grounding_id: str):
     return {"id": grounding_id, "sources": sources}
 
 
-@router.put("/api/sessions/{session_id}")
-async def save_session(session_id: str, request: Request):
-    body = await request.json()
+async def _save_session_body(session_id: str, body: dict) -> None:
+    """Write one client save, the PUT and the unload beacon alike, so both
+    follow the same rules (see _upsert_session for when updated_at moves).
+    A workspacePath in the body is ignored: the server records the folder
+    itself when a chat turn ends (record_session_workspace)."""
     title = body.get("title", "Untitled Session")
     custom_title = 1 if body.get("customTitle") else 0
     generated_title = 1 if body.get("generatedTitle") else 0
@@ -306,9 +313,6 @@ async def save_session(session_id: str, request: Request):
     segments = json.dumps(body.get("segments", []))
     chat_history_frontend = body.get("chatHistory", [])
     speaker_names = json.dumps(body.get("speakerNames", {}))
-    workspace_path = body.get("workspacePath", "")
-    compaction_count = body.get("compactionCount", 0)
-    latched_config = json.dumps(body.get("latchedConfig", {}))
 
     async with _lock_for(session_id):
         await asyncio.get_event_loop().run_in_executor(
@@ -323,11 +327,13 @@ async def save_session(session_id: str, request: Request):
                 segments=segments,
                 chat_history_frontend=chat_history_frontend,
                 speaker_names=speaker_names,
-                workspace_path=workspace_path,
-                compaction_count=compaction_count,
-                latched_config=latched_config,
             ),
         )
+
+
+@router.put("/api/sessions/{session_id}")
+async def save_session(session_id: str, request: Request):
+    await _save_session_body(session_id, await request.json())
     return {"ok": True}
 
 
@@ -337,10 +343,26 @@ async def patch_session_title(session_id: str, request: Request):
     title = body.get("title", "")
     custom_title = 1 if body.get("customTitle") else 0
     generated_title = 1 if body.get("generatedTitle") else 0
+    # A rename is an edit, so it moves updated_at; the full save the client
+    # sends after it then finds the title stored and keeps this time. The
+    # same title again changes nothing and moves nothing.
     with _get_conn() as conn:
         conn.execute(
-            "UPDATE sessions SET title=?, custom_title=?, generated_title=? WHERE id=?",
-            (title, custom_title, generated_title, session_id),
+            """
+            UPDATE sessions
+            SET title = :title, custom_title = :custom, generated_title = :generated,
+                updated_at = :now
+            WHERE id = :id
+              AND (title IS NOT :title OR custom_title IS NOT :custom
+                   OR generated_title IS NOT :generated)
+            """,
+            {
+                "title": title,
+                "custom": custom_title,
+                "generated": generated_title,
+                "now": datetime.now(timezone.utc).isoformat(),
+                "id": session_id,
+            },
         )
     return {"ok": True}
 
@@ -402,7 +424,9 @@ async def open_session_workspace(session_id: str, request: Request):
     if not path or not os.path.isdir(path):
         return JSONResponse({"error": "session has no workspace folder"}, status_code=400)
     try:
-        result = subprocess.run(
+        # Off the event loop: launching an editor can take seconds.
+        result = await asyncio.to_thread(
+            subprocess.run,
             _open_workspace_cmd(app, path),
             capture_output=True,
             timeout=10,
@@ -416,41 +440,9 @@ async def open_session_workspace(session_id: str, request: Request):
 
 @router.post("/api/sessions/{session_id}/beacon")
 async def beacon_save_session(session_id: str, request: Request):
-    """Save via navigator.sendBeacon (POST with JSON body)."""
-    body = await request.json()
-    body["id"] = session_id
-    title = body.get("title", "Untitled Session")
-    custom_title = 1 if body.get("customTitle") else 0
-    generated_title = 1 if body.get("generatedTitle") else 0
-    # See PUT /api/sessions/{id} above for the timestamp fallback.
-    _now = datetime.now(timezone.utc).isoformat()
-    created_at = body.get("createdAt") or _now
-    updated_at = body.get("updatedAt") or _now
-    segments = json.dumps(body.get("segments", []))
-    chat_history_frontend = body.get("chatHistory", [])
-    speaker_names = json.dumps(body.get("speakerNames", {}))
-    workspace_path = body.get("workspacePath", "")
-    compaction_count = body.get("compactionCount", 0)
-    latched_config = json.dumps(body.get("latchedConfig", {}))
-
-    async with _lock_for(session_id):
-        await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: _upsert_session(
-                session_id,
-                title=title,
-                custom_title=custom_title,
-                generated_title=generated_title,
-                created_at=created_at,
-                updated_at=updated_at,
-                segments=segments,
-                chat_history_frontend=chat_history_frontend,
-                speaker_names=speaker_names,
-                workspace_path=workspace_path,
-                compaction_count=compaction_count,
-                latched_config=latched_config,
-            ),
-        )
+    """Save via navigator.sendBeacon (POST with JSON body), the same write
+    as PUT /api/sessions/{id}."""
+    await _save_session_body(session_id, await request.json())
     return {"ok": True}
 
 

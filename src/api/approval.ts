@@ -18,6 +18,9 @@ export interface ApprovalOutcome {
    * with open=true). The frontend switches the active workspace to this path.
    */
   ws_folder_opened?: string | null;
+  /** The user's Stop ended the action before it finished (an approved shell
+   *  command; git and other actions are left to finish). */
+  stopped?: boolean;
 }
 
 /**

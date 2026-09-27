@@ -21,10 +21,21 @@ own call site. One config map now names the model per task::
 Values are ``chat_models`` keys. The special value ``"main"`` means "the
 session's own model" and is resolved by the caller, which knows that model.
 A task that is absent from the map keeps its historical default, so an empty
-map is byte-identical to the pre-map behaviour. A local (on-device) key is
+map is byte-identical to the pre-map behaviour. ``goal_evaluator`` names the
+judge for cloud-model sessions only: an on-device session's goal is always
+judged by its own resident model (server/goals/local_judge.py), in every
+mode, and this map is not consulted for it. A local (on-device) key is
 accepted wherever the call goes through ``one_shot``; the Bedrock-only call
 sites (recall, classifier, explainer) fall back to their default when handed
 a key that is not a cloud model.
+
+Local mode: no side task reaches the cloud (server/infrastructure/cloud_guard.py).
+``aux_model_id`` resolves no model at all, and every Bedrock-only call site
+returns before building a client when it gets None: title generation keeps the
+default title, the auto-mode classifier asks, the permission explainer and
+query rewriting return nothing, and memory recall (which also checks the mode
+itself) returns the newest memories. ``aux_one_shot`` runs an on-device key or
+raises the guard's refusal for a cloud one.
 """
 
 from __future__ import annotations
@@ -97,7 +108,17 @@ def aux_model_id(
     ``chat_models`` map use it instead of the global catalog. ``cloud_only``
     (the default) refuses on-device ids, because the direct Bedrock call sites
     cannot use them; they get the default key's id instead.
+
+    In Local mode a ``cloud_only`` lookup returns None: those callers invoke
+    Bedrock directly, and Local mode never does, so they must take their "no
+    model" path rather than be handed a cloud id (or ``fallback_id``).
     """
+    if cloud_only:
+        from server.infrastructure.cloud_guard import cloud_allowed
+
+        if not cloud_allowed(config):
+            log.debug("auxiliary_models.%s: Local mode, no cloud side call", task)
+            return None
     if models is None:
         try:
             from server.chat.infra import _get_chat_models
@@ -121,6 +142,53 @@ def aux_model_id(
     return model_id
 
 
+# How a refusal names each task to the user.
+_TASK_NAMES = {
+    "memory_recall": "Memory recall",
+    "goal_evaluator": "The goal evaluator",
+    "title": "Title generation",
+    "auto_mode_classifier": "The auto-mode classifier",
+    "permission_explainer": "The permission explainer",
+    "query_rewrite": "Query rewriting",
+    "ci_diagnose": "CI failure diagnosis",
+    "compaction": "Context compaction",
+    "learning_review": "The learning review",
+}
+
+
+def _feature(task: str) -> str:
+    return _TASK_NAMES.get(task, f"The {task.replace('_', ' ')} side task")
+
+
+# The cost-log source each task's calls are recorded under (server.costs.sources).
+TASK_SOURCES = {
+    "memory_recall": "memory",
+    "goal_evaluator": "evaluator",
+    "title": "title",
+    "auto_mode_classifier": "classifier",
+    "permission_explainer": "explainer",
+    "query_rewrite": "query_rewrite",
+    "ci_diagnose": "ci_diagnose",
+    "compaction": "compaction",
+    "learning_review": "memory",
+}
+
+
+def aux_refusal(
+    task: str, default_key: str = "haiku", main_model_key: str | None = None
+) -> str | None:
+    """Why :func:`aux_one_shot` would refuse ``task`` here, or None when it can
+    run: in Local mode a task configured for a cloud key is refused, while an
+    on-device key runs. A caller checks it up front to tell the user the reason
+    instead of reporting an empty result."""
+    from server.infrastructure.cloud_guard import cloud_refusal
+    from server.local.runtime import is_local_model
+
+    if is_local_model(resolve_task_key(task, default_key, main_model_key)):
+        return None
+    return cloud_refusal(_feature(task))
+
+
 def aux_one_shot(
     task: str,
     system: str,
@@ -129,27 +197,45 @@ def aux_one_shot(
     max_tokens: int,
     default_key: str = "haiku",
     main_model_key: str | None = None,
+    session_id: str = "",
 ) -> str:
-    """Run a one-shot completion on the model configured for ``task``.
+    """Run a one-shot completion on the model configured for ``task``, logged
+    in the cost log under the task's source (TASK_SOURCES) and ``session_id``.
 
     Cloud keys (Claude or GPT on Bedrock) and on-device keys both work: the
     routing is ``server.infrastructure.oneshot.one_shot``'s. Raises on hard
     failure, exactly like ``one_shot``, so callers keep their own fallbacks.
+    In Local mode a cloud key raises the cloud guard's refusal.
     """
     from server.infrastructure.oneshot import one_shot
     from server.local.runtime import is_local_model
 
     key = resolve_task_key(task, default_key, main_model_key)
+    feature = _feature(task)
+    source = TASK_SOURCES[task]
     if is_local_model(key):
-        return one_shot(system, user, max_tokens=max_tokens, engine=key)
-    return one_shot(system, user, max_tokens=max_tokens, engine="cloud", cloud_model_key=key)
+        return one_shot(
+            system, user, max_tokens=max_tokens, engine=key, feature=feature, source=source
+        )
+    return one_shot(
+        system,
+        user,
+        max_tokens=max_tokens,
+        engine="cloud",
+        cloud_model_key=key,
+        feature=feature,
+        source=source,
+        session_id=session_id,
+    )
 
 
 __all__ = [
     "MAIN",
     "TASKS",
+    "TASK_SOURCES",
     "aux_model_id",
     "aux_model_key",
     "aux_one_shot",
+    "aux_refusal",
     "resolve_task_key",
 ]

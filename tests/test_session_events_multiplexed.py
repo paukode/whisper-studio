@@ -119,6 +119,14 @@ def test_agent_reports_and_answers_reach_an_idle_session():
     }
 
 
+def test_mcp_changes_ride_the_same_stream_with_no_session():
+    """The MCP server list is app-wide: the registry publishes with an empty
+    session id and every window refetches the one list."""
+    assert _session_event_frame({"type": "mcp_changed", "revision": 7}) == {
+        "mcp_changed": {"revision": 7}
+    }
+
+
 def test_missing_payload_key_yields_an_empty_envelope_not_a_crash():
     assert _session_event_frame({"type": "cron_event"}) == {"cron_event": {}}
 

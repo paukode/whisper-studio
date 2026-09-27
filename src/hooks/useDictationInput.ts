@@ -84,7 +84,16 @@ export function useDictationInput({
       };
 
       const clean = transcript.trim();
-      if (!isFinal && !clean) return;
+      if (!isFinal && !clean) {
+        // An empty interim withdraws the live draft (the server discarded its
+        // utterance without a final): put back the text it was building on.
+        if (dictationLiveRef.current) {
+          dictationLiveRef.current = false;
+          commit(dictationBaseRef.current);
+          caretToEnd();
+        }
+        return;
+      }
 
       // The first interim of an utterance captures the committed text it builds on.
       if (!isFinal && !dictationLiveRef.current) {

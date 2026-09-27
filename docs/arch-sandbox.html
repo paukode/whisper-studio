@@ -143,8 +143,11 @@
       not prefixes or patterns. Two consumers apply them differently, on purpose:</p>
     <ul>
       <li><b>MCP child processes</b> get the full scrub. Every local MCP server spawned over stdio
-        starts from <code>scrub_credential_env(os.environ)</code>, so a third-party server never
-        inherits your GitHub token or cloud keys just because they are exported in your shell.
+        starts from your login-shell environment under the app's own
+        (<code>login_shell_env()</code>, captured once at packaged startup by
+        <code class="path">server/infrastructure/binaries.py</code>), passed through
+        <code>scrub_credential_env</code>, so a third-party server never inherits your GitHub token
+        or cloud keys just because they are exported in your shell.
         Per-server <code>env</code> entries from <code>mcp_servers.json</code> are applied
         <em>after</em> the scrub, so a credential you deliberately configured for that server still
         reaches it. Remote HTTP MCP servers are not child processes and never see your environment at

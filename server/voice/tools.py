@@ -229,19 +229,31 @@ def _preview(value: Any) -> str:
     return text if len(text) <= _PREVIEW_CHARS else text[: _PREVIEW_CHARS - 1] + "…"
 
 
-def _cloud_model_key(model_key: str | None) -> str | None:
-    """The headless runner refuses on-device models; fall back to the default
-    cloud model for those (None lets the runner resolve it)."""
+def _delegate_refusal(model_key: str | None) -> str | None:
+    """Why delegated work cannot run for this voice session, or None when it can.
+
+    Delegated turns run on the session's selected model through the headless
+    runner, which serves cloud models only. They are refused, never re-homed:
+    in Local mode nothing may reach Bedrock, and an on-device selection is not
+    silently swapped for a cloud model the user did not pick. No selection
+    (None) lets the runner use the configured default, which is a choice the
+    user made in Settings."""
+    from server.infrastructure.cloud_guard import cloud_refusal
+
+    refusal = cloud_refusal("Work delegated from voice mode")
+    if refusal:
+        return refusal
     if not model_key:
         return None
-    try:
-        from server.local.runtime import is_local_model
+    from server.local.runtime import is_local_model
 
-        if is_local_model(model_key):
-            return None
-    except Exception:  # noqa: BLE001 - never let a probe break a tool call
-        return None
-    return model_key
+    if is_local_model(model_key):
+        return (
+            "The selected chat model runs on this Mac, and work delegated from voice mode "
+            "runs on a cloud chat model. Pick a cloud model in the model picker to hand "
+            "work to the assistant by voice."
+        )
+    return None
 
 
 def _normalized(text: str) -> str:
@@ -359,6 +371,9 @@ async def _ask_assistant(request: str, ctx: ToolContext) -> str:
             f"Error: {MAX_CONCURRENT_RUNS} requests are already running. Ask the user to wait "
             "for one of them to finish."
         )
+    refusal = _delegate_refusal(ctx.model_key)
+    if refusal:
+        return f"Error: {refusal} Tell the user this in one sentence; do not retry."
     from server.exec.headless import run_headless_turn
 
     run_id = f"voice-{ctx.session_id}-{uuid.uuid4().hex[:8]}"
@@ -367,7 +382,7 @@ async def _ask_assistant(request: str, ctx: ToolContext) -> str:
     # its pause slot is per run.
     gen = run_headless_turn(
         request,
-        model_key=_cloud_model_key(ctx.model_key),
+        model_key=ctx.model_key,
         ephemeral=True,
         session_id=ctx.session_id,
         scope_id=run_id,
@@ -376,6 +391,7 @@ async def _ask_assistant(request: str, ctx: ToolContext) -> str:
         attended=True,
         session_approvals=ctx.session_approvals,
         system_hint=VOICE_HINT,
+        cost_source="voice",
     )
     return await _launch(gen, ctx, run_id, request[:120])
 
@@ -413,7 +429,11 @@ async def _launch(
         "task": None,
     }
     ctx.runs[run_id] = info
-    task = asyncio.create_task(_drive(gen, ctx, run_id, label))
+    from server.tasks.owner import run_owned
+
+    # The run's commands are its own: a Stop of a typed chat turn in the same
+    # session never reaches them.
+    task = asyncio.create_task(run_owned(f"voice:{run_id}", _drive(gen, ctx, run_id, label)))
     info["task"] = task
     if ctx.register_task:
         ctx.register_task(task)
@@ -681,12 +701,13 @@ async def _execute_approval(action: str, payload: dict[str, Any]) -> tuple[bool,
     """Run the approval's registered executor (what POST /api/approval/execute
     does when the user clicks Yes). Returns (ok, detail)."""
     from server.approval import registry
+    from server.approval.spec import execute_approved_by_human
 
     spec = registry.get(action)
     if spec is None:
         return False, f"No approval registered for action {action!r}."
     try:
-        outcome = await spec.executor(payload or {})
+        outcome = await execute_approved_by_human(spec, payload or {})
     except Exception as exc:  # noqa: BLE001 - executor is user-registered
         log.exception("voice resolve_request: executor %s crashed", action)
         return False, f"Executor crashed: {exc}"
@@ -723,6 +744,10 @@ async def _resolve_request(decision: str, ctx: ToolContext) -> str:
 
     if kind == "approval_request" and _classify_decision(answer) is None:
         return "Error: for an approval, pass approve or deny."
+    refusal = _delegate_refusal(ctx.model_key)
+    if refusal:
+        # Checked before the claim: nothing runs, and the request stays pending.
+        return f"Error: {refusal} Tell the user this in one sentence; do not retry."
     # Claim the request now, before the first await: a spoken "yes" and a tap
     # on the card can arrive together, and the action must run exactly once.
     # The second caller finds nothing pending and is told not to retry.
@@ -775,7 +800,7 @@ async def _resolve_request(decision: str, ctx: ToolContext) -> str:
     label = str(req.get("label") or "the request you decided on")
     gen = run_headless_turn(
         "",
-        model_key=_cloud_model_key(ctx.model_key),
+        model_key=ctx.model_key,
         ephemeral=True,
         session_id=ctx.session_id,
         scope_id=str(req["run_id"]),
@@ -785,6 +810,7 @@ async def _resolve_request(decision: str, ctx: ToolContext) -> str:
         session_approvals=ctx.session_approvals,
         system_hint=VOICE_HINT,
         resume={"answers": [{"tool_use_id": str(req.get("tool_use_id", "")), "content": content}]},
+        cost_source="voice",
     )
     result = await _launch(gen, ctx, str(req["run_id"]), label)
     await _announce_next_pending(ctx)

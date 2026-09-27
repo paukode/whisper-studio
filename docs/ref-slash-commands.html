@@ -130,7 +130,8 @@
 
     <h3 id="goal">/goal</h3>
     <p><code>/goal &lt;text&gt;</code> sets a <b>session goal</b> that the goal loop keeps working toward:
-      after each turn a cheap evaluator judges whether the goal is met, and if not the turn
+      after each turn a judge (a cheap cloud evaluator, or an on-device session's own model) decides
+      whether the goal is met, and if not the turn
       auto-continues (capped so it cannot run away). A goal banner appears above the composer while one
       is active. The goal text is also <b>sent as the first message</b>, so the work starts
       immediately rather than leaving you with an empty composer; if a turn is already streaming, the
@@ -221,8 +222,9 @@
 
     <h3 id="skills-mcp">/skills, /skills: and /mcp:</h3>
     <p><code>/skills:</code> browses the available <a href="tut-skills.html">skills</a> and
-      <code>/mcp:</code> browses the tools exposed by your connected
-      <a href="tut-mcp-plugins.html">MCP servers</a>. Both open a searchable submenu as you type after
+      <code>/mcp:</code> lists your <a href="tut-mcp-plugins.html">MCP servers</a> with each one's state
+      and tool count, updated live when a server is added or changes. Both open a searchable submenu as
+      you type after
       the colon, which is the discoverable way to see exactly what is wired up in the current session.
       <code>/skills</code> without the colon is a different command: it opens the <b>Skills</b> panel in
       Settings, where you enable, disable, import, and edit them.</p>

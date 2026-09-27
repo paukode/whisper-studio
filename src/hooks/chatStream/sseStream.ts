@@ -1,21 +1,19 @@
 /**
  * SSE stream engine for /api/chat.
  *
- * Owns the two mutually-recursive stream functions extracted from
- * useChatStream.ts:
+ * Owns the two stream functions extracted from useChatStream.ts:
  *   - readSSEStream: parse one /api/chat SSE response, dispatch every event
  *     type to the stores, and surface pending approvals / user questions.
  *   - sendApprovalContinuation: POST an approval accept/deny, then feed the
  *     continuation response straight back through readSSEStream.
- * They call each other (an approval re-enters the stream), so they share a
- * module to keep the import graph acyclic.
+ * The click-to-resume leg of an approval card (running the approved action
+ * first) lives in ./approvalLeg.
  */
-import { executeApproval, type ApprovalOutcome } from '@/api/approval';
+import type { ApprovalOutcome } from '@/api/approval';
 import { getChatStore } from '@/stores/sessionRuntimes';
 import type { PendingApproval } from '@/stores/chatStore';
 import type { VizArtifact } from '@/types/chat';
 import { TOAST_PRIORITY, useUIStore } from '@/stores/uiStore';
-import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useTaskStore, normalizeTasks } from '@/stores/taskStore';
 import { useDockStore } from '@/stores/dockStore';
 import type {
@@ -24,19 +22,22 @@ import type {
   SSEEventData,
   TeamProgressEvent,
   ToolUseEvent,
+  TurnModelSettings,
 } from '@/types/chat';
 import { SSEEventDataSchema } from '@/types/schemas';
 import { toError } from '@/utils/toError';
 import {
   buildStoppedMessage,
+  registerPendingTextFlusher,
   registerStreamController,
   releaseStreamController,
   wasKillFinalized,
 } from './streamControl';
+import { createStreamPacer } from './streamPacer';
 import { renderEventCards } from './sseEventCards';
 import { emptyResponseFallback } from './emptyResponse';
-import { turnModelSettings } from './turnSettings';
 import { buildHistoryPayload } from './history';
+import { syncAutoAppliedTab } from './autoApplied';
 
 // Augment Window for SSE diagnostics access
 declare global {
@@ -52,11 +53,17 @@ export const _sseEventLog: SSEEventData[] = [];
 
 /**
  * Parse an SSE stream from /api/chat and dispatch events to stores.
+ *
+ * `turnSettings` are the model settings the request that opened this stream
+ * carried. An approval the stream pauses on keeps them, so its continuation
+ * resumes the turn on the settings it ran on, not on whatever the picker
+ * shows when the user answers.
  */
 export async function readSSEStream(
   response: Response,
   sessionId: string,
   signal: AbortSignal,
+  turnSettings: TurnModelSettings,
 ): Promise<{
   fullResponse: string;
   skillsUsed: string[];
@@ -86,6 +93,10 @@ export async function readSSEStream(
    *  legitimately emit several ("show me three layout options"). */
   pendingVisuals: VizArtifact[];
   pendingPlan: { id: string; title: string; summary: string } | null;
+  /** The server ended the turn before it started (a refusal at model
+   *  resolution, a failed setup or model load: an error frame that carries
+   *  an `error_code`): its reason. Null when the turn ran. */
+  refusal: string | null;
 }> {
   // Parallel sessions: bind the OWNING session's store from the sessionId
   // this stream was started with. Never resolve the active session here —
@@ -111,10 +122,22 @@ export async function readSSEStream(
   const pendingVisuals: VizArtifact[] = [];
   let pendingPlan: { id: string; title: string; summary: string } | null = null;
   let flushedSegments = 0;
+  let refusal: string | null = null;
   // Not const: each flushed segment restarts the thinking clock, so a "Thinking
   // 42s" after a card measures the wait since that card rather than replaying
   // the whole turn's elapsed time under every segment.
   let thinkingBlockStart = performance.now();
+
+  // Streamed text reaches the store through pacers: one write per frame, and
+  // Bedrock's clumps revealed as an even flow. `fullResponse` and
+  // `thinkingText` keep every token as it arrives; they are what gets
+  // committed, so a pacer only ever decides what is on screen right now.
+  const textPacer = createStreamPacer((t) => store().appendStreamToken(t));
+  const thinkingPacer = createStreamPacer((t) => store().appendThinkingToken(t));
+  const unregisterFlusher = registerPendingTextFlusher(sessionId, () => {
+    thinkingPacer.flush();
+    textPacer.flush();
+  });
 
   /**
    * Close off everything streamed so far as its own assistant message, so a
@@ -140,6 +163,9 @@ export async function readSSEStream(
       previewImage: t.previewImage,
     }));
     if (!fullResponse && !thinkingText && toolUse.length === 0) return;
+    // The segment commits the full text below; drop what is still unpainted.
+    textPacer.reset();
+    thinkingPacer.reset();
     store().flushStreamSegment({
       role: 'assistant',
       content: fullResponse,
@@ -301,14 +327,11 @@ export async function readSSEStream(
           if (parsed.ws_auto_applied) {
             // Refresh workspace tree
             window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
-            // Mark file as dirty in editor if open
+            // Show the write in its open tab, then what is on disk (ruff may
+            // have fixed and formatted a Python file after the write).
             const autoApplied = parsed.ws_auto_applied;
             if (autoApplied.path) {
-              const ws = useWorkspaceStore.getState();
-              const tab = ws.editorTabs.find(t => t.path === autoApplied.path);
-              if (tab) {
-                ws.markDirty(autoApplied.path, autoApplied.content ?? tab.content);
-              }
+              syncAutoAppliedTab(autoApplied.path, autoApplied.content, autoApplied.workspace_root);
             }
           }
 
@@ -342,6 +365,8 @@ export async function readSSEStream(
                 input: parsed.ws_workspace_prompt,
                 status: 'pending',
               }],
+              // The folder choice resumes this turn on the settings it ran on.
+              turnSettings,
             });
           }
 
@@ -373,71 +398,21 @@ export async function readSSEStream(
               payload: req.payload as Record<string, unknown>,
               riskHint: req.risk_hint ?? null,
               explanation: req.explanation ?? null,
+              alwaysAsks: req.always_asks === true,
               sessionId,
+              turnSettings,
             };
 
-            const st = store();
-
-            // Session-memory routing: category from the spec, not action.
-            const catMode = st.getSessionApproval(req.category);
-            if (catMode === 'allow') {
-              void (async () => {
-                try {
-                  const outcome = await executeApproval({
-                    action: approval.action,
-                    payload: approval.payload,
-                  });
-                  if (outcome.ok) {
-                    // git_clone (and any future workspace-connecting action)
-                    // reports the opened path here — switch to it so the panel
-                    // opens, mirroring the ws_folder_opened SSE handler below.
-                    if (outcome.ws_folder_opened) {
-                      useUIStore.getState().setWsConnected(true, outcome.ws_folder_opened);
-                    }
-                    window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
-                  }
-                  await sendApprovalContinuation(approval, sessionId, true, signal, outcome);
-                } catch (err) {
-                  // executeApproval throws ApiError on any non-2xx / network
-                  // failure. Without this guard the IIFE rejected unhandled:
-                  // the continuation never sent and the turn hung silently.
-                  // Tell the model the truth — a FAILED tool_result (accepted
-                  // but ok:false) — so it can react instead of waiting forever,
-                  // and surface the failure to the user.
-                  const detail = toError(err).message;
-                  console.error('Auto-approved action failed:', err);
-                  useUIStore.getState().addToast({
-                    type: 'error',
-                    message: `Auto-approved "${approval.action}" failed: ${detail}`,
-                    priority: TOAST_PRIORITY.high,
-                    source: 'chat',
-                  });
-                  await sendApprovalContinuation(approval, sessionId, true, signal, {
-                    ok: false,
-                    error: String(err),
-                  });
-                }
-              })();
-            } else if (catMode === 'deny') {
-              void (async () => {
-                // Same guard as the allow path: a rejected continuation here
-                // (e.g. the continuation fetch throws before its own try) would
-                // otherwise surface as an unhandled rejection and strand the turn.
-                try {
-                  await sendApprovalContinuation(approval, sessionId, false, signal);
-                } catch (err) {
-                  console.error('Auto-denied continuation failed:', err);
-                  useUIStore.getState().addToast({
-                    type: 'error',
-                    message: `Failed to record denial for "${approval.action}": ${toError(err).message}`,
-                    priority: TOAST_PRIORITY.high,
-                    source: 'chat',
-                  });
-                }
-              })();
-            } else {
-              st.enqueueApproval(approval);
-            }
+            // Always a card. The server already applied this session's "Yes,
+            // all" / "Block" memory (session_approvals rides on every request,
+            // server/security/permissions.py), so a request that still arrives
+            // is one it insists a human answers: rm, a destructive GitHub
+            // call, a sandbox escalation, an MCP server marked approve. Running
+            // it here on the remembered "allow" bypassed exactly those floors,
+            // and did so in a detached task after this stream had closed, so
+            // the session looked idle while the action ran and its resume
+            // raced any new turn.
+            store().enqueueApproval(approval);
           }
 
           // ── user_question (ask_user tool) ──
@@ -509,6 +484,8 @@ export async function readSSEStream(
                 _thinkingMs: thinkingMs > 0 ? Math.round(thinkingMs) : undefined,
                 _thinkingText: thinkingText || undefined,
                 _inFlight: true,
+                // The answer resumes this turn on the settings it ran on.
+                turnSettings,
               });
               // Prose is now owned by the question message — clear the
               // accumulator so finishStream doesn't re-commit it as a second,
@@ -590,13 +567,6 @@ export async function readSSEStream(
           if (parsed.ws_folder_opened) {
             useUIStore.getState().setWsConnected(true, parsed.ws_folder_opened);
             window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
-          }
-
-          // ── tool_pool (progressive disclosure telemetry) ──
-          if (parsed.tool_pool) {
-            useUIStore.getState().setToolPoolStats(
-              parsed.tool_pool as import('@/stores/uiStore').ToolPoolStats,
-            );
           }
 
           // ── notify_user ──
@@ -831,7 +801,7 @@ export async function readSSEStream(
           if (parsed.thinking) {
             store().setStreamStatus(null);
             thinkingText += parsed.thinking;
-            store().appendThinkingToken(parsed.thinking);
+            thinkingPacer.push(parsed.thinking);
           }
 
           // ── thinking_stop ──
@@ -882,7 +852,7 @@ export async function readSSEStream(
               store().setStreamStatus(null);
             }
             fullResponse += parsed.text;
-            store().appendStreamToken(parsed.text);
+            textPacer.push(parsed.text);
           }
 
           // ── error ──
@@ -894,7 +864,9 @@ export async function readSSEStream(
             // model that failed to load or download).
             const errLine = `${fullResponse ? '\n\n' : ''}*(Error: ${parsed.error})*`;
             fullResponse += errLine;
+            textPacer.flush();
             store().appendStreamToken(errLine);
+            if (parsed.error_code && refusal === null) refusal = parsed.error;
           }
 
         } catch (e) {
@@ -903,6 +875,10 @@ export async function readSSEStream(
       }
     }
   } finally {
+    // The whole reply is on screen before the caller commits it.
+    thinkingPacer.flush();
+    textPacer.flush();
+    unregisterFlusher();
     reader.releaseLock();
   }
 
@@ -921,7 +897,28 @@ export async function readSSEStream(
     pendingArtifact,
     pendingVisuals,
     pendingPlan,
+    refusal,
   };
+}
+
+/** What an approval acts on, for the text the model (and the transcript)
+ *  reads: the path, else the command, else the card's summary. */
+export function approvalTarget(approval: PendingApproval): string {
+  return (approval.payload?.path as string | undefined)
+    ?? (approval.payload?.command as string | undefined)
+    ?? approval.summary
+    ?? 'N/A';
+}
+
+/** Whether the paused turn picked the approval's result up. `resumed` is
+ *  false when the continuation never reached the model (refused at model
+ *  resolution, a failed setup or model load, an HTTP or network failure):
+ *  an action that ran must then be recorded by the caller, since no turn
+ *  will ever say so. A Stop of the continuation counts as resumed; its own
+ *  stop path records what the leg did. */
+export interface ContinuationResult {
+  resumed: boolean;
+  reason?: string;
 }
 
 /**
@@ -939,7 +936,7 @@ export async function sendApprovalContinuation(
   accepted: boolean,
   signal?: AbortSignal,
   outcome?: ApprovalOutcome,
-): Promise<void> {
+): Promise<ContinuationResult> {
   // Parallel sessions: bind the OWNING session's store from the sessionId
   // this stream was started with. Never resolve the active session here —
   // every store() call below must keep landing in the same session no
@@ -947,10 +944,7 @@ export async function sendApprovalContinuation(
   const store = () => getChatStore(sessionId).getState();
   store().setStreaming(true);
 
-  const target = (approval.payload?.path as string | undefined)
-    ?? (approval.payload?.command as string | undefined)
-    ?? approval.summary
-    ?? 'N/A';
+  const target = approvalTarget(approval);
   // Nouns stay action-neutral: this text is what the MODEL reasons from, and
   // the approval registry covers far more than writes — git_push, terminal_run,
   // GitHub API writes, workspace connects. Calling every one of them a
@@ -992,13 +986,15 @@ export async function sendApprovalContinuation(
   const body: Record<string, unknown> = {
     question: '',
     session_id: sessionId,
-    // Carry the model AND the per-turn effort/response-length so the
-    // continuation resumes on the SAME backend at the SAME settings it paused
-    // on. Without the model the endpoint falls back to the default cloud model,
-    // which would strand a paused local (Gemma) tool turn; without effort and
-    // verbosity the post-approval half of the turn silently dropped to the
-    // config defaults (an Ultracode turn finished at normal effort).
-    ...turnModelSettings(),
+    // Carry the model AND the per-turn effort/response-length the paused turn
+    // ran on, so the continuation resumes on the SAME backend at the SAME
+    // settings. Without the model the endpoint falls back to the default
+    // cloud model, which would strand a paused local (Gemma) tool turn;
+    // without effort and verbosity the post-approval half of the turn
+    // silently dropped to the config defaults. Read off the approval, not the
+    // picker: the picker is window-wide, so a model chosen in another session
+    // while this card waited must not take over this turn.
+    ...approval.turnSettings,
     // The conversation so far. Normally unused — the backend restores the
     // stashed paused messages and ignores this — but it is the ONLY context the
     // server has left when that paused state is gone (a backend restart while
@@ -1018,11 +1014,10 @@ export async function sendApprovalContinuation(
   // `enabled` flag, so the continuation needs no per-request override.
 
   // ALWAYS register a controller for this continuation leg so Stop/ESC can
-  // reach it — even for an auto-approved ("Yes, all X") continuation that runs
-  // after the outer stream has already ended and released its own controller.
-  // Reusing only the outer signal left that case unstoppable: the registry no
-  // longer held the outer controller, and we registered nothing. When an outer
-  // signal is passed, chain it so a cancel there still aborts this leg.
+  // reach it: the stream that paused on the card has long since released its
+  // own. When the caller passes the signal of the leg that ran the approved
+  // action (./approvalLeg), chain it so the session stays claimed without a
+  // gap and a cancel there still aborts this leg.
   const ownController = new AbortController();
   registerStreamController(sessionId, ownController);
   if (signal) {
@@ -1049,12 +1044,12 @@ export async function sendApprovalContinuation(
       throw new Error(detail || `Continuation failed (HTTP ${response.status})`);
     }
 
-    const result = await readSSEStream(response, sessionId, continuationSignal);
+    const result = await readSSEStream(response, sessionId, continuationSignal, approval.turnSettings);
     // The kill switch may have finalized this leg while the read loop was
     // draining (an aborted signal exits the loop normally). It already
     // committed the traces shown so far; appending them again here would
     // duplicate the activity.
-    if (wasKillFinalized(ownController)) return;
+    if (wasKillFinalized(ownController)) return { resumed: true };
 
     const contTeamReports = store().takeTeamReports();
     const contToolUse: ToolUseEvent[] = result.skillTraces.map(t => ({
@@ -1112,6 +1107,7 @@ export async function sendApprovalContinuation(
     // Refresh workspace tree after approval
     window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
     window.dispatchEvent(new CustomEvent('whisper-git-refresh'));
+    return result.refusal === null ? { resumed: true } : { resumed: false, reason: result.refusal };
   } catch (err) {
     if (toError(err).name === 'AbortError') {
       // User stop: the kill switch already finalized the UI (traces included)
@@ -1124,14 +1120,15 @@ export async function sendApprovalContinuation(
         const stoppedMsg = buildStoppedMessage(store());
         if (stoppedMsg) store().addMessage(stoppedMsg);
       }
-    } else {
-      console.error('Approval continuation failed:', err);
-      store().addMessage({
-        role: 'assistant',
-        content: `*Error: Failed to continue after approval — ${toError(err).message}*`,
-        timestamp: new Date().toISOString(),
-      });
+      return { resumed: true };
     }
+    console.error('Approval continuation failed:', err);
+    store().addMessage({
+      role: 'assistant',
+      content: `*Error: Failed to continue after approval — ${toError(err).message}*`,
+      timestamp: new Date().toISOString(),
+    });
+    return { resumed: false, reason: toError(err).message };
   } finally {
     if (ownController) releaseStreamController(sessionId, ownController);
     // Only clear streaming if no more approvals pending

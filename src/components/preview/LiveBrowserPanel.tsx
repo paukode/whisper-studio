@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useDockStore } from '@/stores/dockStore';
+import { useSessionStore } from '@/stores/sessionStore';
+import { useUIStore } from '@/stores/uiStore';
 import { startPreviewSession, stopPreviewSession } from '@/api/preview';
 import { LivePanel } from './LivePanel';
 
@@ -10,6 +12,13 @@ import { LivePanel } from './LivePanel';
  * browser. A Stop button stops the dev server; when stopped it shows a
  * "Preview server stopped" state with Restart. Back/forward track URL-bar
  * navigations only — the site is cross-origin, so in-page clicks can't be read.
+ *
+ * Ownership: the pane shows the preview of the chat on screen (see
+ * useDockLiveWatcher), and Stop and Restart act only on that chat's own
+ * server, never another chat's app. Stop is offered only while the pane is
+ * showing that server: a localhost link routed in from chat, or a typed URL,
+ * that points somewhere else must not leave a Stop that kills a server the
+ * user is not looking at.
  *
  * Readiness gate: a dev server is registered the instant it's *spawned*, but a
  * heavy backend (FastAPI/Django/Rails) doesn't accept connections for several
@@ -46,6 +55,27 @@ async function probeReachable(url: string, timeoutMs: number): Promise<boolean> 
   }
 }
 
+/** Loopback spellings that all reach the same local dev server. */
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '0.0.0.0', '[::1]', '::1']);
+
+/** Do two URLs reach the same server (scheme, host, port; loopback aliases
+ *  equal)? Unparseable input never matches. */
+function sameServer(a: string, b: string): boolean {
+  try {
+    const ua = new URL(a);
+    const ub = new URL(b);
+    const host = (u: URL) => (LOOPBACK.has(u.hostname) ? 'localhost' : u.hostname);
+    const port = (u: URL) => u.port || (u.protocol === 'https:' ? '443' : '80');
+    return ua.protocol === ub.protocol && host(ua) === host(ub) && port(ua) === port(ub);
+  } catch {
+    return false;
+  }
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : 'The preview request failed.';
+}
+
 const iconBtn: React.CSSProperties = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
   width: 26, height: 26, padding: 0, flex: '0 0 auto',
@@ -77,10 +107,23 @@ function Spinner() {
   );
 }
 
-export const LiveBrowserPanel: React.FC<{ name: string; url?: string | null; port?: number | null }> = ({ name, url, port }) => {
+export const LiveBrowserPanel: React.FC<{
+  name: string;
+  url?: string | null;
+  port?: number | null;
+  /** Chat that owned the preview this panel last showed. */
+  owner?: string | null;
+}> = ({ name, url, port, owner }) => {
   const liveSession = useDockStore((s) => s.liveSession);
   const liveNavUrl = useDockStore((s) => s.liveNavUrl);
+  const chatId = useSessionStore((s) => s.currentSessionId);
+  const addToast = useUIStore((s) => s.addToast);
+  // The watcher feeds only the chat on screen's own preview, so `running`
+  // means "this chat's server is up". `ownsLive` re-checks the owner against
+  // the chat on screen, which covers the moment between a chat switch and the
+  // watcher's next answer, when the pane may still hold the previous chat's.
   const running = liveSession != null && liveSession.name === name;
+  const ownsLive = running && !!chatId && liveSession?.owner === chatId;
 
   // The pane's target: a routed localhost URL wins, else the running session,
   // else the props/port fallback. The component is remounted (RightDock keys it
@@ -136,8 +179,40 @@ export const LiveBrowserPanel: React.FC<{ name: string; url?: string | null; por
   const refresh = useCallback(() => setRefreshKey((k) => k + 1), []);
 
   const closeLive = useDockStore((s) => s.closeLive);
-  const stop = useCallback(async () => { setBusy(true); try { await stopPreviewSession(name); } finally { setBusy(false); } }, [name]);
-  const restart = useCallback(async () => { setBusy(true); try { await startPreviewSession(name); } finally { setBusy(false); } }, [name]);
+
+  // Stop targets the server this chat owns, and is offered only while the
+  // pane is actually showing it (same scheme, host and port as the server).
+  // It sends this chat's id, so the backend refuses it for any other chat's.
+  const serverUrl = ownsLive
+    ? liveSession?.url || (liveSession?.port ? `http://localhost:${liveSession.port}` : '')
+    : '';
+  const showsServer = ownsLive && (serverUrl ? sameServer(shownUrl, serverUrl) : !liveNavUrl);
+  // Restart brings back a server THIS chat started; a pane left over from
+  // another chat's preview offers only Close.
+  const canRestart = !!chatId && !!owner && owner === chatId;
+
+  const stop = useCallback(async () => {
+    if (!chatId) return;
+    setBusy(true);
+    try {
+      await stopPreviewSession(name, chatId);
+    } catch (err) {
+      addToast({ type: 'error', message: errorText(err) });
+    } finally {
+      setBusy(false);
+    }
+  }, [name, chatId, addToast]);
+  const restart = useCallback(async () => {
+    if (!chatId) return;
+    setBusy(true);
+    try {
+      await startPreviewSession(name, chatId);
+    } catch (err) {
+      addToast({ type: 'error', message: errorText(err) });
+    } finally {
+      setBusy(false);
+    }
+  }, [name, chatId, addToast]);
 
   // Probe the target until it answers, then unlock the iframe. Re-runs (and so
   // re-gates, since `ready` keys off `token`) on a new target or a Refresh. The
@@ -173,13 +248,19 @@ export const LiveBrowserPanel: React.FC<{ name: string; url?: string | null; por
   }, [token, shownUrl, mode]);
 
   // ── Stopped: no running server AND no routed URL to show. A URL-only view (a
-  //    localhost link routed in without a registered session) skips this. ──
+  //    localhost link routed in without a registered session) skips this. A
+  //    pane whose last preview belonged to another chat says so instead of
+  //    offering to restart that chat's server from here. ──
   if (!running && !liveNavUrl) {
     return (
       <div style={{ flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 16, background: 'var(--bg-inset, #0d0d0d)' }}>
-        <div style={{ color: 'var(--text-muted, #888)', fontSize: 13 }}>Preview server stopped</div>
+        <div style={{ color: 'var(--text-muted, #888)', fontSize: 13 }}>
+          {canRestart ? 'Preview server stopped' : 'No preview is running in this chat'}
+        </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" style={txtBtn} onClick={() => void restart()} disabled={busy}>{busy ? 'Starting…' : 'Restart'}</button>
+          {canRestart && (
+            <button type="button" style={txtBtn} onClick={() => void restart()} disabled={busy}>{busy ? 'Starting…' : 'Restart'}</button>
+          )}
           <button type="button" style={txtBtn} onClick={closeLive}>Close</button>
         </div>
       </div>
@@ -208,8 +289,8 @@ export const LiveBrowserPanel: React.FC<{ name: string; url?: string | null; por
             {mode === 'interact' ? 'Watch' : 'Interact'}
           </button>
         )}
-        {running && (
-          <button type="button" style={txtBtn} onClick={() => void stop()} disabled={busy} title="Stop the dev server">Stop</button>
+        {showsServer && (
+          <button type="button" style={txtBtn} onClick={() => void stop()} disabled={busy} title="Stop this chat's dev server">Stop</button>
         )}
       </div>
 

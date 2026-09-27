@@ -80,7 +80,7 @@ def _plumbing(monkeypatch):
     recorded = []
     monkeypatch.setattr("server.tool_router.route_tool", fake_route)
     monkeypatch.setattr("server.costs.tracker.record_turn", lambda **kw: recorded.append(kw))
-    monkeypatch.setattr("server.chat.infra._estimate_cost", lambda *a, **k: 0.0)
+    monkeypatch.setattr("server.costs.tracker.call_cost", lambda *a, **k: 0.0)
     return dispatched, recorded
 
 

@@ -31,12 +31,20 @@ def _is_run_terminal(ev: dict) -> bool:
 
 
 def _default_model():
+    """(key, id) of the model a run with none named uses. Local mode never
+    starts one on the cloud default: it takes the on-device default, or no model
+    at all (run_agent then says why the agents cannot run)."""
     try:
         from server.infrastructure.config import load_config
+        from server.infrastructure.model_mode import current_mode, mode_default_model
 
         cfg = load_config()
         models = cfg.get("chat_models", {}) or {}
         key = cfg.get("default_chat_model")
+        if current_mode(cfg) == "local":
+            meta = cfg.get("chat_model_meta") or {}
+            key = mode_default_model(list(models), meta, "local", key or "")
+            return key, models.get(key, "")
         model_id = (
             (models.get(key) if key else None)
             or models.get("sonnet")

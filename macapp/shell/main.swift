@@ -126,6 +126,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     // native shell on its own.
     private let externalHTMLBridge = ExternalHTMLBridge()
 
+    // View > Actual Size / Zoom In / Zoom Out for the whole page, remembered
+    // across launches (PageZoom.swift).
+    private let pageZoom = PageZoom()
+
     // MARK: Lifecycle
 
     /// A raw SIGTERM/SIGINT (logout, `kill`) skips AppKit's terminate flow, so
@@ -403,6 +407,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         nativeAudioBridge.webView = view
         nativeTranslationBridge.webView = view
         downloadHandler.webView = view
+        pageZoom.webView = view
         view.uiDelegate = self
         view.navigationDelegate = self
         view.allowsBackForwardNavigationGestures = true
@@ -476,6 +481,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         let viewMenu = NSMenu(title: "View")
         viewMenu.addItem(
             withTitle: "Reload", action: #selector(AppDelegate.reloadPage(_:)), keyEquivalent: "r")
+        viewMenu.addItem(NSMenuItem.separator())
+        for zoomItem in pageZoom.menuItems() {
+            viewMenu.addItem(zoomItem)
+        }
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
 

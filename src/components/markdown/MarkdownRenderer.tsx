@@ -4,6 +4,7 @@ import { renderCodeBlock, attachCodeBlockHandlers, beginCodeBlockParse } from '@
 import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
 import { attachWsFileHandlers } from '@/utils/wsFileLinks';
 import { toStepNarration } from '@/utils/stepNarration';
+import { useHtmlProp } from '@/hooks/useHtmlProp';
 
 // Configure marked with custom code block renderer
 const renderer = new marked.Renderer();
@@ -41,6 +42,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, ste
     const src = stepFormat ? toStepNarration(content) : content;
     return renderMarkdownSafe(src, { markedOptions: { renderer } });
   }, [content, instanceId, stepFormat]);
+  const innerHtml = useHtmlProp(html);
 
   // Attach code block action handlers via event delegation
   useEffect(() => {
@@ -60,7 +62,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, ste
     <div
       ref={containerRef}
       className={`markdown-content${stepFormat ? ' step-narration' : ''}`}
-      dangerouslySetInnerHTML={{ __html: html }}
+      dangerouslySetInnerHTML={innerHtml}
     />
   );
 };

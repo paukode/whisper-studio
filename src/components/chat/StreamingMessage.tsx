@@ -80,20 +80,24 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
               gap: 6,
             }}>
               <span>{(isLocalModel && !thinkingContent) ? '\u2728' : '\uD83D\uDCAD'}</span>
+              {/* A status outranks the thinking label: thinking tokens clear
+               *  it, so one that is set now came after them (the goal check
+               *  after a thinking-only round) and names the current phase. */}
               {content
                 ? 'Thought process'
-                : thinkingContent
-                  ? 'Thinking\u2026'
-                  : streamStatus === 'searching'
-                    ? 'Searching your workspace\u2026'
-                    : streamStatus === 'connecting'
-                      ? 'Waiting for the model\u2026'
-                      : streamStatus === 'preparing'
-                        ? 'Preparing\u2026'
-                        : streamStatus
-                          // Free-text phases (compaction, continuation) arrive
-                          // as human-readable status frames; show them as-is.
-                          ? streamStatus
+                : streamStatus === 'searching'
+                  ? 'Searching your workspace\u2026'
+                  : streamStatus === 'connecting'
+                    ? 'Waiting for the model\u2026'
+                    : streamStatus === 'preparing'
+                      ? 'Preparing\u2026'
+                      : streamStatus
+                        // Free-text phases (compaction, continuation, the goal
+                        // check) arrive as human-readable status frames; show
+                        // them as-is.
+                        ? streamStatus
+                        : thinkingContent
+                          ? 'Thinking\u2026'
                           : (isLocalModel ? 'Generating\u2026' : 'Thinking\u2026')}
               {!content && <span className="pulse-dot"></span>}
               {displayElapsed > 0 && (

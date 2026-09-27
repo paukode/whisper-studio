@@ -9,7 +9,7 @@ import { create } from 'zustand';
  * fractions; RightDock renders each panel with `flex-grow: sizes[i]` and the
  * drag handles between panels reallocate space between neighbours.
  *
- * The live panel gets extra state: the current preview session (fed by
+ * The live panel gets extra state: the current chat's preview session (fed by
  * useDockLiveWatcher) and a persisted "dismissed" flag so closing the live
  * panel stays closed across a page reload (until a new session or a reopen).
  */
@@ -26,6 +26,9 @@ export interface LiveSession {
   name: string;
   url: string | null;
   port: number | null;
+  /** Chat session id that owns the preview: the only chat whose Live pane
+   *  shows it and may stop or restart it. */
+  owner: string;
 }
 
 interface DockState {
@@ -76,7 +79,12 @@ function equalize(n: number): number[] {
 }
 
 function livePanel(s: LiveSession): DockPanel {
-  return { id: 'live', kind: 'live', title: `Live · ${s.name}`, meta: { name: s.name, url: s.url, port: s.port } };
+  return {
+    id: 'live',
+    kind: 'live',
+    title: `Live · ${s.name}`,
+    meta: { name: s.name, url: s.url, port: s.port, owner: s.owner },
+  };
 }
 
 export const useDockStore = create<DockState>((set, get) => ({
@@ -137,19 +145,21 @@ export const useDockStore = create<DockState>((set, get) => ({
 
   setSizes: (sizes) => set({ sizes }),
 
-  // Fed by useDockLiveWatcher with the ACTIVE (latest alive) preview session. A
-  // single Live pane tracks it (Claude Code's model): when the active server
-  // *changes* (a genuinely new session name), the pane switches to it — the
+  // Fed by useDockLiveWatcher with the ACTIVE preview: the latest alive one the
+  // chat on screen owns, so the pane (and its Stop) never acts on another
+  // chat's server. A single Live pane tracks it (Claude Code's model): when the
+  // active server *changes* (a new session name, or the same name now owned by
+  // another chat, as after a chat switch), the pane switches to it: the
   // manual URL override is dropped and the nav key bumps so the panel remounts
   // onto the new server. A mere url/port refresh of the same session only
   // updates the panel meta in place (no remount, so in-panel navigation and any
   // routed URL survive). Never auto-closes: when the server stops (s === null)
   // the panel stays and shows its "stopped" state.
   setLiveSession: (s) => {
-    const prevName = get().liveSession?.name ?? null;
-    const newName = s?.name ?? null;
-    const nameChanged = prevName !== newName;
-    if (nameChanged) {
+    const prev = get().liveSession;
+    const serverChanged =
+      (prev?.name ?? null) !== (s?.name ?? null) || (prev?.owner ?? null) !== (s?.owner ?? null);
+    if (serverChanged) {
       set({ liveSession: s, liveNavUrl: null, liveNavKey: get().liveNavKey + 1 });
     } else {
       set({ liveSession: s });
@@ -157,7 +167,8 @@ export const useDockStore = create<DockState>((set, get) => ({
     if (!s) return;
     const existing = get().panels.find((p) => p.kind === 'live');
     if (existing) {
-      if (existing.meta?.name !== s.name || existing.meta?.url !== s.url || existing.meta?.port !== s.port) {
+      const m = existing.meta;
+      if (m?.name !== s.name || m?.url !== s.url || m?.port !== s.port || m?.owner !== s.owner) {
         set({ panels: get().panels.map((p) => (p.kind === 'live' ? livePanel(s) : p)) });
       }
       return;

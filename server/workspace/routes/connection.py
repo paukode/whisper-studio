@@ -1,6 +1,8 @@
 """Workspace connection lifecycle: /connect, /disconnect, /status."""
 
+import asyncio
 import json
+import logging
 import os
 
 from fastapi import Request
@@ -8,14 +10,15 @@ from fastapi.responses import Response
 
 from .. import router
 from ..filesystem import _ws_list_dir
-from ..paths import WORKSPACE_BACKUPS, _resolve_path
+from ..paths import _resolve_path
 from ..state import (
     _check_writable,
-    clear_workspace_scoped_state,
     connect_workspace,
+    disconnect_workspace,
     load_workspace_config,
-    save_workspace_config,
 )
+
+log = logging.getLogger("whisper-studio")
 
 
 @router.post("/connect")
@@ -36,8 +39,13 @@ async def ws_connect(request: Request):
             status_code=404,
             media_type="application/json",
         )
-    real = connect_workspace(path)
-    entries = _ws_list_dir(real)
+    # by_user: switching away from a workspace here releases it for any turn
+    # still running in it, the same as a disconnect.
+    real = connect_workspace(path, by_user=True)
+    # The config write above stays on the loop so a Disconnect clicked right
+    # after is applied in order; the listing is only a read, so it goes to a
+    # worker thread instead of holding every other session's stream.
+    entries = await asyncio.to_thread(_ws_list_dir, real)
     return {
         "path": real,
         "entries": entries,
@@ -50,21 +58,27 @@ async def ws_connect(request: Request):
 
 @router.post("/disconnect")
 async def ws_disconnect():
-    config = load_workspace_config()
-    config["path"] = None
-    config.pop("mode", None)  # retired field; scrub it from old configs
-    save_workspace_config(config)
-    WORKSPACE_BACKUPS.clear()
-    # Immediately, not deferred to the next connect: connect_workspace's own
-    # switch detection requires a truthy `previous` path, which this call just
-    # nulled out — reconnecting to a DIFFERENT workspace afterward would
-    # otherwise skip the clear entirely and keep running commands against the
-    # disconnected workspace's stale cwd.
-    clear_workspace_scoped_state()
-    from server.git.watcher import git_watcher
+    """Disconnect at once, whatever a session is doing.
 
-    git_watcher.set_workspace(None)
-    return {"disconnected": True}
+    disconnect_workspace is in-memory state plus one small atomic file write,
+    so this answers in about a millisecond even mid-turn: it takes no lock a
+    turn holds, stops no turn and kills no process a session started. The
+    running turn's next workspace tool call is refused instead. A teardown
+    step that fails is logged and returned as a warning the UI shows; a failed
+    config write returns 500 and leaves the workspace connected.
+    """
+    try:
+        warnings = disconnect_workspace()
+    except Exception as e:  # noqa: BLE001 - reported to the UI, not swallowed
+        log.exception("workspace disconnect: saving the workspace config failed")
+        return Response(
+            content=json.dumps(
+                {"error": f"Could not save the workspace config, still connected: {e}"}
+            ),
+            status_code=500,
+            media_type="application/json",
+        )
+    return {"disconnected": True, "warnings": warnings}
 
 
 @router.get("/status")

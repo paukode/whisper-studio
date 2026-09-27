@@ -11,6 +11,12 @@ interface FlagState {
   description: string;
   category: string;
   source: 'config' | 'default';
+  /** Set when the active mode keeps this feature off whatever the switch says
+   *  (a cloud-only feature in Local mode); the reason is shown under it. */
+  inactive_reason?: string | null;
+  /** Set when the active mode leaves part of the feature out (auto memory in
+   *  Local mode recalls but records nothing); shown under the switch. */
+  local_mode_note?: string | null;
 }
 
 type FlagMap = Record<string, FlagState>;
@@ -69,6 +75,16 @@ export const FeatureFlagsPanel: React.FC = () => {
                   )}
                 </div>
                 <ExpandableText className="settings-item-desc" text={f.description} />
+                {f.inactive_reason && (
+                  <span className="settings-hint settings-hint--warn" role="note">
+                    {f.inactive_reason}
+                  </span>
+                )}
+                {f.local_mode_note && (
+                  <span className="settings-hint" role="note">
+                    {f.local_mode_note}
+                  </span>
+                )}
               </div>
               <div className="settings-item-actions">
                 <label className="toggle-switch" title={f.enabled ? 'On' : 'Off'}>

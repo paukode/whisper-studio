@@ -43,6 +43,14 @@ torch==2.11.0
 torchaudio==2.11.0
 setuptools==81.0.0
 webrtcvad-wheels==2.0.14
+# Code tools (server/code_tools). ruff checks, and in a workspace that
+# configures ruff also fixes and formats, every Python file the assistant
+# writes, and backs lsp_diagnostics; it runs as `python -P -m ruff` with the
+# app's interpreter, so it is a runtime dependency (the repo's own lint gate
+# uses the same pin). python-lsp-server is the code editor's Python language
+# server, started as `python -P -m pylsp`; pyflakes is its diagnostics plugin
+# there. The launch commands live in server/code_tools/commands.py.
+ruff==0.14.2
 pyflakes==3.4.0
 python-lsp-server==1.14.0
 nodeenv==1.10.0
@@ -87,7 +95,3 @@ leidenalg==0.12.0
 # Dev / test
 pytest==9.0.3
 httpx==0.28.1
-# Lint + format for the Python side. Pinned so CI output is reproducible (ruff
-# ships new rules and occasional formatter changes between minor versions). Not
-# matched by the CI ML-strip grep, so it installs in the backend job.
-ruff==0.14.2

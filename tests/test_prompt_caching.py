@@ -122,9 +122,15 @@ def test_estimate_cost_cache_terms():
     read = estimate_cost("opus4.6", 1000, 500, cache_read_tokens=8000)
     assert read - base == pytest.approx(8000 / 1e6 * 0.50)
 
-    # cache write billed at the model's cache_write rate ($6.25/1M)
+    # cache write billed at the model's cache_write rate: $6.25/1M, the 5-minute
+    # rate, because Opus 4.6 only takes the 5-minute TTL
     write = estimate_cost("opus4.6", 1000, 500, cache_creation_tokens=8000)
     assert write - base == pytest.approx(8000 / 1e6 * 6.25)
+
+    # a 1-hour model bills its write at the 1-hour rate ($10/1M, 2x input)
+    base_1h = estimate_cost("opus4.8", 1000, 500)
+    write_1h = estimate_cost("opus4.8", 1000, 500, cache_creation_tokens=8000)
+    assert write_1h - base_1h == pytest.approx(8000 / 1e6 * 10.0)
 
     # zero cache tokens => identical to the legacy 3-arg result
     assert estimate_cost("opus4.6", 1000, 500, 0, 0) == base

@@ -11,6 +11,8 @@ from __future__ import annotations
 DEFAULT_MAX_MESSAGES = 15
 DEFAULT_CAP_CHARS = 12_000
 _TOOL_RESULT_SLICE = 800  # head+tail chars kept per tool result
+# Prefixed to a tail cut at ``cap_chars``, so a caller sizing a prompt adds it.
+ELIDED_PREFIX = "… [older turns elided] …\n"
 
 
 def _slice(text: str, budget: int = _TOOL_RESULT_SLICE) -> str:
@@ -83,5 +85,5 @@ def render_tail(
             lines.append(f"{role.upper()}: {body.strip()}")
     text = "\n".join(lines)
     if len(text) > cap_chars:
-        text = "… [older turns elided] …\n" + text[-cap_chars:]
+        text = ELIDED_PREFIX + text[-cap_chars:]
     return text or "(no textual content)"

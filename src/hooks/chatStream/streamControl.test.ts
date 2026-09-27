@@ -8,9 +8,11 @@ import {
   wasKillFinalized,
 } from './streamControl';
 
-// The ESC kill switch must also stop background shell tasks the session
-// spawned — fire-and-forget, never blocking or breaking the synchronous kill.
-describe('killSessionStream — background-task stop wire', () => {
+// The ESC kill switch must also stop the shell work the stopped stream
+// started, and only that: the request carries when the stream began, so the
+// backend spares a dev server an earlier turn left running. Fire-and-forget,
+// never blocking or breaking the synchronous kill.
+describe('killSessionStream: shell-work stop wire', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -22,15 +24,79 @@ describe('killSessionStream — background-task stop wire', () => {
     vi.unstubAllGlobals();
   });
 
-  it('fires POST /api/workspace/shell/tasks/stop with the session id', () => {
+  function stopBody(): { session_id: string; since: number } {
+    const call = fetchMock.mock.calls.find((c) => c[0] === '/api/workspace/shell/tasks/stop');
+    expect(call).toBeDefined();
+    return JSON.parse((call![1] as RequestInit).body as string);
+  }
+
+  it('sends the session id and the running stream start as `since`', () => {
+    const before = Date.now() / 1000;
+    registerStreamController('sess-123', new AbortController());
+    const after = Date.now() / 1000;
+
     killSessionStream('sess-123');
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/api/workspace/shell/tasks/stop',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ session_id: 'sess-123' }),
-      }),
-    );
+
+    const body = stopBody();
+    expect(body.session_id).toBe('sess-123');
+    expect(body.since).toBeGreaterThanOrEqual(before);
+    expect(body.since).toBeLessThanOrEqual(after);
+  });
+
+  it('scopes `since` to the turn actually running, not an earlier one', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      registerStreamController('sess-cont', new AbortController(), { startsTurn: true });
+      // A fresh send starts a new turn and replaces the controller.
+      vi.setSystemTime(1_060_000);
+      registerStreamController('sess-cont', new AbortController(), { startsTurn: true });
+
+      killSessionStream('sess-cont');
+      expect(stopBody().since).toBe(1_060);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('every later leg of a turn keeps its start, so the work of earlier legs stays in reach', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(2_000_000);
+      registerStreamController('sess-appr', new AbortController(), { startsTurn: true });
+      // The leg that runs the approved action registers when the user clicks
+      // approve, and the continuation after the action returns: both are legs
+      // of the same turn, whatever their call site passes.
+      vi.setSystemTime(2_030_000);
+      registerStreamController('sess-appr', new AbortController());
+      killSessionStream('sess-appr');
+      expect(stopBody().since).toBe(2_000);
+
+      fetchMock.mockClear();
+      vi.setSystemTime(2_045_000);
+      registerStreamController('sess-appr', new AbortController());
+      killSessionStream('sess-appr');
+      expect(stopBody().since).toBe(2_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a leg with no turn on record starts one', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(3_000_000);
+      registerStreamController('sess-fresh-leg', new AbortController());
+      killSessionStream('sess-fresh-leg');
+      expect(stopBody().since).toBe(3_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not reach for tasks when no stream is running in the session', () => {
+    killSessionStream('sess-idle');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('does not fire for a null session', () => {
@@ -40,7 +106,8 @@ describe('killSessionStream — background-task stop wire', () => {
 
   it('stays synchronous and quiet when the request fails', () => {
     fetchMock.mockRejectedValue(new Error('offline'));
-    expect(() => killSessionStream('sess-123')).not.toThrow();
+    registerStreamController('sess-offline', new AbortController());
+    expect(() => killSessionStream('sess-offline')).not.toThrow();
   });
 });
 

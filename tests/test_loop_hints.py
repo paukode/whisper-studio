@@ -45,13 +45,18 @@ def test_inject_reminder_refuses_non_user_tail():
     assert len(messages[0]["content"]) == 1
 
 
-def test_context_store_roundtrip_and_estimate():
-    assert loop_hints.context_estimate("s1") == (None, loop_hints.DEFAULT_CONTEXT_MAX)
+def _used(session_id):
+    entry = loop_hints._context.get(session_id)
+    return entry["used"] if entry else None
+
+
+def test_context_store_roundtrip():
+    assert _used("s1") is None
     loop_hints.note_prompt_tokens("s1", 120_000, 200_000)
-    assert loop_hints.context_estimate("s1") == (120_000, 200_000)
+    assert (_used("s1"), loop_hints._context["s1"]["max"]) == (120_000, 200_000)
     # Latest round wins (context is a level, not a sum).
     loop_hints.note_prompt_tokens("s1", 130_000, 200_000)
-    assert loop_hints.context_estimate("s1")[0] == 130_000
+    assert _used("s1") == 130_000
 
 
 def test_compaction_nudge_fires_once_at_threshold():
@@ -79,5 +84,5 @@ def test_eviction_is_lru_by_update_not_fifo():
     # Store is full; refresh the oldest-inserted session, then overflow.
     loop_hints.note_prompt_tokens("busy", 200)
     loop_hints.note_prompt_tokens("newcomer", 100)
-    assert loop_hints.context_estimate("busy")[0] == 200  # survived
-    assert loop_hints.context_estimate("idle0")[0] is None  # evicted instead
+    assert _used("busy") == 200  # survived
+    assert _used("idle0") is None  # evicted instead

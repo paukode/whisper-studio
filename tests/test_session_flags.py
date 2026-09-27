@@ -113,20 +113,9 @@ def test_open_workspace_validation(tmp_path, monkeypatch):
         r = client.post(f"/api/sessions/{sid}/open-workspace", json={"app": "finder"})
         assert r.status_code == 400
 
-        # With a real folder: launch is attempted with the mapped command.
-        client.put(
-            f"/api/sessions/{sid}",
-            json={
-                "id": sid,
-                "title": "with ws",
-                "workspacePath": str(tmp_path),
-                "createdAt": "2026-01-01T00:00:00Z",
-                "updatedAt": "2026-01-01T00:00:00Z",
-                "segments": [],
-                "chatHistory": [],
-                "speakerNames": {},
-            },
-        )
+        # With a real folder, recorded the way a chat turn records it: launch
+        # is attempted with the mapped command.
+        sessions_mod.record_session_workspace(sid, str(tmp_path))
         calls = []
 
         class _Result:

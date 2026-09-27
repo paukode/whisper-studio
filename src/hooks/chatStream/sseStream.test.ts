@@ -19,7 +19,16 @@ import { readSSEStream, sendApprovalContinuation } from './sseStream';
 import { useUIStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { PendingApproval } from '@/stores/chatStore';
+import type { TurnModelSettings } from '@/types/chat';
 import { dropRuntime, useRuntimeIndex, getChatStore } from '@/stores/sessionRuntimes';
+
+/** The settings the request that opened a test stream carried. */
+const SETTINGS: TurnModelSettings = {
+  model: 'test-model',
+  effort_level: 'normal',
+  verbosity: 'medium',
+  brief_mode: false,
+};
 
 /** Build an SSE Response from a list of frame objects, terminated by [DONE]. */
 function sseResponse(frames: unknown[]): Response {
@@ -61,7 +70,7 @@ describe('readSSEStream', () => {
       },
     ]);
 
-    await readSSEStream(res, 'sess-budget', new AbortController().signal);
+    await readSSEStream(res, 'sess-budget', new AbortController().signal, SETTINGS);
 
     const toast = useUIStore
       .getState()
@@ -90,6 +99,7 @@ describe('readSSEStream', () => {
       res,
       'sess-usage-total',
       new AbortController().signal,
+      SETTINGS,
     );
 
     expect(result.inputTokens).toBe(100);
@@ -119,6 +129,7 @@ describe('readSSEStream', () => {
       res,
       'sess-usage-prompt',
       new AbortController().signal,
+      SETTINGS,
     );
 
     expect(result.inputTokens).toBe(118_400);
@@ -134,6 +145,7 @@ describe('readSSEStream', () => {
       res,
       'sess-usage-round',
       new AbortController().signal,
+      SETTINGS,
     );
 
     expect(result.inputTokens).toBe(7);
@@ -154,7 +166,7 @@ describe('readSSEStream', () => {
     ]);
 
     const sessionId = 'sess-ws-prompt';
-    await readSSEStream(res, sessionId, new AbortController().signal);
+    await readSSEStream(res, sessionId, new AbortController().signal, SETTINGS);
 
     const messages = getChatStore(sessionId).getState().messages;
     const withPrompt = messages.find((m) => m.toolUse?.some((t) => t.toolName === 'ws_workspace_prompt'));
@@ -174,7 +186,7 @@ describe('readSSEStream', () => {
     ]);
 
     const sessionId = 'sess-ws-prompt-fallback';
-    await readSSEStream(res, sessionId, new AbortController().signal);
+    await readSSEStream(res, sessionId, new AbortController().signal, SETTINGS);
 
     const messages = getChatStore(sessionId).getState().messages;
     const withPrompt = messages.find((m) => m.toolUse?.some((t) => t.toolName === 'ws_workspace_prompt'));
@@ -201,7 +213,7 @@ describe('readSSEStream', () => {
     ]);
 
     const sessionId = 'sess-card-order';
-    const result = await readSSEStream(res, sessionId, new AbortController().signal);
+    const result = await readSSEStream(res, sessionId, new AbortController().signal, SETTINGS);
 
     const messages = getChatStore(sessionId).getState().messages;
     expect(messages).toHaveLength(2);
@@ -231,7 +243,7 @@ describe('readSSEStream', () => {
     ]);
 
     const sessionId = 'sess-card-first';
-    const result = await readSSEStream(res, sessionId, new AbortController().signal);
+    const result = await readSSEStream(res, sessionId, new AbortController().signal, SETTINGS);
 
     const messages = getChatStore(sessionId).getState().messages;
     expect(messages).toHaveLength(1);
@@ -244,7 +256,7 @@ describe('readSSEStream', () => {
       { status: 'Compacting context (prompt too long)...' },
     ]);
 
-    await readSSEStream(res, 'sess-status', new AbortController().signal);
+    await readSSEStream(res, 'sess-status', new AbortController().signal, SETTINGS);
 
     const toast = useUIStore
       .getState()
@@ -263,7 +275,7 @@ describe('readSSEStream', () => {
       { skill: 'web_search', input: {} },
     ]);
 
-    await readSSEStream(res, 'sess-skill-status', new AbortController().signal);
+    await readSSEStream(res, 'sess-skill-status', new AbortController().signal, SETTINGS);
 
     expect(getChatStore('sess-skill-status').getState().streamStatus).toBeNull();
   });
@@ -283,6 +295,8 @@ describe('sendApprovalContinuation', () => {
     summary: 'Create branch docs/x from main',
     payload: { command: 'git checkout -b docs/x' },
     sessionId: 'sess-resume',
+    alwaysAsks: false,
+    turnSettings: { model: 'gpt5.6sol', effort_level: 'ultracode', verbosity: 'high', brief_mode: false },
   };
 
   afterEach(() => {
@@ -329,11 +343,13 @@ describe('sendApprovalContinuation', () => {
     expect(contents.some((c) => c.includes('ended the turn without text'))).toBe(false);
   });
 
-  it('carries model, effort and response length so the resumed half matches', async () => {
+  it('resumes on the settings the paused turn ran on, not on the picker', async () => {
+    // The picker is window-wide: another session picked a local model and a
+    // lower effort while this card waited. The resumed half must not follow.
     useSettingsStore.setState({
-      selectedModel: 'gpt5.6sol',
-      effortLevel: 'ultracode',
-      verbosity: 'high',
+      selectedModel: 'local_gemma',
+      effortLevel: 'low',
+      verbosity: 'low',
     });
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
@@ -426,6 +442,93 @@ describe('sendApprovalContinuation', () => {
   });
 });
 
+describe('readSSEStream approval_request', () => {
+  afterEach(() => {
+    for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
+  });
+
+  it('the card keeps the settings of the stream that paused on it', async () => {
+    const sid = 'sess-card-settings';
+    const opened: TurnModelSettings = {
+      model: 'cloud-sonnet',
+      effort_level: 'high',
+      verbosity: 'medium',
+      brief_mode: false,
+    };
+    const res = sseResponse([
+      {
+        approval_request: {
+          tool_use_id: 'tu_1',
+          action: 'terminal_run',
+          category: 'cli',
+          preview: 'command',
+          summary: 'npm test',
+          payload: { command: 'npm test' },
+        },
+      },
+    ]);
+
+    await readSSEStream(res, sid, new AbortController().signal, opened);
+    // The picker moving afterwards changes nothing about what this card resumes on.
+    useSettingsStore.setState({ selectedModel: 'local_gemma', effortLevel: 'low' });
+
+    expect(getChatStore(sid).getState().currentApproval?.turnSettings).toEqual(opened);
+  });
+
+  it('shows a card the server asks for even when the category is on "Yes, all"', async () => {
+    // The server applies the session's "Yes, all cli" itself, so a request
+    // that still arrives is a floor it wants a human to answer (here: rm).
+    // The client used to run it on the remembered "allow", without a click.
+    const sid = 'sess-floor';
+    getChatStore(sid).getState().setSessionApproval('cli', 'allow');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const res = sseResponse([
+      {
+        approval_request: {
+          tool_use_id: 'tu_rm',
+          action: 'terminal_run',
+          category: 'cli',
+          preview: 'command',
+          summary: 'rm -rf build',
+          payload: { command: 'rm -rf build' },
+        },
+      },
+    ]);
+
+    await readSSEStream(res, sid, new AbortController().signal, SETTINGS);
+
+    expect(getChatStore(sid).getState().currentApproval?.toolUseId).toBe('tu_rm');
+    expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes('/api/approval/execute'))).toBe(false);
+    vi.restoreAllMocks();
+  });
+
+  it('the card knows which requests the server always asks for', async () => {
+    const sid = 'sess-always-asks';
+    const request = (id: string, always_asks?: boolean) => ({
+      approval_request: {
+        tool_use_id: id,
+        action: 'terminal_run',
+        category: 'cli',
+        preview: 'command',
+        summary: id,
+        payload: { command: id },
+        ...(always_asks === undefined ? {} : { always_asks }),
+      },
+    });
+
+    await readSSEStream(
+      sseResponse([request('rm -rf build', true), request('npm test', false)]),
+      sid,
+      new AbortController().signal,
+      SETTINGS,
+    );
+
+    const chat = getChatStore(sid).getState();
+    expect(chat.currentApproval?.alwaysAsks).toBe(true);
+    expect(chat.approvalQueue[0]?.alwaysAsks).toBe(false);
+  });
+});
+
 describe('readSSEStream skill_progress', () => {
   afterEach(() => {
     for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
@@ -448,7 +551,7 @@ describe('readSSEStream skill_progress', () => {
       { skill_progress: { name: 'create_artifact', chars: 16384 } },
     ]);
 
-    await readSSEStream(res, sid, new AbortController().signal);
+    await readSSEStream(res, sid, new AbortController().signal, SETTINGS);
 
     const progress = seen.filter((s) => 'progressChars' in s.updates);
     expect(progress.map((s) => s.updates.progressChars)).toEqual([8192, 16384]);

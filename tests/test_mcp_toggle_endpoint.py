@@ -8,7 +8,7 @@ Contracts pinned here:
 2. PATCH /api/mcp/servers/{name} {enabled} persists the flag AND applies
    it to the runtime connection (enable connects, disable disconnects),
    returning the server's live status.
-3. start_all() starts exactly the enabled servers (missing flag counts
+3. reconcile() starts exactly the enabled servers (missing flag counts
    as enabled), so a disabled server stays stopped across app restarts.
 4. The per-turn tool pool (assemble_tool_pool) contains a server's tools
    exactly while it is enabled — flipping the flag changes the pool for
@@ -24,8 +24,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from server import mcp as mcp_module
-from server.mcp import (
-    MCPManager,
+from server import mcp_routes
+from server.mcp import MCPManager
+from server.mcp_routes import (
     mcp_add_server,
     mcp_patch_server,
     mcp_restart_server,
@@ -80,8 +81,16 @@ def _bind_recording_manager(monkeypatch) -> tuple[MCPManager, list, list]:
 
     monkeypatch.setattr(mgr, "start_server", _fake_start)
     monkeypatch.setattr(mgr, "stop_server", _fake_stop)
-    monkeypatch.setattr(mcp_module, "mcp_manager", mgr)
+    monkeypatch.setattr(mcp_routes, "mcp_manager", mgr)
     return mgr, started, stopped
+
+
+def _running(mgr: MCPManager, started: list, stopped: list) -> None:
+    """Bring the manager up on the current file (what app startup does),
+    then forget those calls so a test sees only its own."""
+    asyncio.run(mgr.reconcile())
+    started.clear()
+    stopped.clear()
 
 
 # --- (1) add: default-enabled + immediate start ---------------------------
@@ -111,7 +120,8 @@ def test_patch_disable_persists_and_stops_the_server(isolated_mcp, monkeypatch):
             {"servers": {"alpha": {"command": "c", "args": [], "env": {}, "enabled": True}}},
             f,
         )
-    _mgr, started, stopped = _bind_recording_manager(monkeypatch)
+    mgr, started, stopped = _bind_recording_manager(monkeypatch)
+    _running(mgr, started, stopped)
 
     resp = asyncio.run(mcp_patch_server("alpha", _FakeRequest({"enabled": False})))
 
@@ -129,7 +139,8 @@ def test_patch_enable_persists_and_starts_the_server(isolated_mcp, monkeypatch):
             {"servers": {"alpha": {"command": "c", "args": [], "env": {}, "enabled": False}}},
             f,
         )
-    _mgr, started, stopped = _bind_recording_manager(monkeypatch)
+    mgr, started, stopped = _bind_recording_manager(monkeypatch)
+    _running(mgr, started, stopped)
 
     resp = asyncio.run(mcp_patch_server("alpha", _FakeRequest({"enabled": True})))
 
@@ -166,10 +177,10 @@ def test_restart_leaves_a_disabled_server_stopped(isolated_mcp, monkeypatch):
     assert resp["enabled"] is False
 
 
-# --- (3) start_all starts exactly the enabled set --------------------------
+# --- (3) reconcile starts exactly the enabled set --------------------------
 
 
-def test_start_all_skips_disabled_and_treats_missing_flag_as_enabled(isolated_mcp, monkeypatch):
+def test_reconcile_skips_disabled_and_treats_missing_flag_as_enabled(isolated_mcp, monkeypatch):
     with open(isolated_mcp, "w") as f:
         json.dump(
             {
@@ -188,7 +199,7 @@ def test_start_all_skips_disabled_and_treats_missing_flag_as_enabled(isolated_mc
         started.append(name)
 
     monkeypatch.setattr(mgr, "start_server", _fake_start)
-    asyncio.run(mgr.start_all())
+    asyncio.run(mgr.reconcile())
 
     assert sorted(started) == ["alpha", "gamma"]  # beta stays stopped
 

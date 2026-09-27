@@ -7,7 +7,7 @@ WSDiagram.mount("preview-diagram", {
     tools: { label: "Actions" }, browser: { label: "Right dock" }
   },
   nodes: [
-    { id: "start", group: "server", col: 0, row: 0.5, label: "preview_start", sub: "approval-gated", desc: "Model (or the Restart button) asks to start a named session; POST /api/preview/sessions resolves the command from .whisper/launch.json or an ad-hoc argv." },
+    { id: "start", group: "server", col: 0, row: 0.5, label: "preview_start", sub: "named: approve once", desc: "Model (or the Restart button) asks to start a named session; POST /api/preview/sessions resolves the command from .whisper/launch.json or an ad-hoc argv. A named launch.json config follows the mode until a person approves its command once, then starts without approval in any permission mode; an ad-hoc argv follows the mode." },
     { id: "spawn", group: "server", col: 1, row: 0.5, label: "Spawn dev server", sub: "process.py", desc: "DevServerProcess.spawn validates the argv, wraps it in the PTY sandbox, and starts it with start_new_session (avoiding the uvloop fork deadlock)." },
     { id: "wait", group: "server", col: 2, row: 0.5, label: "Drain + keep alive", sub: "1 MB ring buffer", desc: "Two reader tasks continuously drain stdout/stderr into bounded 1 MB ring buffers so preview_logs can tail them. Spawn is bounded at 30s." },
     { id: "browser", group: "local", col: 3, row: 0.5, label: "Playwright browser", sub: "browser.py", desc: "On first navigation, an ephemeral Chromium context + page is launched lazily (60s cold-start bound). Console, page errors, and network are captured." },

@@ -1,6 +1,9 @@
 """Single-agent orchestration: spawn (blocking or detached), inter-agent
-messaging, and the active-agent listing. Cost rollup lives here too since both
-spawn and team runs feed it.
+messaging, and the active-agent listing.
+
+No cost is written here: the turn engine logs every agent round once, as it
+runs, under source 'agent'. A run total recorded on top would count the work
+twice (tests/test_agent_cost_recorded_once.py).
 """
 
 import json
@@ -149,7 +152,8 @@ async def _deliver_orphaned_spawn(
     run_task,
 ) -> None:
     """A spawned agent whose launching turn was cancelled: wait briefly for
-    its salvage report, then deliver it as an agent_report session row."""
+    its salvage report, then deliver it as an agent_report session row. The
+    row does not wake the parent: the user stopped that turn."""
     import asyncio
 
     from server.agents import journal as journal_mod
@@ -187,6 +191,7 @@ async def _deliver_orphaned_spawn(
                 }
             ],
         },
+        wake=False,
     )
 
 
@@ -252,40 +257,6 @@ def _start_detached_from_tool(
             ),
         }
     )
-
-
-def _record_agent_cost(session_id: str, model_id: str | None, result) -> None:
-    """Roll a finished agent's spend into session_costs (best-effort).
-
-    Rows are keyed "<model_key>_agent" so pricing resolves by longest-prefix
-    and the breakdown shows agent spend separately from interactive turns.
-    """
-    usage = getattr(result, "usage", None) or {}
-    if not (usage.get("input_tokens") or usage.get("output_tokens")):
-        return
-    try:
-        from server.agents.providers import model_key_for_id
-        from server.costs.tracker import estimate_cost, record_turn
-
-        model_key = model_key_for_id(model_id or "") or "unknown"
-        record_turn(
-            session_id=session_id,
-            turn_number=0,
-            model=f"{model_key}_agent",
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
-            cost_usd=estimate_cost(
-                model_key,
-                usage.get("input_tokens", 0),
-                usage.get("output_tokens", 0),
-                usage.get("cache_read_tokens", 0),
-                usage.get("cache_creation_tokens", 0),
-            ),
-            cache_read_tokens=usage.get("cache_read_tokens", 0),
-            cache_creation_tokens=usage.get("cache_creation_tokens", 0),
-        )
-    except Exception as e:
-        log.debug("agent cost rollup failed: %s", e)
 
 
 async def execute_spawn_agent(
@@ -552,7 +523,6 @@ async def execute_spawn_agent(
             stopped_payload["ephemeral_type"] = ephemeral_meta
         return json.dumps(stopped_payload)
 
-    _record_agent_cost(session_id, model_id, result)
     _persist_agent_result(session_id, task, display_agent_type, model_id, result)
 
     # Pre-flight failures (data-retention gate, no cloud model, depth cap)

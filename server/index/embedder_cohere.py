@@ -26,30 +26,31 @@ log = logging.getLogger("whisper-studio")
 # Cohere caps a single embed request at 96 texts.
 _MAX_TEXTS_PER_CALL = 96
 
-_client = None
+_clients: dict[str, object] = {}
 _client_lock = threading.Lock()
 
 
 def _bedrock():
     """A us-east-1 bedrock-runtime client (Cohere embed/rerank are only there),
-    independent of the chat region. Cached process-wide."""
-    global _client
-    with _client_lock:
-        if _client is None:
-            import boto3
-            from botocore.config import Config as BotoConfig
+    independent of the chat region. Cached process-wide once credentials
+    resolve, so adding them later takes effect without a relaunch."""
+    from botocore.config import Config as BotoConfig
 
-            _client = boto3.client(
-                "bedrock-runtime",
-                region_name=COHERE_REGION,
-                config=BotoConfig(
-                    read_timeout=120,
-                    connect_timeout=10,
-                    retries={"max_attempts": 3},
-                    max_pool_connections=16,
-                ),
-            )
-        return _client
+    from server.infrastructure.aws_clients import cached_client
+
+    return cached_client(
+        _clients,
+        _client_lock,
+        COHERE_REGION,
+        "bedrock-runtime",
+        region_name=COHERE_REGION,
+        config=BotoConfig(
+            read_timeout=120,
+            connect_timeout=10,
+            retries={"max_attempts": 3},
+            max_pool_connections=16,
+        ),
+    )
 
 
 def _l2(arr: np.ndarray) -> np.ndarray:
@@ -61,7 +62,10 @@ def _l2(arr: np.ndarray) -> np.ndarray:
 def _invoke(texts: list[str], input_type: str) -> np.ndarray:
     """Embed texts via Cohere Embed v4, returning (n, dim) L2-normalized float32.
     Raises on failure — a missing/garbage vector silently breaks retrieval, so a
-    build must fail loudly rather than persist one."""
+    build must fail loudly rather than persist one. Each call is billed, so each
+    is in the cost log (source ``index``)."""
+    from server.costs.calls import invoke_input_billed
+
     client = _bedrock()
     out: list[list[float]] = []
     for i in range(0, len(texts), _MAX_TEXTS_PER_CALL):
@@ -74,8 +78,9 @@ def _invoke(texts: list[str], input_type: str) -> np.ndarray:
                 "output_dimension": COHERE_EMBED_DIM,
             }
         )
-        resp = client.invoke_model(modelId=COHERE_EMBED_MODEL_ID, body=body)
-        payload = json.loads(resp["body"].read())
+        payload = invoke_input_billed(
+            client, model_id=COHERE_EMBED_MODEL_ID, body=body, source="index"
+        )
         emb = payload.get("embeddings")
         # v4 with embedding_types returns {"float": [[...]]}; tolerate a bare list.
         rows = emb.get("float") if isinstance(emb, dict) else emb

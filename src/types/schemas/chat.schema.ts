@@ -78,6 +78,10 @@ export const SSEEventDataSchema = z.object({
     payload: z.record(z.string(), z.unknown()),
     risk_hint: z.enum(['low', 'medium', 'high']).nullable().optional(),
     explanation: z.union([z.string(), z.record(z.string(), z.unknown())]).nullable().optional(),
+    /** A hard floor (rm, a destructive GitHub call, a sandbox escalation, an
+     *  MCP server marked approve): the server asks every time, whatever the
+     *  session remembers for the category. */
+    always_asks: z.boolean().optional(),
   }).optional(),
 
   // Workspace integration
@@ -85,6 +89,9 @@ export const SSEEventDataSchema = z.object({
     path: z.string().optional(),
     original: z.string().optional(),
     content: z.string().optional(),
+    // The root the call was bound to (server/tool_executor.py stamps it), so
+    // the client syncs only a tab of that root. Null when none was connected.
+    workspace_root: z.string().nullable().optional(),
   }).optional(),
   ws_workspace_prompt: z.record(z.string(), z.unknown()).optional(),
   ws_folder_opened: z.string().optional(),
@@ -103,7 +110,8 @@ export const SSEEventDataSchema = z.object({
   }).optional(),
   // Completion-gate frames (WS-E goal loop).
   goal_eval: z.object({
-    verdict: z.string().optional(),
+    // 'not_checked': the judge could not run or could not be understood.
+    verdict: z.enum(['achieved', 'not_achieved', 'blocked', 'not_checked']).optional(),
     feedback: z.string().optional(),
     confidence: z.number().optional(),
     attempt: z.number().optional(),
@@ -161,14 +169,6 @@ export const SSEEventDataSchema = z.object({
     tool_use_id: z.string().optional(),
   }).optional(),
   notify_user: z.record(z.string(), z.unknown()).optional(),
-  tool_pool: z
-    .object({
-      advertised: z.number(),
-      deferred: z.number(),
-      total: z.number(),
-      deferred_tokens_est: z.number(),
-    })
-    .optional(),
   team_results: z.record(z.string(), z.unknown()).optional(),
   team_progress: TeamProgressEventSchema.optional(),
   /** Cron card emitted by server/cron_scheduler.py when a cron is

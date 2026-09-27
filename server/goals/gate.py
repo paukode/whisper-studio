@@ -1,13 +1,20 @@
-"""The completion gate — one decision function every loop calls at end-of-turn.
+"""The completion gate: one decision function the engine calls at end of turn.
 
-Order: (1) WS-I Stop hooks (deterministic, cheap; reuses the engine already
-wired into every loop), then (2) the goal evaluator (only if a goal is active).
-A block means: do not end the turn — inject the feedback and loop again. The
-consecutive-block cap (default 8) backstops both a stuck evaluator and a
-misconfigured always-blocking Stop hook.
+Order: (1) WS-I Stop hooks, (1.5 to 1.7) the deterministic deliverable,
+requested-file and verification checks, then, only while a goal is active,
+(2a) the goal's quality gates and (2b) the judge. A block means: do not end
+the turn, inject the feedback and loop again. The consecutive-block cap
+(default 8) backstops both a stuck judge and an always-blocking Stop hook.
 
-Pure decision logic: no SSE, no FastAPI. The three chat loops, cron, and WS-D
-all call ``run_completion_gate`` and act on the returned ``GateDecision``.
+Which turns reach the gate is the caller's TurnPolicy: every interactive
+cloud turn, and an on-device turn only while a goal is active. The judge is
+the goal_evaluator model for a cloud session and the session's own resident
+model on-device (server.goals.local_judge). A judge that cannot run or cannot
+be understood gives ``not_checked``: the turn ends, the goal stays set, and it
+is never recorded as achieved.
+
+Pure decision logic: no SSE, no FastAPI. ``run_gate_with_progress`` adds the
+judge's status line for a streaming caller.
 """
 
 from __future__ import annotations
@@ -19,6 +26,8 @@ from server.goals import (
     CONFIDENT_BLOCK_THRESHOLD,
     GateContext,
     GateDecision,
+    Verdict,
+    not_checked,
 )
 from server.goals import store as goal_store
 
@@ -43,10 +52,73 @@ def _max_blocks(ctx: GateContext) -> int:
         return ctx.max_consecutive_blocks
 
 
+def goal_in_play(session_id: str) -> bool:
+    """Whether the gate's goal phases run for ``session_id``: the goal_loop
+    flag is on and the session has an active goal."""
+    return _flag_on("goal_loop") and goal_store.is_active(session_id)
+
+
+def last_round_not_checked(
+    session_id: str,
+    *,
+    salvage: bool = False,
+    budget: bool = False,
+    deadline: bool = False,
+    attempt: int,
+    cap: int,
+) -> dict | None:
+    """The ``goal_eval`` frame for a turn that ends on its last round with a
+    goal in play, else None.
+
+    The gate does not run there: a block would need a round the turn does not
+    have. So an active goal is recorded as not checked, with the reason the
+    round was the last (a salvage round after a context overflow, the cost
+    budget, the time budget, else the round cap), instead of the turn ending
+    with no verdict at all. The goal stays set and is checked when the next
+    turn ends."""
+    if not goal_in_play(session_id):
+        return None
+    if salvage:
+        why = (
+            "the conversation no longer fit the model's context window, so the "
+            "final answer was written from what fit"
+        )
+    elif budget:
+        why = "the cost budget made this the turn's final round"
+    elif deadline:
+        why = "the turn's time budget made this its final round"
+    else:
+        why = "the turn used its last round"
+    reason = (
+        f"The goal was not checked: {why}. "
+        "The goal stays set and is checked again when the next turn ends."
+    )
+    goal_store.record_not_checked(session_id, reason)
+    return {
+        "goal_eval": {
+            "verdict": "not_checked",
+            "feedback": reason,
+            "confidence": 0.0,
+            "attempt": attempt,
+            "cap": cap,
+        }
+    }
+
+
+def _hook_model_id(ctx: GateContext) -> str:
+    """The model id a Stop hook's payload names: the ``local:...`` chat_models
+    id on-device (what the local memory hooks pass), the provider id on cloud."""
+    if ctx.provider == "local":
+        from server.local.runtime import local_model_meta
+
+        return local_model_meta(ctx.model_key).get("id") or ctx.model_id
+    return ctx.model_id
+
+
 async def run_completion_gate(ctx: GateContext) -> GateDecision:
     """Decide whether the turn may end. See module docstring for ordering.
 
-    The goal_loop flag gates ONLY the evaluator phase — Stop hooks are WS-I's
+    The goal_loop flag gates ONLY the goal phases: Stop hooks are WS-I's
     contract and must keep firing even when the goal loop is disabled (the gate
     replaced the loops' direct check_stop_hooks calls)."""
     cap = _max_blocks(ctx)
@@ -58,7 +130,7 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
         ctx.session_id,
         ctx.workspace,
         stop_hook_active=ctx.attempt > 0,
-        model_id=ctx.model_id,
+        model_id=_hook_model_id(ctx),
     )
     if stop.blocked:
         if ctx.attempt >= cap:
@@ -76,17 +148,18 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
             source="stop_hook",
         )
 
-    # ── Phase 1.5: claimed deliverables (on for every turn, goal or not) ─────
+    # ── Phase 1.5: claimed deliverables (every gated turn, goal or not) ─────
     # The reply says a file was saved or points at an artifact card; check the
     # file exists (non-empty) and the artifact call happened THIS turn. Twice
     # in real sessions neither was true and the user found out only by asking.
-    # A miss is a block with the missing items named, under the same cap.
-    if _flag_on("deliverable_check"):
+    # A miss is a block with the missing items named, under the same cap. A
+    # model with no tools cannot produce the file, so it is not asked to.
+    if ctx.tools_enabled and _flag_on("deliverable_check"):
         from server.goals.deliverables import check_claims
 
         try:
             claim_feedback = check_claims(ctx.messages, ctx.workspace)
-        except Exception as e:  # noqa: BLE001 — a checker bug must never abort a turn
+        except Exception as e:  # noqa: BLE001 - a checker bug must never abort a turn
             log.warning("deliverable check failed (%s); skipping", e)
             claim_feedback = None
         if claim_feedback:
@@ -110,13 +183,14 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
                 source="deliverable",
             )
 
-    # ── Phase 1.6: requested deliverable (every turn, goal or not) ─────────
+    # ── Phase 1.6: requested deliverable (every gated turn, goal or not) ───
     # The mirror of phase 1.5: the user asked for a file and the turn produced
     # none. A real session answered "update the diagram and save it to
     # Downloads" with a revised description in chat and no file, and the user
     # only found out by asking. One nudge per turn, since the ask is read out
-    # of prose. Plan mode is exempt: writing is refused there by design.
-    if _flag_on("requested_file_check"):
+    # of prose. Plan mode is exempt: writing is refused there by design, and
+    # so is a model with no tools, which has no file tool to call.
+    if ctx.tools_enabled and _flag_on("requested_file_check"):
         from server.goals.requested_files import requested_file_feedback
 
         try:
@@ -147,7 +221,7 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
                 source="requested_file",
             )
 
-    # ── Phase 1.7: verification evidence (every turn, goal or not) ──────────
+    # ── Phase 1.7: verification evidence (every gated turn, goal or not) ────
     # Code was edited this turn but no test/lint/typecheck/build command ran
     # green afterwards: ask for the run (or an honest blocker) instead of
     # letting "done, should work" end the turn. Deterministic, no model call,
@@ -236,26 +310,37 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
                 source="gate",
             )
 
-    from server.goals import Verdict
-    from server.goals.evaluator import evaluate
+    # ── Phase 2b: the judge ──────────────────────────────────────────────────
+    verdict = await _judge(ctx, goal)
 
-    # evaluate() makes a blocking one_shot call — keep it off the event loop.
-    # provider is keyword-only on evaluate(); fail OPEN on any unexpected error
-    # so a broken evaluator can never abort the turn.
-    try:
-        verdict = await asyncio.to_thread(evaluate, goal, ctx.messages, provider=ctx.provider)
-    except Exception as e:
-        log.warning("Goal evaluator failed (%s); allowing turn to end.", e)
-        verdict = Verdict(verdict="achieved", feedback="(evaluator error)", confidence=0.0)
+    if verdict.is_not_checked:
+        reason = verdict.feedback.rstrip()
+        if not reason.endswith((".", "!", "?")):
+            reason += "."
+        reason += " The goal stays set and is checked again when the next turn ends."
+        goal_store.record_not_checked(ctx.session_id, reason)
+        return GateDecision(
+            block=False,
+            frame={
+                "goal_eval": {
+                    "verdict": "not_checked",
+                    "feedback": reason,
+                    "confidence": 0.0,
+                    "attempt": ctx.attempt,
+                    "cap": cap,
+                }
+            },
+            source="evaluator",
+        )
 
     if verdict.is_achieved:
-        goal_store.record_pass(ctx.session_id, "achieved", verdict.feedback)
+        goal_store.record_pass(ctx.session_id, "achieved", verdict.shown_feedback)
         return GateDecision(
             block=False,
             frame={
                 "goal_eval": {
                     "verdict": "achieved",
-                    "feedback": verdict.feedback,
+                    "feedback": verdict.shown_feedback,
                     "confidence": verdict.confidence,
                     "attempt": ctx.attempt,
                     "cap": cap,
@@ -268,13 +353,13 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
     # A confident 'blocked' verdict ends the turn and surfaces the blocker
     # instead of looping against something outside the agent's control.
     if verdict.is_blocked and verdict.confidence >= CONFIDENT_BLOCK_THRESHOLD:
-        goal_store.record_pass(ctx.session_id, "blocked", verdict.feedback)
+        goal_store.record_pass(ctx.session_id, "blocked", verdict.shown_feedback)
         return GateDecision(
             block=False,
             frame={
                 "goal_eval": {
                     "verdict": "blocked",
-                    "feedback": verdict.feedback,
+                    "feedback": verdict.shown_feedback,
                     "confidence": verdict.confidence,
                     "attempt": ctx.attempt,
                     "cap": cap,
@@ -284,7 +369,7 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
         )
 
     # not_achieved (or low-confidence blocked): keep working toward the goal.
-    new_count = goal_store.record_block(ctx.session_id, verdict.verdict, verdict.feedback)
+    new_count = goal_store.record_block(ctx.session_id, verdict.verdict, verdict.shown_feedback)
     feedback = (
         f"{verdict.feedback} Continue working toward the goal; end the turn only "
         "when it is genuinely achieved or you are hard-blocked."
@@ -295,7 +380,7 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
         frame={
             "goal_eval": {
                 "verdict": verdict.verdict,
-                "feedback": verdict.feedback,
+                "feedback": verdict.shown_feedback,
                 "confidence": verdict.confidence,
                 "attempt": new_count,
                 "cap": cap,
@@ -303,3 +388,65 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
         },
         source="evaluator",
     )
+
+
+async def _judge(ctx: GateContext, goal: str) -> Verdict:
+    """Phase 2b's verdict. The judge reads the reply being gated: the runner
+    passes it as ``final_reply`` because it is persisted only after the
+    decision. Any exception is ``not_checked``, never a pass."""
+    messages = list(ctx.messages)
+    if ctx.final_reply:
+        messages.append({"role": "assistant", "content": ctx.final_reply})
+    try:
+        if ctx.provider == "local":
+            from server.goals.local_judge import evaluate_on_device
+
+            return await evaluate_on_device(
+                goal, messages, model_key=ctx.model_key, announce=ctx.announce
+            )
+        from server.goals.evaluator import evaluate
+
+        # evaluate() blocks on a one_shot call: keep it off the event loop.
+        return await asyncio.to_thread(
+            evaluate,
+            goal,
+            messages,
+            main_model_key=ctx.model_key,
+            announce=ctx.announce,
+            session_id=ctx.session_id,
+        )
+    except Exception as e:  # noqa: BLE001 - reported to the user, never a pass
+        log.warning("Goal judge failed (%s); the goal is not checked this turn.", e)
+        return not_checked(f"The goal check failed ({type(e).__name__}: {e})")
+
+
+async def run_gate_with_progress(ctx: GateContext):
+    """Run the gate for a streaming caller. Yields a ``{"status": text}``
+    frame for each progress line the judge announces while it runs, then the
+    GateDecision last.
+
+    The judge runs after the reply has streamed and can take minutes
+    on-device, so the user is told which model is checking. The gate runs as
+    a task so its announcements reach the stream while it is still awaited; a
+    consumer that stops early (Stop, a closed tab) cancels it."""
+    loop = asyncio.get_running_loop()
+    statuses: asyncio.Queue[str] = asyncio.Queue()
+    ctx.announce = lambda text: loop.call_soon_threadsafe(statuses.put_nowait, text)
+    task = asyncio.ensure_future(run_completion_gate(ctx))
+    getter: asyncio.Future | None = None
+    try:
+        while not task.done():
+            getter = asyncio.ensure_future(statuses.get())
+            await asyncio.wait({task, getter}, return_when=asyncio.FIRST_COMPLETED)
+            if getter.done():
+                yield {"status": getter.result()}
+            else:
+                getter.cancel()
+        yield task.result()
+    finally:
+        for pending in (getter, task):
+            if pending is not None and not pending.done():
+                pending.cancel()
+        # An abandoned gate's outcome is nobody's: retrieve it so a late
+        # exception is not logged as never retrieved.
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())

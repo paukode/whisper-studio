@@ -4,8 +4,8 @@ server/chat/routes.py accepts a message sent while a turn runs (the composer
 clears and promises it will be taken into account), and runner.py drains the
 inbox at the top of each round. A message that arrives after the last drain
 therefore used to be accepted and then dropped when the loop ended. The
-runner now spends one more round on it, or says plainly that it will be
-picked up next turn when there is no round left to spend.
+runner now spends one more round on it, or says plainly that it was not
+answered when there is no round left to spend.
 
 Bare TurnContext + a scripted adapter, the pattern from
 tests/test_engine_agent_extensions.py: no HTTP route, no real Bedrock.
@@ -44,6 +44,7 @@ class LateMessageAdapter:
 
 def _ctx(session_id: str, adapter, max_rounds: int) -> TurnContext:
     return TurnContext(
+        cost_source="chat",
         session_id=session_id,
         model_key="k",
         model_id="k",
@@ -54,6 +55,7 @@ def _ctx(session_id: str, adapter, max_rounds: int) -> TurnContext:
         executor=None,
         tool_exec_model_id="",
         memory_hooks=lambda msgs: None,
+        midturn_inbox=True,
     )
 
 
@@ -77,7 +79,7 @@ def _messages_text(messages: list) -> str:
 
 def test_message_arriving_after_the_last_drain_gets_another_round():
     sid = "late-1"
-    midturn_inbox.drain(sid)
+    midturn_inbox.clear(sid)
     adapter = LateMessageAdapter(sid)
     _drain_stream(_ctx(sid, adapter, max_rounds=10))
 
@@ -91,24 +93,26 @@ def test_message_arriving_after_the_last_drain_gets_another_round():
     assert midturn_inbox.has_pending(sid) is False
 
 
-def test_no_round_left_says_so_and_keeps_the_message_queued():
+def test_no_round_left_says_it_was_not_answered():
     sid = "late-2"
-    midturn_inbox.drain(sid)
+    midturn_inbox.clear(sid)
     adapter = LateMessageAdapter(sid)
     out = _drain_stream(_ctx(sid, adapter, max_rounds=1))
 
-    # One round was all there was, so the turn ends — but it says where the
-    # message went rather than going quiet on a promise the composer made.
+    # One round was all there was, so the turn ends, but it says so rather
+    # than going quiet on the promise the composer made. The text is in the
+    # chat (and in the next turn's history); it is never re-injected into a
+    # later turn as a mid-turn message.
     assert len(adapter.calls) == 1
-    assert "picked up on the next turn" in out
-    # Still queued, so the next turn's round-zero drain answers it.
-    assert midturn_inbox.has_pending(sid) is True
-    assert midturn_inbox.drain(sid) == ["wait, also save it as a png"]
+    assert "was not answered" in out
+    # The turn is ending: it takes nothing more.
+    assert midturn_inbox.push(sid, "and this?") is False
+    midturn_inbox.clear(sid)
 
 
 def test_quiet_turn_is_untouched():
     sid = "late-3"
-    midturn_inbox.drain(sid)
+    midturn_inbox.clear(sid)
 
     class QuietAdapter(LateMessageAdapter):
         async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
@@ -121,4 +125,4 @@ def test_quiet_turn_is_untouched():
     adapter = QuietAdapter(sid)
     out = _drain_stream(_ctx(sid, adapter, max_rounds=10))
     assert len(adapter.calls) == 1
-    assert "picked up on the next turn" not in out
+    assert "was not answered" not in out

@@ -1,16 +1,16 @@
-"""Regression tests for four LOW-severity audit fixes.
+"""Regression tests for three LOW-severity audit fixes.
 
-(1) server.lsp._python_diagnostics — a missing pyflakes must fall through to
-    the py_compile fallback, not report "No module named pyflakes" as a file
-    diagnostic.
-(2) server.tool_executor.process_tool_results — on an approval pause, a sibling
+(1) server.tool_executor.process_tool_results: on an approval pause, a sibling
     tool that ALREADY executed keeps its real result; only genuinely
     unexecuted tools (and the tool awaiting approval) get "[Not executed]".
-(3) server.terminal._PtySession.kill — signals shutdown and lets the reader own
+(2) server.terminal._PtySession.kill: signals shutdown and lets the reader own
     closing master_fd (no close-under-read fd-reuse race). Reader closes the fd
     once it sees the _closing flag.
-(4) server.tasks_tracker.update_task — an explicitly invalid status returns None
+(3) server.tasks_tracker.update_task: an explicitly invalid status returns None
     without bumping updated_at; execute_task_tool surfaces an explicit error.
+
+(The pyflakes fall-through that used to be fix (1) is gone with pyflakes itself:
+Python diagnostics run ruff now, see tests/test_code_tools.py.)
 """
 
 import asyncio
@@ -21,7 +21,6 @@ from types import SimpleNamespace
 
 import pytest
 
-import server.lsp as lsp
 import server.tasks_tracker as tt
 import server.terminal as T
 from server.approval.bootstrap import register_defaults
@@ -31,56 +30,7 @@ from server.tool_executor import process_tool_results
 register_defaults()
 
 
-# ── Fix (1): pyflakes-unavailable fall-through ───────────────────────────────
-
-
-def test_pyflakes_unavailable_falls_through_to_py_compile(monkeypatch):
-    calls = []
-
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        if "pyflakes" in cmd:
-            # How a missing pyflakes actually surfaces: non-zero exit + an
-            # import error on stderr (NOT a lint finding about the file).
-            return SimpleNamespace(
-                returncode=1,
-                stdout="",
-                stderr="/usr/bin/python3: No module named pyflakes",
-            )
-        if "py_compile" in cmd:
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-        raise AssertionError(f"unexpected command: {cmd}")
-
-    monkeypatch.setattr(lsp.subprocess, "run", fake_run)
-    out = lsp._python_diagnostics("/tmp/whatever.py")
-
-    # The import error must NOT leak out as a diagnostic; we fell through to the
-    # syntax-only fallback instead.
-    assert "No module named" not in out
-    assert out == "No syntax errors."
-    assert any("pyflakes" in c for c in calls)
-    assert any("py_compile" in c for c in calls)
-
-
-def test_pyflakes_findings_are_still_returned(monkeypatch):
-    """pyflakes exits non-zero when it finds real issues — that must not be
-    mistaken for the tool being unavailable."""
-
-    def fake_run(cmd, **kwargs):
-        if "pyflakes" in cmd:
-            return SimpleNamespace(
-                returncode=1,
-                stdout="/tmp/foo.py:1:1 'os' imported but unused\n",
-                stderr="",
-            )
-        raise AssertionError("must not fall through when pyflakes works")
-
-    monkeypatch.setattr(lsp.subprocess, "run", fake_run)
-    out = lsp._python_diagnostics("/tmp/foo.py")
-    assert "imported but unused" in out
-
-
-# ── Fix (2): completed siblings keep real output on an approval pause ─────────
+# ── Fix (1): completed siblings keep real output on an approval pause ─────────
 
 
 class _State:
@@ -137,7 +87,7 @@ def test_completed_sibling_keeps_real_output_on_pause(monkeypatch):
     assert by_id["tu_pending"]["content"].startswith("[Not executed]")
 
 
-# ── Fix (3): PTY fd close handoff ────────────────────────────────────────────
+# ── Fix (2): PTY fd close handoff ────────────────────────────────────────────
 
 
 class _FakeProc:
@@ -211,7 +161,7 @@ def test_reader_closes_fd_on_shutdown_flag():
     os.close(w)
 
 
-# ── Fix (4): update_task rejects an invalid status ───────────────────────────
+# ── Fix (3): update_task rejects an invalid status ───────────────────────────
 
 
 def _fresh(monkeypatch, tmp_path, session_id):

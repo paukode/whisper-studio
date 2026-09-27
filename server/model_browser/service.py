@@ -575,6 +575,9 @@ def _delete_weights(key: str) -> tuple[bool, bool]:
     try:
         result = manager.delete(entry)
         return bool(result.get("stopped_llama_server")), bool(result.get("deleted"))
+    except manager.ModelBusy:
+        # Answering in a chat: refuse the whole removal, config entry included.
+        raise
     except manager.Conflict:
         # Nothing on disk to delete — fine.
         return False, False

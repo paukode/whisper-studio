@@ -44,6 +44,18 @@ class _Entry:
     repo_id = "fake/repo"
 
 
+def _warming_load(_time):
+    """An ensure_serving that got past its busy wait and is warming a server
+    it started (it sets the load's ``started`` event, as the real one does)."""
+
+    def load(k, n=None, **kw):
+        kw["started"].set()
+        _time.sleep(0.9)
+        return "http://x"
+
+    return load
+
+
 def test_cancel_endpoint_flags_model_and_kills_download_job(monkeypatch):
     _stub_model(monkeypatch, downloaded=False)
     cancelled: list[str] = []
@@ -117,9 +129,7 @@ def test_load_memory_phase_cancel_stops_this_models_server(monkeypatch):
     _stub_model(monkeypatch, downloaded=True)
     monkeypatch.setattr(catalog, "get_entry", lambda k: _Entry())
     stops: list[str] = []
-    monkeypatch.setattr(
-        serving, "ensure_serving", lambda k, n=None, **kw: _time.sleep(0.9) or "http://x"
-    )
+    monkeypatch.setattr(serving, "ensure_serving", _warming_load(_time))
     monkeypatch.setattr(serving, "resident_key", lambda: "local_test")
     monkeypatch.setattr(serving, "stop", lambda: stops.append("stop"))
     monkeypatch.setattr(routes_mod, "_load_cancel_requested", lambda m: True)
@@ -138,9 +148,7 @@ def test_load_memory_phase_cancel_spares_a_superseding_model(monkeypatch):
     _stub_model(monkeypatch, downloaded=True)
     monkeypatch.setattr(catalog, "get_entry", lambda k: _Entry())
     stops: list[str] = []
-    monkeypatch.setattr(
-        serving, "ensure_serving", lambda k, n=None, **kw: _time.sleep(0.9) or "http://x"
-    )
+    monkeypatch.setattr(serving, "ensure_serving", _warming_load(_time))
     monkeypatch.setattr(serving, "resident_key", lambda: "some_other_model")
     monkeypatch.setattr(serving, "stop", lambda: stops.append("stop"))
     monkeypatch.setattr(routes_mod, "_load_cancel_requested", lambda m: True)

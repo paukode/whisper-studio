@@ -1,18 +1,23 @@
-"""Goal loop + completion gate — "give it a goal, it achieves it".
+"""Goal loop and completion gate: "give it a goal, it achieves it".
 
-A session can carry a goal. At each real end-of-turn, every loop (chat Claude,
-chat GPT, on-device, cron, and WS-D workflows) calls ``run_completion_gate``.
-The gate runs the WS-I Stop hooks first (deterministic, cheap) and then, if a
-goal is active, a cheap structured evaluator that judges the transcript tail.
-A ``block`` decision makes the loop inject the feedback and keep going toward
-the goal, bounded by a consecutive-block cap (Claude Code parity: 8).
+A session can carry a goal. At each real end of an interactive chat turn the
+engine calls ``run_completion_gate``: on every cloud turn, and on an on-device
+turn only while a goal is active (TurnPolicy.gate_requires_goal). The gate
+runs the WS-I Stop hooks and the deterministic checks first and then, if a
+goal is active, a structured judge of the transcript tail: the
+goal_evaluator model for a cloud session, the session's own resident model
+for an on-device one. A ``block`` decision makes the loop inject the feedback
+and keep going toward the goal, bounded by a consecutive-block cap (Claude
+Code parity: 8). Cron verifies its runs with the same evaluator
+(cron_verify.py).
 
-This package is pure decision logic — no FastAPI, no SSE — so the three loop
-call sites stay tiny and WS-D can call the gate directly.
+This package is pure decision logic (no FastAPI, no SSE), so the loop call
+site stays tiny.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 # Consecutive-block cap (Claude Code parity). Overridable via the
@@ -26,37 +31,71 @@ CONFIDENT_BLOCK_THRESHOLD = 0.7
 
 @dataclass
 class Verdict:
-    """The evaluator's judgment of whether the goal is met."""
+    """The evaluator's judgment of whether the goal is met.
 
-    verdict: str = "not_achieved"  # "achieved" | "not_achieved" | "blocked"
+    ``not_checked`` is not a judgment: the judge could not run, or its answer
+    could not be understood. ``feedback`` then holds the reason. It ends the
+    turn, keeps the goal active, is not counted as a block and is never
+    recorded as achieved."""
+
+    verdict: str = "not_achieved"  # "achieved" | "not_achieved" | "blocked" | "not_checked"
     feedback: str = ""
     confidence: float = 0.0
+    # Shown to the user ahead of ``feedback`` (never to the model): who judged,
+    # when that is the session's own on-device model judging its own work.
+    note: str = ""
 
     @property
     def is_achieved(self) -> bool:
         return self.verdict == "achieved"
 
     @property
+    def shown_feedback(self) -> str:
+        """``feedback`` as the user sees it: prefixed with ``note``."""
+        return f"{self.note} {self.feedback}".strip() if self.note else self.feedback
+
+    @property
     def is_blocked(self) -> bool:
         return self.verdict == "blocked"
+
+    @property
+    def is_not_checked(self) -> bool:
+        return self.verdict == "not_checked"
+
+
+def not_checked(reason: str) -> Verdict:
+    """The verdict for a judge that could not run or could not be understood."""
+    return Verdict(verdict="not_checked", feedback=reason, confidence=0.0)
 
 
 @dataclass
 class GateContext:
     """Everything the gate needs, assembled by each caller. Provider-neutral:
     ``messages`` is the caller's native history (Anthropic blocks or Responses
-    items) — the tail renderer flattens either to text."""
+    items); the tail renderer flattens either to text."""
 
     session_id: str
     messages: list = field(default_factory=list)
     goal: str = ""
     provider: str = "anthropic"  # "anthropic" | "openai" | "local"
     model_id: str = ""
+    # The session's chat_models key: the judge on-device, and what "main"
+    # resolves to for a cloud session's goal_evaluator.
+    model_key: str = ""
     workspace: str | None = None
-    last_text: str = ""
+    # The content of the reply being gated. The runner persists it only after
+    # the decision, so ``messages`` does not hold it yet; the judge reads it
+    # from here.
+    final_reply: list | str | None = None
+    # A model with no tools cannot act on a "produce the file" nudge, so the
+    # checks that ask for one stay quiet for it.
+    tools_enabled: bool = True
     # Plan mode refuses every write, so the checks that ask for a file must
     # stay quiet when it is on.
     plan_mode: bool = False
+    # Progress sink for a user-visible status line while the judge runs.
+    # Thread-safe; set by run_gate_with_progress.
+    announce: Callable[[str], None] | None = None
     # How many times the gate has already blocked this turn (the caller owns the
     # per-turn counter; goal_state owns the cross-turn one).
     attempt: int = 0
@@ -83,4 +122,5 @@ __all__ = [
     "GateContext",
     "GateDecision",
     "Verdict",
+    "not_checked",
 ]

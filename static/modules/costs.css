@@ -1,0 +1,260 @@
+/* ================================================================
+   Settings > Usage and advanced > Costs
+   src/components/settings/CostsPanel.tsx and settings/costs/*.tsx.
+   Chart colours reuse the per-theme categorical palette (--speaker-N),
+   which every theme, including the daltonized ones, defines.
+   ================================================================ */
+
+/* A size container: the tiles, the chart height and the budget fields follow
+   the width the user gives the Settings dialog, not the window's. */
+.usage-panel { max-width: 1200px; container-type: inline-size; }
+
+/* ── Header: title and intro, the exports on the right ── */
+.usage-header {
+    display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between;
+    gap: 10px 16px;
+}
+.usage-heading { flex: 1 1 320px; min-width: 0; }
+.usage-title {
+    margin: 0 0 4px; font-size: var(--fs-title); font-weight: 600;
+    color: var(--text-primary); letter-spacing: -0.2px;
+}
+.usage-panel .usage-intro { margin: 0; max-width: 62ch; }
+.usage-export { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* ── Toolbar: range, granularity and split on one line that stays in view.
+   The negative margins run it under the body's and the panel's padding, so
+   rows scrolling beneath it never show at its sides. ── */
+.usage-toolbar {
+    position: sticky; top: -16px; z-index: 3;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+    margin: 12px -34px 14px; padding: 10px 34px;
+    background: var(--bg-surface); border-bottom: 1px solid var(--border);
+}
+.usage-control { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.usage-control-label { font-size: var(--fs-small); color: var(--text-muted); white-space: nowrap; }
+.usage-field {
+    height: 30px; padding: 0 10px; box-sizing: border-box;
+    background: var(--bg-primary); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px; outline: none;
+    font: inherit; font-size: var(--fs-small);
+}
+.usage-field:focus-visible { border-color: var(--accent); }
+.usage-segmented {
+    display: inline-flex; gap: 2px; padding: 2px; height: 30px; box-sizing: border-box;
+    background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px;
+}
+.usage-segment {
+    background: transparent; border: 0; border-radius: 6px; cursor: pointer;
+    color: var(--text-secondary); font: inherit; font-size: var(--fs-small);
+    padding: 0 11px; white-space: nowrap;
+}
+.usage-segment:hover { color: var(--text-primary); }
+.usage-segment.active { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
+.usage-segment:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* The previous report stays on screen, dimmed, while the next one loads. */
+.usage-report.stale { opacity: 0.6; }
+.usage-range-line { font-size: var(--fs-small); color: var(--text-secondary); margin-bottom: 10px; }
+.usage-custom-range { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+
+/* ── Summary: the cost large, the other four figures in a grid beside it
+   (stacked above it in a narrow dialog) ── */
+.usage-tiles { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+@container (min-width: 560px) {
+    .usage-tiles { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+}
+.usage-tile-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.usage-tile {
+    min-width: 0; padding: 12px 14px; border-radius: 12px;
+    background: var(--bg-elevated); border: 1px solid var(--border);
+}
+.usage-tile--hero { display: flex; flex-direction: column; justify-content: center; padding: 16px 18px; }
+.usage-tile--hero .usage-tile-value {
+    margin-top: 6px; font-size: calc(var(--fs-h1) * 1.25); letter-spacing: -0.5px;
+}
+.usage-tile--hero .usage-tile-desc { font-size: var(--fs-small); }
+.usage-tile-name {
+    font-size: var(--fs-caption); font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.4px;
+}
+.usage-tile-value {
+    margin-top: 4px; font-size: var(--fs-title); font-weight: 600;
+    color: var(--text-primary); font-variant-numeric: tabular-nums;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.usage-tile-desc {
+    margin-top: 6px; font-size: var(--fs-caption); color: var(--text-muted);
+    line-height: 1.4; overflow-wrap: anywhere;
+}
+
+/* Estimated figures (token counts the provider did not report) read as
+   estimated: italic, with the reason spelled out beside them. */
+.usage-tile.usage-est .usage-tile-value,
+.usage-table td.usage-est,
+.usage-chart-tip-list .usage-est,
+#budgetTodaySoFar.usage-est { font-style: italic; }
+.usage-est-note { color: var(--risk-warn); }
+.usage-panel .usage-est-legend { margin: 8px 0 0; }
+
+/* ── Pricing notes, numbered; a table row carries its note's number ── */
+.usage-notes {
+    list-style: none; margin: 12px 0 0; padding: 9px 12px; border-radius: 10px;
+    display: flex; flex-direction: column; gap: 4px;
+    background: var(--risk-warn-dim); color: var(--text-secondary);
+    font-size: var(--fs-caption); line-height: 1.45;
+}
+.usage-notes li { display: flex; align-items: baseline; gap: 8px; }
+.usage-note-mark,
+.usage-note-ref { color: var(--risk-warn); font-weight: 700; font-variant-numeric: tabular-nums; }
+.usage-note-mark { flex-shrink: 0; min-width: 1ch; }
+.usage-note-ref { font-size: 0.75em; cursor: help; }
+
+/* ── Cards: the chart, the breakdown and the budgets ── */
+.usage-card {
+    margin-top: 16px; padding: 14px 16px 16px; border-radius: 12px;
+    background: var(--bg-elevated); border: 1px solid var(--border);
+}
+.usage-section-title {
+    margin: 0 0 12px; font-size: var(--fs-body); font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* ── Chart ── */
+.usage-chart {
+    display: grid; grid-template-columns: auto 1fr;
+    /* Taller as the dialog widens, so the bars keep their proportions. */
+    grid-template-rows: clamp(150px, 26cqi, 300px) auto auto;
+    column-gap: 10px;
+}
+.usage-chart-axis-y {
+    grid-row: 1; grid-column: 1; position: relative; text-align: right;
+    font-size: var(--fs-caption); color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+.usage-chart-axis-sizer { display: block; height: 0; overflow: hidden; visibility: hidden; }
+.usage-chart-tick { position: absolute; right: 0; transform: translateY(-50%); white-space: nowrap; }
+.usage-chart-tick.top { top: 0; }
+.usage-chart-tick.mid { top: 50%; }
+.usage-chart-tick.base { top: 100%; }
+.usage-chart-plot {
+    grid-row: 1; grid-column: 2; position: relative; min-width: 0;
+    border-bottom: 1px solid var(--border-strong); outline: none;
+    /* Gridlines at the top and middle ticks. */
+    background-image: linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+    background-size: 100% 50%;
+}
+.usage-chart-plot:focus-visible { box-shadow: 0 0 0 2px var(--accent-dim); border-radius: 4px; }
+.usage-chart-bars { display: flex; align-items: flex-end; gap: 2px; height: 100%; }
+/* Hundreds of buckets (All time by day): no gaps, and bars may go sub-pixel. */
+.usage-chart-bars.dense { gap: 0; }
+.usage-chart-bars.dense .usage-chart-col { min-width: 0; border-radius: 0; }
+.usage-chart-col {
+    flex: 1 1 0; min-width: 1px; height: 100%; display: flex; align-items: flex-end;
+    border-radius: 3px 3px 0 0;
+}
+.usage-chart-col:hover,
+.usage-chart-col.active { background: var(--bg-hover); }
+/* A week or month clipped by the range: drawn lighter. */
+.usage-chart-col.partial .usage-chart-bar { opacity: 0.45; }
+.usage-chart-bar {
+    width: 100%; display: flex; flex-direction: column-reverse;
+    border-radius: 3px 3px 0 0; overflow: hidden;
+}
+.usage-chart-bar.nonzero { min-height: 2px; }
+.usage-chart-seg { width: 100%; background: var(--series-color); }
+.usage-chart-empty {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    padding: 0 12px; text-align: center;
+    font-size: var(--fs-small); color: var(--text-muted); pointer-events: none;
+}
+.usage-chart-tip {
+    position: absolute; top: 4px; z-index: 2; transform: translateX(-50%);
+    width: max-content; max-width: min(340px, 90%); padding: 8px 10px;
+    background: var(--bg-surface); border: 1px solid var(--border-strong); border-radius: 8px;
+    box-shadow: var(--shadow-md); color: var(--text-secondary);
+    font-size: var(--fs-caption); line-height: 1.45; pointer-events: none;
+}
+.usage-chart-tip.align-start { transform: translateX(-12px); }
+.usage-chart-tip.align-end { transform: translateX(calc(-100% + 12px)); }
+.usage-chart-tip-title { font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+.usage-chart-tip-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.usage-chart-tip-name { color: var(--text-primary); }
+.usage-chart-axis-x {
+    grid-row: 2; grid-column: 2; display: flex; justify-content: space-between;
+    margin-top: 4px; font-size: var(--fs-caption); color: var(--text-muted);
+}
+.usage-legend {
+    grid-row: 3; grid-column: 2; list-style: none; margin: 10px 0 0; padding: 0;
+    display: flex; flex-wrap: wrap; gap: 4px 14px;
+    font-size: var(--fs-caption); color: var(--text-secondary);
+}
+.usage-legend li { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.usage-legend .usage-swatch { margin-right: 0; }
+.usage-swatch {
+    display: inline-block; width: 10px; height: 10px; flex-shrink: 0; margin-right: 4px;
+    border-radius: 3px; background: var(--series-color); vertical-align: -1px;
+}
+/* Slots 3 and 4 swap speakers 4 and 5 so that segments stacked next to each
+   other never share a hue family (the taw themes' speakers 1 and 4 do). */
+.usage-series-0 { --series-color: var(--speaker-1); }
+.usage-series-1 { --series-color: var(--speaker-2); }
+.usage-series-2 { --series-color: var(--speaker-3); }
+.usage-series-3 { --series-color: var(--speaker-5); }
+.usage-series-4 { --series-color: var(--speaker-4); }
+.usage-series-other { --series-color: var(--text-muted); }
+
+/* ── Breakdown table: edge to edge under the card's title ── */
+.usage-table-wrap { overflow-x: auto; }
+.usage-card--table .usage-table-wrap { margin: 0 -16px -16px; }
+.usage-table {
+    width: 100%; border-collapse: collapse;
+    font-size: var(--fs-small); font-variant-numeric: tabular-nums;
+}
+.usage-table th,
+.usage-table td {
+    padding: 8px 12px; text-align: left; vertical-align: top;
+    border-top: 1px solid var(--border);
+}
+.usage-table th:first-child,
+.usage-table td:first-child { padding-left: 16px; }
+.usage-table th:last-child,
+.usage-table td:last-child { padding-right: 16px; }
+.usage-table tbody tr:hover { background: var(--bg-hover); }
+.usage-table .num { text-align: right; white-space: nowrap; }
+.usage-table thead th { font-size: var(--fs-caption); font-weight: 600; color: var(--text-muted); }
+.usage-sort {
+    display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; cursor: pointer;
+    background: none; color: inherit; font: inherit;
+    text-transform: uppercase; letter-spacing: 0.5px;
+}
+.usage-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+.usage-table th[aria-sort="ascending"] .usage-sort,
+.usage-table th[aria-sort="descending"] .usage-sort { color: var(--accent); }
+.usage-sort-mark { font-size: var(--fs-caption); min-width: 1ch; }
+.usage-name { min-width: 160px; font-weight: 500; color: var(--text-primary); }
+.usage-name-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.usage-name-line .usage-swatch { align-self: center; margin-right: 0; }
+.usage-name-text { min-width: 0; overflow-wrap: anywhere; }
+.usage-name-key {
+    display: block; margin-left: 18px; font-family: var(--font-mono); font-size: var(--fs-caption);
+    font-weight: 400; color: var(--text-muted); overflow-wrap: anywhere;
+}
+.usage-badge {
+    display: inline-block; margin: 3px 0 0 18px; padding: 0 7px; border-radius: 999px;
+    background: var(--risk-warn-dim); color: var(--risk-warn);
+    font-size: var(--fs-caption); font-weight: 500;
+}
+
+/* ── Budgets: the two caps side by side when they fit ── */
+.usage-budget-fields {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px 16px;
+}
+.usage-budget-field { min-width: 0; }
+.usage-panel .usage-budget-today { margin: 6px 0 0; }
+.usage-panel .usage-check {
+    display: flex; align-items: center; gap: 8px; margin: 14px 0 0; cursor: pointer;
+    font-size: var(--fs-small); font-weight: 400; color: var(--text-secondary);
+    text-transform: none; letter-spacing: 0;
+}
+.usage-budget-actions { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.usage-panel .usage-budget-actions .settings-hint { margin: 0; }

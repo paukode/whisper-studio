@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
- * Makes a centered modal dialog resizable (corner + edges) and movable (drag a
+ * Makes a centered modal dialog resizable (edges + corners) and movable (drag a
  * header), persisting its size and position to localStorage so it reopens where
  * the user left it. Position is a translate offset from the centered origin, so
  * the dialog stays centered by default and the CSS flex-centering still applies.
@@ -12,6 +12,14 @@ export interface DialogGeometry {
   h: number | null;
   x: number;
   y: number;
+}
+
+/** The edges a resize handle moves; a corner names two. */
+export interface ResizeEdges {
+  n?: boolean;
+  e?: boolean;
+  s?: boolean;
+  w?: boolean;
 }
 
 interface Options {
@@ -61,11 +69,11 @@ export function useResizableDialog(key: string, opts: Options = {}) {
       const maxH = Math.max(minH, vh - margin * 2);
       const w = Math.min(maxW, Math.max(minW, g.w));
       const h = g.h == null ? null : Math.min(maxH, Math.max(minH, g.h));
-      const el = dialogRef.current;
-      const dw = el?.offsetWidth ?? w;
-      const dh = el?.offsetHeight ?? h ?? 0;
-      const maxX = Math.max(0, (vw - dw) / 2);
-      const maxY = Math.max(0, (vh - dh) / 2);
+      // The offset keeps the whole dialog inside the margins at its NEW size;
+      // the rendered size lags one frame behind a resize.
+      const dh = h ?? dialogRef.current?.offsetHeight ?? 0;
+      const maxX = Math.max(0, (vw - margin * 2 - w) / 2);
+      const maxY = Math.max(0, (vh - margin * 2 - dh) / 2);
       const x = Math.max(-maxX, Math.min(maxX, g.x));
       const y = Math.max(-maxY, Math.min(maxY, g.y));
       return { w, h, x, y };
@@ -98,16 +106,31 @@ export function useResizableDialog(key: string, opts: Options = {}) {
     [drag, clamp, geo.x, geo.y],
   );
 
+  // The dialog is centered, so a size change alone would grow it on both sides
+  // and leave the dragged edge half a step behind the pointer. Shifting the
+  // offset by half the change keeps the opposite edge where it was, as a window
+  // resizes. Past a viewport margin the clamp takes the offset back, and the
+  // dialog grows the other way instead.
   const onResizeStart = useCallback(
-    (dir: { e?: boolean; s?: boolean }) => (e: React.PointerEvent) => {
+    (dir: ResizeEdges) => (e: React.PointerEvent) => {
       const el = dialogRef.current;
-      const w0 = el?.offsetWidth ?? geo.w;
-      const h0 = el?.offsetHeight ?? geo.h ?? minH;
+      const w0 = el?.offsetWidth || geo.w;
+      const h0 = el?.offsetHeight || geo.h || minH;
+      const x0 = geo.x;
+      const y0 = geo.y;
       drag((dx, dy) =>
-        setGeo((g) => clamp({ ...g, w: dir.e ? w0 + dx : g.w, h: dir.s ? h0 + dy : g.h })),
+        setGeo((g) => {
+          const w = dir.e ? w0 + dx : dir.w ? w0 - dx : g.w;
+          const h = dir.s ? h0 + dy : dir.n ? h0 - dy : g.h;
+          const next = clamp({ ...g, w, h });
+          const x = dir.e || dir.w ? x0 + ((next.w - w0) / 2) * (dir.e ? 1 : -1) : g.x;
+          const y =
+            (dir.s || dir.n) && next.h != null ? y0 + ((next.h - h0) / 2) * (dir.s ? 1 : -1) : g.y;
+          return clamp({ ...next, x, y });
+        }),
       )(e);
     },
-    [drag, clamp, minH, geo.w, geo.h],
+    [drag, clamp, minH, geo.w, geo.h, geo.x, geo.y],
   );
 
   const reset = useCallback(() => {
@@ -121,10 +144,12 @@ export function useResizableDialog(key: string, opts: Options = {}) {
     return () => window.removeEventListener('resize', onResize);
   }, [clamp]);
 
+  // `translate`, not `transform`: an entrance animation on `transform` would
+  // otherwise override the offset until it ends, then jump.
   const style: React.CSSProperties = {
     width: geo.w,
     height: geo.h ?? undefined,
-    transform: geo.x || geo.y ? `translate(${geo.x}px, ${geo.y}px)` : undefined,
+    translate: geo.x || geo.y ? `${geo.x}px ${geo.y}px` : undefined,
   };
 
   // Whether the height is pinned by the user rather than following the content.

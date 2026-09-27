@@ -56,7 +56,7 @@ import { useUIStore } from '@/stores/uiStore';
 beforeEach(() => {
   useDockStore.setState({ panels: [], sizes: [], open: false });
   // AppShell's mount effects call these; stub them so the render is inert.
-  for (const key of ['loadConfig', 'loadModels', 'loadDataRetention', 'loadSkills', 'loadMCP'] as const) {
+  for (const key of ['loadConfig', 'loadModels', 'loadDataRetention', 'loadSkills'] as const) {
     useSettingsStore.setState({ [key]: vi.fn().mockResolvedValue(undefined) } as never);
   }
   useSessionStore.setState({ loadSessions: vi.fn().mockResolvedValue(undefined) } as never);

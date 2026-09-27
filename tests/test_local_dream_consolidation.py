@@ -4,8 +4,8 @@ The on-device chat path fed session memory + auto-memory at end of turn but
 never recorded sessions for dream consolidation, so local-heavy usage never
 accrued toward a consolidation pass. The local path now spawns the same
 ``record_and_maybe_dream`` hook the cloud paths run (chat/routes.py,
-openai_bedrock/stream.py), skipping gracefully when the app is fully offline
-(model_mode=local, the consolidator agent needs a cloud model).
+openai_bedrock/stream.py). In Local mode the dream_consolidation flag is off
+with a visible reason (the consolidator agent needs a cloud model).
 """
 
 import asyncio
@@ -62,13 +62,17 @@ def test_dream_hook_fires_without_workspace(monkeypatch):
 
 
 def test_dream_hook_skips_when_fully_offline(monkeypatch):
-    import server.infrastructure.model_mode as MM
+    """Local mode keeps the flag itself off (with a reason the Feature flags
+    panel shows), so the hook never spawns."""
+    from server.infrastructure import config as cfg
 
-    monkeypatch.setattr(FF, "is_enabled", lambda flag: flag == "dream_consolidation")
-    monkeypatch.setattr(MM, "current_mode", lambda config=None: "local")
+    monkeypatch.setattr(cfg, "_load_user_config", lambda: {"model_mode": "local"})
+    cfg._invalidate_cache()
     calls = _capture_dream(monkeypatch)
-
-    STREAM._spawn_dream("local_gemma", "/ws")
+    try:
+        STREAM._spawn_dream("local_gemma", "/ws")
+    finally:
+        cfg._invalidate_cache()
     assert calls == []
 
 

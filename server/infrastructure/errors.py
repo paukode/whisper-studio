@@ -82,6 +82,26 @@ class ModelNotAvailableError(WhisperAPIError):
         self.model_id = model_id
 
 
+class NoCredentialsFoundError(WhisperAPIError):
+    """boto3 found no usable AWS credentials (none at all, or a partial set), so
+    the cloud model was never called. Retrying cannot help until the user sets
+    credentials up; the message says how, and names Local mode for chatting
+    without AWS."""
+
+    def __init__(self, message: str):
+        super().__init__(
+            message,
+            error_code="NO_AWS_CREDENTIALS",
+            user_message=(
+                "No AWS credentials were found, so the cloud model was not called. Set "
+                "them up with `aws configure` (or `aws sso login` for an SSO profile) and "
+                "send again, or switch Settings > Model mode to Local to chat on an "
+                "on-device model."
+            ),
+            is_retryable=False,
+        )
+
+
 class DataRetentionRequiredError(WhisperAPIError):
     """Model requires the account's Bedrock data-retention mode to be
     ``provider_data_share`` (Mythos-class models like Claude Fable 5). Bedrock
@@ -107,7 +127,13 @@ class DataRetentionRequiredError(WhisperAPIError):
 
 def classify_bedrock_error(error: Exception) -> WhisperAPIError:
     """Classify a raw Bedrock/botocore exception into a typed WhisperAPIError."""
+    from botocore.exceptions import NoCredentialsError, PartialCredentialsError
+
     error_str = str(error)
+    # Matched by type: botocore raises these before any request is sent, and
+    # their text ("Unable to locate credentials") gives the user no next step.
+    if isinstance(error, (NoCredentialsError, PartialCredentialsError)):
+        return NoCredentialsFoundError(error_str)
     error_code = getattr(error, "response", {}).get("Error", {}).get("Code", "")
 
     if error_code == "ThrottlingException" or "ThrottlingException" in error_str:

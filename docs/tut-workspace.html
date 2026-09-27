@@ -65,9 +65,11 @@
           previews, and Jupyter notebooks by file type.</p>
       </div>
       <div class="card">
-        <h3>LSP: Python + TypeScript</h3>
-        <p>Language servers back the <code>lsp_diagnostics</code>, <code>lsp_hover</code>, and
-          <code>lsp_references</code> tools, so Claude can read real type errors and symbol usages.</p>
+        <h3>Code checks: Python + TypeScript</h3>
+        <p>Every Python file Claude writes is checked by ruff, and fixed and formatted too when the
+          project configures ruff; <code>lsp_diagnostics</code> runs ruff or the project's own ESLint
+          on demand. The editor's language servers add completion, hover and inline diagnostics.
+          Settings &gt; Tools and automation &gt; Code tools shows what works.</p>
       </div>
     </div>
 
@@ -231,9 +233,17 @@ share a helper with @file:src/components/workspace/WorkspacePanel.tsx</code></pr
     </ol>
 
     <h2 id="disconnect">Disconnecting</h2>
-    <p>The <b>disconnect</b> button in the panel header drops the workspace connection. The workspace
-      tools go away with it, so Claude can no longer read or write files until you connect a folder
-      again. Your session history and transcript are untouched.</p>
+    <p>The <b>disconnect</b> button in the panel header drops the workspace connection at once, even
+      while Claude is working. A running turn is not stopped: it carries on, but any workspace tool it
+      calls after the disconnect is refused with the reason, so nothing lands in the folder you let go
+      of (or in one you connect instead). The same goes for agents that turn started, scheduled runs
+      and voice requests. Work pinned to a folder of its own is the exception: an agent already
+      working in its own worktree, or a workflow run pinned to a folder, finishes there, and a
+      worktree agent's changes are still applied to the folder it started from when it is done. An
+      approval card raised before the disconnect is refused too if you click <b>Yes</b> after it.
+      Open terminals, background commands and previews keep running, and unsaved editor tabs are
+      kept until that folder is connected again. Claude can read or write files again once you
+      connect a folder. Your session history and transcript are untouched.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>

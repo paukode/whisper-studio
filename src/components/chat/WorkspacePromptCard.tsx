@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useUIStore } from '@/stores/uiStore';
+import { settleWorkspaceOps, syncWorkspaceStatus } from '@/services/workspaceConnection';
 
 export interface WorkspacePromptCardProps {
   reason: string;
@@ -70,20 +71,17 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
   // mid-turn (another process writing the shared workspace_config.json) leaves
   // the tree rendering a folder the server no longer has — which is exactly
   // how this card ends up looking like it fired for no reason. The status
-  // endpoint is authoritative in both directions, so this can never push a
+  // endpoint is authoritative in both directions, and an answer that a
+  // connect or disconnect overtook is dropped, so this can never push a
   // wrong value into the store.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const resp = await fetch('/api/workspace/status');
-        if (!resp.ok || cancelled) return;
-        const data = (await resp.json()) as { connected?: boolean; path?: string };
-        if (cancelled) return;
-        const truePath = data.connected && data.path ? data.path : '';
-        if (truePath === useUIStore.getState().wsPath) return;
-        useUIStore.getState().setWsConnected(Boolean(truePath), truePath || undefined);
-        window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
+        const outcome = await syncWorkspaceStatus();
+        if (outcome === 'applied' && !cancelled) {
+          window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
+        }
       } catch {
         // Unreachable backend: leave the panel exactly as it is (PR #71).
       }
@@ -95,6 +93,8 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
     setIsBusy(true);
     setError(null);
     try {
+      // A disconnect clicked just before must reach the server first.
+      await settleWorkspaceOps();
       const resp = await fetch('/api/workspace/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

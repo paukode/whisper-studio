@@ -6,16 +6,20 @@
  * goal_cap_reached / stop_hook_block frames update the last verdict + attempt
  * counter so the GoalBanner reflects progress in real time.
  *
- * Zustand v5 rule (see memory): selectors return PRIMITIVES only — never a
- * fresh object/array — so components subscribe to `useGoalStore(s => s.byId[id]?.goal)`
+ * Only 'achieved' ends the goal. 'not_checked' (the judge could not run or
+ * could not be understood) keeps it active like any verdict short of done.
+ *
+ * Zustand v5 rule (see memory): selectors return PRIMITIVES only (never a
+ * fresh object/array), so components subscribe to `useGoalStore(s => s.byId[id]?.goal)`
  * and friends, not the whole record.
  */
 import { create } from 'zustand';
+import type { GoalVerdict } from '@/types/chat';
 
 export interface GoalEntry {
   goal: string;
   active: boolean;
-  lastVerdict: string; // "" | "achieved" | "not_achieved" | "blocked"
+  lastVerdict: GoalVerdict | '';
   lastFeedback: string;
   attempt: number;
   cap: number;
@@ -37,7 +41,7 @@ interface GoalState {
   /** Fold a goal_eval SSE frame (verdict + attempt). */
   applyEval: (
     sessionId: string,
-    v: { verdict?: string; feedback?: string; attempt?: number; cap?: number },
+    v: { verdict?: GoalVerdict; feedback?: string; attempt?: number; cap?: number },
   ) => void;
 }
 

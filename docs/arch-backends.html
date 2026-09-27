@@ -79,10 +79,10 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Model</th><th>Input cap</th></tr></thead>
       <tbody>
-        <tr><td>Fable 5.1, Fable 5.0, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6</td><td>1,000,000 tokens</td></tr>
+        <tr><td>Fable 5.1, Fable 5.0, Opus 5.5, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6</td><td>1,000,000 tokens</td></tr>
         <tr><td>Haiku 4.5</td><td>200,000 tokens</td></tr>
-        <tr><td>GPT-6 Astra</td><td>922,000 tokens</td></tr>
-        <tr><td>GPT-5.6 Sol, Terra, Luna, GPT-5.5, GPT-5.4</td><td>278,528 tokens (the cap the mantle deployments enforce)</td></tr>
+        <tr><td>GPT-6 Astra</td><td>922,000 tokens (OpenAI's published max input; mantle accepted a 348K prompt)</td></tr>
+        <tr><td>GPT-6 Sol, GPT-6 Luna, GPT-5.6 Sol, Terra, Luna, GPT-5.5, GPT-5.4</td><td>278,528 tokens (the cap the mantle deployments enforce; GPT-6 Sol and Luna publish 922,000 upstream but stay here until mantle is shown to accept more)</td></tr>
         <tr><td>Any other Claude id</td><td>200,000 tokens (the Anthropic family default)</td></tr>
         <tr><td>On-device models</td><td>The running context size, then the size you last asked for, then the registry <code>ctx</code></td></tr>
       </tbody>
@@ -102,7 +102,7 @@
 
     <h2 id="anthropic-path">The Anthropic adapter (default)</h2>
     <p>This is the adapter most turns use, running the Claude models in your config: Fable 5.1 and 5.0,
-      Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6, and Haiku 4.5. The engine loop from
+      Opus 5.5, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6, and Haiku 4.5. The engine loop from
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> drives it, so the
       backend-specific parts are the Bedrock client, the request body (prompt-cache checkpoints,
       effort/thinking), and the resilience wrappers around each round.</p>
@@ -151,8 +151,9 @@
 
     <h3 id="cost">Cost tracking</h3>
     <p>Cost tracking runs in the engine for every provider. Each round logs input, output, and
-      prompt-cache token counts and an estimated USD cost (via <code>estimate_cost</code>; OpenAI's
-      cached tokens are a subset of its input tokens and are billed once, local rounds record at $0),
+      prompt-cache token counts and an estimated USD cost (via <code>call_cost</code>, which prices the
+      round at its own tier; OpenAI's cached and cache-written tokens are subsets of its input tokens
+      and are billed once, local rounds record at $0),
       which feeds the session and daily spend caps. If a cap is exceeded, the turn stops with an
       error. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</p>
 
@@ -361,9 +362,12 @@
         GPT-5.6 and up add a <code>max</code> tier above <code>xhigh</code>: when
         <code>_supports_max_effort(...)</code> is true the top-tier labels (<code>max</code> /
         <code>ultracode</code>) ride it, while only <code>extra</code> always collapses to
-        <code>xhigh</code>. GPT-6 (Astra) also has no <code>none</code> rung: its ladder runs
-        <code>low</code> through <code>max</code>, and a <code>none</code> label degrades to
-        <code>low</code> instead of being rejected by the endpoint.</li>
+        <code>xhigh</code>. GPT-6 has no <code>none</code> rung in the app: bedrock-mantle rejects it
+        for Astra (verified live), and the app currently applies Astra's ladder to every GPT-6 id, so
+        Astra, Sol and Luna all run <code>low</code> through <code>max</code> and a <code>none</code>
+        label degrades to <code>low</code> instead of being rejected by the endpoint. OpenAI documents a
+        <code>none</code> rung for Sol and Luna; the check narrows to Astra once mantle is shown to
+        accept it for them.</li>
       <li><b>Verbosity.</b> <code>verbosity_for(...)</code> resolves the response verbosity
         (<code>low</code> / <code>medium</code> / <code>high</code>): a per-request override wins, then
         the model's configured default, otherwise <code>medium</code>.</li>
@@ -376,7 +380,9 @@
         to interpret timing phrases as "reason briefly." Requests route to the app-wide
         <code>bedrock_region</code>, with an optional per-model <code>openai_region</code> override in
         <code>chat_model_meta</code>. GPT-6 Astra ships with <code>us-west-2</code> pinned: at launch
-        bedrock-mantle served it there only, even though the model is listed in every US region.</p></div>
+        bedrock-mantle served it there only, even though the model is listed in every US region.
+        GPT-6 Sol and Luna are pinned the other way, to <code>us-east-1</code>: at their launch
+        bedrock-mantle listed them there and answered 404 from <code>us-west-2</code>.</p></div>
     </div>
 
     <p>The decision chain above describes the <em>top-level</em> chat turn. The
@@ -441,7 +447,10 @@
       workflow script often asks for a family name instead (<code>opus</code>, <code>sonnet</code>,
       <code>haiku</code>). <code class="path">server/agents/model_resolve.py</code> resolves that to the
       newest configured key in the family and reports the substitution in the run's warning, rather than
-      failing silently back to the default model. An override that still does not resolve, or that names
+      failing silently back to the default model. Keys that tie on version, such as
+      <code>gpt6-astra</code>, <code>gpt6-sol</code> and <code>gpt6-luna</code>, go to the first one
+      listed: the catalog lists each family's flagship first, so <code>gpt6</code> means Astra and
+      <code>gpt5.6</code> means GPT-5.6 Sol. An override that still does not resolve, or that names
       an on-device model without tool support, falls back to the default and says why.</p>
 
     <h2 id="modes-vs-models">Model backend is not model mode</h2>

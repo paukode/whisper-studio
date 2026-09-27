@@ -8,7 +8,7 @@
  * sseStream — a shared leaf keeps the import graph acyclic.
  */
 import { getChatStore, getRuntime } from '@/stores/sessionRuntimes';
-import { useSubagentStore } from '@/stores/subagentStore';
+import { subagentsOf, useSubagentStore } from '@/stores/subagentStore';
 import type { ChatState } from '@/stores/chatStore';
 import type { ChatMessage, ToolUseEvent } from '@/types/chat';
 
@@ -22,12 +22,48 @@ const abortControllers = new Map<string, AbortController>();
  *  needs no reset bookkeeping between sends. */
 const killFinalized = new WeakSet<AbortController>();
 
-/** Track a stream's controller for the session (send + continuations). */
+/** When the turn each controller's stream belongs to began (epoch seconds).
+ *  Stop sends it as `since`, so the backend stops only the commands and
+ *  background tasks this turn started, never a dev server an earlier turn
+ *  left running. */
+const streamStartedAt = new WeakMap<AbortController, number>();
+
+/** Start of each session's current turn. Only a fresh send starts a turn;
+ *  every other registration (the leg that runs an approved action, the
+ *  approval continuation, an answered question card) is another leg of that
+ *  same turn and keeps its start, so what the turn began in an earlier leg
+ *  (a background task, a command handed off at the budget, the approved
+ *  command itself) stays within reach of a Stop pressed in a later one. */
+const turnStartedAt = new Map<string, number>();
+
+/** Per session, the writer of streamed text the pacer has not painted yet
+ *  (./streamPacer). Stop builds its message from the store, so it writes
+ *  that text out first or the stopped reply would lose its last words. */
+const pendingTextFlushers = new Map<string, () => void>();
+
+/** Register this stream's pending-text writer; returns the unregister, which
+ *  leaves a newer stream's writer in place. */
+export function registerPendingTextFlusher(sessionId: string, flush: () => void): () => void {
+  pendingTextFlushers.set(sessionId, flush);
+  return () => {
+    if (pendingTextFlushers.get(sessionId) === flush) pendingTextFlushers.delete(sessionId);
+  };
+}
+
+/** Track a stream's controller for the session. `startsTurn` marks a fresh
+ *  send (useChatStream): it alone opens a new turn. Any other caller, present
+ *  or future, continues the session's current turn without having to say so;
+ *  with no turn on record it starts one now. */
 export function registerStreamController(
   sessionId: string,
   controller: AbortController,
+  opts: { startsTurn?: boolean } = {},
 ): void {
   abortControllers.set(sessionId, controller);
+  const inherited = opts.startsTurn ? undefined : turnStartedAt.get(sessionId);
+  const since = inherited ?? Date.now() / 1000;
+  turnStartedAt.set(sessionId, since);
+  streamStartedAt.set(controller, since);
   getRuntime(sessionId).abort = controller;
 }
 
@@ -42,6 +78,12 @@ export function releaseStreamController(
   }
   const runtime = getRuntime(sessionId);
   if (runtime.abort === controller) runtime.abort = null;
+}
+
+/** Whether a stream (a turn, a continuation, or an approved action still
+ *  running) currently owns this session. */
+export function hasLiveStream(sessionId: string): boolean {
+  return abortControllers.has(sessionId);
 }
 
 /** Whether killSessionStream already finalized this stream's UI — the
@@ -133,23 +175,28 @@ export function buildStoppedMessage(chat: ChatState): ChatMessage | undefined {
  *
  * Order matters: finalize UI state FIRST, mark the controller as
  * kill-finalized BEFORE aborting (so the stream's catch/success paths
- * no-op), then stop every registered subagent. Targets only the given
- * session's stream; background sessions keep streaming. Subagents are
- * global by design — a kill stops them all.
+ * no-op), then stop the session's own /subagent runs. Targets only the
+ * given session: other sessions' streams and /subagent runs keep going.
  */
 export function killSessionStream(sessionId: string | null): void {
   if (sessionId) {
-    // Also stop background shell tasks this session spawned (fire-and-forget:
-    // the kill switch stays synchronous; a failed request only means the
-    // task finishes on its own like before).
-    void fetch('/api/workspace/shell/tasks/stop', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId }),
-    }).catch(() => {});
-
+    // Paint what the pacer still holds, then read the store it updated.
+    pendingTextFlushers.get(sessionId)?.();
     const chat = getChatStore(sessionId).getState();
     const controller = abortControllers.get(sessionId);
+    const since = controller ? streamStartedAt.get(controller) : undefined;
+    if (since !== undefined) {
+      // Also stop the shell work this stream started: its foreground
+      // commands and the background tasks it launched. Nothing from an
+      // earlier turn, and nothing at all when no stream is running.
+      // Fire-and-forget: the kill switch stays synchronous; a failed request
+      // only means the work finishes on its own.
+      void fetch('/api/workspace/shell/tasks/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, since }),
+      }).catch(() => {});
+    }
     if (chat.isStreaming) {
       // Same commit the AbortError catch in useChatStream performs: partial
       // prose, the tool activity shown so far and any live team card all
@@ -162,9 +209,9 @@ export function killSessionStream(sessionId: string | null): void {
   }
 
   const subagents = useSubagentStore.getState();
-  for (const [teamId, stop] of Object.entries(subagents.stops)) {
+  for (const teamId of subagentsOf(subagents, sessionId)) {
     try {
-      stop();
+      subagents.stops[teamId]?.();
     } catch {
       // One bad callback must not block stopping the rest.
     }

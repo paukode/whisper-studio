@@ -14,6 +14,7 @@ import os
 from server.agents.journal import REPORT_CHARS
 from server.tasks import registry, shell
 from server.tasks.events import emit_agent_report, emit_task_event
+from server.tasks.owner import run_owned
 
 log = logging.getLogger("whisper-studio")
 
@@ -59,18 +60,22 @@ def start_detached_agent(
         conn.execute("UPDATE agent_tasks SET output_path=? WHERE task_id=?", (out_path, task_id))
 
     aio_task = asyncio.create_task(
-        _run_detached(
-            task_id,
-            task,
-            agent_type,
-            session_id,
-            model_id,
-            out_path,
-            effort_label,
-            read_only,
-            isolation,
-            # The registry row and the on-disk journal share the agent's id.
-            agent_id=task_id,
+        # Its own commands: a chat Stop in the session never reaches them.
+        run_owned(
+            f"agent:{task_id}",
+            _run_detached(
+                task_id,
+                task,
+                agent_type,
+                session_id,
+                model_id,
+                out_path,
+                effort_label,
+                read_only,
+                isolation,
+                # The registry row and the on-disk journal share the agent's id.
+                agent_id=task_id,
+            ),
         ),
         name=f"detached-agent-{task_id}",
     )
@@ -244,18 +249,21 @@ def resume_agent(agent_id: str, message: str, *, session_id: str = "") -> str:
         meta={"agent_type": agent_type, "model": model_id or "", "journal_dir": rec["dir"]},
     )
     aio_task = asyncio.create_task(
-        _run_detached(
-            agent_id,
-            message,
-            agent_type,
-            sid,
-            model_id,
-            None,
-            None,
-            False,
-            "none",
-            agent_id=agent_id,
-            resume_agent_id=agent_id,
+        run_owned(
+            f"agent:{agent_id}",
+            _run_detached(
+                agent_id,
+                message,
+                agent_type,
+                sid,
+                model_id,
+                None,
+                None,
+                False,
+                "none",
+                agent_id=agent_id,
+                resume_agent_id=agent_id,
+            ),
         ),
         name=f"resume-agent-{agent_id}",
     )

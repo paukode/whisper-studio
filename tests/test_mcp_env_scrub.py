@@ -7,7 +7,7 @@ forward one.
 
 import asyncio
 
-from server import sandbox
+from server import mcp, sandbox
 from server.mcp import MCPManager
 from server.security.sensitive_env import (
     CREDENTIAL_ENV_VARS,
@@ -70,3 +70,32 @@ def test_configured_per_server_env_still_forwards(monkeypatch, tmp_path):
     # A denylisted NAME configured explicitly for this server is the
     # deliberate opt-in — it wins over the scrub.
     assert params.env["TAVILY_API_KEY"] == "forwarded"
+
+
+def test_stdio_child_env_starts_from_the_login_shell(monkeypatch, tmp_path):
+    # A Finder-launched app has a bare environment; the child gets the
+    # user's shell environment like a terminal-launched client would.
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.setenv("WHISPER_APP_OWN", "process")
+    monkeypatch.setattr(
+        mcp,
+        "login_shell_env",
+        lambda: {"AWS_PROFILE": "work", "WHISPER_APP_OWN": "shell"},
+    )
+    params = _start_and_capture(monkeypatch, tmp_path, {})
+    assert params.env["AWS_PROFILE"] == "work"
+    # This process's own environment wins over the captured shell.
+    assert params.env["WHISPER_APP_OWN"] == "process"
+
+
+def test_login_shell_credentials_are_scrubbed_too(monkeypatch, tmp_path):
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(
+        mcp,
+        "login_shell_env",
+        lambda: {"AWS_ACCESS_KEY_ID": "from-zshrc", "GITHUB_TOKEN": "from-zshrc"},
+    )
+    params = _start_and_capture(monkeypatch, tmp_path, {})
+    assert "AWS_ACCESS_KEY_ID" not in params.env
+    assert "GITHUB_TOKEN" not in params.env

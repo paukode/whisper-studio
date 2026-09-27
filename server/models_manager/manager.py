@@ -60,6 +60,13 @@ class Conflict(Exception):
     """A request that is valid but impossible right now (HTTP 409)."""
 
 
+class ModelBusy(Conflict):
+    """The model is answering in a chat (or a local agent) right now, so
+    deleting it would kill that turn mid-answer. Distinct from the other
+    conflicts so callers that treat "nothing to delete" as fine never mistake
+    it for that and drop the model's config entry while its weights stay."""
+
+
 class _Job:
     __slots__ = (
         "key",
@@ -450,26 +457,62 @@ def cancel(entry: ModelEntry) -> str:
     return "cancelled"
 
 
-def _stop_llama_if_serving(key: str) -> bool:
-    """Stop the model server when it is serving exactly this model (either
-    engine). Best-effort: a failure here must not block the delete (the file
-    unlink still works — the running server keeps its mapped copy until it
-    exits)."""
-    try:
-        from server.local import serving
+_ANSWERING = (
+    "This model is answering in a chat right now. Stop that turn or wait for it to "
+    "finish, then delete the model."
+)
 
-        if serving.resident_key() == key:
-            log.info("Stopping the model server before deleting %s.", key)
-            serving.stop()
+
+def _stop_if_serving(key: str) -> bool:
+    """Stop the model server when it serves exactly this model (either
+    engine), as one step with the busy check (serving.stop_if_idle): no turn
+    can register on the server between the check and the stop, so a turn
+    that began after _refuse_if_answering is refused here instead of killed.
+    Returns whether it stopped; raises ModelBusy when a turn streams from it
+    or a load or switch holds it. A failing stop is logged and does not block
+    the delete (the file unlink still works; the running server keeps its
+    mapped copy until it exits)."""
+    from server.local import serving
+
+    if serving.resident_key() != key:
+        return False
+    try:
+        if serving.stop_if_idle(key):
+            log.info("Stopped the model server before deleting %s.", key)
             return True
     except Exception as e:
         log.warning("Could not stop the model server before deleting %s: %s", key, e)
-    return False
+        return False
+    if serving.resident_key() != key:
+        return False  # it stopped being resident meanwhile: nothing to stop
+    if serving.busy_turns() > 0:
+        raise ModelBusy(_ANSWERING)
+    raise ModelBusy(
+        "The model server is loading or switching models right now. Try the delete "
+        "again in a moment."
+    )
+
+
+def _refuse_if_answering(key: str) -> None:
+    """Raise ModelBusy while ``key`` is the resident model and any chat turn
+    or local agent is streaming from it: stopping its server would kill every
+    one of those answers, in whichever chat they run.
+
+    Checked before the delete touches anything, so the common refusal has no
+    side effects. A turn that begins after this check is caught by
+    _stop_if_serving, which checks and stops in one step."""
+    from server.local import serving
+
+    if serving.resident_key() == key and serving.busy_turns() > 0:
+        raise ModelBusy(_ANSWERING)
 
 
 def delete(entry: ModelEntry) -> dict:
-    """Remove the model from disk. Refused while its download is running; a
-    QUEUED model is dequeued first, then whatever is on disk is removed."""
+    """Remove the model from disk. Refused while its download is running or
+    while it is answering in a chat; a QUEUED model is dequeued first, then
+    whatever is on disk is removed."""
+    if entry.group == GROUP_LOCAL_CHAT:
+        _refuse_if_answering(entry.key)
     reap()
     with _lock:
         if entry.key in _jobs:
@@ -487,7 +530,7 @@ def delete(entry: ModelEntry) -> dict:
 
     stopped = False
     if entry.group == GROUP_LOCAL_CHAT:
-        stopped = _stop_llama_if_serving(entry.key)
+        stopped = _stop_if_serving(entry.key)
         # A registry entry normally owns its directory, but two config entries
         # MAY point different filenames at one dir — then only our file goes.
         shared = any(

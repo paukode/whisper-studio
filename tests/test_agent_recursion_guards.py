@@ -40,7 +40,6 @@ def _fake_result(**overrides):
 
 def test_team_create_threads_depth_into_members(monkeypatch):
     monkeypatch.setattr("server.agents.event_bus.event_bus", _Bus())
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
     captured = []
 
     async def _fake_run_agent(task, **kwargs):
@@ -65,7 +64,6 @@ def test_team_create_threads_depth_into_members(monkeypatch):
 
 def test_team_create_defaults_to_depth_zero_for_top_level_calls(monkeypatch):
     monkeypatch.setattr("server.agents.event_bus.event_bus", _Bus())
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
     captured = []
 
     async def _fake_run_agent(task, **kwargs):
@@ -86,7 +84,6 @@ def test_team_create_defaults_to_depth_zero_for_top_level_calls(monkeypatch):
 
 def test_team_create_refuses_members_past_concurrency_cap(monkeypatch):
     monkeypatch.setattr("server.agents.event_bus.event_bus", _Bus())
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
     monkeypatch.setattr(
         spawn_mod, "_active_agent_counts", {"sess1": spawn_mod.MAX_CONCURRENT_AGENTS_PER_SESSION}
     )
@@ -110,7 +107,6 @@ def test_team_create_refuses_members_past_concurrency_cap(monkeypatch):
 
 def test_concurrency_slot_released_after_team_member_completes(monkeypatch):
     monkeypatch.setattr("server.agents.event_bus.event_bus", _Bus())
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
     monkeypatch.setattr(spawn_mod, "_active_agent_counts", {})
     seen_during_run = {}
 

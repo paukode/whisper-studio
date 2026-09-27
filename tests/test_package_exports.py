@@ -47,7 +47,6 @@ CHAT_EXPORTS = [
     "_get_chat_models",
     "_get_chat_model_meta",
     "_get_default_model",
-    "_estimate_cost",
     "estimate_message_size",
     "COMPACT_TRIGGER_CHARS",
     "MAX_CONTEXT_CHARS",

@@ -21,6 +21,18 @@ import { fetchSessionTasks } from '@/api/tasks';
 import { permissionModeLabel } from '@/utils/permissionModes';
 
 /**
+ * The streaming reply. The only subscriber to the streamed text, so a token
+ * re-renders this bubble and not the panel with every message above it.
+ */
+const LiveReply: React.FC<{ onGrow: () => void }> = ({ onGrow }) => {
+  const content = useActiveChatStore((s) => s.currentStreamContent);
+  useEffect(() => {
+    if (content) onGrow();
+  }, [content, onGrow]);
+  return <StreamingMessage content={content} isStreaming />;
+};
+
+/**
  * Chat panel matching the vanilla #chatPanelWrap structure exactly.
  *
  * Structure:
@@ -36,7 +48,6 @@ export const ChatPanel: React.FC = () => {
   const branchSession = useSessionStore((s) => s.branchSession);
   const messages = useActiveChatStore((s) => s.messages);
   const isStreaming = useActiveChatStore((s) => s.isStreaming);
-  const currentStreamContent = useActiveChatStore((s) => s.currentStreamContent);
   const permissionMode = useSettingsStore((s) => s.config.permissionMode ?? 'default');
   const wsConnected = useUIStore((s) => s.wsConnected);
 
@@ -175,22 +186,23 @@ export const ChatPanel: React.FC = () => {
     prevMessageCountRef.current = allMessages.length;
     if (!grew) return;
     if (wasAtBottomRef.current) {
+      // Read, not subscribed: a subscription here re-rendered the panel and
+      // every message in it on each streamed token.
       const behavior: ScrollBehavior =
-        currentStreamContent.length > 0 ? 'smooth' : 'auto';
+        getActiveChatStore().getState().currentStreamContent.length > 0 ? 'smooth' : 'auto';
       messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
     } else {
       setUnseenBelow((n) => n + delta);
     }
-  }, [allMessages.length, currentStreamContent]);
+  }, [allMessages.length]);
 
-  // Stream tokens flow through currentStreamContent. When the user is
-  // following along (at bottom), keep snapping the viewport to the
-  // tail. Independent of the count-based effect so it fires per token.
-  useEffect(() => {
-    if (!currentStreamContent) return;
+  // Streamed text grows inside LiveReply, which calls this after each paint
+  // of new text. When the user is following along (at bottom), keep the
+  // viewport snapped to the tail.
+  const followStream = useCallback(() => {
     if (!wasAtBottomRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
-  }, [currentStreamContent]);
+  }, []);
 
   const jumpToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -400,9 +412,7 @@ export const ChatPanel: React.FC = () => {
         <VoiceLiveMessage />
 
         {/* Streaming response */}
-        {isStreaming && (
-          <StreamingMessage content={currentStreamContent} isStreaming={isStreaming} />
-        )}
+        {isStreaming && <LiveReply onGrow={followStream} />}
 
         {/* Approval card — shown when a tool needs permission */}
         <ErrorBoundary label="ApprovalBanner">

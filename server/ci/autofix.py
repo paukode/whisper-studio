@@ -76,15 +76,23 @@ def plan_autofix(run: dict, cwd: str, *, session_id: str = "") -> dict:
     failed = provider.failed_jobs(run)
     names = [j.get("name", "") for j in failed]
 
-    log_text = provider.failing_log(run_id, cwd) if run_id is not None else ""
-    findings = diagnose.diagnose(run, log_text, failed_job_names=names)
+    from server.infrastructure.auxiliary import aux_refusal
+
+    # Local mode refuses a cloud diagnosis model: say so, rather than let the
+    # refused call read as "no actionable failure".
+    refused = aux_refusal("ci_diagnose")
+    findings: list[dict] = []
+    if not refused:
+        log_text = provider.failing_log(run_id, cwd) if run_id is not None else ""
+        findings = diagnose.diagnose(run, log_text, failed_job_names=names)
 
     script = build_autofix_script(branch, findings) if findings else None
-    summary = (
-        f"{len(findings)} finding(s) across {len(names) or 'the'} failed job(s)"
-        if findings
-        else "No actionable failure found in the logs — nothing to autofix."
-    )
+    if refused:
+        summary = refused
+    elif findings:
+        summary = f"{len(findings)} finding(s) across {len(names) or 'the'} failed job(s)"
+    else:
+        summary = "No actionable failure found in the logs, so there is nothing to autofix."
     return {
         "run_id": run_id,
         "branch": branch,

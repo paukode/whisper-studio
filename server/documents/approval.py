@@ -123,5 +123,8 @@ def register_office_script_approval() -> None:
             risk_hint="medium",
             payload_fields=["path", "dest_kind", "format", "code", "source_path", "summary"],
             render_command=lambda p: p.get("code") or "",
+            # A workspace destination is re-resolved at click time, so a Yes
+            # after that workspace went away is refused (see ApprovalSpec).
+            workspace_bound=lambda p: p.get("dest_kind") == "workspace",
         ),
     )

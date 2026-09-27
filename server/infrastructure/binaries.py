@@ -33,43 +33,83 @@ _COMMON_TOOL_DIRS = (
 )
 
 
-def enrich_gui_launch_path() -> None:
-    """Widen ``PATH`` for a Finder/launchd-launched .app.
+# The user's login-shell environment, captured once at packaged startup by
+# load_login_shell_env(). Empty in a dev checkout, whose process was started
+# from a terminal and already carries that environment.
+_LOGIN_ENV: dict[str, str] = {}
 
-    A GUI-launched app inherits a minimal PATH with none of the user's shell
-    config, so user-configured MCP server commands (``uvx``, ``npx``,
-    ``python3``, ``docker``, …) and other spawned tools fail with
-    ``[Errno 2] No such file or directory``. Enrich PATH from the user's real
-    tool locations: their login-shell PATH (which encodes nvm / asdf / pyenv /
-    Homebrew as configured) plus the well-known dirs above as a fallback.
+# Shell bookkeeping that describes the capture shell itself, not the user.
+_SHELL_STATE_VARS = frozenset({"PWD", "OLDPWD", "SHLVL", "_"})
 
-    Packaged mode only — keyed on ``WHISPER_HOME`` — so a dev checkout, which
-    already has a full PATH, is untouched. Best-effort and time-bounded: any
-    failure leaves PATH as it was. The bundle's own ``WHISPER_BIN_DIR`` stays
-    first so bundled binaries (node, ffmpeg, llama-server) remain authoritative.
+_ENV_MARKER = "__WHISPER_LOGIN_ENV__"
+
+
+def _capture_login_shell_env() -> dict[str, str]:
+    """Run the user's login shell once and read back its environment.
+
+    ``-l`` sources the login files and ``-i`` the interactive rc, where most
+    users export PATH, AWS_PROFILE and tool settings. Markers fence the
+    ``env -0`` output so banner text printed by an rc file cannot corrupt it,
+    and NUL separators keep multi-line values intact.
+    """
+    shell = os.environ.get("SHELL", "/bin/zsh")
+    script = f'printf "%s" {_ENV_MARKER}; /usr/bin/env -0; printf "%s" {_ENV_MARKER}'
+    out = subprocess.run(
+        [shell, "-lic", script],
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        timeout=5,
+    )
+    raw = out.stdout.decode("utf-8", errors="replace")
+    first = raw.find(_ENV_MARKER)
+    last = raw.rfind(_ENV_MARKER)
+    if first < 0 or last <= first:
+        return {}
+    env: dict[str, str] = {}
+    for entry in raw[first + len(_ENV_MARKER) : last].split("\0"):
+        key, sep, value = entry.partition("=")
+        if sep and key.isidentifier() and key not in _SHELL_STATE_VARS:
+            env[key] = value
+    return env
+
+
+def load_login_shell_env() -> None:
+    """Adopt the user's shell environment for a Finder/launchd-launched .app.
+
+    A GUI-launched app inherits a nearly empty environment with none of the
+    user's shell config, while Claude Code and other CLIs start from a
+    terminal and get all of it. Capture the login shell's environment once:
+
+      - PATH is widened in this process so user-configured commands (``uvx``,
+        ``npx``, ``docker``, …) resolve, with the well-known tool dirs above
+        filling a thin or failed capture.
+      - The full environment is kept for MCP server children
+        (:func:`login_shell_env`), so a server sees the same AWS_PROFILE,
+        AWS_REGION and tool settings it would in a terminal.
+
+    Packaged mode only, keyed on ``WHISPER_HOME``: a dev checkout already runs
+    with the terminal's environment. Best-effort and time-bounded: a failed
+    capture leaves the environment as it was. The bundle's own
+    ``WHISPER_BIN_DIR`` stays first so bundled binaries (node, ffmpeg,
+    llama-server) remain authoritative.
     """
     if not os.environ.get("WHISPER_HOME", "").strip():
         return
 
-    discovered: list[str] = []
-
-    # 1) The user's login shell PATH. `-l` sources login files, `-i` the
-    #    interactive rc (where PATH is often set); `printf` avoids prompt noise.
-    shell = os.environ.get("SHELL", "/bin/zsh")
     try:
-        out = subprocess.run(
-            [shell, "-lic", 'printf "%s" "$PATH"'],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        for d in out.stdout.strip().split(os.pathsep):
-            if d and d not in discovered:
-                discovered.append(d)
-    except Exception as e:  # timeout, missing shell, weird rc — fall back below
-        log.debug("login-shell PATH capture failed: %s", e)
+        captured = _capture_login_shell_env()
+    except Exception as e:  # timeout, missing shell, weird rc
+        log.debug("login-shell environment capture failed: %s", e)
+        captured = {}
+    _LOGIN_ENV.clear()
+    _LOGIN_ENV.update(captured)
+    log.info("Login-shell environment captured (%d variables)", len(captured))
 
-    # 2) Well-known dirs that actually exist (supplements a thin/failed capture).
+    discovered: list[str] = []
+    for d in captured.get("PATH", "").split(os.pathsep):
+        if d and d not in discovered:
+            discovered.append(d)
+    # Well-known dirs that actually exist (supplements a thin/failed capture).
     for d in _COMMON_TOOL_DIRS:
         expanded = os.path.expanduser(d)
         if os.path.isdir(expanded) and expanded not in discovered:
@@ -88,6 +128,11 @@ def enrich_gui_launch_path() -> None:
             merged.append(d)
     os.environ["PATH"] = os.pathsep.join(merged)
     log.info("PATH enriched for GUI launch (%d entries)", len(merged))
+
+
+def login_shell_env() -> dict[str, str]:
+    """The captured login-shell environment (empty in a dev checkout)."""
+    return dict(_LOGIN_ENV)
 
 
 def resolve(name: str, env_var: str = "", fallbacks: tuple[str, ...] = ()) -> str | None:

@@ -1,6 +1,8 @@
 import React from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { get, post, del } from '@/api/client';
+import { get, post } from '@/api/client';
+import { stopPreviewSession, type PreviewSession } from '@/api/preview';
+import { useSessionStore } from '@/stores/sessionStore';
 
 interface PreviewStatus {
   playwright_importable: boolean;
@@ -12,15 +14,6 @@ interface PreviewStatus {
   log_tail: string[];
   /** True inside the packaged .app, where the browser ships in the bundle. */
   packaged?: boolean;
-}
-
-interface PreviewSessionInfo {
-  id: string;
-  url: string | null;
-  port: number | null;
-  process_alive: boolean | null;
-  browser_started: boolean;
-  created_at: number;
 }
 
 function relativeTime(epochSeconds: number): string {
@@ -42,13 +35,24 @@ export const PreviewSettings: React.FC = () => {
 
   const sessionsQuery = useQuery({
     queryKey: ['preview-sessions'],
-    queryFn: () => get<{ sessions: PreviewSessionInfo[] }>('/api/preview/sessions'),
+    queryFn: () => get<{ sessions: PreviewSession[] }>('/api/preview/sessions'),
     refetchInterval: 5000,
     enabled: !!statusQuery.data?.flag_enabled,
   });
 
   const status = statusQuery.data;
   const sessions = sessionsQuery.data?.sessions ?? [];
+  const chats = useSessionStore((s) => s.sessions);
+  const currentChat = useSessionStore((s) => s.currentSessionId);
+
+  // Which chat a preview belongs to: that chat's Live pane shows it, and it
+  // is the only chat whose assistant may stop or drive it.
+  const ownerLabel = (owner: string): string | null => {
+    if (!owner) return null;
+    if (owner === currentChat) return 'this chat';
+    const title = chats.find((c) => c.id === owner)?.title;
+    return title ? `"${title}"` : 'another chat';
+  };
 
   const handleEnable = async () => {
     try {
@@ -68,9 +72,15 @@ export const PreviewSettings: React.FC = () => {
     }
   };
 
-  const handleStop = async (name: string) => {
+  // The kill switch: stops any preview. One another chat is using gets a
+  // confirmation first, since stopping it stops that chat's running app.
+  const handleStop = async (s: PreviewSession) => {
+    if (s.owner && s.owner !== currentChat) {
+      const label = ownerLabel(s.owner) ?? 'another chat';
+      if (!window.confirm(`Stop "${s.id}"? It is the preview ${label} is running.`)) return;
+    }
     try {
-      await del(`/api/preview/sessions/${encodeURIComponent(name)}`);
+      await stopPreviewSession(s.id);
       await queryClient.invalidateQueries({ queryKey: ['preview-sessions'] });
     } catch (err) {
       console.warn('Failed to stop preview session:', err);
@@ -162,11 +172,12 @@ export const PreviewSettings: React.FC = () => {
                     <div className="settings-item-name">{s.id}</div>
                     <div className="settings-item-desc">
                       {s.url ? s.url : s.port ? `port ${s.port}` : 'no url'} · running {relativeTime(s.created_at)}
+                      {ownerLabel(s.owner) && ` · started in ${ownerLabel(s.owner)}`}
                       {s.process_alive === false && ' · process exited'}
                     </div>
                   </div>
                   <div className="settings-item-actions">
-                    <button className="btn btn-sm" onClick={() => void handleStop(s.id)}>
+                    <button className="btn btn-sm" onClick={() => void handleStop(s)}>
                       Stop
                     </button>
                   </div>

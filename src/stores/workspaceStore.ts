@@ -1,6 +1,15 @@
 import { create } from 'zustand';
 import type { FileTreeEntry, EditorTab } from '@/types/workspace';
-import { dialogConfirm } from './uiStore';
+import { dialogConfirm, useUIStore } from './uiStore';
+
+/** The connected root a new tab belongs to (undefined with none). */
+export const currentRoot = (): string | undefined => useUIStore.getState().wsPath || undefined;
+
+/** The tab shows a file of the connected root. A tab kept from another root
+ *  holds a different file that happens to share the relative path. */
+export const inConnectedRoot = (tab: EditorTab): boolean => tab.root === currentRoot();
+
+const baseName = (path: string) => path.split('/').pop() || path;
 
 export interface WorkspaceState {
   fileTree: FileTreeEntry[];
@@ -26,8 +35,18 @@ export interface WorkspaceState {
    * would fire one prompt per tab during those loops.
    */
   confirmCloseTab: (path: string) => Promise<void>;
+  /**
+   * On a workspace disconnect: close every tab with no unsaved edits. Dirty
+   * tabs are kept (closing them would throw the edits away without asking);
+   * each remembers its root, and saveTab refuses it until that root is
+   * connected again.
+   */
+  closeCleanTabs: () => void;
   setActiveTab: (path: string) => void;
   markDirty: (path: string, content: string) => void;
+  /** Show what an inline write left on disk in the tab, dirty against what
+   *  the tab held before, and remember it as applied (EditorTab.appliedContent). */
+  applyWrite: (path: string, content: string) => void;
   saveTab: (path: string) => Promise<void>;
   refreshTabContent: (path: string, content: string) => void;
   setViewerType: (path: string, viewerType: EditorTab['viewerType']) => void;
@@ -48,11 +67,28 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   openTab: (path: string, content: string, language: string, viewerType?: EditorTab['viewerType']) => {
-    const { editorTabs } = get();
+    let { editorTabs } = get();
     const existing = editorTabs.find((tab) => tab.path === path);
-    if (existing) {
+    if (existing && inConnectedRoot(existing)) {
       set({ activeTabPath: path });
       return;
+    }
+    if (existing?.isDirty) {
+      // Tabs are keyed by path, so the kept tab and this file cannot both be
+      // open. Its edits are not thrown away to make room.
+      useUIStore.getState().addToast({
+        type: 'warning',
+        message:
+          `${baseName(path)} is open with unsaved edits from ${existing.root ?? 'no workspace'}. ` +
+          'Reconnect that folder to save or discard them, then open this one.',
+        duration: 6000,
+      });
+      set({ activeTabPath: path });
+      return;
+    }
+    if (existing) {
+      // A clean tab left from another root: this workspace's file replaces it.
+      editorTabs = editorTabs.filter((tab) => tab !== existing);
     }
     const newTab: EditorTab = {
       path,
@@ -61,6 +97,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       originalContent: content,
       isDirty: false,
       viewerType,
+      root: currentRoot(),
     };
     set({
       editorTabs: [...editorTabs, newTab],
@@ -86,6 +123,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       viewerType: 'diff',
       comparePath: rightPath,
       compareContent: rightContent,
+      root: currentRoot(),
     };
     set({
       editorTabs: [...editorTabs, newTab],
@@ -135,6 +173,18 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     closeTab(path);
   },
 
+  closeCleanTabs: () => {
+    const { editorTabs, activeTabPath } = get();
+    const kept = editorTabs.filter((tab) => tab.isDirty);
+    if (kept.length === editorTabs.length) return;
+    set({
+      editorTabs: kept,
+      activeTabPath: kept.some((tab) => tab.path === activeTabPath)
+        ? activeTabPath
+        : (kept[kept.length - 1]?.path ?? null),
+    });
+  },
+
   setActiveTab: (path: string) => {
     const { editorTabs } = get();
     const exists = editorTabs.some((tab) => tab.path === path);
@@ -151,10 +201,28 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     }));
   },
 
+  applyWrite: (path: string, content: string) => {
+    set((state) => ({
+      editorTabs: state.editorTabs.map((tab) =>
+        tab.path === path
+          ? { ...tab, content, appliedContent: content, isDirty: content !== tab.originalContent }
+          : tab,
+      ),
+    }));
+  },
+
   saveTab: async (path: string) => {
     const { editorTabs } = get();
     const tab = editorTabs.find((t) => t.path === path);
     if (!tab) return;
+    const connected = useUIStore.getState().wsPath;
+    if (tab.root && tab.root !== connected) {
+      const name = path.split('/').pop() || path;
+      throw new Error(
+        `${name} belongs to ${tab.root}, which is not the connected workspace. ` +
+          'Reconnect that folder to save it; nothing was written.',
+      );
+    }
 
     const res = await fetch('/api/workspace/write', {
       method: 'POST',

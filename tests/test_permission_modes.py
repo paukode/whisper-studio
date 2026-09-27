@@ -245,6 +245,40 @@ def test_classifier_confirm_still_shows_the_banner(monkeypatch):
     assert any('"approval_request":' in e for e in sse_events)
 
 
+def test_classifier_and_explainer_bill_the_chat_session_not_the_turn_scope(monkeypatch):
+    # A voice-delegated turn runs under the scope "exec:voice-..." while its
+    # rounds are logged under the chat session. The side calls must land on
+    # the chat session (its budget and readout), the breaker on the scope.
+    _patch_rules(monkeypatch, [])
+    classify = AsyncMock(return_value={"decision": "confirm", "reason": "needs a human"})
+    explain = AsyncMock(return_value=None)
+    breaker_keys = []
+
+    def record_verdict(key, *, allowed):
+        breaker_keys.append(key)
+        return {"tripped": False}
+
+    monkeypatch.setattr("server.tool_executor.classify_tool_call", classify)
+    monkeypatch.setattr("server.tool_executor.explain_permission", explain)
+    monkeypatch.setattr("server.security.permissions.record_classifier_verdict", record_verdict)
+    asyncio.run(
+        process_tool_results(
+            [_write_approval_state()],
+            budget_fn=_budget_passthrough,
+            session_approvals={},
+            config={"permission_explainer_enabled": True},
+            model_id="test-model",
+            recent_messages=[],
+            mode=MODE_AUTO,
+            session_id="exec:voice-chat1-1234abcd",
+            cost_session_id="chat1",
+        )
+    )
+    assert classify.call_args.kwargs["session_id"] == "chat1"
+    assert explain.call_args.kwargs["session_id"] == "chat1"
+    assert breaker_keys == ["exec:voice-chat1-1234abcd"]
+
+
 # ── category_modes ───────────────────────────────────────────────────────────
 
 

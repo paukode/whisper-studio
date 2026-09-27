@@ -7,6 +7,8 @@ existing behavior (no proxy started, no env injected, profile byte-for-byte
 identical) is the regression gate that matters most.
 """
 
+import os
+
 import server.sandbox as sandbox
 from server.security import egress_policy
 
@@ -141,6 +143,43 @@ def test_run_sandboxed_no_sandbox_fallback_still_gets_proxy_env(monkeypatch, tmp
 
     result = sandbox.run_sandboxed("echo $HTTPS_PROXY", cwd=str(tmp_path), timeout=10)
     assert result.stdout.strip() == "http://127.0.0.1:54321"
+
+
+def test_popen_sandboxed_child_gets_the_same_env_as_run_sandboxed(monkeypatch, tmp_path):
+    """Approved and read-only ws_run_command runs, their 30 s handoff and every
+    background task start through popen_sandboxed. Its child must see the
+    proxy vars under a non-permissive tier (the profile denies direct 80/443,
+    so without them it has no HTTP at all) and never a GitHub token."""
+    monkeypatch.setattr(egress_policy, "get_active_policy", lambda: _curated_policy())
+    monkeypatch.setattr(egress_policy, "ensure_proxy_running", lambda: ("127.0.0.1", 54321))
+    monkeypatch.setenv("GH_TOKEN", "should-never-appear")
+    out = tmp_path / "out.txt"
+    with open(out, "w") as f:
+        proc, profile_path = sandbox.popen_sandboxed(
+            'echo "tok=${GH_TOKEN:-none} proxy=${HTTPS_PROXY:-none}"',
+            cwd=str(tmp_path),
+            stdout_file=f,
+        )
+    try:
+        assert proc.wait(timeout=10) == 0
+    finally:
+        if profile_path:
+            os.unlink(profile_path)
+    text = out.read_text()
+    assert "tok=none" in text, text
+    assert "proxy=http://127.0.0.1:54321" in text, text
+
+
+def test_approved_command_path_never_sees_a_github_token(monkeypatch, tmp_path):
+    """The handoff path an approved ws_run_command now takes, end to end."""
+    from server.tasks import handoff, shell
+
+    monkeypatch.setattr(shell, "OUTPUT_DIR", str(tmp_path / "background_output"))
+    monkeypatch.setenv("GITHUB_TOKEN", "should-never-appear")
+    cmd = 'echo "tok=${GITHUB_TOKEN:-none}"'
+    result = handoff.run_with_handoff(cmd, cmd, cwd=str(tmp_path), session_id="s-env")
+    assert result.background is False
+    assert "tok=none" in result.output, result.output
 
 
 def test_run_sandboxed_default_permissive_end_to_end(tmp_path):

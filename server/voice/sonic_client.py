@@ -30,6 +30,18 @@ class SonicStreamError(RuntimeError):
     """The model stream reported an in-band error (throttling, validation, ...)."""
 
 
+SONIC_SERVICE = "Amazon Nova Sonic on Amazon Bedrock"
+
+
+def local_mode_refusal() -> str | None:
+    """Why voice mode may not run in Local mode, else None. The status
+    endpoint, the socket handshake and every stream a live conversation opens
+    (or keeps open) ask the same question, so they cannot drift apart."""
+    from server.infrastructure.cloud_guard import cloud_refusal
+
+    return cloud_refusal("Voice mode", service=SONIC_SERVICE)
+
+
 def sdk_availability() -> tuple[bool, str | None]:
     """(available, reason). Never raises."""
     import sys

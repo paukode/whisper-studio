@@ -91,9 +91,16 @@ def record_request_snapshot(
     messages: list,
     effort_label: str | None = None,
     is_last_round: bool = False,
+    wire=None,
+    attempt: int = 0,
 ) -> None:
     """Write one round's assembled request to disk. Best-effort: every failure
     is swallowed after a log line, because a snapshot must never cost a turn.
+
+    ``wire`` is the exact body posted to the model server, for an adapter that
+    reshapes the request (a dict, or a zero-argument callable run here, off
+    the loop). ``attempt`` numbers extra requests within one round, such as
+    the local adapter's empty-completion retry.
 
     Called synchronously-safe (pure CPU + one file write); the runner schedules
     it on the default executor to keep gzip off the event loop.
@@ -114,7 +121,13 @@ def record_request_snapshot(
             "tool_names": [t.get("name", "?") for t in tools],
             "tools": tools,
             "messages": messages,
+            "attempt": attempt,
         }
+        if wire is not None:
+            try:
+                snapshot["wire_request"] = wire() if callable(wire) else wire
+            except Exception as e:  # noqa: BLE001 - the failure is the finding
+                snapshot["wire_request"] = {"error": str(e) or e.__class__.__name__}
         describe = getattr(adapter, "describe_request", None)
         if callable(describe):
             try:
@@ -127,6 +140,11 @@ def record_request_snapshot(
                 f"(omitted: serialized request was {len(raw)} bytes, "
                 f"over the {MAX_SNAPSHOT_BYTES} byte snapshot cap)"
             )
+            if isinstance(snapshot.get("wire_request"), dict):
+                snapshot["wire_request"] = {
+                    **snapshot["wire_request"],
+                    "messages": snapshot["messages"],
+                }
             raw = json.dumps(snapshot, ensure_ascii=False, default=str)
         os.makedirs(sdir, exist_ok=True)
         ts_name = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%f")

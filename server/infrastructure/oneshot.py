@@ -16,8 +16,11 @@ log = logging.getLogger("whisper-studio")
 
 _LOCAL_KEY = "local_gemma"
 
+# The hybrid "One-shot writer: Off" value: no model runs the map step.
+OFF = "none"
 
-def _resolve_local_key(local_model_key: str | None) -> str:
+
+def resolve_local_key(local_model_key: str | None) -> str:
     """Pick which on-device model runs the local map step.
 
     Prefer, in order: the caller's key (the active chat model), else the model
@@ -47,16 +50,18 @@ def _resolve_local_key(local_model_key: str | None) -> str:
 
 def resolve_map_engine(config: dict | None = None) -> str:
     """Return the engine for a one-shot map call under the active model mode:
-    ``"haiku"``, ``"local"`` (follow the resident on-device model), or a specific
-    on-device model key from the local registry. Anything else the mode resolver
-    returns (e.g. a hybrid ``"none"``) is coerced to ``"haiku"``: the map step
-    must always produce output, and ``"none"`` only means "skip optional index
-    enrichment", not "cannot summarise"."""
+    ``"haiku"``, ``"local"`` (follow the resident on-device model), a specific
+    on-device model key from the local registry, or ``"none"`` when the user
+    switched the hybrid one-shot writer Off. Off means no model runs the map
+    step at all; the caller decides what happens to input that does not fit.
+    An unknown value is coerced to ``"haiku"``, the hybrid cloud default
+    :func:`~server.infrastructure.model_mode.resolve_backend` also uses for an
+    unset capability."""
     from server.infrastructure.model_mode import resolve_backend
     from server.local import registry as local_registry
 
     engine = resolve_backend("index_llm", config)
-    if engine in ("haiku", "local") or engine in local_registry.local_models():
+    if engine in ("haiku", "local", OFF) or engine in local_registry.local_models():
         return engine
     return "haiku"
 
@@ -96,9 +101,16 @@ def one_shot(
     engine: str | None = None,
     cloud_model_key: str = "haiku",
     local_model_key: str | None = None,
+    feature: str = "This model call",
+    source: str,
+    session_id: str = "",
 ) -> str:
     """Run one system+user prompt through a single completion and return the
     assistant text.
+
+    A cloud call is logged in the cost log under ``source`` (and
+    ``session_id`` when it served one); an on-device call costs nothing and is
+    not logged.
 
     Non-streaming and blocking (safe from a worker thread; wrap in
     ``run_in_executor`` when calling from the event loop). Raises on hard
@@ -110,10 +122,20 @@ def one_shot(
 
     ``local_model_key`` names the on-device model for a local map call; when
     unset the resolver follows the resident/first-downloaded model (see
-    :func:`_resolve_local_key`) instead of a fixed key, so the map does not evict
+    :func:`resolve_local_key`) instead of a fixed key, so the map does not evict
     the active chat model.
+
+    In Local mode the cloud branch raises
+    :class:`~server.infrastructure.cloud_guard.CloudRefused` (its message,
+    naming ``feature``, is the user-facing reason) before any client is built.
+    The ``"none"`` engine (the one-shot writer switched Off) raises too: Off
+    never quietly becomes a cloud call.
     """
     engine = engine or resolve_map_engine()
+    if engine == OFF:
+        raise RuntimeError(
+            "the one-shot writer is Off (Settings > Model mode), so no model runs this call"
+        )
 
     from server.local import runtime as local_rt
 
@@ -121,7 +143,7 @@ def one_shot(
         # A specific model key is an explicit user pick and wins over the
         # resident-following heuristic; the bare "local" alias keeps following
         # the active/resident model to avoid multi-GB load/unload cycles.
-        key = engine if engine != "local" else _resolve_local_key(local_model_key)
+        key = engine if engine != "local" else resolve_local_key(local_model_key)
         # complete() would download multi-GB weights if the model is absent;
         # never let a summary request trigger that silently.
         if not local_rt.is_downloaded(key):
@@ -131,6 +153,11 @@ def one_shot(
             raise RuntimeError("local one-shot completion returned empty")
         return out
 
+    # Everything below reaches Amazon Bedrock (or mantle): never in Local mode.
+    from server.infrastructure.cloud_guard import require_cloud
+
+    require_cloud(feature)
+
     # OpenAI-on-Bedrock cloud key: run the one-shot through the Responses API
     # on mantle with the same model, so provider-aware callers (compaction)
     # keep a GPT session entirely on its own model. Failures raise, matching
@@ -138,7 +165,7 @@ def one_shot(
     from server.openai_bedrock.runtime import is_openai_model
 
     if is_openai_model(cloud_model_key):
-        return _openai_one_shot(cloud_model_key, system, user, max_tokens)
+        return _openai_one_shot(cloud_model_key, system, user, max_tokens, source, session_id)
 
     # cloud / haiku
     from server.chat.infra import _get_bedrock_client, _get_chat_models
@@ -168,31 +195,41 @@ def one_shot(
             "messages": [{"role": "user", "content": user}],
         }
     )
-    resp = _get_bedrock_client().invoke_model(modelId=model_id, body=body)
-    payload = json.loads(resp["body"].read())
+    from server.costs.calls import invoke_claude
+
+    payload = invoke_claude(
+        _get_bedrock_client(), model_id=model_id, body=body, source=source, session_id=session_id
+    )
     text = "".join(b.get("text", "") for b in payload.get("content", []) if b.get("type") == "text")
     if not text:
         raise RuntimeError("cloud one-shot completion returned no text")
     return text
 
 
-def _openai_one_shot(model_key: str, system: str, user: str, max_tokens: int) -> str:
-    """One blocking Responses-API completion on bedrock-mantle. Raises on
-    failure or an empty result (one_shot's contract)."""
+def _openai_one_shot(
+    model_key: str, system: str, user: str, max_tokens: int, source: str, session_id: str
+) -> str:
+    """One blocking Responses-API completion on bedrock-mantle, logged. Raises
+    on failure or an empty result (one_shot's contract)."""
     from server.chat.infra import _get_chat_models
+    from server.costs.calls import record_responses
     from server.openai_bedrock.runtime import build_sync_client, region_for
 
     model_id = _get_chat_models().get(model_key)
     if not model_id:
         raise RuntimeError(f"openai one-shot: model key {model_key!r} not configured")
     client = build_sync_client(region_for(model_key))
-    resp = client.responses.create(
-        model=model_id,
-        instructions=system,
-        input=user,
-        max_output_tokens=max(16, max_tokens),
-        reasoning={"effort": "low"},
-        store=False,
+    request = {
+        "model": model_id,
+        "instructions": system,
+        "input": user,
+        "max_output_tokens": max(16, max_tokens),
+        "reasoning": {"effort": "low"},
+        "store": False,
+    }
+    resp = client.responses.create(**request)
+    record_responses(
+        resp, model_key=model_key, request=request, source=source, session_id=session_id
     )
     out = (getattr(resp, "output_text", "") or "").strip()
     if not out:

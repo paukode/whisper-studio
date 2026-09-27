@@ -1,19 +1,28 @@
+"""MCP server registry: the one owner of the configured servers and their
+live connections.
+
+mcp_servers.json is the persisted list. reconcile() is the only place servers
+start and stop; the HTTP routes (server/mcp_routes.py) call it after saving,
+and run() calls it whenever the file changes on disk. Every change a user can
+see bumps ``revision`` and publishes one ``mcp_changed`` event, so every
+window reads the same list from GET /api/mcp/servers without a restart.
+"""
+
 import asyncio
+import copy
 import json
 import logging
 import os
 import shutil
+import tempfile
 import uuid
 
-from fastapi import APIRouter, Request
-from fastapi.responses import Response
-
+from server.infrastructure.async_tasks import spawn
+from server.infrastructure.binaries import login_shell_env
 from server.infrastructure.paths import data_root
 from server.security.sensitive_env import scrub_credential_env
 
 log = logging.getLogger("whisper-studio")
-
-router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 DATA_DIR = data_root()
 MCP_CONFIG_PATH = os.path.join(DATA_DIR, "mcp_servers.json")
@@ -28,6 +37,63 @@ MCP_CONFIG_PATH = os.path.join(DATA_DIR, "mcp_servers.json")
 # minutes is long enough for a human to notice and answer, short enough that
 # a forgotten prompt doesn't wedge either of those indefinitely.
 ELICITATION_TIMEOUT_S = 300
+
+# How long one MCP tool call may run before it is abandoned with an error
+# result. Unbounded, a server that never answered held the whole turn: the
+# tool batch waited on it, the busy slot's keepalive kept the session live,
+# and a message the user sent meanwhile waited for a round that never came.
+# Generous: build and test runners legitimately take many minutes, and the
+# bound is there for a server that has stopped answering, not for slow work.
+# Above ELICITATION_TIMEOUT_S so a call waiting on the human is never cut off
+# first. ``call_timeout_seconds`` on a server's entry in mcp_servers.json
+# overrides it for tools that run longer still.
+CALL_TIMEOUT_S = 1800.0
+
+
+def _call_timeout_s(server_config: dict) -> float:
+    try:
+        value = float(server_config.get("call_timeout_seconds") or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    return value if value > 0 else CALL_TIMEOUT_S
+
+
+async def _send_cancelled(session, request_id, reason: str) -> bool:
+    """Tell the server to stop a request this client has given up on (the
+    protocol's notifications/cancelled), so an abandoned tool call does not
+    keep working, and its side effects keep landing, after the model has
+    been told it failed. False when the server could not be told."""
+    if request_id is None:
+        return False
+    from mcp import types
+
+    note = types.ClientNotification(
+        types.CancelledNotification(
+            params=types.CancelledNotificationParams(requestId=request_id, reason=reason)
+        )
+    )
+    try:
+        await asyncio.wait_for(session.send_notification(note), timeout=5)
+        return True
+    except Exception as e:  # noqa: BLE001 - the error result says what happened
+        log.warning("MCP cancel notification for request %s failed: %s", request_id, e)
+        return False
+
+
+# How long a server gets to finish its handshake and first listing. Every
+# start runs inside reconcile(), so one server that never answers must not
+# hold up every later add, edit or removal. Generous enough for a first
+# `uvx` or `npx` run that downloads the package.
+CONNECT_TIMEOUT_S = 60
+
+# How often run() checks mcp_servers.json for edits made outside the app's
+# own routes (the assistant, an editor, a project import).
+CONFIG_POLL_S = 1.0
+
+# The fields that define a server's connection. A change to any of them
+# restarts the server; any other field (approval mode, tool lists) applies to
+# the running connection as is.
+_LAUNCH_KEYS = ("command", "args", "env", "url", "bearer_token_env_var")
 
 # Per-server/tool approval tiers (see MCPManager.get_tool_approval_tier).
 #   auto    — no approval needed; the tool executes immediately. Default —
@@ -94,6 +160,39 @@ def _unwrap_exc(e: BaseException) -> str:
     return msg or cur.__class__.__name__
 
 
+def _launch_settings(conf: dict) -> dict:
+    """The connection-defining part of one server entry (see _LAUNCH_KEYS)."""
+    return {key: conf.get(key) or None for key in _LAUNCH_KEYS}
+
+
+def _file_signature(path: str) -> tuple[int, int, int] | None:
+    """(mtime, size, inode) of ``path``, or None when it does not exist. The
+    inode catches an atomic replace that keeps the same mtime and size."""
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+
+async def _list_all(fetch, field: str) -> list:
+    """Every item of a paginated MCP listing (tools/list, resources/list).
+    Follows nextCursor until the server stops returning one; a cursor seen
+    twice ends the walk so a buggy server cannot loop it forever."""
+    import mcp.types as types
+
+    items: list = []
+    cursor: str | None = None
+    seen: set[str] = set()
+    while True:
+        result = await fetch(params=types.PaginatedRequestParams(cursor=cursor) if cursor else None)
+        items.extend(getattr(result, field))
+        cursor = result.nextCursor
+        if not cursor or cursor in seen:
+            return items
+        seen.add(cursor)
+
+
 class MCPManager:
     """Manages connections to MCP servers and exposes their tools."""
 
@@ -117,25 +216,58 @@ class MCPManager:
         # stack is whichever call is most likely still in flight when an
         # elicitation arrives for that server.
         self._active_calls: dict[str, list[dict]] = {}
+        # Change counter for everything GET /api/mcp/servers reports: the
+        # config, connection status, tool lists, pending elicitations. Each
+        # change bumps it and publishes one `mcp_changed` event (_bump).
+        self.revision = 0
+        # Why the last reconcile could not read mcp_servers.json, or None.
+        # While set, the running servers are left as they were.
+        self.config_error: str | None = None
+        # Serializes reconcile() passes: the routes and the watcher can both
+        # trigger one, and the second must see the first one's result.
+        self._reconcile_lock: asyncio.Lock | None = None
+        # The config the last reconcile applied, to tell a real edit from a
+        # pass that finds nothing new (the watcher seeing a route's write).
+        self._applied_config: dict | None = None
+        # mcp_servers.json's _file_signature when reconcile last read it.
+        self._seen_file: tuple[int, int, int] | None = None
 
     def _get_lock(self) -> asyncio.Lock:
         if self._lock is None:
             self._lock = asyncio.Lock()
         return self._lock
 
-    def load_config(self) -> dict:
-        """Read mcp_servers.json. Backfills `enabled: true` for any server
-        missing the flag: a configured server is ON unless the user turned
-        it off. Disabling is a first-class, immediate action (the switch in
-        Settings → MCP stops the server at runtime), so opt-out replaces the
-        old opt-in default."""
+    def _get_reconcile_lock(self) -> asyncio.Lock:
+        if self._reconcile_lock is None:
+            self._reconcile_lock = asyncio.Lock()
+        return self._reconcile_lock
+
+    def _bump(self) -> None:
+        """Record a change and tell every open window to refetch the list.
+        App-wide, so it rides the multiplexed session-events stream with no
+        session id."""
+        from server.agents.event_bus import event_bus
+
+        self.revision += 1
+        event_bus.publish("", {"type": "mcp_changed", "revision": self.revision})
+
+    def read_config(self) -> dict | None:
+        """Read mcp_servers.json: {} when the file does not exist, None when
+        it exists but is not a valid server list (a half-typed hand edit).
+
+        Backfills `enabled: true` for any server missing the flag: a
+        configured server is ON unless the user turned it off, and the file
+        is rewritten so the flag is explicit."""
         try:
             with open(MCP_CONFIG_PATH) as f:
-                servers = json.load(f).get("servers", {})
-        except Exception:
+                data = json.load(f)
+        except FileNotFoundError:
             return {}
-        # One-time backfill: any pre-existing server without the field
-        # gets enabled=true. Persist back so the file is explicit.
+        except (OSError, ValueError):
+            return None
+        servers = data.get("servers", {}) if isinstance(data, dict) else None
+        if not isinstance(servers, dict):
+            return None
         changed = False
         for _name, conf in servers.items():
             if isinstance(conf, dict) and "enabled" not in conf:
@@ -144,14 +276,33 @@ class MCPManager:
         if changed:
             try:
                 self.save_config(servers)
-            except Exception as e:
+            except OSError as e:
                 log.warning("MCP backfill save failed: %s", e)
         return servers
 
+    def load_config(self) -> dict:
+        """The configured servers, or {} when mcp_servers.json is missing or
+        unreadable (so an unreadable file enables nothing). Code that writes
+        the file back uses read_config() instead, so it never replaces a
+        broken hand edit with a near-empty list."""
+        return self.read_config() or {}
+
     def save_config(self, servers: dict):
-        os.makedirs(os.path.dirname(MCP_CONFIG_PATH), exist_ok=True)
-        with open(MCP_CONFIG_PATH, "w") as f:
-            json.dump({"servers": servers}, f, indent=2)
+        """Write mcp_servers.json atomically, so the watcher and every other
+        reader only ever see a complete file."""
+        directory = os.path.dirname(MCP_CONFIG_PATH)
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".mcp_servers.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump({"servers": servers}, f, indent=2)
+            os.replace(tmp, MCP_CONFIG_PATH)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def is_server_enabled(self, name: str) -> bool:
         """Whether a server should be running and its tools advertised.
@@ -199,17 +350,21 @@ class MCPManager:
 
         params = None
         if not url:
-            # A third-party MCP server subprocess must not inherit the host
-            # app's credentials (AWS/Bedrock keys, API tokens — canonical list
-            # in server/security/sensitive_env.py). Per-server `env` entries
-            # from mcp_servers.json are applied AFTER the scrub: configuring
-            # one there is the deliberate opt-in that can still forward a
-            # credential to that server.
-            env = {**scrub_credential_env(os.environ), **env_vars}
+            # The child starts from the environment a terminal would give it:
+            # the user's login-shell environment (captured at packaged
+            # startup, empty in a dev checkout) under this process's own, so
+            # AWS_PROFILE, AWS_REGION and tool settings from ~/.zshrc reach
+            # it as they do under Claude Code. A third-party MCP server must
+            # still not inherit credentials (AWS/Bedrock keys, API tokens,
+            # canonical list in server/security/sensitive_env.py). Per-server
+            # `env` entries from mcp_servers.json are applied AFTER the
+            # scrub: configuring one there is the deliberate opt-in that can
+            # still forward a credential to that server.
+            env = {**scrub_credential_env({**login_shell_env(), **os.environ}), **env_vars}
             # Resolve the command up front so a missing executable yields an
             # actionable message instead of a raw "[Errno 2] No such file or
             # directory" from the spawn. A GUI-launched .app has a minimal PATH;
-            # main.py widens it (enrich_gui_launch_path), and we resolve against
+            # main.py widens it (load_login_shell_env), and we resolve against
             # that same PATH here.
             resolved = self._resolve_command(command, env.get("PATH"))
             if resolved is None:
@@ -240,16 +395,28 @@ class MCPManager:
         ready: asyncio.Future = loop.create_future()
         stop_event = asyncio.Event()
         async with self._get_lock():
-            # Idempotent: enabling an already-connected server (e.g. a
-            # double toggle, or enable racing the startup start_all) must
-            # not spawn a second _serve task that would orphan the first
-            # connection's subprocess when it overwrites _sessions[name].
+            # Idempotent: starting an already-connected server must not spawn
+            # a second _serve task that would orphan the first connection's
+            # subprocess when it overwrites _sessions[name].
             existing = self._sessions.get(name)
             if existing is not None and existing.get("status") == "connected":
                 return
             task = asyncio.create_task(self._serve(name, params, config, ready, stop_event))
             try:
-                await ready
+                await asyncio.wait_for(asyncio.shield(ready), timeout=CONNECT_TIMEOUT_S)
+            except TimeoutError:
+                # Cancelling the task unwinds its transport in its own task,
+                # which terminates the subprocess.
+                task.cancel()
+                msg = f"The server did not finish starting within {CONNECT_TIMEOUT_S}s."
+                log.error("MCP server '%s' failed to start: %s", name, msg)
+                self._sessions[name] = {
+                    "status": "error",
+                    "error": msg,
+                    "config": config,
+                    "tools": {},
+                }
+                return
             except Exception as e:
                 # Unwrap the anyio ExceptionGroup so the stored error is the real
                 # cause, not "unhandled errors in a TaskGroup". This message is
@@ -312,6 +479,19 @@ class MCPManager:
 
         elicitation_callback = self._build_elicitation_callback(name)
 
+        async def on_message(message) -> None:
+            # Runs on the session's receive loop, which must keep pumping to
+            # deliver the listing's own response, so the re-list runs in a
+            # task of its own.
+            import mcp.types as types
+
+            root = getattr(message, "root", None)
+            if isinstance(root, types.ToolListChangedNotification):
+                spawn(self._relist(name, ready, "tools"), name=f"mcp-relist-tools:{name}")
+            elif isinstance(root, types.ResourceListChangedNotification):
+                spawn(self._relist(name, ready, "resources"), name=f"mcp-relist-resources:{name}")
+
+        ended = "the server closed the connection"
         try:
             async with transport_cm as transport_streams:
                 # stdio_client yields (read_stream, write_stream);
@@ -319,33 +499,19 @@ class MCPManager:
                 # get_session_id). Only the first two are ever needed here.
                 read_stream, write_stream = transport_streams[0], transport_streams[1]
                 async with ClientSession(
-                    read_stream, write_stream, elicitation_callback=elicitation_callback
+                    read_stream,
+                    write_stream,
+                    elicitation_callback=elicitation_callback,
+                    message_handler=on_message,
                 ) as session:
                     await session.initialize()
-
-                    tools_result = await session.list_tools()
-                    server_tools: dict = {}
-                    tool_registrations: dict = {}
-                    # Use a double-underscore separator so server name + tool name
-                    # round-trip without ambiguity (e.g. server "foo_bar" tool "x"
-                    # becomes "mcp__foo_bar__x", server "foo" tool "bar_x" becomes
-                    # "mcp__foo__bar_x" — no collision). Pre-collapse any "__"
-                    # already inside the server name so the separator stays unique.
-                    safe_server = name.replace("__", "_")
-                    for tool in tools_result.tools:
-                        tool_key = f"mcp__{safe_server}__{tool.name}"
-                        server_tools[tool_key] = tool
-                        tool_registrations[tool_key] = {
-                            "server_name": name,
-                            "mcp_tool": tool,
-                            "original_name": tool.name,
-                        }
+                    tools = await _list_all(session.list_tools, "tools")
+                    server_tools, tool_registrations = self._tool_entries(name, tools)
 
                     # Feature 19: Also discover MCP resources
                     server_resources: dict = {}
                     try:
-                        resources_result = await session.list_resources()
-                        for resource in resources_result.resources:
+                        for resource in await _list_all(session.list_resources, "resources"):
                             server_resources[str(resource.uri)] = resource
                     except Exception as e:
                         log.debug("MCP server '%s' has no resources: %s", name, e)
@@ -379,16 +545,79 @@ class MCPManager:
                 # before storing/surfacing it.
                 ready.set_exception(e)
             else:
-                log.warning("MCP server '%s' connection ended: %s", name, _unwrap_exc(e))
+                ended = _unwrap_exc(e)
+                log.warning("MCP server '%s' connection ended: %s", name, ended)
         finally:
-            # If we still own the published session (a clean stop_server pop
-            # already removed it; an unexpected death did not), drop our
-            # registrations so readers never see a dead server.
+            # Still owning the published session means the connection ended
+            # without stop_server (which removes it first). Record why, so the
+            # server shows an error under its On switch instead of vanishing;
+            # reconcile leaves it there until a Restart or a settings change.
             info = self._sessions.get(name)
             if info is not None and info.get("stop_event") is stop_event:
                 for tool_key in list(info.get("tools", {}).keys()):
                     self._tools.pop(tool_key, None)
-                self._sessions.pop(name, None)
+                self._sessions[name] = {
+                    "status": "error",
+                    "error": f"Connection ended: {ended}",
+                    "config": config,
+                    "tools": {},
+                }
+                self._bump()
+
+    def _tool_entries(self, name: str, tools: list) -> tuple[dict, dict]:
+        """One server's tools keyed for this registry: the per-session map
+        and the global registrations. The double-underscore separator makes
+        server name + tool name round-trip without ambiguity (server
+        "foo_bar" tool "x" is "mcp__foo_bar__x", server "foo" tool "bar_x" is
+        "mcp__foo__bar_x"); any "__" inside the server name is collapsed
+        first so the separator stays unique."""
+        safe_server = name.replace("__", "_")
+        server_tools: dict = {}
+        registrations: dict = {}
+        for tool in tools:
+            tool_key = f"mcp__{safe_server}__{tool.name}"
+            server_tools[tool_key] = tool
+            registrations[tool_key] = {
+                "server_name": name,
+                "mcp_tool": tool,
+                "original_name": tool.name,
+            }
+        return server_tools, registrations
+
+    async def _relist(self, name: str, ready: asyncio.Future, what: str) -> None:
+        """Re-read one server's tools or resources after it announced that
+        they changed (a server that registers its tools after startup, or
+        adds some later), so the model and every window see the new list.
+        A notification that arrives mid-handshake waits for the connection
+        to be published first."""
+        await asyncio.wait([ready])
+        if ready.cancelled() or ready.exception() is not None:
+            return
+        info = self._sessions.get(name)
+        session = info.get("session") if info else None
+        if session is None:
+            return
+        try:
+            if what == "tools":
+                items = await _list_all(session.list_tools, "tools")
+            else:
+                items = await _list_all(session.list_resources, "resources")
+        except Exception as e:
+            log.warning("MCP server '%s': re-listing %s failed: %s", name, what, _unwrap_exc(e))
+            return
+        info = self._sessions.get(name)
+        if info is None or info.get("session") is not session:
+            return  # stopped or replaced while the listing was in flight
+        if what == "tools":
+            server_tools, registrations = self._tool_entries(name, items)
+            for tool_key in list(info.get("tools", {}).keys()):
+                self._tools.pop(tool_key, None)
+            info["tools"] = server_tools
+            self._tools.update(registrations)
+        else:
+            info["resources"] = {str(r.uri): r for r in items}
+        log.info("MCP server '%s' %s changed: now %d", name, what, len(items))
+        self._bump()
 
     async def stop_server(self, name: str):
         async with self._get_lock():
@@ -422,18 +651,68 @@ class MCPManager:
             except Exception as e:
                 log.warning("Error stopping MCP server '%s': %s", name, e)
 
-    async def start_all(self):
-        """Start every ENABLED server. Disabled servers stay stopped —
-        the enabled flag now controls the runtime connection itself, not
-        just tool advertisement, so a toggle takes effect immediately and
-        survives restarts symmetrically."""
-        config = self.load_config()
-        for name, server_config in config.items():
-            if not isinstance(server_config, dict):
-                continue
-            if not bool(server_config.get("enabled", True)):
-                continue
-            await self.start_server(name, server_config)
+    async def reconcile(self) -> None:
+        """Make the running connections match mcp_servers.json.
+
+        The one place servers start and stop. The routes save the config and
+        call this; run() calls it when the file changes on disk (the
+        assistant editing it, the user in an editor, a project import). A
+        server that was removed or disabled stops, a new or re-enabled one
+        starts, and one whose launch settings changed restarts. Other edits
+        (approval mode, tool lists) apply to the running connection. A
+        server that failed keeps its error until its launch settings change
+        or the user restarts it, so a broken entry is not respawned on every
+        pass. An unreadable file leaves every server as it is.
+        """
+        async with self._get_reconcile_lock():
+            self._seen_file = _file_signature(MCP_CONFIG_PATH)
+            config = self.read_config()
+            if config is None:
+                if self.config_error is None:
+                    self.config_error = (
+                        f"{MCP_CONFIG_PATH} is not a valid server list; the running "
+                        "servers are unchanged until it is fixed."
+                    )
+                    log.warning("MCP config unreadable: %s", self.config_error)
+                    self._bump()
+                return
+            edited = self.config_error is not None or config != self._applied_config
+            self.config_error = None
+            self._applied_config = copy.deepcopy(config)
+            wanted = {
+                name: conf
+                for name, conf in config.items()
+                if isinstance(conf, dict) and bool(conf.get("enabled", True))
+            }
+            for name in list(self._sessions):
+                conf = wanted.get(name)
+                running = self._sessions.get(name, {}).get("config") or {}
+                if conf is None or _launch_settings(conf) != _launch_settings(running):
+                    await self.stop_server(name)
+                    self._bump()
+            for name, conf in wanted.items():
+                info = self._sessions.get(name)
+                if info is not None:
+                    info["config"] = conf
+                    continue
+                await self.start_server(name, conf)
+                self._bump()
+            if edited:
+                self._bump()
+
+    async def run(self) -> None:
+        """Start the configured servers, then keep them matched to
+        mcp_servers.json for the life of the app. Polling one small file
+        each CONFIG_POLL_S is cheap and catches every kind of edit."""
+        pending = True
+        while True:
+            if pending:
+                try:
+                    await self.reconcile()
+                except Exception:
+                    log.exception("MCP reconcile failed; retrying on the next change")
+            await asyncio.sleep(CONFIG_POLL_S)
+            pending = _file_signature(MCP_CONFIG_PATH) != self._seen_file
 
     async def stop_all(self):
         for name in list(self._sessions.keys()):
@@ -580,8 +859,43 @@ class MCPManager:
         self._active_calls.setdefault(server_name, []).append(
             {"session_id": session_id, "agent": is_agent}
         )
+        timeout_s = _call_timeout_s(session_info.get("config") or {})
+        stop_event = session_info.get("stop_event")
+        request: dict = {}
+
+        async def _call():
+            # The SDK's send_request takes this id and bumps it before its
+            # first await, so it is the id of this call's tools/call request.
+            request["id"] = getattr(session, "_request_id", None)
+            return await session.call_tool(original_name, arguments=call_arguments)
+
+        async def _call_until_stopped():
+            """The call's result, or None once the server is stopped (Restart,
+            an edit that restarts it, removal): closing the connection that
+            way leaves the SDK's pending request unanswered, so without this
+            the call would wait out the whole timeout."""
+            call = asyncio.ensure_future(_call())
+            if stop_event is None:
+                return await call
+            stopped = asyncio.ensure_future(stop_event.wait())
+            try:
+                done, _ = await asyncio.wait({call, stopped}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for pending in (call, stopped):
+                    if not pending.done():
+                        pending.cancel()
+            return call.result() if call in done else None
+
         try:
-            result = await session.call_tool(original_name, arguments=call_arguments)
+            result = await asyncio.wait_for(_call_until_stopped(), timeout=timeout_s)
+            if result is None:
+                log.warning("MCP server %s stopped while %s ran", server_name, original_name)
+                return (
+                    f"[MCP Error] Server '{server_name}' was stopped or restarted while "
+                    f"{original_name} was running, so the call ended without a result. It "
+                    "may already have done part or all of its work: check the result before "
+                    "calling it again, since a retry can repeat its effects."
+                )
             parts = []
             for content in result.content:
                 if hasattr(content, "text"):
@@ -594,6 +908,30 @@ class MCPManager:
             if result.isError:
                 output = f"[MCP Error] {output}"
             return output
+        except TimeoutError:
+            log.warning(
+                "MCP tool call timed out after %.0fs (%s/%s)", timeout_s, server_name, original_name
+            )
+            told = await _send_cancelled(
+                session, request.get("id"), f"no answer within {timeout_s:.0f} seconds"
+            )
+            if not told:
+                log.warning(
+                    "MCP server %s could not be asked to cancel %s", server_name, original_name
+                )
+            stop = (
+                "the server was asked to cancel it"
+                if told
+                else "the server could not be told to stop, so it may still be running it"
+            )
+            return (
+                f"[MCP Error] {original_name} on server '{server_name}' did not answer "
+                f"within {timeout_s:.0f} seconds. The call was abandoned and {stop}. It "
+                "may already have done part or all of its work: check the result before "
+                "calling it again, since a retry can repeat its effects. A tool that "
+                "legitimately runs longer needs a higher call_timeout_seconds for this "
+                "server in mcp_servers.json."
+            )
         except Exception as e:
             log.error("MCP tool call error (%s/%s): %s", server_name, original_name, e)
             return f"[MCP Error] {e}"
@@ -663,6 +1001,9 @@ class MCPManager:
                 "url": url,
                 "future": future,
             }
+            # Settings > MCP renders pending elicitations from the same list,
+            # so a new one (and its answer, below) is a list change.
+            self._bump()
             log.info(
                 "MCP server '%s' elicits input (id=%s, mode=%s): %s",
                 server_name,
@@ -682,6 +1023,7 @@ class MCPManager:
                 return types.ElicitResult(action="decline")
             finally:
                 self._pending_elicitations.pop(elicitation_id, None)
+                self._bump()
 
             action = answer.get("action", "decline")
             if action not in ("accept", "decline", "cancel"):
@@ -848,246 +1190,3 @@ class MCPManager:
 
 # Singleton
 mcp_manager = MCPManager()
-
-
-# --- API Routes ---
-
-
-def _clamp_approval_mode(mode) -> str:
-    return mode if mode in _VALID_APPROVAL_MODES else "auto"
-
-
-def _extract_mcp_extra_fields(body: dict, old: dict | None = None) -> dict:
-    """Optional per-server fields beyond command/args/env/enabled: the
-    remote transport (url, bearer_token_env_var — the env var NAME only;
-    the actual token is read from os.environ at connect time and never
-    persisted here) and the approval-granularity schema (approval_mode,
-    tool_overrides, enabled_tools, disabled_tools).
-
-    For an update (`old` given), a field absent from the request body
-    carries the previous value forward — mirroring how command/args/env
-    already behave in mcp_update_server — so a partial edit never silently
-    resets the rest of the entry.
-    """
-    old = old or {}
-    extra: dict = {}
-    url = (body.get("url", old.get("url", "")) or "").strip()
-    if url:
-        extra["url"] = url
-    token_env_var = (
-        body.get("bearer_token_env_var", old.get("bearer_token_env_var", "")) or ""
-    ).strip()
-    if token_env_var:
-        extra["bearer_token_env_var"] = token_env_var
-    approval_mode = body.get("approval_mode", old.get("approval_mode"))
-    if approval_mode is not None:
-        extra["approval_mode"] = _clamp_approval_mode(approval_mode)
-    tool_overrides = body.get("tool_overrides", old.get("tool_overrides"))
-    if isinstance(tool_overrides, dict) and tool_overrides:
-        extra["tool_overrides"] = {
-            str(k): _clamp_approval_mode(v) for k, v in tool_overrides.items()
-        }
-    enabled_tools = body.get("enabled_tools", old.get("enabled_tools"))
-    if isinstance(enabled_tools, list) and enabled_tools:
-        extra["enabled_tools"] = [str(t) for t in enabled_tools]
-    disabled_tools = body.get("disabled_tools", old.get("disabled_tools"))
-    if isinstance(disabled_tools, list) and disabled_tools:
-        extra["disabled_tools"] = [str(t) for t in disabled_tools]
-    return extra
-
-
-@router.get("/servers")
-async def mcp_servers_status():
-    config = mcp_manager.load_config()
-    status = mcp_manager.get_status()
-    servers = {}
-    for name, conf in config.items():
-        s = status.get(name, {"status": "stopped", "tools": [], "error": None})
-        servers[name] = {
-            "command": conf.get("command", ""),
-            "args": conf.get("args", []),
-            "env": conf.get("env", {}),
-            "enabled": bool(conf.get("enabled", True)),
-            "status": s["status"],
-            "tools": s.get("tools", []),
-            "error": s.get("error"),
-            # Remote transport. bearer_token_env_var is the env var NAME
-            # only — never the token value, which is never persisted.
-            "url": conf.get("url", ""),
-            "bearer_token_env_var": conf.get("bearer_token_env_var", ""),
-            "approval_mode": conf.get("approval_mode", "auto"),
-            "tool_overrides": conf.get("tool_overrides", {}),
-            "enabled_tools": conf.get("enabled_tools", []),
-            "disabled_tools": conf.get("disabled_tools", []),
-        }
-    # Live MCP tool count: disabled servers are disconnected, so _tools
-    # holds exactly the connected (enabled) servers' tools. Deduped by
-    # sanitized name, matching what get_bedrock_tools advertises.
-    total_mcp_tools = len({mcp_manager._sanitize_tool_name(k) for k in mcp_manager._tools})
-    return {
-        "servers": servers,
-        "total_mcp_tools": total_mcp_tools,
-        # Elicitations awaiting a human answer right now, across every
-        # connected server — Settings → MCP polls this to show a form.
-        "pending_elicitations": mcp_manager.get_pending_elicitations(),
-    }
-
-
-@router.post("/servers")
-async def mcp_add_server(request: Request):
-    body = await request.json()
-    name = body.get("name", "").strip()
-    command = body.get("command", "").strip()
-    args = body.get("args", [])
-    env = body.get("env", {})
-    extra = _extract_mcp_extra_fields(body)
-    if not name or not (command or extra.get("url")):
-        return Response(
-            content=json.dumps({"error": "name and either command or url are required"}),
-            status_code=400,
-            media_type="application/json",
-        )
-
-    config = mcp_manager.load_config()
-    # New servers are enabled by default and started immediately below, so
-    # they are usable on the very next message — no app restart.
-    config[name] = {"command": command, "args": args, "env": env, "enabled": True, **extra}
-    mcp_manager.save_config(config)
-
-    await mcp_manager.start_server(name, config[name])
-    status = mcp_manager.get_status().get(name, {})
-    return {
-        "name": name,
-        "enabled": True,
-        "status": status.get("status"),
-        "tools": status.get("tools", []),
-        "error": status.get("error"),
-    }
-
-
-@router.patch("/servers/{name}")
-async def mcp_patch_server(name: str, request: Request):
-    """Toggle the per-server `enabled` flag AND apply it live: enabling
-    connects the server, disabling disconnects it, so the change is real
-    for the next message with no app restart. Distinct from PUT (which
-    rewrites the whole server entry); the enable/disable switch lives in
-    Settings → MCP (the composer no longer has an MCP tick)."""
-    body = await request.json()
-    config = mcp_manager.load_config()
-    if name not in config:
-        return Response(
-            content=json.dumps({"error": f"Server '{name}' not found"}),
-            status_code=404,
-            media_type="application/json",
-        )
-    if "enabled" in body:
-        config[name]["enabled"] = bool(body["enabled"])
-    mcp_manager.save_config(config)
-    enabled = bool(config[name].get("enabled", True))
-    # Apply the flag to the runtime connection. A failed connect is not an
-    # HTTP error: the flag IS persisted, and the caller gets the live
-    # status ("error" + message) to surface in the UI.
-    if enabled:
-        await mcp_manager.start_server(name, config[name])
-    else:
-        await mcp_manager.stop_server(name)
-    status = mcp_manager.get_status().get(name, {})
-    return {
-        "name": name,
-        "enabled": enabled,
-        "status": status.get("status", "stopped"),
-        "tools": status.get("tools", []),
-        "error": status.get("error"),
-    }
-
-
-@router.delete("/servers/{name}")
-async def mcp_remove_server(name: str):
-    await mcp_manager.stop_server(name)
-    config = mcp_manager.load_config()
-    config.pop(name, None)
-    mcp_manager.save_config(config)
-    return {"removed": name}
-
-
-@router.post("/servers/{name}/restart")
-async def mcp_restart_server(name: str):
-    config = mcp_manager.load_config()
-    if name not in config:
-        return Response(
-            content=json.dumps({"error": f"Server '{name}' not found"}),
-            status_code=404,
-            media_type="application/json",
-        )
-    await mcp_manager.stop_server(name)
-    # A disabled server must stay stopped: with disabled == disconnected,
-    # a Restart that reconnected it would show a green dot under an Off
-    # switch. Restart only cycles servers that are enabled.
-    if bool(config[name].get("enabled", True)):
-        await mcp_manager.start_server(name, config[name])
-    status = mcp_manager.get_status().get(name, {})
-    return {
-        "name": name,
-        "enabled": bool(config[name].get("enabled", True)),
-        "status": status.get("status", "stopped"),
-        "tools": status.get("tools", []),
-        "error": status.get("error"),
-    }
-
-
-@router.put("/servers/{name}")
-async def mcp_update_server(name: str, request: Request):
-    body = await request.json()
-    config = mcp_manager.load_config()
-    if name not in config:
-        return Response(
-            content=json.dumps({"error": f"Server '{name}' not found"}),
-            status_code=404,
-            media_type="application/json",
-        )
-    new_name = body.get("new_name", "").strip()
-    # Read the OLD entry BEFORE popping/renaming so we can carry its state.
-    old = config[name]
-    command = body.get("command", old.get("command", "")).strip()
-    args = body.get("args", old.get("args", []))
-    env = body.get("env", old.get("env", {}))
-    # Preserve the persisted `enabled` flag. Rebuilding the entry as
-    # {command, args, env} only would drop it — silently flipping the
-    # server's state on every edit or rename. The Settings UI uses PUT for
-    # both in-place edit and rename, so carry the flag in both branches
-    # (missing flag counts as enabled, matching load_config's backfill).
-    enabled = bool(old.get("enabled", True))
-    extra = _extract_mcp_extra_fields(body, old)
-    await mcp_manager.stop_server(name)
-    if new_name and new_name != name:
-        config.pop(name)
-        config[new_name] = {
-            "command": command,
-            "args": args,
-            "env": env,
-            "enabled": enabled,
-            **extra,
-        }
-        target_name = new_name
-    else:
-        config[name] = {
-            "command": command,
-            "args": args,
-            "env": env,
-            "enabled": enabled,
-            **extra,
-        }
-        target_name = name
-    mcp_manager.save_config(config)
-    # Reconnect with the new config only if the server is enabled — a
-    # disabled server stays stopped through edits and renames.
-    if enabled:
-        await mcp_manager.start_server(target_name, config[target_name])
-    status = mcp_manager.get_status().get(target_name, {})
-    return {
-        "name": target_name,
-        "enabled": enabled,
-        "status": status.get("status", "stopped"),
-        "tools": status.get("tools", []),
-        "error": status.get("error"),
-    }

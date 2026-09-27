@@ -83,8 +83,9 @@ def _complete(system: str, user: str, engine: str) -> str:
                 "messages": [{"role": "user", "content": user}],
             }
         )
-        resp = client.invoke_model(modelId=model_id, body=body)
-        payload = json.loads(resp["body"].read())
+        from server.costs.calls import invoke_claude
+
+        payload = invoke_claude(client, model_id=model_id, body=body, source="index")
         return "".join(
             b.get("text", "") for b in payload.get("content", []) if b.get("type") == "text"
         )

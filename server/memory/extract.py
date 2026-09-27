@@ -146,6 +146,11 @@ async def maybe_extract_memory(
     a disabled flag) keeps the excerpt-based extraction agent.
 
     Guards:
+    0. Local mode records nothing: the review and the extraction agent run on
+       a cloud model, and a cloud turn that ends after a switch to Local must
+       not replay itself to Bedrock. Checked before the throttle, so no slice
+       is marked processed without being reviewed. The auto_memory flag's
+       local_mode_note tells the user.
     1. Feature flag must be enabled (via ensure_*_memory_dir)
     2. Throttle: only every N turns
     3. In-flight: one extraction agent per session at a time
@@ -153,6 +158,11 @@ async def maybe_extract_memory(
     5. Cursor: only process new messages; claimed BEFORE the agent runs so
        overlapping turns cannot double-extract the same slice
     """
+    from server.infrastructure.cloud_guard import cloud_allowed
+
+    if not cloud_allowed():
+        log.debug("Skipping auto-memory extraction: Local mode records no memories")
+        return
     try:
         # The global dir doubles as the cursor anchor; ensure_* helpers
         # return None when auto_memory is off, gating the whole pipeline.
@@ -420,6 +430,7 @@ async def _run_extraction(
         depth=1,  # Prevent recursive extraction
         # auxiliary_models.learning_review may pin a cheaper model for this agent.
         model_id_override=_review_model_override(model_id),
+        cost_source="memory",
     )
 
     if result.status == "completed":

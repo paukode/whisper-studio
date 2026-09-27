@@ -18,8 +18,8 @@
     <p class="subtitle">Hooks let you gate what the assistant does. A hook can <em>deny</em> a tool call, <em>rewrite</em>
       its input, add context to a result or a prompt, or refuse to end a turn, deterministically, in your own
       code, before the model ever sees the outcome. The tool hooks run across every path: chat, sub-agents,
-      cron, and headless turns. The <code>Stop</code> gate runs only on interactive cloud chat, through the
-      completion gate.</p>
+      cron, and headless turns. The <code>Stop</code> gate runs through the completion gate, on interactive
+      cloud chat and on on-device chat while a goal is active.</p>
 
     <p>The engine lives in <code class="path">server/hooks/</code>: <code class="path">schema.py</code> (the
       hook definition, outcome, and matcher semantics), <code class="path">engine.py</code> (evaluation),
@@ -31,8 +31,9 @@
       <div id="hooks-diagram" class="diagram"></div>
       <figcaption>Before a tool runs, the executor asks the engine for <em>PreToolUse</em>, which may deny or
         rewrite; after, it asks for <em>PostToolUse</em> or, when the tool raised,
-        <em>PostToolUseFailure</em>. On interactive cloud chat only, <em>check_stop_hooks</em> can refuse to
-        stop at end of turn. Each event runs in-process hooks first, then sandboxed shell hooks (user, then
+        <em>PostToolUseFailure</em>. On interactive chat (on-device chat only while a goal is active),
+        <em>check_stop_hooks</em> can refuse to stop at end of turn. Each event runs in-process hooks first,
+        then sandboxed shell hooks (user, then
         trusted project), filtered by matcher.</figcaption>
     </figure>
 
@@ -149,11 +150,15 @@
     <p>The <code>Stop</code> gate is different. <code>check_stop_hooks()</code> is invoked only from
       <code>run_completion_gate</code> (<code class="path">server/goals/gate.py</code>), and the
       engine only calls that gate when the turn's <code>TurnPolicy</code> has
-      <code>completion_gate</code> on, which today is the interactive cloud-chat policy alone.
-      <a href="arch-agents.html">Sub-agents</a> force the gate off so a child can never trip the
-      parent turn's evaluator, and <a href="arch-cron.html">cron</a>, headless turns, and the local
-      chat path all run with it off too. Cron instead verifies its own runs with a separate
-      <code>cron_verify</code> step; see <a href="arch-goals.html">The goal loop</a>.</p>
+      <code>completion_gate</code> on: the interactive chat policies. Cloud chat runs it at the end of
+      every turn; the on-device policy sets <code>gate_requires_goal</code>, so local chat runs it only
+      while the session has an active goal, and plain local chat still ends when the model stops. On a
+      local turn the Stop payload's <code>model_id</code> is the model's <code>local:...</code>
+      chat_models id, the same id the local memory hooks receive; on a cloud turn it is the provider's
+      model id. <a href="arch-agents.html">Sub-agents</a> force the gate off so a child can never trip
+      the parent turn's evaluator, and <a href="arch-cron.html">cron</a> and headless turns run with it
+      off too. Cron instead verifies its own runs with a separate <code>cron_verify</code> step; see
+      <a href="arch-goals.html">The goal loop</a>.</p>
     <p>The completion gate calls the Stop hooks; it does not register one. That matters when you read the
       transcript: the gate's own deliverable and verification checks emit the same
       <code>stop_hook_block</code> frame, which renders as <b>Continuing (Stop hook)</b>, so a turn can

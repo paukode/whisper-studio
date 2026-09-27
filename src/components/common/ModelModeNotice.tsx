@@ -1,11 +1,16 @@
 import { useCallback, useState } from 'react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
+import type { ModelMode } from '@/types/settings';
 
 /**
- * One-time first-start notice: fresh installs now default to Local mode, and
- * this explains what the three model modes are and where to change them
- * (Settings > Model mode). The dismissed flag is CONFIG-backed
+ * One-time first-start notice: fresh installs default to Local mode, and this
+ * explains what the three model modes are and where to change them (Settings >
+ * Model mode). It is a notice, not a chooser (the Settings control is the one
+ * place to change the mode), and it states the mode the config ACTUALLY has:
+ * an upgrader who never dismissed it may be in Cloud or Hybrid mode (the
+ * notice renders only after the loaded config, so the mode is the real one).
+ * The dismissed flag is CONFIG-backed
  * (config.modeNoticeSeen, persisted via PUT /api/config): localStorage is
  * origin-keyed, and the Mac app shell serves the SPA from a fresh localhost
  * port when the old one is taken, which wiped the flag and re-showed the
@@ -34,15 +39,17 @@ function markSeen(): void {
   }
 }
 
-const MODES: { name: string; desc: string }[] = [
+const MODES: { mode: ModelMode; name: string; desc: string }[] = [
   {
+    mode: 'local',
     name: 'Local',
     desc:
       'Everything runs on this Mac and nothing leaves it. Transcription works ' +
       'out of the box; for chat, install an on-device model from Settings > ' +
-      'Models > Discover. You start in this mode.',
+      'Models > Discover.',
   },
   {
+    mode: 'hybrid',
     name: 'Hybrid',
     desc:
       'On-device where it is cheap and private (embeddings, entity extraction), ' +
@@ -50,6 +57,7 @@ const MODES: { name: string; desc: string }[] = [
       'credentials for the cloud side.',
   },
   {
+    mode: 'cloud',
     name: 'Cloud',
     desc: 'Every capability runs on cloud models via your AWS account.',
   },
@@ -57,6 +65,8 @@ const MODES: { name: string; desc: string }[] = [
 
 export const ModelModeNotice: React.FC = () => {
   const configSeen = useSettingsStore((s) => s.config.modeNoticeSeen);
+  const currentMode = useSettingsStore((s) => s.config.modelMode);
+  const currentName = MODES.find((m) => m.mode === currentMode)?.name ?? currentMode;
   const markModeNoticeSeen = useSettingsStore((s) => s.markModeNoticeSeen);
   const [dismissed, setDismissed] = useState(seen);
   const openSettings = useUIStore((s) => s.openSettings);
@@ -87,7 +97,7 @@ export const ModelModeNotice: React.FC = () => {
       >
         <div className="whisper-dialog__header">
           <h2 className="whisper-dialog__title" id="mode-notice-title">
-            You&apos;re starting in Local mode
+            You&apos;re in {currentName} mode
           </h2>
         </div>
         <div className="whisper-dialog__body">
@@ -99,14 +109,21 @@ export const ModelModeNotice: React.FC = () => {
             {MODES.map((m) => (
               <div
                 key={m.name}
+                data-testid={`mode-notice-${m.mode}`}
+                aria-current={m.mode === currentMode ? 'true' : undefined}
                 style={{
                   padding: '10px 14px',
                   borderRadius: 10,
                   background: 'var(--bg-elevated)',
-                  border: '1px solid var(--border)',
+                  border: m.mode === currentMode ? '1px solid var(--accent)' : '1px solid var(--border)',
                 }}
               >
-                <div style={{ fontWeight: 600 }}>{m.name}</div>
+                <div style={{ fontWeight: 600 }}>
+                  {m.name}
+                  {m.mode === currentMode && (
+                    <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}> (current)</span>
+                  )}
+                </div>
                 <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>
                   {m.desc}
                 </div>

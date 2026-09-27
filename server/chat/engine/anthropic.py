@@ -85,6 +85,10 @@ class AnthropicAdapter:
         self._loop = loop
         self._executor = executor
         self._client = _get_bedrock_client()
+        # The round in flight, for inflight_usage: (meter, label) and the
+        # characters of content received so far.
+        self._inflight = None
+        self._inflight_received = 0
         # Per-model metadata, driving the output cap (chat_model_meta.max_output)
         # and the effort mapping ("ultracode" has no fixed wire value; it rides
         # this model's own top reasoning rung).
@@ -190,18 +194,42 @@ class AnthropicAdapter:
 
     # ── One streamed round ────────────────────────────────────────────────────
 
+    def inflight_usage(self) -> Usage | None:
+        """What the round in flight has cost so far, for the engine to record
+        when the round ends without a RoundResult (a mid-stream error, a
+        retry, a Stop): the prompt counts message_start reported plus the
+        output as characters / 4 of what arrived. None when no round is in
+        flight or the provider never started one (nothing was billed)."""
+        inflight = getattr(self, "_inflight", None)
+        if inflight is None:
+            return None
+        meter, label = inflight
+        partial = meter.partial(self._inflight_received, label=label)
+        return Usage(**partial) if partial else None
+
     async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
         """Yield neutral RoundEvents for one model round. Raises
         PromptTooLongError / WhisperAPIError at invoke time (engine handles)."""
+        from server.costs.capture import ClaudeStreamUsage
+
+        meter = ClaudeStreamUsage()
+        label = f"{self.model_key} round {round_num}"
+        self._inflight = (meter, label)
+        self._inflight_received = 0
+        # Characters of the exact body posted: the input estimate should the
+        # stream report no usage at all. Built in the invoke worker, as before.
+        posted = {"chars": 0}
 
         def _call(messages=messages):
+            body = json.dumps(
+                self._build_body(messages, tools, core_count, round_num, is_last_round)
+            )
+            posted["chars"] = len(body)
             return self._client.invoke_model_with_response_stream(
                 modelId=self.model_id,
                 contentType="application/json",
                 accept="application/json",
-                body=json.dumps(
-                    self._build_body(messages, tools, core_count, round_num, is_last_round)
-                ),
+                body=body,
             )
 
         response = await invoke_with_retry(
@@ -212,6 +240,19 @@ class AnthropicAdapter:
 
         q: asyncio.Queue = asyncio.Queue()
         stop_reading = threading.Event()
+        loop = asyncio.get_running_loop()  # the loop that owns ``q``
+
+        def _post(item) -> None:
+            # asyncio.Queue is not thread-safe: a put_nowait from this worker
+            # resolves the waiting getter without waking the loop, so each
+            # chunk sat until some unrelated wakeup (and under uvloop it
+            # touches libuv state off the loop thread). Hand it over through
+            # the loop instead. A closed loop (shutdown mid-stream) has nobody
+            # left to read, so the item is dropped.
+            try:
+                loop.call_soon_threadsafe(q.put_nowait, item)
+            except RuntimeError:
+                stop_reading.set()
 
         def _read_stream():
             try:
@@ -224,24 +265,21 @@ class AnthropicAdapter:
                         for ekey, canonical in _STREAM_ERROR_KEYS.items():
                             if ekey in event:
                                 msg = (event[ekey] or {}).get("message", canonical)
-                                q.put_nowait(
-                                    classify_bedrock_error(Exception(f"{canonical}: {msg}"))
-                                )
+                                _post(classify_bedrock_error(Exception(f"{canonical}: {msg}")))
                                 return
                         continue
-                    q.put_nowait(json.loads(chunk["bytes"].decode("utf-8")))
+                    _post(json.loads(chunk["bytes"].decode("utf-8")))
                 if not stop_reading.is_set():
-                    q.put_nowait(None)
+                    _post(None)
             except Exception as e:
                 if not stop_reading.is_set():
-                    q.put_nowait(e)
+                    _post(e)
 
         self._loop.run_in_executor(self._executor, _read_stream)
 
         content_blocks: list[dict] = []
         current_block: dict | None = None
         stop_reason = "end_turn"
-        in_tok = out_tok = cache_read = cache_creation = 0
 
         try:
             while True:
@@ -256,14 +294,12 @@ class AnthropicAdapter:
                     yield RoundError(message=api_err.user_message, retryable=api_err.is_retryable)
                     return
                 event_type = data.get("type")
+                # Usage: message_start (prompt), message_delta (cumulative
+                # output, the last value is the count), message_stop (Bedrock's
+                # invocationMetrics trailer).
+                meter.observe(data)
 
-                if event_type == "message_start":
-                    usage = data.get("message", {}).get("usage", {})
-                    in_tok += usage.get("input_tokens", 0)
-                    cache_read += usage.get("cache_read_input_tokens", 0)
-                    cache_creation += usage.get("cache_creation_input_tokens", 0)
-
-                elif event_type == "content_block_start":
+                if event_type == "content_block_start":
                     block = data.get("content_block", {})
                     current_block = {
                         "type": block.get("type"),
@@ -288,6 +324,7 @@ class AnthropicAdapter:
                     ):
                         text = delta.get("thinking", "")
                         current_block["text"] += text
+                        self._inflight_received += len(text)
                         yield ThinkingDelta(text=text)
                     elif (
                         delta.get("type") == "signature_delta"
@@ -302,13 +339,16 @@ class AnthropicAdapter:
                     ):
                         text = delta.get("text", "")
                         current_block["text"] += text
+                        self._inflight_received += len(text)
                         yield TextDelta(text=text)
                     elif (
                         delta.get("type") == "input_json_delta"
                         and current_block
                         and current_block["type"] == "tool_use"
                     ):
-                        current_block["input_json"] += delta.get("partial_json", "")
+                        piece = delta.get("partial_json", "")
+                        current_block["input_json"] += piece
+                        self._inflight_received += len(piece)
                         # A large tool argument (a whole HTML app) streams for
                         # minutes with nothing else to show: report its size.
                         _n = len(current_block["input_json"])
@@ -339,7 +379,6 @@ class AnthropicAdapter:
 
                 elif event_type == "message_delta":
                     stop_reason = data.get("delta", {}).get("stop_reason", stop_reason)
-                    out_tok += data.get("usage", {}).get("output_tokens", 0)
         finally:
             stop_reading.set()
             try:
@@ -349,8 +388,14 @@ class AnthropicAdapter:
             except Exception:
                 pass
 
+        usage = Usage(**meter.result(posted["chars"], self._inflight_received, label=label))
         # Cache canary: caching on but nothing read from cache by round 3+.
-        if self.caching_on and round_num >= 2 and cache_read == 0 and not _CACHE_CANARY["fired"]:
+        if (
+            self.caching_on
+            and round_num >= 2
+            and usage.cache_read_tokens == 0
+            and not _CACHE_CANARY["fired"]
+        ):
             _CACHE_CANARY["fired"] = True
             log.warning(
                 "prompt_caching is ON but cache_read is still 0 after %d rounds — "
@@ -359,15 +404,13 @@ class AnthropicAdapter:
                 round_num + 1,
             )
 
+        # The round completed: its cost travels on the RoundResult, so the
+        # engine must not also record it as an unfinished attempt.
+        self._inflight = None
         yield RoundResult(
             stop_reason=stop_reason,
             content=_to_canonical_content(content_blocks),
-            usage=Usage(
-                input_tokens=in_tok,
-                output_tokens=out_tok,
-                cache_read_tokens=cache_read,
-                cache_write_tokens=cache_creation,
-            ),
+            usage=usage,
         )
 
 

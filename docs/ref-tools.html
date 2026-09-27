@@ -245,7 +245,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>lsp_diagnostics</code></td><td>Errors, warnings, and type diagnostics for a file.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>lsp_diagnostics</code></td><td>Errors and warnings for a file: ruff for Python (the project's ruff config applies), the workspace's own ESLint for JS/TS.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>lsp_hover</code></td><td>Type annotations and documentation for a symbol at a position.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>lsp_references</code></td><td>Find all usages of a symbol at a specific location.</td><td><span class="badge badge--muted">read</span></td></tr>
       </tbody>
@@ -380,7 +380,11 @@
         <tr><td><code>read_mcp_resource</code></td><td>Read the content of a specific MCP resource by server name and URI.</td><td><span class="badge badge--muted">read</span></td></tr>
       </tbody>
     </table></div>
-    <p>MCP servers themselves come in two transports (<code class="path">server/mcp.py</code>): local
+    <p>One registry owns them (<code class="path">server/mcp.py</code>): its <code>reconcile()</code>
+      is the only place servers start and stop, run after every change in Settings and whenever
+      <code class="path">mcp_servers.json</code> changes on disk, and each change publishes an
+      <code>mcp_changed</code> event so every window shows the same list without a restart.
+      MCP servers themselves come in two transports: local
       servers spawned as stdio child processes, and <b>remote HTTP servers</b> reached over streamable
       HTTP (a <code>url</code> plus an optional bearer token read from an environment variable named
       by <code>bearer_token_env_var</code>, never stored raw in config). Each server also carries its
@@ -469,15 +473,17 @@
     <h2 id="preview">Live preview &amp; browser</h2>
     <p>A dev-server-plus-headless-browser session for building and checking web UIs. The read-only
       tools (logs, snapshots, inspection) run freely; anything that starts a server or drives the page
-      pauses for approval. Note that <code>preview_eval</code> is marked <em>destructive</em> since it
+      follows the permission mode, except that a named <code class="path">.whisper/launch.json</code>
+      config whose command you approved once starts without asking (see <code>preview_start</code>
+      below). Note that <code>preview_eval</code> is marked <em>destructive</em> since it
       runs arbitrary page JavaScript. See <a href="arch-preview.html">Live preview &amp; browser</a>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>preview_start</code></td><td>Start a dev server for a preview session, by name or with an ad-hoc command.</td><td><span class="badge">approval</span></td></tr>
-        <tr><td><code>preview_stop</code></td><td>Stop a preview session's dev server and close its browser.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>preview_start</code></td><td>Start a dev server for a preview session, by name or with an ad-hoc command. A name from <code class="path">.whisper/launch.json</code> follows the mode until you approve its command once (a new or changed command needs that again), then starts without asking in any permission mode; an ad-hoc command follows the mode every time. The session belongs to the chat that started it; a name another chat's preview holds is refused, naming that chat.</td><td><span class="badge">approval</span></td></tr>
+        <tr><td><code>preview_stop</code></td><td>Stop a preview session's dev server and close its browser. Only the chat that started a preview can stop it (the Settings kill switch can stop any).</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>preview_navigate</code></td><td>Navigate the preview browser to an http:// or https:// URL.</td><td><span class="badge">approval</span></td></tr>
-        <tr><td><code>preview_list</code></td><td>List all running preview sessions with their status.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>preview_list</code></td><td>List running preview sessions: this chat's with full status (<code>this_chat</code>), other chats' as metadata only (<code>other_chats</code>), which can be inspected but not stopped or driven.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>preview_logs</code></td><td>Read the dev server's stdout and stderr for a session.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>preview_console_logs</code></td><td>Read the browser console output for a session.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>preview_network</code></td><td>Read network requests made by the page (method, URL, status).</td><td><span class="badge badge--muted">read</span></td></tr>

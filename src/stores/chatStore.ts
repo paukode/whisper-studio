@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import type { ChatMessage, ApprovalCategory, ToolUseEvent, PreviewKind, RiskHint, TeamProgressEvent, TeamReportData } from '@/types/chat';
+import type { ChatMessage, ApprovalCategory, ToolUseEvent, PreviewKind, RiskHint, TeamProgressEvent, TeamReportData, TurnModelSettings } from '@/types/chat';
 import { foldTeamProgressIntoMap, foldTeamResultsInto } from '@/hooks/chatStream/teamProgress';
 
 /**
@@ -17,7 +17,14 @@ export interface PendingApproval {
   payload: Record<string, unknown>;
   riskHint?: RiskHint | null;
   explanation?: string | Record<string, unknown> | null;
+  /** A hard floor the server asks for every time: the card offers no
+   *  "Yes, all" / "Block", since the server would ignore that choice. */
+  alwaysAsks: boolean;
   sessionId: string;
+  /** Model, effort and response length of the turn that paused here. The
+   *  continuation resumes on exactly these, whatever the (window-wide)
+   *  picker shows by the time the user answers. */
+  turnSettings: TurnModelSettings;
 }
 
 /** Session approval/denial memory per category */
@@ -78,6 +85,12 @@ export interface ChatState {
   sessionInputTokens: number;
   sessionOutputTokens: number;
   sessionCost: number;
+  /** The recorded session's pricing note (the dated GPT list-rate note when
+   *  any round ran on GPT, '' otherwise) and how many of its rounds had
+   *  estimated token counts. From /api/costs/session/{id}, refreshed when a
+   *  session is opened and after each turn. */
+  sessionCostNote: string;
+  sessionEstimatedRounds: number;
   /** Live context-window usage for the turn, from the usage SSE frame's
    *  context_used/context_max (real per-round token counts). Drives the
    *  composer readout's context meter. 0 = not yet reported this session. */
@@ -130,8 +143,6 @@ export interface ChatState {
   clearCurrentApproval: () => void;
   setSessionApproval: (category: ApprovalCategory, mode: SessionApprovalMode) => void;
   resetSessionApprovals: () => void;
-  /** Look up the session-memory mode for a category. */
-  getSessionApproval: (category: string) => SessionApprovalMode;
 
   // Auto-mode circuit breaker
   setAutoModeBreaker: (breaker: AutoModeBreaker) => void;
@@ -150,7 +161,12 @@ export interface ChatState {
   /** Seed the session-cumulative totals from the server's recorded spend
    *  (session hydration). Never lowers a running total, so it can't undo a
    *  turn that streamed while the fetch was in flight. */
-  hydrateSessionUsage: (input: number, output: number, cost: number) => void;
+  hydrateSessionUsage: (
+    input: number,
+    output: number,
+    cost: number,
+    marks?: { note: string; estimatedRounds: number },
+  ) => void;
   setThinkingElapsed: (ms: number) => void;
 
   // Tool tracking
@@ -200,6 +216,8 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   sessionInputTokens: 0,
   sessionOutputTokens: 0,
   sessionCost: 0,
+  sessionCostNote: '',
+  sessionEstimatedRounds: 0,
   contextUsed: 0,
   contextMax: 0,
   sseEventCount: 0,
@@ -375,8 +393,8 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
    * Show this approval, or queue it behind the one already on screen.
    *
    * ALWAYS one of the two — never a silent drop. Routing on session memory
-   * (allow → execute, deny → refuse) belongs to the caller, which decides
-   * before it gets here; this used to re-check `sessionApprovals` and return
+   * (allow → execute, deny → refuse) belongs to the server, which applies it
+   * before it ever asks; this used to re-check `sessionApprovals` and return
    * early for those modes, so a caller that skipped the check (or a category
    * whose mode changed in between) lost the approval with no card, no queue
    * entry and no trace. Showing a card the user did not strictly need is the
@@ -415,10 +433,6 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
 
   resetSessionApprovals: () => {
     set({ sessionApprovals: { ...DEFAULT_SESSION_APPROVALS } });
-  },
-
-  getSessionApproval: (category: string) => {
-    return get().sessionApprovals[category] ?? 'ask';
   },
 
   // ── Auto-mode circuit breaker ──
@@ -470,12 +484,15 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
     });
   },
 
-  hydrateSessionUsage: (input: number, output: number, cost: number) => {
+  hydrateSessionUsage: (input, output, cost, marks) => {
     const prev = get();
     set({
       sessionInputTokens: Math.max(prev.sessionInputTokens, input),
       sessionOutputTokens: Math.max(prev.sessionOutputTokens, output),
       sessionCost: Math.max(prev.sessionCost, cost),
+      ...(marks
+        ? { sessionCostNote: marks.note, sessionEstimatedRounds: marks.estimatedRounds }
+        : {}),
     });
   },
 

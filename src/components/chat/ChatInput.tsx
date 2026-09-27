@@ -1,7 +1,8 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useActiveChatStore, getActiveChatStore } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { useMcpStore } from '@/stores/mcpStore';
+import { chatModelBlockReason, useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useChatStream } from '@/hooks/useChatStream';
 import { updatePermissions } from '@/api/settings';
@@ -35,6 +36,7 @@ import { TokenCounter } from './TokenCounter';
 import { MoreMenu, type MoreSection } from './MoreMenu';
 import { useVoiceStore } from '@/stores/voiceStore';
 import { voiceController } from '@/services/voiceController';
+import { settleWorkspaceOps } from '@/services/workspaceConnection';
 import { VoiceBar } from './VoiceBar';
 
 export interface ChatInputProps {
@@ -71,15 +73,20 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   // Voice mode (Nova 2 Sonic). While a conversation is open the text row is
   // replaced by the VoiceBar unless the user asked to type; typed text then
   // goes to the voice model as a cross-modal turn instead of the SSE chat.
+  // The conversation belongs to the session it started in: every other
+  // session's composer is an ordinary chat composer.
   const voiceStatus = useVoiceStore((s) => s.status);
+  const voiceSessionId = useVoiceStore((s) => s.sessionId);
   const voiceTyping = useVoiceStore((s) => s.typing);
   const voiceAvailable = useVoiceStore((s) => s.available);
   const voiceReason = useVoiceStore((s) => s.unavailableReason);
-  const voiceOn = voiceStatus !== 'off';
+  const voiceOn = voiceStatus !== 'off' && voiceSessionId === sessionId;
+  // Subscribed so the composer re-renders whenever a hung-up conversation
+  // starts or stops draining; which session it drains for comes from the
+  // controller's per-socket record.
   const voiceDraining = useVoiceStore((s) => s.draining);
-  const voiceRunSession = useVoiceStore((s) => s.runSessionId);
-  // Voice is off but its delegated work is still running for this session.
-  const voiceWorking = !voiceOn && voiceDraining > 0 && (!voiceRunSession || voiceRunSession === sessionId);
+  // Voice is off here but its delegated work is still running for this session.
+  const voiceWorking = !voiceOn && voiceDraining > 0 && voiceController.hasDrainingRuns(sessionId);
   useEffect(() => { void voiceController.loadStatus(); }, []);
   const { mic, handleMicClick, inputTextRef, submitRef, stopMic } = useDictationInput({
     text,
@@ -111,6 +118,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // so the user gets early warning that writes may fail, without
       // blocking the connection (os.access lies on network mounts /
       // root / macOS extended ACLs, so we never refuse based on it).
+      // A disconnect clicked just before must reach the server first.
+      await settleWorkspaceOps();
       const data = await post<{ path?: string; writable?: boolean }>(
         '/api/workspace/connect',
         { path: wsPath },
@@ -333,7 +342,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
   const autoMemory = useSettingsStore((s) => s.autoMemory);
   const setAutoMemory = useSettingsStore((s) => s.setAutoMemory);
   const skills = useSettingsStore((s) => s.skills);
-  const mcpServers = useSettingsStore((s) => s.mcpServers);
+  const mcpServers = useMcpStore((s) => s.servers);
 
   const openWorkspaceConnect = useUIStore((s) => s.openWorkspaceConnect);
   const openSettings = useUIStore((s) => s.openSettings);
@@ -383,6 +392,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
     acItems,
     acVisible,
     acIndex,
+    acHeading,
     acRect,
     setAcIndex,
     closeAc,
@@ -449,12 +459,22 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
         return;
       }
 
-      // Voice mode is on: a typed message is a cross-modal turn for the voice
-      // model (it hears it as if spoken); the normal SSE turn is bypassed.
-      if (useVoiceStore.getState().status !== 'off') {
-        inputTextRef.current = '';
-        setText('');
-        voiceController.sendText(trimmed);
+      // Voice mode is on in THIS session: a typed message is a cross-modal
+      // turn for the voice model (it hears it as if spoken); the normal SSE
+      // turn is bypassed. Only clear the composer once the text was sent: a
+      // call that is still connecting or already ending has no open socket.
+      const voice = useVoiceStore.getState();
+      if (voice.status !== 'off' && voice.sessionId === sessionId) {
+        if (voiceController.sendText(trimmed)) {
+          inputTextRef.current = '';
+          setText('');
+        } else {
+          useUIStore.getState().addToast({
+            type: 'error',
+            message: 'Not delivered: the voice conversation is not connected right now. Your text is still in the box.',
+            duration: 5000,
+          });
+        }
         return;
       }
 
@@ -474,6 +494,16 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
           setAttachments([]);
         }
         return;
+      }
+
+      // No usable chat model (Local mode before an on-device model is installed):
+      // refuse with the reason, keeping the typed text, instead of sending.
+      {
+        const blocked = chatModelBlockReason(useSettingsStore.getState());
+        if (blocked) {
+          useUIStore.getState().addToast({ type: 'error', message: blocked, duration: 6000 });
+          return;
+        }
       }
 
       // Lazy on-device load: in local/hybrid mode a selected model isn't loaded
@@ -553,7 +583,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- inputTextRef/stopMic are stable (refs/callback from useDictationInput)
-    [handleSlashCommand, closeAc, attachments, chatStream, waitForUploads, attachmentsRef, setAttachments, approvePlan, skills],
+    [handleSlashCommand, closeAc, attachments, chatStream, waitForUploads, attachmentsRef, setAttachments, approvePlan, skills, sessionId],
   );
 
   const handleSubmit = useCallback(
@@ -736,6 +766,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
             className="skill-autocomplete"
             role="listbox"
             aria-label="Autocomplete suggestions"
+            data-heading={acHeading}
             style={{
               position: 'fixed',
               left: acRect.left,
@@ -843,7 +874,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
             className="btn btn-chat-stop"
             type="button"
             title={isStreaming ? 'Stop' : 'Stop the background work'}
-            onClick={isStreaming ? handleAbort : () => voiceController.cancelRuns()}
+            onClick={isStreaming ? handleAbort : () => voiceController.cancelRuns(sessionId)}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/>

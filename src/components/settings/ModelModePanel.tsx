@@ -4,7 +4,6 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { indexEngines } from '@/api/workspace';
 import type { IndexEngineOption } from '@/api/workspace';
 import type { IndexCapability, ModelMode } from '@/types/settings';
-import { ConfigJsonLink } from './ConfigEditorDialog';
 
 interface Capability {
   key: IndexCapability;
@@ -25,8 +24,8 @@ const llmOption = (o: IndexEngineOption): [string, string] => [
   o.local
     ? o.downloaded
       ? o.label
-      : `${o.label} — downloads on first use`
-    : 'Claude Haiku — Bedrock',
+      : `${o.label} (downloads on first use)`
+    : 'Claude Haiku (Bedrock)',
 ];
 
 /** Hybrid-mode per-capability backend options. The first option in each list is
@@ -40,14 +39,14 @@ const buildCapabilities = (engines: IndexEngineOption[]): Capability[] => [
     label: 'Embeddings (search index)',
     hint: 'Each backend keeps its own index, so a folder is indexed once per embedder. Switching never rebuilds the other.',
     cloudDefault: 'cohere',
-    options: [['cohere', 'Cohere Embed v4 — Bedrock'], ['qwen3', 'Qwen3 — on-device']],
+    options: [['cohere', 'Cohere Embed v4 (Bedrock)'], ['qwen3', 'Qwen3 (on-device)']],
   },
   {
     key: 'rerank',
     label: 'Reranker',
     hint: 'Reorders retrieved passages before grounding.',
     cloudDefault: 'cohere',
-    options: [['cohere', 'Cohere Rerank 3.5 — Bedrock'], ['qwen3', 'Qwen3 Reranker — on-device']],
+    options: [['cohere', 'Cohere Rerank 3.5 (Bedrock)'], ['qwen3', 'Qwen3 Reranker (on-device)']],
   },
   {
     key: 'ner',
@@ -56,7 +55,7 @@ const buildCapabilities = (engines: IndexEngineOption[]): Capability[] => [
     cloudDefault: 'haiku',
     options: [
       ...engines.filter((o) => !o.local).map(llmOption),
-      ['gliner', 'GLiNER — on-device extractor'],
+      ['gliner', 'GLiNER (on-device extractor)'],
       ...engines.filter((o) => o.local).map(llmOption),
     ],
   },
@@ -67,7 +66,7 @@ const buildCapabilities = (engines: IndexEngineOption[]): Capability[] => [
     cloudDefault: 'haiku',
     options: [
       ...engines.map(llmOption),
-      ['local', 'On-device — follows the active local model'],
+      ['local', 'On-device (follows the active local model)'],
       ['none', 'Off'],
     ],
   },
@@ -93,11 +92,12 @@ export const ModelModePanel: React.FC = () => {
   });
   const capabilities = buildCapabilities(enginesQuery.data?.engines ?? FALLBACK_ENGINES);
 
-  // Changes persist immediately, but the model picker + any loaded on-device
-  // model are initialized at startup — so the running app only fully switches on
-  // a reload. Rather than interrupt with a modal (which would fire before a
-  // hybrid user can configure the pickers), surface a non-blocking banner that
-  // stays until they reload, so they can finish configuring first.
+  // Changes persist immediately and the composer's model picker follows the
+  // mode live (setModelMode re-reads /api/models once the mode is saved). The
+  // indexing side and any loaded on-device model are set up at startup, so they
+  // only fully switch on a reload. Rather than interrupt with a modal (which
+  // would fire before a hybrid user can configure the pickers), surface a
+  // non-blocking banner that stays until they reload.
   const [pendingReload, setPendingReload] = useState(false);
 
   const changeMode = (next: ModelMode) => {
@@ -115,7 +115,8 @@ export const ModelModePanel: React.FC = () => {
   return (
     <div className="settings-form" style={{ maxWidth: 560 }}>
       <p className="settings-hint">
-        Where indexing and retrieval run. Chat model selection is separate (the toolbar picker).
+        Where chat, indexing and retrieval run. The mode also decides which chat models the
+        toolbar picker offers: Local offers only on-device models.
       </p>
 
       {pendingReload && (
@@ -128,7 +129,8 @@ export const ModelModePanel: React.FC = () => {
           }}
         >
           <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>
-            Saved. Reload the app to switch indexing, retrieval, and the model picker to the new mode.
+            Saved. The model picker already follows the new mode; reload the app to switch
+            indexing and retrieval too.
           </span>
           <button
             type="button"
@@ -148,9 +150,9 @@ export const ModelModePanel: React.FC = () => {
         value={mode}
         onChange={(e) => changeMode(e.target.value as ModelMode)}
       >
-        <option value="cloud">Cloud — all Bedrock</option>
-        <option value="hybrid">Hybrid — pick per capability</option>
-        <option value="local">Local — all on-device</option>
+        <option value="cloud">Cloud (all Bedrock)</option>
+        <option value="hybrid">Hybrid (pick per capability)</option>
+        <option value="local">Local (all on-device)</option>
       </select>
       <p className="settings-hint">{MODE_BLURB[mode]}</p>
 
@@ -177,11 +179,11 @@ export const ModelModePanel: React.FC = () => {
 
       <p className="settings-hint" style={{ marginTop: 12 }}>
         Index storage is per embedder: a folder indexed with one embedder isn't re-indexed when you
-        switch — the other index stays put. Re-index a folder once under a backend to search it there.
+        switch, and the other index stays put. Re-index a folder once under a backend to search it there.
       </p>
 
       <p className="settings-hint" style={{ marginTop: 4 }}>
-        On-device chat models come from your config. Add one by editing <ConfigJsonLink />.
+        Install on-device chat models from Settings &gt; Models &gt; Discover.
       </p>
     </div>
   );

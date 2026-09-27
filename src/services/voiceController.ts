@@ -8,6 +8,7 @@ import { recordingController } from '@/services/recordingController';
 import { applyVoiceEvent, mergeSpoken } from '@/services/voiceEvents';
 import { buildHistoryPayload } from '@/hooks/chatStream/history';
 import { VoiceServerEventSchema, VoiceStatusSchema } from '@/types/schemas/voice.schema';
+import { settleWorkspaceOps } from './workspaceConnection';
 import type { ChatMessage, TeamReportData, ToolUseEvent } from '@/types/chat';
 
 /**
@@ -83,7 +84,19 @@ class VoiceController {
 
   async start(sessionId: string | null): Promise<void> {
     const store = useVoiceStore.getState();
-    if (store.status !== 'off') return;
+    if (store.status !== 'off') {
+      // One conversation at a time, and it belongs to the session it started
+      // in. Asked for from another session, say so instead of doing nothing.
+      if (store.sessionId !== sessionId) {
+        useUIStore.getState().addToast({
+          type: 'info',
+          message: 'Voice is already on in another session. End that conversation first.',
+          duration: 4000,
+          persist: false,
+        });
+      }
+      return;
+    }
     const sid = sessionId ?? useSessionStore.getState().createSession();
     this.sessionId = sid;
     const myToken = ++this.startToken;
@@ -181,12 +194,19 @@ class VoiceController {
     }
   }
 
-  /** A typed turn while voice is on (cross-modal input). */
-  sendText(text: string): void {
+  /** A typed turn while voice is on (cross-modal input). Returns whether it
+   *  was actually sent: while the call is still connecting or already ending
+   *  there is no open socket, and the caller must keep the text. */
+  sendText(text: string): boolean {
     const clean = text.trim();
     const ws = this.ws;
-    if (!clean || !ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ type: 'text', content: clean }));
+    if (!clean || !ws || ws.readyState !== WebSocket.OPEN) return false;
+    try {
+      ws.send(JSON.stringify({ type: 'text', content: clean }));
+    } catch {
+      return false;
+    }
+    return true;
   }
 
   /** The user clicked the pending request card (Yes / No / an option). The
@@ -266,11 +286,38 @@ class VoiceController {
     store.adjustDraining(-1);
   }
 
-  /** Stop the background work of hung-up conversations (the chat's Stop or
-   *  ESC while voice is off but the assistant is still finishing). */
-  cancelRuns(): void {
+  /** Whether a hung-up conversation of this chat session is still finishing
+   *  delegated work. Every change to this answer also moves the store's
+   *  `draining` count (onDraining and dropDraining update both together), so
+   *  a component that subscribes to that count re-reads this in time. */
+  hasDrainingRuns(sessionId: string | null): boolean {
+    if (!sessionId) return false;
+    for (const ws of this.draining) {
+      if (this.socketSession.get(ws) === sessionId) return true;
+    }
+    return false;
+  }
+
+  /** The chat session a delegated run belongs to: the session of the call
+   *  that started it, live or hung up and still draining. Null once that
+   *  call's socket is gone. Every change to this answer comes with a voice
+   *  store update (the run's first event, or dropDraining), so a component
+   *  rendering the store's run work re-reads it in time. */
+  runSession(runId: string): string | null {
+    for (const [ws, runs] of this.socketRuns) {
+      if (runs.has(runId)) return this.socketSession.get(ws) ?? null;
+    }
+    return null;
+  }
+
+  /** Stop the background work of this session's hung-up conversations (the
+   *  chat's Stop or ESC while voice is off but the assistant is still
+   *  finishing). Other sessions' delegated work keeps running. */
+  cancelRuns(sessionId: string | null): void {
+    if (!sessionId) return;
     const payload = JSON.stringify({ type: 'cancel' });
     for (const ws of this.draining) {
+      if (this.socketSession.get(ws) !== sessionId) continue;
       if (ws.readyState === WebSocket.OPEN) {
         try { ws.send(payload); } catch { /* socket on its way out */ }
       }
@@ -322,6 +369,8 @@ class VoiceController {
    *  through the same endpoint the Workspace dropdown uses (idempotent). */
   private async syncWorkspace(path: string): Promise<void> {
     try {
+      // A disconnect clicked just before must reach the server first.
+      await settleWorkspaceOps();
       const data = await post<{ path?: string }>('/api/workspace/connect', { path });
       const connected = data?.path || path;
       useUIStore.getState().setWsConnected(true, connected);

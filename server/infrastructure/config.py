@@ -19,8 +19,9 @@ shipped catalog always appears, and a user entry adds a new key or overrides
 specific fields of a shipped entry. ``chat_models_disabled`` (a list of keys in
 the USER and PROJECT layers) drops shipped models the user doesn't want after
 the merge. The PROJECT layer still replaces the catalog wholesale, matching its
-historical semantics. Pricing stays SYSTEM-only (pricing.json) — there is no
-user pricing layer, because user-added local models are always $0.
+historical semantics. Pricing is not part of this config: it is the shipped
+pricing.example.json overlaid by an optional pricing.json of the user's own
+per-key overrides (server/costs/tracker.py).
 
 The latching system caches config snapshots per session so that mid-session
 settings changes don't disrupt an active conversation or invalidate prompt caches.
@@ -30,6 +31,7 @@ brief_mode, permission_mode. These are frozen at session start and
 only refresh when a new session begins.
 """
 
+import functools
 import json
 import logging
 import os
@@ -109,8 +111,11 @@ DEFAULTS = {
     # a stable location; see server/infrastructure/paths.py.
     "data_dir": "",
     "tavily_api_key": "",
-    # Whisper decode language: blank/None = auto-detect, "pl" pins one language,
-    # "pl,en" keeps auto-detection but constrains it to that allowlist.
+    # Transcription languages (the Settings field "Transcription Languages";
+    # the key keeps its historical name). "pl" pins one language, "pl,en"
+    # limits detection to that list. Blank/None means, for Canary, English
+    # plus the Mac's preferred languages it decodes (server/asr/languages.py),
+    # and for Whisper its own detection. Parakeet has no language input.
     "whisper_language": None,
     # The transcript panel's Translate dropdown: "off", "canary" (Canary's
     # native translation, any engine's audio, 25 languages with English on
@@ -174,7 +179,7 @@ DEFAULTS = {
     # the app-owned catalog. Honored in the USER and PROJECT layers (unioned);
     # unknown names are ignored. Default [] = show system models + the user's own.
     "chat_models_disabled": [],
-    "default_chat_model": "opus4.8",
+    "default_chat_model": "gpt6-luna",
     "brief_mode": False,
     "permission_mode": "default",  # default | auto | plan | acceptEdits | bypassPermissions | dontAsk
     "permission_explainer_enabled": True,
@@ -269,6 +274,29 @@ _config_cache: dict | None = None
 _config_cache_mtime: float = 0.0
 _config_cache_lock = threading.Lock()
 _CONFIG_CACHE_TTL = 2.0  # seconds
+
+# ── User-layer writes ────────────────────────────────────────────────
+# Held across every read-modify-write of the USER layer (read, change, save as
+# one step) and by every write. Its writers run on the event loop (PUT
+# /api/config, the Settings toggles) and on worker threads (a Discover install
+# finalising, the config tool), so without one lock a write that lands between
+# another writer's read and its save is silently lost. Re-entrant, so a held
+# span can call save_config. Held only for a small file read and write, never
+# across a network call or an await.
+USER_CONFIG_LOCK = threading.RLock()
+
+
+def edits_user_config(fn):
+    """Decorator: run ``fn`` (a whole read-modify-write of the USER layer)
+    holding USER_CONFIG_LOCK, so no other writer lands between its read and its
+    save."""
+
+    @functools.wraps(fn)
+    def _locked(*args, **kwargs):
+        with USER_CONFIG_LOCK:
+            return fn(*args, **kwargs)
+
+    return _locked
 
 
 _OPUS_VERSION_RE = re.compile(r"opus(\d+)\.(\d+)$", re.IGNORECASE)
@@ -679,9 +707,11 @@ def _atomic_write(path: str, text: str) -> None:
 
 def save_config(config: dict):
     """Persist the USER layer (config.user.json, or the legacy config.json while
-    that is still the active user layer)."""
-    _atomic_write(_active_user_config_path(), json.dumps(config, indent=2))
-    _invalidate_cache()
+    that is still the active user layer). A caller that read the layer to build
+    ``config`` holds USER_CONFIG_LOCK across that read and this save."""
+    with USER_CONFIG_LOCK:
+        _atomic_write(_active_user_config_path(), json.dumps(config, indent=2))
+        _invalidate_cache()
 
 
 def _write_config_text(text: str) -> None:
@@ -689,8 +719,9 @@ def _write_config_text(text: str) -> None:
     the next load_config() sees the new contents. Targets the active user layer
     file (config.user.json going forward, or the legacy config.json until the
     split runs)."""
-    _atomic_write(_active_user_config_path(), text)
-    _invalidate_cache()
+    with USER_CONFIG_LOCK:
+        _atomic_write(_active_user_config_path(), text)
+        _invalidate_cache()
 
 
 # Written into a brand-new config.user.json on first launch (packaged app, or
@@ -745,9 +776,9 @@ def migrate_user_config() -> bool:
         return False
 
     if not os.path.exists(legacy_path):
-        # Fresh install: seed the first-run defaults (hybrid + on-device index),
-        # then never touch the file again so the user's settings win afterward.
-        # SYSTEM still supplies the chat-model catalog.
+        # Fresh install: seed the first-run defaults (Local mode, with the dormant
+        # hybrid backends map), then never touch the file again so the user's
+        # settings win afterward. SYSTEM still supplies the chat-model catalog.
         try:
             _atomic_write(user_path, json.dumps(FIRST_RUN_USER_CONFIG, indent=2) + "\n")
             _invalidate_cache()
@@ -905,6 +936,7 @@ def _json_object_span(text: str, key: str) -> tuple[int, int] | None:
     return None
 
 
+@edits_user_config
 def set_feature_flag(flag_name: str, enabled: bool) -> None:
     """Toggle ONE feature flag in the USER config, changing only that boolean and
     preserving every other byte and all formatting.
@@ -1024,18 +1056,24 @@ async def get_config_endpoint():
         safe["_feature_flag_states"] = get_flag_states()
     except Exception:
         pass
+    # Read-only: what the transcription language setting resolves to per
+    # engine, so Settings can show the effective set (not a config key, so
+    # PUT ignores it).
+    try:
+        from server.asr.languages import summary
+
+        safe["_transcription_languages"] = summary()
+    except Exception as e:
+        log.warning("Transcription languages summary failed: %s", e)
     # Include config layer info
     safe["_has_project_config"] = bool(_load_project_config(ws))
     return safe
 
 
-@router.put("")
-async def update_config(request: Request):
-    body = await request.json()
-    # Use the RAW on-disk config as the base, not load_config(). load_config
-    # flattens chat_models for downstream callers — if we wrote that back we'd
-    # lose the rich {id, label, thinking} shape and the per-model metadata.
-    # Body fields overlay on top; everything else is preserved verbatim.
+@edits_user_config
+def _apply_config_update(body: dict) -> None:
+    """Overlay ``body``'s known keys on the RAW user layer and save it, as one
+    locked read-modify-write."""
     raw = _load_user_config()
     # These keys must never be persisted blank: an empty string defeats the
     # config default (dict.get only defaults an ABSENT key) and breaks Bedrock
@@ -1054,5 +1092,15 @@ async def update_config(request: Request):
             value = value.strip()
         raw[key] = value
     save_config(raw)
+
+
+@router.put("")
+async def update_config(request: Request):
+    body = await request.json()
+    # Use the RAW on-disk config as the base, not load_config(). load_config
+    # flattens chat_models for downstream callers; if we wrote that back we'd
+    # lose the rich {id, label, thinking} shape and the per-model metadata.
+    # Body fields overlay on top; everything else is preserved verbatim.
+    _apply_config_update(body)
     log.info("Config updated: %s", list(body.keys()))
     return {"updated": True}

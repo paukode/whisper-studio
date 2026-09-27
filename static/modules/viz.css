@@ -7,6 +7,7 @@
  * ever naming a colour. */
 
 .viz-card {
+    position: relative;
     border: 1px solid var(--border);
     border-radius: 10px;
     background: var(--bg-surface);
@@ -65,6 +66,50 @@
     border: 0;
     background: transparent;
 }
+
+/* ---- Resize grip (MediaResize.tsx): diagrams, charts, screenshots ---------
+ * Quiet until the picture is hovered, like the export actions. The backing
+ * tile keeps the mark visible on a light diagram and a dark screenshot. */
+
+.media-grip {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    width: 18px;
+    height: 18px;
+    border-top-left-radius: 6px;
+    background: color-mix(in srgb, var(--bg-surface) 75%, transparent);
+    cursor: nwse-resize;
+    touch-action: none;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+
+.media-grip::after {
+    content: '';
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    width: 7px;
+    height: 7px;
+    border-right: 2px solid var(--text-muted);
+    border-bottom: 2px solid var(--text-muted);
+    border-bottom-right-radius: 2px;
+}
+
+.viz-card:hover .media-grip,
+.preview-screenshot-card:hover .media-grip,
+.is-resizing .media-grip { opacity: 1; }
+
+@media (hover: none) { .media-grip { opacity: 1; } }
+
+/* The dragged width, never wider than the column it sits in. A plain width
+ * (not min()) so it also sizes the assistant bubble, which shrink-wraps its
+ * content: a percentage there would not count toward the bubble's width. */
+.media-sized { width: var(--media-w); max-width: 100%; }
+
+.is-resizing { user-select: none; }
 
 .viz-error {
     font-family: var(--font-mono, ui-monospace, monospace);

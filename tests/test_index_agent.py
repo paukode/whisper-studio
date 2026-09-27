@@ -60,3 +60,85 @@ def test_run_skips_when_app_is_running(monkeypatch):
 
     monkeypatch.setattr(agent.store, "list_indexed_workspaces", boom)
     assert agent.run() == 0  # returns before iterating
+
+
+def _database_before_the_cost_migrations(monkeypatch, path) -> None:
+    """A sessions.db as an install left it before migrations 021 and 022:
+    session_costs in its old shape (no source or provenance columns)."""
+    import sqlite3
+
+    from server.infrastructure import sessions
+    from server.migrations import runner
+
+    monkeypatch.setattr(sessions, "DB_PATH", path)
+    sessions._ensure_db()
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    runner._ensure_schema_version_table(conn)
+    for m in runner._discover_migrations():
+        if m["version"] >= 21:
+            continue
+        m["migrate"](conn)
+        conn.execute(
+            "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+            (m["version"], m["description"]),
+        )
+    conn.commit()
+    conn.close()
+
+
+def test_a_refresh_before_the_app_ever_migrated_still_logs_its_paid_calls(monkeypatch, tmp_path):
+    # After an update launchd runs the NEW code, possibly before the app has
+    # launched once. The refresh's cost rows must land, not fail on the old
+    # table shape.
+    import sqlite3
+
+    import server.index.pipeline as pipeline
+    from server.costs import tracker
+    from server.migrations import runner
+
+    db = tmp_path / "sessions.db"
+    _database_before_the_cost_migrations(monkeypatch, str(db))
+    for mod in (runner, tracker):
+        monkeypatch.setattr(mod, "DB_PATH", str(db))
+    monkeypatch.setattr(runner, "STORAGE_DIR", str(tmp_path))
+    monkeypatch.setattr(tracker, "_ensured", set())
+
+    monkeypatch.setattr(agent, "_app_running", lambda: False)
+    monkeypatch.setattr(agent.store, "list_indexed_workspaces", lambda: ["/ws"])
+    monkeypatch.setattr(agent.store, "has_index", lambda ws: True)
+    monkeypatch.setattr(agent.store, "get_meta", lambda ws: {})
+    monkeypatch.setattr(agent.store, "set_meta", lambda ws, **kw: None)
+    monkeypatch.setattr(
+        agent.wssettings,
+        "get_settings",
+        lambda ws: {"refresh_when_closed": True, "schedule": {"enabled": True}},
+    )
+
+    def build(ws):
+        # What an embed call of the refresh logs.
+        tracker.record_turn("", 0, "cohere.embed-v4:0", 1200, 0, source="index")
+
+    monkeypatch.setattr(pipeline, "build", build)
+
+    assert agent.run() == 0
+    conn = sqlite3.connect(db)
+    rows = conn.execute("SELECT model, input_tokens, source FROM session_costs").fetchall()
+    conn.close()
+    assert rows == [("cohere.embed-v4:0", 1200, "index")]
+
+
+def test_a_failed_migration_refreshes_nothing(monkeypatch):
+    import server.migrations.runner as runner
+
+    def broken():
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(agent, "_app_running", lambda: False)
+    monkeypatch.setattr(runner, "run_migrations", broken)
+
+    def boom():
+        raise AssertionError("must not refresh on an unmigrated database")
+
+    monkeypatch.setattr(agent.store, "list_indexed_workspaces", boom)
+    assert agent.run() == 1

@@ -275,7 +275,7 @@ def test_recall_selector_gets_tier_qualified_keys(mem_dirs, monkeypatch):
 
     captured = {}
 
-    async def fake_selector(query, manifest, model_id):
+    async def fake_selector(query, manifest, model_id, session_id=""):
         captured["manifest"] = manifest
         return ["global/f0.md", "global/f3.md"]
 
@@ -294,7 +294,7 @@ def test_recall_selector_bare_filename_fallback(mem_dirs, monkeypatch):
     for i in range(7):
         _seed(mem_dirs, "global", f"f{i}.md")
 
-    async def fake_selector(query, manifest, model_id):
+    async def fake_selector(query, manifest, model_id, session_id=""):
         return ["f2.md"]
 
     monkeypatch.setattr(RC, "_query_selector", fake_selector)
@@ -472,7 +472,7 @@ def test_recall_selector_nested_path_without_tier_prefix(mem_dirs, monkeypatch):
         "---\nname: AWS\ndescription: aws pointers\ntype: reference\n---\n\naws body\n"
     )
 
-    async def fake_selector(query, manifest, model_id):
+    async def fake_selector(query, manifest, model_id, session_id=""):
         assert "global/aws/creds.md" in manifest
         return ["aws/creds.md"]  # tier prefix stripped by the model
 
@@ -486,7 +486,7 @@ def test_recall_selector_duplicate_keys_deduped(mem_dirs, monkeypatch):
     for i in range(6):
         _seed(mem_dirs, "global", f"f{i}.md")
 
-    async def fake_selector(query, manifest, model_id):
+    async def fake_selector(query, manifest, model_id, session_id=""):
         return ["global/f1.md", "f1.md", "global/f1.md"]
 
     monkeypatch.setattr(RC, "_query_selector", fake_selector)

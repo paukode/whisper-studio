@@ -65,8 +65,6 @@ def _lock_for(session_id: str) -> asyncio.Lock:
 # these columns already existing.
 _MIGRATED_SESSION_COLUMNS = (
     ("workspace_path", "TEXT DEFAULT ''"),  # migration 002
-    ("compaction_count", "INTEGER DEFAULT 0"),  # migration 002
-    ("latched_config", "TEXT DEFAULT '{}'"),  # migration 002
     ("pinned", "INTEGER DEFAULT 0"),  # migration 005
     ("archived", "INTEGER DEFAULT 0"),  # migration 005
     ("goal", "TEXT DEFAULT ''"),  # migration 009 (WS-E goal loop)
@@ -146,8 +144,6 @@ def _row_to_dict(row):
         "chatHistory": json.loads(row["chat_history"]),
         "speakerNames": json.loads(row["speaker_names"]),
         "workspacePath": _safe_col(row, "workspace_path", ""),
-        "compactionCount": int(_safe_col(row, "compaction_count", 0)),
-        "latchedConfig": json.loads(_safe_col(row, "latched_config", "{}")),
         "goal": _safe_col(row, "goal", ""),
         "goalState": json.loads(_safe_col(row, "goal_state", "{}") or "{}"),
     }
@@ -434,6 +430,46 @@ def ensure_cron_inbox() -> str:
     return CRON_INBOX_ID
 
 
+def record_session_workspace(session_id: str, path: str) -> None:
+    """Remember the folder a session's chat turn ran in, which the sidebar's
+    "Open workspace in" opens. This is the column's only writer: client saves
+    never touch it. It writes only on a change, leaves updated_at alone, and
+    never adds a row, so an id with no session row records nothing."""
+    with _get_conn() as conn:
+        conn.execute(
+            "UPDATE sessions SET workspace_path = ? WHERE id = ? AND workspace_path IS NOT ?",
+            (path, session_id, path),
+        )
+
+
+def _same_json(stored, text: str) -> bool:
+    """Whether a stored JSON column holds the same data as ``text``. Compared
+    as data when the text differs: the browser re-serializes what it loaded,
+    so a float stored as 1.0 comes back as 1 and is still the same value."""
+    if stored == text:
+        return True
+    try:
+        return json.loads(stored) == json.loads(text)
+    except (TypeError, ValueError):
+        return False
+
+
+def _saves_nothing(row, stored_history: list, history: list, **columns) -> bool:
+    """Whether writing ``columns`` over ``row`` leaves the session as it is.
+    ``stored_history`` and ``history`` are the parsed chat histories, so the
+    largest column compares as data without being parsed a second time."""
+    for column, value in columns.items():
+        stored = row[column]
+        if stored == value:
+            continue
+        if column == "chat_history" and stored_history == history:
+            continue
+        if column in ("segments", "speaker_names") and _same_json(stored, value):
+            continue
+        return False
+    return True
+
+
 def _upsert_session(
     session_id: str,
     *,
@@ -445,19 +481,28 @@ def _upsert_session(
     segments: str,
     chat_history_frontend: list,
     speaker_names: str,
-    workspace_path: str,
-    compaction_count: int,
-    latched_config: str,
 ) -> None:
     """UPSERT a session, merging backend-owned UI-only chat_history rows
     (e.g. cron_event entries appended by the cron daemon) into the
     frontend's submitted chat history so they survive the save.
+
+    Only the client's own columns are written. The rest of the row is the
+    server's (the folder record_session_workspace keeps, the goal, the
+    sidebar flags) and stays as stored; a new row gets the table defaults.
+
+    ``updated_at`` is taken only when the save changes the row. The client
+    re-saves every open session with its clock as updatedAt (on a timer, on
+    switch, eviction and unload), so storing it unconditionally moved an
+    untouched old session into Today just for being opened.
     """
     with _get_conn() as conn:
         existing_row = conn.execute(
-            "SELECT chat_history FROM sessions WHERE id = ?", (session_id,)
+            "SELECT title, custom_title, generated_title, segments, chat_history, "
+            "speaker_names, updated_at FROM sessions WHERE id = ?",
+            (session_id,),
         ).fetchone()
         merged_history = chat_history_frontend
+        existing: list = []
         if existing_row is not None:
             try:
                 existing = json.loads(existing_row["chat_history"]) or []
@@ -477,38 +522,31 @@ def _upsert_session(
                     m for m in backend_owned if m.get("timestamp") not in seen_ts
                 ]
         merged_history = _enforce_backend_row_caps(merged_history)
+        # The columns this save writes. The same dict decides whether the
+        # save changes anything and builds the statement, so a column is
+        # compared exactly when it is written.
+        written = {
+            "title": title,
+            "custom_title": custom_title,
+            "generated_title": generated_title,
+            "segments": segments,
+            "chat_history": json.dumps(merged_history),
+            "speaker_names": speaker_names,
+        }
+        if existing_row is not None and _saves_nothing(
+            existing_row, existing, merged_history, **written
+        ):
+            updated_at = existing_row["updated_at"] or updated_at
+        names = ", ".join(written)
+        marks = ", ".join("?" for _ in written)
+        updates = ", ".join(f"{name}=excluded.{name}" for name in written)
         conn.execute(
-            """
-            INSERT INTO sessions (id, title, custom_title, generated_title, created_at, updated_at,
-                                  segments, chat_history, speaker_names,
-                                  workspace_path, compaction_count, latched_config)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                title=excluded.title,
-                custom_title=excluded.custom_title,
-                generated_title=excluded.generated_title,
-                updated_at=excluded.updated_at,
-                segments=excluded.segments,
-                chat_history=excluded.chat_history,
-                speaker_names=excluded.speaker_names,
-                workspace_path=excluded.workspace_path,
-                compaction_count=excluded.compaction_count,
-                latched_config=excluded.latched_config
+            f"""
+            INSERT INTO sessions (id, created_at, updated_at, {names})
+            VALUES (?, ?, ?, {marks})
+            ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at, {updates}
             """,
-            (
-                session_id,
-                title,
-                custom_title,
-                generated_title,
-                created_at,
-                updated_at,
-                segments,
-                json.dumps(merged_history),
-                speaker_names,
-                workspace_path,
-                compaction_count,
-                latched_config,
-            ),
+            (session_id, created_at, updated_at, *written.values()),
         )
         from server.infrastructure.session_search import reindex_session
 
@@ -517,9 +555,11 @@ def _upsert_session(
 
 def _delete_session_sync(session_id: str) -> None:
     """Remove every trace of a session: the parent row, all child rows,
-    the on-disk speaker profile, and the per-session in-memory caches.
+    the on-disk speaker profile, and the per-session in-memory caches. The
+    one exception is its cost rows: spend that was billed stays in the cost
+    log (shown as "Deleted session"), so range totals keep matching the bill.
 
-    The parent ``sessions`` row and ``session_costs`` are deleted here;
+    The parent ``sessions`` row is deleted here;
     ``clear_session_tasks`` owns the ``tasks`` table (+ its cache). The
     remaining helpers each clear one in-memory cache. All are best-effort
     and self-guarding, so one failure can't block the rest. Imports are
@@ -537,13 +577,9 @@ def _delete_session_sync(session_id: str) -> None:
         from server.infrastructure.session_search import drop_session as _drop_fts
 
         _drop_fts(conn, session_id)
-        try:
-            conn.execute("DELETE FROM session_costs WHERE session_id = ?", (session_id,))
-        except sqlite3.OperationalError:
-            # session_costs comes from migration 001 (app startup). A database
-            # that has only seen _ensure_db lacks the table — and has no cost
-            # rows to delete. Same tolerance as ensure_cron_inbox's pinned UPDATE.
-            pass
+        # session_costs rows are NOT deleted: they are the spend history the
+        # Costs tab and the budget caps read, and a deleted session's calls
+        # were still billed. They show as "Deleted session" there.
         try:
             conn.execute("DELETE FROM attachments WHERE session_id = ?", (session_id,))
         except sqlite3.OperationalError:

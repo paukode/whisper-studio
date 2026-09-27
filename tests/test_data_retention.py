@@ -172,3 +172,64 @@ def test_classify_data_retention_error():
     assert isinstance(classified, DataRetentionRequiredError)
     assert classified.is_retryable is False
     assert "data retention" in classified.user_message.lower()
+
+
+# ── Local mode + event loop ───────────────────────────────────────────────────
+
+
+class _NoControlPlane:
+    def __getattr__(self, name):
+        raise AssertionError(f"control plane called in Local mode: {name}")
+
+
+def test_local_mode_probe_makes_no_aws_call(monkeypatch):
+    monkeypatch.setattr(dr, "current_mode", lambda *a, **k: "local")
+    c = _client(monkeypatch, _NoControlPlane())
+    body = c.get("/api/data-retention").json()
+    # Unknown, not "known off": the consent flow still asks before a Fable switch.
+    assert body["available"] is False and body["enabled"] is False
+    assert "Local mode" in body["error"]
+
+
+def test_local_mode_refuses_a_retention_change(monkeypatch):
+    monkeypatch.setattr(dr, "current_mode", lambda *a, **k: "local")
+    c = _client(monkeypatch, _NoControlPlane())
+    r = c.put("/api/data-retention", json={"enabled": True})
+    assert r.status_code == 409
+    assert "Local mode" in r.json()["error"]
+
+
+def test_control_plane_calls_run_off_the_event_loop(monkeypatch):
+    import threading
+
+    threads: dict[str, int] = {}
+
+    class RecordingBedrock(FakeBedrock):
+        def get_account_data_retention(self):
+            threads["get"] = threading.get_ident()
+            return super().get_account_data_retention()
+
+        def put_account_data_retention(self, mode):
+            threads["put"] = threading.get_ident()
+            return super().put_account_data_retention(mode)
+
+    monkeypatch.setattr(dr, "current_mode", lambda *a, **k: "cloud")
+    monkeypatch.setattr(dr, "_get_control_plane_client", lambda: RecordingBedrock())
+    app = FastAPI()
+    app.include_router(dr.router)
+
+    import asyncio
+
+    import httpx
+
+    async def _run():
+        loop_thread = threading.get_ident()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            await client.get("/api/data-retention")
+            await client.put("/api/data-retention", json={"enabled": False})
+        return loop_thread
+
+    loop_thread = asyncio.run(_run())
+    assert threads["get"] != loop_thread
+    assert threads["put"] != loop_thread

@@ -148,6 +148,7 @@ def build_mlx_entry(
     return key, entry
 
 
+@config_mod.edits_user_config
 def write_entry(key: str, entry: dict) -> None:
     """Merge ONE entry into the USER layer's ``chat_models`` and persist.
 
@@ -209,6 +210,7 @@ def build_recommended_entry(key: str) -> tuple[str, dict]:
     return key, entry
 
 
+@config_mod.edits_user_config
 def adopt_local_index_llm() -> bool:
     """After the user installs their first local chat model, point the index LLM
     at the active on-device model, but only while they are still on the untouched
@@ -247,6 +249,7 @@ def adopt_local_index_llm() -> bool:
 _TOOLS_SWEEP_FLAG = "small_model_tools_swept"
 
 
+@config_mod.edits_user_config
 def disable_tools_on_small_models() -> list[str]:
     """One-shot: turn ``supports_tools`` off for already-installed local models
     below the agentic threshold, then mark the user layer so it never runs again.
@@ -289,6 +292,7 @@ def disable_tools_on_small_models() -> list[str]:
     return changed
 
 
+@config_mod.edits_user_config
 def remove_entry(key: str) -> bool:
     """Drop ``key`` from the USER layer's ``chat_models``; return whether it was
     present. Leaves the file minimal (drops an emptied ``chat_models``)."""
@@ -306,6 +310,7 @@ def remove_entry(key: str) -> bool:
     return True
 
 
+@config_mod.edits_user_config
 def tombstone_entry(key: str) -> bool:
     """Add ``key`` to the USER layer's ``chat_models_disabled`` hide-list so a
     BEDROCK model (no weights, lives in the app-owned catalog) vanishes from the

@@ -166,7 +166,9 @@
       stops asking for tools <em>and</em> the completion gate lets it end. On <code>end_turn</code>
       the engine first runs <code>run_completion_gate</code>
       (<code class="path">server/goals/gate.py</code>): the WS-I Stop hooks always run, and a WS-E
-      Haiku goal evaluator runs when the <code>goal_loop</code> flag is on with an active goal. If a
+      goal judge runs when the <code>goal_loop</code> flag is on with an active goal (the
+      <code>goal_evaluator</code> model, Haiku by default, for a cloud session; the session's own
+      model on-device, where the whole gate runs only while a goal is active). If a
       Stop hook blocks or the goal is judged not achieved, the gate injects
       <code>[completion gate]</code> feedback and the loop continues; only an unblocked gate reaches
       <code>[DONE]</code>, bounded by <code>goal_max_consecutive_blocks</code> (default 8). For the

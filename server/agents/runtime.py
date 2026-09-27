@@ -34,8 +34,11 @@ from server.agents.runtime_support import (  # noqa: F401 - re-exported for call
     _git_executor,
     _harvest_worktree,
     _resolve_agent_model,
+    _spawned_by_released_turn,
     _with_session_id,
     budget_readout,
+    distill_run_output,
+    no_agent_model_reason,
 )
 from server.chat.engine.runner import SOFT_LIMIT_FRACTION
 
@@ -111,10 +114,13 @@ async def run_agent(
     workspace_path: str | None = None,
     agent_id: str | None = None,
     resume_agent_id: str | None = None,
+    cost_source: str = "agent",
 ) -> AgentResult:
     """Run an agent with full tool execution loop.
 
     Args:
+        cost_source: ``source`` of the run's cost rows (server.costs.sources);
+            workflows pass "workflow", memory runs "memory".
         task: The task description for the agent.
         agent_type: Type name from AGENT_TYPES.
         config: Optional custom AgentConfig (overrides agent_type lookup).
@@ -153,21 +159,15 @@ async def run_agent(
     # With no override, fall back to the user's configured default chat model,
     # never a hardcoded per-agent-type model. On-device models are first-class
     # here when they support tool calling (LocalAdapter below); chat-only
-    # local models are refused up front.
+    # local models are refused up front, and so is a cloud model in Local mode.
     model_id = _resolve_agent_model(model_id_override, config)
     if not model_id:
-        log.warning(
-            "Agent %s cannot run: no configured chat model can drive an agent "
-            "loop (every entry is an on-device model without tool support).",
-            config.agent_type,
-        )
+        why_not = no_agent_model_reason(model_id_override)
+        log.warning("Agent %s cannot run: %s", config.agent_type, why_not)
         return AgentResult(
             agent_id="",
             agent_type=config.agent_type,
-            output=(
-                "[Agent Error] No agent-capable chat model configured: every "
-                "chat_models entry is an on-device model without tool support."
-            ),
+            output=f"[Agent Error] {why_not}",
             status="failed",
         )
 
@@ -177,30 +177,25 @@ async def run_agent(
 
     _is_local = _is_local_id(model_id)
     if _is_local:
+        from server.infrastructure import model_mode as _mm
+
         _local_key = _model_key_for_id(model_id)
-        if not _supports_tools(_local_key):
+        # _distill_structured still runs on the old cloud provider-adapter
+        # system, which has no local branch, so a schema is refused readably
+        # rather than failing at the distill call after the whole run. The
+        # remedy is worded for the mode (Local offers no cloud model).
+        _why = (
+            _mm.chat_only_agent_refusal(_local_key or model_id, _mm.current_mode())
+            if not _supports_tools(_local_key)
+            else _mm.on_device_schema_refusal(_mm.current_mode())
+            if structured_schema is not None
+            else None
+        )
+        if _why:
             return AgentResult(
                 agent_id="",
                 agent_type=config.agent_type,
-                output=(
-                    f"[Agent Error] On-device model '{_local_key or model_id}' does not "
-                    "support tool calling, so it cannot run agents. Pick a "
-                    "tool-capable local model or a cloud model."
-                ),
-                status="failed",
-            )
-        if structured_schema is not None:
-            # _distill_structured still runs on the old cloud provider-adapter
-            # system, which has no local branch — refuse readably rather than
-            # failing at the distill call after the whole run.
-            return AgentResult(
-                agent_id="",
-                agent_type=config.agent_type,
-                output=(
-                    "[Agent Error] Structured output (schema) requires a cloud "
-                    "model; run this agent without a schema or override the "
-                    "model with a cloud one."
-                ),
+                output=f"[Agent Error] {_why}",
                 status="failed",
             )
 
@@ -318,8 +313,12 @@ async def run_agent(
         # else whatever is globally connected (loop.run_in_executor does NOT
         # propagate contextvars, so the ambient override wouldn't be visible
         # here anyway — repo_root is how a pin actually reaches this thread).
-        _wt_session = await asyncio.get_running_loop().run_in_executor(
-            _git_executor, _enter_agent_worktree, agent_id, session_id, workspace_path
+        _wt_session = (
+            None  # no worktree of the folder connected in place of the parent's
+            if _spawned_by_released_turn(workspace_path)
+            else await asyncio.get_running_loop().run_in_executor(
+                _git_executor, _enter_agent_worktree, agent_id, session_id, workspace_path
+            )
         )
         if _wt_session:
             _override_path = _wt_session.worktree_path
@@ -359,6 +358,7 @@ async def run_agent(
         result = await _run_agent_loop(
             effort_label=effort_label,
             structured_schema=structured_schema,
+            cost_source=cost_source,
             agent_id=agent_id,
             task=task,
             context=context,
@@ -545,6 +545,7 @@ async def _run_agent_loop(
     journal: AgentJournal | None = None,
     resume_messages: list | None = None,
     extension: dict | None = None,
+    cost_source: str = "agent",
 ) -> AgentResult:
     """Internal agent loop — the shared chat/engine turn loop
     (server.chat.engine.runner.run_turn) instead of a hand-rolled round loop.
@@ -814,17 +815,13 @@ async def _run_agent_loop(
         # itself gives up with a clear error after its busy-wait timeout when a
         # displacing switch cannot proceed (e.g. the parent chat turn holds a
         # DIFFERENT local model busy for as long as this very agent runs).
-        import functools
-
+        # serve_turn releases the mark itself when the run is cancelled mid-load.
         from server.chat.engine.local import LocalAdapter
         from server.local import serving
         from server.local.runtime import supports_thinking
 
         try:
-            base_url = await loop.run_in_executor(
-                _agent_executor,
-                functools.partial(serving.ensure_serving, model_key, mark_busy=True),
-            )
+            base_url = await serving.serve_turn(model_key, executor=_agent_executor)
         except Exception as e:
             _emit("failed", error=str(e)[:500])
             return AgentResult(
@@ -848,6 +845,7 @@ async def _run_agent_loop(
 
     from server.chat.engine.policy import TurnPolicy
     from server.chat.engine.runner import TurnContext, run_turn
+    from server.workspace.state import latch_workspace
 
     ctx = TurnContext(
         session_id=session_id,
@@ -867,6 +865,7 @@ async def _run_agent_loop(
         ),
         loop=loop,
         executor=_agent_executor,
+        cost_source=cost_source,
         current_attachments=current_attachments,
         # Offline invariant for local runs: no permission-explainer model.
         tool_exec_model_id=("" if _is_local_agent else model_id),
@@ -883,6 +882,10 @@ async def _run_agent_loop(
         on_round=(journal.checkpoint if journal is not None else None),
         final_round_hint=REPORT_TEMPLATE,
         budget_extension=extension,
+        # The spawning turn's latch (latch_workspace inherits it): an unpinned
+        # agent's workspace tools are refused once the user lets go of that
+        # turn's workspace; a pinned one keeps its root.
+        ws_latch=latch_workspace(),
     )
 
     # Drain run_turn: an async generator yielding SSE-format ndjson strings
@@ -903,6 +906,7 @@ async def _run_agent_loop(
         "output_tokens": 0,
         "cache_read_tokens": 0,
         "cache_creation_tokens": 0,
+        "cost_usd": 0.0,
     }
     round_text_parts: list[str] = []
     error_text: str | None = None
@@ -956,6 +960,7 @@ async def _run_agent_loop(
                         "output_tokens": u.get("total_output", 0),
                         "cache_read_tokens": u.get("total_cache_read", 0),
                         "cache_creation_tokens": u.get("total_cache_creation", 0),
+                        "cost_usd": u.get("estimated_cost_usd", 0.0),
                     }
                     rounds_used += 1
                     turn_no = rounds_used
@@ -969,7 +974,6 @@ async def _run_agent_loop(
                             next_turn=turn_no + 1,
                             elapsed=time.monotonic() - turn_start,
                             usage=final_usage,
-                            model_key=model_key,
                             cost_capped=cost_capped,
                         ),
                     )
@@ -1091,39 +1095,22 @@ async def _run_agent_loop(
 
     structured = None
     if structured_schema is not None:
-        # Kept on the OLD provider-adapter system (server.agents.providers) —
-        # _distill_structured is a one-shot, non-agentic forced-tool call the
-        # chat/engine adapters have no equivalent for yet. Out of scope for
-        # this migration (see the module docstring above).
-        from server.agents.providers import TurnUsage as _OldTurnUsage
-        from server.agents.providers import get_adapter as _get_old_adapter
-
-        _old_adapter = _get_old_adapter(model_key, model_id)
-        _old_usage = _OldTurnUsage(
-            input_tokens=final_usage["input_tokens"],
-            output_tokens=final_usage["output_tokens"],
-            cache_read_tokens=final_usage["cache_read_tokens"],
-            cache_creation_tokens=final_usage["cache_creation_tokens"],
+        # One-shot forced-tool calls on the old provider adapters
+        # (server.agents.providers): the chat/engine adapters have no
+        # equivalent. See distill_run_output.
+        structured, final_usage = await distill_run_output(
+            model_key=model_key,
+            model_id=model_id,
+            system=system,
+            messages=ctx.messages,
+            final_text=collected_text,
+            stopped_early=stopped_early,
+            schema=structured_schema,
+            config=config,
+            usage=final_usage,
+            session_id=session_id,
+            source=cost_source,
         )
-        if stopped_early:
-            # Matches the pre-migration tail path: no synthetic assistant
-            # turn appended, ctx.messages already ends with the last tool
-            # result.
-            _distill_messages = ctx.messages
-        else:
-            # Matches the pre-migration natural-finish path: append the
-            # final round's own answer as one more assistant turn first.
-            _distill_messages = [
-                *ctx.messages,
-                {
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": collected_text or "(done)"}],
-                },
-            ]
-        structured = await _distill_structured(
-            _old_adapter, system, _distill_messages, structured_schema, config, _old_usage
-        )
-        final_usage = _old_usage.as_dict()
 
     if stopped_early:
         if cost_capped:

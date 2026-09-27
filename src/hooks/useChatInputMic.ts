@@ -181,8 +181,9 @@ export function useChatInputMic(opts: UseChatInputMicOptions): UseChatInputMicRe
             progress?: number;
             stage?: string;
           };
-          if (msg.type === 'interim' && msg.text) {
-            // Live, word-by-word draft of the utterance in progress.
+          if (msg.type === 'interim' && typeof msg.text === 'string') {
+            // Live, word-by-word draft of the utterance in progress. An empty
+            // one withdraws the draft: its utterance closed without a final.
             onTranscriptRef.current(msg.text, false);
           } else if (msg.type === 'transcript' && msg.text) {
             // Settled sentence — commit it.

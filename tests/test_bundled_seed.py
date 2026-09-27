@@ -45,6 +45,18 @@ def test_seed_noop_without_bundle_dir(tmp_path, monkeypatch):
     assert not models.exists() or not os.listdir(models)
 
 
+def test_seed_is_a_plain_call_and_lifespan_is_the_context_manager(tmp_path, monkeypatch):
+    """The @asynccontextmanager decorator belongs on lifespan, not on the seed
+    helper. Misplaced, the seed call only worked because the wrapper happens to
+    run the body at construction, and lifespan reached FastAPI as a bare async
+    generator."""
+    monkeypatch.setattr(main_mod, "BASE_DIR", str(tmp_path))
+    assert main_mod._seed_bundled_models() is None
+    # Built but never entered, so no startup runs.
+    cm = main_mod.lifespan(main_mod.app)
+    assert hasattr(cm, "__aenter__") and hasattr(cm, "__aexit__")
+
+
 def test_fresh_installs_default_to_local_mode():
     from server.infrastructure.config import FIRST_RUN_USER_CONFIG
 

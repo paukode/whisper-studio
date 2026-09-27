@@ -257,7 +257,16 @@ def _import_mcp_servers(source_path: str, config_rels: list[str], parser) -> dic
     if not parsed:
         return {"added": [], "skipped": [], "source": found_path, "reason": "no servers defined"}
 
-    config = mcp_manager.load_config()
+    config = mcp_manager.read_config()
+    if config is None:
+        # Saving over an unreadable mcp_servers.json would drop every server
+        # it still holds; the user fixes the file first.
+        return {
+            "added": [],
+            "skipped": [],
+            "source": found_path,
+            "reason": "mcp_servers.json is not a valid server list; fix it, then import again",
+        }
     added: list[str] = []
     skipped: list[dict] = []
     changed = False

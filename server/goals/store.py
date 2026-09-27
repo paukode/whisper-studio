@@ -135,6 +135,16 @@ def record_pass(session_id: str, verdict: str, feedback: str = "") -> None:
     _save_state(session_id, state)
 
 
+def record_not_checked(session_id: str, reason: str) -> None:
+    """The judge could not run or could not be understood: keep the goal
+    active, record the reason, and count it neither as a block nor as an
+    evaluation."""
+    state = _load_state(session_id)
+    state["last_verdict"] = "not_checked"
+    state["last_feedback"] = reason
+    _save_state(session_id, state)
+
+
 def reset_for_new_turn(session_id: str) -> None:
     """Every new user turn zeroes the consecutive-block counter so the cap is
     per-turn, not per-session (Claude Code parity)."""

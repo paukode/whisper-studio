@@ -19,23 +19,22 @@ import {
   getTranscriptionStore,
 } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
+import { refreshSessionUsage } from '@/stores/sessionUsage';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useIndexSearchStore } from '@/stores/indexSearchStore';
 import type { ChatMessage, ToolUseEvent } from '@/types/chat';
 import { toError } from '@/utils/toError';
 import { ensureRetentionEnabled } from '@/components/chat/dataRetentionConsent';
-import {
-  _sseEventLog,
-  readSSEStream,
-  sendApprovalContinuation,
-} from './chatStream/sseStream';
+import { _sseEventLog, readSSEStream } from './chatStream/sseStream';
 import { emptyResponseFallback } from './chatStream/emptyResponse';
-import { turnModelSettings } from './chatStream/turnSettings';
+import { pausedTurnSettings, turnModelSettings } from './chatStream/turnSettings';
 import { buildHistoryPayload } from './chatStream/history';
+import { APPROVED_ACTION_STATUS } from './chatStream/approvalLeg';
 import {
   abortSessionStream,
   buildStoppedMessage,
+  hasLiveStream,
   killSessionStream,
   registerStreamController,
   releaseStreamController,
@@ -85,6 +84,68 @@ export function buildDisplayQuestion(
 /** The user-facing parallelism ceiling: how many sessions may be ACTIVE
  *  (streaming / mid-approval / recording) at once. */
 export const MAX_ACTIVE_SESSIONS = 3;
+
+/** A JSON answer from /api/chat: the "queued into the running turn" reply
+ *  (server/chat/routes.py) or a refusal carrying its reason. */
+interface ChatJsonReply {
+  queued_into_running_turn?: boolean;
+  error?: string;
+  detail?: unknown;
+}
+
+function isJsonReply(response: Response): boolean {
+  return (response.headers.get('content-type') || '').includes('application/json');
+}
+
+async function readJsonReply(response: Response): Promise<ChatJsonReply | null> {
+  try {
+    const data: unknown = await response.json();
+    return data && typeof data === 'object' ? (data as ChatJsonReply) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The reason a JSON reply gives, in the server's own words when it has any. */
+function jsonReplyError(data: ChatJsonReply | null, status: number): string {
+  if (data?.error) return data.error;
+  if (typeof data?.detail === 'string' && data.detail) return data.detail;
+  return `Chat request failed: unexpected reply (HTTP ${status})`;
+}
+
+/** The one notice for "your text went into the turn already running in this
+ *  session", shared by the composer's steer path and a full send the server
+ *  queued the same way. */
+function toastQueuedIntoRunningTurn(): void {
+  useUIStore.getState().addToast({
+    type: 'info',
+    message:
+      'Added to the running turn. The assistant will take it into account as it continues and answer it when this turn finishes.',
+    duration: 5000,
+    key: 'midturn-queued',
+    persist: false,
+  });
+}
+
+/** A send that replaced this session's own live stream got queued into
+ *  that stream's turn, which is closing: say so, since no reply will come. */
+function toastQueuedIntoReplacedTurn(): void {
+  useUIStore.getState().addToast({
+    type: 'error',
+    message:
+      'Not answered: the turn this message replaced was still closing on the server and took the message, so no reply will come. Use Regenerate on your message to send it again.',
+    duration: 8000,
+    key: 'queued-into-replaced-turn',
+    source: 'chat',
+  });
+}
+
+// Sessions with a mid-turn message still waiting for the server's answer.
+// The composer keeps the text until the server confirms it, so a slow
+// confirmation looked like a message that went nowhere and invited another
+// Enter; every press posted the same text again, and once the server caught
+// up it queued each copy into the running turn.
+const midTurnInFlight = new Set<string>();
 
 // The controller registry and the instant kill switch live in
 // ./chatStream/streamControl (a leaf module shared with sseStream).
@@ -144,7 +205,13 @@ export function useChatStream(): UseChatStreamReturn {
       return;
     }
 
-    // Abort any in-flight stream FOR THIS SESSION only.
+    // Abort any in-flight stream FOR THIS SESSION only. Remember whether
+    // there was one: the server releases that turn's slot only once it sees
+    // the disconnect, so for a moment it still counts the turn as running and
+    // may queue this send into the very turn just cancelled here. (A leg
+    // still running its approved action holds no server slot.)
+    const replacesLiveStream =
+      hasLiveStream(activeSessionId) && store().streamStatus !== APPROVED_ACTION_STATUS;
     abortSessionStream(activeSessionId);
 
     const isContinuation = !!opts?.approvedToolResult;
@@ -173,7 +240,9 @@ export function useChatStream(): UseChatStreamReturn {
     store().setStreaming(true);
 
     const controller = new AbortController();
-    registerStreamController(activeSessionId, controller);
+    // An answered question or folder card resumes the turn that asked; only a
+    // new message starts a turn (the `since` a Stop scopes its kill to).
+    registerStreamController(activeSessionId, controller, { startsTurn: !isContinuation });
 
     // Build transcript from the OWNING session's transcript store. Keep the
     // speaker label on every line (same format as the panel/sidebar exports)
@@ -191,16 +260,24 @@ export function useChatStream(): UseChatStreamReturn {
     // wasteful to ship them over the wire.
     const cappedHistory = buildHistoryPayload(store().messages, isContinuation);
 
+    // Model + effort + response length. Resolved once: the body carries them,
+    // and any card this turn pauses on keeps the same values so the resumed
+    // half can never finish on different settings than it started. An answer
+    // to a question or folder prompt IS such a resumed half: it runs on the
+    // settings recorded with its card, not on what the window-wide picker
+    // shows now (another session may have changed it while the card waited).
+    const answered = opts?.approvedToolResult;
+    const settingsForTurn = (answered && pausedTurnSettings(
+      store().messages,
+      (Array.isArray(answered) ? answered : [answered]).map((a) => a.tool_use_id),
+    )) || turnModelSettings();
     const body: Record<string, unknown> = {
       question,
       transcript,
       history: cappedHistory,
       attachment_ids: opts?.attachmentIds ?? [],
       attachment_names: opts?.attachmentNames ?? [],
-      // Model + effort + response length. Shared with the approval-resume leg
-      // (sendApprovalContinuation) so one turn can never finish on different
-      // settings than it started with.
-      ...turnModelSettings(),
+      ...settingsForTurn,
       force_skill: opts?.forceSkill ?? null,
       session_id: activeSessionId,
       // Local thinking and tools have no per-turn client flags any more: the
@@ -225,8 +302,8 @@ export function useChatStream(): UseChatStreamReturn {
         useIndexSearchStore.getState().selectionBySession[activeSessionId],
     };
     // MCP servers are resolved by the backend from each server's persisted
-    // `enabled` flag (toggled live from the Settings panel or chat toolbar via
-    // useMcpToggle), so we don't send a per-request override.
+    // `enabled` flag (toggled live in Settings > MCP), so we don't send a
+    // per-request override.
 
     let fullResponse = '';
 
@@ -259,11 +336,33 @@ export function useChatStream(): UseChatStreamReturn {
         });
         return;
       }
+      // A JSON body is never an SSE stream. The server answers a send that
+      // lands while a turn is still running in this session by queueing the
+      // text into that turn, and every refusal carries its reason as JSON.
+      // Handing either to the SSE reader parsed zero events and ended the
+      // send in total silence: no reply, no toast, no error.
+      if (isJsonReply(response)) {
+        const data = await readJsonReply(response);
+        if (response.ok && data?.queued_into_running_turn === true) {
+          // The user's bubble stays and the thinking indicator ends here.
+          store().finishStream();
+          if (replacesLiveStream) {
+            // The running turn the server queued into is the one this send
+            // just aborted: it ends on the disconnect and nothing answers.
+            toastQueuedIntoReplacedTurn();
+          } else {
+            // Delivered into a turn that really runs; say where it went.
+            toastQueuedIntoRunningTurn();
+          }
+          return;
+        }
+        throw new Error(jsonReplyError(data, response.status));
+      }
       if (!response.ok || !response.body) {
         throw new Error(`Chat request failed: ${response.status}`);
       }
 
-      const result = await readSSEStream(response, activeSessionId, controller.signal);
+      const result = await readSSEStream(response, activeSessionId, controller.signal, settingsForTurn);
       // A kill switch may have finalized this stream while the read loop was
       // draining (signal.aborted exits the loop NORMALLY, landing here on the
       // success path) — appending anything now would resurrect the answer.
@@ -376,7 +475,8 @@ export function useChatStream(): UseChatStreamReturn {
           void fetch('/api/generate-title', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: convoText }),
+            // session_id attributes the title call's cost to this session.
+            body: JSON.stringify({ text: convoText, session_id: activeSessionId }),
           })
             .then(r => {
               // A 500 from the title endpoint still has a body
@@ -415,6 +515,9 @@ export function useChatStream(): UseChatStreamReturn {
       releaseStreamController(activeSessionId, controller);
       // Ensure streaming is cleared (no-op if finishStream already ran)
       if (store().isStreaming) store().setStreaming(false);
+      // The recorded rounds now include this turn's: their pricing note (a
+      // GPT round's dated list-rate note) and estimate count reach the readout.
+      void refreshSessionUsage(activeSessionId);
       // Re-focus chat input
       const chatInput = document.getElementById('chatInput') as HTMLTextAreaElement | null;
       chatInput?.focus();
@@ -445,6 +548,32 @@ export function useChatStream(): UseChatStreamReturn {
       return false;
     }
 
+    // An approved action is still running: no turn holds the server's slot
+    // until its continuation starts, so the server would refuse this anyway.
+    // Say what is actually happening instead of "no longer running".
+    if (getChatStore(activeSessionId).getState().streamStatus === APPROVED_ACTION_STATUS) {
+      useUIStore.getState().addToast({
+        type: 'error',
+        message:
+          'Not sent: the approved action is still running, and the turn resumes as soon as it finishes. Send your message once the reply is streaming, or press Stop.',
+        duration: 5000,
+      });
+      return false;
+    }
+
+    // One delivery at a time per session: a second message waits until the
+    // first is confirmed or refused, so a retry can never double-queue it.
+    if (midTurnInFlight.has(activeSessionId)) {
+      useUIStore.getState().addToast({
+        type: 'info',
+        message: 'Still delivering your last message to the running turn. Your text stays in the box until it lands.',
+        duration: 4000,
+        key: 'midturn-in-flight',
+      });
+      return false;
+    }
+    midTurnInFlight.add(activeSessionId);
+
     let delivered = false;
     try {
       // Deliberately a minimal body: the backend only needs `question` +
@@ -458,10 +587,17 @@ export function useChatStream(): UseChatStreamReturn {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, session_id: activeSessionId, midturn: true }),
       });
-      delivered = response.ok && (response.headers.get('content-type') || '').includes('application/json');
-      if (!delivered) void response.body?.cancel();
+      // Delivered only when the server SAYS it queued the text; a 200 alone
+      // (or any other JSON body) is not a confirmation.
+      if (response.ok && isJsonReply(response)) {
+        delivered = (await readJsonReply(response))?.queued_into_running_turn === true;
+      } else {
+        void response.body?.cancel();
+      }
     } catch {
       delivered = false;
+    } finally {
+      midTurnInFlight.delete(activeSessionId);
     }
 
     if (delivered) {
@@ -473,14 +609,7 @@ export function useChatStream(): UseChatStreamReturn {
       // Say where the message went: it is folded into the turn that is
       // already running and answered at that turn's end, not by a separate
       // reply. Without this, the silence after sending read as a lost message.
-      useUIStore.getState().addToast({
-        type: 'info',
-        message:
-          'Added to the running turn. The assistant will take it into account as it continues and answer it when this turn finishes.',
-        duration: 5000,
-        key: 'midturn-queued',
-        persist: false,
-      });
+      toastQueuedIntoRunningTurn();
     } else {
       useUIStore.getState().addToast({
         type: 'error',
@@ -493,14 +622,11 @@ export function useChatStream(): UseChatStreamReturn {
   }, []);
 
   // Stop button: instant kill of the session the user is LOOKING AT (state
-  // finalized synchronously) plus every running subagent. Background
-  // sessions keep streaming.
+  // finalized synchronously) plus that session's own /subagent runs. Other
+  // sessions keep streaming and keep their runs.
   const abort = useCallback(() => {
     killSessionStream(useSessionStore.getState().currentSessionId);
   }, []);
 
   return { send, sendMidTurn, abort };
 }
-
-// Re-export for use in approval components
-export { sendApprovalContinuation };

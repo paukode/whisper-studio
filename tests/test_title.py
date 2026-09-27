@@ -45,3 +45,42 @@ def test_clean_title_length_cap():
 
 def test_clean_title_all_dates_falls_back():
     assert _clean_title("2026 July Monday") == "New Conversation"
+
+
+# ── Local mode: titles never leave this Mac ───────────────────────────────────
+
+
+def _local_mode_client(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.chat import routes
+
+    # Patched where the endpoint resolves it (a lazy import inside the handler).
+    monkeypatch.setattr("server.infrastructure.model_mode.current_mode", lambda *a, **k: "local")
+
+    requested: list[bool] = []
+
+    def _no_bedrock():
+        requested.append(True)
+        raise AssertionError("Bedrock client requested in Local mode")
+
+    monkeypatch.setattr(routes, "_get_bedrock_client", _no_bedrock)
+    app = FastAPI()
+    app.include_router(routes.router)
+    return TestClient(app), requested
+
+
+def test_local_mode_title_comes_from_the_first_user_line(monkeypatch):
+    client, requested = _local_mode_client(monkeypatch)
+    text = "User: Plan the Krakow offsite budget\nAssistant: Sure, here is a plan."
+    title = client.post("/api/generate-title", json={"text": text}).json()["title"]
+    assert title == _clean_title("Plan the Krakow offsite budget")
+    assert requested == []
+
+
+def test_local_mode_title_of_unlabelled_text_uses_its_first_line(monkeypatch):
+    client, requested = _local_mode_client(monkeypatch)
+    title = client.post("/api/generate-title", json={"text": "\n  Fix the parser\nmore"}).json()
+    assert title["title"] == _clean_title("Fix the parser")
+    assert requested == []

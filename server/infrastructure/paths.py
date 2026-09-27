@@ -307,13 +307,10 @@ def bootstrap_home() -> None:
         migrate_user_config()
     except Exception as e:  # never block boot on the config split
         log.warning("Config migration/seed skipped: %s", e)
-    # pricing.json still starts as a copy of the committed template (pricing stays
-    # SYSTEM-seeded — there is no user pricing layer); PROMPT_RULES.md too. Both
-    # live at repo_root() (read-only in a bundle) and are only copied when missing.
-    _seed_file(
-        os.path.join(repo_root(), "pricing.example.json"),
-        os.path.join(config_dir(), "pricing.json"),
-    )
+    # pricing.json is NOT seeded: it holds only the user's own per-key rate
+    # overrides over the shipped pricing.example.json, and a full copy of the
+    # template froze every rate at install time. PROMPT_RULES.md is copied from
+    # repo_root() (read-only in a bundle) when missing.
     _seed_file(
         os.path.join(repo_root(), "PROMPT_RULES.md"),
         os.path.join(config_dir(), "PROMPT_RULES.md"),

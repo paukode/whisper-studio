@@ -8,6 +8,9 @@ export interface PreviewSession {
   process_alive: boolean | null;
   browser_started: boolean | null;
   created_at: number;
+  /** Chat session id that started this preview ('' when none was known).
+   *  Only that chat may stop, restart or drive it. */
+  owner: string;
 }
 
 /** List the preview sessions the assistant currently has running. */
@@ -16,14 +19,21 @@ export async function listPreviewSessions(): Promise<PreviewSession[]> {
   return data.sessions ?? [];
 }
 
-/** Start (or restart) a preview session by name, resolving its .whisper/launch.json config. */
-export async function startPreviewSession(name: string): Promise<void> {
-  await post('/api/preview/sessions', { name });
+/** Start (or restart) a preview session by name for `sessionId`'s chat,
+ *  resolving its .whisper/launch.json config. Refused (409) when another
+ *  chat's preview already holds the name. */
+export async function startPreviewSession(name: string, sessionId: string): Promise<void> {
+  await post('/api/preview/sessions', { name, session_id: sessionId });
 }
 
-/** Stop a preview session (kills the dev server + its browser). */
-export async function stopPreviewSession(name: string): Promise<void> {
-  await del(`/api/preview/sessions/${encodeURIComponent(name)}`);
+/**
+ * Stop a preview session (kills the dev server + its browser). With
+ * `sessionId` (the Live pane) the backend stops it only when that chat owns
+ * it; without (the Settings kill switch) it stops any preview.
+ */
+export async function stopPreviewSession(name: string, sessionId?: string): Promise<void> {
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
+  await del(`/api/preview/sessions/${encodeURIComponent(name)}${query}`);
 }
 
 /**

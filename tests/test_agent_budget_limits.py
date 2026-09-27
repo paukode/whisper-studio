@@ -185,8 +185,8 @@ def test_check_budget_soft_trips_before_the_cap(monkeypatch):
     from server.costs import budget
 
     monkeypatch.setattr(budget, "load_config", lambda: {"max_session_cost_usd": 1.0})
-    monkeypatch.setattr(budget, "get_session_summary", lambda sid: {"total_cost_usd": 0.92})
-    monkeypatch.setattr(budget, "get_today_total_cost", lambda: 0.0)
+    monkeypatch.setattr(budget, "get_session_usage", lambda sid: {"cost_usd": 0.92})
+    monkeypatch.setattr(budget, "today_spend_usd", lambda: 0.0)
     # The autouse fixture stubs the public entry points; exercise the shared
     # check directly at both fractions.
     assert budget._check("s", 1.0) is None

@@ -108,7 +108,56 @@ def test_round_assembles_text_thinking_and_usage(monkeypatch):
     assert isinstance(result, EV.RoundResult)
     assert result.stop_reason == "end_turn"
     assert result.content == [{"type": "text", "text": "Hello world"}]
-    assert result.usage.input_tokens == 11 and result.usage.exact is True
+    assert result.usage.input_tokens == 11 and result.usage.estimated == ()
+
+
+def test_accepted_request_opens_thinking_before_hidden_reasoning(monkeypatch):
+    # Mantle acknowledges at once, then reasons silently (no summaries) before
+    # the first output. The thinking phase must open on the acknowledgement,
+    # not on the answer, and a summary that does arrive joins the same phase.
+    a, _ = _adapter(
+        monkeypatch,
+        [
+            [
+                FakeEvent(type="response.created"),
+                FakeEvent(type="response.in_progress"),
+                FakeEvent(type="response.output_text.delta", delta="Dear team"),
+                _completed(),
+            ],
+            [
+                FakeEvent(type="response.created"),
+                FakeEvent(type="response.reasoning_summary_text.delta", delta="weighing"),
+                FakeEvent(type="response.output_text.delta", delta="Hi"),
+                _completed(),
+            ],
+        ],
+    )
+    for _ in range(2):
+        evs = asyncio.run(
+            _collect(a.stream_round([{"role": "user", "content": "hi"}], [], None, 0, False))
+        )
+        kinds = [type(e).__name__ for e in evs]
+        assert kinds[0] == "ThinkingStart"
+        assert kinds.count("ThinkingStart") == 1
+        assert kinds.index("ThinkingStop") < kinds.index("TextDelta")
+
+
+def test_no_thinking_phase_when_reasoning_is_off(monkeypatch):
+    a, _ = _adapter(
+        monkeypatch,
+        [
+            [
+                FakeEvent(type="response.created"),
+                FakeEvent(type="response.output_text.delta", delta="Hi"),
+                _completed(),
+            ]
+        ],
+    )
+    a.effort = "none"
+    evs = asyncio.run(
+        _collect(a.stream_round([{"role": "user", "content": "hi"}], [], None, 0, False))
+    )
+    assert not any(isinstance(e, (EV.ThinkingStart, EV.ThinkingStop)) for e in evs)
 
 
 def test_function_call_assembly_and_stop_reason(monkeypatch):
@@ -159,7 +208,12 @@ def test_function_call_assembly_and_stop_reason(monkeypatch):
 
 
 def test_early_release_estimates_usage_without_completed(monkeypatch):
-    a, _ = _adapter(
+    # The completed event (the only one with usage) never arrives: both counts
+    # are characters / 4 of the payloads themselves, never 0 for the input
+    # that was certainly sent.
+    from server.costs.capture import estimate_tokens, json_chars
+
+    a, fr = _adapter(
         monkeypatch,
         [
             [
@@ -173,9 +227,10 @@ def test_early_release_estimates_usage_without_completed(monkeypatch):
     )
     result = evs[-1]
     assert isinstance(result, EV.RoundResult)
-    assert result.usage.exact is False
-    assert result.usage.input_tokens == 0
-    assert result.usage.output_tokens == max(1, len("hello world") // 4)
+    assert result.usage.estimated == ("input", "output")
+    assert result.usage.input_tokens == estimate_tokens(json_chars(fr.captured[0]))
+    assert result.usage.input_tokens > 0
+    assert result.usage.output_tokens == estimate_tokens(len("hello world"))
 
 
 def test_heartbeat_fires_during_idle_gap(monkeypatch):

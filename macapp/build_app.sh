@@ -496,12 +496,24 @@ else
     echo "    warning: ReDimNet2 not bundled (it downloads on first use)"
 fi
 
-# f.6: helper binaries.
+# f.6: helper binaries. node also runs the workspace's own ESLint for the
+# assistant's JS/TS checks (server/code_tools; setup.sh parity: nodeenv puts
+# node in the venv).
 substep "copying bin/ (llama-server + dylibs/metallib, ffmpeg, ffprobe, node)"
 cp "$LLAMA_BIN_DIR"/* "$RES_DIR/bin/"
 cp "$FFMPEG_DIR/ffmpeg" "$FFMPEG_DIR/ffprobe" "$NODE_DIR/node" "$RES_DIR/bin/"
 chmod +x "$RES_DIR/bin/llama-server" "$RES_DIR/bin/ffmpeg" \
          "$RES_DIR/bin/ffprobe" "$RES_DIR/bin/node"
+
+# ruff on the app's PATH (Resources/bin is prepended to it), so a `ruff check`
+# the assistant runs in the workspace shell finds the same bundled ruff its
+# diagnostics use (setup.sh parity: venv/bin/ruff is on PATH in a source
+# install). A relative link keeps one copy of the binary, signed in place under
+# python/bin by the loop below.
+substep "linking bin/ruff to the bundled python/bin/ruff"
+[[ -x "$RES_DIR/python/bin/ruff" ]] \
+    || die "python/bin/ruff missing from the bundled runtime (requirements.txt pins ruff)"
+ln -s ../python/bin/ruff "$RES_DIR/bin/ruff"
 
 # ---------------------------------------------------------------------------
 # Stage g: code signing

@@ -17,6 +17,7 @@ import { ensureRecordingModels } from '@/services/recordingModels';
 import { __resetNativeAudioForTests } from './nativeAudioSource';
 import { useRecordingStore } from '@/stores/recordingStore';
 import { useSessionStore } from '@/stores/sessionStore';
+import { answerStopLikeServer } from '@/test/mocks/asrServer';
 
 /** Base64-encode Int16 samples little-endian, like the Swift shell does. */
 function encodeInt16(samples: number[]): string {
@@ -37,6 +38,12 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 interface TrackedWS {
   _getSentMessages(): (string | ArrayBuffer)[];
   readyState: number;
+}
+interface MockSocket {
+  readyState: number;
+  send(data: string | ArrayBuffer): void;
+  close(): void;
+  _receiveMessage(data: object): void;
 }
 
 let wsInstances: TrackedWS[] = [];
@@ -64,12 +71,17 @@ beforeEach(() => {
     },
   };
 
-  // Track websocket instances so the sent PCM can be inspected.
+  // Track websocket instances so the sent PCM can be inspected; `stop` is
+  // answered the way the server does.
   RealWS = globalThis.WebSocket;
-  class TrackingWS extends (RealWS as unknown as { new (url: string): object }) {
+  class TrackingWS extends (RealWS as unknown as { new (url: string): MockSocket }) {
     constructor(url: string) {
       super(url);
       wsInstances.push(this as unknown as TrackedWS);
+    }
+    send(data: string | ArrayBuffer): void {
+      super.send(data);
+      answerStopLikeServer(this, data);
     }
   }
   globalThis.WebSocket = TrackingWS as unknown as typeof WebSocket;
@@ -141,7 +153,7 @@ describe('recordingController — native-only mode', () => {
     expect(pcm[0]).toBeLessThanOrEqual(0x2000);
 
     recordingController.stop();
-    await sleep(300); // stop-drain quiet timer
+    await sleep(300); // the server answers stop with session_ended
 
     expect(posted).toContainEqual({ cmd: 'stop' });
     const after = useRecordingStore.getState();

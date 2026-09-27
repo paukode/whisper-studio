@@ -59,14 +59,14 @@ def test_known_cloud_override_resolves_and_reports_its_key(monkeypatch):
 def test_no_override_uses_the_runs_model_with_no_warning(monkeypatch):
     model_id, key, warning = _resolve({}, monkeypatch=monkeypatch)
     assert model_id == "global.anthropic.claude-opus-5"
-    assert key == ""  # empty ⇒ the ledger falls back to the run's own key
+    assert key == ""  # empty: the run's own model
     assert warning == ""
 
 
 def test_unknown_override_warns_and_does_not_claim_the_bad_key(monkeypatch):
     model_id, key, warning = _resolve({"model": "does-not-exist"}, monkeypatch=monkeypatch)
     assert model_id == "global.anthropic.claude-opus-5"  # fell back
-    assert key == ""  # the ledger must NOT price under the invalid name
+    assert key == ""  # never the invalid name
     assert "unknown model" in warning
 
 
@@ -83,11 +83,15 @@ def test_local_override_is_refused_with_a_readable_reason(monkeypatch):
     assert "on-device" in warning
 
 
-def test_ledger_prices_the_model_that_actually_ran():
-    """The mispricing bug: the ledger used opts.model even when that override
-    was rejected, charging real work to a model that never ran."""
+def test_ledger_adds_the_cost_the_agent_run_reports():
+    """The mispricing bug: the ledger priced opts.model even when that
+    override was rejected, charging real work to a model that never ran. The
+    ledger now prices nothing itself: it adds the cost run_agent reports,
+    which the engine priced round by round under the model that ran."""
     from server.workflows.runtime import WorkflowRun
 
-    src = inspect.getsource(WorkflowRun._handle_agent)
-    assert 'result.get("model_key") or self.model_key' in src
-    assert 'model_key=opts.get("model")' not in src
+    run = WorkflowRun("r1", "")
+    run._account({"input_tokens": 900, "output_tokens": 30, "cost_usd": 1.25})
+    run._account({"input_tokens": 100, "output_tokens": 5, "cost_usd": 0.5})
+    run._account({})  # a failed or replayed call
+    assert (run.tokens_in, run.tokens_out, run.cost_usd) == (1000, 35, 1.75)
