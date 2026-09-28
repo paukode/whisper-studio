@@ -27,10 +27,13 @@ def test_default_model_downgrades_to_cheaper_key():
 
 
 def test_every_priced_model_except_cheapest_has_a_fallback():
-    cheapest = min(_MODEL_PRICING, key=_cost)
+    # The lowest price can be shared: one model priced under two ids (Cohere
+    # Embed v4's in-region id and its global profile). Every key at that
+    # price has nothing strictly cheaper; every other key steps down.
+    floor = min(_cost(key) for key in _MODEL_PRICING)
     for key in _MODEL_PRICING:
         nxt = mf.get_next_fallback(key)
-        if key == cheapest:
+        if _cost(key) == floor:
             assert nxt is None
         else:
             assert nxt is not None

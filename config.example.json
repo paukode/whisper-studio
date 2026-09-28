@@ -67,16 +67,14 @@
       "label": "GPT-6 Sol",
       "context_window": 278528,
       "thinking": "adaptive",
-      "provider": "openai_bedrock",
-      "openai_region": "us-east-1"
+      "provider": "openai_bedrock"
     },
     "gpt6-luna": {
       "id": "openai.gpt-6-luna",
       "label": "GPT-6 Luna",
       "context_window": 278528,
       "thinking": "adaptive",
-      "provider": "openai_bedrock",
-      "openai_region": "us-east-1"
+      "provider": "openai_bedrock"
     },
     "gpt5.6-sol": {
       "id": "openai.gpt-5.6-sol",

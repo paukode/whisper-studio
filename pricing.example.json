@@ -13,7 +13,7 @@
     "sonnet5": "AWS Price List (global) and the billed Cost Explorer rates after 2026-08-31: $2 / $10 / cache read $0.20 / 1-hour write $4.",
     "fable5.1": "AWS Price List (global): $10 / $50 / cache read $0.25 / 1-hour write $20.",
     "nova-sonic": "AWS Price List (AmazonBedrock, us-east-1, Nova Sonic 2.0), matching Cost Explorer's unit costs: speech input $0.003 / speech output $0.012 / text input $0.00033 / text output $0.00275 per 1K tokens. Speech and text bill apart, so the voice log records them under <model id>:speech and <model id>:text.",
-    "cohere": "AWS Price List (AmazonBedrockFoundationModels, us-east-1): Cohere Embed 4 input $0.12 per 1M tokens, no output. Cohere Rerank 3.5 bills $0.002 per search unit, not per token, so its token rows carry no rate and show as $0 with the unpriced note.",
+    "cohere": "AWS Price List (AmazonBedrockFoundationModels, us-east-1): Cohere Embed 4 input $0.12 per 1M tokens, no output. The index calls it through its global profile (global.cohere.embed-v4:0) since 2026-09-28; the Price List carries no separate global Cohere rate, so that row repeats the in-region one, and the in-region row stays so earlier cost rows keep their price. Cohere Rerank 3.5 bills $0.002 per search unit, not per token, so its token rows carry no rate and show as $0 with the unpriced note.",
     "override": "To override or add rates, create pricing.json (gitignored, in the config folder: ~/.whisper for the Mac app, the repo root for a source install) holding only the keys you change. Entries there REPLACE these per model key; models you don't list keep the defaults below. An entry equal to a rate an earlier release shipped for that key is ignored (older installs seeded a full copy of this file), so a stale copy never shadows a correction. There is no silent fallback: a model with no entry bills $0 and logs loudly. Changes apply on server restart.",
     "keys_prefixed_with_underscore": "ignored by the loader (annotations only)."
   },
@@ -48,5 +48,6 @@
 
   "amazon.nova-2-sonic-v1:0:speech": { "input": 3.00, "output": 12.00 },
   "amazon.nova-2-sonic-v1:0:text":   { "input": 0.33, "output": 2.75 },
-  "cohere.embed-v4:0":               { "input": 0.12, "output": 0.00 }
+  "cohere.embed-v4:0":               { "input": 0.12, "output": 0.00 },
+  "global.cohere.embed-v4:0":        { "input": 0.12, "output": 0.00 }
 }
