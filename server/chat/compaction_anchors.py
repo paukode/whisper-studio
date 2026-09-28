@@ -36,7 +36,7 @@ _SYNTHETIC_PREFIXES = (
     "[The conversation no longer fits",
     "<system-reminder>",
     "<user_message_mid_turn>",
-    "Continue exactly where you left off",
+    "Continue exactly where you left off. Do not repeat anything.",
     "[Hook context]",
 )
 
