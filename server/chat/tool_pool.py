@@ -85,10 +85,11 @@ def assemble_tool_pool(
     ws_connected: bool = False,
     suppress_workspace_search: bool = False,
 ) -> list[dict]:
-    """Full advertised tool pool for one model request — cron and the agent
-    runtime use it. The interactive chat loop uses
-    ``assemble_partitioned_pool`` instead (progressive core + activated
-    tools, everything else discoverable via tool_search)."""
+    """Full advertised tool pool for one model request, nothing deferred.
+    The interactive chat loop and cron use ``assemble_partitioned_pool``
+    (progressive core + activated tools, everything else discoverable via
+    tool_search); agents build their entitlement from
+    ``assemble_full_catalog`` in server/agents/tool_access.py."""
     return assemble_full_catalog(
         plan_mode=plan_mode,
         ws_connected=ws_connected,

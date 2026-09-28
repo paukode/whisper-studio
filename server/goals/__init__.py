@@ -84,14 +84,14 @@ class GateContext:
     model_key: str = ""
     workspace: str | None = None
     # The content of the reply being gated. The runner persists it only after
-    # the decision, so ``messages`` does not hold it yet; the judge reads it
-    # from here.
+    # the decision, so ``messages`` does not hold it yet; the gate appends it
+    # to a copy of ``messages`` that its checks and its judge all read.
     final_reply: list | str | None = None
     # A model with no tools cannot act on a "produce the file" nudge, so the
     # checks that ask for one stay quiet for it.
     tools_enabled: bool = True
-    # Plan mode refuses every write, so the checks that ask for a file must
-    # stay quiet when it is on.
+    # Plan mode refuses the workspace writes and the turn is meant to end on
+    # a plan, so the checks that ask for a file stay quiet when it is on.
     plan_mode: bool = False
     # Progress sink for a user-visible status line while the judge runs.
     # Thread-safe; set by run_gate_with_progress.

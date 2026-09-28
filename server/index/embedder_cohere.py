@@ -1,11 +1,11 @@
 """Cohere Embed v4 backend (Amazon Bedrock) — text → 1536-d L2-normalized vectors.
 
 The cloud counterpart to the on-device Qwen3 embedder. Called via bedrock-runtime
-InvokeModel against ``cohere.embed-v4:0``, region-pinned to us-east-1 (where Embed
-v4 + Rerank 3.5 live). Cohere uses an asymmetric recipe: documents are embedded
-with ``input_type=search_document`` and queries with ``search_query``. Cohere
-vectors are not unit-length, so we L2-normalize each row to match the store's
-cosine search (dot product on unit vectors).
+InvokeModel against Embed v4's global profile (``global.cohere.embed-v4:0``) from
+us-east-1, the region Rerank 3.5 also runs in. Cohere uses an asymmetric recipe:
+documents are embedded with ``input_type=search_document`` and queries with
+``search_query``. Cohere vectors are not unit-length, so we L2-normalize each row
+to match the store's cosine search (dot product on unit vectors).
 
 No weights are downloaded or held resident — it's a network call — so unload()/
 is_loaded() are no-ops kept for API parity with the on-device embedder.
@@ -31,9 +31,9 @@ _client_lock = threading.Lock()
 
 
 def _bedrock():
-    """A us-east-1 bedrock-runtime client (Cohere embed/rerank are only there),
-    independent of the chat region. Cached process-wide once credentials
-    resolve, so adding them later takes effect without a relaunch."""
+    """A bedrock-runtime client in COHERE_REGION (us-east-1), independent of
+    the chat region. Cached process-wide once credentials resolve, so adding
+    them later takes effect without a relaunch."""
     from botocore.config import Config as BotoConfig
 
     from server.infrastructure.aws_clients import cached_client

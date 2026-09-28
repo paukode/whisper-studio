@@ -18,7 +18,6 @@ from dataclasses import dataclass, field
 from server.agents import extensions as budget_extensions
 from server.agents.config import (
     AgentConfig,
-    filter_tools_for_agent,
     get_agent_config,
 )
 from server.agents.event_bus import event_bus
@@ -511,6 +510,11 @@ async def run_agent(
                 pass
         message_bus.delete_mailbox(agent_id)
         budget_extensions.unregister(agent_id)
+        # The run's own tool_search activations end with it.
+        from server.agents.tool_access import activation_key
+        from server.chat.tool_activation import forget as _forget_activations
+
+        _forget_activations(activation_key(agent_id))
         # Prune stale completed agents once the top-level (coordinator) run
         # finishes consuming results. register()/update_status() are the only
         # things that ever touched the in-memory _agents dict, so without a
@@ -573,10 +577,9 @@ async def _run_agent_loop(
     fully offline (no permission-explainer model id). Only tool-capable local
     models reach this point — run_agent gates on supports_tools up front.
     """
+    from server.agents.tool_access import AgentToolAccess
     from server.attachment_store import load_session_attachments
     from server.chat.tool_activation import activate_from_history
-    from server.chat.tool_index import build_deferred_index
-    from server.chat.tool_pool import assemble_partitioned_pool
     from server.workspace import get_workspace_path
 
     loop = asyncio.get_event_loop()
@@ -631,47 +634,21 @@ async def _run_agent_loop(
         user_content += f"Task: {task}"
         messages = [{"role": "user", "content": user_content}]
 
-    # Progressive tool disclosure: re-derive this session's activations from
-    # visible history first (self-healing across restarts, exactly like
-    # server/chat/routes.py), then build the filtered tool pool ONCE for the
-    # whole run — identical logic to the pre-migration loop (assemble_tool_pool
-    # + agent-runtime tools + filter_tools_for_agent + final dedup), just fed
-    # from the core+activated set instead of the full catalog — and hand it to
-    # the engine as a precomputed TurnContext.tool_catalog instead of letting
-    # it reassemble a chat-shaped catalog every round. Everything deferred is
-    # folded into a compact index appended to the system prompt below.
-    activate_from_history(session_id, messages)
-    all_tools, _deferred, _core_count = assemble_partitioned_pool(
-        plan_mode=False, ws_connected=bool(ws_path), session_id=session_id
+    # Tool access (server/agents/tool_access.py): what this run may execute is
+    # fixed here, and the engine refuses every other name (ctx.tool_scope).
+    # Each round's array is rebuilt from it, so a tool loaded with tool_search
+    # is offered from the next round. A resumed run's own earlier calls
+    # re-activate into its own set, never the parent session's.
+    access = AgentToolAccess(
+        config, agent_id=agent_id, depth=depth, session_id=session_id, ws_connected=bool(ws_path)
     )
-    deferred_tool_index = build_deferred_index(_deferred)
+    activate_from_history(access.scope.activation_key, messages)
+    deferred_tool_index = access.deferred_index()
     if deferred_tool_index:
         system += "\n\n" + deferred_tool_index
 
-    from server.agents.tools import get_agent_runtime_tools, strip_delegation_tools_at_depth_limit
-
-    existing_names = {t["name"] for t in all_tools}
-    for t in get_agent_runtime_tools(agent_id, depth):
-        if t["name"] not in existing_names:
-            all_tools.append(t)
-            existing_names.add(t["name"])
-
-    all_tools = strip_delegation_tools_at_depth_limit(all_tools, depth)
-
-    tools = filter_tools_for_agent(all_tools, config)
-
-    # Final dedup — MCP servers or plugins may contribute duplicate tool names.
-    # Bedrock rejects requests with non-unique tool names.
-    seen_names = set()
-    deduped_tools = []
-    for t in tools:
-        if t["name"] not in seen_names:
-            seen_names.add(t["name"])
-            deduped_tools.append(t)
-    tools = deduped_tools
-
     def _tool_catalog() -> tuple[list[dict], int | None]:
-        return tools, None
+        return access.offered(), None
 
     # Provider adapter selection — the same chat_model_meta.provider check
     # server/chat/routes.py uses to choose between the two chat/engine
@@ -877,6 +854,7 @@ async def _run_agent_loop(
         unattended=True,
         turn_scope_id=f"agent:{agent_id}",
         tool_catalog=_tool_catalog,
+        tool_scope=access.scope,
         # Round-start checkpoint into the journal, and the report template for
         # whichever limit forces the final round.
         on_round=(journal.checkpoint if journal is not None else None),
@@ -1008,7 +986,11 @@ async def _run_agent_loop(
                         tool_name=tool_name,
                         output_preview=_preview(output_preview, 240),
                         output_full=_preview(output_preview, 4000),
-                        status="error" if output_preview.startswith("[Tool Error]") else "ok",
+                        status=(
+                            "error"
+                            if output_preview.startswith(("[Tool Error]", "[Refused]"))
+                            else "ok"
+                        ),
                     )
                 elif "notify_user" in frame:
                     msg = (frame["notify_user"] or {}).get("message", "")

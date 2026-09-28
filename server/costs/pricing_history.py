@@ -81,6 +81,7 @@ SHIPPED_RATES: dict[str, tuple[dict, ...]] = {
     "amazon.nova-2-sonic-v1:0:speech": (_e(3.0, 12.0, 0.0, 0.0),),
     "amazon.nova-2-sonic-v1:0:text": (_e(0.33, 2.75, 0.0, 0.0),),
     "cohere.embed-v4:0": (_e(0.12, 0.0, 0.0, 0.0),),
+    "global.cohere.embed-v4:0": (_e(0.12, 0.0, 0.0, 0.0),),
 }
 
 

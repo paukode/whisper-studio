@@ -46,6 +46,12 @@ def get_ordered(session_id: str) -> list[str]:
         return list(_activated.get(session_id, ()))
 
 
+def forget(session_id: str) -> None:
+    """Drop a key's activations: an agent run's own set when the run ends."""
+    with _lock:
+        _activated.pop(session_id, None)
+
+
 def activate_from_history(session_id: str, messages: list[dict]) -> list[str]:
     """Re-activate every tool name the model already used in this history.
 

@@ -2,9 +2,11 @@
 
 Order: (1) WS-I Stop hooks, (1.5 to 1.7) the deterministic deliverable,
 requested-file and verification checks, then, only while a goal is active,
-(2a) the goal's quality gates and (2b) the judge. A block means: do not end
-the turn, inject the feedback and loop again. The consecutive-block cap
-(default 8) backstops both a stuck judge and an always-blocking Stop hook.
+(2a) the goal's quality gates and (2b) the judge. The checks and the judge
+read one transcript: the history with the reply being gated at its end. A
+block means: do not end the turn, inject the feedback and loop again. The
+consecutive-block cap (default 8) backstops both a stuck judge and an
+always-blocking Stop hook.
 
 Which turns reach the gate is the caller's TurnPolicy: every interactive
 cloud turn, and an on-device turn only while a goal is active. The judge is
@@ -115,6 +117,17 @@ def _hook_model_id(ctx: GateContext) -> str:
     return ctx.model_id
 
 
+def _gated_messages(ctx: GateContext) -> list:
+    """The transcript the checks and the judge read: the history with the
+    reply being gated at its end. The runner persists that reply only after
+    the decision, so the last assistant row of ``ctx.messages`` is the round
+    before it. A new list: the caller's history is never changed."""
+    messages = list(ctx.messages)
+    if ctx.final_reply:
+        messages.append({"role": "assistant", "content": ctx.final_reply})
+    return messages
+
+
 async def run_completion_gate(ctx: GateContext) -> GateDecision:
     """Decide whether the turn may end. See module docstring for ordering.
 
@@ -148,17 +161,22 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
             source="stop_hook",
         )
 
+    # Every phase from here judges the same transcript, the reply included.
+    messages = _gated_messages(ctx)
+
     # ── Phase 1.5: claimed deliverables (every gated turn, goal or not) ─────
     # The reply says a file was saved or points at an artifact card; check the
     # file exists (non-empty) and the artifact call happened THIS turn. Twice
     # in real sessions neither was true and the user found out only by asking.
-    # A miss is a block with the missing items named, under the same cap. A
-    # model with no tools cannot produce the file, so it is not asked to.
+    # A miss is a block with the missing items named, at most
+    # MAX_CLAIM_NUDGES per turn under the same cap; plan mode checks only the
+    # artifact card, since its paths are files the plan will write. A model
+    # with no tools cannot produce the file, so it is not asked to.
     if ctx.tools_enabled and _flag_on("deliverable_check"):
         from server.goals.deliverables import check_claims
 
         try:
-            claim_feedback = check_claims(ctx.messages, ctx.workspace)
+            claim_feedback = check_claims(messages, ctx.workspace, plan_mode=ctx.plan_mode)
         except Exception as e:  # noqa: BLE001 - a checker bug must never abort a turn
             log.warning("deliverable check failed (%s); skipping", e)
             claim_feedback = None
@@ -188,14 +206,14 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
     # none. A real session answered "update the diagram and save it to
     # Downloads" with a revised description in chat and no file, and the user
     # only found out by asking. One nudge per turn, since the ask is read out
-    # of prose. Plan mode is exempt: writing is refused there by design, and
-    # so is a model with no tools, which has no file tool to call.
+    # of prose. Plan mode is exempt: the workspace writes are refused there by
+    # design, and so is a model with no tools, which has no file tool to call.
     if ctx.tools_enabled and _flag_on("requested_file_check"):
         from server.goals.requested_files import requested_file_feedback
 
         try:
             file_feedback = requested_file_feedback(
-                ctx.messages, ctx.workspace, plan_mode=ctx.plan_mode
+                messages, ctx.workspace, plan_mode=ctx.plan_mode
             )
         except Exception as e:  # noqa: BLE001 - a checker bug must never abort a turn
             log.warning("requested-file check failed (%s); skipping", e)
@@ -230,7 +248,7 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
         from server.goals.verification import verify_on_stop_feedback
 
         try:
-            verify_feedback = verify_on_stop_feedback(ctx.messages, ctx.workspace)
+            verify_feedback = verify_on_stop_feedback(messages, ctx.workspace)
         except Exception as e:  # noqa: BLE001 - the ledger must never abort a turn
             log.warning("verify-on-stop check failed (%s); skipping", e)
             verify_feedback = None
@@ -311,7 +329,7 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
             )
 
     # ── Phase 2b: the judge ──────────────────────────────────────────────────
-    verdict = await _judge(ctx, goal)
+    verdict = await _judge(ctx, goal, messages)
 
     if verdict.is_not_checked:
         reason = verdict.feedback.rstrip()
@@ -390,13 +408,10 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
     )
 
 
-async def _judge(ctx: GateContext, goal: str) -> Verdict:
-    """Phase 2b's verdict. The judge reads the reply being gated: the runner
-    passes it as ``final_reply`` because it is persisted only after the
-    decision. Any exception is ``not_checked``, never a pass."""
-    messages = list(ctx.messages)
-    if ctx.final_reply:
-        messages.append({"role": "assistant", "content": ctx.final_reply})
+async def _judge(ctx: GateContext, goal: str, messages: list) -> Verdict:
+    """Phase 2b's verdict on ``messages``, the transcript the checks before it
+    read, the reply being gated included (``_gated_messages``). Any exception
+    is ``not_checked``, never a pass."""
     try:
         if ctx.provider == "local":
             from server.goals.local_judge import evaluate_on_device

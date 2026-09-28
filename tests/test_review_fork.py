@@ -110,6 +110,26 @@ def test_fork_replays_the_turn_and_only_runs_allowed_tools(_plumbing):
     assert stats["cache_read_tokens"] == 18100
 
 
+def test_a_chat_round_offers_every_tool_the_review_may_run(monkeypatch):
+    """The fork replays the round's tools array byte for byte and refuses
+    tool_search, so a tool it may run that the round deferred is out of reach:
+    the review asks for memory_write and skill_manage, and neither was core."""
+    from server.chat.tool_pool import assemble_full_catalog, assemble_partitioned_pool
+    from server.infrastructure import feature_flags
+
+    real = feature_flags.is_enabled
+    on = {"auto_memory", "skill_self_improvement", "progressive_tools"}
+    monkeypatch.setattr(feature_flags, "is_enabled", lambda name: name in on or real(name))
+    catalog = {t["name"] for t in assemble_full_catalog(ws_connected=False)}
+    advertised, _deferred, _core = assemble_partitioned_pool(
+        ws_connected=False, session_id="s-review-fresh"
+    )
+
+    runnable = review_fork.ALLOWED_TOOLS & catalog
+    assert {"memory_write", "skill_manage"} <= runnable
+    assert runnable <= {t["name"] for t in advertised}
+
+
 def test_supports_fork_and_prompt_contents():
     assert review_fork.supports_fork(SimpleNamespace(provider="anthropic"))
     assert review_fork.supports_fork(SimpleNamespace(provider="openai"))

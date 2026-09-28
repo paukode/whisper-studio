@@ -314,10 +314,14 @@
       <code>assemble_partitioned_pool</code> (<code class="path">server/chat/tool_pool.py</code>) in
       <a href="arch-chat-pipeline.html">the chat pipeline</a>:</p>
     <div class="spec">
-      <dt><code>CORE_TOOLS</code></dt><dd>A curated always-advertised set (36 names) in
+      <dt><code>CORE_TOOLS</code></dt><dd>A curated always-advertised set in
         <code class="path">tool_partition.py</code>: workspace primitives, the discovery tools
         (<code>tool_search</code> can never be deferred - it is the way back), the todo and
-        background-task tools, orchestration, and the workflow / CI tools when present.</dd>
+        background-task tools, orchestration, the workflow / CI tools when present, and the four
+        memory tools while <code>auto_memory</code> puts them in the catalogue.
+        <code>core_names()</code> adds <code>skill_manage</code> while
+        <code>skill_self_improvement</code> is on. The post-turn learning review replays a turn's
+        tools array and cannot load a deferred tool, so what it saves with has to be core.</dd>
       <dt>Session activation</dt><dd>Tools this session has pulled in via <code>tool_search</code> or
         history replay, tracked in <code class="path">server/chat/tool_activation.py</code> and
         appended after the core prefix in activation order.</dd>
@@ -329,9 +333,21 @@
       <code>core_count</code> breakpoint is placed on it, so a new activation invalidates only the
       appended tail of the tools cache block, not the core prefix. The flag
       <code>progressive_tools</code> defaults <b>on</b> and covers every turn-engine consumer: interactive chat, <a href="arch-cron.html">cron runs</a>,
-      <a href="arch-agents.html">sub-agents</a>, and headless turns all call
-      <code>activate_from_history</code> + <code>assemble_partitioned_pool</code> and carry the
-      deferred index, so <code>tool_search</code> works inside agents and scheduled runs too.</p>
+      and headless turns call <code>activate_from_history</code> +
+      <code>assemble_partitioned_pool</code> and carry the deferred index, and
+      <a href="arch-agents.html">sub-agents</a> get the same disclosure through their own tool
+      access, so <code>tool_search</code> works inside agents and scheduled runs too.</p>
+    <p>Sub-agents go through <code class="path">server/agents/tool_access.py</code>. What an agent
+      may run is fixed when it starts: its own catalogue (the chat catalogue outside ultracode plus
+      the agent-only tools) through its type's filter, and the executor refuses every other name. A
+      tool it may run that its round merely deferred still runs by name, as in chat. Two things
+      differ from chat. An agent with an <code>allowed_tools</code> whitelist is offered its whole
+      whitelist every round and gets no deferred index: the memory agents cannot call
+      <code>tool_search</code>, so deferral would leave their own tools out of reach. Any other agent
+      is offered the core set plus the session's activations and its own; its index lists only tools
+      it may run, and its <code>tool_search</code> searches only those and loads them into the
+      agent's own set, so they are offered from its next round and the parent chat's tools do not
+      change.</p>
 
     <h2 id="key-files">Key files</h2>
     <div class="spec">

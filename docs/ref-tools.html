@@ -62,8 +62,9 @@
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/><path d="M9 18h6M10 22h4"/></svg></span>
       <div class="callout__body"><p>Throughout the tables, a <span class="badge">★ Core</span> badge marks
-        a tool in the progressive-disclosure <b>core set</b> (<code>CORE_TOOLS</code>, 36 names in
-        <code class="path">server/chat/tool_partition.py</code>): always advertised, never deferred.
+        a tool in the progressive-disclosure <b>core set</b> (<code>CORE_TOOLS</code> in
+        <code class="path">server/chat/tool_partition.py</code>, plus <code>skill_manage</code> while
+        <code>skill_self_improvement</code> is on): always advertised, never deferred.
         Unbadged tools appear only as one-line entries in the deferred index until
         <code>tool_search</code> activates them for the session.</p></div>
     </div>
@@ -277,15 +278,16 @@
     <h2 id="memory">Memory</h2>
     <p>Read and write the workspace memory store, which the assistant injects into the system prompt on
       later turns. These four are in the catalogue only while the <code>auto_memory</code> feature
-      flag is on (its default). See <a href="arch-memory.html">Memory system</a> and
+      flag is on (its default), and are core whenever they are, so the post-turn learning review can
+      call them. See <a href="arch-memory.html">Memory system</a> and
       <a href="tut-memory.html">Memory &amp; WHISPER.md</a>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
       <tbody>
-        <tr><td><code>memory_read</code></td><td>Read a memory file from the workspace memory store.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>memory_write</code></td><td>Write a memory file, creating or overwriting it. Writes route by scope: portable facts about you go to the global tier, repo-specific ones to the project tier.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
-        <tr><td><code>memory_list</code></td><td>List all memory files with their type and metadata.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>memory_delete</code></td><td>Delete a memory file from the store. Without a scope it searches the project tier first, then the global one.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
+        <tr><td><code>memory_read</code> <span class="badge">★ Core</span></td><td>Read a memory file from the workspace memory store.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>memory_write</code> <span class="badge">★ Core</span></td><td>Write a memory file, creating or overwriting it. Writes route by scope: portable facts about you go to the global tier, repo-specific ones to the project tier.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
+        <tr><td><code>memory_list</code> <span class="badge">★ Core</span></td><td>List all memory files with their type and metadata.</td><td><span class="badge badge--muted">read</span></td></tr>
+        <tr><td><code>memory_delete</code> <span class="badge">★ Core</span></td><td>Delete a memory file from the store. Without a scope it searches the project tier first, then the global one.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
       </tbody>
     </table></div>
 
@@ -373,7 +375,7 @@
       <tbody>
         <tr><td><code>skill_list</code> <span class="badge">★ Core</span></td><td>List all available Whisper skills with names and descriptions.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>skill_invoke</code> <span class="badge">★ Core</span></td><td>Invoke a named skill as a tool call, passing an input.</td><td><span class="badge badge--muted">read</span></td></tr>
-        <tr><td><code>skill_manage</code></td><td>Create and maintain the assistant's own skills, its procedural memory for how you want a class of task done. Actions: <code>view</code> (the SKILL.md text and file list), <code>create</code>, <code>patch</code> (replace one unique piece of text), <code>append</code>, <code>write_file</code> and <code>remove_file</code> for a support file under <code class="path">references/</code>, <code class="path">scripts/</code>, <code class="path">templates/</code> or <code class="path">assets/</code>, and <code>delete</code>, which only works on skills it created.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
+        <tr><td><code>skill_manage</code> <span class="badge">★ Core</span></td><td>Core while <code>skill_self_improvement</code> is on. Create and maintain the assistant's own skills, its procedural memory for how you want a class of task done. Actions: <code>view</code> (the SKILL.md text and file list), <code>create</code>, <code>patch</code> (replace one unique piece of text), <code>append</code>, <code>write_file</code> and <code>remove_file</code> for a support file under <code class="path">references/</code>, <code class="path">scripts/</code>, <code class="path">templates/</code> or <code class="path">assets/</code>, and <code>delete</code>, which only works on skills it created.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
         <tr><td><code>notebook_read</code></td><td>Read a Jupyter notebook (.ipynb) and return all cells with their type and output.</td><td><span class="badge badge--muted">read</span></td></tr>
         <tr><td><code>notebook_edit</code></td><td>Edit a cell in a Jupyter notebook.</td><td><span class="badge">approval</span></td></tr>
         <tr><td><code>list_mcp_resources</code></td><td>List available resources from all connected MCP servers.</td><td><span class="badge badge--muted">read</span></td></tr>

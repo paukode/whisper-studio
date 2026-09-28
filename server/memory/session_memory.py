@@ -200,7 +200,7 @@ async def _run_session_update(
     model_id: str,
 ) -> None:
     """Run the session memory update. On-device (local) turns summarise via the
-    local model itself (fully offline); cloud turns use the memory_extractor
+    local model itself (fully offline); cloud turns use the session_summarizer
     agent. Both write the same structured markdown file."""
     from server.local.runtime import is_local_model_id
 
@@ -226,19 +226,24 @@ async def _run_session_update(
 
 
 async def _run_agent_session_update(existing: str, excerpt: str, session_id: str) -> str | None:
-    """Cloud path: summarise via the memory_extractor agent."""
+    """Cloud path: summarise via the read-only session_summarizer agent, which
+    runs under the summary prompt. This function writes the file from its
+    reply. It ran as memory_extractor, whose extraction prompt and write tools
+    led it to save the summary into long-term memory as well."""
     from server.agents.runtime import run_agent
-    from server.memory.prompts import SESSION_SUMMARY_PROMPT
 
     result = await run_agent(
         _update_task(existing, excerpt),
-        agent_type="memory_extractor",
+        agent_type="session_summarizer",
         session_id=session_id,
-        context=SESSION_SUMMARY_PROMPT,
         depth=1,
         cost_source="memory",
     )
-    if result.status == "completed" and result.output:
+    # A run that reached its round or time limit returns a stop note ahead of
+    # its text, or a salvage report in its place: neither is the summary. The
+    # file keeps its last summary until a later update, due on the usual
+    # thresholds, writes a new one.
+    if result.status == "completed" and result.output and not result.stopped_early:
         return result.output
     return None
 

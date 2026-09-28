@@ -9,8 +9,10 @@ Owns everything GPT/mantle-specific:
     call linkage survives round-tripping through the engine's canonical
     format — the old path degraded history tool calls to plain text)
   - the two mantle stream adaptations, verified live: EARLY RELEASE (mantle
-    holds the stream open ~30-40s after the answer before ``completed``) and
-    HEARTBEAT keepalives during idle gaps
+    can hold the stream open for seconds after the output before
+    ``completed``; the round moves on once a ``final_answer`` message or every
+    function call is done, never on a ``commentary`` preamble, which the calls
+    follow) and HEARTBEAT keepalives during idle gaps
   - prompt-too-long detection: mantle rejections like ``prompt tokens (281096)
     exceed customer model maximum (278528)`` raise ``PromptTooLongError`` so
     the engine's reactive rescue + salvage round apply to GPT turns exactly as
@@ -296,7 +298,14 @@ class OpenAIResponsesAdapter:
         fcalls: dict[str, dict] = {}
         n_items = 0
         n_done = 0
-        text_done = False
+        # GPT marks the text it writes before tool calls "commentary" and the
+        # reply that ends the response "final_answer" (mantle, GPT-5.5 to 6).
+        # Only a final answer is the end: after a preamble the stream goes
+        # silent (1.2 to 2.1 s live) and then sends the calls, so releasing on
+        # it ended the turn on "I'm checking the files now" with the calls
+        # never seen. Text with no phase waits for completed.
+        msg_phase = None
+        answer_done = False
         completed_usage = None
         completed = False
         thinking_open = False
@@ -309,12 +318,12 @@ class OpenAIResponsesAdapter:
 
         try:
             while True:
-                ready = text_done or (n_items > 0 and n_done >= n_items)
+                ready = answer_done or (n_items > 0 and n_done >= n_items)
                 try:
                     kind, payload = await asyncio.wait_for(q.get(), timeout=_POLL_S)
                 except asyncio.TimeoutError:
                     now = loop.time()
-                    # Answer complete -> skip mantle's laggy completed-tail.
+                    # Final answer or calls done -> skip mantle's completed-tail.
                     if ready and (now - last_event) > _EARLY_RELEASE_GRACE_S:
                         break
                     if (now - last_hb) >= _HEARTBEAT_S:
@@ -357,7 +366,7 @@ class OpenAIResponsesAdapter:
                     last_event = loop.time()
                     yield TextDelta(text=d)
                 elif et == "response.output_text.done":
-                    text_done = True
+                    answer_done = answer_done or msg_phase == "final_answer"
                     if cur_text:
                         text_blocks.append(cur_text)
                         cur_text = ""
@@ -384,7 +393,10 @@ class OpenAIResponsesAdapter:
                     yield TextDelta(text=d)
                 elif et == "response.output_item.added":
                     item = getattr(ev, "item", None)
-                    if item is not None and getattr(item, "type", "") == "function_call":
+                    item_type = getattr(item, "type", "") if item is not None else ""
+                    if item_type == "message":
+                        msg_phase = getattr(item, "phase", None)
+                    elif item_type == "function_call":
                         n_items += 1
                         fcalls[getattr(item, "id", "") or ""] = {
                             "call_id": getattr(item, "call_id", "") or "",

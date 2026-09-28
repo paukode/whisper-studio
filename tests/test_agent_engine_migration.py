@@ -38,9 +38,6 @@ def test_agent_stamp_reaches_route_tool_through_new_loop(monkeypatch):
         ]
     )
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr(
-        "server.chat.tool_pool.assemble_partitioned_pool", lambda *a, **k: ([], [], 0)
-    )
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
 
     captured: dict = {}
@@ -105,9 +102,6 @@ def test_spawned_agent_does_not_perturb_parent_session_goal_state(monkeypatch, t
         [[msg_start(), *text_block("Subtask done."), *msg_end(stop_reason="end_turn")]]
     )
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr(
-        "server.chat.tool_pool.assemble_partitioned_pool", lambda *a, **k: ([], [], 0)
-    )
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
 
     # session_id is the PARENT chat session's own id, exactly as
@@ -142,8 +136,7 @@ def test_read_only_agent_cannot_reach_write_tools_via_new_tool_catalog(monkeypat
         {"name": "ws_write_file", "description": "d", "input_schema": {"type": "object"}},
     ]
     monkeypatch.setattr(
-        "server.chat.tool_pool.assemble_partitioned_pool",
-        lambda *a, **k: (_mock_tools, [], len(_mock_tools)),
+        "server.chat.tool_pool.assemble_full_catalog", lambda *a, **k: list(_mock_tools)
     )
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
 
@@ -197,9 +190,6 @@ def test_worktree_isolation_end_to_end_through_new_loop(monkeypatch, tmp_path):
         ]
     )
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr(
-        "server.chat.tool_pool.assemble_partitioned_pool", lambda *a, **k: ([], [], 0)
-    )
 
     cfg = AgentConfig(agent_type="general", read_only=False, max_turns=5, deadline_seconds=None)
     result = asyncio.run(
@@ -260,9 +250,6 @@ def test_worktree_kept_not_applied_on_turn_limit_exit(monkeypatch, tmp_path):
         ]
     )
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr(
-        "server.chat.tool_pool.assemble_partitioned_pool", lambda *a, **k: ([], [], 0)
-    )
 
     cfg = AgentConfig(agent_type="general", read_only=False, max_turns=2, deadline_seconds=None)
     result = asyncio.run(
@@ -277,6 +264,10 @@ def test_worktree_kept_not_applied_on_turn_limit_exit(monkeypatch, tmp_path):
 
     assert result.status == "completed"
     assert result.stopped_early is True
+    # The write really ran, in the agent's worktree: a refused call would
+    # leave the repo clean too and prove nothing below.
+    ran = fake_stream.requests[1]["messages"][-1]["content"][0]["content"]
+    assert not ran.startswith("[Refused]"), ran
     # Not applied: the shared workspace (repo) must NOT have the new file —
     # the worktree is kept for inspection, per _agent_finished's gate.
     assert not (repo / "x.txt").exists()
@@ -315,8 +306,7 @@ def test_ephemeral_agent_type_resolves_through_new_loop(monkeypatch):
         {"name": "ws_write_file", "description": "d", "input_schema": {"type": "object"}},
     ]
     monkeypatch.setattr(
-        "server.chat.tool_pool.assemble_partitioned_pool",
-        lambda *a, **k: (_mock_tools, [], len(_mock_tools)),
+        "server.chat.tool_pool.assemble_full_catalog", lambda *a, **k: list(_mock_tools)
     )
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
 

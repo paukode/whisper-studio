@@ -96,6 +96,24 @@ WRITE_TOOLS = frozenset(
         # executors.py::execute_ws_open_folder) — a read_only agent must not
         # be able to redirect the workspace out from under later tools.
         "ws_open_folder",
+        # Delegation. Each starts another agent, and spawn_agent, team_create
+        # and skill_invoke can start a general one with the full write set,
+        # auto-approved, so a read-only agent that delegates is not read-only.
+        # Claude Code keeps its agent tool away from Explore and Plan for the
+        # same reason.
+        "spawn_agent",
+        "team_create",
+        "team_delete",
+        "skill_invoke",
+        # Handler-backed tools that change state outside the workspace: a
+        # scheduled job (cron_run starts one with its own tools), an artifact
+        # or a plan (saved, and opened in the parent chat), or another session.
+        "cron_update",
+        "cron_run",
+        "create_artifact",
+        "edit_artifact",
+        "create_plan",
+        "send_session_message",
     }
 )
 
@@ -176,6 +194,11 @@ class AgentConfig:
             _handle_spawn_agent); wiring a per-type override is a possible
             follow-up, deliberately left inert here to avoid guessing whether
             it should be a chat_models catalog key or a raw provider id.
+        internal: True for a preset the app runs for itself (the memory
+            agents), never a type the user or the model spawns. The
+            ``agent_limits.default`` block does not reach it; only an entry
+            under its own name does (see get_agent_config). Custom and
+            ephemeral types are never internal.
 
     isolation is a run_agent parameter, not per-type state.
     """
@@ -188,6 +211,7 @@ class AgentConfig:
     allowed_tools: frozenset[str] | None = None
     system_prompt: str | None = None
     model: str | None = None
+    internal: bool = False
 
 
 AGENT_TYPES: dict[str, AgentConfig] = {
@@ -246,13 +270,18 @@ AGENT_TYPES: dict[str, AgentConfig] = {
         )
         + AGENT_METHOD,
     ),
+    # The memory agents run unattended and skip agent_limits.default (see
+    # get_agent_config), so each pairs its round cap with its own time limit:
+    # the 900 s the shipped default gave them before they skipped it.
     "memory_extractor": AgentConfig(
         agent_type="memory_extractor",
         max_turns=5,
+        deadline_seconds=900,
         max_tokens=4096,
         allowed_tools=MEMORY_RW_TOOLS,
         # Single source of truth in server/memory/prompts.py.
         system_prompt=EXTRACTION_SYSTEM_PROMPT,
+        internal=True,
     ),
     # Dream consolidation: reorganizes the EXISTING store (merge/update/prune),
     # so it keeps the write set but runs under a consolidation-specific prompt
@@ -262,9 +291,11 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     "memory_consolidator": AgentConfig(
         agent_type="memory_consolidator",
         max_turns=8,
+        deadline_seconds=900,
         max_tokens=4096,
         allowed_tools=MEMORY_RW_TOOLS,
         system_prompt=CONSOLIDATION_SYSTEM_PROMPT,
+        internal=True,
     ),
     # Session summariser: distils one conversation into a fixed-section markdown
     # file. The caller writes that file from the agent's returned text, so the
@@ -273,9 +304,11 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     "session_summarizer": AgentConfig(
         agent_type="session_summarizer",
         max_turns=5,
+        deadline_seconds=900,
         max_tokens=4096,
         allowed_tools=MEMORY_RO_TOOLS,
         system_prompt=SESSION_SUMMARY_PROMPT,
+        internal=True,
     ),
     "coordinator": AgentConfig(
         agent_type="coordinator",
@@ -309,6 +342,7 @@ def _agent_limit_overrides() -> dict:
         }
 
     Lets turn/time budgets be tuned per deployment without editing code.
+    ``default`` covers the spawnable types only; see get_agent_config.
     """
     try:
         from server.infrastructure.config import load_config
@@ -355,10 +389,20 @@ def get_agent_config(agent_type: str) -> AgentConfig:
     type name, including one that shadows a built-in preset name. Only
     ``max_turns`` and ``deadline_seconds`` are overridable via agent_limits;
     any unset key keeps the resolved preset.
+
+    ``default`` is the budget for the agents people spawn: the docs describe
+    it next to the spawnable types (docs/tut-subagents.html), it may raise
+    their presets as well as lower them, and the memory agents are documented
+    as "not ones you spawn directly". An internal preset therefore skips it
+    and keeps its own cap, which bounds an unattended background job; only an
+    entry under its own name retunes it, in either direction. The shipped
+    config.example.json sizes ``default`` for the general worker, which had
+    lifted every memory agent to that budget.
     """
     base = _resolve_base_config(agent_type)
     ov = _agent_limit_overrides()
-    merged = {**(ov.get("default") or {}), **(ov.get(agent_type) or {})}
+    default = {} if base.internal else (ov.get("default") or {})
+    merged = {**default, **(ov.get(agent_type) or {})}
     if not merged:
         return base
 

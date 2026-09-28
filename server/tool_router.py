@@ -47,11 +47,17 @@ async def route_tool(
     origin: str = "chat",
     effort_label: str | None = None,
     event_channel: str | None = None,
+    tool_scope=None,
 ) -> tuple[str, list[dict]]:
     """Dispatch a tool call to its handler.
 
     ``event_channel`` is where agent progress for this turn is published
     (None: the session id). A nested agent's own channel takes precedence.
+
+    ``tool_scope`` (server.agents.tool_access.ToolScope) is the calling agent
+    run's entitlement, None outside an agent. The executor already refused
+    every name outside it; here it bounds what tool_search finds and keys
+    where its matches are activated.
 
     Returns:
         (output, side_effects) where side_effects is a list of dicts.
@@ -380,7 +386,14 @@ async def route_tool(
             ws_connected=bool(get_workspace_path()),
             ultracode=is_ultracode(effort_label),
         )
-        output = execute_tool_search(tool_input, all_t, session_id=session_id)
+        activation_key = session_id
+        if tool_scope is not None:
+            # An agent finds only what it may run (a read-only agent is never
+            # handed a write tool's schema), and what it loads is offered from
+            # its own next round without touching the parent chat's tools.
+            all_t = [t for t in all_t if t["name"] in tool_scope.permitted]
+            activation_key = tool_scope.activation_key
+        output = execute_tool_search(tool_input, all_t, session_id=activation_key)
         return output, side_effects
 
     # --- MCP resources ---

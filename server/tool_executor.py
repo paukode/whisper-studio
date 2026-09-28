@@ -158,8 +158,16 @@ async def execute_tool_batch(
     guard_scope: str = "",
     event_channel: str | None = None,
     workspace_latch=None,
+    tool_scope=None,
 ) -> list[ToolState]:
     """Execute a batch of tool_use blocks with full lifecycle management.
+
+    ``tool_scope`` (server.agents.tool_access.ToolScope) is what an agent run
+    may execute. A call to any name outside ``tool_scope.permitted`` is
+    refused with a synthetic result before hooks, approvals or the router see
+    it, whatever name the model emitted: the tools array only decides what
+    the model is shown, and agents approve their own writes. None (every
+    non-agent turn) leaves calls unscoped.
 
     ``workspace_latch`` (server.workspace.state.WorkspaceLatch) is the
     workspace the turn was assembled against. Every call in the batch runs
@@ -207,6 +215,16 @@ async def execute_tool_batch(
             call_input["__agent__"] = True
 
         # --- Pre-execution checks ---
+
+        # Agent tool scope: a name outside the run's entitlement never runs.
+        if tool_scope is not None and tool_name not in tool_scope.permitted:
+            state.status = "skipped"
+            state.output = (
+                f"[Refused] '{tool_name}' is not one of this agent's tools, so it did "
+                "not run. Continue with the tools you have."
+            )
+            log.info("agent tool scope refused %s", tool_name)
+            return
 
         # Sibling abort: skip writes if a command tool failed
         if command_error and not is_concurrent_safe(tool_name):
@@ -309,6 +327,7 @@ async def execute_tool_batch(
                 tool_use_id=state.tool_id,
                 effort_label=effort_label,
                 event_channel=event_channel,
+                tool_scope=tool_scope,
             )
             output = _explain_lost_workspace(output)
             if isinstance(output, str) and output.startswith("[WS_APPROVAL]"):

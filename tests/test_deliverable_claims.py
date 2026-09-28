@@ -3,6 +3,11 @@ reply presents as deliverables out of provider-neutral messages, and verify
 them. Twice in real sessions the reply said "saved" / "artifact card above"
 and neither existed."""
 
+import pytest
+
+from server.chat.engine import midturn_inbox
+from server.chat.engine.runner import _midturn_text, _remind
+from server.chat.loop_hints import WIND_DOWN_AT, near_cap_reminder
 from server.goals import deliverables as d
 
 
@@ -108,3 +113,77 @@ def test_check_claims_flags_an_artifact_card_claim_without_a_create_artifact_cal
         msgs[1],
     ]
     assert d.check_claims(with_call, None) is None
+
+
+# ── rows the engine writes into a running turn ─────────────────────────────
+# When the loop carries on past an apparent end of turn (a late mid-turn
+# message, a pause_turn, a max_tokens cut), what it writes next is a user row
+# of its own after the assistant turn: the late message or a reminder
+# (runner._remind), or the continuation prompt. None of them starts a new
+# turn. Rows the runner has a helper for are built with it.
+
+
+def _late(messages: list, text: str, kind: str = midturn_inbox.USER) -> list:
+    _remind(messages, _midturn_text(midturn_inbox.Entry(kind, text)))
+    return messages
+
+
+def _artifact_turn() -> list:
+    return [
+        {"role": "user", "content": "draw the pipeline as a diagram"},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "a1", "name": "create_artifact", "input": {}}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "a1", "content": "ok"}],
+        },
+        {"role": "assistant", "content": "Here it is in the artifact card above."},
+    ]
+
+
+def test_a_late_mid_turn_message_does_not_start_a_new_turn():
+    msgs = _late(_artifact_turn(), "No, dont do that for sebastian, ignore it.")
+    assert len(msgs) == 5 and msgs[-1]["role"] == "user"
+    msgs.append({"role": "assistant", "content": "Understood, I left it as it is."})
+    assert d.turn_messages(msgs) == msgs[1:]
+
+
+@pytest.mark.parametrize(
+    "add_row",
+    [
+        lambda msgs: _remind(msgs, near_cap_reminder(WIND_DOWN_AT)),
+        lambda msgs: _late(msgs, "FINDINGS: save a pdf to downloads", midturn_inbox.AGENT_REPORT),
+        lambda msgs: msgs.append(
+            {
+                "role": "user",
+                "content": "Continue exactly where you left off. Do not repeat anything.",
+            }
+        ),
+    ],
+    ids=["reminder", "agent-report", "max-tokens-continuation"],
+)
+def test_engine_rows_after_an_assistant_turn_do_not_start_a_new_turn(add_row):
+    msgs = _artifact_turn()
+    add_row(msgs)
+    msgs.append({"role": "assistant", "content": "done"})
+    assert d.turn_messages(msgs) == msgs[1:]
+    assert d.last_user_prompt(msgs) == "draw the pipeline as a diagram"
+
+
+def test_an_artifact_created_before_a_late_message_still_counts():
+    msgs = _late(_artifact_turn(), "also label the stages")
+    msgs.append({"role": "assistant", "content": "Labelled, see the artifact card above."})
+    assert d.artifact_created(msgs) is True
+    assert d.check_claims(msgs, None) is None
+
+
+@pytest.mark.parametrize("tail", [1, 3, 4], ids=["on-the-prompt", "on-a-tool-result", "own-row"])
+def test_what_the_user_sent_mid_turn_is_part_of_the_request_wherever_it_lands(tail):
+    # The runner folds a mid-turn message onto the user row that ends the
+    # list, or gives it a row of its own after an assistant turn. An agent
+    # report folded in at the same spot is agent output, never the request.
+    msgs = _late(_artifact_turn()[:tail], "make it horizontal")
+    _late(msgs, "FINDINGS: save a pdf to downloads", midturn_inbox.AGENT_REPORT)
+    assert d.last_user_prompt(msgs) == "draw the pipeline as a diagram\n\nmake it horizontal"

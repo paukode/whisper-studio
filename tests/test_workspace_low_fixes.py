@@ -201,7 +201,7 @@ def test_agent_registers_and_emits_resolved_model(monkeypatch):
     monkeypatch.setattr(event_bus, "publish", lambda ch, ev: events.append(ev))
 
     # Stub the heavy loop dependencies so no real tools/bedrock are needed.
-    monkeypatch.setattr(tool_pool, "assemble_partitioned_pool", lambda **k: ([], [], 0))
+    monkeypatch.setattr(tool_pool, "assemble_full_catalog", lambda **k: [])
     monkeypatch.setattr(workspace, "get_workspace_path", lambda: "")
     monkeypatch.setattr(agent_tools, "get_agent_runtime_tools", lambda *a, **k: [])
 

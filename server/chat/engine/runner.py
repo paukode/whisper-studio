@@ -244,6 +244,9 @@ class TurnContext:
     # without the engine reaching into chat-specific tool_pool/tool_partition
     # modules. None (every existing caller today) keeps current behavior.
     tool_catalog: Callable[[], tuple[list[dict], int | None]] | None = None
+    # What an agent run may execute (server.agents.tool_access.ToolScope): the
+    # tool batch refuses every other name. None (every other turn): unscoped.
+    tool_scope: Any = None
 
 
 def _assemble_round_tools(ctx: TurnContext) -> tuple[list, int | None]:
@@ -998,6 +1001,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     guard_scope=_scope_id,
                     event_channel=ctx.event_channel,
                     workspace_latch=ctx.ws_latch,
+                    tool_scope=ctx.tool_scope,
                 )
             )
 

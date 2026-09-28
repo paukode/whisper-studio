@@ -11,6 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from server.chat.engine import midturn_inbox
+from server.chat.engine.runner import _midturn_text, _remind
 from server.goals import requested_files as rf
 
 
@@ -171,6 +173,59 @@ def test_the_ask_is_read_from_this_turn_not_an_older_one():
         {"role": "user", "content": "thanks, what is in it?"},
         {"role": "assistant", "content": "three sections"},
     ]
+    assert rf.requested_file_feedback(msgs, None) is None
+
+
+# ── a message the user sends late in the turn ──────────────────────────────
+# One that lands after the loop's last drain gets a user row of its own after
+# the assistant turn (runner._remind). The turn's ask is still its prompt.
+
+
+def _late(messages: list, text: str) -> list:
+    _remind(messages, _midturn_text(midturn_inbox.Entry(midturn_inbox.USER, text)))
+    return messages
+
+
+def test_the_original_ask_is_still_checked_after_a_late_mid_turn_message():
+    msgs = _late(
+        [
+            {"role": "user", "content": "generate a png of the flow and save it in downloads"},
+            {"role": "assistant", "content": "Here is a description of the flow."},
+        ],
+        "also mention the retry step",
+    )
+    msgs.append({"role": "assistant", "content": "Added the retry step."})
+    fb = rf.requested_file_feedback(msgs, None)
+    assert fb and "generate a png of the flow and save it in downloads" in fb
+
+
+def test_a_file_saved_before_a_late_mid_turn_message_still_counts():
+    msgs = _late(
+        [
+            {"role": "user", "content": "generate a png of the flow and save it in downloads"},
+            _tool("save_file", {"destination_path": "~/Downloads/flow.png"}),
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1"}]},
+            {"role": "assistant", "content": "Saved."},
+        ],
+        "thanks, keep those colours",
+    )
+    msgs.append({"role": "assistant", "content": "Will do."})
+    assert rf.produced_a_file(msgs, None, on_disk=True) is True
+    assert rf.requested_file_feedback(msgs, None) is None
+
+
+def test_one_nudge_per_turn_holds_across_a_late_mid_turn_message():
+    msgs = _late(
+        [
+            {"role": "user", "content": "make me a pdf of the plan"},
+            {"role": "assistant", "content": "Here is the plan."},
+            {"role": "user", "content": f"[completion gate] {rf.REQUEST_MARKER} produce it"},
+            {"role": "assistant", "content": "I cannot write a pdf here."},
+        ],
+        "then export it as a csv instead",
+    )
+    msgs.append({"role": "assistant", "content": "Here are the rows."})
+    assert rf.request_nudges_used(msgs) == 1
     assert rf.requested_file_feedback(msgs, None) is None
 
 

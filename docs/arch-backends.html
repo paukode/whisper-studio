@@ -379,10 +379,10 @@
         tool from the pool and appends a short note to the (Claude-tuned) system prompt telling the model
         to interpret timing phrases as "reason briefly." Requests route to the app-wide
         <code>bedrock_region</code>, with an optional per-model <code>openai_region</code> override in
-        <code>chat_model_meta</code>. GPT-6 Astra ships with <code>us-west-2</code> pinned: at launch
-        bedrock-mantle served it there only, even though the model is listed in every US region.
-        GPT-6 Sol and Luna are pinned the other way, to <code>us-east-1</code>: at their launch
-        bedrock-mantle listed them there and answered 404 from <code>us-west-2</code>.</p></div>
+        <code>chat_model_meta</code>. Every GPT model follows <code>bedrock_region</code>
+        (<code>us-east-1</code> by default) except GPT-6 Astra, which ships with <code>us-west-2</code>
+        pinned: bedrock-mantle serves it there only and answers 404 from <code>us-east-1</code>,
+        even though the model is listed in every US region.</p></div>
     </div>
 
     <p>The decision chain above describes the <em>top-level</em> chat turn. The

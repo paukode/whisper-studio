@@ -213,3 +213,19 @@ def test_tool_search_activation_batch_cap():
 
 def test_core_set_contains_the_essentials():
     assert {"tool_search", "skill_invoke", "spawn_agent", "team_create"} <= CORE_TOOLS
+
+
+@pytest.mark.parametrize("on", [True, False])
+def test_skill_manage_is_core_exactly_while_its_flag_is_on(monkeypatch, on):
+    from server.chat.tool_pool import assemble_partitioned_pool
+    from server.infrastructure import feature_flags
+
+    real = feature_flags.is_enabled
+    monkeypatch.setattr(
+        feature_flags,
+        "is_enabled",
+        lambda name: on if name == "skill_self_improvement" else real(name),
+    )
+    advertised, deferred, _core = assemble_partitioned_pool(ws_connected=False, session_id="s-sk")
+    assert ("skill_manage" in {t["name"] for t in advertised}) is on
+    assert ("skill_manage" in {t["name"] for t in deferred}) is not on

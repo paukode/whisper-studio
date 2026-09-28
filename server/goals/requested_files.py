@@ -22,10 +22,10 @@ import json
 import re
 
 from server.goals.deliverables import (
-    claimed_paths,
+    asserted_paths,
     exists_non_empty,
-    last_assistant_text,
     last_user_prompt,
+    reply_texts,
     turn_messages,
 )
 
@@ -133,10 +133,14 @@ def requested_clause(prompt: str) -> str | None:
 
 def produced_a_file(messages: list, workspace: str | None, *, on_disk: bool = False) -> bool:
     """True when this turn actually put a file (or artifact) in front of the
-    user: a file tool ran, or the reply names a path that really exists.
+    user: a file tool ran, or one of its replies names a path that really
+    exists.
 
     The second arm matters for the skill path, where a document is written by
-    a script rather than by a file tool. With ``on_disk`` an artifact card
+    a script rather than by a file tool. Every reply of the turn counts, so a
+    later reply that answers a mid-turn question without naming the file
+    again does not undo it, but only a path a reply says it made: an input
+    file it read is not the deliverable. With ``on_disk`` an artifact card
     does not count: the user asked for a file somewhere they can open it."""
     accepted = _DISK_TOOLS if on_disk else _FILE_TOOLS
     for m in turn_messages(messages):
@@ -150,7 +154,11 @@ def produced_a_file(messages: list, workspace: str | None, *, on_disk: bool = Fa
                 continue
             if b.get("type") in ("tool_use", "function_call") and b.get("name") in accepted:
                 return True
-    return any(exists_non_empty(p, workspace) for p in claimed_paths(last_assistant_text(messages)))
+    return any(
+        exists_non_empty(p, workspace)
+        for text in reply_texts(messages)
+        for p in asserted_paths(text)
+    )
 
 
 def request_nudges_used(messages: list) -> int:
@@ -180,8 +188,8 @@ def requested_file_feedback(
     """Gate feedback when the user asked for a file this turn and none was
     produced, or None when there is nothing to ask for.
 
-    Silent in plan mode: writing is refused there by design, so the turn is
-    supposed to end with a plan and no file."""
+    Silent in plan mode: the workspace writes are refused there by design,
+    so the turn is supposed to end with a plan and no file."""
     if plan_mode:
         return None
     clause = requested_clause(last_user_prompt(messages))
