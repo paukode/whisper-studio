@@ -222,7 +222,9 @@
       <code>list_agents</code>, and <code>complete_coordination</code>. It cannot touch files by design.
       Three further types back the memory subsystem - <code>memory_extractor</code>,
       <code>memory_consolidator</code>, and <code>session_summarizer</code> - and are not ones
-      you spawn directly. See <a href="arch-memory.html">Memory system</a>.</p>
+      you spawn directly. They are marked <code>internal</code>, so the <code>"default"</code>
+      block of <code>agent_limits</code> never raises their small round caps; only an entry under
+      their own name retunes one. See <a href="arch-memory.html">Memory system</a>.</p>
     <p>Each user-facing type shares a common working method appended to its system prompt: restate the
       task, list steps, gather evidence per claim, then run a short self-check before the final answer.
       That self-check is emitted as a <code>text</code> event, so it shows up in the live log.</p>
