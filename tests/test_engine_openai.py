@@ -21,6 +21,8 @@ class FakeEvent:
 
 
 class FakeStream:
+    """A scripted stream; a float in the script is a silent gap in seconds."""
+
     def __init__(self, events):
         self._events = events
         self.closed = False
@@ -28,7 +30,10 @@ class FakeStream:
     def __aiter__(self):
         async def gen():
             for e in self._events:
-                yield e
+                if isinstance(e, float):
+                    await asyncio.sleep(e)
+                else:
+                    yield e
 
         return gen()
 
@@ -231,6 +236,91 @@ def test_early_release_estimates_usage_without_completed(monkeypatch):
     assert result.usage.input_tokens == estimate_tokens(json_chars(fr.captured[0]))
     assert result.usage.input_tokens > 0
     assert result.usage.output_tokens == estimate_tokens(len("hello world"))
+
+
+def _message(phase=None):
+    item = FakeEvent(type="message") if phase is None else FakeEvent(type="message", phase=phase)
+    return FakeEvent(type="response.output_item.added", item=item)
+
+
+def _text(text):
+    return [
+        FakeEvent(type="response.output_text.delta", delta=text),
+        FakeEvent(type="response.output_text.done"),
+    ]
+
+
+def _fast_release(monkeypatch):
+    import server.chat.engine.openai as mod
+
+    monkeypatch.setattr(mod, "_POLL_S", 0.02)
+    monkeypatch.setattr(mod, "_EARLY_RELEASE_GRACE_S", 0.1)
+
+
+def test_commentary_preamble_keeps_the_round_open_for_its_calls(monkeypatch):
+    # GPT on mantle writes a preamble marked "commentary", goes silent (1.2 to
+    # 2.1 s live with a session-sized prompt), then sends the function calls
+    # in the same response. Releasing on the preamble ended the turn with the
+    # calls never seen: "I'm checking the files now", and nothing ran.
+    _fast_release(monkeypatch)
+    a, _ = _adapter(
+        monkeypatch,
+        [
+            [
+                _message("commentary"),
+                *_text("I'm checking the saved files now."),
+                0.4,
+                FakeEvent(
+                    type="response.output_item.added",
+                    item=FakeEvent(type="function_call", id="it_1", call_id="c1", name="ls"),
+                ),
+                FakeEvent(
+                    type="response.function_call_arguments.done",
+                    item_id="it_1",
+                    arguments='{"path":"~/Downloads"}',
+                ),
+                _completed(9, 5),
+            ]
+        ],
+    )
+    evs = asyncio.run(
+        _collect(
+            a.stream_round([{"role": "user", "content": "how is it going?"}], [], None, 0, False)
+        )
+    )
+    result = evs[-1]
+    assert result.stop_reason == "tool_use"
+    assert result.content == [
+        {"type": "text", "text": "I'm checking the saved files now."},
+        {"type": "tool_use", "id": "c1", "name": "ls", "input": {"path": "~/Downloads"}},
+    ]
+    assert result.usage.estimated == ()
+
+
+def test_final_answer_releases_before_the_completed_tail(monkeypatch):
+    # A final answer is the end of the response, so mantle's late completed
+    # event is not waited out: the round returns on the grace, usage estimated.
+    _fast_release(monkeypatch)
+    a, _ = _adapter(monkeypatch, [[_message("final_answer"), *_text("Done."), 2.0, _completed()]])
+    evs = asyncio.run(
+        _collect(a.stream_round([{"role": "user", "content": "hi"}], [], None, 0, False))
+    )
+    result = evs[-1]
+    assert result.stop_reason == "end_turn"
+    assert result.content == [{"type": "text", "text": "Done."}]
+    assert result.usage.estimated == ("input", "output")
+
+
+def test_text_without_a_phase_waits_for_completed(monkeypatch):
+    # No phase means no proof the text ends the response: wait for completed.
+    _fast_release(monkeypatch)
+    a, _ = _adapter(monkeypatch, [[_message(), *_text("Hello."), 0.4, _completed(7, 3)]])
+    evs = asyncio.run(
+        _collect(a.stream_round([{"role": "user", "content": "hi"}], [], None, 0, False))
+    )
+    result = evs[-1]
+    assert result.usage.estimated == ()
+    assert (result.usage.input_tokens, result.usage.output_tokens) == (7, 3)
 
 
 def test_heartbeat_fires_during_idle_gap(monkeypatch):
