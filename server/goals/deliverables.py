@@ -38,16 +38,30 @@ _ARTIFACT_CLAIM_RE = re.compile(
     re.IGNORECASE,
 )
 _GATE_PREFIX = "[completion gate]"
+_MIDTURN_OPEN = "<user_message_mid_turn>"
+_MIDTURN_CLOSE = "</user_message_mid_turn>"
+_REMINDER_OPEN = "<system-reminder>"
+# Rows the loop itself files under role=user inside a running turn: gate
+# feedback, a mid-turn message or reminder written after an assistant tail
+# (runner._remind), the max_tokens continuation. They continue the turn and
+# never start one. A compaction summary is not listed: once it has replaced
+# the prompt it is the best anchor left, and it quotes the user verbatim.
+_ENGINE_PREFIXES = (
+    _GATE_PREFIX,
+    _MIDTURN_OPEN,
+    _REMINDER_OPEN,
+    "Continue exactly where you left off",
+)
 
 
 def _is_user_prompt(m: dict) -> bool:
-    """A real user turn, as opposed to tool results or gate feedback that the
-    loop also files under role=user."""
+    """A real user turn, as opposed to tool results, gate feedback or other
+    engine rows that the loop also files under role=user."""
     if m.get("role") != "user":
         return False
     content = m.get("content")
     if isinstance(content, str):
-        return not content.startswith(_GATE_PREFIX)
+        return not content.startswith(_ENGINE_PREFIXES)
     if isinstance(content, list):
         texts = [
             b for b in content if isinstance(b, dict) and b.get("type") in ("text", "input_text")
@@ -59,8 +73,32 @@ def _is_user_prompt(m: dict) -> bool:
         ]
         if others or not texts:
             return False
-        return not str(texts[0].get("text", "")).startswith(_GATE_PREFIX)
+        return not str(texts[0].get("text", "")).startswith(_ENGINE_PREFIXES)
     return False
+
+
+def _texts(content) -> list[str]:
+    """The text of each text block of one message (a string is one block)."""
+    if isinstance(content, str):
+        return [content]
+    if not isinstance(content, list):
+        return []
+    return [
+        str(b.get("text", ""))
+        for b in content
+        if isinstance(b, dict) and b.get("type") in ("text", "input_text")
+    ]
+
+
+def _midturn_words(text: str) -> str:
+    """The user's own words in a mid-turn message, without the wrapper
+    runner._midturn_text puts around them (a note to the model, then a blank
+    line); "" for any other text."""
+    if not text.startswith(_MIDTURN_OPEN):
+        return ""
+    inner = text[len(_MIDTURN_OPEN) :].removesuffix(_MIDTURN_CLOSE)
+    _note, sep, words = inner.partition("\n\n")
+    return (words if sep else inner).strip()
 
 
 def turn_messages(messages: list) -> list:
@@ -72,14 +110,30 @@ def turn_messages(messages: list) -> list:
 
 
 def last_user_prompt(messages: list) -> str:
-    """Text of the real user prompt this turn is answering, gate feedback and
-    tool results excluded. Mid-turn messages are appended onto that same
-    message (loop_hints.inject_reminder), so what the user asked for while the
-    turn ran is part of it."""
+    """What the user asked for this turn: the real prompt it is answering,
+    then the words of each message the user sent while it ran, whether it was
+    folded onto the prompt (loop_hints.inject_reminder) or onto a later row (a
+    tool result, or a row of its own after an assistant tail). Gate feedback,
+    tool results and engine reminders, agent reports among them, are never
+    part of it."""
     for i in range(len(messages) - 1, -1, -1):
         if _is_user_prompt(messages[i]):
-            return _render_blocks(messages[i].get("content"))
-    return ""
+            break
+    else:
+        return ""
+    asked = [
+        _midturn_words(t) or t
+        for t in _texts(messages[i].get("content"))
+        if not t.startswith(_REMINDER_OPEN)
+    ]
+    asked += [
+        words
+        for m in messages[i + 1 :]
+        if isinstance(m, dict) and m.get("role") == "user"
+        for t in _texts(m.get("content"))
+        if (words := _midturn_words(t))
+    ]
+    return "\n\n".join(t for t in asked if t)
 
 
 def last_assistant_text(messages: list) -> str:
