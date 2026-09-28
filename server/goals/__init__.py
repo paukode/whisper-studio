@@ -84,8 +84,8 @@ class GateContext:
     model_key: str = ""
     workspace: str | None = None
     # The content of the reply being gated. The runner persists it only after
-    # the decision, so ``messages`` does not hold it yet; the judge reads it
-    # from here.
+    # the decision, so ``messages`` does not hold it yet; the gate appends it
+    # to a copy of ``messages`` that its checks and its judge all read.
     final_reply: list | str | None = None
     # A model with no tools cannot act on a "produce the file" nudge, so the
     # checks that ask for one stay quiet for it.
