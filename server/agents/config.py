@@ -96,6 +96,24 @@ WRITE_TOOLS = frozenset(
         # executors.py::execute_ws_open_folder) — a read_only agent must not
         # be able to redirect the workspace out from under later tools.
         "ws_open_folder",
+        # Delegation. Each starts another agent, and spawn_agent, team_create
+        # and skill_invoke can start a general one with the full write set,
+        # auto-approved, so a read-only agent that delegates is not read-only.
+        # Claude Code keeps its agent tool away from Explore and Plan for the
+        # same reason.
+        "spawn_agent",
+        "team_create",
+        "team_delete",
+        "skill_invoke",
+        # Handler-backed tools that change state outside the workspace: a
+        # scheduled job (cron_run starts one with its own tools), an artifact
+        # or a plan (saved, and opened in the parent chat), or another session.
+        "cron_update",
+        "cron_run",
+        "create_artifact",
+        "edit_artifact",
+        "create_plan",
+        "send_session_message",
     }
 )
 

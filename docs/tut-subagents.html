@@ -119,7 +119,9 @@
       type).</p>
     <p>The read-only guarantee is enforced, not just requested: the runtime strips every write tool
       (file writes, <code>ws_run_command</code>, git commits, <code>config_set</code>, memory writes,
-      and so on) from an <code>explore</code> or <code>plan</code> agent's tool pool. A coordinator gets
+      and so on) from an <code>explore</code> or <code>plan</code> agent's tool pool, and refuses any
+      call to one when it runs, so a model that names a hidden tool anyway gets a refusal, not a
+      write. A coordinator gets
       an even tighter whitelist of just <code>spawn_agent</code>, <code>send_message</code>,
       <code>list_agents</code>, and <code>complete_coordination</code>, so it cannot touch your files
       even by accident.</p>

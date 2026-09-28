@@ -86,13 +86,17 @@
         is refused up front with a readable error, as is a structured-output schema on a local model,
         and when no configured entry can drive an agent loop the run fails early instead of erroring at
         the provider call.</p></li>
-      <li><h4>Builds a filtered tool pool</h4><p>Agents use the same
-        <a href="arch-tools.html#progressive-disclosure">progressive tool disclosure</a> as chat:
-        <code>activate_from_history</code> plus <code>assemble_partitioned_pool</code>, with the
-        deferred index appended to the agent's system prompt, so <code>tool_search</code> works
-        inside an agent. The runtime then adds the agent-only tools (<code>receive_messages</code>,
-        <code>complete_coordination</code>, and <code>spawn_agent</code> while below the depth ceiling),
-        deduplicates by name, and applies the agent type's tool filter (see below).</p></li>
+      <li><h4>Builds its tool access</h4><p>What the agent may run is fixed at run start
+        (<code class="path">server/agents/tool_access.py</code>): the chat catalog outside ultracode
+        plus the agent-only tools (<code>receive_messages</code>, <code>complete_coordination</code>,
+        and <code>spawn_agent</code> while below the depth ceiling), through the agent type's tool
+        filter (see below). A type with an <code>allowed_tools</code> whitelist is offered its whole
+        list every round and gets no deferred index. Any other type gets the same
+        <a href="arch-tools.html#progressive-disclosure">progressive tool disclosure</a> as chat: the
+        core set plus the session's activations and its own, with an index of the rest appended to its
+        system prompt. Its <code>tool_search</code> finds only tools it may run and loads them into the
+        agent's own set, so they are offered from its next round and the parent chat's tools do not
+        change.</p></li>
       <li><h4>Runs the loop</h4><p>Up to <code>config.max_turns</code> rounds, bounded also by the
         type's <code>deadline_seconds</code> wall-clock budget (the primary "don't loop forever"
         brake) and by the session cost cap. The mailbox is drained once at run start into the initial
@@ -238,8 +242,15 @@
       <code>ws_run_command</code>, the git write commands, <code>config_set</code>, <code>memory_write</code>,
       <code>cron_create</code>, and more), and a registry backstop catches the rest: any native
       executor registered <code>read_only=False</code> counts as a write even when absent from
-      <code>WRITE_TOOLS</code>. So an <code>explore</code> or <code>plan</code> agent
-      physically cannot mutate your project.</p>
+      <code>WRITE_TOOLS</code>. Delegation counts as a write too: <code>spawn_agent</code>,
+      <code>team_create</code> and <code>skill_invoke</code> can start a <code>general</code> agent,
+      so a read-only agent does not get them.</p>
+    <p>The filter only decides what the agent is shown; the tool executor decides what runs. Every
+      call from an agent is checked against the run's entitlement (<code>TurnContext.tool_scope</code>),
+      and a name outside it gets a <code>[Refused]</code> result before hooks, approvals or the
+      handler see it, whatever name the model emits. Agents approve their own writes, so that check,
+      not the tools array, is what makes read-only hold: an <code>explore</code> or
+      <code>plan</code> agent cannot mutate your project.</p>
 
     <h3 id="custom-types">Custom and ephemeral agent types</h3>
     <p>The built-in table is not the whole story

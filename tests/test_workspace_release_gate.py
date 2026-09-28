@@ -430,7 +430,11 @@ def test_a_subagent_spawned_by_a_released_turn_cannot_touch_the_new_workspace(
     replayed = _replayed_result(fake_bedrock)
     assert "ws_b original" not in replayed, "the subagent read B's file"
     assert (ws_b / "build" / "out.txt").exists(), "the subagent deleted B's file"
-    assert replayed.count("No workspace connected") == 2, replayed
+    # Both calls were refused: by the latch, or, once an isolated run falls
+    # back to read-only, the delete by the agent's tool scope before it.
+    results = [r["content"] for r in fake_bedrock.requests[1]["messages"][-1]["content"]]
+    assert len(results) == 2, replayed
+    assert all(r.startswith(("No workspace connected", "[Refused]")) for r in results), replayed
     assert forked == [], "an isolated subagent forked the newly connected workspace"
 
 
