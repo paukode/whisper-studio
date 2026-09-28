@@ -196,7 +196,8 @@ def build_learning_review_prompt(
 SESSION_SUMMARY_PROMPT = """\
 You are a session memory agent. Summarize the conversation into structured sections.
 
-Update the session memory file with these fixed sections:
+Your reply is saved as the session memory file, so answer with the updated markdown itself and
+call no tools. Use these fixed sections:
 ## Goals: What the user is trying to accomplish this session
 ## Decisions: Key choices made during the session
 ## Context: Important background information established

@@ -123,6 +123,7 @@ def test_cloud_session_summary_runs_under_the_read_only_summarizer(monkeypatch):
     class _Res:
         status = "completed"
         output = "## Goals\n- x"
+        stopped_early = False
 
     async def _fake_run_agent(task, **kwargs):
         captured.update(kwargs)
@@ -133,3 +134,39 @@ def test_cloud_session_summary_runs_under_the_read_only_summarizer(monkeypatch):
     assert out == _Res.output
     assert captured["agent_type"] == "session_summarizer"
     assert WRITE_TOOLS.isdisjoint(AGENT_TYPES[captured["agent_type"]].allowed_tools)
+
+
+def test_a_summary_run_cut_short_keeps_the_last_summary(monkeypatch, tmp_path):
+    """A summariser run that reaches its round limit returns the stop note
+    ahead of its text, or a salvage report in its place. The session memory
+    file keeps its last good summary instead of saving either."""
+    import server.agents.runtime as runtime
+    from server.agents.runtime import AgentResult
+    from server.memory import session_memory
+
+    monkeypatch.setattr(session_memory, "SESSION_MEMORY_DIR", str(tmp_path))
+    good = "## Goals\n- ship the release"
+    with open(session_memory.get_session_memory_path("sess-cap"), "w", encoding="utf-8") as f:
+        f.write(good)
+    run = {}
+
+    async def _fake_run_agent(task, **kwargs):
+        return AgentResult(agent_id="a1", agent_type=kwargs["agent_type"], **run)
+
+    monkeypatch.setattr(runtime, "run_agent", _fake_run_agent)
+    messages = [{"role": "user", "content": "plan the release"}]
+    model = "global.anthropic.claude-sonnet-5"
+
+    run.update(
+        output="[Agent stopped - reached turn limit (5)]\n\n## Goals\n- partial",
+        stop_reason="turn_limit",
+        stopped_early=True,
+    )
+    asyncio.run(session_memory._run_session_update(messages, "sess-cap", model))
+    assert session_memory.load_session_memory("sess-cap") == good
+
+    run.update(
+        output="## Goals\n- ship the release tonight", stop_reason="completed", stopped_early=False
+    )
+    asyncio.run(session_memory._run_session_update(messages, "sess-cap", model))
+    assert session_memory.load_session_memory("sess-cap") == run["output"]

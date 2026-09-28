@@ -239,7 +239,11 @@ async def _run_agent_session_update(existing: str, excerpt: str, session_id: str
         depth=1,
         cost_source="memory",
     )
-    if result.status == "completed" and result.output:
+    # A run that reached its round or time limit returns a stop note ahead of
+    # its text, or a salvage report in its place: neither is the summary. The
+    # file keeps its last summary until a later update, due on the usual
+    # thresholds, writes a new one.
+    if result.status == "completed" and result.output and not result.stopped_early:
         return result.output
     return None
 
