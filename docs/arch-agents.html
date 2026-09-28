@@ -88,8 +88,9 @@
         the provider call.</p></li>
       <li><h4>Builds its tool access</h4><p>What the agent may run is fixed at run start
         (<code class="path">server/agents/tool_access.py</code>): the chat catalog outside ultracode
-        plus the agent-only tools (<code>receive_messages</code>, <code>complete_coordination</code>,
-        and <code>spawn_agent</code> while below the depth ceiling), through the agent type's tool
+        plus the agent-only tools (<code>send_message</code>, <code>receive_messages</code>,
+        <code>list_agents</code>, <code>complete_coordination</code>, and <code>spawn_agent</code>
+        while below the depth ceiling), through the agent type's tool
         filter (see below). A type with an <code>allowed_tools</code> whitelist is offered its whole
         list every round and gets no deferred index. Any other type gets the same
         <a href="arch-tools.html#progressive-disclosure">progressive tool disclosure</a> as chat: the

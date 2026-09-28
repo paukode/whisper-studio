@@ -238,8 +238,9 @@ async def _execute_cron_prompt(job_id: str) -> None:
         # from visible history first (self-healing across restarts, exactly
         # like server/chat/routes.py), then assemble the same core+activated
         # pool an interactive chat turn gets, built ONCE for the whole run
-        # (mirrors agents/runtime.py). Everything else is deferred into a
-        # compact index folded into the system prompt below.
+        # (agents rebuild theirs every round, see server/agents/tool_access.py).
+        # Everything else is deferred into a compact index folded into the
+        # system prompt below.
         activate_from_history(session_id, visible_chat_history(messages))
         # The run's tools work under this latch, like a chat turn's: once the
         # user disconnects (or switches away from) the workspace it started

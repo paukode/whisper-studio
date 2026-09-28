@@ -423,8 +423,8 @@
             <code>local</code>. <code>cloud</code> is the shipped SYSTEM value, but a fresh install
             (setup.sh or the Mac app alike) seeds <code>local</code> into the user layer, which
             outranks it, so <code>local</code> is what a new install runs. This is separate from the
-            chat-model choice in the toolbar. Cohere embed/rerank are pinned to <code>us-east-1</code>;
-            chat can run in any region. See <a href="tut-model-modes.html">Model modes</a> and
+            chat-model choice in the toolbar. Cohere embed/rerank are called from <code>us-east-1</code>
+            (embed through its global profile); chat can run in any region. See <a href="tut-model-modes.html">Model modes</a> and
             <a href="ref-settings.html#model-selection">Settings &amp; config keys</a>.</td>
         </tr>
         <tr>
