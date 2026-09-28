@@ -104,6 +104,13 @@ def test_memory_presets_are_internal_and_never_offered_to_the_model():
     assert offered and offered.isdisjoint(internal)
 
 
+def test_every_internal_preset_pairs_its_round_cap_with_a_time_limit():
+    """The memory agents run unattended and skip agent_limits.default, so a
+    stuck run still ends on its own clock, as the other presets do."""
+    for name in _internal_types():
+        assert AGENT_TYPES[name].deadline_seconds is not None, name
+
+
 def test_default_limits_do_not_raise_an_internal_preset(monkeypatch):
     for name in _internal_types():
         preset = AGENT_TYPES[name]

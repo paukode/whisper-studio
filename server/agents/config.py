@@ -270,9 +270,13 @@ AGENT_TYPES: dict[str, AgentConfig] = {
         )
         + AGENT_METHOD,
     ),
+    # The memory agents run unattended and skip agent_limits.default (see
+    # get_agent_config), so each pairs its round cap with its own time limit:
+    # the 900 s the shipped default gave them before they skipped it.
     "memory_extractor": AgentConfig(
         agent_type="memory_extractor",
         max_turns=5,
+        deadline_seconds=900,
         max_tokens=4096,
         allowed_tools=MEMORY_RW_TOOLS,
         # Single source of truth in server/memory/prompts.py.
@@ -287,6 +291,7 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     "memory_consolidator": AgentConfig(
         agent_type="memory_consolidator",
         max_turns=8,
+        deadline_seconds=900,
         max_tokens=4096,
         allowed_tools=MEMORY_RW_TOOLS,
         system_prompt=CONSOLIDATION_SYSTEM_PROMPT,
@@ -299,6 +304,7 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     "session_summarizer": AgentConfig(
         agent_type="session_summarizer",
         max_turns=5,
+        deadline_seconds=900,
         max_tokens=4096,
         allowed_tools=MEMORY_RO_TOOLS,
         system_prompt=SESSION_SUMMARY_PROMPT,
