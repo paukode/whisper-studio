@@ -84,7 +84,8 @@
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
       <div class="callout__body"><p>Who does the summarizing depends on the model. Cloud turns use the
-        <code>memory_extractor</code> agent (see <a href="arch-agents.html">Sub-agents</a>); on-device
+        read-only <code>session_summarizer</code> agent, which runs under the summary prompt and cannot
+        write to the memory store (see <a href="arch-agents.html">Sub-agents</a>); on-device
         turns run the summary on the local model itself, on its own executor thread, so a local
         conversation's memory never leaves the machine. Either way, a failed summary degrades to no
         update rather than disrupting the chat.</p></div>

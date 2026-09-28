@@ -110,3 +110,26 @@ def test_dream_consolidate_runs_under_consolidator_agent(tmp_path, monkeypatch):
     assert captured["agent_type"] == "memory_consolidator"
     assert captured["agent_type"] != "memory_extractor"
     assert captured["task"] == CONSOLIDATION_PROMPT.format(scope="global")
+
+
+def test_cloud_session_summary_runs_under_the_read_only_summarizer(monkeypatch):
+    """The cloud summary ran as memory_extractor: the extraction prompt and
+    its write tools led it to save the summary as a long-term memory file."""
+    import server.agents.runtime as runtime
+    from server.memory import session_memory
+
+    captured: dict = {}
+
+    class _Res:
+        status = "completed"
+        output = "## Goals\n- x"
+
+    async def _fake_run_agent(task, **kwargs):
+        captured.update(kwargs)
+        return _Res()
+
+    monkeypatch.setattr(runtime, "run_agent", _fake_run_agent)
+    out = asyncio.run(session_memory._run_agent_session_update("", "excerpt", "sess-1"))
+    assert out == _Res.output
+    assert captured["agent_type"] == "session_summarizer"
+    assert WRITE_TOOLS.isdisjoint(AGENT_TYPES[captured["agent_type"]].allowed_tools)
