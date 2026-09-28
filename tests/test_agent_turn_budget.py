@@ -187,9 +187,6 @@ class _FakeBedrock:
 
 def _patch_common(monkeypatch, fake_stream):
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr(
-        "server.chat.tool_pool.assemble_partitioned_pool", lambda *a, **k: ([], [], 0)
-    )
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
     monkeypatch.setattr("server.tool_executor.route_tool", AsyncMock(return_value=("ok", [])))
 
@@ -206,7 +203,11 @@ def test_turn_limit_distills_structured_output(monkeypatch):
     # model has nothing left to call and just answers in text.
     fake_stream = FakeBedrockClient(
         [
-            [msg_start(), *tool_use_block("t1", "noop", {}), *msg_end(stop_reason="tool_use")],
+            [
+                msg_start(),
+                *tool_use_block("t1", "ws_grep", {"pattern": "x"}),
+                *msg_end(stop_reason="tool_use"),
+            ],
             [msg_start(), *text_block("partial progress"), *msg_end(stop_reason="end_turn")],
         ]
     )
@@ -253,7 +254,11 @@ def test_turn_limit_finalizes_text_when_no_schema(monkeypatch):
     # loop's separate manual "out of budget, give your best answer" pass).
     fake_stream = FakeBedrockClient(
         [
-            [msg_start(), *tool_use_block("t1", "noop", {}), *msg_end(stop_reason="tool_use")],
+            [
+                msg_start(),
+                *tool_use_block("t1", "ws_grep", {"pattern": "x"}),
+                *msg_end(stop_reason="tool_use"),
+            ],
             [
                 msg_start(),
                 *text_block("Here is my best summary so far."),

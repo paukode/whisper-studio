@@ -52,9 +52,6 @@ def test_spawned_agent_receives_the_session_attachments(monkeypatch):
     monkeypatch.setattr(
         "server.chat.engine.anthropic._get_bedrock_client", lambda: _one_round_agent_response()
     )
-    monkeypatch.setattr(
-        "server.chat.tool_pool.assemble_partitioned_pool", lambda *a, **k: ([], [], 0)
-    )
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
 
     route_tool = AsyncMock(return_value=("DOCUMENT [report.pdf]:\nquarterly numbers", []))
@@ -84,9 +81,6 @@ def test_spawned_agent_with_no_session_id_gets_empty_attachments_not_a_crash(mon
     )
     monkeypatch.setattr(
         "server.chat.engine.anthropic._get_bedrock_client", lambda: _one_round_agent_response()
-    )
-    monkeypatch.setattr(
-        "server.chat.tool_pool.assemble_partitioned_pool", lambda *a, **k: ([], [], 0)
     )
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
 

@@ -28,9 +28,6 @@ def isolated(tmp_path, monkeypatch):
 
 def _patch_engine(monkeypatch, fake_stream, route_tool=None):
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
-    monkeypatch.setattr(
-        "server.chat.tool_pool.assemble_partitioned_pool", lambda *a, **k: ([], [], 0)
-    )
     monkeypatch.setattr("server.workspace.get_workspace_path", lambda: None)
 
     async def _default_route_tool(tool_name, tool_input, **kw):
