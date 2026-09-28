@@ -69,12 +69,25 @@ CORE_TOOLS: frozenset[str] = frozenset(
         "sleep",
         "git_status",
         "git_diff",
+        # memory: in the catalog only while auto_memory is on, so core exactly
+        # then. The post-turn learning review replays the turn's tools array
+        # byte for byte (server/memory/review_fork.py) and cannot load a
+        # deferred tool, so the tools it saves with must be advertised here.
+        "memory_read",
+        "memory_write",
+        "memory_list",
+        "memory_delete",
     }
 )
 
 
 def core_names() -> frozenset[str]:
-    """The effective core set: curated constant plus config extras.
+    """The effective core set: curated constant, skill_manage while
+    skill_self_improvement is on, plus config extras.
+
+    skill_manage is in the catalog either way (its executor refuses while the
+    flag is off); it is core while the flag lets the chat and the learning
+    review call it, for the same replay reason as the memory tools.
 
     ``progressive_tools_core_extra`` / ``progressive_tools_defer_extra`` are
     hand-edit-only operator knobs (no UI, not in the example config): lists of
@@ -83,10 +96,13 @@ def core_names() -> frozenset[str]:
     defer: set[str] = set()
     try:
         from server.infrastructure.config import load_config
+        from server.infrastructure.feature_flags import is_enabled
 
         cfg = load_config()
         extra = {str(n) for n in (cfg.get("progressive_tools_core_extra") or [])}
         defer = {str(n) for n in (cfg.get("progressive_tools_defer_extra") or [])}
+        if is_enabled("skill_self_improvement"):
+            extra.add("skill_manage")
     except Exception:
         pass
     # tool_search is the way back to everything else; it can never defer.

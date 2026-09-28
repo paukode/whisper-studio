@@ -184,6 +184,10 @@
         <code>skill_manage</code>, and the read-only workspace reads (<code>ws_read_file</code>,
         <code>ws_grep</code>, <code>ws_glob</code>). Anything else the model calls gets a refusal
         <code>tool_result</code>.</li>
+      <li>It can call only what the turn advertised: it replays the same tools array and refuses
+        <code>tool_search</code>. That is why the four memory tools sit in the progressive-disclosure
+        core set, and <code>skill_manage</code> does while <code>skill_self_improvement</code> is on
+        (see <a href="arch-tools.html#progressive-disclosure">Progressive tool disclosure</a>).</li>
       <li>At most <code>MAX_ROUNDS</code> (6) rounds.</li>
       <li>It never touches the live conversation and never emits SSE. Its usage <em>is</em> recorded
         against the session, at turn numbers counted from <code>REVIEW_TURN_BASE</code> (900), so the

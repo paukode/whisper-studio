@@ -314,10 +314,14 @@
       <code>assemble_partitioned_pool</code> (<code class="path">server/chat/tool_pool.py</code>) in
       <a href="arch-chat-pipeline.html">the chat pipeline</a>:</p>
     <div class="spec">
-      <dt><code>CORE_TOOLS</code></dt><dd>A curated always-advertised set (36 names) in
+      <dt><code>CORE_TOOLS</code></dt><dd>A curated always-advertised set in
         <code class="path">tool_partition.py</code>: workspace primitives, the discovery tools
         (<code>tool_search</code> can never be deferred - it is the way back), the todo and
-        background-task tools, orchestration, and the workflow / CI tools when present.</dd>
+        background-task tools, orchestration, the workflow / CI tools when present, and the four
+        memory tools while <code>auto_memory</code> puts them in the catalogue.
+        <code>core_names()</code> adds <code>skill_manage</code> while
+        <code>skill_self_improvement</code> is on. The post-turn learning review replays a turn's
+        tools array and cannot load a deferred tool, so what it saves with has to be core.</dd>
       <dt>Session activation</dt><dd>Tools this session has pulled in via <code>tool_search</code> or
         history replay, tracked in <code class="path">server/chat/tool_activation.py</code> and
         appended after the core prefix in activation order.</dd>
