@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { get } from '@/api/client';
 import {
   AT_ROOT_ENTRIES,
+  autocompleteHeading,
   matchColonSubmenu,
+  mcpServerDesc,
   optLabel,
   optValue,
   slugifySessionTitle,
@@ -35,6 +37,9 @@ export interface UseChatAutocompleteResult {
   acItems: ACItem[];
   acVisible: boolean;
   acIndex: number;
+  /** What the open menu lists ("Commands", "Files", "Mentions", ...), shown as
+   *  the popup's heading. */
+  acHeading: string;
   acRect: { left: number; bottom: number; width: number } | null;
   setAcIndex: React.Dispatch<React.SetStateAction<number>>;
   closeAc: () => void;
@@ -161,7 +166,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
       const items: ACItem[] = mcpServers.map((s) => ({
         icon: '🔌',
         name: s.name,
-        desc: `MCP server (${s.status})`,
+        desc: mcpServerDesc(s),
         insert: 'mcp:' + s.name,
       }));
       setAcItems(items.length > 0 ? items : [{ icon: '🔌', name: 'No servers', desc: 'No MCP servers', insert: 'mcp:' }]);
@@ -187,7 +192,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
       const items: ACItem[] = mcpServers.map((s) => ({
         icon: '🔌',
         name: s.name,
-        desc: `MCP server (${s.status})`,
+        desc: mcpServerDesc(s),
         insert: '@mcp:' + s.name,
       }));
       setAcItems(items.length > 0 ? items : [{ icon: '🔌', name: 'No servers', desc: 'No MCP servers', insert: '@mcp:' }]);
@@ -384,7 +389,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
           setAcItems(filtered.length > 0 ? filtered.map((s) => ({
             icon: '🔌',
             name: s.name,
-            desc: `MCP server (${s.status})`,
+            desc: mcpServerDesc(s),
             insert: 'mcp:' + s.name,
           })) : [{ icon: '🔌', name: 'No matches', desc: 'No MCP servers found', insert: 'mcp:' }]);
           setAcIndex(0);
@@ -494,7 +499,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
           setAcItems(filtered.map((s) => ({
             icon: '🔌',
             name: s.name,
-            desc: `MCP server (${s.status})`,
+            desc: mcpServerDesc(s),
             insert: 'mcp:' + s.name,
           })));
           setAcIndex(0);
@@ -544,7 +549,7 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
           setAcItems(filtered.length > 0 ? filtered.map((s) => ({
             icon: '🔌',
             name: s.name,
-            desc: `MCP server (${s.status})`,
+            desc: mcpServerDesc(s),
             insert: '@mcp:' + s.name,
           })) : [{ icon: '🔌', name: 'No matches', desc: 'No MCP servers found', insert: '@mcp:' }]);
           setAcIndex(0);
@@ -590,10 +595,15 @@ export function useChatAutocomplete(opts: UseChatAutocompleteOptions): UseChatAu
     closeAc();
   }, [updateAcRect, closeAc, skills, mcpServers, sessions, searchFiles, SLASH_COMMANDS]);
 
+  // Derived from the menu state rather than stored, so the heading can never
+  // disagree with the menu it names.
+  const acHeading = autocompleteHeading(acMode, acSubCmd);
+
   return {
     acItems,
     acVisible,
     acIndex,
+    acHeading,
     acRect,
     setAcIndex,
     closeAc,

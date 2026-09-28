@@ -35,15 +35,22 @@ export function renderEventCards(
     toolName: string,
     input: Record<string, unknown>,
     status: ToolUseEvent['status'],
+    result?: string,
   ): void => {
     flushSegment();
     store().addMessage({
       role: 'assistant',
       content: '',
       timestamp: new Date().toISOString(),
-      toolUse: [{ toolId: toolName, toolName, input, status }],
+      toolUse: [{ toolId: toolName, toolName, input, status, ...(result ? { result } : {}) }],
     });
   };
+
+  // A completion-gate card ends the gate's phase: a status it announced
+  // ("Checking the goal on ...") must not label the next round's wait.
+  if (parsed.goal_eval || parsed.stop_hook_block || parsed.goal_cap_reached) {
+    store().setStreamStatus(null);
+  }
 
   // ── plan_blocked ──
   if (parsed.plan_blocked) {
@@ -62,10 +69,14 @@ export function renderEventCards(
   }
 
   // ── goal_eval (completion gate's verdict) ──
+  // 'not_checked' is terminal but not a failure: the card renders it neutral
+  // (ActivityRow). The full feedback rides as the card's result, so a reason
+  // longer than the one-line summary is one click away.
   if (parsed.goal_eval) {
     const ge = parsed.goal_eval;
     useGoalStore.getState().applyEval(sessionId, ge);
-    emitCard('goal_eval', ge as Record<string, unknown>, ge.verdict === 'achieved' ? 'complete' : 'error');
+    const terminal = ge.verdict === 'achieved' || ge.verdict === 'not_checked';
+    emitCard('goal_eval', ge as Record<string, unknown>, terminal ? 'complete' : 'error', ge.feedback);
   }
 
   // ── stop_hook_block (a Stop hook refused to end the turn) ──

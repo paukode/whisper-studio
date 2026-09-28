@@ -231,6 +231,18 @@ def run() -> int:
     if _app_running():
         log.info("Index agent: app is running — leaving the refresh to it.")
         return 0
+    # launchd runs this worker with the app bundle's own code, so after an
+    # update it can wake before the app has launched (and migrated the
+    # database) once. A refresh logs its paid calls to the cost log, whose
+    # rows need the current schema, so the worker migrates first. The app is
+    # not running (checked above), so the two never migrate at once.
+    from server.migrations.runner import run_migrations
+
+    try:
+        run_migrations()
+    except Exception as e:  # noqa: BLE001 - logged, and nothing is refreshed
+        log.error("Index agent: the database migration failed, so nothing was refreshed: %s", e)
+        return 1
     now = time.time()
     refreshed = 0
     for ws in store.list_indexed_workspaces():

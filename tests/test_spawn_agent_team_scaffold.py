@@ -36,7 +36,6 @@ def test_spawn_agent_emits_team_scaffold(monkeypatch):
         )
 
     monkeypatch.setattr("server.agents.runtime.run_agent", _fake_run_agent)
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
 
     out = json.loads(
         asyncio.run(
@@ -81,7 +80,6 @@ def test_spawn_agent_registers_stoppable_team(monkeypatch):
 
     bus = _Bus()
     monkeypatch.setattr("server.agents.event_bus.event_bus", bus)
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
     seen = {}
 
     async def _fake_run_agent(task, **kwargs):
@@ -112,7 +110,6 @@ def test_spawn_agent_team_completed_fires_on_exception(monkeypatch):
 
     bus = _Bus()
     monkeypatch.setattr("server.agents.event_bus.event_bus", bus)
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
 
     async def _boom(task, **kwargs):
         raise RuntimeError("provider exploded")
@@ -131,7 +128,6 @@ def test_spawn_agent_preflight_failure_publishes_failed_row(monkeypatch):
 
     bus = _Bus()
     monkeypatch.setattr("server.agents.event_bus.event_bus", bus)
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
 
     async def _gated(task, **kwargs):
         return SimpleNamespace(
@@ -187,7 +183,6 @@ def test_spawn_agent_publishes_on_the_turn_event_channel(monkeypatch):
         )
 
     monkeypatch.setattr("server.agents.runtime.run_agent", _fake_run_agent)
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
 
     asyncio.run(
         agent_tools.execute_spawn_agent(

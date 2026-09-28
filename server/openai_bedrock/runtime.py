@@ -104,9 +104,11 @@ def _supports_max_effort(model_key: str) -> bool:
 
 
 def _rejects_none_effort(model_key: str) -> bool:
-    """True iff the model has no "none" rung. GPT-6 (Astra) rejects
+    """True iff the model has no "none" rung. GPT-6 Astra rejects
     reasoning.effort "none" with unsupported_value (verified live 2026-09-09);
-    GPT-5.x accepts it."""
+    GPT-5.x accepts it. Applied to every GPT-6 id, so "none" on GPT-6 Sol or
+    Luna degrades to "low" although OpenAI documents "none" for them; narrow
+    this to Astra once mantle is probed (see effort.EFFORT_TIERS["openai6"])."""
     ver = _gpt_version(model_key)
     return ver is not None and ver >= (6, 0)
 

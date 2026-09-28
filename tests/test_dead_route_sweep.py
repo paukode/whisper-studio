@@ -122,6 +122,8 @@ def test_esc_stop_flow_end_to_end(tmp_path):
     r = c.post("/api/workspace/connect", json={"path": str(ws_dir)})
     assert r.status_code == 200, r.text
     try:
+        # The stopped turn's stream began here; the stop carries it as `since`.
+        since = time.time()
         r = c.post(
             "/api/workspace/shell",
             json={"command": "sleep 30", "background": True, "session_id": "esc-live"},
@@ -130,7 +132,8 @@ def test_esc_stop_flow_end_to_end(tmp_path):
         task_id = r.json()["task_id"]
         time.sleep(0.3)
 
-        r = c.post("/api/workspace/shell/tasks/stop", json={"session_id": "esc-live"})
+        stop_body = {"session_id": "esc-live", "since": since}
+        r = c.post("/api/workspace/shell/tasks/stop", json=stop_body)
         assert r.status_code == 200, r.text
         assert task_id in r.json()["stopped"], r.text
 
@@ -142,7 +145,7 @@ def test_esc_stop_flow_end_to_end(tmp_path):
         assert get_task(task_id)["status"] == "stopped"
 
         # Second stop for the same session: nothing left to kill.
-        r = c.post("/api/workspace/shell/tasks/stop", json={"session_id": "esc-live"})
+        r = c.post("/api/workspace/shell/tasks/stop", json=stop_body)
         assert r.json()["stopped"] == []
     finally:
         c.post("/api/workspace/disconnect")

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { ModelDropdown } from './ModelDropdown';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 const MODELS = [
   { key: 'opus4.8', name: 'Opus 4.8' },
@@ -71,5 +72,21 @@ describe('ModelDropdown — on-device load state', () => {
       models: [{ key: 'opus4.8', name: 'Opus 4.8', supports_tools: false }],
     });
     expect(screen.queryByText(/chat only/i)).toBeNull();
+  });
+});
+
+describe('ModelDropdown with nothing to offer', () => {
+  it('points Local mode to Discover instead of listing models', () => {
+    useSettingsStore.setState({ needsLocalModel: true });
+    renderDropdown({ open: true, models: [], selectedModel: '' });
+    expect(screen.getByTestId('model-empty-hint').textContent).toMatch(/Settings > Models > Discover/);
+    expect(document.querySelector('[data-testid^="model-option-"]')).toBeNull();
+    expect(screen.getByText('No model')).toBeTruthy();
+  });
+
+  it('shows no hint while there are models to pick', () => {
+    useSettingsStore.setState({ needsLocalModel: false });
+    renderDropdown({ open: true });
+    expect(screen.queryByTestId('model-empty-hint')).toBeNull();
   });
 });

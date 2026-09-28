@@ -42,12 +42,9 @@ def _mk(source, **kw):
     return WorkflowRun("run-test", source, **kw)
 
 
-def test_runtime_executes_and_accounts(monkeypatch):
-    # every agent "costs" $1 so we can assert the ledger deterministically.
-    import server.costs.tracker as T
-
-    monkeypatch.setattr(T, "estimate_cost", lambda *a, **k: 1.0)
-
+def test_runtime_executes_and_accounts():
+    # Every agent run reports $1 (the engine's per-round pricing), so the
+    # ledger total is deterministic.
     calls = []
 
     async def fake_agent(prompt, opts):
@@ -55,7 +52,7 @@ def test_runtime_executes_and_accounts(monkeypatch):
         return {
             "text": f"ran:{prompt}",
             "output": None,
-            "usage": {"input_tokens": 5, "output_tokens": 3},
+            "usage": {"input_tokens": 5, "output_tokens": 3, "cost_usd": 1.0},
             "status": "completed",
         }
 
@@ -65,7 +62,7 @@ def test_runtime_executes_and_accounts(monkeypatch):
         "const r = await parallel([() => agent('one'), () => agent('two'), () => agent('three')])\n"
         "return r.map(x => x.text)\n"
     )
-    run = _mk(src, agent_runner=fake_agent, model_key="sonnet")
+    run = _mk(src, agent_runner=fake_agent)
     out = _run(run.run())
     assert out["status"] == "done"
     assert set(out["result"]) == {"ran:one", "ran:two", "ran:three"}
@@ -116,7 +113,7 @@ def test_budget_enforced():
         "catch (e) { return { n, err: e.type }; }\n"
         "return { n, err: false };\n"
     )
-    run = _mk(src, agent_runner=fake_agent, budget_tokens=8, model_key="sonnet")
+    run = _mk(src, agent_runner=fake_agent, budget_tokens=8)
     out = _run(run.run())
     assert out["status"] == "done"
     assert out["result"]["err"] == "BudgetExceededError"

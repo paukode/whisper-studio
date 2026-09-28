@@ -146,20 +146,25 @@ def emit_task_event(session_id: str, event_type: str, task: dict) -> None:
     emit_session_event(session_id, role="task_event", payload_key="taskEvent", payload=payload)
 
 
-def emit_agent_report(session_id: str, payload: dict) -> None:
+def emit_agent_report(session_id: str, payload: dict, *, wake: bool = True) -> None:
     """Persist finished agent reports into the session when no live turn can
     carry them (the parent was cancelled, or the agent ran detached or was
     resumed). Unlike task_event this row IS shown to the model: the next turn
     reads it as a user message (server.infrastructure.sessions.
-    visible_chat_history), so the parent still gets its turn to act."""
+    visible_chat_history), so the parent still gets its turn to act.
+
+    ``wake=False`` persists the row without waking the parent: the launching
+    turn was stopped, and the user who stopped it gets no answer they did not
+    ask for. Their next message reads the row."""
     if not session_id or not isinstance(payload, dict):
         return
     payload = {**payload, "timestamp": payload.get("timestamp") or _utc_now_iso()}
     emit_session_event(session_id, role="agent_report", payload_key="agentReport", payload=payload)
     try:
-        from server.agents.wake import maybe_wake
+        if wake:
+            from server.agents.wake import maybe_wake
 
-        maybe_wake(session_id, payload)
+            maybe_wake(session_id, payload)
     except Exception as e:  # noqa: BLE001 - the row is already persisted; the wake is extra
         log.warning("agent report wake skipped: %s", e)
     try:

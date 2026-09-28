@@ -216,7 +216,10 @@ export async function downloadLocalModel(model: string, label: string): Promise<
   return result;
 }
 
-/** Free the resident on-device model (called when switching away from it). */
+/** Free the resident on-device model (called when switching away from it).
+ *  A turn still streaming from it keeps it until that turn ends (the reply
+ *  says `unloaded: false`); it is marked unloaded here either way, so picking
+ *  it again loads it, which cancels that pending release on the server. */
 export async function unloadLocalModel(): Promise<void> {
   useSettingsStore.getState().setLoadedLocalModel(null);
   try {

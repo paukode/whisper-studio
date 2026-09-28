@@ -823,6 +823,53 @@ def test_remove_from_list_deletes_a_downloaded_recommendation(isolated_home, mon
     assert "local_gemma" not in data.get("chat_models_disabled", [])
 
 
+def test_remove_from_list_refuses_a_model_answering_in_a_chat(isolated_home, monkeypatch):
+    """Refused as a whole: the config entry stays with the weights, instead of
+    the entry vanishing while gigabytes of weights stay on disk unlisted."""
+    from server.local import serving
+    from server.models_manager import manager
+    from server.models_manager.catalog import GROUP_LOCAL_CHAT
+
+    _stub_hf_and_queue(monkeypatch)
+    key = service.install_model("unsloth/Qwen3-0.6B-GGUF", "Qwen3-0.6B-Q4_K_M.gguf")["key"]
+
+    class _Entry:
+        group = GROUP_LOCAL_CHAT
+
+    _Entry.key = key
+    monkeypatch.setattr("server.models_manager.catalog.get_entry", lambda k: _Entry())
+    monkeypatch.setattr(serving, "resident_key", lambda: key)
+    monkeypatch.setattr(serving, "busy_turns", lambda: 1)
+    monkeypatch.setattr(serving, "stop", lambda: pytest.fail("stopped a model mid-answer"))
+
+    with pytest.raises(manager.ModelBusy):
+        service.remove_from_list(key)
+    with pytest.raises(manager.ModelBusy):
+        service.uninstall_model(key)
+    data = json.loads((isolated_home / "config.user.json").read_text())
+    assert key in data.get("chat_models", {}), "the entry was dropped while the model answered"
+
+
+@pytest.mark.parametrize("path", ["/api/models/browse/k1/entry", "/api/models/browse/k1"])
+def test_remove_and_uninstall_answer_409_with_the_reason(monkeypatch, path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.model_browser.routes import router
+    from server.models_manager import manager
+
+    def busy(key):
+        raise manager.ModelBusy("This model is answering in a chat right now.")
+
+    monkeypatch.setattr(service, "remove_from_list", busy)
+    monkeypatch.setattr(service, "uninstall_model", busy)
+    app = FastAPI()
+    app.include_router(router)
+    r = TestClient(app).delete(path)
+    assert r.status_code == 409
+    assert "answering" in r.json()["detail"]
+
+
 def test_remove_from_list_tombstones_bedrock_model(isolated_home, monkeypatch):
     # A Bedrock model (in the SYSTEM catalog, not local) has no weights and can't
     # be deleted, so it is hidden via the recoverable chat_models_disabled list.

@@ -966,3 +966,51 @@ async def test_hang_up_with_a_run_waiting_on_the_card_keeps_it_answerable(harnes
     types = [e["type"] for e in harness["events"]]
     assert types.index("assistant_answer") < types.index("ended")
     assert vs.done.is_set() and vs.pending == {}
+
+
+def _usage_event(speech_in, text_in, speech_out, text_out):
+    """Sonic's usageEvent: the stream's running totals."""
+    total = {
+        "input": {"speechTokens": speech_in, "textTokens": text_in},
+        "output": {"speechTokens": speech_out, "textTokens": text_out},
+    }
+    return {"usageEvent": {"details": {"total": total}}}
+
+
+def _logged(session_id):
+    from server.costs import tracker
+
+    sums: dict[str, list[int]] = {}
+    for row in tracker.get_session_costs(session_id):
+        assert (row["source"], row["count_source"]) == ("voice", "reported")
+        got = sums.setdefault(row["model"], [0, 0])
+        got[0] += row["input_tokens"]
+        got[1] += row["output_tokens"]
+    return sums
+
+
+@run_async
+async def test_sonic_usage_is_logged_once_per_stream_across_a_renewal(harness):
+    from server.voice.cost_log import model_keys
+
+    keys = model_keys(protocol.DEFAULT_MODEL_ID)
+    vs = harness["make"]()
+    await vs.start()
+    s1 = harness["streams"][0]
+    s1.feed(_usage_event(100, 40, 0, 0))
+    s1.feed(_usage_event(300, 60, 500, 20))  # totals, not increments
+    s1.feed({"completionEnd": {"stopReason": "END_TURN"}})
+    await _settle(10)
+    assert _logged("s1") == {keys["speech"]: [300, 500], keys["text"]: [60, 20]}
+    s1.feed(_usage_event(350, 60, 520, 20))  # used after the completion
+    await _settle(5)
+    await s1.incoming.put(None)  # the model hangs up: the stream is renewed
+    for _ in range(40):
+        await asyncio.sleep(0.02)
+        if len(harness["streams"]) == 2:
+            break
+    s2 = harness["streams"][1]
+    s2.feed(_usage_event(10, 5, 0, 0))  # a new stream's totals start at zero
+    await _settle(5)
+    await vs.stop()
+    assert _logged("s1") == {keys["speech"]: [360, 520], keys["text"]: [65, 20]}

@@ -574,17 +574,15 @@ def popen_sandboxed(
     unlinked by the caller once the process exits — the profile file has to
     outlive the process, exactly the ``build_pty_sandbox_wrap`` contract.
 
-    Egress policy note: this path picks up the SAME network-restriction
-    rules as ``run_sandboxed`` (the macOS profile via ``_generate_macos_profile``,
-    and ``--unshare-net`` on bwrap when non-permissive — see
-    ``_macos_network_restriction_rules`` / ``_bwrap_network_restriction_args``).
-    It does NOT set ``env=`` at all, though (pre-existing — this function
-    inherits the full parent environment unconditionally, unlike
-    ``run_sandboxed``'s ``_merged_env``), so it never gets the
-    HTTPS_PROXY/HTTP_PROXY injection either. Under a non-permissive tier
-    that means background/streaming commands started this way get NO
-    network at all rather than a filtered allowlist — fails closed, not
-    open, but worth knowing if this ever surprises someone.
+    Environment and egress: the child gets the same ``_merged_env`` as a
+    ``run_sandboxed`` child, so the credential denylist holds (no GH_TOKEN for
+    a prompt-injected ``curl "...?t=$GH_TOKEN"``) and, under a non-permissive
+    network tier, the HTTPS_PROXY/HTTP_PROXY vars point at the allowlisting
+    proxy. It also picks up the same network-restriction rules (the macOS
+    profile via ``_generate_macos_profile``, ``--unshare-net`` on bwrap), so
+    the proxy is the only way out on ports 80 and 443. Approved and read-only
+    ws_run_command runs, their 30 s handoff and every background shell task
+    start here, so this is where the parity has to hold.
     """
     from server.process_utils import new_process_group
 
@@ -631,6 +629,7 @@ def popen_sandboxed(
             stdout=stdout_file,
             stderr=subprocess.STDOUT,
             preexec_fn=new_process_group,
+            env=_merged_env(None),
         )
     except Exception:
         if profile_path:

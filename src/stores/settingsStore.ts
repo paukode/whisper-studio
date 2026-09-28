@@ -1,12 +1,11 @@
 import { create } from 'zustand';
-import type { AppConfig, IndexCapability } from '@/types/settings';
+import type { AppConfig, IndexCapability, ModelEntry, ModelsResponse } from '@/types/settings';
 import { get, put } from '@/api/client';
 import {
   AppConfigResponseSchema,
   ModelsResponseSchema,
   DataRetentionResponseSchema,
   PermissionsResponseSchema,
-  MCPServersResponseSchema,
   SkillsResponseSchema,
 } from '@/types/schemas';
 import { useUIStore } from './uiStore';
@@ -59,6 +58,33 @@ function persistSelectedModel(model: string): void {
 /** Response-length value (stored as GPT-5.x's native verbosity low/medium/high;
  *  the toolbar shows Brief/Normal/Detailed). Persisted so the choice survives a
  *  refresh, like the model selection. */
+/** Voice mode is refused in Local mode, and the Talk button shows why: re-read
+ *  its availability once the server holds a new mode. Loaded lazily (the voice
+ *  controller imports this store); never rejects. */
+function refreshVoiceStatus(): void {
+  void import('@/services/voiceController')
+    .then(({ voiceController }) => voiceController.loadStatus(true))
+    .catch(() => {});
+}
+
+/** Hydrate the Memory toggle from its backend feature flag, so the toolbar
+ *  shows the real state and what the active mode leaves out of it (Local mode
+ *  recalls memories but records none). Re-read after a mode switch. Never
+ *  rejects: with the flags API unavailable the current value stays. */
+async function loadMemoryFlag(): Promise<void> {
+  try {
+    const flags = await get<Record<string, { enabled?: boolean; local_mode_note?: string | null }>>(
+      '/api/feature-flags',
+    );
+    useSettingsStore.setState({
+      autoMemory: !!flags.auto_memory?.enabled,
+      autoMemoryNote: flags.auto_memory?.local_mode_note || null,
+    });
+  } catch {
+    // Flags API unavailable: keep the current value.
+  }
+}
+
 const VERBOSITY_KEY = 'whisper.verbosity';
 
 function readVerbosity(): string | null {
@@ -78,31 +104,7 @@ function persistVerbosity(v: string): void {
   }
 }
 
-/** Per-model metadata as returned by GET /api/models. */
-export interface ModelEntry {
-  key: string;
-  name: string;
-  requires_data_retention?: boolean;
-  /** On-device model — runs via the local runtime, not Bedrock. */
-  is_local?: boolean;
-  /** Whether this local model has a toggleable thinking/reasoning mode. */
-  supports_thinking?: boolean;
-  /** Whether this local model can use tools (local agentic loop). */
-  supports_tools?: boolean;
-  /** Effort levels this model exposes (empty ⇒ no effort, e.g. Haiku). */
-  effort_levels?: string[];
-  default_effort?: string;
-  supports_ultracode?: boolean;
-  /** GPT-5.x verbosity control (text.verbosity). Only openai_bedrock models. */
-  supports_verbosity?: boolean;
-  default_verbosity?: string;
-}
-
-/** Shape returned by GET /api/models */
-interface ModelsResponse {
-  models: ModelEntry[];
-  default: string;
-}
+export type { ModelEntry } from '@/types/settings';
 
 /** Shape returned by GET /api/skills */
 interface SkillEntry {
@@ -114,23 +116,16 @@ interface SkillEntry {
   trusted?: boolean;
 }
 
-/** Shape returned by GET /api/mcp/servers */
-interface MCPEntry {
-  name: string;
-  status: string;
-  /** Persisted enable flag — see server/mcp.py. Defaults to true when a
-   *  server is added; the Settings → MCP switch stops/starts the server live
-   *  (no restart) and hides/shows its tools on the next turn. */
-  enabled: boolean;
-  tools?: Array<{ name: string; description?: string }>;
-}
-
 export interface SettingsState {
   config: AppConfig;
 
   /* Models */
   models: ModelEntry[];
+  /** '' when nothing is selectable (Local mode with no on-device model). */
   selectedModel: string;
+  /** Local mode with no on-device chat model installed (GET /api/models): the
+   *  picker shows the install hint and the composer refuses to send. */
+  needsLocalModel: boolean;
   /** Which on-device model is actually RESIDENT in server memory right now, or
    *  null if none. Distinct from selectedModel: in local/hybrid mode a local
    *  model can be the selection without being loaded (we no longer eager-load at
@@ -149,19 +144,15 @@ export interface SettingsState {
   /* Skills */
   skills: SkillEntry[];
 
-  /* MCP — the persisted `enabled` flag on each server is the single source of
-   *  truth, toggled in Settings → MCP (via useMcpToggle); the backend resolves
-   *  the active set from these flags. This live copy also feeds the composer's
-   *  @-mention autocomplete (mcp: mentions), so it is kept even though the
-   *  composer no longer has an enable/disable tick. */
-  mcpServers: MCPEntry[];
-
   /* Effort & brief */
   effortLevel: string;
   /** GPT-5.x verbosity (text.verbosity); only used by openai_bedrock models. */
   verbosity: string;
   planMode: boolean;
   autoMemory: boolean;
+  /** What the active mode leaves out of auto memory (Local mode recalls but
+   *  records nothing), from the flag's `local_mode_note`; null when nothing. */
+  autoMemoryNote: string | null;
   /** Local-model context window (tokens). Drives the chat-input slider; changing
    *  it reloads the on-device model at the new size. Persisted to localStorage. */
   localContextWindow: number;
@@ -172,10 +163,6 @@ export interface SettingsState {
   loadDataRetention: () => Promise<void>;
   setDataRetentionEnabled: (on: boolean) => void;
   loadSkills: () => Promise<void>;
-  loadMCP: () => Promise<void>;
-  /** Optimistically set a server's persisted enabled flag in the live store
-   *  copy (the PATCH + rollback is owned by useMcpToggle). */
-  setMcpServerEnabled: (name: string, enabled: boolean) => void;
   updateConfig: (partial: Partial<AppConfig>) => void;
   setSelectedModel: (model: string) => void;
   setLoadedLocalModel: (model: string | null) => void;
@@ -210,10 +197,11 @@ const defaultConfig: AppConfig = {
 
 /** Decide which chat model is active after loading the model list, in priority
  *  order: (1) the user's persisted choice if it's still a valid model (this is
- *  what survives a hard refresh), (2) an on-device model if one is offered — on
- *  local builds the UI defaults to Gemma, while the *backend* default stays a
- *  cloud model so headless / model-less requests never load the local weights,
- *  (3) the backend default. Pure + exported for unit testing. */
+ *  what survives a hard refresh), (2) an on-device model if one is offered (on
+ *  local builds the UI defaults to Gemma, while the configured backend default
+ *  stays a cloud model so headless / model-less requests in Cloud or Hybrid mode
+ *  never load the local weights), (3) the backend default, which is '' when the
+ *  active mode can run nothing. Pure + exported for unit testing. */
 export function pickActiveModel(
   models: ModelEntry[],
   backendDefault: string,
@@ -223,22 +211,47 @@ export function pickActiveModel(
   return models.find((m) => m.is_local)?.key ?? backendDefault;
 }
 
+/** Why there is no chat model to use, worded for the picker's empty state and
+ *  the send refusal alike. */
+export function noChatModelHint(needsLocalModel: boolean): string {
+  return needsLocalModel
+    ? 'Local mode needs an on-device chat model. Install one from Settings > Models > Discover.'
+    : 'No chat model is available. Pick or enable one in Settings > Models.';
+}
+
+/** The reason a message cannot be sent with the current selection, or null
+ *  when it can. Refused: Local mode with no on-device model, or a selection the
+ *  loaded list does not offer. An empty list the server has not explained (not
+ *  loaded yet, or the fetch failed) is not refused here: the server decides,
+ *  and it refuses a turn with no runnable model with a visible error. Pure +
+ *  exported for unit testing. */
+export function chatModelBlockReason(
+  s: Pick<SettingsState, 'models' | 'selectedModel' | 'needsLocalModel'>,
+): string | null {
+  if (s.models.some((m) => m.key === s.selectedModel)) return null;
+  if (s.needsLocalModel || s.models.length > 0) return noChatModelHint(s.needsLocalModel);
+  return null;
+}
+
 export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   config: { ...defaultConfig },
   models: [],
   // Hydrate from the persisted choice so there's no flash of the wrong model
   // before loadModels resolves; loadModels then validates it against the list.
-  selectedModel: readSelectedModel() ?? 'opus4.8',
+  // No hardcoded stand-in: with nothing persisted the selection is empty until
+  // the list says what the active mode can run.
+  selectedModel: readSelectedModel() ?? '',
+  needsLocalModel: false,
   // Nothing is resident until the user loads a model (lazy in local mode).
   loadedLocalModel: null,
   dataRetentionEnabled: false,
   skills: [],
-  mcpServers: [],
   effortLevel: DEFAULT_EFFORT,
   verbosity: readVerbosity() ?? 'medium',
   planMode: false,
   // Global memory defaults ON (matches config.example.json feature_flags.auto_memory).
   autoMemory: true,
+  autoMemoryNote: null,
   localContextWindow: readLocalContextWindow(),
 
   loadConfig: async () => {
@@ -289,12 +302,7 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
       // Hydrate the global-memory toggle from its backend feature flag so the
       // toolbar reflects the real state (and the on-by-default config value),
       // rather than only the store's initial default.
-      try {
-        const flags = await get<Record<string, { enabled?: boolean }>>('/api/feature-flags');
-        set({ autoMemory: !!flags.auto_memory?.enabled });
-      } catch {
-        // Flags API unavailable — keep the current value.
-      }
+      await loadMemoryFlag();
     } catch (err) {
       console.warn('Failed to load config:', err);
       useUIStore.getState().addToast({
@@ -309,7 +317,8 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
     try {
       const data = await get<ModelsResponse>('/api/models', { schema: ModelsResponseSchema });
       const models = data.models ?? [];
-      const def = data.default ?? 'opus4.8';
+      const def = data.default ?? '';
+      const needsLocalModel = !!data.needs_local_model;
       set((state) => {
         // Called again after any catalog change (config-editor save, the
         // Settings visibility toggles) so the composer picker updates live. On
@@ -327,6 +336,7 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
         const allowed = models.find((m) => m.key === chosen)?.effort_levels ?? [];
         return {
           models,
+          needsLocalModel,
           selectedModel: chosen,
           // Reconcile effort to whatever the chosen model supports.
           ...(allowed.length ? { effortLevel: clampEffort(state.effortLevel, allowed) } : {}),
@@ -362,7 +372,7 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
 
   loadSkills: async () => {
     try {
-      const data = await get<{ skills: SkillEntry[]; mcpTools: Array<{ name: string; description: string; server: string }> }>('/api/skills', { schema: SkillsResponseSchema });
+      const data = await get<{ skills: SkillEntry[] }>('/api/skills', { schema: SkillsResponseSchema });
       set({ skills: Array.isArray(data.skills) ? data.skills : [] });
     } catch (err) {
       console.warn('Failed to load skills:', err);
@@ -374,42 +384,9 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
     }
   },
 
-  loadMCP: async () => {
-    try {
-      const data = await get<{ servers: Record<string, { name?: string; command: string; args: string[]; enabled?: boolean; status: string; error?: string | null }> }>('/api/mcp/servers', { schema: MCPServersResponseSchema });
-      const serversObj = data.servers ?? {};
-      const list: MCPEntry[] = Object.entries(serversObj).map(([name, info]) => ({
-        name,
-        status: info.status ?? 'stopped',
-        enabled: !!info.enabled,
-      }));
-      // Authoritative REPLACE: the backend response is the whole truth, so a
-      // server deleted there (e.g. the retired AgentCore) is dropped from this
-      // copy — it can never linger as a "ghost" that the @-mention list still
-      // shows while Settings reads empty. An empty response ⇒ empty list.
-      set({ mcpServers: list });
-    } catch (err) {
-      // Keep the previous list on a transient fetch/parse error: a network
-      // blip must not wipe a valid list (and the @-mention autocomplete that
-      // reads it). Only a SUCCESSFUL fetch reconciles the list above.
-      console.warn('Failed to load MCP servers:', err);
-      useUIStore.getState().addToast({
-        type: 'error',
-        message: 'Failed to load MCP servers',
-        duration: 4000,
-      });
-    }
-  },
-
   updateConfig: (partial) => {
     set((state) => ({
       config: { ...state.config, ...partial },
-    }));
-  },
-
-  setMcpServerEnabled: (name, enabled) => {
-    set((state) => ({
-      mcpServers: state.mcpServers.map((s) => (s.name === name ? { ...s, enabled } : s)),
     }));
   },
 
@@ -463,12 +440,26 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   setModelMode: (mode) => {
     // Optimistic: flip the mode immediately, persist via PUT /api/config, roll
     // back + toast on failure so the UI never lies about the active mode.
+    // Once the mode is SAVED (the backend filters on the persisted value), the
+    // composer picker and the data-retention state follow it live: Local offers
+    // only on-device models, and a switch to Cloud or Hybrid re-reads retention
+    // (Local mode never probes AWS).
     const prev = useSettingsStore.getState().config.modelMode;
     set((s) => ({ config: { ...s.config, modelMode: mode } }));
-    void put('/api/config', { model_mode: mode }).catch(() => {
-      set((s) => ({ config: { ...s.config, modelMode: prev } }));
-      useUIStore.getState().addToast({ type: 'error', message: 'Could not update model mode', duration: 3000 });
-    });
+    void put('/api/config', { model_mode: mode })
+      .then(() => {
+        // A mode switch changes what is visible and usable: the chat model
+        // list, the data-retention gate, and whether voice mode is offered.
+        const s = useSettingsStore.getState();
+        void s.loadModels();
+        void s.loadDataRetention();
+        void loadMemoryFlag();
+        refreshVoiceStatus();
+      })
+      .catch(() => {
+        set((s) => ({ config: { ...s.config, modelMode: prev } }));
+        useUIStore.getState().addToast({ type: 'error', message: 'Could not update model mode', duration: 3000 });
+      });
   },
 
   markModeNoticeSeen: () => {
@@ -498,3 +489,11 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
     set({ localContextWindow: v });
   },
 }));
+
+// The picker follows the connected workspace: /api/models is workspace-aware (a
+// project's .whisper/settings.json can define or hide chat models), so connecting
+// or disconnecting one re-reads the list. loadModels keeps a still-offered
+// selection, so this never moves a valid pick.
+useUIStore.subscribe((state, prev) => {
+  if (state.wsPath !== prev.wsPath) void useSettingsStore.getState().loadModels();
+});

@@ -2,6 +2,7 @@ import React, { useCallback, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { readFile } from '@/api/workspace';
 import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
+import { useHtmlProp } from '@/hooks/useHtmlProp';
 import { downloadFile } from '@/utils/downloadFile';
 
 export interface MarkdownPreviewProps {
@@ -124,5 +125,6 @@ const MarkdownContent: React.FC<{ html: string }> = ({ html }) => {
   // dangerouslySetInnerHTML is intentional: `html` is workspace markdown
   // already parsed by `marked`. (No react/no-danger rule is configured here,
   // so no disable directive is needed.)
-  return <div className="ws-markdown-preview markdown-body" dangerouslySetInnerHTML={{ __html: html }} />;
+  const innerHtml = useHtmlProp(html);
+  return <div className="ws-markdown-preview markdown-body" dangerouslySetInnerHTML={innerHtml} />;
 };

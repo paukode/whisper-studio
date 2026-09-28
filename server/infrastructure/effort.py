@@ -44,9 +44,13 @@ EFFORT_TIERS = {
     # ladder tops there; "minimal" rejected — verified live), the real "max"
     # tier for GPT-5.6 (verified live 2026-07-15).
     "openai": ["none", "low", "medium", "high", "max"],
-    # GPT-6 (Astra) drops the "none" rung: bedrock-mantle rejects
+    # GPT-6 Astra drops the "none" rung: bedrock-mantle rejects
     # reasoning.effort "none" for it with unsupported_value (verified live
-    # 2026-09-09; accepted values are low/medium/high/xhigh/max).
+    # 2026-09-09; accepted values are low/medium/high/xhigh/max). Every GPT-6
+    # id gets this ladder, but only Astra's rejection is verified: OpenAI
+    # documents a "none" rung for GPT-6 Sol and Luna. TODO: once a live mantle
+    # probe shows Sol and Luna accept "none", narrow openai_effort_tier_for
+    # and openai_bedrock.runtime._rejects_none_effort to Astra.
     "openai6": ["low", "medium", "high", "max"],
     "none": [],
 }
@@ -104,7 +108,8 @@ def gpt_version(model_id: str) -> tuple[int, int] | None:
 
 def openai_effort_tier_for(model_id: str) -> str:
     """The reasoning ladder an OpenAI-on-Bedrock model exposes when its config
-    entry does not declare one: GPT-6 and up have no "none" rung."""
+    entry does not declare one: GPT-6 and up get no "none" rung (verified for
+    Astra only; see the "openai6" tier)."""
     ver = gpt_version(model_id)
     return "openai6" if ver is not None and ver >= (6, 0) else "openai"
 

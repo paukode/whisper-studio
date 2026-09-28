@@ -66,10 +66,10 @@ Deploy setup is in [`docs/README.md`](docs/README.md).
 - **Talk to it.** Voice mode holds a spoken conversation: Amazon Nova Sonic
   carries the voice while your session's model does the work through the
   same tools as typed chat, approvals included.
-- **Chat with Claude or GPT.** Fable 5.0/5.1, Opus 4.6/4.7/4.8/5, Sonnet
-  4.6/5, Haiku 4.5, GPT-5.4/5.5, GPT-5.6 Sol/Terra/Luna and GPT-6 Astra,
-  with streaming tokens, tool use, attachments and slash commands. Or run
-  fully on-device in local mode.
+- **Chat with Claude or GPT.** Fable 5.0/5.1, Opus 4.6/4.7/4.8/5/5.5,
+  Sonnet 4.6/5, Haiku 4.5, GPT-5.4/5.5, GPT-5.6 Sol/Terra/Luna and GPT-6
+  Astra/Sol/Luna, with streaming tokens, tool use, attachments and slash
+  commands. Or run fully on-device in local mode.
 - **Full workspace IDE.** File tree, Monaco editor, xterm.js terminal, Git
   (status, diff, log, blame, branches, fetch, pull, PR), LSP for Python and
   TypeScript, ripgrep search.

@@ -63,13 +63,21 @@ describe('ModelModePanel', () => {
     expect(options.length).toBe(2);
     const ner = screen.getByLabelText('Entity extraction') as HTMLSelectElement;
     const texts = Array.from(ner.options).map((o) => o.text);
-    expect(texts).toContain('GLiNER — on-device extractor');
-    expect(texts).toContain('Claude Haiku — Bedrock');
+    expect(texts).toContain('GLiNER (on-device extractor)');
+    expect(texts).toContain('Claude Haiku (Bedrock)');
   });
 
   it('hides the capability pickers in local mode', () => {
     setMode('local');
     renderPanel();
     expect(screen.queryByLabelText('Embeddings (search index)')).toBeNull();
+  });
+
+  it('says the mode decides the chat picker and where on-device models come from', () => {
+    renderPanel();
+    const text = document.body.textContent ?? '';
+    expect(text).toMatch(/decides which chat models/);
+    expect(text).toMatch(/Settings > Models > Discover/);
+    expect(text).not.toMatch(/selection is separate/);
   });
 });

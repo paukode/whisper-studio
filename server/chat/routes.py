@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re as _re
+import sqlite3
 import threading as _threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -28,7 +29,6 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from server.attachments import attachments
-from server.costs.tracker import record_turn as _record_cost_turn
 from server.hooks import run_hooks
 from server.infrastructure.config import latch_session
 from server.security.permissions import get_mode
@@ -39,8 +39,9 @@ from server.workspace import (
     get_workspace_path,
     is_plan_mode,
 )
+from server.workspace.state import latch_workspace, reset_turn_latch, set_turn_latch
 
-from . import executor, router
+from . import executor, router, stream_slot
 
 # Dedicated pool for index grounding so its (embedder-bound, self-serializing)
 # work never consumes the shared Bedrock streaming workers. A few workers (not
@@ -63,39 +64,45 @@ from .compaction import (  # noqa: E402
     thresholds_for,
 )
 from .infra import (  # noqa: E402
-    _estimate_cost,
     _get_bedrock_client,
-    _get_chat_model_meta,
     _get_chat_models,
     _get_default_model,
+    _turn_catalog,
 )
+from .local_refusals import btw_refusal, subagent_refusal  # noqa: E402
 
 log = logging.getLogger("whisper-studio")
 
 
 def _prepend_grounding_event(resp, meta):
-    """Emit one ``grounding`` SSE frame at the head of a local/openai turn's
-    stream so the UI can show "grounded in N folders / M passages". Wrapping the
-    response's body iterator avoids threading the meta through every stream
+    """Emit one ``grounding`` SSE frame at the head of a local turn's stream so
+    the UI can show "grounded in N folders / M passages". Wrapping the
+    response's body iterator avoids threading the meta through the local stream
     function. ``meta`` is None on approval-resume turns (grounding isn't
     recomputed there) and when nothing was searched, so the response passes
     through untouched. The cloud path emits this frame from inside
-    ``guarded_stream`` instead, so its stream-slot cleanup wraps the whole stream.
+    ``guarded_stream`` instead. Either way the session's busy slot is released
+    by ``staged_stream``, which wraps both.
     """
     if not meta:
         return resp
     inner = resp.body_iterator
 
     async def _gen():
-        yield f"data: {ndjson_dumps({'grounding': meta})}\n\n"
-        async for chunk in inner:
-            yield chunk
+        try:
+            yield f"data: {ndjson_dumps({'grounding': meta})}\n\n"
+            async for chunk in inner:
+                yield chunk
+        finally:
+            await stream_slot.aclose(inner)
 
     resp.body_iterator = _gen()
     return resp
 
 
-async def _rewrite_query_for_retrieval(question: str, history: list[dict]) -> str | None:
+async def _rewrite_query_for_retrieval(
+    question: str, history: list[dict], session_id: str = ""
+) -> str | None:
     """Tier 3 retrieval (behind the ``rag_query_rewrite`` flag): condense a
     follow-up + recent history into a single standalone search query using a fast
     model (Haiku), resolving pronouns/references. Returns None on any failure so
@@ -128,8 +135,15 @@ async def _rewrite_query_for_retrieval(question: str, history: list[dict]) -> st
         client = _get_bedrock_client()
 
         def _call():
-            resp = client.invoke_model(modelId=model_id, body=body)
-            payload = json.loads(resp["body"].read())
+            from server.costs.calls import invoke_claude
+
+            payload = invoke_claude(
+                client,
+                model_id=model_id,
+                body=body,
+                source="query_rewrite",
+                session_id=session_id,
+            )
             return (payload["content"][0]["text"] or "").strip()
 
         rewritten = await asyncio.get_event_loop().run_in_executor(None, _call)
@@ -169,7 +183,11 @@ def _grounding_budget_s() -> float:
 
 
 async def _run_grounding(
-    selected_indexes: list[str], question: str, history: list[dict], forced: bool
+    selected_indexes: list[str],
+    question: str,
+    history: list[dict],
+    forced: bool,
+    session_id: str = "",
 ):
     """One turn's index retrieval, run as a background task so it overlaps the
     rest of turn setup. Returns ``retrieve_grounding``'s ``(block, meta)``.
@@ -193,7 +211,7 @@ async def _run_grounding(
     if is_enabled("rag_query_rewrite") and history:
         try:
             rewritten = await asyncio.wait_for(
-                _rewrite_query_for_retrieval(question, history),
+                _rewrite_query_for_retrieval(question, history, session_id),
                 timeout=_QUERY_REWRITE_TIMEOUT_S,
             )
         except asyncio.TimeoutError:
@@ -284,53 +302,30 @@ def _resume_messages(messages: list, answers: list[dict], paused: dict | None) -
     ]
 
 
-# Session id -> monotonic start time of its in-flight NEW-turn stream. Guards
-# the pause/resume state above against a second concurrent turn for the same
-# session (e.g. two windows); different sessions stream in parallel freely.
-# A dict (not a set) so an abandoned stream (one whose connection was suspended
-# or closed without a clean disconnect, leaving the generator parked so its
-# finally never ran) can be detected as stale and reclaimed. Otherwise the
-# session would 409 on every later turn until the whole app is restarted.
-_active_chat_streams: dict[str, float] = {}
-# Session id -> monotonic time of last observed progress (refreshed at every
-# round boundary). Staleness is judged against THIS, not the start time in
-# _active_chat_streams (which doubles as the ownership token and must not be
-# mutated), so a legitimately long multi-round turn is never wrongly reclaimed.
-_stream_heartbeat: dict[str, float] = {}
-# A stream older than this (seconds) is presumed abandoned and its slot is
-# reclaimed on the next turn. The /reset endpoint and the client
-# disconnect-poll free it sooner on the common paths; this is the backstop for
-# a suspended connection that never cleanly disconnects.
-_STREAM_STALE_AFTER_S = 900.0  # above a single Bedrock read timeout (~600s)
-# How often a live stream refreshes its heartbeat while it is silent.
-_HEARTBEAT_KEEPALIVE_S = 30.0
-
-
-async def _with_heartbeat(chunks, beat, interval: float = _HEARTBEAT_KEEPALIVE_S):
-    """Forward ``chunks``, calling ``beat`` on every chunk and every ``interval``
-    seconds of silence in between.
-
-    The runner heartbeats once per round, but one tool call can outlast the
-    stale window on its own: a team of agents working for an hour, a long
-    shell command. Judged stale, the slot refused the user's mid-turn message
-    (409, the composer kept the text) or, before 2.8.1, let a second turn
-    start on top of the running one. The pulse lives exactly as long as this
-    generator, so a stream that ends or is cancelled stops heartbeating with
-    it; Stop closes the stream and frees the slot the same way as before.
-    """
-
-    async def _pulse():
-        while True:
-            await asyncio.sleep(interval)
-            beat()
-
-    pulse = asyncio.create_task(_pulse())
+async def _record_turn_workspace(session_id: str, latch) -> None:
+    """Remember the folder this session's turn ran in, for the sidebar's "Open
+    workspace in". Read as the turn's stream closes rather than when it starts:
+    a session begun from the empty composer creates its row in the same
+    instant as its first turn. It is read through the turn's workspace latch,
+    as the turn's own tools see it, so a folder the turn connected itself
+    (git_clone) counts, while a turn whose folder the user let go of mid-turn
+    (a disconnect, or another folder connected from the UI, perhaps for
+    another session) records nothing. A turn with no folder keeps the last."""
+    token = set_turn_latch(latch)
     try:
-        async for chunk in chunks:
-            beat()
-            yield chunk
+        ws = get_workspace_path()
     finally:
-        pulse.cancel()
+        reset_turn_latch(token)
+    if not ws or not os.path.isdir(ws):
+        return
+    from server.infrastructure.sessions import record_session_workspace
+
+    try:
+        # Shielded so a stream closed by Stop or a lost client still records
+        # the folder; the client already shows it on the session's row.
+        await asyncio.shield(asyncio.to_thread(record_session_workspace, session_id, ws))
+    except sqlite3.Error:
+        log.warning("Could not record the workspace of session %s", session_id, exc_info=True)
 
 
 @router.post("/api/chat/sessions/{session_id}/reset")
@@ -339,8 +334,12 @@ async def reset_chat_session(session_id: str):
     any paused-approval state so the session accepts new turns again without
     restarting the whole app. Safe any time; a no-op when nothing is stuck.
     In-process state only, so it never touches durable chat history."""
-    cleared_stream = _active_chat_streams.pop(session_id, None) is not None
+    from server.chat.engine import midturn_inbox
+
+    cleared_stream = stream_slot.drop(session_id)
     cleared_paused = _paused_sessions.pop(session_id, None) is not None
+    # Text queued for the wedged turn must not surface in the next one.
+    midturn_inbox.clear(session_id)
     log.info(
         "Session %s reset (cleared_stream=%s, cleared_paused=%s)",
         session_id,
@@ -419,18 +418,16 @@ def _resolve_at_file_mentions(question: str, ws_path: str) -> str:
 
 @router.get("/api/models")
 async def models_endpoint():
+    from server.chat.infra import mode_chat_catalog
+    from server.infrastructure.config import load_config
     from server.infrastructure.effort import default_effort_for, effort_levels_for
-    from server.infrastructure.model_mode import current_mode, visible_chat_keys
 
-    models = _get_chat_models()
-    meta = _get_chat_model_meta()
-    default = _get_default_model()
-    # Show only the models runnable in the active mode: cloud hides on-device
-    # models (no local runtime), local hides cloud models (all on-device),
-    # hybrid shows all. Config order is preserved.
-    visible = visible_chat_keys(list(models), meta, current_mode())
-    if default not in visible and visible:
-        default = visible[0]
+    # The same workspace-aware catalog a turn latches, so a model the connected
+    # project hides (or defines) is hidden (or offered) here too. Only the
+    # models runnable in the active mode are shown, in config order. The list
+    # may be empty (local mode before an on-device model is installed); the UI
+    # then shows an install hint instead of a picker.
+    visible, meta, mode, default = mode_chat_catalog(load_config(get_workspace_path()))
     rows = []
     for k in visible:
         m = meta.get(k, {})
@@ -458,7 +455,13 @@ async def models_endpoint():
                 "default_verbosity": m.get("verbosity", "medium"),
             }
         )
-    return {"models": rows, "default": default}
+    return {
+        "models": rows,
+        "default": default,
+        # Local mode with no on-device chat model: nothing is runnable until one
+        # is installed from Settings > Models > Discover.
+        "needs_local_model": mode == "local" and not visible,
+    }
 
 
 # Models with a load cancel requested (banner Cancel, or a superseding load).
@@ -466,11 +469,20 @@ async def models_endpoint():
 # the blocking work runs on executor threads that can't be interrupted directly.
 _load_cancels: set[str] = set()
 _load_cancels_lock = _threading.Lock()
+# The newest /api/local-model/load per model, so an older load that settles
+# late never clears (or acts on) a flag that belongs to a newer one.
+_load_generations: dict[str, int] = {}
 
 
 def _load_cancel_requested(model: str) -> bool:
     with _load_cancels_lock:
         return model in _load_cancels
+
+
+def _clear_load_cancel(model: str, generation: int) -> None:
+    with _load_cancels_lock:
+        if _load_generations.get(model) == generation:
+            _load_cancels.discard(model)
 
 
 @router.get("/api/local-model/load")
@@ -508,7 +520,11 @@ async def local_model_load(model: str, n_ctx: int | None = None):
     async def gen():
         loop = asyncio.get_event_loop()
         with _load_cancels_lock:
-            _load_cancels.discard(model)  # stale flag from a previous run
+            # A flag left by an earlier load of this model. If that load's
+            # worker is still waiting, clearing it lets the worker go on to
+            # load this same model, which this load wants anyway.
+            _load_cancels.discard(model)
+            generation = _load_generations[model] = _load_generations.get(model, 0) + 1
         yield f"data: {ndjson_dumps({'stage': busy_stage, 'progress': 0.0, 'label': label})}\n\n"
         from server.local import serving
         from server.models_manager import manager as models_manager
@@ -516,12 +532,20 @@ async def local_model_load(model: str, n_ctx: int | None = None):
 
         entry = catalog_entry(model)  # local-chat keys are catalog keys
 
-        def _stop_if_ours():
-            # Only kill the server when it is (or is warming up as) THIS model;
-            # a superseding load's fresh spawn must never be collateral.
-            if serving.resident_key() == model:
-                serving.stop()
+        # Set by ensure_serving once this load is past its busy wait and
+        # (re)starting a server.
+        started = _threading.Event()
 
+        def _stop_if_ours():
+            # Only a server THIS load started, and never under a live turn or
+            # another transition. A cancelled context reload that was still
+            # waiting on another session's turn must leave that turn's server
+            # (same key, old size) alone, and a superseding load's spawn is
+            # never collateral.
+            if started.is_set():
+                serving.stop_if_idle(model, started)
+
+        load_future = None
         try:
             # Download phase, via the manager so the job is a real, killable
             # worker process. Skipped when the weights are on disk or the key
@@ -571,6 +595,7 @@ async def local_model_load(model: str, n_ctx: int | None = None):
                     model,
                     n_ctx,
                     should_abort=lambda: _load_cancel_requested(model),
+                    started=started,
                 ),
             )
 
@@ -595,8 +620,9 @@ async def local_model_load(model: str, n_ctx: int | None = None):
                     break
                 if _load_cancel_requested(model):
                     cancelled = True
-                    # Kill the warming server; the load future then raises and
-                    # is reported as cancelled below.
+                    # Kill the server this load is warming, if it got that far;
+                    # a load still waiting on a live turn sees the flag through
+                    # should_abort. Either way it is reported as cancelled below.
                     await loop.run_in_executor(None, _stop_if_ours)
                     break
                 if not local_llm.is_downloaded(model):
@@ -608,7 +634,10 @@ async def local_model_load(model: str, n_ctx: int | None = None):
                     ramp = min(0.9, ramp + 0.05)
                     yield f"data: {ndjson_dumps({'stage': 'loading', 'progress': round(ramp, 2), 'label': label})}\n\n"
             try:
-                await load_future
+                # Shielded: a disconnect here cancels only this await. The
+                # worker keeps running either way, and the cleanup below must
+                # still see its future pending so a standing cancel is kept.
+                await asyncio.shield(load_future)
             except Exception as e:
                 if cancelled or _load_cancel_requested(model):
                     yield f"data: {ndjson_dumps({'stage': 'cancelled', 'label': label})}\n\n"
@@ -628,8 +657,21 @@ async def local_model_load(model: str, n_ctx: int | None = None):
         finally:
             # No yield here: on client disconnect this runs under GeneratorExit,
             # where emitting would raise. Cleanup only.
-            with _load_cancels_lock:
-                _load_cancels.discard(model)
+            if load_future is not None and not load_future.done():
+                # The stream closed before the worker finished (the banner's
+                # Cancel posts the cancel and then aborts the fetch). Nothing
+                # here ever cancels load_future, so this means the worker is
+                # still running. Keep the flag for its should_abort, and once
+                # the load it could not interrupt lands, stop it if that
+                # cancel stands.
+                def _settle(_fut):
+                    if _load_cancel_requested(model) and _load_generations.get(model) == generation:
+                        loop.run_in_executor(None, _stop_if_ours)
+                    _clear_load_cancel(model, generation)
+
+                load_future.add_done_callback(_settle)
+            else:
+                _clear_load_cancel(model, generation)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -717,11 +759,17 @@ async def local_model_download(model: str):
 
 @router.post("/api/local-model/unload")
 async def local_model_unload():
-    """Free the resident on-device model (called when switching away from it)."""
+    """Free the resident on-device model (called when switching away from it).
+    A turn still streaming from it, in any session, keeps it until that turn
+    ends: the picker moving to a cloud model never kills a live answer."""
     from server.local import serving
 
-    await asyncio.get_event_loop().run_in_executor(None, serving.stop)
-    return {"unloaded": True}
+    if await asyncio.to_thread(serving.release_resident):
+        return {"unloaded": True}
+    return {
+        "unloaded": False,
+        "reason": "The on-device model is still answering; it is freed when that answer ends.",
+    }
 
 
 # How Claude titles a conversation: a fast model reads the opening exchange and
@@ -820,12 +868,33 @@ def _clean_title(text: str) -> str:
     return t[:60] or "New Conversation"
 
 
+def _first_user_line_title(messages_text: str) -> str:
+    """A deterministic title from the conversation's first user line.
+
+    The composer sends role-labelled lines ("User: ..." then "Assistant: ...");
+    the first "User:" line (or the first non-empty line when unlabelled) goes
+    through the same _clean_title a generated title does."""
+    lines = [ln.strip() for ln in messages_text.splitlines() if ln.strip()]
+    for ln in lines:
+        if ln.lower().startswith("user:"):
+            return _clean_title(ln[len("user:") :])
+    return _clean_title(lines[0] if lines else "")
+
+
 @router.post("/api/generate-title")
 async def generate_title_endpoint(request: Request):
     body = await request.json()
     messages_text = body.get("text", "")
     if not messages_text.strip():
         return {"title": "New Conversation"}
+    # Local mode: nothing leaves this Mac, so the conversation is never sent to
+    # Bedrock for a title. Nor does it go to the on-device model: the title
+    # request fires right after the first reply, exactly when the user sends
+    # the second message, and it would take the single local runtime slot.
+    from server.infrastructure.cloud_guard import cloud_allowed
+
+    if not cloud_allowed():
+        return {"title": _first_user_line_title(messages_text)}
     chat_models = _get_chat_models()
     # A small, fast model is the right tool for titling (Claude does the same);
     # auxiliary_models.title may name another cloud key.
@@ -842,10 +911,14 @@ async def generate_title_endpoint(request: Request):
     )
     bedrock_client = _get_bedrock_client()
     loop = asyncio.get_event_loop()
+    title_session = str(body.get("session_id") or "")
 
     def _call():
-        resp = bedrock_client.invoke_model(
-            modelId=model_id,
+        from server.costs.calls import invoke_claude
+
+        result = invoke_claude(
+            bedrock_client,
+            model_id=model_id,
             contentType="application/json",
             accept="application/json",
             body=json.dumps(
@@ -856,8 +929,9 @@ async def generate_title_endpoint(request: Request):
                     "messages": [{"role": "user", "content": messages_text[:2000]}],
                 }
             ),
+            source="title",
+            session_id=title_session,
         )
-        result = json.loads(resp["body"].read())
         text = result.get("content", [{}])[0].get("text", "New Conversation")
         return _clean_title(text)
 
@@ -898,11 +972,14 @@ async def subagent_stream_endpoint(request: Request):
     Progress is published on a PRIVATE event channel so a concurrent /api/chat
     turn (which drains the session channel) never absorbs these events.
     """
+    import threading
     import uuid as _uuid
 
     from server.agents.event_bus import event_bus as _agent_event_bus
     from server.agents.runtime import run_agent
     from server.chat.infra import effort_for_model
+    from server.tasks.handoff import stop_owned_work
+    from server.tasks.owner import run_owned
 
     body = await request.json()
     task = (body.get("task") or "").strip()
@@ -917,6 +994,8 @@ async def subagent_stream_endpoint(request: Request):
 
         return StreamingResponse(_err(), media_type="text/event-stream")
 
+    if (refused := subagent_refusal(model_key)) is not None:
+        return refused
     chat_models = _get_chat_models()
     model_id = (
         chat_models.get(model_key) or chat_models.get("sonnet") or next(iter(chat_models.values()))
@@ -960,19 +1039,26 @@ async def subagent_stream_endpoint(request: Request):
             }
         )
 
+        # The run owns the commands it starts (server/tasks/owner.py): a chat
+        # Stop in the session spares them, and stopping this run kills them.
+        work_owner = f"subagent:{team_id}"
         agent_task = asyncio.create_task(
-            run_agent(
-                task,
-                agent_type="general",
-                session_id=session_id,
-                model_id_override=model_id,
-                team_id=team_id,
-                agent_name="Subagent",
-                event_channel=event_channel,
-                # /subagent is a subagent like any other: it runs at the
-                # composer's effort. It was the last entry point still passing
-                # nothing, which on the Anthropic path means no thinking block.
-                effort_label=effort_for_model(model_key, body.get("effort_level")),
+            run_owned(
+                work_owner,
+                run_agent(
+                    task,
+                    agent_type="general",
+                    session_id=session_id,
+                    model_id_override=model_id,
+                    team_id=team_id,
+                    agent_name="Subagent",
+                    event_channel=event_channel,
+                    # /subagent is a subagent like any other: it runs at the
+                    # composer's effort. It was the last entry point still
+                    # passing nothing, which on the Anthropic path means no
+                    # thinking block.
+                    effort_label=effort_for_model(model_key, body.get("effort_level")),
+                ),
             )
         )
         # Register the live coroutine so POST /api/background-tasks/{id}/stop
@@ -1007,24 +1093,8 @@ async def subagent_stream_endpoint(request: Request):
             result = agent_task.result()
             output = getattr(result, "output", "") or ""
             status = getattr(result, "status", "completed")
-            # Best-effort cost rollup into the parent session (AgentResult may
-            # not carry token usage; skip silently if absent).
-            usage = getattr(result, "usage", None)
-            if isinstance(usage, dict) and (
-                usage.get("input_tokens") or usage.get("output_tokens")
-            ):
-                try:
-                    it, ot = usage.get("input_tokens", 0), usage.get("output_tokens", 0)
-                    _record_cost_turn(
-                        session_id=session_id,
-                        turn_number=0,
-                        model=f"{model_key}_subagent",
-                        input_tokens=it,
-                        output_tokens=ot,
-                        cost_usd=_estimate_cost(model_key, it, ot),
-                    )
-                except Exception:  # noqa: BLE001 - cost tracking is best-effort
-                    pass
+            # No cost row here: the turn engine already recorded every one of
+            # the agent's rounds under this session as it ran.
             yield _frame({"team_progress": {"phase": "team_completed", "team_id": team_id}})
             yield _frame({"subagent_done": {"output": output, "status": status}})
             _task_registry.finish_task(
@@ -1044,11 +1114,22 @@ async def subagent_stream_endpoint(request: Request):
             # If the client disconnected or hit Stop (the SSE fetch aborted),
             # the generator is closing while the agent is still running —
             # cancel it so the background work actually stops (and doesn't leak).
-            if not agent_task.done():
+            # A cancel from the background-tasks panel lands here too.
+            if not agent_task.done() or agent_task.cancelled():
                 agent_task.cancel()
                 _task_registry.finish_task(
                     registry_task_id, status="stopped", result_text="[Stopped by user]"
                 )
+                # Cancelling the agent cannot stop a command running in a
+                # worker thread, so the run's own commands are killed too. On
+                # a thread: this finally may run inside a cancelled scope,
+                # where an await would not complete.
+                threading.Thread(
+                    target=stop_owned_work,
+                    args=(session_id, work_owner),
+                    name=f"stop-{team_id}",
+                    daemon=True,
+                ).start()
             else:
                 # Disconnect can also land AFTER the agent finished but before
                 # the try block recorded the outcome (GeneratorExit at a yield
@@ -1090,6 +1171,9 @@ async def btw_endpoint(request: Request):
             media_type="application/json",
         )
 
+    if (refused := btw_refusal()) is not None:
+        return refused
+
     # Use up to the last 4 messages as lightweight context (read-only)
     recent_history = body.get("recent_history", [])[-4:]
     model_key = body.get("model", _get_default_model())
@@ -1111,23 +1195,33 @@ async def btw_endpoint(request: Request):
         messages.append({"role": m["role"], "content": m.get("content", "")})
     messages.append({"role": "user", "content": question})
 
+    btw_body = json.dumps(
+        {
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 2048,
+            "system": system,
+            "messages": messages,
+        }
+    )
+    btw_session = str(body.get("session_id") or "")
+
     async def _btw_stream():
+        from server.costs.calls import ClaudeStreamRecorder
+
         bedrock = _get_bedrock_client()
         loop = asyncio.get_event_loop()
+        # The side question is billed like any call: logged once, whether the
+        # stream completes, fails or the client goes away.
+        cost = ClaudeStreamRecorder(
+            model_id=model_id, body=btw_body, source="btw", session_id=btw_session
+        )
 
         def _stream():
             return bedrock.invoke_model_with_response_stream(
                 modelId=model_id,
                 contentType="application/json",
                 accept="application/json",
-                body=json.dumps(
-                    {
-                        "anthropic_version": "bedrock-2023-05-31",
-                        "max_tokens": 2048,
-                        "system": system,
-                        "messages": messages,
-                    }
-                ),
+                body=btw_body,
             )
 
         # Invoke on the shared executor so the (blocking) request setup never
@@ -1161,18 +1255,23 @@ async def btw_endpoint(request: Request):
 
         loop.run_in_executor(executor, _read_stream)
 
-        while True:
-            data = await q.get()
-            if data is None:
-                break
-            if isinstance(data, Exception):
-                yield f"data: {ndjson_dumps({'error': str(data)})}\n\n"
-                break
-            event_type = data.get("type", "")
-            if event_type == "content_block_delta":
-                text = data.get("delta", {}).get("text", "")
-                if text:
-                    yield f"data: {ndjson_dumps({'text': text})}\n\n"
+        try:
+            while True:
+                data = await q.get()
+                if data is None:
+                    break
+                if isinstance(data, Exception):
+                    yield f"data: {ndjson_dumps({'error': str(data)})}\n\n"
+                    break
+                cost.observe(data)
+                event_type = data.get("type", "")
+                if event_type == "content_block_delta":
+                    text = data.get("delta", {}).get("text", "")
+                    cost.received(text)
+                    if text:
+                        yield f"data: {ndjson_dumps({'text': text})}\n\n"
+        finally:
+            cost.finish()
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(_btw_stream(), media_type="text/event-stream")
@@ -1223,10 +1322,10 @@ async def chat_endpoint(request: Request):
     # round — no second stream is opened.
     #
     # `is_new_turn`/`stream_token` are consumed further down (inside
-    # _build_turn, as closure reads — no `nonlocal` needed since neither is
-    # reassigned there any more) for the TurnContext and for the matching
-    # cleanup in the stream's `finally`, which pops the slot only if it
-    # still holds THIS turn's token.
+    # _build_turn, as closure reads) for the TurnContext and by the one
+    # release, in staged_stream's `finally`, which every exit of every turn
+    # passes through and which pops the slot only if it still holds THIS
+    # turn's token.
     #
     # Every turn claims the slot, continuations included. An approval resume
     # used to skip the claim, so from the first approval card onward the
@@ -1240,28 +1339,37 @@ async def chat_endpoint(request: Request):
     # the user nothing was sent.
     is_new_turn = approved_tool_result is None
     midturn_only = bool(body.get("midturn"))
-    _busy_since = _active_chat_streams.get(session_id)
+    _busy_since = stream_slot.active_streams.get(session_id)
     _now = time.monotonic()
-    _last_seen = _stream_heartbeat.get(session_id, _busy_since)
-    _slot_live = _busy_since is not None and (_now - _last_seen) < _STREAM_STALE_AFTER_S
+    _last_seen = stream_slot.heartbeats.get(session_id, _busy_since)
+    _slot_live = stream_slot.is_live(session_id, _now)
+    _turn_ending = False
     if is_new_turn and _slot_live:
         from server.chat.engine.midturn_inbox import push as _push_midturn
 
-        _push_midturn(session_id, question)
-        return JSONResponse({"queued_into_running_turn": True})
+        if _push_midturn(session_id, question):
+            return JSONResponse({"queued_into_running_turn": True})
+        # The running turn has already taken its last look at the inbox and
+        # is ending: queued, this text would never be read. It is not running
+        # any more for this message, which starts the next turn instead.
+        _turn_ending = True
     if midturn_only:
         return JSONResponse(
             {"queued_into_running_turn": False, "error": "no_running_turn"}, status_code=409
         )
-    if _busy_since is not None and not _slot_live:
+    if _turn_ending:
+        log.info("Session %s: the running turn is ending; starting the next one", session_id)
+    elif _busy_since is not None and not _slot_live:
         log.warning(
             "Reclaiming stale stream slot for session %s (age %.0fs)",
             session_id,
             _now - _last_seen,
         )
-    stream_token: float | None = _now
-    _active_chat_streams[session_id] = stream_token
-    _stream_heartbeat[session_id] = _now
+    stream_token: float = _now
+    stream_slot.claim(session_id, stream_token, fresh=is_new_turn)
+
+    def _heartbeat() -> None:
+        stream_slot.beat(session_id, stream_token)
 
     # Stream from byte zero: everything below (transcript condensation, index
     # grounding, hooks, provider dispatch) can take long seconds, and with the
@@ -1275,16 +1383,24 @@ async def chat_endpoint(request: Request):
     def _status(stage: str) -> None:
         status_q.put_nowait(stage)
 
+    # The workspace latch _build_turn takes as the turn starts; the stream's
+    # finally records the session's folder through it.
+    ws_latch = None
+
     async def _build_turn():
         # These prelude names are REASSIGNED below (condensation rewrites the
         # transcript, mention-resolution rewrites the question, fallback
-        # resolution rewrites the model) — without nonlocal each assignment
-        # would shadow the closure variable and the earlier reads would raise
-        # UnboundLocalError.
-        nonlocal question, transcript, model_key
+        # resolution rewrites the model, and the workspace latch is taken):
+        # without nonlocal each assignment would shadow the closure variable
+        # and the earlier reads would raise UnboundLocalError.
+        nonlocal question, transcript, model_key, ws_latch
         _status("preparing")
         _setup_t0 = time.monotonic()
-        ws_path = get_workspace_path()
+        # The turn's tools run under this latch: a disconnect (or a switch in
+        # the UI) while the turn runs makes its remaining workspace tool calls
+        # refuse with the reason instead of acting on whatever is connected.
+        ws_latch = latch_workspace(get_workspace_path)
+        ws_path = ws_latch.path
 
         # ── Grounding router + parallel retrieval kickoff ─────────────────────
         # Route index-vs-LLM instantly (regex plus one index listing; no model
@@ -1317,7 +1433,7 @@ async def chat_endpoint(request: Request):
             if _ground_sel:
                 _ground_t0 = time.monotonic()
                 grounding_task = asyncio.create_task(
-                    _run_grounding(_ground_sel, question, chat_history, force_index)
+                    _run_grounding(_ground_sel, question, chat_history, force_index, session_id)
                 )
                 # Mark a pre-await failure observed, so a setup error between
                 # kickoff and the await below can't add "exception was never
@@ -1335,52 +1451,87 @@ async def chat_endpoint(request: Request):
                 grounding_note,
             )
 
-        # Latch config for this session — latched fields are frozen at session start
+        # Latch config for this session: latched fields are frozen at session start
         # to prevent mid-session settings changes from disrupting the conversation.
+        # The model resolves against the latch PLUS any model the live catalog
+        # gained since (a Discover install mid-session, an on-device model with no
+        # config entry), so a key the picker offers is never swapped for the
+        # default just because it is newer than the session.
         session_config = latch_session(session_id, workspace_path=ws_path)
-        chat_models = session_config.get("chat_models", _get_chat_models())
-        default_model = session_config.get("default_chat_model", _get_default_model())
-        if not model_key or model_key not in chat_models:
-            model_key = default_model
-
-        # Apply model fallback chain if enabled
-        from server.infrastructure.model_fallback import resolve_model_with_fallback
-
-        _requested_model_key = model_key
-        model_key, model_id = resolve_model_with_fallback(
-            model_key, chat_models, session_id=session_id
+        chat_models, _turn_meta = _turn_catalog(session_config, ws_path)
+        from server.infrastructure.model_mode import (
+            current_mode,
+            mode_default_model,
+            turn_model_refusal,
+            visible_chat_keys,
         )
+        from server.local.runtime import is_local_model as _runs_on_device
 
-        # A forced skill may pin its own (often cheaper) model for the turn it owns
-        # via the skill's `model:` frontmatter. This only applies to a forced skill
-        # (the whole turn is that skill) and only when the override names a chat
-        # model that is actually available; otherwise the resolved model stands.
-        if force_skill:
-            from server.skills import get_skill_model
-
-            _skill_model_key = get_skill_model(force_skill)
-            if _skill_model_key and _skill_model_key in chat_models:
-                model_key, model_id = _skill_model_key, chat_models[_skill_model_key]
-
-        # An oversized transcript cannot fit the model context in one pass. Condense
-        # it to per-chunk extracts here, at the single point it enters the request,
-        # so both the "[Transcript so far]" user block and the transcript handed to
-        # tools see the condensed text (and the turn-1 prompt does not overflow).
-        # Runs after model resolution so a local turn can steer the map step at the
-        # active on-device model instead of evicting it to load a fixed one.
-        # Self-gating: a no-op below the size threshold; only blocks (LLM calls)
-        # when it actually fires, so run it off the event loop.
-        if transcript:
-            from server.local import runtime as _local_rt
-            from server.summarize.mapreduce import maybe_condense_transcript
-
-            _chat_model_key = model_key if _local_rt.is_local_model(model_key) else None
-            transcript = await asyncio.get_running_loop().run_in_executor(
-                None,
-                functools.partial(
-                    maybe_condense_transcript, transcript, chat_model_key=_chat_model_key
-                ),
+        # The LIVE mode (not a latched copy): a switch to Hybrid applies next turn.
+        _model_mode = current_mode()
+        default_model = mode_default_model(
+            chat_models,
+            _turn_meta,
+            _model_mode,
+            session_config.get("default_chat_model") or _get_default_model(),
+        )
+        # No model named means the mode's default. A named model this catalog
+        # does not know (removed, or never installed) is refused with a reason
+        # below, never swapped for the default behind the user's back.
+        model_key = body.get("model") or default_model
+        _requested_model_key = model_key
+        model_id = ""
+        _refusal, _refusal_code = None, ""
+        if model_key and model_key not in chat_models:
+            _refusal = (
+                f"{model_key} is not an available chat model (it may have been removed). "
+                "Pick one from the model menu."
             )
+            _refusal_code = "UNKNOWN_MODEL"
+        elif model_key:
+            # Apply model fallback chain if enabled
+            from server.infrastructure.model_fallback import resolve_model_with_fallback
+
+            model_key, model_id = resolve_model_with_fallback(
+                model_key, chat_models, session_id=session_id
+            )
+
+            # A forced skill may pin its own (often cheaper) model for the turn it
+            # owns via the skill's `model:` frontmatter. This only applies to a
+            # forced skill (the whole turn is that skill) and only when the override
+            # names a chat model the active mode offers; otherwise the resolved
+            # model stands.
+            if force_skill:
+                from server.skills import get_skill_model
+
+                _skill_model_key = get_skill_model(force_skill)
+                if _skill_model_key and _skill_model_key in visible_chat_keys(
+                    chat_models, _turn_meta, _model_mode
+                ):
+                    model_key, model_id = _skill_model_key, chat_models[_skill_model_key]
+
+        # Refuse at execution, after every substitution above: in Local mode a
+        # cloud model is never sent to Bedrock, and nothing reroutes it quietly.
+        # The existing error frame carries the reason (staged_stream forwards it).
+        if _refusal is None:
+            _refusal = turn_model_refusal(
+                model_key,
+                on_device=_runs_on_device(model_key),
+                label=(_turn_meta.get(model_key) or {}).get("label", ""),
+                mode=_model_mode,
+            )
+            _refusal_code = "LOCAL_MODE_CLOUD_MODEL" if model_key else "NO_CHAT_MODEL"
+        if _refusal:
+            if grounding_task is not None:
+                grounding_task.cancel()
+            log.info("Turn refused (%s, model=%s, mode=%s)", _refusal_code, model_key, _model_mode)
+            return JSONResponse({"error": _refusal, "error_code": _refusal_code}, status_code=409)
+        # The turn will run: a wake answering agent reports in this session
+        # gives way to it and its reports go to this turn. A refused turn
+        # (above) leaves the wake to answer.
+        from server.agents import wake as _wake
+
+        _wake.yield_to_chat_turn(session_id, fresh=is_new_turn)
 
         # Plan mode — single source of truth is the permissions mode setting.
         plan_mode = is_plan_mode()
@@ -1400,16 +1551,14 @@ async def chat_endpoint(request: Request):
             normalize_effort,
         )
 
-        # Read the metadata from the LATCHED session config, not the global one:
-        # chat_model_meta is a latched field, so a model defined only in the
-        # workspace's .whisper/settings.json carries its own effort tier and
-        # ultracode capability here. Going back to the global config would resolve
-        # that model against metadata it does not have and silently downgrade it.
-        # Fall back to the global lookup for keys the latch does not know (a local
-        # model downloaded mid-session is folded in there, not in the snapshot).
-        _model_meta = (session_config.get("chat_model_meta") or {}).get(model_key) or (
-            _get_chat_model_meta().get(model_key, {})
-        )
+        # Read the metadata from the same catalog the model resolved against
+        # (_turn_catalog): LATCHED first, since chat_model_meta is a latched field
+        # and a model defined only in the workspace's .whisper/settings.json
+        # carries its own effort tier and ultracode capability there. Going back to
+        # the global config would resolve that model against metadata it does not
+        # have and silently downgrade it. Keys the latch does not know (a local
+        # model downloaded mid-session) come from the live workspace catalog.
+        _model_meta = _turn_meta.get(model_key) or {}
         _allowed_effort = effort_levels_for(_model_meta, model_key)
         _requested_effort = normalize_effort(
             body.get("effort_level") or session_config.get("effort_level") or DEFAULT_EFFORT
@@ -1454,7 +1603,7 @@ async def chat_endpoint(request: Request):
                 from server.memory.recall import recall_memory_context
 
                 memory_context, _recalled_n = await recall_memory_context(
-                    question, ws_path, model_id=model_id
+                    question, ws_path, model_id=model_id, session_id=session_id
                 )
                 if _recalled_n:
                     # Surface on the session's long-lived event stream (the chat
@@ -1486,7 +1635,7 @@ async def chat_endpoint(request: Request):
         # may list a few tools a strict-RAG round hides — harmless, tool_search
         # activation still intersects with the post-filter catalog per round.
         from server.chat.tool_activation import activate, activate_from_history
-        from server.chat.tool_index import build_deferred_index, estimate_tool_tokens
+        from server.chat.tool_index import build_deferred_index
         from server.chat.tool_pool import assemble_partitioned_pool
         from server.infrastructure.sessions import visible_chat_history
 
@@ -1500,7 +1649,6 @@ async def chat_endpoint(request: Request):
             ultracode=ultracode_active,
         )
         _deferred_index = build_deferred_index(_deferred0)
-        _deferred_tokens_est = estimate_tool_tokens(_deferred0)
 
         system_prompt, system_static, system_dynamic, _cache_ttl = resolve_system_prompt(
             model_id,
@@ -1563,6 +1711,41 @@ async def chat_endpoint(request: Request):
             from server.attachment_store import bind_to_session
 
             await asyncio.to_thread(bind_to_session, _referenced_ids, session_id)
+
+        # An oversized transcript cannot fit the model context in one pass. Condense
+        # it to per-chunk extracts here, at the single point it enters the request,
+        # so both the "[Transcript so far]" user block and the transcript handed to
+        # tools see the condensed text (and the prompt does not overflow). Runs
+        # once the rest of the turn is assembled: the chat model that reads the
+        # transcript keeps it raw while it fits beside this turn's system prompt,
+        # tools, history and attachments, and only a transcript that does not is
+        # condensed, sized to that model's input budget. A local turn steers the
+        # map step at the active on-device model instead of evicting it to load a
+        # fixed one (at the CTX chip's size, which the local route applies only
+        # after this). Only blocks (LLM calls) when it fires, so run it off the
+        # event loop.
+        if transcript:
+            from server.summarize.mapreduce import maybe_condense_transcript, reader_turn_tokens
+
+            _turn_tokens = reader_turn_tokens(
+                model_key,
+                system_prompt=system_prompt,
+                tools=_advertised0,
+                messages=messages,
+                texts=[question, *attachment_texts],
+                local_prompt_parts=(whisper_md_context, memory_context, session_memory_context),
+                ws_path=ws_path or "",
+            )
+            transcript = await asyncio.get_running_loop().run_in_executor(
+                None,
+                functools.partial(
+                    maybe_condense_transcript,
+                    transcript,
+                    chat_model_key=model_key,
+                    reader_n_ctx=body.get("local_context_window"),
+                    turn_tokens=_turn_tokens,
+                ),
+            )
 
         # Grounding state for this turn. Set in the fresh-turn branch below; stays
         # None/False on approval-resume turns (grounding isn't recomputed there).
@@ -1751,14 +1934,22 @@ async def chat_endpoint(request: Request):
             plan_mode=plan_mode,
             mode=mode,
             ws_path=ws_path,
+            ws_latch=ws_latch,
             session_approvals=session_approvals,
             session_denials=session_denials,
             session_config=session_config,
             suppress_ws_search=suppress_ws_search,
+            heartbeat=_heartbeat,
+            is_disconnected=request.is_disconnected,
         )
         if _local_resp is not None:
             _log_setup()
             _status("connecting")
+            # The same keepalive as the cloud stream: a cold model load or a
+            # long local tool call must not look like an abandoned slot.
+            _local_resp.body_iterator = stream_slot.with_heartbeat(
+                _local_resp.body_iterator, _heartbeat
+            )
             return _prepend_grounding_event(_local_resp, grounding_meta)
 
         # OpenAI models (GPT-5.x) run on the SAME engine path as Claude below —
@@ -1877,9 +2068,6 @@ async def chat_endpoint(request: Request):
                 meta=_model_meta,
             )
 
-        def _heartbeat():
-            _stream_heartbeat[session_id] = time.monotonic()
-
         turn_ctx = TurnContext(
             session_id=session_id,
             model_key=model_key,
@@ -1889,9 +2077,11 @@ async def chat_endpoint(request: Request):
             policy=CHAT_POLICY,
             loop=loop,
             executor=executor,
+            cost_source="chat",
             plan_mode=plan_mode,
             mode=mode,
             ws_path=ws_path,
+            ws_latch=ws_latch,
             suppress_ws_search=suppress_ws_search,
             effort_label=effort_label,
             transcript=transcript,
@@ -1899,43 +2089,31 @@ async def chat_endpoint(request: Request):
             session_denials=session_denials,
             session_approvals=session_approvals,
             session_config=session_config,
-            advertised_count=len(_advertised0),
-            deferred_count=len(_deferred0),
-            deferred_tokens_est=_deferred_tokens_est,
             is_new_turn=is_new_turn,
             heartbeat=_heartbeat,
             is_disconnected=request.is_disconnected,
+            midturn_inbox=True,
         )
 
         async def guarded_stream():
-            # The discard must survive every exit path (normal [DONE], client
-            # disconnect via generator aclose, and exceptions) or the session would
-            # be stuck "streaming" until restart. Only pop our OWN slot: if a later
-            # turn already reclaimed this session as stale, its token differs and we
-            # must not evict the newer stream.
+            # The busy slot is released by staged_stream, which wraps this
+            # stream, the local one and every setup failure alike. Closing the
+            # inner turn here first means its own cleanup (a still-running
+            # tool batch is cancelled) has run by the time the slot opens.
+            turn = stream_slot.with_heartbeat(run_turn(turn_ctx), _heartbeat)
             try:
-                # Emit the grounding frame from INSIDE the guard so the slot-cleanup
-                # finally wraps the whole stream (a client disconnect after this
-                # first frame still frees the slot). Only the LOCAL path uses the
-                # _prepend_grounding_event wrapper instead — it returns its own
-                # StreamingResponse above and never takes an _active_chat_streams
-                # slot. GPT is not in that group: since the engine cutover it runs
-                # this very path (the provider split is adapter selection above), so
-                # it holds and frees a slot exactly like Anthropic.
                 if grounding_meta:
                     yield f"data: {ndjson_dumps({'grounding': grounding_meta})}\n\n"
                 # Tell the UI when this turn is NOT running what the composer
-                # shows — a budget fallback swapped the model, or the resolved
+                # shows: a budget fallback swapped the model, or the resolved
                 # model could not honour the requested effort. Emitted before the
                 # first token so the notice is visible while the turn runs.
                 if _downgrade:
                     yield f"data: {ndjson_dumps({'turn_downgrade': _downgrade})}\n\n"
-                async for chunk in _with_heartbeat(run_turn(turn_ctx), _heartbeat):
+                async for chunk in turn:
                     yield chunk
             finally:
-                if _active_chat_streams.get(session_id) == stream_token:
-                    _active_chat_streams.pop(session_id, None)
-                    _stream_heartbeat.pop(session_id, None)
+                await stream_slot.aclose(turn)
 
         _log_setup()
         _status("connecting")
@@ -1944,7 +2122,11 @@ async def chat_endpoint(request: Request):
     build_task = asyncio.create_task(_build_turn())
 
     async def staged_stream():
-        delegated = False
+        # Whether the turn ran to its end (its [DONE] or a setup error frame)
+        # rather than being closed early by Stop or a client that left.
+        finished = False
+        # Whether the turn's own stream started (a turn ran, however it ended).
+        turn_ran = False
         try:
             while True:
                 getter = asyncio.create_task(status_q.get())
@@ -1956,19 +2138,32 @@ async def chat_endpoint(request: Request):
                     continue
                 getter.cancel()
                 break
+            from server.chat.engine import midturn_inbox
+
             try:
                 resp = build_task.result()
             except Exception as e:  # noqa: BLE001 — surface as an SSE error frame
                 log.error("Turn setup failed: %s", e, exc_info=True)
-                yield f"data: {ndjson_dumps({'error': f'Failed to start the turn: {e}'})}\n\n"
+                # error_code marks a turn that never started, so an approval
+                # continuation's client records the action that already ran.
+                _setup_error = {
+                    "error": f"Failed to start the turn: {e}",
+                    "error_code": "TURN_SETUP_FAILED",
+                }
+                yield f"data: {ndjson_dumps(_setup_error)}\n\n"
+                # No round loop ran to read what was queued during setup.
+                for note in midturn_inbox.close_and_announce(session_id):
+                    yield note
                 yield "data: [DONE]\n\n"
+                finished = True
                 return
             while not status_q.empty():
                 yield f"data: {ndjson_dumps({'status': status_q.get_nowait()})}\n\n"
             if isinstance(resp, StreamingResponse):
-                delegated = True
+                turn_ran = True
                 async for chunk in resp.body_iterator:
                     yield chunk
+                finished = True
             else:
                 # Non-stream refusal (e.g. SESSION_BUSY): forward as an SSE
                 # error frame — the client is already reading this stream, so
@@ -1978,19 +2173,32 @@ async def chat_endpoint(request: Request):
                 if payload.get("error_code"):
                     frame["error_code"] = payload["error_code"]
                 yield f"data: {ndjson_dumps(frame)}\n\n"
+                for note in midturn_inbox.close_and_announce(session_id):
+                    yield note
                 yield "data: [DONE]\n\n"
+                finished = True
         finally:
-            # Client gone during setup: stop the build. Setup finished but the
-            # inner stream was not (fully) consumed: close it explicitly so
-            # its slot-cleanup finally always runs.
-            if not build_task.done():
-                build_task.cancel()
-            elif build_task.exception() is None:
-                _resp = build_task.result()
-                if isinstance(_resp, StreamingResponse) and (not delegated or True):
-                    try:
-                        await _resp.body_iterator.aclose()
-                    except Exception:  # noqa: BLE001 — already closed/exhausted
-                        pass
+            # The ONE release of the session's busy slot. Every turn passes
+            # through here whatever its path (cloud, local, a setup that
+            # raised or refused, a client that left during setup) and however
+            # it ends (normal [DONE], Stop, disconnect, an exception).
+            try:
+                # Client gone during setup: stop the build (a cancelled setup
+                # may still be unwinding, but its result is discarded and it
+                # never reaches a provider). Setup finished: close the turn's
+                # stream so its own cleanup runs before the slot opens.
+                if not build_task.done():
+                    build_task.cancel()
+                elif not build_task.cancelled() and build_task.exception() is None:
+                    _resp = build_task.result()
+                    if isinstance(_resp, StreamingResponse):
+                        await stream_slot.aclose(_resp.body_iterator)
+            finally:
+                stream_slot.release(session_id, stream_token, stopped=not finished)
+                # Last, once the slot is freed: on a cancelled stream the
+                # cancellation lands on this await, and anything after it
+                # would be skipped.
+                if turn_ran:
+                    await _record_turn_workspace(session_id, ws_latch)
 
     return StreamingResponse(staged_stream(), media_type="text/event-stream")

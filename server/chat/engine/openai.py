@@ -136,6 +136,8 @@ class OpenAIResponsesAdapter:
         self.effort = oai.reasoning_effort_for(model_key, effort_label)
         self.verbosity = oai.verbosity_for(model_key, body)
         self.region = oai.region_for(model_key)
+        # The round in flight, for inflight_usage (None between rounds).
+        self._inflight = None
 
     def describe_request(self) -> dict:
         """Provider half of a request snapshot (server/chat/request_snapshots.py)."""
@@ -208,31 +210,67 @@ class OpenAIResponsesAdapter:
 
     # ── One streamed round ────────────────────────────────────────────────────
 
+    def inflight_usage(self) -> Usage | None:
+        """What the round in flight has cost so far, for the engine to record
+        when the round ends without a RoundResult (a mid-stream failure, a
+        retry, a Stop): the usage a failure event carried, else characters / 4
+        of the posted request and the content received. Once the stream has
+        delivered any event the provider is processing the prompt, so the
+        input is billed even while only reasoning (whose summary is not
+        billed output) has arrived. None before the first event: no evidence
+        the prompt was ever processed."""
+        from server.costs.capture import estimated_counts, responses_counts
+
+        inflight = getattr(self, "_inflight", None)
+        if inflight is None:
+            return None
+        if inflight["usage"] is not None:
+            return Usage(**responses_counts(inflight["usage"], 0, 0))
+        if not inflight["acknowledged"]:
+            return None
+        received = inflight["received"] + sum(len(a) for a in inflight["args"].values())
+        return Usage(**estimated_counts(inflight["request_chars"], received))
+
     async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
+        from server.costs.capture import estimated_counts, json_chars, responses_counts
+
         oai = self.oai
         input_items = self.to_input_items(messages)
         oa_tools = self._translate_tools(tools) if tools else None
         # Stable per-session cache key: the endpoint reuses the cached
         # system+tools prefix across the session's turns.
         session_key = f"ws-{self.session_id or self.model_key}"
+        request = {
+            "model": self.model_id,
+            "instructions": self.instructions,
+            "input": input_items,
+            "reasoning": {"effort": self.effort, "summary": "auto"},
+            "text": {"verbosity": self.verbosity},
+            "stream": True,
+            "store": False,
+            "prompt_cache_key": session_key,
+            **(
+                {"tools": oa_tools, "tool_choice": "none" if is_last_round else "auto"}
+                if oa_tools
+                else {}
+            ),
+        }
+        # The request body's characters are the input estimate when the
+        # usage-bearing completed event never arrives (the early release).
+        # ``acknowledged``: the stream delivered an event, so the prompt is
+        # being processed (and billed) whatever arrives after it.
+        inflight = {
+            "request_chars": json_chars(request),
+            "received": 0,
+            "args": {},
+            "usage": None,
+            "acknowledged": False,
+        }
+        self._inflight = inflight
 
         client = oai.build_client(self.region)
         try:
-            stream = await client.responses.create(
-                model=self.model_id,
-                instructions=self.instructions,
-                input=input_items,
-                reasoning={"effort": self.effort, "summary": "auto"},
-                text={"verbosity": self.verbosity},
-                stream=True,
-                store=False,
-                prompt_cache_key=session_key,
-                **(
-                    {"tools": oa_tools, "tool_choice": "none" if is_last_round else "auto"}
-                    if oa_tools
-                    else {}
-                ),
-            )
+            stream = await client.responses.create(**request)
         except Exception as e:  # noqa: BLE001 — classify, then surface or rescue
             msg = str(e)
             if _is_prompt_too_long(msg):
@@ -259,10 +297,10 @@ class OpenAIResponsesAdapter:
         n_items = 0
         n_done = 0
         text_done = False
-        out_chars = 0
-        in_tok = out_tok = cached_tok = 0
+        completed_usage = None
         completed = False
         thinking_open = False
+        accepted = False
         text_blocks: list[str] = []
         cur_text = ""
         refusal_text = ""
@@ -297,13 +335,24 @@ class OpenAIResponsesAdapter:
                     return
 
                 ev = payload
+                inflight["acknowledged"] = True
                 et = getattr(ev, "type", "") or ""
-                if et == "response.output_text.delta":
+                if et in ("response.created", "response.in_progress"):
+                    # The model has the request and is reasoning. Mantle
+                    # streams no reasoning summaries, so at a high effort the
+                    # next event can be tens of seconds away: open the
+                    # thinking phase now, or the UI keeps saying it is still
+                    # waiting for the model while the model is working.
+                    if not accepted and not thinking_open and self.effort != "none":
+                        thinking_open = True
+                        yield ThinkingStart()
+                    accepted = True
+                elif et == "response.output_text.delta":
                     d = getattr(ev, "delta", "") or ""
                     if thinking_open:
                         thinking_open = False
                         yield ThinkingStop()
-                    out_chars += len(d)
+                    inflight["received"] += len(d)
                     cur_text += d
                     last_event = loop.time()
                     yield TextDelta(text=d)
@@ -319,6 +368,9 @@ class OpenAIResponsesAdapter:
                 ):
                     d = getattr(ev, "delta", "") or ""
                     if d:
+                        if et == "response.reasoning_text.delta":
+                            # Raw reasoning is billed output; a summary is not.
+                            inflight["received"] += len(d)
                         if not thinking_open:
                             thinking_open = True
                             yield ThinkingStart()
@@ -326,7 +378,7 @@ class OpenAIResponsesAdapter:
                         yield ThinkingDelta(text=d)
                 elif et == "response.refusal.delta":
                     d = getattr(ev, "delta", "") or ""
-                    out_chars += len(d)
+                    inflight["received"] += len(d)
                     refusal_text += d
                     last_event = loop.time()
                     yield TextDelta(text=d)
@@ -345,6 +397,7 @@ class OpenAIResponsesAdapter:
                     fc = fcalls.get(getattr(ev, "item_id", "") or "")
                     if fc is not None:
                         fc["args"] += getattr(ev, "delta", "") or ""
+                        inflight["args"][id(fc)] = fc["args"]
                         last_event = loop.time()
                         # A large tool argument (a whole HTML app) streams for
                         # minutes with nothing else to show: report its size.
@@ -360,6 +413,7 @@ class OpenAIResponsesAdapter:
                         da = getattr(ev, "arguments", None)
                         if da:
                             fc["args"] = da
+                            inflight["args"][id(fc)] = da
                         try:
                             parsed = json.loads(fc["args"]) if fc["args"].strip() else {}
                         except Exception:
@@ -368,17 +422,20 @@ class OpenAIResponsesAdapter:
                         yield ToolCall(id=fc["call_id"], name=fc["name"], input=parsed)
                     n_done += 1
                     last_event = loop.time()
-                elif et == "response.completed":
+                elif et in ("response.completed", "response.incomplete"):
+                    # Both end the response and carry what it billed: an
+                    # incomplete one (the output cap, a content filter) too,
+                    # reasoning tokens included, which characters / 4 of the
+                    # visible text would never count.
                     completed = True
-                    resp = getattr(ev, "response", None)
-                    usage = getattr(resp, "usage", None)
-                    in_tok = int(getattr(usage, "input_tokens", 0) or 0)
-                    out_tok = int(getattr(usage, "output_tokens", 0) or 0)
-                    itd = getattr(usage, "input_tokens_details", None)
-                    cached_tok = int(getattr(itd, "cached_tokens", 0) or 0)
+                    completed_usage = getattr(getattr(ev, "response", None), "usage", None)
+                    if et == "response.incomplete":
+                        yield Incomplete()
                     break
                 elif et in ("response.failed", "error"):
                     resp = getattr(ev, "response", None)
+                    # A failed response that still reports usage was billed.
+                    inflight["usage"] = getattr(resp, "usage", None)
                     err = (
                         getattr(resp, "error", None) or getattr(ev, "message", "") or "stream error"
                     )
@@ -393,8 +450,6 @@ class OpenAIResponsesAdapter:
                     )
                     yield RoundError(message=msg, retryable=_is_transient(msg))
                     return
-                elif et == "response.incomplete":
-                    yield Incomplete()
 
             if thinking_open:
                 yield ThinkingStop()
@@ -422,15 +477,20 @@ class OpenAIResponsesAdapter:
                 }
             )
 
+        received = inflight["received"] + sum(len(a) for a in inflight["args"].values())
+        if completed:
+            usage_counts = responses_counts(completed_usage, inflight["request_chars"], received)
+        else:
+            # Early release: the completed event with the usage never came,
+            # so both counts are characters / 4 of the payloads themselves.
+            usage_counts = estimated_counts(inflight["request_chars"], received)
+        # The round completed: its cost travels on the RoundResult, so the
+        # engine must not also record it as an unfinished attempt.
+        self._inflight = None
         yield RoundResult(
             stop_reason="tool_use" if valid else "end_turn",
             content=content,
-            usage=Usage(
-                input_tokens=in_tok if completed else 0,
-                output_tokens=out_tok if completed else max(1, out_chars // 4),
-                cache_read_tokens=cached_tok,
-                exact=completed,
-            ),
+            usage=Usage(**usage_counts),
         )
 
 

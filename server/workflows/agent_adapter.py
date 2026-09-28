@@ -72,7 +72,7 @@ async def run_workflow_agent(
     schema = opts.get("schema") if isinstance(opts.get("schema"), dict) else None
     effort = _agent_effort(opts, effort_label)
     isolation = "worktree" if opts.get("isolation") == "worktree" else "none"
-    model_id, effective_model_key, model_warning = _resolve_model(opts, default_model_id)
+    model_id, _key, model_warning = _resolve_model(opts, default_model_id)
     if model_warning:
         log.warning("workflow %s agent model override: %s", run_id, model_warning)
 
@@ -95,6 +95,7 @@ async def run_workflow_agent(
             isolation=isolation,
             depth=depth,
             event_channel=f"workflow:{run_id}",
+            cost_source="workflow",
         )
     except Exception as e:  # noqa: BLE001 — surface as a failed agent, never crash the run
         log.warning("workflow agent error (run %s): %s", run_id, e)
@@ -107,10 +108,6 @@ async def run_workflow_agent(
         }
 
     return {
-        # The key the work ACTUALLY ran on, so the ledger prices reality
-        # rather than an override that silently fell back (see _resolve_model).
-        # Empty means "the run's own model" — the caller's default.
-        "model_key": effective_model_key,
         "model_warning": model_warning,
         "text": res.output or "",
         "output": res.structured_output,

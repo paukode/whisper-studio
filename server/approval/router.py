@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from . import registry
+from .spec import execute_approved_by_human
 
 log = logging.getLogger("whisper-studio")
 
@@ -46,7 +47,7 @@ async def approval_execute(req: ExecuteRequest):
 
     ws_before = get_workspace_path()
     try:
-        outcome = await spec.executor(req.payload or {})
+        outcome = await execute_approved_by_human(spec, req.payload or {})
     except Exception as e:  # noqa: BLE001 - executor is user-registered
         log.exception("approval/execute: %s failed", req.action)
         return {"ok": False, "error": f"Executor crashed: {e}"}
@@ -71,5 +72,6 @@ async def approval_execute(req: ExecuteRequest):
         "ok": outcome.ok,
         "output": outcome.output,
         "error": outcome.error,
+        "stopped": bool(getattr(outcome, "stopped", False)),
         "ws_folder_opened": ws_folder_opened,
     }

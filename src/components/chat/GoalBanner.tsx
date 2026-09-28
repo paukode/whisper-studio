@@ -5,23 +5,29 @@
  */
 import React, { useCallback, useEffect } from 'react';
 import { useGoalStore } from '@/stores/goalStore';
+import type { GoalVerdict } from '@/types/chat';
 
-const VERDICT_LABEL: Record<string, string> = {
+const VERDICT_LABEL: Record<GoalVerdict, string> = {
   achieved: 'achieved',
   not_achieved: 'working…',
   blocked: 'blocked',
+  // The judge could not run: neither a pass nor a blocker, so it reads
+  // neutral, and the reason is on the chip's tooltip and the goal card.
+  not_checked: 'not checked',
 };
 
-const VERDICT_COLOR: Record<string, string> = {
+const VERDICT_COLOR: Record<GoalVerdict, string> = {
   achieved: 'var(--accent-ok, #2e7d32)',
   not_achieved: 'var(--accent-warn, #b8860b)',
   blocked: 'var(--accent-record)',
+  not_checked: 'var(--text-muted)',
 };
 
 export const GoalBanner: React.FC<{ sessionId: string | null }> = ({ sessionId }) => {
   const goal = useGoalStore((s) => (sessionId ? s.byId[sessionId]?.goal : '') ?? '');
   const active = useGoalStore((s) => (sessionId ? s.byId[sessionId]?.active : false) ?? false);
   const verdict = useGoalStore((s) => (sessionId ? s.byId[sessionId]?.lastVerdict : '') ?? '');
+  const feedback = useGoalStore((s) => (sessionId ? s.byId[sessionId]?.lastFeedback : '') ?? '');
   const attempt = useGoalStore((s) => (sessionId ? s.byId[sessionId]?.attempt : 0) ?? 0);
   const cap = useGoalStore((s) => (sessionId ? s.byId[sessionId]?.cap : 8) ?? 8);
 
@@ -57,7 +63,11 @@ export const GoalBanner: React.FC<{ sessionId: string | null }> = ({ sessionId }
       <span className="goal-banner-icon" aria-hidden="true">🎯</span>
       <span className="goal-banner-text" title={goal}>{goal}</span>
       {verdict && (
-        <span className="goal-banner-chip" style={{ color: VERDICT_COLOR[verdict] ?? 'inherit' }}>
+        <span
+          className={`goal-banner-chip verdict-${verdict}`}
+          style={{ color: VERDICT_COLOR[verdict] ?? 'inherit' }}
+          title={feedback || undefined}
+        >
           {VERDICT_LABEL[verdict] ?? verdict}
         </span>
       )}

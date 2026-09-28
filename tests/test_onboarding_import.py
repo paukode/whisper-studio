@@ -432,3 +432,20 @@ def test_route_honors_explicit_source_type_override(tmp_path, client):
     body = resp.json()
     assert body["source_type"] == "codex"
     assert body["instructions"]["status"] == "skipped"  # looked for AGENTS.md, not CLAUDE.md
+
+
+def test_mcp_import_leaves_an_unreadable_config_alone(tmp_path, isolated_skills, isolated_mcp):
+    """Saving the import over a broken hand edit would drop every server the
+    file still holds, so the MCP part is refused until the file is fixed."""
+    broken = '{"servers": {"mine": {"command": "a"}, '
+    _write(isolated_mcp, broken)
+    src = _make_claude_project(str(tmp_path / "src"))
+    ws = tmp_path / "ws"
+    ws.mkdir()
+
+    result = ie.import_claude_project(src, str(ws))
+
+    assert result["mcp"]["added"] == []
+    assert "not a valid server list" in result["mcp"]["reason"]
+    with open(isolated_mcp) as f:
+        assert f.read() == broken

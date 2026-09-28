@@ -7,9 +7,11 @@ fresh or an approval resume — and returns the ``StreamingResponse``, or ``None
 to let the cloud Claude path proceed.
 
 Local turns run on the unified turn engine (server/chat/engine) through the
-LocalAdapter with the LOCAL policy: no completion gate, an empty tool-executor
-model id (permission explainer stays offline), and compaction that summarizes
-via the resident on-device model — the path stays fully offline end to end.
+LocalAdapter with the LOCAL policy: the completion gate runs only while a goal
+is active, and its judge is this same resident model (server/goals/
+local_judge.py); an empty tool-executor model id keeps the permission
+explainer offline, and compaction summarizes via the resident on-device model.
+The path stays fully offline end to end.
 """
 
 from __future__ import annotations
@@ -35,6 +37,9 @@ def local_chat_response(
     session_denials: dict,
     session_config: dict,
     suppress_ws_search: bool = False,
+    heartbeat=None,
+    is_disconnected=None,
+    ws_latch=None,
 ) -> StreamingResponse | None:
     from server.local.runtime import build_local_system_prompt, is_local_model
 
@@ -98,10 +103,10 @@ def local_chat_response(
         # a model switch (composer select, context slider) WAITS for the turn
         # instead of stopping the server mid-answer; end_turn in the finally
         # below releases it even when the client disconnects mid-stream.
-        import functools
-
+        # serve_turn also releases it when Stop lands during the cold start.
         from server.attachment_store import load_session_attachments
         from server.chat import executor as tool_thread_pool
+        from server.chat.engine import midturn_inbox
         from server.chat.engine.local import LocalAdapter
         from server.chat.engine.policy import LOCAL_POLICY
         from server.chat.engine.runner import TurnContext, run_turn
@@ -110,12 +115,19 @@ def local_chat_response(
         from server.utils import ndjson_dumps
 
         try:
-            base_url = await asyncio.get_running_loop().run_in_executor(
-                None,
-                functools.partial(serving.ensure_serving, model_key, n_ctx, mark_busy=True),
-            )
+            base_url = await serving.serve_turn(model_key, n_ctx)
         except Exception as e:
-            yield f"data: {ndjson_dumps({'error': str(e) or e.__class__.__name__})}\n\n"
+            # error_code marks a turn that never started (see routes.py's
+            # setup failure frame).
+            _load_error = {
+                "error": str(e) or e.__class__.__name__,
+                "error_code": "MODEL_LOAD_FAILED",
+            }
+            yield f"data: {ndjson_dumps(_load_error)}\n\n"
+            # The turn ends before its round loop: what was queued for it
+            # during the load is handed on here.
+            for frame in midturn_inbox.close_and_announce(session_id):
+                yield frame
             yield "data: [DONE]\n\n"
             return
 
@@ -141,9 +153,12 @@ def local_chat_response(
                 policy=LOCAL_POLICY,
                 loop=asyncio.get_running_loop(),
                 executor=tool_thread_pool,
+                cost_source="chat",
                 plan_mode=plan_mode,
                 mode=mode,
                 ws_path=ws_path,
+                # The chat route's workspace latch (see TurnContext.ws_latch).
+                ws_latch=ws_latch,
                 suppress_ws_search=suppress_ws_search,
                 transcript=transcript,
                 current_attachments=current_attachments,
@@ -151,6 +166,11 @@ def local_chat_response(
                 session_approvals=session_approvals,
                 session_config=session_config,
                 is_new_turn=approved_tool_result is None,
+                # The chat route's busy slot: refreshed every round like a
+                # cloud turn, and a closed tab ends the turn at the next round.
+                heartbeat=heartbeat,
+                is_disconnected=is_disconnected,
+                midturn_inbox=True,
                 # Offline invariants: no permission-explainer model, and the
                 # local-aware memory hooks (model_mode gating) instead of the
                 # generic cloud ones.

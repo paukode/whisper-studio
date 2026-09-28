@@ -444,3 +444,28 @@ def test_headless_refuses_explicit_local_model(monkeypatch):
         "status": "failed",
         "session_id": events[-1]["session_id"],
     }
+
+
+def test_headless_refuses_every_turn_in_local_mode(monkeypatch):
+    """No model_key normally resolves the configured (cloud) default; in Local
+    mode the run is refused before any model is resolved or client built."""
+    from server.infrastructure import config as config_mod
+
+    monkeypatch.setattr(
+        config_mod, "load_config", lambda *a, **k: {**CHAT_MODELS_CFG, "model_mode": "local"}
+    )
+    resolved: list[str] = []
+    monkeypatch.setattr(
+        "server.agents.runtime._resolve_agent_model",
+        lambda *a, **k: resolved.append("default") or "test-model",
+    )
+    monkeypatch.setattr(
+        "server.chat.engine.anthropic._get_bedrock_client",
+        lambda: resolved.append("bedrock"),
+    )
+    for key in (None, "sonnet"):
+        events = asyncio.run(_collect(run_headless_turn("hi", model_key=key, ephemeral=True)))
+        assert [e["type"] for e in events] == ["error", "done"]
+        assert "Local mode" in events[0]["message"]
+        assert events[-1]["status"] == "failed"
+    assert resolved == []

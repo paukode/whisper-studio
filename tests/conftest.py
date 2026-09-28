@@ -171,3 +171,26 @@ def _drop_cached_bedrock_clients():
     recall = sys.modules.get("server.memory.recall")
     if recall is not None:
         recall._reset_recall_client_cache()
+
+
+@pytest.fixture(scope="session")
+def _english_only_mac_prefs(tmp_path_factory):
+    """A Mac preferences plist that lists English only."""
+    import plistlib
+
+    path = tmp_path_factory.mktemp("mac-prefs") / "GlobalPreferences.plist"
+    with open(path, "wb") as f:
+        plistlib.dump({"AppleLanguages": ["en-US"]}, f)
+    return str(path)
+
+
+@pytest.fixture(autouse=True)
+def _pin_mac_languages(monkeypatch, _english_only_mac_prefs):
+    """Never read the developer's real Mac language list: a blank
+    transcription-language setting resolves through it (server/asr/languages.py).
+    English only by default, which pins Canary to English so no test loads the
+    language-ID model by accident; tests that need other languages point
+    _MAC_GLOBAL_PREFS at their own plist."""
+    from server.asr import languages
+
+    monkeypatch.setattr(languages, "_MAC_GLOBAL_PREFS", _english_only_mac_prefs)

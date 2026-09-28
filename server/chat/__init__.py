@@ -56,7 +56,6 @@ from .compaction import (  # noqa: E402,F401
 from .infra import (  # noqa: E402,F401
     _BEDROCK_CLIENT_LOCK,
     _BEDROCK_CLIENTS,
-    _estimate_cost,
     _get_bedrock_client,
     _get_chat_model_meta,
     _get_chat_models,

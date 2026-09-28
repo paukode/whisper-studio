@@ -106,10 +106,8 @@
       <dt><code class="path">segments</code></dt><dd>JSON array of transcript segments (text plus speaker) for recorded sessions. Empty <code>[]</code> for chat-only sessions.</dd>
       <dt><code class="path">chat_history</code></dt><dd>JSON array of chat messages. Holds prompt roles (<code>user</code>, <code>assistant</code>) and the backend-owned rows <code>cron_event</code>, <code>task_event</code>, <code>session_message</code>, <code>agent_report</code>, and <code>agent_answer</code> (see below).</dd>
       <dt><code class="path">speaker_names</code></dt><dd>JSON map of speaker id to a human-assigned name for diarized transcripts.</dd>
-      <dt><code class="path">workspace_path</code></dt><dd>The folder this session is bound to, if any. The path is read from the DB, never the client, when opening a workspace externally.</dd>
-      <dt><code class="path">latched_config</code></dt><dd>JSON snapshot of the config fields frozen for this session on its first turn (see <a href="#session-latch">the session latch</a>).</dd>
+      <dt><code class="path">workspace_path</code></dt><dd>The folder this session's latest chat turn ran in, recorded by the server as the turn's stream closes (<code>record_session_workspace()</code>), and empty until a turn runs with a workspace connected. It is read through the turn's workspace latch, so a folder the turn connected itself counts, while a turn whose folder the user let go of mid-turn records nothing. A turn with none connected keeps the last one, and client saves never write it. The sidebar's "Open workspace in" opens it, reading the path from the DB, never the client.</dd>
       <dt><code class="path">pinned</code>, <code class="path">archived</code></dt><dd>Sidebar flags. Pinned floats to the top; archived hides from the default list.</dd>
-      <dt><code class="path">compaction_count</code></dt><dd>How many times history compaction has run for this session, surfaced in the UI so a long conversation shows it is being trimmed.</dd>
       <dt><code class="path">goal</code>, <code class="path">goal_state</code></dt><dd>The WS-E goal loop's target text (<code>goal</code>) and its progress as a JSON blob (<code>goal_state</code>), added additively via <code>_MIGRATED_SESSION_COLUMNS</code> and surfaced in <code>_row_to_dict()</code> as <code>goal</code> / <code>goalState</code>.</dd>
     </dl>
     <p>Reads go through <code>_row_to_dict()</code> (full detail) or <code>_row_to_summary()</code>
@@ -139,10 +137,10 @@
       <li><code>permission_mode</code> - the approval posture for the turn.</li>
       <li><code>bedrock_region</code> - the region the request is routed to.</li>
     </ul>
-    <p>The live snapshot lives in an in-memory dict (<code>_latched_sessions</code>) guarded by a
-      lock, and the same values are persisted in the <code>latched_config</code> column so a session
-      survives a restart with its choices intact. When a session is deleted, its snapshot is dropped
-      via <code>unlatch_session()</code> as part of the delete cascade.</p>
+    <p>The snapshot lives only in an in-memory dict (<code>_latched_sessions</code>) guarded by a
+      lock. Nothing persists it, so a restart drops every snapshot and a session's next turn latches
+      the settings current at that moment. When a session is deleted, its snapshot is dropped via
+      <code>unlatch_session()</code> as part of the delete cascade.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
@@ -176,8 +174,10 @@
       agent report that lands mid-save survives the round-trip exactly like a
       <code>cron_event</code> does.</p>
     <p>Reactive compaction is the other force acting on <code>chat_history</code>. When a prompt grows
-      too long, the oldest message pairs are summarized or dropped and the turn retries;
-      <code>compaction_count</code> is incremented so the UI can show it. See
+      too long, the oldest message pairs are summarized or dropped and the turn retries. Every
+      compaction is logged per session in <code class="path">compactions/&lt;session_id&gt;.jsonl</code>
+      under the data root, a start record and an end record with the outcome, read back through
+      <code>GET /api/sessions/{id}/compactions</code>. See
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for the compaction path.</p>
 
     <h2 id="companion-tables">The companion tables</h2>
@@ -187,7 +187,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Table</th><th>Grain</th><th>Holds</th></tr></thead>
       <tbody>
-        <tr><td><code>session_costs</code></td><td>One row per model turn</td><td><code>session_id</code>, <code>turn_number</code>, <code>model</code>, input / output / cache-read / cache-creation tokens, <code>cost_usd</code>, and <code>api_duration_ms</code>. Backs the cost aggregates and spend caps.</td></tr>
+        <tr><td><code>session_costs</code></td><td>One row per billed model call</td><td><code>session_id</code>, <code>turn_number</code>, <code>model</code>, input / output / cache-read / cache-creation tokens, <code>api_duration_ms</code>, <code>source</code> (chat, agent, title, compaction, ...), and the count provenance (<code>count_source</code>, <code>estimated_fields</code>, <code>count_detail</code>). No dollar figure: every reader prices the tokens with the current rate table. Backs the Costs tab and the spend caps, and outlives a deleted session.</td></tr>
         <tr><td><code>cron_runs</code></td><td>One row per scheduled-task fire</td><td><code>run_id</code>, <code>job_id</code>, <code>job_name</code>, <code>session_id</code>, a <code>status</code> lease (<code>running</code> / <code>ok</code> / <code>failed</code>), timestamps, <code>duration_ms</code>, the result <code>text</code>, and the computed <code>next_run</code>.</td></tr>
         <tr><td><code>agent_tasks</code></td><td>One row per background task</td><td><code>task_id</code>, <code>kind</code> (<code>shell</code> / <code>agent</code> / <code>workflow</code>), <code>session_id</code>, <code>title</code>, a <code>status</code> lease with <code>owner_pid</code>, and kind-specific fields. The unified background-task registry (migration 007).</td></tr>
         <tr><td><code>notifications</code></td><td>One row per notification</td><td>An id, <code>session_id</code>, a free-form <code>source</code> slug (originally a closed <code>chat</code> / <code>agent</code> / <code>cron</code> set; migration 012 rebuilt the table without that CHECK so app-originated toasts - "app", "model-download", "recording", and more - can log too), <code>title</code>, <code>message</code>, <code>status</code>, a <code>read_at</code> stamp, a <code>hidden_at</code> stamp (migration 010: per-row hide and "Clear all" soft-hide instead of deleting; hidden rows are excluded from the list and the unread count), and a <code>count</code> for tight-loop dedupe (migration 012: identical toasts firing within seconds collapse into one row instead of spamming the bell). The durable log written by <code>notify_user</code> and app-side toasts; exposed at <code>/api/notifications</code> and surfaced by the header bell.</td></tr>
@@ -266,6 +266,9 @@
         <tr><td>018</td><td><code class="path">018_add_grounding.py</code></td><td>Creates the <code>grounding</code> table, so the passages behind a grounded answer survive the turn that produced them.</td></tr>
         <tr><td>019</td><td><code class="path">019_add_session_search_fts.py</code></td><td>Creates the FTS5 mirror of session messages and backfills it from existing rows, so <code>session_search</code> works on history that predates the table.</td></tr>
         <tr><td>020</td><td><code class="path">020_session_search_rowid_ranges.py</code></td><td>Rebuilds that mirror with per-session rowid ranges. The first version rewrote a session's whole index on every save, which on a long agentic session ran for seconds and competed with every other request while a turn streamed.</td></tr>
+        <tr><td>021</td><td><code class="path">021_cost_rows_source_and_provenance.py</code></td><td>Adds <code>source</code>, <code>count_source</code>, <code>estimated_fields</code> and <code>count_detail</code> to <code>session_costs</code>, labels existing rows from what they show, and moves the duplicate <code>&lt;key&gt;_agent</code> / <code>_subagent</code> rollups (every agent round was already recorded) to <code>session_costs_rollup_backup</code>, a table nothing reads. A rollup with no rounds behind it stays, relabelled to its base model.</td></tr>
+        <tr><td>022</td><td><code class="path">022_cost_rows_priced_at_read_time.py</code></td><td>Drops <code>session_costs.cost_usd</code>: a frozen price never saw a rate correction, so cost is priced from the token counts wherever it is read.</td></tr>
+        <tr><td>023</td><td><code class="path">023_drop_unused_session_columns.py</code></td><td>Drops <code>compaction_count</code> and <code>latched_config</code> from <code>sessions</code>. Migration 002 added them, but nothing ever wrote either: compactions have their own log and the latch lives in memory. A column already gone is skipped.</td></tr>
       </tbody>
     </table></div>
     <p>Two of these carry an instructive pattern. Migrations 014, 015 and 016 each widen a table whose
@@ -304,6 +307,11 @@
           pulls out the backend-owned UI-only rows, and appends any (by timestamp) that the frontend
           payload does not yet include. So a cron card written between the last hydrate and this save
           survives the round-trip.</p>
+        <p>It writes only the client's own columns: the title and its flags, <code>segments</code>,
+          <code>chat_history</code>, and <code>speaker_names</code>. The rest of the row is the
+          server's (the recorded <code>workspace_path</code>, the goal, the sidebar flags), and a save
+          leaves it as stored. The same set of columns decides whether a save changed anything, so an
+          identical save keeps the stored <code>updated_at</code>.</p>
       </li>
     </ol>
     <p>The caps on both <code>cron_event</code> and <code>session_message</code> rows are re-applied
@@ -312,14 +320,17 @@
       <code>navigator.sendBeacon</code> POST used on page unload. Deleting a session is also
       lock-guarded and cascades (<code>_delete_session_sync</code> in
       <code class="path">server/infrastructure/sessions.py</code>): it removes the parent row,
-      <code>session_costs</code>, <code>attachments</code>, <code>grounding</code>, and the session's
+      <code>attachments</code>, <code>grounding</code>, and the session's
       slice of the search mirror (by rowid range, via <code>session_search.drop_session</code>);
       hands cron jobs to
       <code>cron_scheduler.on_session_deleted</code>, which disables them, flags them orphaned and
       re-homeable, and repoints their run history to the Scheduled Reports inbox rather than silently
       dropping them; and clears every per-session in-memory cache (tasks, diarization, shell snapshot,
       cwd tracker, file state, the config latch, and the memory extraction/update-cadence state). Each
-      step is best-effort and independently guarded, so one failing cleanup cannot block the rest.</p>
+      step is best-effort and independently guarded, so one failing cleanup cannot block the rest.
+      The session's <code>session_costs</code> rows are kept on purpose: those calls were billed, so
+      the Costs tab keeps counting them (as "Deleted session") and range totals keep matching the
+      bill.</p>
 
     <h2 id="export-import">Session export &amp; import</h2>
     <p>A session can also leave the database entirely, as a portable file, independent of

@@ -1,0 +1,201 @@
+{
+  "range": {
+    "from": "2026-09-01",
+    "to": "2026-09-23",
+    "timezone": "UTC"
+  },
+  "granularity": "week",
+  "split": "model",
+  "totals": {
+    "cost_usd": 76.55,
+    "prompt_tokens": 14222000,
+    "cache_read_tokens": 11946000,
+    "cache_write_tokens": 190000,
+    "output_tokens": 114000,
+    "calls": 193,
+    "estimated_calls": 8,
+    "unpriced_calls": 0,
+    "cache_hit_rate": 0.839966,
+    "cache_savings_usd": 41.25
+  },
+  "buckets": [
+    {
+      "start": "2026-09-01",
+      "end": "2026-09-06",
+      "partial": true,
+      "cost_usd": 20.0,
+      "by_key": {
+        "gpt5.6-sol": {
+          "cost_usd": 15.0,
+          "prompt_tokens": 3000000,
+          "output_tokens": 20000,
+          "calls": 40
+        },
+        "opus5.0": {
+          "cost_usd": 5.0,
+          "prompt_tokens": 400000,
+          "output_tokens": 8000,
+          "calls": 10
+        }
+      }
+    },
+    {
+      "start": "2026-09-07",
+      "end": "2026-09-13",
+      "partial": false,
+      "cost_usd": 29.0,
+      "by_key": {
+        "gpt5.6-sol": {
+          "cost_usd": 25.0,
+          "prompt_tokens": 5000000,
+          "output_tokens": 30000,
+          "calls": 60
+        },
+        "sonnet5": {
+          "cost_usd": 3.2,
+          "prompt_tokens": 500000,
+          "output_tokens": 9000,
+          "calls": 12
+        },
+        "haiku4.5": {
+          "cost_usd": 0.8,
+          "prompt_tokens": 700000,
+          "output_tokens": 5000,
+          "calls": 20
+        },
+        "local_lmstudio_community_deepseek_r1_0528_qwen3_8b_mlx_4bit__4bit": {
+          "cost_usd": 0.0,
+          "prompt_tokens": 12000,
+          "output_tokens": 3000,
+          "calls": 5
+        }
+      }
+    },
+    {
+      "start": "2026-09-14",
+      "end": "2026-09-20",
+      "partial": false,
+      "cost_usd": 0.0,
+      "by_key": {}
+    },
+    {
+      "start": "2026-09-21",
+      "end": "2026-09-23",
+      "partial": true,
+      "cost_usd": 27.55,
+      "by_key": {
+        "gpt6-astra": {
+          "cost_usd": 20.0,
+          "prompt_tokens": 4000000,
+          "output_tokens": 25000,
+          "calls": 30
+        },
+        "opus5.0": {
+          "cost_usd": 7.5,
+          "prompt_tokens": 600000,
+          "output_tokens": 12000,
+          "calls": 14
+        },
+        "nova-sonic": {
+          "cost_usd": 0.05,
+          "prompt_tokens": 10000,
+          "output_tokens": 2000,
+          "calls": 2
+        }
+      }
+    }
+  ],
+  "rows": [
+    {
+      "key": "gpt5.6-sol",
+      "label": "GPT-5.6 Sol",
+      "cost_usd": 40.0,
+      "share": 0.522534,
+      "prompt_tokens": 8000000,
+      "cached_pct": 91.2,
+      "output_tokens": 50000,
+      "calls": 100,
+      "estimated_calls": 3,
+      "note": "Estimate at list rates. AWS billed GPT on Bedrock at $0 for this account as of 2026-09-23.",
+      "deleted": false
+    },
+    {
+      "key": "gpt6-astra",
+      "label": "GPT-6 Astra",
+      "cost_usd": 20.0,
+      "share": 0.261267,
+      "prompt_tokens": 4000000,
+      "cached_pct": 87.5,
+      "output_tokens": 25000,
+      "calls": 30,
+      "estimated_calls": 0,
+      "note": "Estimate at list rates. AWS billed GPT on Bedrock at $0 for this account as of 2026-09-23.",
+      "deleted": false
+    },
+    {
+      "key": "opus5.0",
+      "label": "Opus 5",
+      "cost_usd": 12.5,
+      "share": 0.163292,
+      "prompt_tokens": 1000000,
+      "cached_pct": 75.0,
+      "output_tokens": 20000,
+      "calls": 24,
+      "estimated_calls": 0,
+      "note": "",
+      "deleted": false
+    },
+    {
+      "key": "sonnet5",
+      "label": "Sonnet 5",
+      "cost_usd": 3.2,
+      "share": 0.041803,
+      "prompt_tokens": 500000,
+      "cached_pct": 80.0,
+      "output_tokens": 9000,
+      "calls": 12,
+      "estimated_calls": 0,
+      "note": "",
+      "deleted": false
+    },
+    {
+      "key": "haiku4.5",
+      "label": "Haiku 4.5",
+      "cost_usd": 0.8,
+      "share": 0.010451,
+      "prompt_tokens": 700000,
+      "cached_pct": 0.0,
+      "output_tokens": 5000,
+      "calls": 20,
+      "estimated_calls": 0,
+      "note": "",
+      "deleted": false
+    },
+    {
+      "key": "nova-sonic",
+      "label": "Nova Sonic",
+      "cost_usd": 0.05,
+      "share": 0.000653,
+      "prompt_tokens": 10000,
+      "cached_pct": 0.0,
+      "output_tokens": 2000,
+      "calls": 2,
+      "estimated_calls": 0,
+      "note": "",
+      "deleted": false
+    },
+    {
+      "key": "local_lmstudio_community_deepseek_r1_0528_qwen3_8b_mlx_4bit__4bit",
+      "label": "local_lmstudio_community_deepseek_r1_0528_qwen3_8b_mlx_4bit__4bit",
+      "cost_usd": 0.0,
+      "share": 0.0,
+      "prompt_tokens": 12000,
+      "cached_pct": 0.0,
+      "output_tokens": 3000,
+      "calls": 5,
+      "estimated_calls": 5,
+      "note": "",
+      "deleted": false
+    }
+  ]
+}

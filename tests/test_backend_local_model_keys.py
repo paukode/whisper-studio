@@ -43,6 +43,7 @@ def test_one_shot_runs_on_the_picked_local_model(monkeypatch):
         engine="local_qwen35_9b",
         local_model_key="local_gemma",
         max_tokens=200,
+        source="condensation",
     )
     assert out == "condensed"
     assert seen["key"] == "local_qwen35_9b"  # not the caller's local_model_key

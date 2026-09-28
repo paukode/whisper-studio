@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { Session } from '@/types/session';
+import type { Session, TranscriptSegment } from '@/types/session';
 import type { ChatMessage } from '@/types/chat';
 import * as sessionsApi from '@/api/sessions';
 import { SessionListResponseSchema } from '@/types/schemas';
@@ -11,34 +11,15 @@ import {
   getTranscriptionStore,
   maybeEvictIdle,
 } from './sessionRuntimes';
+import { persistedSegments } from './transcriptionStore';
 import { useRecordingStore } from './recordingStore';
 import { useWorkspaceStore } from './workspaceStore';
 import { useUIStore } from './uiStore';
 import { useIndexSearchStore } from './indexSearchStore';
 import { useComposerAttachmentsStore } from './composerAttachmentsStore';
 import { useCronUnreadStore } from './cronUnreadStore';
+import { refreshSessionUsage } from './sessionUsage';
 
-/** Seed a reopened session's token/cost readout from the spend the server
- *  recorded for it, so the composer counter covers the whole conversation
- *  rather than restarting at the next turn. Best-effort: a session with no
- *  recorded turns (or a failed fetch) just starts the counter at zero. */
-async function hydrateSessionUsage(sessionId: string): Promise<void> {
-  try {
-    const { get } = await import('@/api/client');
-    const usage = await get<{
-      prompt_tokens?: number;
-      output_tokens?: number;
-      cost_usd?: number;
-    }>(`/api/costs/session/${encodeURIComponent(sessionId)}`);
-    getChatStore(sessionId).getState().hydrateSessionUsage(
-      usage.prompt_tokens ?? 0,
-      usage.output_tokens ?? 0,
-      usage.cost_usd ?? 0,
-    );
-  } catch {
-    // Cosmetic counter — never let it fail a session load.
-  }
-}
 
 /** Deleting a session that owns the live recording must stop the engine
  *  first (websocket, mic worklet, watchdog), or it would keep streaming
@@ -92,11 +73,19 @@ export interface SessionState {
   /** Persist one session's full state (chat + transcript from its own
    *  runtime stores). Returns the underlying update promise so callers
    *  that need durability (e.g. branchSession) can await the flush;
-   *  fire-and-forget callers may ignore it. Resolves to nothing when the
-   *  session has no live metadata. */
+   *  fire-and-forget callers may ignore it. Resolves to nothing when there
+   *  is nothing to send: no live metadata, or isSaved. */
   saveSession: (id: string) => Promise<{ ok: boolean }> | void;
+  /** Whether the server already holds this session as its stores hold it
+   *  now: nothing changed since the copy it served on load, created, or
+   *  last acknowledged. saveSession then sends nothing, whichever path calls
+   *  it, and the unload beacon skips the session too. */
+  isSaved: (id: string) => boolean;
   debouncedSave: (id: string) => void;
   syncChatHistory: (id: string, messages: ChatMessage[]) => void;
+  /** A stream started in this session: note the folder connected now, so
+   *  the stream's end copies it to the row only if it stayed connected. */
+  noteStreamStart: (id: string) => void;
   dropLiveSession: (id: string) => void;
   clearChat: () => void;
 }
@@ -104,6 +93,69 @@ export interface SessionState {
 /** Per-session debounce timers — A's pending save must not be cancelled
  *  by B's keystroke. */
 const saveTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** The store objects one save of a session is built from. Every store
+ *  updates immutably, so the same objects mean the same content. */
+interface SaveSources {
+  live: Session;
+  messages: ChatMessage[];
+  segments: TranscriptSegment[];
+  speakerNames: Record<string, string>;
+}
+
+/** Per session, the sources of the copy the server holds: what it served on
+ *  load, what it created, or what the last save it acknowledged sent. Only
+ *  a success counts, so a failed or out-of-order save is sent again by the
+ *  next 30s tick. Dropped with the live session, so evicted stores are not
+ *  kept alive. */
+const serverCopies = new Map<string, SaveSources>();
+
+/** The folder connected when each session's current stream started (see
+ *  noteStreamStart and syncChatHistory). */
+const streamStartFolders = new Map<string, string>();
+
+/** The folder the workspace panel has connected, or '' for none. */
+function connectedFolder(): string {
+  const { wsConnected, wsPath } = useUIStore.getState();
+  return wsConnected ? wsPath : '';
+}
+
+function saveSources(id: string): SaveSources | null {
+  const live = useSessionStore.getState().liveSessions[id];
+  if (!live) return null;
+  const { messages } = getChatStore(id).getState();
+  const { segments, speakerNames } = getTranscriptionStore(id).getState();
+  return { live, messages, segments, speakerNames };
+}
+
+function heldByServer(id: string, sources: SaveSources): boolean {
+  const held = serverCopies.get(id);
+  return !!held
+    && held.live === sources.live
+    && held.messages === sources.messages
+    && held.segments === sources.segments
+    && held.speakerNames === sources.speakerNames;
+}
+
+function saveBody({ live, messages, segments, speakerNames }: SaveSources): Session {
+  return {
+    ...live,
+    chatHistory: messages,
+    segments: persistedSegments(segments),
+    speakerNames,
+    // Stored only if this save changes the session: the server keeps the
+    // old time for an identical save, such as a retry whose first attempt
+    // landed but whose reply was lost.
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/** What a save of this session sends right now, or null when it has no live
+ *  metadata. The unload beacon sends exactly what saveSession does. */
+export function sessionSaveBody(id: string): Session | null {
+  const sources = saveSources(id);
+  return sources && saveBody(sources);
+}
 
 function normalizeSession(session: Session): Session {
   // Backend returns "date" instead of "updatedAt" — normalize.
@@ -198,9 +250,6 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
       speakerNames: {},
     };
 
-    // Save to backend
-    void sessionsApi.createSession(newSession);
-
     const summary: SessionSummary = {
       id,
       title: 'New Session',
@@ -222,6 +271,15 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
       currentSessionId: id,
       liveSessions: { ...state.liveSessions, [id]: newSession },
     }));
+
+    // Save to backend; once it lands, the server holds the empty session.
+    const created = saveSources(id);
+    sessionsApi.createSession(newSession).then(
+      () => {
+        if (created && get().liveSessions[id]) serverCopies.set(id, created);
+      },
+      (err) => console.warn('Failed to create session:', err),
+    );
 
     // Note: a live recording deliberately SURVIVES new-session creation
     // now — it is bound to its owning session's store, so the fresh
@@ -269,7 +327,10 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
             normalized.segments,
             normalized.speakerNames ?? {},
           );
-          void hydrateSessionUsage(id);
+          // The server holds exactly what was just loaded.
+          const loaded = saveSources(id);
+          if (loaded) serverCopies.set(id, loaded);
+          void refreshSessionUsage(id);
           entry.hydrated = true;
         } catch (err) {
           console.warn('Failed to load session:', err);
@@ -527,11 +588,21 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
   syncChatHistory: (id: string, messages: ChatMessage[]) => {
     const live = get().liveSessions[id];
     if (!live) return;
+    // The server records the folder a turn ran in as its stream closes, read
+    // through the turn's workspace latch, so a turn whose folder was switched
+    // mid-turn (from this chat or another) records nothing, and a turn with
+    // none connected keeps the last one. Copy it so the row offers "Open
+    // workspace in" without a reload, but only a folder that stayed
+    // connected for the whole stream.
+    const folder = connectedFolder();
+    const started = streamStartFolders.get(id);
+    streamStartFolders.delete(id);
+    const workspace = folder && folder === started ? { workspacePath: folder } : {};
 
     set((state) => {
       const now = new Date().toISOString();
       const updated = state.sessions.map((s) =>
-        s.id === id ? { ...s, chatCount: messages.length, date: now } : s,
+        s.id === id ? { ...s, chatCount: messages.length, date: now, ...workspace } : s,
       );
       updated.sort((a, b) => {
         if (!a.date && !b.date) return 0;
@@ -552,21 +623,23 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
   },
 
   saveSession: (id: string) => {
-    const live = get().liveSessions[id];
-    if (!live) return;
-
-    // Compose from the session's OWN runtime stores — works identically
+    // Compose from the session's OWN runtime stores, so it works the same
     // for foreground and background sessions.
-    const chat = getChatStore(id).getState();
-    const { segments, speakerNames } = getTranscriptionStore(id).getState();
-    const sessionToSave = {
-      ...live,
-      chatHistory: chat.messages,
-      segments,
-      speakerNames,
-      updatedAt: new Date().toISOString(),
-    };
-    return sessionsApi.updateSession(id, sessionToSave);
+    const sources = saveSources(id);
+    if (!sources || heldByServer(id, sources)) return;
+    const saving = sessionsApi.updateSession(id, saveBody(sources));
+    saving.then(
+      () => {
+        if (get().liveSessions[id]) serverCopies.set(id, sources);
+      },
+      (err) => console.warn('Failed to save session:', err),
+    );
+    return saving;
+  },
+
+  isSaved: (id: string) => {
+    const sources = saveSources(id);
+    return !!sources && heldByServer(id, sources);
   },
 
   debouncedSave: (id: string) => {
@@ -581,7 +654,13 @@ export const useSessionStore = create<SessionState>()(persist((set, get) => ({
     );
   },
 
+  noteStreamStart: (id: string) => {
+    streamStartFolders.set(id, connectedFolder());
+  },
+
   dropLiveSession: (id: string) => {
+    serverCopies.delete(id);
+    streamStartFolders.delete(id);
     set((state) => {
       if (!(id in state.liveSessions)) return state;
       const next = { ...state.liveSessions };

@@ -389,16 +389,13 @@ if [ "$FRESH" -eq 1 ]; then
     echo "  Config will be re-seeded with first-run defaults (local mode)."
     echo "  Re-add your Tavily API key and any custom settings in Settings (gear icon)."
     # pricing.json gets the same treatment (gitignored per-key rate overrides;
-    # defaults live in pricing.example.json). Back up any existing one and reseed
-    # so a fresh install starts from the current rate table.
+    # defaults live in pricing.example.json). Back up any existing one and
+    # remove it so a fresh install bills at the current rate table.
     if [ -f pricing.json ]; then
         pricing_backup="pricing.json.bak.$(date +%Y%m%d%H%M%S)"
         cp pricing.json "$pricing_backup"
-        echo "Backed up existing pricing.json to $pricing_backup."
-    fi
-    if [ -f pricing.example.json ]; then
-        cp pricing.example.json pricing.json
-        echo "Wrote a fresh pricing.json from pricing.example.json."
+        rm -f pricing.json
+        echo "Backed up pricing.json to $pricing_backup and removed it (rates come from pricing.example.json)."
     fi
     if [ -d "$VENV_DIR" ]; then
         echo "Removing existing virtual environment ($VENV_DIR)..."
@@ -433,13 +430,10 @@ fi
 # DEFAULTS -> config.example.json -> the user layer additively, so a model
 # added to config.example.json reaches every install on the next start.
 
-# Seed pricing.json from the template on first run too. The app runs fine off
-# pricing.example.json alone, but seeding gives a ready-to-edit local copy for
-# per-key rate overrides. gitignored; an existing pricing.json is left untouched.
-if [ ! -f pricing.json ] && [ -f pricing.example.json ]; then
-    cp pricing.example.json pricing.json
-    echo "Created pricing.json from pricing.example.json (edit to override model rates)."
-fi
+# pricing.json is not seeded (the packaged app does not seed it either): the
+# app bills from pricing.example.json, and pricing.json holds only the rates a
+# user chooses to override. A full copy of the template froze every rate at
+# install time and shadowed later corrections.
 
 if [ -d "$VENV_DIR" ]; then
     echo "Virtual environment found, skipping Python setup."
@@ -504,7 +498,10 @@ else
         echo "WARNING: AWS CLI not found and no Homebrew. Chat (Bedrock) will fail until installed."
     fi
 
-    # Install isolated Node.js into the venv (for ESLint LSP)
+    # Install isolated Node.js into the venv. It builds the frontend and, at
+    # runtime, runs the workflow harness and the workspace's own ESLint for the
+    # assistant's JS/TS checks (macapp/build_app.sh bundles bin/node for the
+    # same runtime uses). The app itself never calls npm or npx.
     run_quiet "Installing Node.js $NODE_VERSION into virtual environment" \
         nodeenv --python-virtualenv --node="$NODE_VERSION"
     source "$VENV_DIR/bin/activate"

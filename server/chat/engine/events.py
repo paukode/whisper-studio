@@ -71,15 +71,23 @@ class ToolCallProgress:
 
 @dataclass(frozen=True)
 class Usage:
-    """Token truth for the round, when the provider reports it. ``exact`` is
-    False when the adapter estimated (e.g. mantle's early release skips the
-    usage-bearing completed event)."""
+    """Token counts for the round, read from the provider's own payload.
+
+    ``estimated`` names the fields the adapter had to estimate because the
+    payload carried no count (mantle's early release skips the usage-bearing
+    completed event; a local server may send no usage): always characters / 4
+    of the request body actually posted (input) or of the content actually
+    received (output). Empty means every count was reported. ``detail``
+    holds both reported sources, keyed by name, when they disagreed (Bedrock's
+    invocationMetrics trailer against the Anthropic usage block); the fields
+    above carry the authoritative one."""
 
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
-    exact: bool = True
+    estimated: tuple[str, ...] = ()
+    detail: dict | None = None
 
 
 @dataclass(frozen=True)

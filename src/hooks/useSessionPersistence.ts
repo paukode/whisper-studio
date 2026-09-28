@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useSessionStore } from '@/stores/sessionStore';
-import { getChatStore, getTranscriptionStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
+import { sessionSaveBody, useSessionStore } from '@/stores/sessionStore';
+import { useRuntimeIndex } from '@/stores/sessionRuntimes';
 
 export interface UseSessionPersistenceReturn {
   save: () => void;
@@ -17,6 +17,10 @@ export interface UseSessionPersistenceReturn {
  *   - a `beforeunload` beacon PER LIVE SESSION, so a tab close mid-stream
  *     or mid-recording loses nothing in any session (the server's
  *     per-session locks serialize the concurrent writes).
+ * Neither sends a session the server already holds as is (saveSession skips
+ * it, the beacon checks isSaved), so an open session nobody touches costs
+ * nothing; a failed save is not acknowledged and goes out again on the next
+ * tick or in the beacon.
  */
 export function useSessionPersistence(): UseSessionPersistenceReturn {
   const [isSaving, setIsSaving] = useState(false);
@@ -33,24 +37,18 @@ export function useSessionPersistence(): UseSessionPersistenceReturn {
 
   useEffect(() => {
     const handleBeforeUnload = () => {
-      const { liveSessions } = useSessionStore.getState();
+      const { isSaved } = useSessionStore.getState();
       for (const id of useRuntimeIndex.getState().liveIds) {
-        const live = liveSessions[id];
-        if (!live) continue;
+        if (isSaved(id)) continue;
         // Fresh snapshot of every persisted surface from the session's
-        // OWN stores at flush time — in-flight chat and the last
-        // un-debounced transcript segments included.
-        const { segments, speakerNames } = getTranscriptionStore(id).getState();
-        const payload = {
-          ...live,
-          chatHistory: getChatStore(id).getState().messages,
-          segments,
-          speakerNames,
-          updatedAt: new Date().toISOString(),
-        };
+        // OWN stores at flush time: in-flight chat and the last
+        // un-debounced transcript segments included. Same body as
+        // saveSession, so both follow the same server rules.
+        const body = sessionSaveBody(id);
+        if (!body) continue;
         navigator.sendBeacon(
           `/api/sessions/${encodeURIComponent(id)}/beacon`,
-          new Blob([JSON.stringify(payload)], { type: 'application/json' }),
+          new Blob([JSON.stringify(body)], { type: 'application/json' }),
         );
       }
     };

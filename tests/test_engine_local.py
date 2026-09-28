@@ -18,7 +18,8 @@ from server.chat.engine.runner import TurnContext, run_turn
 
 
 def _fake_rounds(*rounds):
-    """Stand-in for SS._stream_round: each round is (pieces, calls[, usage])."""
+    """Stand-in for SS._stream_round: each round is
+    (pieces, calls[, usage[, finish_reason]])."""
     box = {"i": 0}
 
     async def gen(base_url, payload):
@@ -32,13 +33,26 @@ def _fake_rounds(*rounds):
             "done",
             {
                 "calls": calls,
-                "finish_reason": "tool_calls" if calls else "stop",
+                "finish_reason": rest[1] if len(rest) > 1 else ("tool_calls" if calls else "stop"),
                 "usage": rest[0] if rest else {},
             },
         )
 
     gen.payloads = []
     return gen
+
+
+def _assert_alternates(wire: list[dict]) -> None:
+    """Strict chat templates need user and assistant turns to alternate. Tool
+    traffic is the one exception: tool messages follow the assistant turn
+    that called them, and a user turn may follow the tool messages."""
+    body = [m for m in wire if m["role"] != "system"]
+    assert body and body[0]["role"] == "user"
+    for prev, cur in zip(body, body[1:], strict=False):
+        if cur["role"] == "tool":
+            assert prev["role"] == "tool" or prev.get("tool_calls")
+        elif prev["role"] != "tool":
+            assert prev["role"] != cur["role"], (prev, cur)
 
 
 def _fake_tool_pipeline(monkeypatch, results_by_id=None, pending=False, capture=None):
@@ -89,6 +103,7 @@ def _run_local_turn(
         tools_enabled=tools_enabled,
     )
     ctx = TurnContext(
+        cost_source="chat",
         session_id=session_id,
         model_key="local_gemma",
         model_id="local_gemma",
@@ -263,8 +278,12 @@ def test_empty_completion_retries_once_and_recovers(monkeypatch):
     assert len(fake.payloads) == 2
     first_messages = fake.payloads[0]["messages"]
     retry_messages = fake.payloads[1]["messages"]
-    assert len(retry_messages) == len(first_messages) + 1
+    # The nudge rides on the user's own turn instead of a second user turn,
+    # and a plain chat round is not told about a tool result it never had.
+    _assert_alternates(retry_messages)
+    assert retry_messages[-1]["content"].startswith(first_messages[-1]["content"])
     assert "Continue" in retry_messages[-1]["content"]
+    assert "tool result" not in retry_messages[-1]["content"]
 
 
 def test_empty_completion_retry_still_empty_falls_back_once(monkeypatch):
@@ -297,6 +316,7 @@ def test_context_overflow_raises_prompt_too_long_and_salvages(monkeypatch):
         tools_enabled=False,
     )
     ctx = TurnContext(
+        cost_source="chat",
         session_id="local-ptl",
         model_key="local_gemma",
         model_id="local_gemma",
@@ -337,13 +357,17 @@ def test_usage_frame_reports_cached_prefix_semantics(monkeypatch):
 
 
 def test_usage_falls_back_to_char_estimate_without_usage(monkeypatch):
-    blob, _ = _run_local_turn(monkeypatch, [([("text", "x" * 80)], [])])
+    # No usage from the server: characters / 4 of the body posted and of the
+    # text received, never 0 for an input that was certainly sent.
+    from server.costs.capture import estimate_tokens, json_chars
+
+    blob, fake = _run_local_turn(monkeypatch, [([("text", "x" * 80)], [])])
     frames = [
         json.loads(ln[6:])["usage"]
         for ln in blob.splitlines()
         if ln.startswith("data: ") and '"usage"' in ln
     ]
-    assert frames[0]["input_tokens"] == 0
+    assert frames[0]["input_tokens"] == estimate_tokens(json_chars(fake.payloads[-1])) > 0
     assert frames[0]["output_tokens"] == 20  # 80 chars / 4
 
 
@@ -358,6 +382,7 @@ def test_transport_error_surfaces_and_ends(monkeypatch):
         model_key="k", base_url="http://x", system_prompt="", thinking=False, tools_enabled=False
     )
     ctx = TurnContext(
+        cost_source="chat",
         session_id="local-err",
         model_key="k",
         model_id="k",
@@ -402,3 +427,141 @@ def test_conversion_flattens_blocks_and_keeps_tool_fidelity():
     assert msgs[1] == {"role": "user", "content": "look"}  # image dropped
     assert msgs[2]["tool_calls"][0]["function"]["name"] == "read"
     assert msgs[3] == {"role": "tool", "tool_call_id": "c1", "name": "read", "content": "body"}
+
+
+def test_empty_completion_after_a_tool_result_keeps_the_tool_wording(monkeypatch):
+    calls = [{"id": "c1", "name": "ws_read_file", "input": {"path": "a.py"}}]
+    blob, fake = _run_local_turn(
+        monkeypatch,
+        [([], calls), ([], []), ([("text", "done")], [])],
+        tools_enabled=True,
+    )
+    assert "done" in blob
+    retry = fake.payloads[2]["messages"]
+    _assert_alternates(retry)
+    assert retry[-2]["role"] == "tool"
+    assert "tool result" in retry[-1]["content"]
+
+
+def _adapter():
+    return LocalAdapter(
+        model_key="k", base_url="http://x", system_prompt="SYS", thinking=False, tools_enabled=True
+    )
+
+
+def test_conversion_keeps_block_boundaries():
+    """A reminder or mid-turn note is its own block; on the wire it must not
+    run straight into the user's words."""
+    reminder = "<system-reminder>near the cap</system-reminder>"
+    msgs = _adapter().to_openai_messages(
+        [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "fix it"}, {"type": "text", "text": reminder}],
+            }
+        ]
+    )
+    user = msgs[-1]["content"]
+    assert "fix it" in user and reminder in user
+    between = user[user.index("fix it") + len("fix it") : user.index(reminder)]
+    assert between and not between.strip()
+
+
+def test_conversion_alternates_roles_for_every_source_of_neighbours():
+    """An empty assistant row dropped from the history, the attachment lead
+    before the first user turn, and the text after tool results all used to
+    put two user turns side by side."""
+    msgs = _adapter().to_openai_messages(
+        [
+            {"role": "user", "content": "[Files attached earlier in this session]"},
+            {"role": "user", "content": "hey!"},
+            {"role": "assistant", "content": ""},
+            {"role": "user", "content": "second"},
+            {
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "c1", "name": "read", "input": {}}],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "c1", "content": "body"},
+                    {"type": "text", "text": "<system-reminder>x</system-reminder>"},
+                ],
+            },
+            {"role": "user", "content": "and a third"},
+        ]
+    )
+    _assert_alternates(msgs)
+    wire_text = json.dumps(msgs)
+    for said in ("hey!", "second", "and a third", "Files attached", "system-reminder"):
+        assert said in wire_text  # merged, never dropped
+    assert any(m["role"] == "tool" and m["tool_call_id"] == "c1" for m in msgs)
+
+
+def test_history_window_opening_on_an_assistant_reply_starts_at_the_user():
+    msgs = _adapter().to_openai_messages(
+        [
+            {"role": "assistant", "content": "an old answer cut by the history cap"},
+            {"role": "user", "content": "next question"},
+        ]
+    )
+    _assert_alternates(msgs)
+    assert msgs[1] == {"role": "user", "content": "next question"}
+
+
+def test_conversion_tolerates_null_text_blocks():
+    msgs = _adapter().to_openai_messages(
+        [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": None}, {"type": "text", "text": "q"}],
+            }
+        ]
+    )
+    assert msgs[-1] == {"role": "user", "content": "q"}
+
+
+# ── finish_reason "length": the output cap cut the round off ────────────────
+
+
+def test_answer_cut_by_the_output_cap_is_continued_not_committed(monkeypatch):
+    """Cut off mid-answer, the round reports max_tokens: the engine says so and
+    continues the answer instead of ending the turn on a half sentence."""
+    blob, fake = _run_local_turn(
+        monkeypatch,
+        [([("text", "The first half of")], [], {}, "length"), ([("text", " the answer.")], [])],
+    )
+    assert "Output limit reached" in blob
+    assert "The first half of" in blob and " the answer." in blob
+    assert len(fake.payloads) == 2
+    continued = fake.payloads[1]["messages"]
+    _assert_alternates(continued)
+    assert continued[-2] == {"role": "assistant", "content": "The first half of"}
+
+
+def test_thinking_that_spends_the_whole_cap_names_the_limit(monkeypatch):
+    """A thinking model can spend the whole cap reasoning. That is not a stall
+    after a tool result: no nudge retry, no continuation, and the note names
+    the output limit."""
+    blob, fake = _run_local_turn(
+        monkeypatch, [([("thinking", "a long chain")], [], {}, "length")], thinking=True
+    )
+    assert len(fake.payloads) == 1
+    assert "output limit" in blob
+    assert "stall after a tool result" not in blob
+    assert blob.strip().endswith("data: [DONE]")
+
+
+def test_tool_call_cut_by_the_output_cap_is_never_run(monkeypatch):
+    calls = [{"id": "w1", "name": "ws_write_file", "input": {}}]
+    capture: dict = {}
+    blob, fake = _run_local_turn(
+        monkeypatch,
+        [([("text", "Writing it now.")], calls, {}, "length")],
+        tools_enabled=True,
+        capture=capture,
+    )
+    assert "tool_uses" not in capture  # the truncated call never reached the pipeline
+    assert '"skill_input"' not in blob
+    assert "output limit" in blob and "ws_write_file" in blob
+    assert len(fake.payloads) == 1

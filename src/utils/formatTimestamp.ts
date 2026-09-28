@@ -2,6 +2,12 @@
  * Timestamp formatting utilities for chat messages and transcript segments.
  */
 
+// Built once: toLocale*String constructs a new Intl formatter on every call,
+// and a chat renders one timestamp per message.
+const TIME_FORMAT = new Intl.DateTimeFormat([], { hour: 'numeric', minute: '2-digit' });
+const WEEKDAY_FORMAT = new Intl.DateTimeFormat([], { weekday: 'short' });
+const MONTH_DAY_FORMAT = new Intl.DateTimeFormat([], { month: 'short', day: 'numeric' });
+
 /**
  * Format an ISO timestamp for display on chat messages.
  * - Today: "2:34 PM"
@@ -14,7 +20,7 @@ export function formatMessageTimestamp(isoString: string): string {
   if (isNaN(date.getTime())) return '';
 
   const now = new Date();
-  const timeStr = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const timeStr = TIME_FORMAT.format(date);
 
   // Same calendar day
   if (
@@ -39,12 +45,12 @@ export function formatMessageTimestamp(isoString: string): string {
   // Within past 7 days
   const diffMs = now.getTime() - date.getTime();
   if (diffMs < 7 * 24 * 60 * 60 * 1000 && diffMs > 0) {
-    const dayName = date.toLocaleDateString([], { weekday: 'short' });
+    const dayName = WEEKDAY_FORMAT.format(date);
     return `${dayName} ${timeStr}`;
   }
 
   // Older
-  const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const dateStr = MONTH_DAY_FORMAT.format(date);
   return `${dateStr} ${timeStr}`;
 }
 

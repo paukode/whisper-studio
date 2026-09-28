@@ -199,7 +199,6 @@ def _team_fixture(monkeypatch):
     from server.agent_tools import spawn as spawn_mod
 
     monkeypatch.setattr(spawn_mod, "_active_agent_counts", {})
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
     monkeypatch.setattr("server.agents.journal.team_manifest", lambda *a, **k: None)
 
 
@@ -247,7 +246,7 @@ def test_cancelled_team_delivers_its_reports_to_the_session(monkeypatch):
     monkeypatch.setattr(teams, "SALVAGE_WAIT_S", 0.2)
     delivered: list = []
     monkeypatch.setattr(
-        teams, "emit_agent_report", lambda sid, payload: delivered.append((sid, payload))
+        teams, "emit_agent_report", lambda sid, payload, **kw: delivered.append((sid, payload))
     )
 
     async def _hanging_run_agent(task, **kwargs):

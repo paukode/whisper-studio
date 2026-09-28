@@ -98,7 +98,14 @@ def render_attachment_blocks(
                     f"[Image: {att['filename']} — transcribed text]\n{ocr_text}"
                 )
             else:
-                attachment_texts.append(f"[Image: {att['filename']}]")
+                # No text was read. While Local mode keeps the image off the
+                # cloud reader, say so (rendered now, never stored as the
+                # image's text, so it ends with the mode and is never indexed).
+                from server.extract.ocr import local_mode_note
+
+                note = local_mode_note()
+                marker = f"[Image: {att['filename']}]"
+                attachment_texts.append(f"{marker}\n{note}" if note else marker)
         elif att["kind"] == "document":
             doc_text = att["text"]
             full_len = len(doc_text)

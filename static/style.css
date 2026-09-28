@@ -1016,6 +1016,21 @@ input.segment-speaker {
 .chat-msg-wrap {
     display: flex; flex-direction: column; gap: 2px; max-width: 92%;
 }
+/* Messages off screen cost no layout or paint. A streaming reply relays out
+ * the message column on every frame, and without this that walked every
+ * message of a long session (about 16 ms a frame at 300 messages). `auto`
+ * keeps each message's last rendered height, so scrolling back up does not
+ * jump. The newest children always render: opening a session scrolls to the
+ * bottom, and that must land on real heights, not on estimates that grow as
+ * the last messages render. */
+.chat-messages > .chat-msg-wrap:nth-last-child(n+9) {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 120px;
+    /* The column is a flex container: a skipped message has no content
+     * height to defend, so without this it shrinks to nothing and the
+     * whole history collapses into the viewport. */
+    flex-shrink: 0;
+}
 .chat-msg-wrap.user-wrap { align-self: flex-end; align-items: flex-end; }
 .chat-msg-wrap.assistant-wrap { align-self: flex-start; max-width: 66.67%; }
 .msg-actions {
@@ -2259,8 +2274,10 @@ input.segment-speaker {
     from { opacity: 0; transform: translateY(8px); }
     to   { opacity: 1; transform: translateY(0); }
 }
+/* The heading names the open menu (Commands, Files, Mentions, ...); ChatInput
+   sets it as data-heading. */
 .skill-autocomplete::before {
-    content: "Skills";
+    content: attr(data-heading);
     display: block;
     padding: 6px 10px 4px;
     font-size: var(--fs-caption); font-weight: 600;
@@ -2443,14 +2460,19 @@ input.segment-speaker {
 @keyframes fadeIn {
     from { opacity: 0; } to { opacity: 1; }
 }
+/* The width (and a height once the user resizes it) comes inline from
+   useResizableDialog; the caps keep a remembered size inside a smaller window. */
 .settings-container {
-    width: 90vw; max-width: 800px; max-height: 85vh;
+    position: relative;
+    max-width: calc(100vw - 32px); max-height: 85vh;
     background: var(--bg-surface); border-radius: 14px;
     display: flex; flex-direction: column;
     box-shadow: 0 20px 60px rgba(0,0,0,0.4);
     border: 1px solid var(--border);
     overflow: hidden;
 }
+.settings-container.is-sized { max-height: calc(100vh - 32px); }
+.settings-header { user-select: none; }
 .settings-header {
     display: flex; align-items: center; justify-content: space-between;
     padding: 16px 20px; border-bottom: 1px solid var(--border);
@@ -2535,7 +2557,19 @@ input.segment-speaker {
 
 .settings-body {
     flex: 1; overflow-y: auto; padding: 16px 20px;
+    /* A gutter for the right-edge resize handle, clear of the scrollbar. */
+    margin-right: 6px;
 }
+/* The resize handles, placed for the 20px corner radius. */
+.settings-container .ws-rz-e,
+.settings-container .ws-rz-w { width: 6px; top: 20px; bottom: 20px; }
+.settings-container .ws-rz-n,
+.settings-container .ws-rz-s { left: 20px; right: 20px; }
+.settings-container .ws-rz-ne,
+.settings-container .ws-rz-se,
+.settings-container .ws-rz-sw,
+.settings-container .ws-rz-nw { width: 20px; height: 20px; }
+.settings-container .ws-rz-se::after { right: 7px; bottom: 7px; }
 /* ── Settings > Models: layout & rhythm ──────────────────────────────────
    The shared .settings-* hooks are otherwise unstyled, so the Models tab owns
    its own vertical rhythm here. Header (heading + Refresh) on one row, a terse
@@ -3405,9 +3439,15 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 /* Resize handles (kept inside the dialog since overflow is hidden). */
 .ws-rz { position: absolute; z-index: 5; touch-action: none; }
 .ws-rz-e { top: 10px; bottom: 10px; right: 0; width: 7px; cursor: ew-resize; }
+.ws-rz-w { top: 10px; bottom: 10px; left: 0; width: 7px; cursor: ew-resize; }
 .ws-rz-s { left: 10px; right: 10px; bottom: 0; height: 7px; cursor: ns-resize; }
+.ws-rz-n { left: 10px; right: 10px; top: 0; height: 7px; cursor: ns-resize; }
 .ws-rz-se { right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
-.ws-rz-e:hover, .ws-rz-s:hover { background: var(--accent-dim); }
+.ws-rz-nw { left: 0; top: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+.ws-rz-ne { right: 0; top: 0; width: 16px; height: 16px; cursor: nesw-resize; }
+.ws-rz-sw { left: 0; bottom: 0; width: 16px; height: 16px; cursor: nesw-resize; }
+.ws-rz-e:hover, .ws-rz-s:hover,
+.ws-rz-w:hover, .ws-rz-n:hover { background: var(--accent-dim); }
 .ws-rz-se::after {
     content: ''; position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px;
     border-right: 2px solid var(--text-muted); border-bottom: 2px solid var(--text-muted);
@@ -3960,6 +4000,10 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     white-space: nowrap;
 }
 .tc-sep { opacity: 0.5; }
+/* A cost resting on estimated token counts reads as estimated; a session with
+   GPT rounds says GPT is priced at list rates (the dated note is the title). */
+.tc-cost.usage-est { font-style: italic; }
+.tc-note { color: var(--risk-warn); font-family: var(--font-sans); }
 .tc-ctx-track {
     display: inline-block;
     width: 40px;
@@ -3979,16 +4023,6 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 @media (prefers-reduced-motion: reduce) {
     .tc-ctx-fill { transition: none; }
 }
-
-/* Context usage bar */
-.context-bar-track { height: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden; }
-.context-bar-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.3s; }
-.context-bar-fill.warning { background: #e6a700; }
-.context-bar-fill.danger { background: #e53e3e; }
-
-/* Cost bar chart */
-.cost-bar-chart { display: flex; align-items: flex-end; gap: 4px; height: 100px; padding: 8px 0; }
-.cost-bar { display: flex; flex-direction: column; align-items: center; flex: 1; height: 100%; justify-content: flex-end; }
 
 /* Project config badge */
 
@@ -4015,9 +4049,6 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     font-size: 0.83em;
 }
 .settings-item-info { flex: 1; min-width: 0; }
-
-/* Stats tab */
-.stat-label { color: var(--text-muted); }
 
 /* Plan mode indicator in header */
 
@@ -4606,6 +4637,8 @@ button.ws-git-status-badge:hover {
 .activity-badge.running { color: var(--accent); background: var(--accent-dim); }
 .activity-badge.error { color: var(--accent-record); background: var(--accent-record-dim); }
 .activity-badge.stopped { color: var(--text-muted); }
+/* A goal the judge could not check: neither a pass nor a failure. */
+.activity-badge.unchecked { color: var(--text-muted); }
 
 .activity-steps {
     list-style: none;
@@ -4651,6 +4684,7 @@ button.ws-git-status-badge:hover {
 .activity-check { color: var(--accent-live); }
 .activity-x { color: var(--accent-record); }
 .activity-stopped { color: var(--text-muted); }
+.activity-unchecked { color: var(--text-muted); }
 .activity-spinner {
     color: var(--accent);
     display: inline-block;

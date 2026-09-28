@@ -17,7 +17,9 @@ import mcp.client.streamable_http
 import pytest
 
 from server import mcp as mcp_module
-from server.mcp import MCPManager, mcp_add_server
+from server import mcp_routes
+from server.mcp import MCPManager
+from server.mcp_routes import mcp_add_server
 
 
 @pytest.fixture
@@ -38,6 +40,7 @@ class _FakeTool:
 class _FakeToolsResult:
     def __init__(self):
         self.tools = [_FakeTool("ping")]
+        self.nextCursor = None
 
 
 class _FakeSession:
@@ -53,10 +56,10 @@ class _FakeSession:
     async def initialize(self):
         pass
 
-    async def list_tools(self):
+    async def list_tools(self, params=None):
         return _FakeToolsResult()
 
-    async def list_resources(self):
+    async def list_resources(self, params=None):
         raise RuntimeError("no resources")
 
 
@@ -80,7 +83,7 @@ def _install_fakes(monkeypatch, record):
     monkeypatch.setattr(
         mcp,
         "ClientSession",
-        lambda r, w, elicitation_callback=None: _FakeSession(),
+        lambda r, w, elicitation_callback=None, message_handler=None: _FakeSession(),
         raising=False,
     )
     monkeypatch.setattr(
@@ -197,7 +200,7 @@ def test_bearer_token_value_never_persisted_only_env_var_name(isolated_mcp, monk
         return None
 
     monkeypatch.setattr(mgr, "start_server", _noop)
-    monkeypatch.setattr(mcp_module, "mcp_manager", mgr)
+    monkeypatch.setattr(mcp_routes, "mcp_manager", mgr)
 
     os.environ["ADD_SERVER_TOKEN"] = "top-secret-do-not-store"
     try:

@@ -236,6 +236,7 @@ async def _run_agent_session_update(existing: str, excerpt: str, session_id: str
         session_id=session_id,
         context=SESSION_SUMMARY_PROMPT,
         depth=1,
+        cost_source="memory",
     )
     if result.status == "completed" and result.output:
         return result.output

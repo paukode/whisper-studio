@@ -20,7 +20,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from server import mcp as mcp_module
-from server.mcp import MCPManager, mcp_update_server
+from server import mcp_routes
+from server.mcp import MCPManager
+from server.mcp_routes import mcp_update_server
 
 
 @pytest.fixture
@@ -66,7 +68,7 @@ def _bind_fresh_manager(monkeypatch) -> MCPManager:
 
     monkeypatch.setattr(mgr, "start_server", _noop)
     monkeypatch.setattr(mgr, "stop_server", _noop)
-    monkeypatch.setattr(mcp_module, "mcp_manager", mgr)
+    monkeypatch.setattr(mcp_routes, "mcp_manager", mgr)
     return mgr
 
 

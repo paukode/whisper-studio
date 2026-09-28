@@ -1,4 +1,5 @@
 import React from 'react';
+import { noChatModelHint, useSettingsStore } from '@/stores/settingsStore';
 
 interface ModelOption {
   key: string;
@@ -28,7 +29,9 @@ interface ModelDropdownProps {
  * file under the size budget. Purely presentational — selection routing (the
  * Mythos-class data-retention consent gate, etc.) stays in the parent via
  * `onSelect`, and closing sibling dropdowns stays in `onToggle`. On this branch
- * on-device models carry a "Local" badge.
+ * on-device models carry a "Local" badge. With nothing to offer (Local mode
+ * before an on-device model is installed) the menu shows where to get one
+ * instead of rows: a hint, not a second control.
  */
 /** The config labels name on-device models "... (Local)". The dropdown rows
  *  already carry the Local badge, so strip the suffix there to avoid saying it
@@ -40,6 +43,7 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
   models, selectedModel, loadedLocalModel, open, onToggle, onSelect,
 }) => {
   const sel = models.find((m) => m.key === selectedModel);
+  const needsLocalModel = useSettingsStore((s) => s.needsLocalModel);
   // An on-device model that is selected but not resident yet — the user loads it
   // (by re-selecting or by sending the first message) to start a session.
   const selectedNotLoaded = !!sel?.is_local && loadedLocalModel !== selectedModel;
@@ -49,13 +53,18 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 2l2.4 5.3L20 8.5l-4 4.1.9 5.9L12 15.8l-4.9 2.7.9-5.9-4-4.1 5.6-1.2z"/>
       </svg>
-      {sel?.name ?? selectedModel}
+      {sel?.name ?? (selectedModel || 'No model')}
       {selectedNotLoaded && (
         <span style={{ opacity: 0.6, marginLeft: 4, fontSize: '0.85em' }}>· not loaded</span>
       )}
     </button>
     <div className="toolbar-dropdown" id="modelDropdown" style={{ display: open ? 'block' : 'none' }}>
       <div className="toolbar-dropdown-header">Model</div>
+      {models.length === 0 && (
+        <div className="toolbar-dropdown-item-desc" data-testid="model-empty-hint" style={{ padding: '8px 12px', maxWidth: 260 }}>
+          {noChatModelHint(needsLocalModel)}
+        </div>
+      )}
       {models.map((m) => (
         <div
           key={m.key}

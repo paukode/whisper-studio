@@ -585,6 +585,68 @@ def test_delete_non_resident_gguf_leaves_llama_server(client, home, monkeypatch)
     assert r.json()["stopped_llama_server"] is False
 
 
+def test_delete_refused_while_the_model_is_answering(client, home, monkeypatch):
+    """A turn (in any chat) or a local agent streaming from the resident model:
+    the delete is refused with a reason and changes nothing, instead of
+    stopping the server mid-answer. Once nothing streams, it goes through."""
+    from server.local import serving
+
+    install_fake(home, "local_gemma")
+    stops = []
+    monkeypatch.setattr(serving, "resident_key", lambda: "local_gemma")
+    monkeypatch.setattr(serving, "stop", lambda: stops.append(True))
+    monkeypatch.setattr(serving, "busy_turns", lambda: 1)
+
+    r = client.delete("/api/models/local_gemma")
+    assert r.status_code == 409
+    assert "answering" in r.json()["detail"]
+    assert stops == [], "the model server was stopped under a live turn"
+    assert (home / "models" / get_entry("local_gemma").dir_name).exists()
+
+    monkeypatch.setattr(serving, "busy_turns", lambda: 0)
+    r = client.delete("/api/models/local_gemma")
+    assert r.status_code == 200 and r.json()["stopped_llama_server"] is True
+    assert stops == [True]
+
+
+def test_a_turn_that_starts_after_the_busy_check_is_never_killed(client, home, monkeypatch):
+    """The first busy check runs before the reap and the disk checks; a turn
+    can register on the resident server in between. The stop re-checks
+    atomically (serving.stop_if_idle), so that turn keeps its server."""
+    from server.local import llama_server, serving
+    from server.models_manager import manager
+
+    install_fake(home, "local_gemma")
+    stops = []
+    monkeypatch.setattr(llama_server, "resident_key", lambda: "local_gemma")
+    monkeypatch.setattr(llama_server, "stop", lambda: stops.append(True))
+    real_reap = manager.reap
+
+    def reap_while_a_turn_starts():
+        serving.begin_turn()  # the lock-free fast path of a new local turn
+        real_reap()
+
+    monkeypatch.setattr(manager, "reap", reap_while_a_turn_starts)
+    try:
+        r = client.delete("/api/models/local_gemma")
+    finally:
+        serving.end_turn()
+    assert r.status_code == 409 and "answering" in r.json()["detail"]
+    assert stops == [], "the model server was stopped under a live turn"
+    assert (home / "models" / get_entry("local_gemma").dir_name).exists()
+
+
+def test_a_busy_turn_on_another_model_does_not_block_a_delete(client, home, monkeypatch):
+    from server.local import serving
+
+    install_fake(home, "local_gemma")
+    monkeypatch.setattr(serving, "resident_key", lambda: "local_gemma_coder")
+    monkeypatch.setattr(serving, "busy_turns", lambda: 2)
+    monkeypatch.setattr(serving, "stop", lambda: pytest.fail("stopped another model's server"))
+    r = client.delete("/api/models/local_gemma")
+    assert r.status_code == 200 and r.json()["deleted"] is True
+
+
 # ── status poll ──────────────────────────────────────────────────────────
 
 

@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import subprocess
+from dataclasses import dataclass
 
 from server import file_state
 from server.executors import register_executor
@@ -26,6 +27,7 @@ from server.executors import register_executor
 from .commands import (
     _apply_stdin_redirect,
     _interpret_exit_code,
+    _is_silent_command,
     _needs_stdin_redirect,
     _truncate_shell_output,
     _validate_command,
@@ -40,12 +42,14 @@ from .paths import (
 )
 from .read_only import _is_read_only_command
 from .state import (
+    CONFIG_LOCK,
     _workspace_prompt_payload,
     get_workspace_path,
     load_workspace_config,
     resolve_write_destination,
     save_recent_workspace,
     save_workspace_config,
+    workspace_lost_message,
 )
 
 log = logging.getLogger("whisper-studio")
@@ -58,16 +62,23 @@ def open_folder_now(path: str) -> str:
     approval executor (server/approval/bootstrap.py::_do_folder_access) can
     complete the very action the user approved instead of only recording the
     permission for it. ``path`` must already be expanded and realpath'd.
+
+    Refused in a turn whose workspace the user let go of (see
+    connect_workspace): reconnecting that folder would undo their disconnect.
     """
+    lost = workspace_lost_message()
+    if lost:
+        return json.dumps({"error": lost})
     try:
         os.makedirs(path, exist_ok=True)
     except Exception as e:
         return json.dumps({"error": f"Could not create folder: {e}"})
-    # Connect workspace
-    config = load_workspace_config()
-    config["path"] = path
-    config.pop("mode", None)  # retired field; scrub it from old configs
-    save_workspace_config(config)
+    # Connect workspace (serialized with the connect/disconnect handlers)
+    with CONFIG_LOCK:
+        config = load_workspace_config()
+        config["path"] = path
+        config.pop("mode", None)  # retired field; scrub it from old configs
+        save_workspace_config(config)
     save_recent_workspace(path)
     WORKSPACE_BACKUPS.clear()
     entries = _ws_list_dir(path)
@@ -97,6 +108,12 @@ def execute_ws_open_folder(tool_input: dict) -> str:
     raw = str(tool_input.get("path", "")).strip()
     if not raw:
         return json.dumps({"error": "path is required"})
+    # The user disconnected (or switched away from) this turn's workspace
+    # mid-turn. Opening a folder now, silently when it is under a grant, would
+    # undo that, so the turn tells the user instead.
+    lost = workspace_lost_message()
+    if lost:
+        return json.dumps({"error": lost})
     switch = _flag(tool_input.get("switch"))
     create = _flag(tool_input.get("create"))
 
@@ -590,75 +607,117 @@ def _exec_ws_run_command(tool_input, transcript, current_attachments):
     command = tool_input.get("command", "").strip()
     if not command:
         return "No command provided."
+    session_id = tool_input.pop("__session_id__", "")
+    run_in_background = bool(tool_input.get("run_in_background", False))
 
-    # Read-only commands execute directly — no approval needed
+    # Read-only commands execute directly, no approval needed
     if _is_read_only_command(command):
-        return _execute_command_directly(command, ws, tool_input)
+        warning = _validate_command(command)
+        if warning:
+            return f"Error: {warning}"
+        try:
+            return run_workspace_command(
+                command, ws, session_id=session_id, run_in_background=run_in_background
+            ).text
+        except Exception as e:
+            return f"Error: {e}"
 
-    payload = json.dumps({"action": "command", "command": command, "cwd": ws})
+    # Everything else runs through the same path once approved: the session
+    # keeps its cwd and owns the task, and run_in_background plus the 30s
+    # handoff apply exactly as they do to read-only commands.
+    payload = json.dumps(
+        {
+            "action": "command",
+            "command": command,
+            "cwd": ws,
+            "session_id": session_id,
+            "run_in_background": run_in_background,
+        }
+    )
     return f"[WS_APPROVAL]{payload}"
 
 
 _AUTO_BACKGROUND_SECONDS = 30
 
 
-def _execute_command_directly(command: str, ws: str, tool_input: dict) -> str:
-    """Execute a read-only command directly and return output to the LLM.
+@dataclass
+class CommandRun:
+    """What one ws_run_command execution produced for the model."""
 
-    If the command runs longer than _AUTO_BACKGROUND_SECONDS, it is
-    automatically moved to a background task and a task_id is returned
-    so the LLM can poll for results instead of blocking.
+    text: str
+    background: bool = False
+    returncode: int | None = None
+    # A session Stop killed the command before it finished.
+    stopped: bool = False
+
+
+def run_workspace_command(
+    command: str, ws: str, *, session_id: str = "", run_in_background: bool = False
+) -> CommandRun:
+    """The one execution path for ws_run_command, read-only and approved alike.
+
+    The caller has already validated ``command``. Starts it at once as a
+    background task when asked to; otherwise waits up to
+    _AUTO_BACKGROUND_SECONDS and, if it is still running then, hands the SAME
+    process to a background task (no restart, no kill) and returns its handle
+    so the model polls instead of blocking. Blocking: call it off the event
+    loop.
     """
-    warning = _validate_command(command)
-    if warning:
-        return f"Error: {warning}"
-
-    run_in_background = tool_input.get("run_in_background", False)
-    session_id = tool_input.pop("__session_id__", "")
     from server.cwd_tracker import (
         extract_cwd_from_output,
+        generation,
         get_cwd,
         update_cwd,
         wrap_command_for_cwd,
     )
+    from server.tasks.handoff import run_with_handoff
 
+    # Captured before the command starts, so its cwd write-back is refused if
+    # the workspace is disconnected or switched while it runs.
+    cwd_generation = generation()
     effective_cwd = get_cwd(session_id, ws) if session_id else ws
     redirected = _apply_stdin_redirect(command) if _needs_stdin_redirect(command) else command
     exec_command = wrap_command_for_cwd(redirected)
 
-    # Explicit background request — start immediately in background
     if run_in_background:
-        return _start_background_command(command, exec_command, effective_cwd, session_id)
+        text = _start_background_command(command, exec_command, effective_cwd, session_id)
+        return CommandRun(text=text, background=True)
 
-    try:
-        from server.tasks.handoff import run_with_handoff
+    result = run_with_handoff(
+        command,
+        exec_command,
+        cwd=effective_cwd,
+        session_id=session_id,
+        timeout=_AUTO_BACKGROUND_SECONDS,
+    )
+    if result.background:
+        text = _background_started_message(command, result.task_id, result.output_path)
+        return CommandRun(text=text, background=True)
+    clean_output, new_cwd = extract_cwd_from_output(result.output.strip())
+    if session_id and new_cwd and os.path.isdir(new_cwd):
+        update_cwd(session_id, new_cwd, generation=cwd_generation)
+    if clean_output:
+        output = clean_output
+    elif result.returncode == 0 and _is_silent_command(command):
+        output = "Done."
+    else:
+        output = "(no output)"
+    output = _truncate_shell_output(output)
+    meaning = _interpret_exit_code(command, result.returncode)
+    if meaning:
+        output += f"\n(exit code {result.returncode}: {meaning})"
+    if result.task_id:
+        output += "\n" + _left_running_message(result.task_id, result.output_path)
+    return CommandRun(text=output, returncode=result.returncode, stopped=result.stopped)
 
-        result = run_with_handoff(
-            command,
-            exec_command,
-            cwd=effective_cwd,
-            session_id=session_id,
-            timeout=_AUTO_BACKGROUND_SECONDS,
-        )
-        if result.background:
-            # Command outlived the foreground budget: the SAME process keeps
-            # running as a background task (no restart, no lost work).
-            return _background_started_message(command, result.task_id, result.output_path)
-        output_text = result.output.strip()
-        clean_output, new_cwd = extract_cwd_from_output(output_text)
-        if session_id and new_cwd and os.path.isdir(new_cwd):
-            update_cwd(session_id, new_cwd)
-        if not clean_output:
-            output = "(no output)"
-        else:
-            output = clean_output
-        output = _truncate_shell_output(output)
-        meaning = _interpret_exit_code(command, result.returncode)
-        if meaning:
-            output += f"\n(exit code {result.returncode}: {meaning})"
-        return output
-    except Exception as e:
-        return f"Error: {e}"
+
+def _left_running_message(task_id: str, output_path: str | None) -> str:
+    return (
+        f"[Left running] The command returned, but processes it started in the "
+        f"background are still running, tracked as task_id={task_id}. Their output "
+        f"keeps going to {output_path}; check them with task_status or task_output "
+        f"{{'task_id': '{task_id}'}} and stop them with task_cancel."
+    )
 
 
 def _start_background_command(

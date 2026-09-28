@@ -18,9 +18,12 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
 
 from . import paths, store
+
+log = logging.getLogger("whisper-studio")
 
 FREQUENCIES = ("daily", "every_n_days", "weekly")
 WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -178,6 +181,38 @@ def get_settings(ws_path: str) -> dict:
         _pending_clear(ws_path)  # promote pre-index config into the index, then forget it
         return seeded
     return _validated(raw)
+
+
+# The per-folder LLM passes an index build runs, keyed by their settings
+# section. "haiku" is their cloud engine; "none" skips a pass.
+LLM_PASSES = ("typed_relations", "entity_descriptions", "chunk_context")
+CLOUD_ENGINE = "haiku"
+SKIP_ENGINE = "none"
+
+
+def settings_for_build(ws_path: str, config: dict | None = None) -> dict:
+    """The settings an index build runs with: :func:`get_settings`, except that
+    in Local mode every LLM pass stored with the cloud ``haiku`` engine is
+    skipped (engine ``none``), because Local mode never calls Bedrock.
+
+    The stored settings are untouched, so the folder's choice applies again
+    after a switch to Hybrid or Cloud, and the settings UI keeps showing what
+    the user saved. The pass is skipped rather than moved to an on-device
+    model: the folder never chose one, and a scheduled refresh must not load
+    a multi-GB model nobody set up. A skipped chunk-header pass falls back to
+    the filename header, like any chunk the LLM could not describe."""
+    from server.infrastructure.cloud_guard import cloud_refusal
+
+    settings = get_settings(ws_path)
+    refusal = cloud_refusal("The Haiku index passes", config)
+    if not refusal:
+        return settings
+    skipped = [p for p in LLM_PASSES if settings[p].get("engine") == CLOUD_ENGINE]
+    for p in skipped:
+        settings[p]["engine"] = SKIP_ENGINE
+    if skipped:
+        log.warning("index %s: skipping %s. %s", ws_path, ", ".join(skipped), refusal)
+    return settings
 
 
 def update_settings(ws_path: str, patch: dict) -> dict:

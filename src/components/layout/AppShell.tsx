@@ -9,11 +9,12 @@ import { useDockLiveWatcher } from '@/hooks/useDockLiveWatcher';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { useSessionPersistence } from '@/hooks/useSessionPersistence';
 import { killSessionStream } from '@/hooks/chatStream/streamControl';
-import { useActiveChatStore } from '@/stores/sessionRuntimes';
-import { useSubagentStore } from '@/stores/subagentStore';
+import { openEventChannel, useActiveChatStore } from '@/stores/sessionRuntimes';
+import { hasRunningSubagent, useSubagentStore } from '@/stores/subagentStore';
 import { useVoiceStore } from '@/stores/voiceStore';
 import { voiceController } from '@/services/voiceController';
 import { initRecordingControllerEvents } from '@/services/recordingController';
+import { syncWorkspaceStatus } from '@/services/workspaceConnection';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { AppStatusBar } from './AppStatusBar';
@@ -64,12 +65,12 @@ const AppShell: React.FC = () => {
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
   const transcriptVisible = useUIStore((s) => s.transcriptVisible);
   const wsConnected = useUIStore((s) => s.wsConnected);
+  const terminalLive = useUIStore((s) => s.terminalLive);
   const workspacePanelCollapsed = useUIStore((s) => s.workspacePanelCollapsed);
   const loadConfig = useSettingsStore((s) => s.loadConfig);
   const loadModels = useSettingsStore((s) => s.loadModels);
   const loadDataRetention = useSettingsStore((s) => s.loadDataRetention);
   const loadSkills = useSettingsStore((s) => s.loadSkills);
-  const loadMCP = useSettingsStore((s) => s.loadMCP);
   const loadSessions = useSessionStore((s) => s.loadSessions);
 
   // Track whether editor tabs are open (for ws-ide-open class)
@@ -118,7 +119,9 @@ const AppShell: React.FC = () => {
     void loadModels();
     void loadDataRetention();
     void loadSkills();
-    void loadMCP();
+    // The app-wide event channel; its first open loads the MCP server list,
+    // and its mcp_changed events keep that list live.
+    openEventChannel();
     // After loadSessions, restore the persisted current session id if any.
     // This survives the page-reload-mid-chat case where Vite HMR cascades on
     // a workspace-wide file change (assistant ran `git checkout`/`merge`) and
@@ -140,7 +143,7 @@ const AppShell: React.FC = () => {
         }
       }
     })();
-  }, [loadConfig, loadModels, loadDataRetention, loadSkills, loadMCP, loadSessions]);
+  }, [loadConfig, loadModels, loadDataRetention, loadSkills, loadSessions]);
 
   // Reconcile the connected workspace on load, after a backend blip, and
   // whenever the window regains focus.
@@ -160,6 +163,12 @@ const AppShell: React.FC = () => {
   // git panel and the chip all kept rendering a workspace the server no
   // longer had, while every turn assembled its tool pool with
   // ws_connected=False and silently dropped the git and GitHub tools.
+  //
+  // Authoritative, but not retroactive: an answer requested before the user
+  // last connected or disconnected is dropped (syncWorkspaceStatus). Focus
+  // fires on the mousedown that clicks Disconnect in an inactive window, so
+  // the resync GET went out just before the POST and its "connected" answer
+  // put the disconnected workspace straight back on screen.
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
@@ -167,16 +176,9 @@ const AppShell: React.FC = () => {
     const sync = async (attempt = 0): Promise<void> => {
       if (cancelled) return;
       try {
-        const response = await fetch('/api/workspace/status');
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = (await response.json()) as { connected?: boolean; path?: string };
-        if (cancelled) return;
-        if (data.connected && data.path) {
-          useUIStore.getState().setWsConnected(true, data.path);
-        } else {
-          useUIStore.getState().setWsConnected(false);
-        }
-        // A clean response is authoritative either way — stop retrying.
+        await syncWorkspaceStatus();
+        // A clean response is authoritative either way (or superseded by
+        // the user's own newer change): stop retrying.
       } catch {
         if (cancelled || attempt >= WORKSPACE_SYNC_MAX_RETRIES) return;
         timer = window.setTimeout(
@@ -219,20 +221,24 @@ const AppShell: React.FC = () => {
   useKeyboardShortcut('mod+k', () => {
     useUIStore.getState().openCommandPalette();
   });
-  // ESC = instant kill switch for the viewed session's stream + all running
-  // subagents. Armed only while something is streaming, so ESC keeps its
-  // normal meaning everywhere else; overlay dismissers that consume ESC
-  // (preventDefault) always win — the next ESC then stops the stream.
+  // ESC = instant kill switch for the viewed session's stream + its own
+  // /subagent runs. Armed only while the viewed session has something to
+  // stop, so ESC keeps its normal meaning everywhere else; overlay dismissers
+  // that consume ESC (preventDefault) always win, and the next ESC stops it.
+  const viewedSessionId = useSessionStore((s) => s.currentSessionId);
   const isActiveStreaming = useActiveChatStore((s) => s.isStreaming);
-  const hasRunningSubagents = useSubagentStore((s) => Object.keys(s.stops).length > 0);
-  const voiceDraining = useVoiceStore((s) => s.draining > 0);
+  const hasRunningSubagents = useSubagentStore((s) => hasRunningSubagent(s, viewedSessionId));
+  // The draining count re-renders this on every change; the controller says
+  // whether any of it belongs to the viewed session.
+  const voiceDrainingCount = useVoiceStore((s) => s.draining);
+  const voiceDraining = voiceDrainingCount > 0 && voiceController.hasDrainingRuns(viewedSessionId);
   useKeyboardShortcut(
     'escape',
     () => {
       if (isActiveStreaming || hasRunningSubagents) {
         killSessionStream(useSessionStore.getState().currentSessionId);
       } else {
-        voiceController.cancelRuns();
+        voiceController.cancelRuns(useSessionStore.getState().currentSessionId);
       }
     },
     isActiveStreaming || hasRunningSubagents || voiceDraining,
@@ -292,8 +298,11 @@ const AppShell: React.FC = () => {
         </div>
       )}
 
-      {/* Terminal panel — below, shown when workspace connected */}
-      {wsConnected && (
+      {/* Terminal panel below: shown with a workspace connected, and kept
+        * after a disconnect for as long as it has open terminals. Unmounting
+        * it closes every PTY, which would kill the dev servers and builds the
+        * session is running there. */}
+      {(wsConnected || terminalLive) && (
         <ErrorBoundary label="Terminal">
           <TerminalPanel />
         </ErrorBoundary>

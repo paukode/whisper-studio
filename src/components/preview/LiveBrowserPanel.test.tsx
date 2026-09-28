@@ -5,7 +5,7 @@
  * self-heals into the live iframe (the auto-retry).
  */
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/react';
 
 // Keep the API layer inert — we only care about the render gate here.
 vi.mock('@/api/preview', () => ({
@@ -16,12 +16,16 @@ vi.mock('@/api/preview', () => ({
 
 import { LiveBrowserPanel } from './LiveBrowserPanel';
 import { useDockStore } from '@/stores/dockStore';
+import { useSessionStore } from '@/stores/sessionStore';
+import { startPreviewSession, stopPreviewSession } from '@/api/preview';
 
 const TARGET = 'http://localhost:65500';
+const CHAT = 'chat-a';
 
 function seedRunningSession() {
+  useSessionStore.setState({ currentSessionId: CHAT });
   useDockStore.setState({
-    liveSession: { name: 'test', url: TARGET, port: 65500 },
+    liveSession: { name: 'test', url: TARGET, port: 65500, owner: CHAT },
     liveNavUrl: null,
     panels: [{ id: 'live', kind: 'live', title: 'Live · test' }],
   });
@@ -72,5 +76,57 @@ describe('LiveBrowserPanel — readiness gate', () => {
     // Server finishes booting; the probe loop should catch it and mount.
     up = true;
     await waitFor(() => expect(iframe()).not.toBeNull(), { timeout: 4000 });
+  });
+});
+
+// Field report: stopping the debugging chat's work stopped the app another
+// chat was building. The pane's Stop must act only on the server this chat
+// owns, and only while the pane is showing that server.
+describe('LiveBrowserPanel: Stop and Restart ownership', () => {
+  const stopBtn = () => screen.queryByRole('button', { name: 'Stop' });
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('refused')));
+    (stopPreviewSession as unknown as ReturnType<typeof vi.fn>).mockReset();
+    (startPreviewSession as unknown as ReturnType<typeof vi.fn>).mockReset();
+  });
+
+  it("stops this chat's own server, naming this chat to the backend", () => {
+    render(<LiveBrowserPanel name="test" url={TARGET} port={65500} owner={CHAT} />);
+    fireEvent.click(stopBtn()!);
+    expect(stopPreviewSession).toHaveBeenCalledWith('test', CHAT);
+  });
+
+  it('offers no Stop while a routed URL points at a different server', () => {
+    useDockStore.setState({ liveNavUrl: 'http://localhost:5174/debug' });
+    render(<LiveBrowserPanel name="test" url={TARGET} port={65500} owner={CHAT} />);
+    expect(screen.getByLabelText('Preview URL')).toHaveValue('http://localhost:5174/debug');
+    expect(stopBtn()).toBeNull();
+  });
+
+  it('keeps Stop for a routed URL on the same server (loopback alias, other path)', () => {
+    useDockStore.setState({ liveNavUrl: 'http://127.0.0.1:65500/settings' });
+    render(<LiveBrowserPanel name="test" url={TARGET} port={65500} owner={CHAT} />);
+    expect(stopBtn()).not.toBeNull();
+  });
+
+  it("offers no Stop for a preview another chat owns, even before the watcher catches up", () => {
+    useSessionStore.setState({ currentSessionId: 'chat-b' });
+    render(<LiveBrowserPanel name="test" url={TARGET} port={65500} owner={CHAT} />);
+    expect(stopBtn()).toBeNull();
+  });
+
+  it("a stopped pane restarts only this chat's server", () => {
+    useDockStore.setState({ liveSession: null });
+    const { unmount } = render(<LiveBrowserPanel name="test" url={TARGET} port={65500} owner={CHAT} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Restart' }));
+    expect(startPreviewSession).toHaveBeenCalledWith('test', CHAT);
+    unmount();
+
+    // Another chat on screen: the leftover pane says so and offers no Restart.
+    useSessionStore.setState({ currentSessionId: 'chat-b' });
+    render(<LiveBrowserPanel name="test" url={TARGET} port={65500} owner={CHAT} />);
+    expect(screen.getByText('No preview is running in this chat')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Restart' })).toBeNull();
   });
 });

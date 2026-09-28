@@ -177,12 +177,13 @@ source ~/.zshrc</code></pre></div>
       <tbody>
         <tr><td rowspan="2"><b>Chat and models</b></td><td>Model mode</td><td>-</td><td>The <code>cloud</code> / <code>hybrid</code> / <code>local</code> dial and, in hybrid, one backend picker per capability.</td></tr>
         <tr><td>Models</td><td>Chat, Discover, Transcription, Indexing</td><td>The chat-model catalog and its visibility toggles, the on-device model browser, and the speech and index weights you have on disk.</td></tr>
-        <tr><td rowspan="4"><b>Tools and automation</b></td><td>MCP servers</td><td>-</td><td>Local stdio and remote HTTP MCP servers.</td></tr>
+        <tr><td rowspan="5"><b>Tools and automation</b></td><td>MCP servers</td><td>-</td><td>Local stdio and remote HTTP MCP servers.</td></tr>
         <tr><td>Import project</td><td>-</td><td>Migrate a Claude Code or Codex CLI project (see below).</td></tr>
+        <tr><td>Code tools</td><td>-</td><td>Each linter and language server the app runs (ruff, pylsp, the workspace's ESLint, typescript-language-server): what it powers, whether it works for the connected workspace, its version, and why not.</td></tr>
         <tr><td>Skills and plugins</td><td>Skills, Plugins</td><td>Your skill folders and opt-in Python plugins.</td></tr>
         <tr><td>Tasks and hooks</td><td>Scheduled tasks, Hooks</td><td>Cron jobs and the Pre/Post/Stop tool hooks.</td></tr>
         <tr><td rowspan="2"><b>Access and usage</b></td><td>Keys and permissions</td><td>API keys, Permissions</td><td>The fields listed below, plus permission rules, per-category defaults, and the sandbox network policy.</td></tr>
-        <tr><td>Usage and advanced</td><td>Stats, Costs, Feature flags, Live preview</td><td>Token and cost history, spend caps, gated features, and the preview browser.</td></tr>
+        <tr><td>Usage and advanced</td><td>Costs, Feature flags, Live preview</td><td>Usage and estimated cost over a chosen range of UTC days, spend caps, gated features, and the preview browser.</td></tr>
       </tbody>
     </table></div>
 
@@ -192,7 +193,7 @@ source ~/.zshrc</code></pre></div>
       <thead><tr><th>Field</th><th>Values</th><th>What it does</th></tr></thead>
       <tbody>
         <tr><td>Tavily API Key (for web search)</td><td>a key, or blank</td><td>Enables <code>web_search</code>. Only needed if you did not set the <code>TAVILY_API_KEY</code> env var; the env var wins if both are present. The field shows a masked hint once saved, never the key.</td></tr>
-        <tr><td>Whisper Language</td><td>blank, one code, or a comma-separated list</td><td>Blank auto-detects. One code pins the language; a list such as <code>pl,en</code> keeps detection but limits it to those languages, so short utterances in a mixed-language meeting are not misdetected (<code>whisper_language</code>).</td></tr>
+        <tr><td>Transcription Languages</td><td>blank, one code, or a comma-separated list</td><td>One code pins the language; a list such as <code>pl,en</code> keeps detection but limits it to those languages, so short utterances in a mixed-language meeting are not misdetected. Blank means English plus your Mac's preferred languages for Canary, and Whisper's own detection for Whisper; the field shows the set in use. Parakeet has no language setting (<code>whisper_language</code>).</td></tr>
         <tr><td>Transcription Model</td><td>Whisper Large v3 · Canary · Parakeet (live)</td><td>The same selector as the transcript header, applied live (<code>transcription_backend</code>; Parakeet is the default).</td></tr>
         <tr><td>Translation Model</td><td>Off · Canary · Apple</td><td>Adds a translation line under speech in another language (<code>translate_mode</code>). Canary covers its 25 European languages with English always on one side; Apple translates between any two of its languages on-device, and exists only in the Mac app on macOS 15 or later.</td></tr>
         <tr><td>Translate To</td><td>a language</td><td>Shown only when translation is on (<code>translate_target</code>).</td></tr>
@@ -205,7 +206,7 @@ source ~/.zshrc</code></pre></div>
         is chosen from the <b>model chip</b> in the composer toolbar (or with <code>/model</code>), and
         the choice sticks for new sessions. Settings &rarr; Models &rarr; Chat is where you hide models
         from that chip or add your own; Discover is where you install on-device ones. The stored key is
-        <code>default_chat_model</code>, whose shipped value is <code>opus5.0</code> (Opus 5).</p></div>
+        <code>default_chat_model</code>, whose shipped value is <code>gpt6-luna</code> (GPT-6 Luna).</p></div>
     </div>
 
     <h3 id="session-controls">Controls that live in the composer, not in Settings</h3>
@@ -225,11 +226,11 @@ source ~/.zshrc</code></pre></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Models</th><th>Levels offered</th></tr></thead>
       <tbody>
-        <tr><td>Opus 4.8, Opus 5, Fable 5.0, Fable 5.1</td><td>low, medium, high, extra, max, ultracode</td></tr>
+        <tr><td>Opus 4.8, Opus 5, Opus 5.5, Fable 5.0, Fable 5.1</td><td>low, medium, high, extra, max, ultracode</td></tr>
         <tr><td>Sonnet 5</td><td>low, medium, high, max, ultracode</td></tr>
         <tr><td>Sonnet 4.6, Opus 4.6, Opus 4.7, GPT-5.4</td><td>low, medium, high, max</td></tr>
         <tr><td>GPT-5.5, GPT-5.6 Sol / Terra / Luna</td><td>none, low, medium, high, max, ultracode</td></tr>
-        <tr><td>GPT-6 Astra</td><td>low, medium, high, max, ultracode</td></tr>
+        <tr><td>GPT-6 Astra / Sol / Luna</td><td>low, medium, high, max, ultracode</td></tr>
         <tr><td>Haiku 4.5 and every on-device model</td><td>none offered; the Effort and Response-length chips are hidden</td></tr>
       </tbody>
     </table></div>
@@ -241,7 +242,7 @@ source ~/.zshrc</code></pre></div>
         <tr><td>Permission Mode</td><td>the Mode chip in the composer</td><td><code>default</code> / <code>auto</code> / <code>plan</code> / <code>acceptEdits</code> / <code>bypassPermissions</code> / <code>dontAsk</code>. How risky tool calls are gated. See <a href="tut-permissions.html">Permissions &amp; approvals</a>.</td></tr>
         <tr><td>Permissions panel</td><td>Keys and permissions &rarr; Permissions</td><td>Per-rule justification notes, a dry-run tester, per-category approval defaults (<code>category_modes</code>), and the sandbox network egress policy (<code>network_policy</code>, tiers <code>restrictive</code> / <code>curated</code> / <code>permissive</code>; <code>permissive</code> is the default, meaning no restriction).</td></tr>
         <tr><td>Feature Flags</td><td>Usage and advanced &rarr; Feature flags</td><td>Turn gated features on or off (<code>feature_flags</code>) without editing the file. <code>progressive_tools</code> (progressive tool disclosure) is one example, with companion <code>progressive_tools_core_extra</code> / <code>progressive_tools_defer_extra</code> keys for tuning the split.</td></tr>
-        <tr><td>Cost Limits</td><td>Usage and advanced &rarr; Costs</td><td>Per-session (<code>max_session_cost_usd</code>) and per-day (<code>max_daily_cost_usd</code>) Bedrock spend caps. <code>0</code> means unlimited. Reaching a cap leaves the turn one final round to answer. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td></tr>
+        <tr><td>Cost Limits</td><td>Usage and advanced &rarr; Costs</td><td>Per-session (<code>max_session_cost_usd</code>) and per-day (<code>max_daily_cost_usd</code>, the UTC day) Bedrock spend caps. <code>0</code> means unlimited. Reaching a cap leaves the turn one final round to answer. See <a href="arch-costs.html">Cost tracking &amp; budgets</a>.</td></tr>
         <tr><td>Import project</td><td>Tools and automation &rarr; Import project</td><td>Migrates CLAUDE.md or AGENTS.md to WHISPER.md, copies skills, and translates <code>.mcp.json</code>. Source files are never modified. See <a href="installation.html#import-project">Installation</a>.</td></tr>
       </tbody>
     </table></div>

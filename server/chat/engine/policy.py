@@ -20,11 +20,16 @@ class TurnPolicy:
     # Whether an unrescuable turn gets one final no-tools round on a hard-
     # trimmed context (synthesize from what remains) instead of a bare error.
     salvage_round: bool = True
-    # Completion gate (Stop hooks + goal evaluator). Off for the local preset:
-    # the gate's evaluator may call a cloud model, and a local turn must stay
-    # fully offline (parity with the pre-engine local loop, which had no gate).
+    # Completion gate (Stop hooks, the deliverable and verification checks, the
+    # goal's quality gates and its judge). Unattended consumers (agents, cron,
+    # headless runs) build their own policy with it off.
     completion_gate: bool = True
+    # Run the gate only while the session has an active goal (the goal_loop
+    # flag on and a goal set). The on-device preset: every block costs a full
+    # local round, so plain on-device chat keeps ending when the model stops,
+    # and a goal brings the whole gate, judged on the session's own model.
+    gate_requires_goal: bool = False
 
 
 CHAT_POLICY = TurnPolicy()
-LOCAL_POLICY = TurnPolicy(completion_gate=False)
+LOCAL_POLICY = TurnPolicy(gate_requires_goal=True)

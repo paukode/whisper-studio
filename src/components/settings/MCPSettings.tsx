@@ -1,23 +1,8 @@
-import React, { useCallback, useMemo, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import React, { useCallback, useState } from 'react';
 import { z } from 'zod';
-import { get, post, put, del } from '@/api/client';
-import { useSettingsStore } from '@/stores/settingsStore';
-import { useMcpToggle, fetchMcpServers, type MCPServerInfo } from '@/hooks/useMcpToggle';
+import { post, put, del } from '@/api/client';
+import { useMcpStore, type MCPServerInfo, type PendingElicitation } from '@/stores/mcpStore';
 import { useSaveToast } from '@/hooks/useSaveToast';
-
-/** Approval-granularity fields the backend returns alongside MCPServerInfo's
- *  base shape (see server/mcp.py's mcp_servers_status) that the shared hook's
- *  type doesn't declare. Read via a local cast so useMcpToggle.ts (outside
- *  this panel) doesn't need to change for this settings-only surface. */
-interface MCPServerExtra {
-  url?: string;
-  bearer_token_env_var?: string;
-  approval_mode?: string;
-  tool_overrides?: Record<string, string>;
-  enabled_tools?: string[];
-  disabled_tools?: string[];
-}
 
 const APPROVAL_MODES = ['auto', 'prompt', 'writes', 'approve'] as const;
 
@@ -46,16 +31,6 @@ const EMPTY_FORM: MCPServerFormData = {
   enabledTools: '',
   disabledTools: '',
 };
-
-interface PendingElicitation {
-  elicitation_id: string;
-  server: string;
-  session_id?: string | null;
-  mode: string;
-  message: string;
-  requested_schema?: Record<string, unknown> | null;
-  url?: string | null;
-}
 
 /** Parse a comma-separated tool-name list field. Blank -> no restriction. */
 function parseToolNameList(raw: string): string[] {
@@ -90,8 +65,19 @@ export function parseMcpArgs(raw: string): { args: string[] } | { error: string 
   }
 }
 
+/** One line under a server's name: its launch command, then what it offers
+ *  or why it failed. */
+function serverSummary(server: MCPServerInfo): string {
+  const launch = server.url || `${server.command} ${server.args.join(' ')}`.trim();
+  if (!server.enabled) return launch;
+  if (server.status === 'error') return `${launch} · ${server.error ?? 'failed to start'}`;
+  if (server.status === 'connected') {
+    return `${launch} · ${server.tools.length} ${server.tools.length === 1 ? 'tool' : 'tools'}`;
+  }
+  return launch;
+}
+
 export const MCPSettings: React.FC = () => {
-  const queryClient = useQueryClient();
   const [editingServer, setEditingServer] = useState<string | null>(null);
   const [renamingServer, setRenamingServer] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -99,42 +85,18 @@ export const MCPSettings: React.FC = () => {
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null); // form-validation + mutation errors
 
-  // Server list loads via react-query (no setState-in-effect). Mutations below
-  // invalidate ['mcp-servers'] to refetch; the enable toggle updates the cache
-  // optimistically via setQueryData.
-  const serversQuery = useQuery({
-    queryKey: ['mcp-servers'],
-    queryFn: fetchMcpServers,
-    staleTime: 30_000,
-  });
-  // Stable identity when the query data is unchanged, so callbacks that depend
-  // on `servers` (e.g. rename) don't get a new reference every render.
-  const servers = useMemo(() => serversQuery.data ?? [], [serversQuery.data]);
-  const displayError = error ?? (serversQuery.isError ? 'Failed to load MCP servers from backend.' : null);
+  // The one MCP list (mcpStore), kept live by the backend's mcp_changed
+  // events: the same servers and pending elicitations the composer reads.
+  const servers = useMcpStore((s) => s.servers);
+  const pendingElicitations = useMcpStore((s) => s.pendingElicitations);
+  const configError = useMcpStore((s) => s.configError);
+  const loadFailed = useMcpStore((s) => s.loadFailed);
+  const handleToggleEnabled = useMcpStore((s) => s.setEnabled);
+  const displayError = error ?? configError ?? (loadFailed ? 'Failed to load MCP servers from backend.' : null);
   const [saving, setSaving] = useState(false);
 
-  // Elicitations awaiting a human answer (an MCP server asking for input
-  // mid tool-call — see server/mcp.py's _build_elicitation_callback). A
-  // separate query straight against the raw response (not through
-  // fetchMcpServers, which only ever returns MCPServerInfo[]) so this
-  // panel-only surface doesn't require changing that shared hook. Polled
-  // while the panel is mounted since a pending elicitation can appear at
-  // any time, independent of any user action here.
-  const elicitationsQuery = useQuery({
-    queryKey: ['mcp-elicitations'],
-    queryFn: async () => {
-      const data = await get<{ pending_elicitations?: PendingElicitation[] }>('/api/mcp/servers');
-      return data.pending_elicitations ?? [];
-    },
-    refetchInterval: 4000,
-  });
-  const pendingElicitations = elicitationsQuery.data ?? [];
   const [elicitationContent, setElicitationContent] = useState<Record<string, string>>({});
   const [elicitationBusy, setElicitationBusy] = useState<string | null>(null);
-
-  // Shared persistent toggle — updates this panel's cache AND the toolbar's
-  // store copy + PATCHes, so the change is live in both places.
-  const handleToggleEnabled = useMcpToggle();
 
   // Toast feedback for save/delete/restart/rename (the editor closes / the row
   // refetches, so an inline indicator would unmount before it's seen).
@@ -155,22 +117,19 @@ export const MCPSettings: React.FC = () => {
   }, []);
 
   const handleEdit = useCallback((server: MCPServerInfo) => {
-    const extra = server as MCPServerInfo & MCPServerExtra;
     setIsAdding(false);
     setEditingServer(server.name);
     setFormData({
       name: server.name,
       command: server.command,
       args: JSON.stringify(server.args),
-      env: server.env ? JSON.stringify(server.env) : '',
-      url: extra.url ?? '',
-      bearerTokenEnvVar: extra.bearer_token_env_var ?? '',
-      approvalMode: extra.approval_mode ?? 'auto',
-      toolOverrides: extra.tool_overrides && Object.keys(extra.tool_overrides).length
-        ? JSON.stringify(extra.tool_overrides)
-        : '',
-      enabledTools: (extra.enabled_tools ?? []).join(', '),
-      disabledTools: (extra.disabled_tools ?? []).join(', '),
+      env: JSON.stringify(server.env),
+      url: server.url,
+      bearerTokenEnvVar: server.bearer_token_env_var,
+      approvalMode: server.approval_mode,
+      toolOverrides: Object.keys(server.tool_overrides).length ? JSON.stringify(server.tool_overrides) : '',
+      enabledTools: server.enabled_tools.join(', '),
+      disabledTools: server.disabled_tools.join(', '),
     });
   }, []);
 
@@ -253,13 +212,10 @@ export const MCPSettings: React.FC = () => {
       setIsAdding(false);
       setEditingServer(null);
       setFormData(EMPTY_FORM);
-      void queryClient.invalidateQueries({ queryKey: ['mcp-servers'] });
-      // Refresh the toolbar's store copy so a new/renamed server shows there too.
-      await useSettingsStore.getState().loadMCP();
-      await useSettingsStore.getState().loadSkills();
+      await useMcpStore.getState().refresh();
     }, { success: wasAdding ? 'MCP server added' : 'MCP server saved', error: 'Failed to save MCP server' });
     setSaving(false);
-  }, [formData, isAdding, editingServer, queryClient, saveToast]);
+  }, [formData, isAdding, editingServer, saveToast]);
 
   const handleCancel = useCallback(() => {
     setIsAdding(false);
@@ -272,20 +228,16 @@ export const MCPSettings: React.FC = () => {
       await del(`/api/mcp/servers/${encodeURIComponent(name)}`);
       setEditingServer(null);
       setFormData(EMPTY_FORM);
-      void queryClient.invalidateQueries({ queryKey: ['mcp-servers'] });
-      await useSettingsStore.getState().loadMCP();
-      await useSettingsStore.getState().loadSkills();
+      await useMcpStore.getState().refresh();
     }, { success: 'MCP server deleted', error: 'Failed to delete MCP server' });
-  }, [queryClient, saveToast]);
+  }, [saveToast]);
 
   const handleRestart = useCallback(async (name: string) => {
     await saveToast(async () => {
       await post(`/api/mcp/servers/${encodeURIComponent(name)}/restart`);
-      void queryClient.invalidateQueries({ queryKey: ['mcp-servers'] });
-      await useSettingsStore.getState().loadMCP();
-      await useSettingsStore.getState().loadSkills();
-    }, { success: 'MCP server restarting', error: 'Failed to restart MCP server' });
-  }, [queryClient, saveToast]);
+      await useMcpStore.getState().refresh();
+    }, { success: 'MCP server restarted', error: 'Failed to restart MCP server' });
+  }, [saveToast]);
 
   const handleRenameStart = useCallback((name: string) => {
     setRenamingServer(name);
@@ -310,11 +262,9 @@ export const MCPSettings: React.FC = () => {
       });
       setRenamingServer(null);
       setRenameValue('');
-      void queryClient.invalidateQueries({ queryKey: ['mcp-servers'] });
-      await useSettingsStore.getState().loadMCP();
-      await useSettingsStore.getState().loadSkills();
+      await useMcpStore.getState().refresh();
     }, { success: 'MCP server renamed', error: 'Failed to rename MCP server' });
-  }, [renamingServer, renameValue, servers, queryClient, saveToast]);
+  }, [renamingServer, renameValue, servers, saveToast]);
 
   const handleRenameCancel = useCallback(() => {
     setRenamingServer(null);
@@ -344,12 +294,12 @@ export const MCPSettings: React.FC = () => {
           action: 'mcp_elicit_respond',
           payload: { elicitation_id: e.elicitation_id, response_action: responseAction, content },
         });
-        void queryClient.invalidateQueries({ queryKey: ['mcp-elicitations'] });
+        await useMcpStore.getState().refresh();
       } finally {
         setElicitationBusy(null);
       }
     },
-    [elicitationContent, queryClient],
+    [elicitationContent],
   );
 
   const statusClass = (status: string) => {
@@ -373,7 +323,7 @@ export const MCPSettings: React.FC = () => {
         </button>
       </div>
 
-      {error && <p className="settings-empty">{error}</p>}
+      {displayError && <p className="settings-empty">{displayError}</p>}
 
       {isFormVisible && (
         <div className="settings-editor" id="mcpEditor">
@@ -545,7 +495,7 @@ export const MCPSettings: React.FC = () => {
               ) : (
                 <>
                   <div className="settings-item-name">{server.name}</div>
-                  <div className="settings-item-desc">{server.command} {server.args.join(' ')}</div>
+                  <div className="settings-item-desc">{serverSummary(server)}</div>
                 </>
               )}
             </div>

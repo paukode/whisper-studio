@@ -73,7 +73,10 @@ def test_normalizer_carries_window_metadata():
 # Deployments whose prompt cap differs from their family default. GPT-6 Astra
 # is not on the 278,528 mantle cap: bedrock-mantle accepted a 348K-token prompt
 # (verified live 2026-09-09); its rejection carries no number, so the entry
-# pins OpenAI's published 922K max input.
+# pins OpenAI's published 922K max input. GPT-6 Sol and Luna publish the same
+# 922K upstream but stay on the family default until a live probe shows mantle
+# accepting a longer prompt for them (GPT-5.6 also publishes 1M and is capped at
+# 278,528 on mantle).
 _DEPLOYMENT_CAPS = {"openai.gpt-6-astra": 922_000}
 
 

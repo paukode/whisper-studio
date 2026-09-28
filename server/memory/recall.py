@@ -16,7 +16,6 @@ import os
 import threading
 from datetime import datetime, timezone
 
-import boto3
 from botocore.config import Config as BotoConfig
 
 from server.memory.memdir import (
@@ -43,16 +42,17 @@ _RECALL_CLIENT_LOCK = threading.Lock()
 
 
 def _get_recall_client(region: str):
-    with _RECALL_CLIENT_LOCK:
-        client = _RECALL_CLIENTS.get(region)
-        if client is None:
-            client = boto3.client(
-                "bedrock-runtime",
-                region_name=region,
-                config=BotoConfig(read_timeout=30, connect_timeout=5, retries={"max_attempts": 1}),
-            )
-            _RECALL_CLIENTS[region] = client
-        return client
+    # Cached only once credentials resolve, so adding them later takes effect.
+    from server.infrastructure.aws_clients import cached_client
+
+    return cached_client(
+        _RECALL_CLIENTS,
+        _RECALL_CLIENT_LOCK,
+        region,
+        "bedrock-runtime",
+        region_name=region,
+        config=BotoConfig(read_timeout=30, connect_timeout=5, retries={"max_attempts": 1}),
+    )
 
 
 def _reset_recall_client_cache() -> None:
@@ -104,7 +104,7 @@ def _build_tier_manifest(entries: list[tuple[str, MemoryFile]]) -> str:
 
 
 async def recall_memory_context(
-    query: str, ws_path: str | None, *, model_id: str
+    query: str, ws_path: str | None, *, model_id: str, session_id: str = ""
 ) -> tuple[str, int]:
     """Select relevant memories across both tiers and format the context block.
 
@@ -117,7 +117,7 @@ async def recall_memory_context(
         return "", 0
 
     entries = _scan_tiers(tiers)
-    selected = await _select_entries(query, entries, model_id=model_id)
+    selected = await _select_entries(query, entries, model_id=model_id, session_id=session_id)
     return _build_context(tiers, selected), len(selected)
 
 
@@ -126,6 +126,7 @@ async def _select_entries(
     entries: list[tuple[str, MemoryFile]],
     *,
     model_id: str,
+    session_id: str = "",
 ) -> list[tuple[str, MemoryFile]]:
     """Pick up to MAX_SELECTIONS entries relevant to the query."""
     if not entries:
@@ -138,16 +139,18 @@ async def _select_entries(
     # On-device (local) turns must stay fully offline: skip the Haiku ranking
     # side-query and return the most recent memories. With a large store this
     # loses smart ranking, but it never leaves the machine — recall parity for
-    # Gemma without breaking isolation.
+    # Gemma without breaking isolation. Local mode is the same for every turn,
+    # whatever model it runs on: the manifest never goes to Bedrock there.
+    from server.infrastructure.cloud_guard import cloud_allowed
     from server.local.runtime import is_local_model_id
 
-    if is_local_model_id(model_id):
+    if is_local_model_id(model_id) or not cloud_allowed():
         return entries[:MAX_SELECTIONS]
 
     manifest = _build_tier_manifest(entries)
 
     try:
-        selected_keys = await _query_selector(query, manifest, model_id)
+        selected_keys = await _query_selector(query, manifest, model_id, session_id)
     except Exception as e:
         log.warning("Memory recall side-query failed: %s", e)
         # Graceful degradation: return most recent files
@@ -181,7 +184,9 @@ async def _select_entries(
     return result
 
 
-async def _query_selector(query: str, manifest: str, model_id: str) -> list[str]:
+async def _query_selector(
+    query: str, manifest: str, model_id: str, session_id: str = ""
+) -> list[str]:
     """Call Haiku to select relevant memory files."""
     import asyncio
 
@@ -190,14 +195,15 @@ async def _query_selector(query: str, manifest: str, model_id: str) -> list[str]
     config = load_config()
     region = config.get("bedrock_region", "us-east-1")
     chat_models = config.get("chat_models", {})
-    # Haiku for recall by default (cheapest model); auxiliary_models.memory_recall
-    # may name another cloud key.
+    # Haiku for recall by default (cheapest Claude model);
+    # auxiliary_models.memory_recall may name another cloud key.
     from server.infrastructure.auxiliary import aux_model_id
 
-    haiku_model = (
-        aux_model_id("memory_recall", fallback_id=model_id, models=chat_models, config=config)
-        or model_id
+    haiku_model = aux_model_id(
+        "memory_recall", fallback_id=model_id, models=chat_models, config=config
     )
+    if not haiku_model:
+        raise RuntimeError("no cloud model resolves for memory recall")
 
     client = _get_recall_client(region)
 
@@ -208,8 +214,11 @@ async def _query_selector(query: str, manifest: str, model_id: str) -> list[str]
     )
 
     def _invoke():
-        response = client.invoke_model(
-            modelId=haiku_model,
+        from server.costs.calls import invoke_claude
+
+        body = invoke_claude(
+            client,
+            model_id=haiku_model,
             contentType="application/json",
             accept="application/json",
             body=json.dumps(
@@ -220,8 +229,9 @@ async def _query_selector(query: str, manifest: str, model_id: str) -> list[str]
                     "messages": [{"role": "user", "content": user_msg}],
                 }
             ),
+            source="memory",
+            session_id=session_id,
         )
-        body = json.loads(response["body"].read())
         text = body.get("content", [{}])[0].get("text", "")
         # Parse JSON response. A bare "Expecting value: line 1 column 1" said
         # nothing about WHICH model answered or WHAT it said (61 times in one

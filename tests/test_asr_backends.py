@@ -92,6 +92,68 @@ def test_repetition_hallucination_filter():
     )
 
 
+def test_repetition_filter_spares_emphasis_inside_a_sentence():
+    """A back-to-back triple is a loop only when it is most of the utterance.
+    Tripled emphasis inside a real sentence is ordinary speech (Polish above
+    all) and must survive; the same phrase repeated as the whole text is
+    still a loop, even when it could be real ("Tak, tak, tak." cannot be told
+    apart from "Ola ola ola" by its text)."""
+    r = whisper_backend.is_repetition_hallucination
+    for spoken in (
+        "To było bardzo, bardzo, bardzo dobre spotkanie i wszyscy byli zadowoleni z wyników.",
+        "Tak, tak, tak, rozumiem, ale budżet na przyszły kwartał jest już zamknięty.",
+        "Musimy to zrobić szybko, szybko, szybko, bo klient czeka na odpowiedź od wczoraj.",
+        "Nie nie, nie o to mi chodziło.",
+        "Nie, nie, nie, ja tego nie powiedziałem.",
+        "It was very, very, very good and everyone in the meeting agreed with the plan.",
+    ):
+        assert not r(spoken), spoken
+        # The repeated phrase alone, looping, is still caught.
+        clean = spoken.lower().replace(",", "").split()
+        run = next(w for i, w in enumerate(clean) if clean[i + 1 : i + 3] == [w, w])
+        assert r(" ".join([run] * 4)), run
+    # A long loop with a short lead-in stays a loop.
+    assert r("and then the the the the the the the the the the")
+
+
+def test_repetition_filter_counts_whole_words_not_substrings():
+    """The long-form rule counts a phrase as whole words. A short word that
+    merely recurs inside longer ones ("the" in "there", "ta" in "tabela",
+    "nie" in "niebo") is not repetition, while a phrase that really loops is."""
+    r = whisper_backend.is_repetition_hallucination
+    for spoken in (
+        "So then they thought the theme was there.",
+        "Ta tabela tam to taka tania tapeta.",
+        "Na nas na nasz narodowy naród.",
+        "Nie wiem czy niebo nie jest niebieskie nie",
+        "Nie, nie mogę, niestety nie dzisiaj.",
+        "the cat and the dog and the bird",
+    ):
+        assert not r(spoken), spoken
+    assert r("and then i said i love you i love you i love you i love you")
+    assert r("I love you. " * 12)
+
+
+def test_repetition_filter_needs_back_to_back_repeats():
+    """A word or phrase that recurs through a sentence with other words
+    between its occurrences is how people talk about one thing, not a loop,
+    however often it recurs. The same phrase said back to back until it takes
+    over the text is a loop."""
+    r = whisper_backend.is_repetition_hallucination
+    for spoken in (
+        "Nie wiem, naprawdę nie wiem, nie wiem co powiedzieć.",
+        "Dziękuję bardzo, dziękuję wszystkim, dziękuję i do widzenia.",
+        "Transkrypcja działa, transkrypcja jest szybka, transkrypcja jest dobra.",
+        "Nie, nie, nie, to nie tak, nie.",
+        "To było bardzo, bardzo, bardzo dobre.",
+        "We need the database migration, the database backup and the database restore.",
+        "Kubernetes deployment, Kubernetes service and Kubernetes ingress.",
+    ):
+        assert not r(spoken), spoken
+    assert r("Thank you for watching. " * 3)
+    assert r("We need the database " + "the database " * 5)
+
+
 # ── startup warmup policy: ONLY Parakeet is warmed at startup ──────────────────
 
 
@@ -211,13 +273,20 @@ def test_decode_uses_constrained_detection_for_allowlist(monkeypatch):
 # ── translate-to-English companion pass ──────────────────────────────────────
 
 
-def test_translate_utterance_filters_hallucinations(monkeypatch):
+def test_translate_utterance_keeps_short_phrases_and_drops_loops(monkeypatch):
+    """The source already passed its engine's transcript filter, so a short
+    translation that happens to be an English filler phrase ("Dziekuje." ->
+    "Thank you.") is real; only a runaway loop is dropped."""
     from server.asr import canary_backend
 
+    audio = np.zeros(16000, dtype=np.float32)
     monkeypatch.setattr(
-        canary_backend, "_generate", lambda a, source_lang, target_lang: "thank you."
+        canary_backend, "_generate", lambda a, source_lang, target_lang: "Thank you."
     )
-    assert canary_backend.translate_utterance(np.zeros(16000, dtype=np.float32), "pl") == ""
+    assert canary_backend.translate_utterance(audio, "pl") == "Thank you."
+    loop = "thank you thank you thank you thank you thank you thank you"
+    monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: loop)
+    assert canary_backend.translate_utterance(audio, "pl") == ""
 
 
 # ── canary backend + whisper variant ─────────────────────────────────────────
@@ -233,7 +302,7 @@ def test_canary_session_emits_final_with_language(monkeypatch):
     monkeypatch.setattr(
         canary_backend,
         "_decode_utterance",
-        lambda pcm, previous=None: ("dzień dobry", np.zeros(16000, dtype=np.float32), "pl"),
+        lambda pcm, tracker: ("dzień dobry", np.zeros(16000, dtype=np.float32), "pl"),
     )
     session = canary_backend.create_session()
     session._buf = _StubBuffer([b"\x00" * 32000])
@@ -241,73 +310,6 @@ def test_canary_session_emits_final_with_language(monkeypatch):
     assert [(e["kind"], e["text"], e["language"]) for e in events] == [
         ("final", "dzień dobry", "pl")
     ]
-
-
-def test_canary_utterance_language_pins_and_detects(monkeypatch):
-    import server.infrastructure.config as cfg
-    from server.asr import canary_backend, lid
-
-    long_audio = np.zeros(32000, dtype=np.float32)  # 2 s: clears the duration gate
-    # Single supported allowlist entry: pinned, no detection call.
-    monkeypatch.setattr(cfg, "get", lambda k, default=None: "xx,pl")
-    monkeypatch.setattr(
-        lid, "detect", lambda a, allowed=None: (_ for _ in ()).throw(AssertionError)
-    )
-    assert canary_backend._utterance_language(long_audio) == "pl"
-    # Multi-entry allowlist: confident detection constrained to it wins.
-    seen = {}
-
-    def fake_detect(a, allowed=None):
-        seen["allowed"] = set(allowed)
-        return "en", 0.9
-
-    monkeypatch.setattr(cfg, "get", lambda k, default=None: "pl,en")
-    monkeypatch.setattr(lid, "detect", fake_detect)
-    assert canary_backend._utterance_language(long_audio) == "en"
-    assert seen["allowed"] == {"pl", "en"}
-    # No allowlist: detection over all Canary languages; failure falls to en.
-    monkeypatch.setattr(cfg, "get", lambda k, default=None: "")
-    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: (None, 0.0))
-    assert canary_backend._utterance_language(long_audio) == "en"
-
-
-def test_canary_language_is_sticky_for_weak_detections(monkeypatch):
-    import server.infrastructure.config as cfg
-    from server.asr import canary_backend, lid
-
-    monkeypatch.setattr(cfg, "get", lambda k, default=None: "")
-    long_audio = np.zeros(32000, dtype=np.float32)  # 2 s
-    short_audio = np.zeros(8000, dtype=np.float32)  # 0.5 s: under the gate
-    # A weak (low-confidence) detection must not displace the session language.
-    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: ("sl", 0.4))
-    assert canary_backend._utterance_language(long_audio, previous="pl") == "pl"
-    # Nor may a short clip, however confident it claims to be.
-    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: ("nl", 0.95))
-    assert canary_backend._utterance_language(short_audio, previous="pl") == "pl"
-    # A confident detection on a long clip DOES switch.
-    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: ("en", 0.85))
-    assert canary_backend._utterance_language(long_audio, previous="pl") == "en"
-    # With no previous, even a weak detection beats guessing English.
-    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: ("pl", 0.4))
-    assert canary_backend._utterance_language(long_audio, previous=None) == "pl"
-
-
-def test_canary_session_remembers_language(monkeypatch):
-    from server.asr import canary_backend
-
-    calls = []
-
-    def fake_decode(pcm, previous=None):
-        calls.append(previous)
-        return "tekst", np.zeros(16000, dtype=np.float32), "pl"
-
-    monkeypatch.setattr(canary_backend, "_decode_utterance", fake_decode)
-    session = canary_backend.create_session()
-    session._buf = _StubBuffer([b"\x00" * 32000, b"\x00" * 32000])
-    session.process(b"\x00" * 960)
-    session._buf = _StubBuffer([b"\x00" * 32000])
-    session.process(b"\x00" * 960)
-    assert calls == [None, "pl", "pl"]
 
 
 def test_canary_translate_language_pairs(monkeypatch):
@@ -330,22 +332,6 @@ def test_canary_translate_language_pairs(monkeypatch):
     assert calls == [("pl", "en"), ("en", "pl")]
 
 
-def test_canary_translate_detects_unknown_source(monkeypatch):
-    from server.asr import canary_backend, lid
-
-    monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: "hi")
-    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: ("pl", 0.9))
-    import server.infrastructure.config as cfg
-
-    monkeypatch.setattr(cfg, "get", lambda k, default=None: "")
-    audio = np.zeros(16000, dtype=np.float32)
-    # Parakeet finals carry no language: detected here, then translated.
-    assert canary_backend.translate_utterance(audio, None, target="en") == "hi"
-    # Detected language equals the target: skipped.
-    monkeypatch.setattr(lid, "detect", lambda a, allowed=None: ("en", 0.9))
-    assert canary_backend.translate_utterance(audio, None, target="en") == ""
-
-
 # ── translate-mode resolution (server/websocket.py) ─────────────────────────
 
 
@@ -363,6 +349,11 @@ def test_resolve_translator_matrix():
     assert r("canary", False, None, "de") == "canary"
     assert r("canary", False, None, "en") == "canary"
     assert r("canary", False, "pl", "ja") is None  # ja not a Canary language
+    # A known source Canary cannot read is not attempted in either direction
+    # (only an unknown one is, and detected there).
+    for heard in ("ja", "ar", "zh", "no"):
+        assert r("canary", False, heard, "en") is None, heard
+        assert r("canary", True, heard, "en") is None, heard
     # apple: needs the bridge, any pair
     assert r("apple", True, "pl", "de") == "apple"
     assert r("apple", False, "pl", "en") is None
@@ -375,18 +366,41 @@ def test_resolve_translator_matrix():
 def test_lid_pick_language_constrained():
     import math
 
+    import pytest
+
     from server.asr.lid import pick_language
 
     codes = ("en", "pl", "de", "ru")
     probs = [math.log(p) for p in (0.1, 0.2, 0.6, 0.9)]
-    code, conf = pick_language(probs, codes, None)
-    assert code == "ru" and conf > 0.4
     code, conf = pick_language(probs, codes, {"en", "pl"})
-    # Confidence is RELATIVE to the candidate set: 0.2 / (0.1 + 0.2).
+    # Confidence is RELATIVE to the candidate set: 0.2 / (0.1 + 0.2), however
+    # much of the mass sits on languages outside it.
     assert code == "pl" and abs(conf - 2 / 3) < 0.01
-    # Empty intersection falls back to the global argmax.
-    code, _ = pick_language(probs, codes, {"xx"})
-    assert code == "ru"
+    # Tiny absolute masses keep their ratio (no underflow to a zero share).
+    tiny = [-800.0, -799.0, -1.0, -0.5]
+    code, conf = pick_language(tiny, codes, {"en", "pl"})
+    assert code == "pl" and abs(conf - 1 / (1 + math.exp(-1))) < 1e-6
+    # No candidate the classifier can label is a programming error: it
+    # raises instead of quietly widening to every language.
+    with pytest.raises(ValueError):
+        pick_language(probs, codes, {"xx"})
+
+
+def test_lid_detect_reports_classifier_failure_but_raises_on_no_candidates(monkeypatch, caplog):
+    import pytest
+
+    from server.asr import lid
+
+    def broken():
+        raise RuntimeError("model missing")
+
+    monkeypatch.setattr(lid, "_get_classifier", broken)
+    audio = np.zeros(16000, dtype=np.float32)
+    with caplog.at_level("WARNING", logger="whisper-studio"):
+        assert lid.detect(audio, ("en", "pl")) == (None, 0.0)
+    assert "Language detection failed" in caplog.text
+    with pytest.raises(ValueError):
+        lid.detect(audio, ())
 
 
 def test_canary_session_emits_interim_drafts(monkeypatch):
@@ -395,7 +409,6 @@ def test_canary_session_emits_interim_drafts(monkeypatch):
     monkeypatch.setattr(
         canary_backend, "_generate", lambda a, source_lang, target_lang: "dzień dob"
     )
-    monkeypatch.setattr(canary_backend, "_utterance_language", lambda a, previous=None: "pl")
     session = canary_backend.create_session()
     # No completed utterance, 1 s of pending audio: a draft is emitted once.
     session._buf = _StubBuffer([], tail=None)
@@ -415,7 +428,6 @@ def test_canary_drafts_yield_to_translations(monkeypatch):
     from server.asr import canary_backend
 
     monkeypatch.setattr(canary_backend, "_generate", lambda a, source_lang, target_lang: "draft")
-    monkeypatch.setattr(canary_backend, "_utterance_language", lambda a, previous=None: "pl")
     monkeypatch.setattr(canary_backend, "_pending_translations", 0)
     session = canary_backend.create_session()
     session._buf = _StubBuffer([], tail=None)

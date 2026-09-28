@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { get, post } from '@/api/client';
 import { useUIStore } from '@/stores/uiStore';
+import { useMcpStore } from '@/stores/mcpStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 
 type SourceType = 'auto' | 'claude' | 'codex';
@@ -110,10 +111,10 @@ export const ImportPanel: React.FC = () => {
       const summary = await post<ImportSummary>('/api/onboarding/import', body);
       setResult(summary);
       addToast({ type: 'success', message: `Imported ${summary.tool} project`, persist: false });
-      // The import may have added folder skills and/or MCP servers — refresh
-      // the composer's cached copies so they show up without a reload.
+      // The import may have added folder skills and MCP servers; the backend
+      // already started the servers, so reload both lists everywhere.
       await useSettingsStore.getState().loadSkills();
-      await useSettingsStore.getState().loadMCP();
+      await useMcpStore.getState().refresh();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Import failed';
       setError(message);

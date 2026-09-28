@@ -184,6 +184,13 @@ def exec_run_python(tool_input, transcript, current_attachments):
     code = tool_input.get("code", "")
     if not code:
         return "Error: no code provided."
+    # The code runs in the workspace (or /tmp without one). In a turn whose
+    # workspace the user disconnected mid-turn it would quietly move to /tmp.
+    from server.workspace.state import workspace_lost_message
+
+    lost = workspace_lost_message()
+    if lost:
+        return lost
     payload = json.dumps(
         {
             "action": "run_python",

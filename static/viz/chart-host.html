@@ -8,6 +8,8 @@
 <style>
   html, body { margin: 0; padding: 0; background: transparent; }
   #c { width: 100%; }
+  /* Filling: the parent set this frame's height, and the chart takes it. */
+  html.fill, html.fill body, html.fill #c { height: 100%; overflow: hidden; }
   #c svg { display: block; }
   .err {
     font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -25,7 +27,11 @@
  * it is evaluated here and not in the app document.
  *
  * Protocol with the parent (VizCard.tsx):
- *   in   {type:'render', spec, tokens}     render a Vega-Lite spec
+ *   in   {type:'render', spec, tokens, fill}
+ *                                          render a Vega-Lite spec; with fill,
+ *                                          fit it to the frame's height (the
+ *                                          user resized the chart) instead of
+ *                                          sizing the frame to the chart
  *        {type:'export', format, id}       'svg' | 'png'
  *   out  {type:'height', height}           after every render
  *        {type:'error',  message}          spec failed to compile or run
@@ -35,6 +41,7 @@ const container = document.getElementById('c');
 let view = null;
 let lastSpec = null;
 let lastTokens = null;
+let lastFill = false;
 
 const post = (msg) => parent.postMessage(msg, '*');
 
@@ -126,18 +133,31 @@ function showError(message) {
 /* `width: "container"` makes the chart track the card width, but Vega-Lite
  * rejects it on multi-view specs (facet/concat/repeat), so only single views
  * that did not ask for an explicit width get it. */
+function isMultiView(spec) {
+  return Boolean(spec.facet || spec.hconcat || spec.vconcat || spec.concat || spec.repeat);
+}
+
 function fitWidth(spec) {
-  const multiView =
-    spec.facet || spec.hconcat || spec.vconcat || spec.concat || spec.repeat;
-  if (multiView || spec.width != null) return spec;
+  if (isMultiView(spec) || spec.width != null) return spec;
   return { ...spec, width: 'container' };
 }
 
-async function render(spec, tokens) {
+/* The same rule for a height the user dragged the chart to. A multi-view
+ * chart keeps its own height and simply sits in the taller frame. */
+function fitHeight(spec, fill) {
+  const filling = Boolean(fill) && !isMultiView(spec);
+  document.documentElement.classList.toggle('fill', filling);
+  return filling ? { ...spec, height: 'container' } : spec;
+}
+
+async function render(spec, tokens, fill) {
   lastSpec = spec;
   lastTokens = tokens;
+  lastFill = Boolean(fill);
   try {
-    const compiled = vegaLite.compile(fitWidth(spec), { config: houseConfig(tokens) });
+    const compiled = vegaLite.compile(fitHeight(fitWidth(spec), fill), {
+      config: houseConfig(tokens),
+    });
     if (view) view.finalize();
     view = new vega.View(vega.parse(compiled.spec), {
       renderer: 'svg',
@@ -172,17 +192,18 @@ window.addEventListener('message', (e) => {
   if (e.source !== parent) return;
   const m = e.data;
   if (!m || typeof m !== 'object') return;
-  if (m.type === 'render') render(m.spec, m.tokens);
+  if (m.type === 'render') render(m.spec, m.tokens, m.fill);
   else if (m.type === 'export') exportAs(m.format, m.id);
 });
 
-// Re-render on width change so the chart stays fitted when the chat pane is
-// resized. Debounced — a drag fires dozens of these.
+// Re-render on a size change so the chart stays fitted when the chat pane is
+// resized, or (filling) when the user drags the chart taller or shorter.
+// Debounced — a drag fires dozens of these.
 let resizeTimer = null;
 new ResizeObserver(() => {
   if (!lastSpec) return;
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => render(lastSpec, lastTokens), 120);
+  resizeTimer = setTimeout(() => render(lastSpec, lastTokens, lastFill), 120);
 }).observe(document.body);
 
 post({ type: 'ready' });

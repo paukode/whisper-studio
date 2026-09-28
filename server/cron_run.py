@@ -52,6 +52,7 @@ cron_progress SSE frames.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import uuid
@@ -64,6 +65,9 @@ log = logging.getLogger("whisper-studio")
 # Default tool-round cap for an unattended run; overridable via the
 # `cron_max_rounds` config key (was a bare magic 15 before).
 CRON_MAX_ROUNDS_DEFAULT = 30
+
+# The feature name every Local-mode refusal of a scheduled run shows the user.
+SCHEDULED_RUNS = "Scheduled runs"
 
 # Dedicated pool for cron's blocking calls — the adapter's Bedrock invoke and
 # the synchronous completion-verifier (server.goals.cron_verify.verify).
@@ -164,6 +168,13 @@ async def _execute_cron_prompt(job_id: str) -> None:
         from server.workspace import get_workspace_path
 
         config = load_config()
+        # Scheduled runs execute on a cloud model (on-device ids are refused
+        # below), so Local mode refuses them before any model is resolved. The
+        # refusal lands in the run history and the session like any failure;
+        # the job itself is kept, so it runs again after a switch back.
+        from server.infrastructure.cloud_guard import require_cloud
+
+        require_cloud(SCHEDULED_RUNS, config)
         chat_models = config.get("chat_models", {})
         # Per-job model override: an explicit `model` key on the job wins when
         # it resolves to an Anthropic Bedrock id; otherwise the haiku-first
@@ -230,9 +241,16 @@ async def _execute_cron_prompt(job_id: str) -> None:
         # (mirrors agents/runtime.py). Everything else is deferred into a
         # compact index folded into the system prompt below.
         activate_from_history(session_id, visible_chat_history(messages))
+        # The run's tools work under this latch, like a chat turn's: once the
+        # user disconnects (or switches away from) the workspace it started
+        # in, its workspace tools are refused instead of acting on the folder
+        # connected in its place, with nobody there to see it happen.
+        from server.workspace.state import latch_workspace
+
+        ws_latch = latch_workspace(get_workspace_path)
         advertised, deferred, _core_count = assemble_partitioned_pool(
             plan_mode=False,
-            ws_connected=bool(get_workspace_path()),
+            ws_connected=bool(ws_latch.path),
             suppress_workspace_search=False,
             session_id=session_id,
         )
@@ -344,6 +362,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
             ),
             loop=loop,
             executor=_CRON_EXECUTOR,
+            cost_source="cron",
             tool_exec_model_id=model_id,
             # Agents this run spawns inherit the same level (and the ultracode
             # directive with it, when that is what the app is configured to).
@@ -354,6 +373,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
             unattended=True,
             turn_scope_id=f"cron:{job_id}",
             tool_catalog=_tool_catalog,
+            ws_latch=ws_latch,
         )
 
         # ── Drain run_turn, possibly more than once (WS-E verify-and-continue
@@ -460,10 +480,21 @@ async def _execute_cron_prompt(job_id: str) -> None:
             # on (never the event loop) — same reasoning as
             # server.goals.gate.run_completion_gate's own evaluator call.
             verdict = await loop.run_in_executor(
-                _CRON_EXECUTOR, _cron_verify, job["prompt"], ctx.messages, notifications
+                _CRON_EXECUTOR,
+                functools.partial(
+                    _cron_verify,
+                    job["prompt"],
+                    ctx.messages,
+                    notifications,
+                    main_model_key=model_key,
+                    session_id=session_id,
+                ),
             )
             if (
                 verdict.is_achieved
+                # A verifier that could not judge spends no continuation: the
+                # run is reported unverified with the reason below.
+                or verdict.is_not_checked
                 or verify_continuations >= MAX_CONTINUATIONS
                 or turn_no >= max_rounds
             ):
@@ -503,7 +534,8 @@ async def _execute_cron_prompt(job_id: str) -> None:
         result_text = _merge_notifications(notifications, collected_text)
         status = "ok"
         if verdict is not None and not verdict.is_achieved:
-            result_text = f"[UNVERIFIED] {verdict.feedback}\n\n{result_text}"
+            unchecked = "Not checked: " if verdict.is_not_checked else ""
+            result_text = f"[UNVERIFIED] {unchecked}{verdict.feedback}\n\n{result_text}"
             status = "failed"
         cron_events.emit_progress(
             session_id,

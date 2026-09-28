@@ -372,8 +372,10 @@ def _spawn_cron_run(job_id: str) -> None:
 
     def _spawn_tracked() -> None:
         from server.infrastructure.async_tasks import spawn
+        from server.tasks.owner import run_owned
 
-        spawn(_execute_cron_prompt(job_id), name=f"cron-run-{job_id}")
+        # Its commands are its own: a chat Stop in the job's session spares them.
+        spawn(run_owned(f"cron:{job_id}", _execute_cron_prompt(job_id)), name=f"cron-run-{job_id}")
 
     try:
         running = asyncio.get_running_loop()
@@ -695,6 +697,14 @@ def _create_job(name, prompt, schedule, session_id, model: str = "") -> dict:
 
 def execute_cron_tool(tool_name: str, tool_input: dict, session_id: str = "") -> str:
     if tool_name == "cron_create":
+        from server.cron_run import SCHEDULED_RUNS
+        from server.infrastructure.cloud_guard import cloud_refusal
+
+        # A job created in Local mode could only ever fail when it fires
+        # (cron_run refuses there too), so say so now instead.
+        refusal = cloud_refusal(SCHEDULED_RUNS)
+        if refusal:
+            return json.dumps({"error": refusal})
         name = tool_input.get("name", "").strip()
         prompt = tool_input.get("prompt", "").strip()
         if not name or not prompt:

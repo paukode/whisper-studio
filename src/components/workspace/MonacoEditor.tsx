@@ -3,8 +3,9 @@ import Editor, { type OnMount, type OnChange } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { useTheme } from '@/providers/ThemeProvider';
 import { useMonaco } from '@/hooks/useMonaco';
-import { useLsp, type LspStatus } from '@/hooks/useLsp';
+import { useLsp } from '@/hooks/useLsp';
 import { useUIStore } from '@/stores/uiStore';
+import { LspStatusIndicator } from './LspStatusIndicator';
 
 /** Monaco namespace, as handed to onMount by @monaco-editor/react. */
 type MonacoNamespace = typeof import('monaco-editor');
@@ -103,46 +104,6 @@ export function getMonacoTheme(resolvedTheme: string): string {
   }
 }
 
-/** Human-readable label for the LSP status dot's tooltip + text. */
-function lspStatusLabel(status: LspStatus, language: string): string {
-  const server = `${language} language server`;
-  switch (status) {
-    case 'connecting':
-      return `Connecting to ${server}…`;
-    case 'connected':
-      return `${server}: connected`;
-    case 'error':
-      return `${server}: unavailable`;
-    default:
-      return `${server}: off`;
-  }
-}
-
-/**
- * Small language-server status pill rendered in the editor's top-right chrome.
- * Uses the shared `.ws-lsp-status` / `.ws-lsp-dot` classes from
- * static/modules/lsp-client.css so the dot color tracks the connection state.
- */
-const LspStatusIndicator: React.FC<{ status: LspStatus; language: string }> = ({
-  status,
-  language,
-}) => {
-  const dotClass = status === 'closed' ? '' : ` ${status}`;
-  const label = lspStatusLabel(status, language);
-  return (
-    <div
-      className="ws-lsp-status"
-      title={label}
-      role="status"
-      aria-label={label}
-      style={{ position: 'absolute', top: 4, right: 14, zIndex: 4 }}
-    >
-      <span className={`ws-lsp-dot${dotClass}`} />
-      <span>LSP</span>
-    </div>
-  );
-};
-
 export interface MonacoEditorProps {
   filePath: string;
   content: string;
@@ -157,6 +118,12 @@ export interface MonacoEditorProps {
   /** Monotonic counter: bumping it re-reveals the range (e.g. re-clicking a
    *  citation for an already-open file), even when revealRange is unchanged. */
   revealRev?: number;
+  /** For a workspace tab: the root its file belongs to (EditorTab.root; null
+   *  for a tab opened with none connected). The language server runs only
+   *  while that root is the connected one, so a tab kept from another
+   *  workspace is never analysed as this one's file. Omitted for an editor
+   *  that is not a workspace tab. */
+  workspaceRoot?: string | null;
 }
 
 /**
@@ -177,6 +144,7 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   readOnly = false,
   revealRange,
   revealRev,
+  workspaceRoot,
 }) => {
   const { resolvedTheme } = useTheme();
   const { setEditorTheme } = useMonaco();
@@ -195,14 +163,15 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   const wsPath = useUIStore((s) => s.wsPath);
 
   // Live language client tunneling to server/lsp_proxy.py. No-ops for
-  // unsupported languages or when no workspace is connected.
-  const { status: lspStatus, active: lspActive } = useLsp({
+  // unsupported languages, when no workspace is connected, and for a tab of
+  // another root than the connected one.
+  const { status: lspStatus, active: lspActive, failure: lspFailure } = useLsp({
     monaco: lspTarget?.monaco ?? null,
     editorInstance: lspTarget?.editor ?? null,
     language,
     filePath,
     workspacePath: wsPath,
-    enabled: wsConnected && !readOnly,
+    enabled: wsConnected && !readOnly && (workspaceRoot === undefined || workspaceRoot === wsPath),
   });
 
   // Reveal + highlight a cited line range (clamped to the model). Used both on
@@ -332,7 +301,9 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
 
   return (
     <div className="monaco-editor-wrapper" role="region" aria-label={`Editor: ${filePath}`} style={{ position: 'relative', width: '100%', height: '100%' }}>
-      {lspActive && <LspStatusIndicator status={lspStatus} language={language} />}
+      {lspActive && (
+        <LspStatusIndicator status={lspStatus} language={language} failure={lspFailure} />
+      )}
       <Editor
         height="100%"
         path={filePath}

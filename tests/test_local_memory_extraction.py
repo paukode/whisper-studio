@@ -5,7 +5,7 @@ Two gaps closed here:
 1. The on-device (local model) chat path never fed auto-memory: only the
    cloud paths (chat/routes.py, openai_bedrock/stream.py) spawned
    ``maybe_extract_memory`` at end of turn. The local path now runs the same
-   hook, skipping gracefully when the app is fully offline (model_mode=local,
+   hook; in Local mode maybe_extract_memory records nothing (model_mode=local,
    the extraction agent needs a cloud model).
 
 2. The every-N-turns throttle counter was in-memory only, so a server restart
@@ -253,15 +253,39 @@ def test_extraction_hook_fires_in_hybrid_mode(monkeypatch):
     assert calls[0]["model_id"] == L.local_model_meta("local_gemma").get("id", "")
 
 
-def test_extraction_hook_skips_when_fully_offline(monkeypatch):
+def test_local_mode_records_no_memories_on_any_path(mem_dirs, fresh_extract_state, monkeypatch):
+    """One guard, where every path passes: a local turn's excerpt extraction
+    and a cloud turn's review fork (a cloud turn that ends after a switch to
+    Local) both stop before the throttle, so nothing replays to Bedrock and
+    no slice is marked processed unreviewed."""
+    from types import SimpleNamespace
+
     import server.infrastructure.model_mode as MM
+    import server.memory.review_fork as RF
 
-    monkeypatch.setattr(FF, "is_enabled", lambda flag: flag == "auto_memory")
     monkeypatch.setattr(MM, "current_mode", lambda config=None: "local")
-    calls = _capture_extraction(monkeypatch)
+    agents = _fake_agent(monkeypatch)
+    reviews = []
 
-    STREAM._spawn_extraction("local_gemma", _messages(3), "s5", None)
-    assert calls == []
+    async def fake_run_review(fork, **kw):
+        reviews.append(fork.adapter.provider)
+        return {"ended": "stub", "rounds": 1}
+
+    monkeypatch.setattr(RF, "run_review", fake_run_review)
+    fork = SimpleNamespace(adapter=SimpleNamespace(provider="anthropic"), model_key="sonnet")
+    for _ in range(XT.DEFAULT_EXTRACT_INTERVAL):
+        asyncio.run(
+            XT.maybe_extract_memory(
+                messages=_messages(4), session_id="s5", ws_path=None, model_id="m", fork=fork
+            )
+        )
+        asyncio.run(
+            XT.maybe_extract_memory(
+                messages=_messages(4), session_id="s5b", ws_path=None, model_id="local:gemma"
+            )
+        )
+    assert reviews == [] and agents == []
+    assert "s5" not in XT._turn_counters and "s5b" not in XT._turn_counters
 
 
 def test_extraction_hook_gated_on_auto_memory_flag(monkeypatch):

@@ -77,16 +77,65 @@ def test_does_not_flag_rm_mentioned_only_in_heredoc_data():
 
 
 def test_unparseable_segment_is_treated_as_rm_like():
-    # Fail toward requiring approval, not away from it — an unbalanced quote
+    # Fail toward requiring approval, not away from it: an unbalanced quote
     # is exactly the kind of thing an obfuscated command produces. Tested at
-    # the tokenizer directly: split_subcommands' own regex treats a lone
+    # the segment check directly: split_subcommands' own regex treats a lone
     # unmatched quote character as an implicit break, so by the time
     # is_rm_command's segments reach the tokenizer they are individually
-    # well-formed — this failure mode only reaches a caller that hands
-    # _leading_command_token a raw, unsplit segment.
-    from server.security.command_validator import _leading_command_token
+    # well-formed; this failure mode only reaches a caller that hands
+    # _segment_deletes a raw, unsplit segment.
+    from server.security.command_validator import _segment_deletes
 
-    assert _leading_command_token("echo 'unterminated") is None
+    assert _segment_deletes("echo 'unterminated", 0) is True
+
+
+def test_detects_rm_inside_a_shell_script_argument():
+    # The script after -c is a command line of its own; `sh -c "rm -rf build"`
+    # used to read as the command `sh`.
+    assert is_rm_command("sh -c 'rm -rf build'")
+    assert is_rm_command('bash -c "rm -rf build && npm run dev"')
+    assert is_rm_command("bash -lc 'npm run build; rm -rf dist'")
+    assert is_rm_command("zsh -o pipefail -c 'rm x'")
+    assert is_rm_command("/bin/sh -e -c 'rm x'")
+    assert is_rm_command("sh -c \"bash -c 'rm -rf x'\"")
+    # The argv a launch config joins with plain spaces keeps the verb visible.
+    assert is_rm_command("sh -c rm -rf build")
+
+
+def test_detects_rm_behind_more_wrappers():
+    assert is_rm_command("nohup rm -rf x")
+    assert is_rm_command("time rm x")
+    assert is_rm_command("timeout 10 rm x")
+    assert is_rm_command("sudo -u root rm -rf x")
+    assert is_rm_command("echo a | xargs -I {} rm {}")
+    assert is_rm_command("nohup sh -c 'rm -rf x'")
+    assert is_rm_command("eval 'rm -rf x'")
+
+
+def test_detects_rm_after_a_reserved_word():
+    assert is_rm_command("sh -c 'if true; then rm -rf dist; fi'")
+    assert is_rm_command("if rm x; then echo gone; fi")
+    assert is_rm_command("(rm -rf build)")
+
+
+def test_shell_scripts_reads_a_shell_anywhere_in_an_argv():
+    from server.security.command_validator import shell_scripts
+
+    assert shell_scripts(["sh", "-c", "rm -rf build && npm run dev"]) == [
+        "rm -rf build && npm run dev"
+    ]
+    assert shell_scripts(["nohup", "bash", "-lc", "npm run dev"]) == ["npm run dev"]
+    assert shell_scripts(["bash", "build.sh"]) == []
+    assert shell_scripts(["npm", "run", "dev"]) == []
+
+
+def test_shells_and_wrappers_that_do_not_delete_pass():
+    assert not is_rm_command("sh -c 'npm run build && npm start'")
+    assert not is_rm_command("bash -lc 'npm test'")
+    assert not is_rm_command("bash build.sh")
+    assert not is_rm_command("nohup npm run dev")
+    assert not is_rm_command("time python manage.py runserver")
+    assert not is_rm_command("timeout 30 curl -s http://localhost:3000")
 
 
 # ── resolve_static_decision: the absolute-ask floor ─────────────────────────

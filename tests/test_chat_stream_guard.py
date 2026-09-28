@@ -11,27 +11,27 @@ path."""
 import asyncio
 import time
 
-from server.chat import routes
+from server.chat import routes, stream_slot
 
 
 def test_guard_dict_membership_semantics():
     # The guard's contract is enforced at the top of chat_endpoint via this
     # module-level dict (session_id -> monotonic start time). Exercise the
     # primitives the endpoint uses.
-    routes._active_chat_streams.clear()
+    stream_slot.active_streams.clear()
 
     sid = "guard-session"
-    assert sid not in routes._active_chat_streams
-    routes._active_chat_streams[sid] = time.monotonic()
-    assert sid in routes._active_chat_streams
+    assert sid not in stream_slot.active_streams
+    stream_slot.active_streams[sid] = time.monotonic()
+    assert sid in stream_slot.active_streams
 
     # Different session is unaffected.
-    assert "other" not in routes._active_chat_streams
+    assert "other" not in stream_slot.active_streams
 
     # pop is idempotent (continuation / finally paths).
-    routes._active_chat_streams.pop(sid, None)
-    routes._active_chat_streams.pop(sid, None)
-    assert sid not in routes._active_chat_streams
+    stream_slot.active_streams.pop(sid, None)
+    stream_slot.active_streams.pop(sid, None)
+    assert sid not in stream_slot.active_streams
 
 
 def test_fresh_slot_is_busy_stale_slot_is_reclaimable():
@@ -41,9 +41,9 @@ def test_fresh_slot_is_busy_stale_slot_is_reclaimable():
     # until the app is restarted.
     now = time.monotonic()
     fresh = now
-    stale = now - routes._STREAM_STALE_AFTER_S - 1
-    assert (now - fresh) < routes._STREAM_STALE_AFTER_S  # busy
-    assert (now - stale) >= routes._STREAM_STALE_AFTER_S  # reclaimable
+    stale = now - stream_slot.STALE_AFTER_S - 1
+    assert (now - fresh) < stream_slot.STALE_AFTER_S  # busy
+    assert (now - stale) >= stream_slot.STALE_AFTER_S  # reclaimable
 
 
 def test_second_new_turn_queued_into_running_turn_while_streaming(monkeypatch):
@@ -56,11 +56,11 @@ def test_second_new_turn_queued_into_running_turn_while_streaming(monkeypatch):
     app.include_router(routes.router)
     client = TestClient(app)
 
-    routes._active_chat_streams.clear()
+    stream_slot.active_streams.clear()
     midturn_inbox.drain("busy-session")
     # Fresh timestamp => within the busy window => queued, not started as a
     # second stream and not refused.
-    routes._active_chat_streams["busy-session"] = time.monotonic()
+    stream_slot.active_streams["busy-session"] = time.monotonic()
     try:
         r = client.post(
             "/api/chat",
@@ -74,10 +74,12 @@ def test_second_new_turn_queued_into_running_turn_while_streaming(monkeypatch):
         # the busy slot (still owned by the ACTUAL running turn) is untouched.
         assert r.status_code == 200
         assert r.json() == {"queued_into_running_turn": True}
-        assert "busy-session" in routes._active_chat_streams
-        assert midturn_inbox.drain("busy-session") == ["actually, stop and give me what you have"]
+        assert "busy-session" in stream_slot.active_streams
+        assert [e.text for e in midturn_inbox.drain("busy-session")] == [
+            "actually, stop and give me what you have"
+        ]
     finally:
-        routes._active_chat_streams.clear()
+        stream_slot.active_streams.clear()
         midturn_inbox.drain("busy-session")
 
 
@@ -98,8 +100,8 @@ def test_slot_is_claimed_synchronously_before_the_turns_own_setup_runs():
         async def json(self):
             return self._body
 
-    routes._active_chat_streams.clear()
-    routes._stream_heartbeat.clear()
+    stream_slot.active_streams.clear()
+    stream_slot.heartbeats.clear()
 
     async def _call():
         req = _FakeRequest({"question": "hello", "session_id": "claim-timing-sess", "history": []})
@@ -110,11 +112,11 @@ def test_slot_is_claimed_synchronously_before_the_turns_own_setup_runs():
         # asyncio.create_task schedules but does not run _build_turn before
         # chat_endpoint's own return — this passing is the whole point: the
         # slot is already held with NO turn setup having executed at all.
-        assert "claim-timing-sess" in routes._active_chat_streams
+        assert "claim-timing-sess" in stream_slot.active_streams
         assert resp is not None
     finally:
-        routes._active_chat_streams.clear()
-        routes._stream_heartbeat.clear()
+        stream_slot.active_streams.clear()
+        stream_slot.heartbeats.clear()
 
 
 def test_stale_busy_slot_is_reclaimed_not_queued(monkeypatch):
@@ -133,11 +135,9 @@ def test_stale_busy_slot_is_reclaimed_not_queued(monkeypatch):
     app.include_router(routes.router)
     client = TestClient(app)
 
-    routes._active_chat_streams.clear()
+    stream_slot.active_streams.clear()
     midturn_inbox.drain("stale-session")
-    routes._active_chat_streams["stale-session"] = (
-        time.monotonic() - routes._STREAM_STALE_AFTER_S - 1
-    )
+    stream_slot.active_streams["stale-session"] = time.monotonic() - stream_slot.STALE_AFTER_S - 1
     try:
         r = client.post(
             "/api/chat",
@@ -147,7 +147,7 @@ def test_stale_busy_slot_is_reclaimed_not_queued(monkeypatch):
         # Reclaimed and streamed normally — never queued.
         assert midturn_inbox.drain("stale-session") == []
     finally:
-        routes._active_chat_streams.clear()
+        stream_slot.active_streams.clear()
         midturn_inbox.drain("stale-session")
 
 
@@ -159,10 +159,10 @@ def test_reset_endpoint_clears_wedged_state():
     app.include_router(routes.router)
     client = TestClient(app)
 
-    routes._active_chat_streams.clear()
+    stream_slot.active_streams.clear()
     routes._paused_sessions.clear()
     sid = "wedged-session"
-    routes._active_chat_streams[sid] = time.monotonic()
+    stream_slot.active_streams[sid] = time.monotonic()
     routes._paused_sessions[sid] = {"messages": [], "pending_tool_results": []}
     try:
         r = client.post(f"/api/chat/sessions/{sid}/reset")
@@ -172,7 +172,7 @@ def test_reset_endpoint_clears_wedged_state():
             "cleared_stream": True,
             "cleared_paused": True,
         }
-        assert sid not in routes._active_chat_streams
+        assert sid not in stream_slot.active_streams
         assert sid not in routes._paused_sessions
 
         # Idempotent: a second reset is a clean no-op.
@@ -183,7 +183,7 @@ def test_reset_endpoint_clears_wedged_state():
             "cleared_paused": False,
         }
     finally:
-        routes._active_chat_streams.clear()
+        stream_slot.active_streams.clear()
         routes._paused_sessions.clear()
 
 
@@ -203,8 +203,8 @@ def test_continuation_turn_claims_the_slot_too():
     card onward the session looked idle: a message typed while the resumed
     turn kept working started a second turn from the composer's minimal body
     instead of being queued into the running one."""
-    routes._active_chat_streams.clear()
-    routes._stream_heartbeat.clear()
+    stream_slot.active_streams.clear()
+    stream_slot.heartbeats.clear()
 
     async def _call():
         req = _FakeRequest(
@@ -220,11 +220,11 @@ def test_continuation_turn_claims_the_slot_too():
     try:
         resp = asyncio.run(_call())
         assert resp is not None
-        assert "resume-sess" in routes._active_chat_streams
-        assert "resume-sess" in routes._stream_heartbeat
+        assert "resume-sess" in stream_slot.active_streams
+        assert "resume-sess" in stream_slot.heartbeats
     finally:
-        routes._active_chat_streams.clear()
-        routes._stream_heartbeat.clear()
+        stream_slot.active_streams.clear()
+        stream_slot.heartbeats.clear()
 
 
 def test_midturn_body_is_refused_when_nothing_is_running():
@@ -239,8 +239,8 @@ def test_midturn_body_is_refused_when_nothing_is_running():
     app = FastAPI()
     app.include_router(routes.router)
     client = TestClient(app)
-    routes._active_chat_streams.clear()
-    routes._stream_heartbeat.clear()
+    stream_slot.active_streams.clear()
+    stream_slot.heartbeats.clear()
     midturn_inbox.drain("idle-session")
     try:
         r = client.post(
@@ -249,11 +249,11 @@ def test_midturn_body_is_refused_when_nothing_is_running():
         )
         assert r.status_code == 409
         assert r.json()["queued_into_running_turn"] is False
-        assert "idle-session" not in routes._active_chat_streams
+        assert "idle-session" not in stream_slot.active_streams
         assert midturn_inbox.drain("idle-session") == []
     finally:
-        routes._active_chat_streams.clear()
-        routes._stream_heartbeat.clear()
+        stream_slot.active_streams.clear()
+        stream_slot.heartbeats.clear()
 
 
 def test_midturn_body_is_queued_while_running():
@@ -265,8 +265,8 @@ def test_midturn_body_is_queued_while_running():
     app = FastAPI()
     app.include_router(routes.router)
     client = TestClient(app)
-    routes._active_chat_streams.clear()
-    routes._active_chat_streams["live-session"] = time.monotonic()
+    stream_slot.active_streams.clear()
+    stream_slot.active_streams["live-session"] = time.monotonic()
     midturn_inbox.drain("live-session")
     try:
         r = client.post(
@@ -275,9 +275,9 @@ def test_midturn_body_is_queued_while_running():
         )
         assert r.status_code == 200
         assert r.json() == {"queued_into_running_turn": True}
-        assert midturn_inbox.drain("live-session") == ["what is the status?"]
+        assert [e.text for e in midturn_inbox.drain("live-session")] == ["what is the status?"]
     finally:
-        routes._active_chat_streams.clear()
+        stream_slot.active_streams.clear()
         midturn_inbox.drain("live-session")
 
 
@@ -294,7 +294,7 @@ def test_stream_heartbeat_keeps_pulsing_during_a_silent_tool_call():
 
     async def run():
         out = []
-        async for chunk in routes._with_heartbeat(
+        async for chunk in stream_slot.with_heartbeat(
             silent_turn(), lambda: beats.append(time.monotonic()), interval=0.05
         ):
             out.append(chunk)
@@ -303,3 +303,30 @@ def test_stream_heartbeat_keeps_pulsing_during_a_silent_tool_call():
     assert asyncio.run(run()) == ["data: {}\n\n"]
     # Several pulses landed during the silence, plus one for the chunk itself.
     assert len(beats) >= 4
+
+
+def test_stream_heartbeat_stops_pulsing_while_the_client_is_not_reading():
+    """A client that stops reading without a clean disconnect parks the
+    stream at ``yield`` for good. The pulse must not keep that slot live, or
+    the stale reclaim never fires and every later message in the session is
+    queued into a turn that can no longer read it."""
+    beats: list[float] = []
+
+    async def chatty_turn():
+        while True:
+            yield "data: {}\n\n"
+            await asyncio.sleep(0.01)
+
+    async def run():
+        stream = stream_slot.with_heartbeat(
+            chatty_turn(), lambda: beats.append(time.monotonic()), interval=0.05
+        )
+        await stream.__anext__()
+        parked_at = time.monotonic()
+        # The consumer holds the chunk and does not ask for the next one.
+        await asyncio.sleep(0.35)
+        beats_while_parked = [b for b in beats if b > parked_at]
+        await stream.aclose()
+        return beats_while_parked
+
+    assert asyncio.run(run()) == []

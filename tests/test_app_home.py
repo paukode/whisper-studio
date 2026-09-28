@@ -123,10 +123,9 @@ def test_bootstrap_home_seeds_both_trees(monkeypatch, tmp_path):
     assert not (user / "config.json").exists()
     assert not (home / "config.user.json").exists()
 
-    with open(os.path.join(root, "pricing.example.json")) as f:
-        example_pricing = json.load(f)
-    with open(user / "pricing.json") as f:
-        assert json.load(f) == example_pricing
+    # pricing.json holds only the user's own overrides: a seeded full copy of
+    # the template froze every rate at install time and shadowed corrections.
+    assert not (user / "pricing.json").exists()
     assert (user / "PROMPT_RULES.md").is_file()
 
     # skills/ is a copy of the repo tree, at the USER root.

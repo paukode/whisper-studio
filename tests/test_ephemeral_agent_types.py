@@ -79,7 +79,6 @@ def test_get_agent_config_resolves_ephemeral_by_resolution_key(monkeypatch):
 def test_ephemeral_inline_spawn_runs_and_surfaces_type(monkeypatch):
     bus = _Bus()
     monkeypatch.setattr("server.agents.event_bus.event_bus", bus)
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
     captured = {}
 
     async def _fake_run_agent(task, **kwargs):

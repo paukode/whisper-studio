@@ -35,13 +35,18 @@
     <p><code class="path">server/preview/manager.py</code> holds a <code>PreviewManager</code> that tracks
       multiple concurrent, named <code>PreviewSession</code> objects (its shape mirrors the MCP manager).
       Each session bundles an optional dev-server process, its own lazily created browser, and a bit of
-      metadata (port, base URL, creation time). Names are unique: starting a session whose name is already
-      running is an error, so you stop it or pick a new name first.</p>
+      metadata (port, base URL, creation time, owner). Names are unique across the app, because they resolve
+      against the workspace's <code>.whisper/launch.json</code>. Each session also records its <b>owner</b>:
+      the chat session that started it. Only the owner may stop, replace or drive a preview (navigate,
+      click, fill, eval, resize). Another chat can list and inspect it (screenshots, snapshots, logs), but
+      its attempt to stop it or to start a session under the same name is refused with an error naming
+      the owning chat, so it picks a different name for a preview of its own. Starting a name the same
+      chat is already running is an error too: reuse that session, or stop it first to restart it.</p>
     <dl class="spec">
-      <dt><code class="path">PreviewSession</code></dt><dd>One named unit: a <code>DevServerProcess | None</code>, a <code>BrowserSession</code>, plus <code>port</code>, <code>url</code>, and <code>created_at</code>. A session can be browser-only (no subprocess) if you point it at an already-running server.</dd>
-      <dt><code class="path">start_session(name, command, cwd, port, url, env)</code></dt><dd>Under an async lock: refuse a duplicate name, spawn the dev server if a command was given, register the session, and return it. Spawning is separate from loading a page.</dd>
-      <dt><code class="path">stop_session(name)</code></dt><dd>Pop the session, close its browser, then kill the process group. Returns whether anything was actually stopped.</dd>
-      <dt><code class="path">list_sessions()</code></dt><dd>A status snapshot per session: id, url, port, <code>process_alive</code>, <code>browser_started</code>, and <code>created_at</code>.</dd>
+      <dt><code class="path">PreviewSession</code></dt><dd>One named unit: a <code>DevServerProcess | None</code>, a <code>BrowserSession</code>, plus <code>port</code>, <code>url</code>, <code>created_at</code>, and <code>owner</code> (the starting chat's session id, empty when none was known). A session can be browser-only (no subprocess) if you point it at an already-running server.</dd>
+      <dt><code class="path">start_session(name, command, cwd, port, url, env, owner)</code></dt><dd>Under an async lock: refuse a duplicate name (with <code>PreviewNotOwned</code> when another chat owns it), spawn the dev server if a command was given, register the session under its owner, and return it. Spawning is separate from loading a page.</dd>
+      <dt><code class="path">stop_session(name, caller)</code></dt><dd>Under the same lock, refuse a <code>caller</code> chat that is not the owner (<code>PreviewNotOwned</code>); an empty caller, the Settings kill switch, may stop any preview. Then pop the session and tear it down: kill the process group first, then close the browser. The teardown runs as its own task awaited under a shield, so a caller cancelled mid-stop cannot leave a server running that nothing can reach any more. Returns whether anything was actually stopped.</dd>
+      <dt><code class="path">list_sessions()</code></dt><dd>A status snapshot per session: id, url, port, <code>process_alive</code>, <code>browser_started</code>, <code>created_at</code>, and <code>owner</code>.</dd>
     </dl>
 
     <h2 id="spawning">Spawning the dev server</h2>
@@ -66,6 +71,22 @@
       configurations, each with a <code>name</code>, <code>runtimeExecutable</code>, <code>runtimeArgs</code>,
       and optional <code>port</code>), or an ad-hoc command passed directly on the tool call. If neither is
       present, <code>preview_start</code> returns a clear error explaining both options.</p>
+    <p>The two sources are approved differently. A start by name, with <code>cwd</code> omitted or
+      inside the workspace, needs no approval in any permission mode once a person has approved its
+      command: the first start of a new or changed command follows the mode, and a Yes on that card
+      records the command's SHA-256 for the workspace in <code class="path">launch_trust.json</code>
+      (<code class="path">server/preview/launch_trust.py</code>). The file alone earns nothing, since
+      it can come from a cloned repo or an edit a permissive mode applied with no card; only a
+      person's answer to a card records trust. An ad-hoc command follows the permission mode like
+      any other command. A deny rule and a session "No for all" on the <code>preview</code> category
+      (outside Bypass) and the rm-class floor (checked against the resolved command, inside
+      <code>sh -c</code> too) still apply to a named start. See
+      <a href="tut-permissions.html#preview-named-configs">Previews from launch.json</a>.</p>
+    <p>What runs is what was decided. The preview router pins the resolved config into the call's
+      payload (<code>launch_config</code>) when <code>preview_start</code> is dispatched; the card
+      shows that pinned command, the executor runs it, and the exemption is withheld when
+      <code class="path">launch.json</code> no longer resolves to it. The Live pane's Restart button
+      sends no pin and reads the file.</p>
 
     <h2 id="the-browser">The Playwright browser</h2>
     <p>Each session owns one <code>BrowserSession</code> (<code class="path">server/preview/browser.py</code>).
@@ -85,7 +106,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Tool</th><th>Gate</th><th>What it does</th></tr></thead>
       <tbody>
-        <tr><td><code>preview_start</code></td><td><span class="badge">approval</span></td><td>Spawn a dev server for a named session (from <code>launch.json</code> or ad-hoc argv). Does not load a page yet.</td></tr>
+        <tr><td><code>preview_start</code></td><td><span class="badge">approval</span></td><td>Spawn a dev server for a named session (from <code>launch.json</code> or ad-hoc argv). Does not load a page yet. A named <code>launch.json</code> config follows the mode until a person approves its command once, then starts without a card in any permission mode; ad-hoc argv follows the mode.</td></tr>
         <tr><td><code>preview_stop</code></td><td><span class="badge">approval</span></td><td>Kill the dev server and close the browser.</td></tr>
         <tr><td><code>preview_navigate</code></td><td><span class="badge">approval</span></td><td><code>page.goto(url)</code>, http/https only. Returns the resolved URL and page title.</td></tr>
         <tr><td><code>preview_click</code></td><td><span class="badge">approval</span></td><td>Click (or double-click) a CSS selector.</td></tr>
@@ -98,7 +119,7 @@
         <tr><td><code>preview_console_logs</code></td><td><span class="badge badge--muted">read</span></td><td>Browser console output, optionally filtered by level.</td></tr>
         <tr><td><code>preview_network</code></td><td><span class="badge badge--muted">read</span></td><td>Network requests (method, url, status), optionally only the failed/4xx/5xx ones.</td></tr>
         <tr><td><code>preview_logs</code></td><td><span class="badge badge--muted">read</span></td><td>The dev server's stdout/stderr (tail bytes, choose a stream).</td></tr>
-        <tr><td><code>preview_list</code></td><td><span class="badge badge--muted">read</span></td><td>Every running session and its status.</td></tr>
+        <tr><td><code>preview_list</code></td><td><span class="badge badge--muted">read</span></td><td>Running sessions, split in two: <code>this_chat</code> with full status, and <code>other_chats</code> as metadata only (id, url, port, <code>process_alive</code>) with a note that those can be inspected but never stopped or driven from here.</td></tr>
       </tbody>
     </table></div>
     <p>That is 14 tools in all: 7 approval-gated and 7 read-only. They are dispatched from an async branch
@@ -196,8 +217,10 @@
       </div>
     </div>
     <p>The pane finds its session by polling <code>GET /api/preview/sessions</code> and following the
-      latest server that is still alive, so starting a new one switches the pane to it and a crashed one
-      is skipped instead of shown as a dead frame. The cadence adapts
+      latest server that is still alive <b>and owned by the chat on screen</b>, so starting a new one
+      switches the pane to it, a crashed one is skipped instead of shown as a dead frame, and another
+      chat's server never appears there. The pane's Stop and Restart send that chat's session id, so they
+      only ever act on its own server; Stop is offered only while the pane is showing that server. The cadence adapts
       (<code class="path">src/hooks/useDockLiveWatcher.ts</code>): every 2 seconds while a preview is live
       or the dock is open, every 15 seconds otherwise, and not at all while the window is hidden. Coming
       back to the foreground polls immediately, so the pane is current the moment you look at it.</p>
@@ -208,17 +231,18 @@
       SSE/WebSocket runtimes are wired.</p>
 
     <h2 id="the-kill-switch">The status API and kill switch</h2>
-    <p><code class="path">server/preview/routes.py</code> is a small status API for the Settings "Live
-      preview" panel: a user-visible kill switch for whatever the model has spun up. It is intentionally
+    <p><code class="path">server/preview/routes.py</code> is a small status API for the Live pane and the
+      Settings "Live preview" panel. The Settings panel is the user-visible kill switch for whatever the
+      model has spun up, in any chat. It is intentionally
       not a full remote-control surface (the page actions above are agent tools, not REST endpoints).
       The same panel's enable/install flow lives in
       <code class="path">server/preview/install_routes.py</code>.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Method + path</th><th>Purpose</th></tr></thead>
       <tbody>
-        <tr><td><code>GET /api/preview/sessions</code></td><td>List sessions and their status for the panel.</td></tr>
-        <tr><td><code>POST /api/preview/sessions</code></td><td>Start (or reuse) a session by name, resolving its command from <code>.whisper/launch.json</code>. Powers the panel's Restart button, so a stopped dev server can come back without the assistant.</td></tr>
-        <tr><td><code>DELETE /api/preview/sessions/{name}</code></td><td>Stop a session; 404 if there is no such session.</td></tr>
+        <tr><td><code>GET /api/preview/sessions</code></td><td>List sessions and their status. Each row carries <code>owner</code>, the chat session id that started the preview: the Live pane uses it to show only its own chat's server, and Settings to say which chat each preview belongs to.</td></tr>
+        <tr><td><code>POST /api/preview/sessions</code></td><td>Start (or reuse) a session by <code>name</code> for the chat in <code>session_id</code>, resolving its command from <code>.whisper/launch.json</code>. Both fields are required (400 otherwise). A name another chat's preview holds is refused with 409 naming that chat. Powers the Live pane's Restart button, so a stopped dev server can come back without the assistant.</td></tr>
+        <tr><td><code>DELETE /api/preview/sessions/{name}?session_id=</code></td><td>Stop a session; 404 if there is no such session. With <code>session_id</code> (the Live pane) only that chat's own preview is stopped, and another chat's is refused with 409 naming the owner. Without it (the Settings kill switch) any preview is stopped; Settings asks for confirmation first when the preview belongs to another chat.</td></tr>
         <tr><td><code>WS /ws/preview/{name}/screencast</code></td><td>The view-only live screencast described above.</td></tr>
         <tr><td><code>GET /api/preview/status</code></td><td>Install-flow status for the same panel: whether Playwright is importable, Chromium is present, an install is running, and the <code>preview_tools</code> flag is on (<code class="path">server/preview/install_routes.py</code>).</td></tr>
         <tr><td><code>POST /api/preview/install</code></td><td>Kick off the Playwright + Chromium install on a background thread; the panel polls <code>status</code> until it completes and the <code>preview_tools</code> flag flips on. A packaged .app never pip-installs: its browsers are bundled (<code>PLAYWRIGHT_BROWSERS_PATH</code>), so Enable just flips the flag.</td></tr>

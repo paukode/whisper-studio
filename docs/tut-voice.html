@@ -136,10 +136,11 @@
       its 25 languages without deciding anything. Short or accented utterances are where automatic
       detection goes wrong, and a wrong guess can quietly translate a line instead of transcribing
       it.</p>
-    <p>The <b>Whisper Language</b> field in Settings is the fix. Leave it blank for full auto-detection,
-      put one code in it (<code>pl</code>) to pin the language outright, or list the languages actually
-      spoken in the room (<code>pl,en</code>) to keep detection but stop it wandering outside them. The
-      same list constrains Canary.</p>
+    <p>The <b>Transcription Languages</b> field in Settings is the fix. Put one code in it
+      (<code>pl</code>) to pin the language outright, or list the languages actually spoken in the room
+      (<code>pl,en</code>) to keep detection but stop it wandering outside them. The same list
+      constrains Canary and Whisper. Left blank, Canary chooses among English plus your Mac's preferred
+      languages, and Whisper detects on its own; the field shows which set is in use.</p>
 
     <h2 id="translation">Translate as you record</h2>
     <p>With a translator selected, each finalized segment grows a second line: the translation, tagged

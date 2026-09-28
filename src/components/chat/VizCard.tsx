@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import DOMPurify from 'dompurify';
-import type { VizArtifact } from '@/types/chat';
+import type { MediaSize, VizArtifact } from '@/types/chat';
 import { downloadFile } from '@/utils/downloadFile';
+import { useHtmlProp } from '@/hooks/useHtmlProp';
+import { MediaResizeGrip, mediaWidthStyle, useMediaResize } from './MediaResize';
 import {
   copyPngToClipboard,
   dataUrlToBlob,
@@ -58,6 +60,17 @@ function useThemeTokens(): ThemeTokens {
 }
 
 type ExportFormat = 'svg' | 'png';
+
+interface VizCardProps {
+  viz: VizArtifact;
+  /** The size the user dragged the card to, if any. */
+  size?: MediaSize;
+  /** Save a dragged size, or null for the natural one. Without it the card
+   *  has no resize grip. */
+  onResize?: (size: MediaSize | null) => void;
+}
+
+const noResize = () => {};
 
 /* The chart host is delivered as an iframe `srcdoc` with the Vega runtime
  * inlined into it, assembled once per app session and shared by every chart.
@@ -120,8 +133,12 @@ function loadChartHost(): Promise<string> {
  * `chart` specs render in a `sandbox="allow-scripts"` iframe. A model-authored
  * spec is attacker-influenceable, so the Vega runtime that evaluates it stays
  * on an opaque origin with no reach into the app or the local backend.
+ *
+ * The corner grip resizes the card: a diagram scales with the width, and a
+ * chart takes the width and the height the user drags to, which the host
+ * fills (`fill`) instead of sizing itself.
  */
-export const VizCard: React.FC<{ viz: VizArtifact }> = ({ viz }) => {
+export const VizCard: React.FC<VizCardProps> = ({ viz, size: savedSize, onResize }) => {
   const tokens = useThemeTokens();
   const svgHostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -129,6 +146,15 @@ export const VizCard: React.FC<{ viz: VizArtifact }> = ({ viz }) => {
   const [chartError, setChartError] = useState<string | null>(null);
   const [hostHtml, setHostHtml] = useState<string | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
+
+  const { frameRef: cardRef, size, resizing, gripProps } = useMediaResize({
+    saved: savedSize,
+    keepRatio: viz.kind === 'svg',
+    currentHeight: savedSize?.h ?? frameHeight,
+    onChange: onResize ?? noResize,
+  });
+  const chartHeight = size?.h ?? frameHeight;
+  const fill = size?.h !== undefined;
 
   // Resolvers for in-flight postMessage export round trips, keyed by request id.
   const pending = useRef(new Map<number, (data: string | null) => void>());
@@ -141,6 +167,7 @@ export const VizCard: React.FC<{ viz: VizArtifact }> = ({ viz }) => {
         : '',
     [viz.kind, viz.source],
   );
+  const cleanHtml = useHtmlProp(clean);
 
   const spec = useMemo(() => {
     if (viz.kind !== 'chart') return null;
@@ -171,7 +198,7 @@ export const VizCard: React.FC<{ viz: VizArtifact }> = ({ viz }) => {
       if (!m || typeof m !== 'object') return;
       if (m.type === 'ready') {
         setChartError(null);
-        frameRef.current.contentWindow?.postMessage({ type: 'render', spec, tokens }, '*');
+        frameRef.current.contentWindow?.postMessage({ type: 'render', spec, tokens, fill }, '*');
       } else if (m.type === 'height' && typeof m.height === 'number') {
         setFrameHeight(Math.max(80, m.height));
       } else if (m.type === 'error') {
@@ -183,13 +210,14 @@ export const VizCard: React.FC<{ viz: VizArtifact }> = ({ viz }) => {
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [viz.kind, spec, tokens]);
+  }, [viz.kind, spec, tokens, fill]);
 
-  // Re-theme (and re-render) an already-loaded host when the theme changes.
+  // Re-theme (and re-render) an already-loaded host when the theme changes,
+  // and when a resize starts or stops setting the chart's height.
   useEffect(() => {
     if (viz.kind !== 'chart' || !spec) return;
-    frameRef.current?.contentWindow?.postMessage({ type: 'render', spec, tokens }, '*');
-  }, [viz.kind, spec, tokens]);
+    frameRef.current?.contentWindow?.postMessage({ type: 'render', spec, tokens, fill }, '*');
+  }, [viz.kind, spec, tokens, fill]);
 
   const requestFromHost = useCallback((format: ExportFormat): Promise<string | null> => {
     const win = frameRef.current?.contentWindow;
@@ -258,7 +286,11 @@ export const VizCard: React.FC<{ viz: VizArtifact }> = ({ viz }) => {
   }, [getPng, showFlash]);
 
   return (
-    <div className="viz-card">
+    <div
+      ref={cardRef}
+      className={`viz-card${size ? ' media-sized' : ''}${resizing ? ' is-resizing' : ''}`}
+      style={mediaWidthStyle(size)}
+    >
       <div className="viz-card-head">
         <div className="viz-card-titles">
           <div className="viz-card-title">{viz.title}</div>
@@ -276,7 +308,7 @@ export const VizCard: React.FC<{ viz: VizArtifact }> = ({ viz }) => {
         <div className="viz-card-body">
           {/* Sanitised above with DOMPurify's SVG profile: no <script>, no
               on* handlers, no foreignObject escape hatch. */}
-          <div ref={svgHostRef} className="viz-svg" dangerouslySetInnerHTML={{ __html: clean }} />
+          <div ref={svgHostRef} className="viz-svg" dangerouslySetInnerHTML={cleanHtml} />
         </div>
       ) : spec === null ? (
         <div className="viz-error">Chart spec was not valid JSON.</div>
@@ -289,12 +321,13 @@ export const VizCard: React.FC<{ viz: VizArtifact }> = ({ viz }) => {
               className="viz-frame"
               srcDoc={hostHtml}
               sandbox="allow-scripts"
-              style={{ height: frameHeight }}
+              style={{ height: chartHeight }}
               title={viz.title}
             />
           )}
         </div>
       )}
+      {onResize && <MediaResizeGrip {...gripProps} />}
     </div>
   );
 };

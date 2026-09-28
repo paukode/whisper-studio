@@ -67,6 +67,7 @@ async def explain_permission(
     recent_messages: list[dict],
     config: dict,
     model_id: str,
+    session_id: str = "",
 ) -> dict | None:
     """
     Returns risk explanation dict or None (on error / disabled / timeout).
@@ -77,7 +78,7 @@ async def explain_permission(
 
     try:
         result = await asyncio.wait_for(
-            _call_explainer(tool_name, tool_input, recent_messages, config, model_id),
+            _call_explainer(tool_name, tool_input, recent_messages, config, model_id, session_id),
             timeout=_EXPLAINER_TIMEOUT,
         )
         return result
@@ -95,6 +96,7 @@ async def _call_explainer(
     recent_messages: list[dict],
     config: dict,
     model_id: str,
+    session_id: str = "",
 ) -> dict | None:
     import boto3
 
@@ -110,6 +112,9 @@ async def _call_explainer(
         models=chat_models,
         config=config,
     )
+    if not haiku:
+        # No cloud model resolves here (Local mode): no explanation, nothing sent.
+        return None
 
     user_msg = _build_user_message(tool_name, tool_input, recent_messages)
 
@@ -126,8 +131,14 @@ async def _call_explainer(
     )
 
     def _invoke():
-        resp = bedrock.invoke_model(modelId=haiku, body=body)
-        return json.loads(resp["body"].read())["content"][0]["text"].strip()
+        # Recorded in the worker, so a call the 3s timeout abandoned is still
+        # logged: it was billed all the same.
+        from server.costs.calls import invoke_claude
+
+        payload = invoke_claude(
+            bedrock, model_id=haiku, body=body, source="explainer", session_id=session_id
+        )
+        return payload["content"][0]["text"].strip()
 
     text = await loop.run_in_executor(None, _invoke)
 

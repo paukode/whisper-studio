@@ -1,6 +1,7 @@
 """Anthropic-on-Bedrock adapter: the runtime's original invoke_model path,
-plus what it always should have had — effort/adaptive thinking, usage
-extraction, redacted_thinking preservation, and structured forcing.
+plus what it always should have had: effort/adaptive thinking, token counts
+through server.costs.capture, redacted_thinking preservation, and structured
+forcing.
 """
 
 from __future__ import annotations
@@ -11,7 +12,12 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
-from server.agents.providers.base import AGENT_CALL_CONCURRENCY, ProviderTurn, TurnUsage
+from server.agents.providers.base import (
+    AGENT_CALL_CONCURRENCY,
+    CountsHook,
+    ProviderTurn,
+    TurnUsage,
+)
 
 log = logging.getLogger("whisper-studio")
 
@@ -46,6 +52,7 @@ class AnthropicBedrockAdapter:
         max_tokens: int,
         effort_label: str | None = None,
         force_structured: dict | None = None,
+        on_counts: CountsHook | None = None,
     ) -> ProviderTurn:
         body: dict = {
             "anthropic_version": "bedrock-2023-05-31",
@@ -83,26 +90,36 @@ class AnthropicBedrockAdapter:
                 }
 
         bedrock = self._bedrock_client()
+        request_body = json.dumps(body)
+        label = f"agent call ({self.model_key or self.model_id})"
 
-        def _invoke(b=body):
+        def _invoke():
+            from server.costs.capture import claude_invoke_counts
+
             resp = bedrock.invoke_model(
                 modelId=self.model_id,
                 contentType="application/json",
                 accept="application/json",
-                body=json.dumps(b),
+                body=request_body,
             )
-            return json.loads(resp["body"].read())
+            # The call returned, so it was billed: its counts come from the
+            # payload's usage, Bedrock's token-count headers, or characters /
+            # 4 of what was posted and received, even when the body is
+            # unreadable.
+            try:
+                payload = json.loads(resp["body"].read())
+            except Exception:
+                if on_counts is not None:
+                    on_counts(claude_invoke_counts(resp, {}, request_body, label=label))
+                raise
+            counts = claude_invoke_counts(resp, payload, request_body, label=label)
+            if on_counts is not None:
+                on_counts(counts)
+            return payload, counts
 
         loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(_executor, _invoke)
-
-        raw_usage = response.get("usage", {}) or {}
-        usage = TurnUsage(
-            input_tokens=raw_usage.get("input_tokens", 0),
-            output_tokens=raw_usage.get("output_tokens", 0),
-            cache_read_tokens=raw_usage.get("cache_read_input_tokens", 0),
-            cache_creation_tokens=raw_usage.get("cache_creation_input_tokens", 0),
-        )
+        response, counts = await loop.run_in_executor(_executor, _invoke)
+        usage = TurnUsage.from_counts(counts, self.model_key)
 
         content_blocks = response.get("content", []) or []
         text_parts: list[str] = []

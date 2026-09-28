@@ -1,30 +1,25 @@
 """
-LSP (Language Server Protocol) integration for Whisper Studio.
-Provides lsp_diagnostics, lsp_hover, lsp_references tools that
-query language servers for richer code understanding.
-Falls back to static analysis tools when LSP servers aren't running.
+Code-intelligence tools for the assistant: lsp_diagnostics, lsp_hover and
+lsp_references.
+
+Diagnostics run ruff on Python and the workspace's own ESLint on JS/TS, with
+the commands server/code_tools resolves (the same ones Settings > Code tools
+reports). Hover shows the symbol and its context, and references are a
+bounded workspace word search; neither talks to a language server.
 """
 
-import logging
 import os
-import subprocess
-import sys
 
-from fastapi import APIRouter
-
-log = logging.getLogger("whisper-studio")
-
-router = APIRouter(prefix="/api/lsp", tags=["lsp"])
-
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+from server.code_tools import eslint, ruff
+from server.code_tools.commands import JS_EXTENSIONS, PYTHON_EXTENSIONS
 
 LSP_TOOLS = [
     {
         "name": "lsp_diagnostics",
         "description": (
-            "[LSP] Get errors, warnings, and type diagnostics for a file. "
-            "Uses pyflakes/eslint depending on language. "
-            "Use this to understand what's wrong before fixing code."
+            "[LSP] Lint a workspace file and return its errors and warnings: ruff for "
+            "Python (the project's ruff config applies), the workspace's own ESLint for "
+            "JS/TS. Use this to understand what's wrong before fixing code."
         ),
         "input_schema": {
             "type": "object",
@@ -64,58 +59,6 @@ LSP_TOOLS = [
         },
     },
 ]
-
-
-def _python_diagnostics(full_path: str) -> str:
-    """Run pyflakes, falling back to a syntax check when it isn't installed."""
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pyflakes", full_path],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        # pyflakes not installed: `python -m pyflakes` exits non-zero and prints
-        # "No module named pyflakes" to stderr. That's a tool-availability error,
-        # NOT a file diagnostic — returning it verbatim would tell the model the
-        # file has a "No module named pyflakes" problem. Fall through to the
-        # py_compile fallback instead. (pyflakes exits non-zero with real
-        # findings too, so we key off the module-missing message specifically.)
-        tool_missing = result.returncode != 0 and "No module named" in result.stderr
-        if not tool_missing:
-            output = (result.stdout + result.stderr).strip()
-            return output if output else "No issues found."
-    except FileNotFoundError:
-        pass
-    # Fallback: py_compile for syntax errors only
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "py_compile", full_path],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            return "No syntax errors."
-        return result.stderr.strip() or "Syntax error detected."
-    except Exception as e:
-        return f"Diagnostic check failed: {e}"
-
-
-def _js_diagnostics(full_path: str, ws_path: str) -> str:
-    """Run ESLint for JS/TS files."""
-    try:
-        result = subprocess.run(
-            ["npx", "--no-install", "eslint", "--format", "compact", full_path],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            cwd=ws_path,
-        )
-        output = (result.stdout + result.stderr).strip()
-        return output if output else "No ESLint issues found."
-    except Exception as e:
-        return f"ESLint not available ({e}). Install with: npm install -g eslint"
 
 
 def _extract_symbol(line: str, column: int) -> str:
@@ -189,10 +132,10 @@ def execute_lsp_tool(tool_name: str, tool_input: dict) -> str:
     ext = os.path.splitext(path)[1].lower()
 
     if tool_name == "lsp_diagnostics":
-        if ext == ".py":
-            return _python_diagnostics(full_path)
-        elif ext in (".js", ".jsx", ".ts", ".tsx"):
-            return _js_diagnostics(full_path, ws)
+        if ext in PYTHON_EXTENSIONS:
+            return ruff.check_file(ws, full_path, path)
+        elif ext in JS_EXTENSIONS:
+            return eslint.check_file(ws, full_path, path)
         else:
             size = os.path.getsize(full_path)
             return f"No LSP configured for {ext} files. File: {path} ({size} bytes, readable)."
@@ -227,23 +170,3 @@ def execute_lsp_tool(tool_name: str, tool_input: dict) -> str:
             return f"Error: {e}"
 
     return f"Unknown LSP tool: {tool_name}"
-
-
-# --- API Routes ---
-
-
-@router.get("/status")
-async def lsp_status():
-    """Check which LSP/analysis tools are available."""
-    available = {}
-    for tool_name, cmd in [
-        ("pyflakes", ["python", "-m", "pyflakes", "--version"]),
-        ("pylsp", ["pylsp", "--version"]),
-        ("eslint", ["npx", "--no-install", "eslint", "--version"]),
-    ]:
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            available[tool_name] = r.returncode == 0
-        except Exception:
-            available[tool_name] = False
-    return {"tools": available, "lsp_tools": [t["name"] for t in LSP_TOOLS]}

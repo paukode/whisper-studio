@@ -70,9 +70,11 @@ def test_ws_approval_sentinel_is_executed_not_left_as_coroutine(monkeypatch):
         )
     )
 
-    # The executor ran, with the parsed sentinel payload. agent=True marks the
-    # subagent origin so high-blast-radius executors can refuse unattended runs.
-    execute_inline.assert_awaited_once_with(ws_payload, agent=True)
+    # The executor ran, with the parsed sentinel payload plus the workspace
+    # root the gate stamps on a workspace-bound one (none is connected here).
+    # agent=True marks the subagent origin so high-blast-radius executors can
+    # refuse unattended runs.
+    execute_inline.assert_awaited_once_with({**ws_payload, "workspace_root": None}, agent=True)
 
     # Turn 2's request replays the tool_result the model saw: it must be the
     # executed string, never a coroutine repr.

@@ -17,6 +17,11 @@ _session_cwd: dict[str, str] = {}
 # is refused rather than silently resurrecting the entry clear_override just
 # removed — see the race this closes in update_cwd's docstring.
 _live_overrides: set[str] = set()
+# Bumped by clear_all (a workspace disconnect or switch). A command captures it
+# before it starts; its cwd write-back is refused once it has moved, so a
+# command still running when the workspace went away cannot put the old
+# workspace's folder back into the table and leak it into the next one.
+_generation = 0
 
 # Per-agent cwd identity. Worktree isolation already separates agents by
 # their unique worktree path, but agents that are NOT isolated still share
@@ -113,8 +118,35 @@ def register_override(override: str) -> None:
         _live_overrides.add(override)
 
 
-def update_cwd(session_id: str, cwd: str):
-    """Store the working directory for a session."""
+def generation() -> int:
+    """The current clear_all generation. Capture it before starting a command
+    and hand it back to update_cwd when the command finishes."""
+    return _generation
+
+
+def clear_all() -> None:
+    """Drop every stored cwd and retire every command still running.
+
+    Called when the connected workspace goes away (a disconnect or a switch).
+    The bump and the clear share one lock acquisition with update_cwd's
+    generation check, so a command finishing concurrently either lands just
+    before the clear (and is dropped by it) or is refused just after.
+    """
+    global _generation
+    with _lock:
+        _generation += 1
+        _session_cwd.clear()
+
+
+def update_cwd(session_id: str, cwd: str, *, generation: int | None = None):
+    """Store the working directory for a session.
+
+    ``generation`` is the value generation() returned before the command
+    started. A write from before the last clear_all is refused: the command
+    ran in a workspace that has since been disconnected or replaced. Writes
+    under a worktree override skip that check, since a pinned root is not
+    the connected workspace and outlives it.
+    """
     override = _active_override()
     if override and not _is_within(cwd, override):
         return  # never let an isolated agent's cwd escape its own worktree
@@ -124,6 +156,8 @@ def update_cwd(session_id: str, cwd: str):
         # command that outlived its agent (see register_override) — refuse it
         # rather than resurrecting an entry nothing will ever clear again.
         if override and override not in _live_overrides:
+            return
+        if not override and generation is not None and generation != _generation:
             return
         _session_cwd[key] = cwd
 

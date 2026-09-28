@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import {
   MAX_LIVE_RUNTIMES,
+  countActiveSessions,
   dropRuntime,
   getChatStore,
   getRuntime,
@@ -17,11 +18,13 @@ import {
 } from './sessionRuntimes';
 import { useSessionStore } from './sessionStore';
 import { useRecordingStore } from './recordingStore';
+import { useSubagentStore } from './subagentStore';
 
 function resetAll() {
   for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
   useSessionStore.setState({ currentSessionId: null, liveSessions: {}, sessions: [] });
   useRecordingStore.setState({ recordingSessionId: null });
+  useSubagentStore.setState({ stops: {}, owners: {} });
 }
 
 beforeEach(resetAll);
@@ -140,11 +143,42 @@ describe('eviction', () => {
       currentApproval: {
         toolUseId: 'x', action: 'write', category: 'write', preview: 'text',
         summary: 's', payload: {}, sessionId: 'appr',
+        alwaysAsks: false,
+        turnSettings: { model: 'm', effort_level: 'normal', verbosity: 'medium', brief_mode: false },
       },
     });
 
     maybeEvictIdle();
     expect(useRuntimeIndex.getState().liveIds.sort()).toEqual(['appr', 'cur', 'rec', 'stream']);
+  });
+
+  it('never evicts a session whose /subagent run is still going', () => {
+    useSessionStore.setState({ saveSession: vi.fn() } as never);
+    ['sub', 'x1', 'x2', 'x3'].forEach((id, i) => {
+      const e = getRuntime(id);
+      e.hydrated = true;
+      e.lastUsed = i; // 'sub' is the least recently used
+    });
+    useSubagentStore.getState().register('team-sub', 'sub', vi.fn());
+
+    maybeEvictIdle();
+    // The run's answer has somewhere to land: 'sub' stays, an idle one goes.
+    expect(useRuntimeIndex.getState().liveIds).toContain('sub');
+    expect(useRuntimeIndex.getState().liveIds).not.toContain('x1');
+
+    // Once the run is over the session is ordinary idle state again.
+    useSubagentStore.getState().unregister('team-sub');
+    getRuntime('x4').hydrated = true;
+    maybeEvictIdle();
+    expect(useRuntimeIndex.getState().liveIds).not.toContain('sub');
+  });
+
+  it('a session with a /subagent run counts toward the active ceiling', () => {
+    getRuntime('runner');
+    expect(countActiveSessions()).toBe(0);
+    useSubagentStore.getState().register('team-r', 'runner', vi.fn());
+    expect(countActiveSessions()).toBe(1);
+    expect(countActiveSessions('runner')).toBe(0);
   });
 
   it('dropRuntime aborts the in-flight stream and unsubscribes', () => {

@@ -84,7 +84,6 @@ def test_team_create_refuses_members_when_budget_already_exceeded(monkeypatch):
 
 def test_team_create_dispatches_normally_when_within_budget(monkeypatch):
     monkeypatch.setattr("server.agents.event_bus.event_bus", _Bus())
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
     monkeypatch.setattr(spawn_mod, "_active_agent_counts", {})
     _no_budget_cap(monkeypatch)
     calls = []
@@ -142,7 +141,6 @@ def test_nested_spawn_agent_refuses_when_budget_already_exceeded(monkeypatch):
 
 def test_team_member_result_lands_in_the_task_registry(monkeypatch):
     monkeypatch.setattr("server.agents.event_bus.event_bus", _Bus())
-    monkeypatch.setattr("server.agent_tools.spawn._record_agent_cost", lambda *a, **k: None)
     monkeypatch.setattr(spawn_mod, "_active_agent_counts", {})
     _no_budget_cap(monkeypatch)
 

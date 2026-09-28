@@ -76,6 +76,7 @@ def _base_ctx(**overrides) -> TurnContext:
         policy=TurnPolicy(max_rounds=10, completion_gate=False),
         loop=None,
         executor=None,
+        cost_source="agent",
         tool_exec_model_id="",
         memory_hooks=lambda msgs: None,
     )
@@ -329,3 +330,38 @@ def test_deadline_hit_forces_a_terminal_no_tools_round():
     assert "Final answer given the time limit." in blob
     assert "(Reached maximum tool rounds)" not in blob
     assert blob.strip().endswith("data: [DONE]")
+
+
+# ── cost attribution: the chat session, not the turn scope ─────────────────
+
+
+def test_tool_result_side_calls_bill_the_chat_session_under_a_turn_scope(monkeypatch):
+    # A voice-delegated turn: rounds log under the chat session, the scope
+    # keys turn state. The classifier and explainer calls that
+    # process_tool_results makes must bill the chat session too.
+    seen: dict = {}
+
+    async def fake_route_tool(tool_name, tool_input, **kw):
+        return "ok", []
+
+    async def fake_process(states, budget_fn, **kw):
+        seen.update(kw)
+        results = [
+            {"type": "tool_result", "tool_use_id": s.tool_id, "content": "ok"} for s in states
+        ]
+        return results, [], False, False
+
+    monkeypatch.setattr("server.tool_executor.route_tool", fake_route_tool)
+    monkeypatch.setattr("server.tool_executor.process_tool_results", fake_process)
+    adapter = ScriptedAdapter(
+        [_tool_use_round("t1", "ws_read_file", {"path": "x.txt"}), _text_round("done")]
+    )
+    ctx = _base_ctx(
+        session_id="chat1",
+        turn_scope_id="exec:voice-chat1-1234abcd",
+        adapter=adapter,
+        cost_source="voice",
+    )
+    asyncio.run(_drain(ctx))
+    assert seen["session_id"] == "exec:voice-chat1-1234abcd"
+    assert seen["cost_session_id"] == "chat1"

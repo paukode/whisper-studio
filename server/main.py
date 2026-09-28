@@ -29,7 +29,8 @@ from server.chat import router as chat_router
 from server.chat.compaction_log import router as compaction_log_router
 from server.chat.request_snapshots import router as request_snapshots_router
 from server.ci.routes import router as ci_router
-from server.costs.tracker import router as cost_router
+from server.code_tools.status import router as code_tools_router
+from server.costs.routes import router as cost_router
 from server.cron_scheduler import init_scheduler
 from server.cron_scheduler import router as cron_router
 from server.diarization.routes import router as speakers_router
@@ -48,10 +49,9 @@ from server.infrastructure.feature_flags import router as feature_flags_router
 from server.infrastructure.paths import bootstrap_home
 from server.infrastructure.result_cache import router as result_cache_router
 from server.infrastructure.sessions import router as sessions_router
-from server.lsp import router as lsp_router
 from server.lsp_proxy import router as lsp_proxy_router
 from server.mcp import mcp_manager
-from server.mcp import router as mcp_router
+from server.mcp_routes import router as mcp_router
 from server.memory import init_memory
 from server.memory.router import memory_router
 from server.migrations.runner import run_migrations
@@ -92,12 +92,13 @@ bootstrap_home()
 _BIN_DIR = os.environ.get("WHISPER_BIN_DIR", "").strip()
 if _BIN_DIR and _BIN_DIR not in os.environ.get("PATH", "").split(os.pathsep):
     os.environ["PATH"] = _BIN_DIR + os.pathsep + os.environ.get("PATH", "")
-# Widen PATH with the user's real tool locations (Homebrew, pipx, nvm, …) so
-# user-configured MCP server commands and other spawns resolve under the
-# minimal PATH a GUI-launched .app inherits. Packaged mode only.
-from server.infrastructure.binaries import enrich_gui_launch_path  # noqa: E402
+# Adopt the user's login-shell environment: PATH is widened with their real
+# tool locations (Homebrew, pipx, nvm, …) so spawned commands resolve under the
+# minimal environment a GUI-launched .app inherits, and the full environment
+# is kept for MCP servers. Packaged mode only.
+from server.infrastructure.binaries import load_login_shell_env  # noqa: E402
 
-enrich_gui_launch_path()
+load_login_shell_env()
 
 
 class _QuietPollAccessLog(logging.Filter):
@@ -292,7 +293,6 @@ def _start_parent_watchdog() -> None:
     threading.Thread(target=_watch, name="parent-watchdog", daemon=True).start()
 
 
-@asynccontextmanager
 def _seed_bundled_models() -> None:
     """First-launch copy of the always-on speech models shipped in the app.
 
@@ -327,6 +327,7 @@ def _seed_bundled_models() -> None:
             shutil.rmtree(dst, ignore_errors=True)  # never leave a half copy
 
 
+@asynccontextmanager
 async def lifespan(app):
     # Installed here (not at import) so it survives uvicorn's own logging
     # dictConfig, which runs before the lifespan and would otherwise reset the
@@ -379,7 +380,9 @@ async def lifespan(app):
     except Exception as e:
         logging.getLogger("whisper-studio").debug("model server orphan reap failed: %s", e)
     cleanup_task = asyncio.create_task(cleanup_loop())
-    mcp_task = asyncio.create_task(mcp_manager.start_all())
+    # Starts the configured MCP servers, then keeps them matched to
+    # mcp_servers.json (edits from any source apply without a restart).
+    mcp_task = asyncio.create_task(mcp_manager.run())
     # Warm the transcription stack in the background so the first
     # recording doesn't pay model-load latency. The websocket path loads
     # everything lazily anyway, so a warmup failure only costs the first
@@ -429,17 +432,20 @@ async def lifespan(app):
         serving.stop()
     except Exception as e:  # never block shutdown on this
         logging.getLogger("whisper-studio").debug("model server stop failed: %s", e)
+    # Stop the config watcher first so it cannot start a server while the
+    # rest are being shut down.
+    mcp_task.cancel()
+    await asyncio.gather(mcp_task, return_exceptions=True)
     await mcp_manager.stop_all()
     await preview_manager.stop_all()
     cleanup_task.cancel()
-    mcp_task.cancel()
     # Wait for the cancellations to actually take effect before the
     # event loop tears down. Without an awaited gather, uvicorn may
     # close the loop while these tasks are still resolving CancelError,
     # leaving "Task was destroyed but it is pending" warnings — or
     # worse, half-done cleanup. ``return_exceptions=True`` keeps a
     # noisy cancellation from masking the shutdown path.
-    await asyncio.gather(cleanup_task, mcp_task, return_exceptions=True)
+    await asyncio.gather(cleanup_task, return_exceptions=True)
 
 
 app = FastAPI(lifespan=lifespan)
@@ -488,7 +494,7 @@ app.include_router(models_manager_router)
 app.include_router(model_browser_router)
 app.include_router(index_router)
 app.include_router(plugins_router)
-app.include_router(lsp_router)
+app.include_router(code_tools_router)
 app.include_router(lsp_proxy_router)
 app.include_router(terminal_router)
 app.include_router(buddy_router)

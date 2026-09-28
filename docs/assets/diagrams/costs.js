@@ -1,27 +1,25 @@
-/* Architecture - cost tracking, budgets, and forecasting */
+/* Architecture - cost logging, read-time pricing, budgets, and forecasting */
 WSDiagram.mount("costs-diagram", {
-  title: "Cost logging, aggregation, budgets, and forecast",
+  title: "Cost logging, read-time pricing, budgets, and forecast",
   grid: { nodeW: 168, nodeH: 60, gapX: 54, gapY: 42 },
   groups: {
     server: { label: "Cost pipeline" }, persist: { label: "Storage" },
     security: { label: "Budget" }, browser: { label: "SPA" }
   },
   nodes: [
-    { id: "turn", group: "server", col: 0, row: 0, label: "Turn completes", sub: "usage from the adapter", desc: "Each streaming round ends with the adapter's own usage report: a message_delta for Anthropic, a response.completed event for OpenAI, or a done payload with prompt/completion tokens for local - normalized to one usage shape by the engine." },
-    { id: "est", group: "server", col: 1, row: 0, label: "estimate_cost", sub: "in / out / cache tokens", desc: "A USD estimate from the per-model price table: input, output, cache-read, and cache-write rates per 1M tokens." },
-    { id: "log", group: "persist", kind: "store", col: 2, row: 0, label: "session_costs table", sub: "one row per turn", desc: "record_turn INSERTs one row per turn into session_costs in sessions.db: model, tokens, cost_usd, api_duration_ms, created_at." },
-    { id: "sess", group: "server", col: 3, row: 0, label: "Session totals", sub: "aggregate", desc: "get_session_summary sums a session's rows: turns, tokens, cache reads, total cost, and duration." },
-    { id: "check", group: "security", col: 4, row: 0, label: "check_budget", sub: "session / day cap", desc: "Before every round, compares the running session and daily totals against the configured caps. At 90 percent (check_budget_soft) the turn gets one final round with tools off so it can answer with what it has; the next trip past the cap ends it." },
-    { id: "fore", group: "server", col: 3, row: 1, label: "Compaction nudge", sub: "context_used / context_max", desc: "note_prompt_tokens records the real per-round prompt size; should_nudge_compaction fires once usage crosses COMPACT_NUDGE_FRACTION (0.95) of the model's usable input budget." },
-    { id: "ui", group: "browser", col: 4, row: 1, label: "Costs panel", sub: "usage + estimate", desc: "The SPA Costs panel reads the aggregates and renders per-model totals, the daily bar chart, and the live per-turn estimate." }
+    { id: "turn", group: "server", col: 0, row: 0, label: "Billed call ends", sub: "counts from the payload", desc: "Each call's token counts come from the provider's own payload: the Anthropic usage fields and Bedrock's invocationMetrics trailer (authoritative), the Responses usage for GPT, the server's usage for local. With no count in the payload, characters / 4 of what was posted and received, marked estimated. Side tasks (titles, compaction, the classifier, ...) are logged the same way by server/costs/calls.py." },
+    { id: "log", group: "persist", kind: "store", col: 1, row: 0, label: "session_costs table", sub: "one row per call", desc: "record_turn INSERTs one row per billed call: model, token counts, source, count provenance, api_duration_ms, created_at (UTC). No dollar figure is stored." },
+    { id: "est", group: "server", col: 2, row: 0, label: "estimate_cost", sub: "priced when read", desc: "Every reader prices the stored counts with the current rate table (pricing.example.json overlaid by the user's own pricing.json), so a rate correction re-rates history everywhere at once." },
+    { id: "check", group: "security", col: 3, row: 0, label: "check_budget", sub: "session / UTC-day cap", desc: "Before every round, compares the session's cost and the current UTC day's cost against the configured caps. At 90 percent (check_budget_soft) the turn gets one final round with tools off so it can answer with what it has; the next trip past the cap ends it." },
+    { id: "fore", group: "server", col: 2, row: 1, label: "Compaction nudge", sub: "context_used / context_max", desc: "note_prompt_tokens records the real per-round prompt size; should_nudge_compaction fires once usage crosses COMPACT_NUDGE_FRACTION (0.95) of the model's usable input budget." },
+    { id: "ui", group: "browser", col: 3, row: 1, label: "Costs tab", sub: "/api/costs/usage", desc: "The ranged report over UTC days: zero-filled day, week or month buckets, a split by model, session or source, cache figures for the range, and a dated note on every GPT figure." }
   ],
   edges: [
-    { from: "turn", to: "est", label: "usage" },
-    { from: "est", to: "log", label: "record_turn" },
-    { from: "log", to: "sess" },
-    { from: "sess", to: "check", label: "before round" },
+    { from: "turn", to: "log", label: "record_turn" },
+    { from: "log", to: "est" },
+    { from: "est", to: "check", label: "before round" },
+    { from: "est", to: "ui" },
     { from: "log", to: "fore" },
-    { from: "sess", to: "ui" },
     { from: "fore", to: "ui" }
   ]
 });

@@ -2,9 +2,9 @@
 search, and the native folder picker.
 """
 
+import asyncio
 import json
 import os
-import subprocess
 
 from fastapi import Request
 from fastapi.responses import Response
@@ -17,6 +17,13 @@ from ..state import get_workspace_path
 
 @router.get("/browse")
 async def ws_browse(path: str = ""):
+    # The scan runs on a worker thread: a big folder, or one on a slow or
+    # network volume, held the event loop (every session's stream and a
+    # Disconnect click with it) for as long as the listing took.
+    return await asyncio.to_thread(_browse, path)
+
+
+def _browse(path: str) -> dict:
     target = os.path.expanduser(path) if path else os.path.expanduser("~")
     target = _resolve_path(target)
     if not os.path.isdir(target):
@@ -119,7 +126,7 @@ async def ws_list_dir_endpoint(path: str = ""):
                 status_code=404,
                 media_type="application/json",
             )
-    entries = _ws_list_dir(ws, path)
+    entries = await asyncio.to_thread(_ws_list_dir, ws, path)
     return {"entries": entries}
 
 
@@ -135,8 +142,36 @@ async def ws_search_files_endpoint(q: str = "", limit: int = 100):
         )
     if not q.strip():
         return {"results": []}
-    results = _ws_search_files(ws, q.strip(), max_results=min(limit, 500))
+    # A walk of the whole workspace, fired per keystroke by the @-mention
+    # autocomplete and the panel's file search, often while a turn streams.
+    results = await asyncio.to_thread(_ws_search_files, ws, q.strip(), max_results=min(limit, 500))
     return {"results": results}
+
+
+_PICK_FOLDER_TIMEOUT_S = 120
+
+
+async def _run_folder_dialog() -> tuple[int, str]:
+    """Run the native folder dialog without blocking the event loop.
+
+    The dialog stays open for as long as the user takes (up to two minutes).
+    Run synchronously it stalled every other request for that whole time:
+    other sessions' streams, heartbeats, /status and a Disconnect click.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "osascript",
+        "-e",
+        'POSIX path of (choose folder with prompt "Select workspace folder")',
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, _err = await asyncio.wait_for(proc.communicate(), _PICK_FOLDER_TIMEOUT_S)
+    except (TimeoutError, asyncio.CancelledError):
+        proc.kill()
+        await proc.wait()
+        raise
+    return proc.returncode or 0, out.decode(errors="replace")
 
 
 @router.get("/pick-folder")
@@ -147,23 +182,14 @@ async def ws_pick_folder():
     system = platform.system()
     if system == "Darwin":
         try:
-            result = subprocess.run(
-                [
-                    "osascript",
-                    "-e",
-                    'POSIX path of (choose folder with prompt "Select workspace folder")',
-                ],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if result.returncode == 0:
-                path = result.stdout.strip().rstrip("/")
-                if path:
-                    return {"path": path}
+            returncode, stdout = await _run_folder_dialog()
+        except TimeoutError:
             return {"path": None, "cancelled": True}
-        except subprocess.TimeoutExpired:
-            return {"path": None, "cancelled": True}
+        if returncode == 0:
+            path = stdout.strip().rstrip("/")
+            if path:
+                return {"path": path}
+        return {"path": None, "cancelled": True}
     return Response(
         content=json.dumps({"error": "Native folder picker not available on this platform"}),
         status_code=501,

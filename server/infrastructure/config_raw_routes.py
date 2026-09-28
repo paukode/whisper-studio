@@ -256,19 +256,20 @@ async def put_models_disabled(request: Request):
     # Dedupe, preserving order — the file stays clean under repeated toggling.
     cleaned = list(dict.fromkeys(disabled))
 
-    raw = config_mod._load_user_config()
-    unknown = [k for k in cleaned if k not in _known_model_keys(raw)]
-    if unknown:
-        # Not fatal (same as the raw editor): a typo, or pre-disabling a model
-        # a future app version ships.
-        log.warning("chat_models_disabled names no known model: %s", ", ".join(sorted(unknown)))
+    with config_mod.USER_CONFIG_LOCK:  # one read-modify-write, no writer in between
+        raw = config_mod._load_user_config()
+        unknown = [k for k in cleaned if k not in _known_model_keys(raw)]
+        if unknown:
+            # Not fatal (same as the raw editor): a typo, or pre-disabling a model
+            # a future app version ships.
+            log.warning("chat_models_disabled names no known model: %s", ", ".join(sorted(unknown)))
 
-    if cleaned:
-        raw["chat_models_disabled"] = cleaned
-    else:
-        # Everything visible again — drop the key so the user layer stays minimal.
-        raw.pop("chat_models_disabled", None)
-    config_mod.save_config(raw)
+        if cleaned:
+            raw["chat_models_disabled"] = cleaned
+        else:
+            # Everything visible again: drop the key so the user layer stays minimal.
+            raw.pop("chat_models_disabled", None)
+        config_mod.save_config(raw)
     log.info("chat_models_disabled updated via Settings toggles: %s", cleaned or "[]")
     return {"ok": True, **_models_disabled_payload()}
 

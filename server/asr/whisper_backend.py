@@ -132,12 +132,54 @@ WHISPER_HALLUCINATIONS = {
 }
 
 
+# A loop is one phrase of 1 to 6 words repeated back to back. Only adjacent
+# repeats count: a word or phrase that recurs with other words between its
+# occurrences ("the database migration, the database backup and the database
+# restore", "dziękuję bardzo, dziękuję wszystkim") is a sentence, not a loop.
+_LOOP_MAX_PHRASE_WORDS = 6
+# Share of the words a run of three or more repeats must cover when the loop
+# is the whole utterance ("ola ola ola", "i do i do i do"). Tripled emphasis
+# inside a sentence ("bardzo, bardzo, bardzo dobre spotkanie") covers less.
+_REPEAT_RUN_SHARE = 0.8
+# A loop that is not the whole utterance (real speech, then the decoder stuck
+# on one phrase) must repeat at least this often, which emphasis never does,
+# and cover this share of the text's characters.
+_LOOP_MIN_REPEATS = 4
+_LOOP_TEXT_SHARE = 0.35
+
+
+def _repeat_runs(words: list[str]):
+    """Yield ``(repeats, phrase)`` for every maximal back-to-back run of one
+    1 to 6 word phrase repeated at least three times."""
+    for n in range(1, _LOOP_MAX_PHRASE_WORDS + 1):
+        i = 0
+        while i + 3 * n <= len(words):
+            phrase = words[i : i + n]
+            reps = 1
+            while words[i + reps * n : i + (reps + 1) * n] == phrase:
+                reps += 1
+            if reps < 3:
+                i += 1
+                continue
+            yield reps, phrase
+            # A start before the run's last repeat only finds a rotation of
+            # the same phrase, repeating no further than this run does.
+            i += (reps - 1) * n + 1
+
+
 def is_repetition_hallucination(text: str) -> bool:
     """Detect Whisper's looping hallucination patterns.
 
-    Catches both long-form loops ("I love you" × 50) and the short-form
-    cases the original filter missed: "Cheers cheers", "Ola ola ola",
-    "I do I do I do". Three independent checks; any one is enough.
+    Catches long-form loops ("I love you" x 50), the short whole-text ones
+    ("Cheers cheers cheers", "Ola ola ola", "I do I do I do") and a loop that
+    takes over after real speech. A loop is back-to-back repetition that
+    dominates the text, so a term that recurs through a sentence and a phrase
+    repeated for emphasis inside one are speech, not loops.
+
+    Known limit, kept on purpose: an utterance that is nothing but a triple
+    ("Tak, tak, tak.", "Nie wiem, nie wiem, nie wiem.") is still dropped. By
+    its text it cannot be told apart from "Ola ola ola", the hallucination
+    this filter exists for.
     """
     clean = re.sub(r"[^\w\s]", "", text.lower())
     words = clean.split()
@@ -150,32 +192,16 @@ def is_repetition_hallucination(text: str) -> bool:
             if clean == phrase * (len(clean) // n) + phrase[: len(clean) % n]:
                 return True
 
-    # 2. Consecutive n-gram repetition: the same 1-3 word phrase three or
-    # more times back-to-back ("cheers cheers cheers", "i do i do i do").
-    if len(words) >= 3:
-        for n in (1, 2, 3):
-            if len(words) < n * 3:
-                continue
-            for i in range(len(words) - n * 3 + 1):
-                window = words[i : i + n * 3]
-                first = window[:n]
-                if first == window[n : 2 * n] == window[2 * n : 3 * n]:
-                    return True
-
-    # 3. Long-form whole-text loop: a phrase that dominates the output
-    # (3+ repetitions covering over 35% of the text).
-    if len(words) >= 6:
-        limit = min(len(words), 20)
-        for start in range(limit):
-            for n in range(1, 7):
-                if start + n > len(words):
-                    break
-                phrase = " ".join(words[start : start + n])
-                if not phrase:
-                    continue
-                count = clean.count(phrase)
-                if count >= 3 and count * len(phrase) > len(clean) * 0.35:
-                    return True
+    for reps, phrase in _repeat_runs(words):
+        # 2. The loop is the utterance: three or more repeats covering most
+        # of the words ("cheers cheers cheers", "i do i do i do").
+        if reps * len(phrase) >= len(words) * _REPEAT_RUN_SHARE:
+            return True
+        # 3. A long loop inside longer output: four or more repeats covering
+        # a large share of the text ("so i said i love you i love you ...").
+        covered = reps * len(" ".join(phrase))
+        if reps >= _LOOP_MIN_REPEATS and covered > len(clean) * _LOOP_TEXT_SHARE:
+            return True
     return False
 
 

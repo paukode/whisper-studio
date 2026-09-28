@@ -36,7 +36,10 @@ export const ModelsResponseSchema = z.object({
     supports_verbosity: z.boolean().optional().default(false),
     default_verbosity: z.string().optional().default('medium'),
   })).optional().default([]),
-  default: z.string().optional().default('opus4.8'),
+  // '' when the active mode can run nothing (never a hardcoded cloud stand-in).
+  default: z.string().optional().default(''),
+  // Local mode with no on-device chat model installed.
+  needs_local_model: z.boolean().optional().default(false),
 });
 
 /** GET / PUT /api/data-retention */
@@ -50,18 +53,35 @@ export const PermissionsResponseSchema = z.object({
   mode: z.string().optional().default('default'),
 }).passthrough();
 
-/** GET /api/mcp/servers */
+/** GET /api/mcp/servers: the one MCP server list (src/stores/mcpStore.ts).
+ *  The backend coerces every field to these types, so the shape is exact. */
 export const MCPServersResponseSchema = z.object({
   servers: z.record(z.string(), z.object({
-    name: z.string().optional(),
     command: z.string(),
     args: z.array(z.string()),
-    // Persisted opt-in flag. Older backends may omit it; default to false
-    // since that's the new safe default (no tokens spent unless opted in).
-    enabled: z.boolean().optional().default(false),
+    env: z.record(z.string(), z.string()),
+    enabled: z.boolean(),
     status: z.string(),
-    error: z.string().nullable().optional(),
-  })).optional().default({}),
+    tools: z.array(z.string()),
+    error: z.string().nullable(),
+    url: z.string(),
+    bearer_token_env_var: z.string(),
+    approval_mode: z.string(),
+    tool_overrides: z.record(z.string(), z.string()),
+    enabled_tools: z.array(z.string()),
+    disabled_tools: z.array(z.string()),
+  })),
+  revision: z.number(),
+  config_error: z.string().nullable(),
+  pending_elicitations: z.array(z.object({
+    elicitation_id: z.string(),
+    server: z.string(),
+    session_id: z.string().nullable().optional(),
+    mode: z.string(),
+    message: z.string(),
+    requested_schema: z.record(z.string(), z.unknown()).nullable().optional(),
+    url: z.string().nullable().optional(),
+  })),
 });
 
 /** GET /api/skills */
@@ -73,10 +93,5 @@ export const SkillsResponseSchema = z.object({
     isFolder: z.boolean().optional(),
     hasScripts: z.boolean().optional(),
     trusted: z.boolean().optional(),
-  })).optional().default([]),
-  mcpTools: z.array(z.object({
-    name: z.string(),
-    description: z.string(),
-    server: z.string(),
   })).optional().default([]),
 });

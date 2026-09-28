@@ -32,7 +32,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket
 from starlette.websockets import WebSocketDisconnect
 
 from server.voice import protocol
-from server.voice.sonic_client import SonicUnavailable, sdk_availability
+from server.voice.sonic_client import SonicUnavailable, local_mode_refusal, sdk_availability
 
 log = logging.getLogger(__name__)
 
@@ -80,7 +80,13 @@ def _credentials_present() -> bool:
 @router.get("/api/voice/status")
 async def voice_status() -> dict[str, Any]:
     settings = voice_settings()
-    available, reason = sdk_availability()
+    # The mode comes first: in Local mode no credential lookup runs, and the
+    # reason names the real blocker instead of a missing AWS profile.
+    refusal = local_mode_refusal()
+    if refusal:
+        available, reason = False, refusal
+    else:
+        available, reason = sdk_availability()
     if available and not settings.get("enabled", True):
         available, reason = False, "Voice mode is disabled in config (voice.enabled)."
     if available and not await asyncio.get_running_loop().run_in_executor(
@@ -103,7 +109,7 @@ async def voice_status() -> dict[str, Any]:
 
 @router.put("/api/voice/settings")
 async def update_voice_settings(request: Request) -> dict[str, Any]:
-    from server.infrastructure.config import _load_user_config, save_config
+    from server.infrastructure.config import USER_CONFIG_LOCK, _load_user_config, save_config
 
     try:
         body = await request.json()
@@ -125,10 +131,11 @@ async def update_voice_settings(request: Request) -> dict[str, Any]:
         update["enabled"] = bool(body["enabled"])
     if not update:
         raise HTTPException(400, "nothing to update")
-    raw = _load_user_config()
-    block = raw.get("voice") if isinstance(raw.get("voice"), dict) else {}
-    raw["voice"] = {**block, **update}
-    save_config(raw)
+    with USER_CONFIG_LOCK:  # one read-modify-write, no writer in between
+        raw = _load_user_config()
+        block = raw.get("voice") if isinstance(raw.get("voice"), dict) else {}
+        raw["voice"] = {**block, **update}
+        save_config(raw)
     return {"updated": True, **voice_settings()}
 
 
@@ -175,6 +182,15 @@ async def voice_websocket(websocket: WebSocket, session_id: str | None = None) -
         return
 
     settings = voice_settings()
+    # Refused before any VoiceSession exists, so no Sonic stream ever opens in
+    # Local mode (the status endpoint says the same; this holds for a stale or
+    # scripted client too). A live session ends itself on a later switch.
+    refusal = local_mode_refusal()
+    if refusal:
+        await emit({"type": "error", "message": refusal})
+        await emit({"type": "ended", "reason": "unavailable"})
+        await websocket.close()
+        return
     if not settings.get("enabled", True):
         await emit(
             {"type": "error", "message": "Voice mode is disabled in config (voice.enabled)."}

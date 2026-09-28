@@ -21,7 +21,10 @@ Sessions are duck-typed to the protocol below. Events are plain dicts:
     {"kind": "interim", "text": str}
         Volatile word-by-word draft of the in-flight utterance. May
         self-correct; carries no audio and never gets a speaker label.
-        Backends without live drafts simply never emit it.
+        Backends without live drafts simply never emit it. A backend that
+        showed a draft emits ``text: ""`` when that utterance closes (in
+        ``process`` or ``finish``) without a final, so the draft is
+        withdrawn instead of lingering until the client saves it.
 
     {"kind": "final", "text": str, "audio": np.ndarray, "words": list[dict]}
         A settled utterance at a natural silence boundary. ``audio`` is

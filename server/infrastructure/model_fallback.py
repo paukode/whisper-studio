@@ -14,7 +14,8 @@ unavailable.
 
 import logging
 
-from server.costs.tracker import get_session_summary, get_today_total_cost
+from server.costs.tracker import CostLogUnreadable, get_session_usage
+from server.costs.usage import today_spend_usd
 from server.infrastructure.config import load_config
 
 log = logging.getLogger("whisper-studio")
@@ -34,6 +35,7 @@ _STATIC_FALLBACK_CHAIN = [
     "fable5.1",
     "gpt6-astra",
     "fable5.0",
+    "opus5.5",
     "opus5.0",
     "opus4.8",
     "opus4.7",
@@ -44,8 +46,10 @@ _STATIC_FALLBACK_CHAIN = [
     "gpt5.4",
     "sonnet5",
     "sonnet",
+    "gpt6-sol",
     "gpt5.6-luna",
     "haiku",
+    "gpt6-luna",
 ]
 
 # Budget threshold: switch to cheaper model when this % of limit is used
@@ -119,16 +123,26 @@ def should_downgrade_for_budget(
 
     session_limit = config.get("max_session_cost_usd", 0.0)
     daily_limit = config.get("max_daily_cost_usd", 0.0)
+    try:
+        return _budget_downgrade(session_id, model_key, session_limit, daily_limit)
+    except CostLogUnreadable as e:
+        # The budget check itself stops the run with this reason; a
+        # downgrade cannot be judged without the spend either.
+        log.warning("No budget downgrade for %s: %s", model_key, e)
+        return None
 
+
+def _budget_downgrade(
+    session_id: str, model_key: str, session_limit: float, daily_limit: float
+) -> str | None:
     # Check session budget pressure
     if session_limit > 0:
-        summary = get_session_summary(session_id)
-        session_cost = summary.get("total_cost_usd", 0.0)
+        session_cost = get_session_usage(session_id)["cost_usd"]
         if session_cost >= session_limit * BUDGET_THRESHOLD_PCT:
             fallback = get_next_fallback(model_key)
             if fallback:
                 log.info(
-                    "Budget pressure: session cost $%.4f (%.0f%% of $%.2f) — downgrading %s → %s",
+                    "Budget pressure: session cost $%.4f (%.0f%% of $%.2f): downgrading %s to %s",
                     session_cost,
                     session_cost / session_limit * 100,
                     session_limit,
@@ -139,12 +153,12 @@ def should_downgrade_for_budget(
 
     # Check daily budget pressure
     if daily_limit > 0:
-        today_cost = get_today_total_cost()
+        today_cost = today_spend_usd()
         if today_cost >= daily_limit * BUDGET_THRESHOLD_PCT:
             fallback = get_next_fallback(model_key)
             if fallback:
                 log.info(
-                    "Budget pressure: daily cost $%.4f (%.0f%% of $%.2f) — downgrading %s → %s",
+                    "Budget pressure: today's cost (UTC day) $%.4f (%.0f%% of $%.2f): downgrading %s to %s",
                     today_cost,
                     today_cost / daily_limit * 100,
                     daily_limit,

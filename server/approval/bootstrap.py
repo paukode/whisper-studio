@@ -183,7 +183,9 @@ def register_defaults() -> None:
                 summary=_summary_command,
                 executor=_do_command,
                 risk_hint="medium",
-                payload_fields=["command", "cwd"],
+                # session_id: the owning session (its cwd, its background
+                # task); run_in_background: honoured once approved.
+                payload_fields=["command", "cwd", "session_id", "run_in_background"],
             ),
         )
 
@@ -557,14 +559,30 @@ def register_defaults() -> None:
         if exe:
             args = " ".join(str(a) for a in (p.get("runtimeArgs") or []))
             return f"preview_start [{name}]: {exe} {args}".strip()
+        from server.preview.start_policy import approval_trusts_it
+
+        if approval_trusts_it(p):
+            return (
+                f"preview_start [{name}]: from .whisper/launch.json, a command not "
+                "approved before (approving lets it start without asking from now on)"
+            )
         return f"preview_start [{name}]: from .whisper/launch.json"
 
     def _preview_start_command(p: dict) -> str:
         exe = p.get("runtimeExecutable")
         if not exe:
+            # A named config shows the command pinned into the call, which is
+            # exactly what runs on Yes (server/preview/start_policy.py).
+            from server.preview.start_policy import display_command
+
+            pinned = display_command(p)
+            if pinned:
+                return pinned
             return f"(resolve '{p.get('session_name', '?')}' from .whisper/launch.json)"
         args = " ".join(str(a) for a in (p.get("runtimeArgs") or []))
         return f"{exe} {args}".strip()
+
+    from server.preview.start_policy import PIN_KEY, trust_approved
 
     register(
         "preview_start",
@@ -574,6 +592,8 @@ def register_defaults() -> None:
             summary=_preview_start_summary,
             executor=_do_preview_start,
             risk_hint="medium",
+            # session_id on every preview action: the calling chat, which
+            # owns what it starts and is checked before it stops or drives.
             payload_fields=[
                 "session_name",
                 "runtimeExecutable",
@@ -581,8 +601,13 @@ def register_defaults() -> None:
                 "port",
                 "cwd",
                 "url",
+                "session_id",
+                PIN_KEY,
             ],
             render_command=_preview_start_command,
+            # A person's Yes on a named config trusts its pinned command, so
+            # later starts of it need no card in any mode.
+            on_approved_by_human=trust_approved,
         ),
     )
 
@@ -594,7 +619,7 @@ def register_defaults() -> None:
             summary=lambda p: f"Stop preview session {p.get('session_name', '?')}",
             executor=_do_preview_stop,
             risk_hint="low",
-            payload_fields=["session_name"],
+            payload_fields=["session_name", "session_id"],
         ),
     )
 
@@ -606,7 +631,7 @@ def register_defaults() -> None:
             summary=lambda p: f"preview_navigate [{p.get('session_name', '?')}]: {p.get('url', '?')}",
             executor=_do_preview_navigate,
             risk_hint="medium",
-            payload_fields=["session_name", "url"],
+            payload_fields=["session_name", "url", "session_id"],
         ),
     )
 
@@ -624,7 +649,7 @@ def register_defaults() -> None:
             summary=_preview_click_summary,
             executor=_do_preview_click,
             risk_hint="medium",
-            payload_fields=["session_name", "selector", "doubleClick"],
+            payload_fields=["session_name", "selector", "doubleClick", "session_id"],
         ),
     )
 
@@ -646,7 +671,7 @@ def register_defaults() -> None:
             summary=_preview_fill_summary,
             executor=_do_preview_fill,
             risk_hint="medium",
-            payload_fields=["session_name", "selector", "value"],
+            payload_fields=["session_name", "selector", "value", "session_id"],
             render_command=_preview_fill_command,
         ),
     )
@@ -664,7 +689,7 @@ def register_defaults() -> None:
             summary=_preview_eval_summary,
             executor=_do_preview_eval,
             risk_hint="high",  # arbitrary JS — the highest-risk single action
-            payload_fields=["session_name", "expression"],
+            payload_fields=["session_name", "expression", "session_id"],
             render_command=lambda p: p.get("expression") or "?",  # full, unabridged JS
         ),
     )
@@ -684,7 +709,14 @@ def register_defaults() -> None:
             summary=_preview_resize_summary,
             executor=_do_preview_resize,
             risk_hint="low",
-            payload_fields=["session_name", "preset", "width", "height", "colorScheme"],
+            payload_fields=[
+                "session_name",
+                "preset",
+                "width",
+                "height",
+                "colorScheme",
+                "session_id",
+            ],
         ),
     )
 
@@ -721,6 +753,83 @@ def register_defaults() -> None:
             payload_fields=["elicitation_id", "response_action", "content"],
         ),
     )
+
+    _bind_workspace_actions()
+
+
+def _no_explicit_cwd(p: dict) -> bool:
+    return not str(p.get("cwd") or "").strip()
+
+
+def _terminal_uses_workspace(p: dict) -> bool:
+    # No cwd, or one that is not a directory: both fall back to the workspace.
+    from server.executors.terminal_run import uses_workspace_cwd
+
+    return uses_workspace_cwd(p.get("cwd"))
+
+
+def _preview_uses_workspace(p: dict) -> bool:
+    # A start with its own cwd, or a pinned launch config that records the
+    # workspace it came from, does not fall back to the connected one.
+    from server.preview.start_policy import pinned_config
+
+    return _no_explicit_cwd(p) and not (pinned_config(p) or {}).get("workspace")
+
+
+# Actions whose executor resolves against the workspace connected when the
+# user clicks Yes: workspace-relative writes and deletes, workspace commands,
+# a worktree, git and gh calls in its repo, and code that runs in it. Their
+# cards carry the root they were raised in, and a Yes after that workspace
+# was disconnected or replaced is refused instead of acting on the new one
+# (server/approval/spec.py::stale_workspace_refusal). A terminal run or send
+# is bound unless it names a cwd that exists, and a preview start unless it
+# names a cwd or a pinned launch config records its workspace.
+_WORKSPACE_BOUND = {
+    **dict.fromkeys(
+        (
+            "write",
+            "ws_write_file",
+            "create",
+            "ws_create_file",
+            "create_document",
+            "delete",
+            "ws_delete_file",
+            "command",
+            "cli",
+            "ws_run_command",
+            "enter_worktree",
+            "git_add_commit",
+            "git_push",
+            "git_pull",
+            "git_create_branch",
+            "git_push_pr",
+            "git_checkout",
+            "git_delete_branch",
+            "git_merge",
+            "git_stash",
+            "github",
+            "github_destructive",
+            "github_api_write",
+            "github_api_write_destructive",
+            "run_python",
+            "run_tool_script",
+        ),
+        True,
+    ),
+    "terminal_run": _terminal_uses_workspace,
+    "terminal_send": _terminal_uses_workspace,
+    "preview_start": _preview_uses_workspace,
+}
+
+
+def _bind_workspace_actions() -> None:
+    from .registry import get
+
+    for action, bound in _WORKSPACE_BOUND.items():
+        spec = get(action)
+        if spec is None:
+            raise RuntimeError(f"workspace-bound approval action {action!r} is not registered")
+        spec.workspace_bound = bound
 
 
 __all__ = ["register_defaults"]

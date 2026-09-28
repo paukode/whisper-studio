@@ -14,6 +14,10 @@ path, mispricing the ledger — see tests/test_model_resolution.py):
   calling (the same registry gate interactive chat uses); a chat-only local
   model is refused up front with a readable reason instead of being handed
   an agent loop it cannot drive.
+* In Local mode a CLOUD key is refused the same way (nothing leaves this
+  Mac), with the reason chat turns give (model_mode.turn_model_refusal).
+  run_agent refuses a cloud default too (runtime_support._resolve_agent_model),
+  so the fallback can never reach Bedrock either.
 
 ``warning`` is empty when the override resolved cleanly (or no override was
 asked for).
@@ -30,7 +34,8 @@ def resolve_model_override(
     try:
         from server.infrastructure.config import load_config
 
-        models = load_config().get("chat_models", {}) or {}
+        cfg = load_config()
+        models = cfg.get("chat_models", {}) or {}
     except Exception:
         return (default_model_id or None), "", ""
 
@@ -41,10 +46,13 @@ def resolve_model_override(
         # the catalog keys are versioned ("sonnet5.0"). Seen 14 times in one
         # log, each silently downgraded to the default model. Resolve to the
         # newest configured key in that family and say so in the warning, so
-        # the override still never fails silently.
+        # the override still never fails silently. Keys with the same version
+        # ("gpt6-astra", "gpt6-sol", "gpt6-luna" are all version 6) go to the
+        # FIRST one listed: the catalog lists each family's flagship first, so
+        # "gpt6" means Astra, not whichever smaller sibling was added last.
         family = [k for k in models if k.lower().startswith(key.lower())]
         if family:
-            key = sorted(family, key=_version_sort_key)[-1]
+            key = max(family, key=_version_sort_key)
             resolved = models.get(key)
             alias_note = f"model alias resolved to '{key}'"
     if not resolved:
@@ -54,8 +62,17 @@ def resolve_model_override(
             f"unknown model '{key}'; ran on the default model instead",
         )
 
+    from server.infrastructure.model_mode import current_mode, turn_model_refusal
     from server.local.runtime import is_local_model_id, supports_tools
 
+    if current_mode(cfg) == "local" and not is_local_model_id(resolved):
+        label = ((cfg.get("chat_model_meta") or {}).get(key) or {}).get("label", "")
+        refusal = turn_model_refusal(key, on_device=False, label=label, mode="local")
+        return (
+            (default_model_id or None),
+            "",
+            f"{refusal} The agent ran on the default model instead.",
+        )
     if is_local_model_id(resolved) and not supports_tools(key):
         return (
             (default_model_id or None),
@@ -70,10 +87,12 @@ def resolve_model_override(
 
 
 def _version_sort_key(key: str) -> tuple:
-    """ "sonnet5.0" -> (5, 0); a key with no trailing version sorts lowest."""
+    """The version right after the family name, wherever the key puts it:
+    "sonnet5.0" -> (5, 0), "gpt5.6-sol" -> (5, 6), "gpt6-astra" -> (6,). A
+    key with no version ("haiku", "sonnet") sorts lowest."""
     import re
 
-    m = re.search(r"(\d+(?:\.\d+)*)$", key)
+    m = re.search(r"\d+(?:\.\d+)*", key)
     if not m:
         return (0,)
-    return tuple(int(p) for p in m.group(1).split("."))
+    return tuple(int(p) for p in m.group(0).split("."))

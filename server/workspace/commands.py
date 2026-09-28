@@ -1,6 +1,6 @@
 """Shell-execution helpers shared by both executors and HTTP routes.
 
-These were extracted because both `_execute_command_directly` (in executors.py)
+These were extracted because both `run_workspace_command` (in executors.py)
 and `ws_shell_endpoint` (in routes.py) — plus `server/approval/bootstrap.py` —
 need the same validation, redirection, truncation, and exit-code interpretation
 logic. Living in their own module avoids circular imports between executors

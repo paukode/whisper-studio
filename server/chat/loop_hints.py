@@ -9,9 +9,10 @@ Two long-standing loop gaps close here:
 
 2. Context accounting was character-based guesswork (COMPACT_TRIGGER_CHARS).
    Every round's message_start usage already reports the TRUE prompt size
-   (input + cache_read + cache_creation tokens); recording it per session
-   gives a real context meter (the Stats panel bar) and an early compaction
-   nudge at 80% of the model's window, both at zero added cost.
+   (input + cache_read + cache_creation tokens). The usage frame carries it
+   to the composer's context readout (TokenCounter), and recording it per
+   session gives an early compaction nudge at COMPACT_NUDGE_FRACTION of the
+   model's window, both at zero added cost.
 
 Reminders are PERSISTED into history (appended to the last user message):
 injecting request-only would fork the token prefix between rounds and destroy
@@ -43,7 +44,8 @@ def context_window_for(model_key: str) -> int:
     reserved for the answer), via the engine's window accounting — so a
     1M-window Claude model budgets against ~872K, GPT-on-mantle against its
     real 278,528-token prompt cap, and a local model against its live n_ctx.
-    Feeds both the Stats context meter and the compaction nudge."""
+    Feeds both the composer's context readout (the usage frame's
+    context_max, shown by TokenCounter) and the compaction nudge."""
     try:
         from server.chat.engine.windows import input_budget
 
@@ -74,15 +76,6 @@ def note_prompt_tokens(session_id: str, tokens: int, context_max: int | None = N
         if context_max:
             entry["max"] = context_max
         _context[session_id] = entry
-
-
-def context_estimate(session_id: str) -> tuple[int | None, int]:
-    """Latest known (context_used, context_max) for a session."""
-    with _lock:
-        entry = _context.get(session_id)
-        if not entry:
-            return None, DEFAULT_CONTEXT_MAX
-        return entry["used"], entry["max"]
 
 
 def should_nudge_compaction(session_id: str) -> bool:

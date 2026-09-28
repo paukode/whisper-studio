@@ -11,8 +11,9 @@
  * Nothing is cleared on switch. Background sessions keep streaming,
  * keep receiving cron events, and keep saving themselves. The registry
  * is soft-capped: beyond MAX_LIVE_RUNTIMES, idle hydrated sessions are
- * evicted LRU (never the current one, never one that is streaming,
- * recording, mid-approval, or has an unflushed save).
+ * evicted LRU (never the current one, never one that is busy (streaming,
+ * running an approved action, mid-approval, or running a /subagent),
+ * recording, or has an unflushed save).
  */
 import { create, useStore } from 'zustand';
 import type { StoreApi } from 'zustand/vanilla';
@@ -21,6 +22,7 @@ import { createTranscriptionStore, type TranscriptionState } from './transcripti
 import { useSessionStore } from './sessionStore';
 import { useRecordingStore } from './recordingStore';
 import { useCronUnreadStore } from './cronUnreadStore';
+import { hasRunningSubagent, useSubagentStore } from './subagentStore';
 import type {
   ChatMessage,
   CronEventPayload,
@@ -78,7 +80,7 @@ export function getRuntime(sessionId: string | null): RuntimeEntry {
     runtimes.set(key, entry);
     if (key !== DRAFT_SESSION) {
       attachRuntimeSubscriptions(key, entry);
-      ensureSharedEventStream();
+      openEventChannel();
       syncIndex();
     }
   }
@@ -136,15 +138,48 @@ export function useSessionActivity(sessionId: string): SessionActivity {
   return chatActivity as SessionActivity;
 }
 
-/** ACTIVE = streaming, mid-approval, or owning the recording. The user's
+/** Approved actions still executing, counted per session. While one runs its
+ *  leg holds the stream, but Stop lets go of the stream and the action keeps
+ *  running: its outcome still has to be written into this session. */
+const runningApprovedActions = new Map<string, number>();
+
+/** Count an approved action as running in this session until the returned
+ *  release is called (once; later calls do nothing). */
+export function holdForApprovedAction(sessionId: string): () => void {
+  runningApprovedActions.set(sessionId, (runningApprovedActions.get(sessionId) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (runningApprovedActions.get(sessionId) ?? 1) - 1;
+    if (left > 0) runningApprovedActions.set(sessionId, left);
+    else runningApprovedActions.delete(sessionId);
+  };
+}
+
+/** A session's chat is BUSY while a turn streams in it, while an approved
+ *  action it started is still executing (also after Stop), while an approval
+ *  card waits on the user, or while a /subagent it started is still running.
+ *  One predicate for both the parallel ceiling and eviction, so a session
+ *  that still has an answer to deliver is never treated as idle. */
+function isChatBusy(sid: string, chat: ChatState): boolean {
+  return (
+    chat.isStreaming
+    || runningApprovedActions.has(sid)
+    || chat.currentApproval !== null
+    || chat.approvalQueue.length > 0
+    || hasRunningSubagent(useSubagentStore.getState(), sid)
+  );
+}
+
+/** ACTIVE = a busy chat (see isChatBusy) or owning the recording. The user's
  *  3-session ceiling counts these; viewing idle sessions is never capped. */
 export function countActiveSessions(excluding?: string): number {
   const recOwner = useRecordingStore.getState().recordingSessionId;
   let count = 0;
   for (const [sid, entry] of runtimes) {
     if (sid === DRAFT_SESSION || sid === excluding) continue;
-    const chat = entry.chat.getState();
-    if (chat.isStreaming || chat.currentApproval !== null || sid === recOwner) count++;
+    if (isChatBusy(sid, entry.chat.getState()) || sid === recOwner) count++;
   }
   return count;
 }
@@ -159,6 +194,8 @@ function attachRuntimeSubscriptions(sid: string, entry: RuntimeEntry): void {
   let prevMsgCount = entry.chat.getState().messages.length;
   entry.unsubs.push(
     entry.chat.subscribe((s) => {
+      // Stream start: note the connected folder (see syncChatHistory).
+      if (!wasStreaming && s.isStreaming) useSessionStore.getState().noteStreamStart(sid);
       // Stream end → full sync (counts, sort, debounced save).
       if (wasStreaming && !s.isStreaming && s.messages.length > 0) {
         setTimeout(() => {
@@ -237,25 +274,22 @@ function toastMemoryEvent(sid: string, ev: MemoryEventPayload): void {
   });
 }
 
-/** The single multiplexed SSE channel carrying every session's out-of-band
- *  events. One connection, not one per session: browsers cap concurrent
- *  connections per origin (~6 on HTTP/1.1), and a stream per session plus the
- *  chat stream exhausted that budget, so a file upload or a second session's
- *  first request sat queued in the browser until a running turn released its
- *  socket. Each frame carries `session_id`; it is routed to that session's
- *  runtime here, and dropped when the session has no live runtime (which is
- *  exactly who used to have a stream at all). */
+/** The app's single multiplexed SSE channel, open for the app's lifetime. It
+ *  carries every session's out-of-band events plus the app-wide ones (the MCP
+ *  server list changing). One connection, not one per session: browsers cap
+ *  concurrent connections per origin (~6 on HTTP/1.1), and a stream per
+ *  session plus the chat stream exhausted that budget, so a file upload or a
+ *  second session's first request sat queued in the browser until a running
+ *  turn released its socket. A session frame carries its `session_id` and is
+ *  routed to that session's runtime here, and dropped when the session has no
+ *  live runtime (its rows are durable and replay on the next hydrate). */
 let sharedEvents: EventSource | null = null;
 
-function hasLiveRuntimes(): boolean {
-  for (const key of runtimes.keys()) if (key !== DRAFT_SESSION) return true;
-  return false;
-}
-
 /** One frame off the multiplexed channel. `session_id` says which session it
- *  belongs to; exactly one payload key is set. */
+ *  belongs to (empty for an app-wide frame); exactly one payload key is set. */
 interface SessionEventFrame {
   session_id?: string;
+  mcp_changed?: { revision: number };
   cron_event?: CronEventPayload;
   memory_event?: MemoryEventPayload;
   task_event?: TaskEventPayload;
@@ -267,9 +301,16 @@ interface SessionEventFrame {
   ci_result?: Record<string, unknown>;
 }
 
-function ensureSharedEventStream(): void {
+/** Open the app's event channel if it is not open. AppShell opens it at
+ *  startup; recycling and a new session runtime reopen one that died. */
+export function openEventChannel(): void {
   if (sharedEvents || typeof EventSource === 'undefined') return; // vitest/jsdom
   const es = new EventSource('/api/sessions/events');
+  // Every (re)connect reloads the MCP list: a change made while the channel
+  // was down, or before it first opened, has no event left to deliver.
+  es.onopen = () => {
+    void import('./mcpStore').then(({ useMcpStore }) => useMcpStore.getState().refresh());
+  };
   es.onmessage = (event) => {
     if (!event.data) return;
     let parsed: SessionEventFrame | null = null;
@@ -277,6 +318,11 @@ function ensureSharedEventStream(): void {
       parsed = JSON.parse(event.data) as SessionEventFrame;
     } catch {
       return; // heartbeats / malformed frames
+    }
+    if (parsed?.mcp_changed) {
+      const { revision } = parsed.mcp_changed;
+      void import('./mcpStore').then(({ useMcpStore }) => useMcpStore.getState().applyChange(revision));
+      return;
     }
     const sid = parsed?.session_id ?? '';
     const entry = sid ? runtimes.get(sid) : undefined;
@@ -423,11 +469,10 @@ function closeSharedEventStream(): void {
  *  offline); otherwise only non-OPEN streams are recycled so a routine tab
  *  refocus doesn't churn healthy connections. */
 function recycleEventStreams(force: boolean): void {
-  if (!hasLiveRuntimes()) return;
   const es = sharedEvents;
   if (!force && es && es.readyState === EventSource.OPEN) return;
   closeSharedEventStream();
-  ensureSharedEventStream();
+  openEventChannel();
 }
 
 if (typeof window !== 'undefined') {
@@ -440,14 +485,13 @@ if (typeof window !== 'undefined') {
 // ── Teardown + eviction ────────────────────────────────────────────────
 
 /** Remove a runtime (session deleted, or evicted after a flush-save).
- *  Aborts any in-flight stream and closes the event channel. */
+ *  Aborts any in-flight stream; the app's event channel stays open. */
 export function dropRuntime(sessionId: string): void {
   const entry = runtimes.get(sessionId);
   if (!entry) return;
   entry.abort?.abort();
   for (const unsub of entry.unsubs) unsub();
   runtimes.delete(sessionId);
-  if (!hasLiveRuntimes()) closeSharedEventStream();
   syncIndex();
 }
 
@@ -455,8 +499,7 @@ function isEvictable(sid: string, entry: RuntimeEntry): boolean {
   if (sid === DRAFT_SESSION) return false;
   if (sid === useSessionStore.getState().currentSessionId) return false;
   if (sid === useRecordingStore.getState().recordingSessionId) return false;
-  const chat = entry.chat.getState();
-  if (chat.isStreaming || chat.currentApproval !== null) return false;
+  if (isChatBusy(sid, entry.chat.getState())) return false;
   return entry.hydrated && entry.hydrating === null;
 }
 

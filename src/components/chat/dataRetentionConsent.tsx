@@ -288,6 +288,18 @@ export async function ensureRetentionEnabled(): Promise<boolean> {
   return enabled;
 }
 
+/** Commit a model switch: select the target, then free the previous on-device
+ *  model's weights when leaving one. Called only at the points where the switch
+ *  is certain, so a declined consent screen (or a failed retention change) never
+ *  unloads the local model the selection stays on. */
+async function commitSwitch(targetKey: string, leavingLocal: boolean): Promise<void> {
+  useSettingsStore.getState().setSelectedModel(targetKey);
+  if (leavingLocal) {
+    const { unloadLocalModel } = await import('@/api/localModel');
+    void unloadLocalModel();
+  }
+}
+
 /**
  * Handle ANY model change in the UI (picker, slash command, future surfaces),
  * gating on data retention as needed. Returns whether the switch happened.
@@ -313,8 +325,9 @@ export async function requestModelChange(targetKey: string): Promise<boolean> {
   if (targetKey === current && !needsLocalLoad) return false;
 
   // On-device models: load the target into memory (with the progress banner)
-  // before committing the switch; free the previous local model when leaving
-  // it. Local models never need the data-retention gate.
+  // before committing the switch. Local models never need the data-retention
+  // gate. Leaving a local model for a cloud one frees its weights, but only
+  // once the switch commits (commitSwitch), never before the consent screen.
   if (targetModel?.is_local) {
     const { loadLocalModel } = await import('@/api/localModel');
     // Load at the user's chosen context window so first load matches the slider.
@@ -323,12 +336,7 @@ export async function requestModelChange(targetKey: string): Promise<boolean> {
     useSettingsStore.getState().setSelectedModel(targetKey);
     return true;
   }
-  if (currentModel?.is_local) {
-    // Leaving a local model for a cloud one — free the on-device weights.
-    const { unloadLocalModel } = await import('@/api/localModel');
-    void unloadLocalModel();
-  }
-
+  const leavingLocal = !!currentModel?.is_local;
   const targetNeeds = modelRequiresRetention(targetKey);
   const currentNeeds = modelRequiresRetention(current);
 
@@ -346,12 +354,12 @@ export async function requestModelChange(targetKey: string): Promise<boolean> {
         duration: 3000,
       });
     }
-    useSettingsStore.getState().setSelectedModel(targetKey);
+    await commitSwitch(targetKey, leavingLocal);
     return true;
   }
 
   if (currentNeeds && settings.dataRetentionEnabled) {
-    useSettingsStore.getState().setSelectedModel(targetKey); // the switch itself proceeds
+    await commitSwitch(targetKey, leavingLocal); // the switch itself proceeds
     const turnOff = await showRetentionDialog('turnoff', currentModel?.name ?? current);
     if (turnOff) {
       const ok = await applyRetention(false);
@@ -366,6 +374,6 @@ export async function requestModelChange(targetKey: string): Promise<boolean> {
     return true;
   }
 
-  useSettingsStore.getState().setSelectedModel(targetKey);
+  await commitSwitch(targetKey, leavingLocal);
   return true;
 }

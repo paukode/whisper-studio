@@ -364,6 +364,16 @@ export const PermissionsPanel: React.FC = () => {
                     Don&apos;t ask declines launches. Trusted saved workflows always run directly.
                   </p>
                 )}
+                {cat === 'preview' && (
+                  <p className="settings-hint" style={{ margin: '4px 0 0 188px' }}>
+                    A preview started by name from .whisper/launch.json follows the mode while its
+                    command is new or changed; once you approve it on a card, it starts without
+                    asking in every mode, including this row&apos;s. Outside Bypass, a rule that
+                    denies preview_start, or Block preview on an approval card, still refuses it,
+                    and a launch config that deletes files always asks. An ad-hoc preview command
+                    follows the mode.
+                  </p>
+                )}
               </React.Fragment>
             );
           })}

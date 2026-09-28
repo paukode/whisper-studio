@@ -21,7 +21,6 @@ from fastapi.responses import Response
 
 import server.skills as _sk
 from server import folder_skills
-from server.mcp import mcp_manager
 from server.skills import router, whisper_md_router
 
 log = logging.getLogger("whisper-studio")
@@ -44,23 +43,7 @@ async def skills_endpoint():
         }
         for s in _sk.SKILLS.values()
     ]
-    # Only tools from servers whose persisted `enabled` flag is on — the
-    # autocomplete/skills UI must mirror the MCP ticks, not the connection
-    # state (servers stay warm while disabled so re-enabling is instant).
-    enabled_servers = mcp_manager.globally_enabled_servers()
-    mcp_tools = []
-    for tool_key, tool_info in mcp_manager._tools.items():
-        if tool_info.get("server_name", "") not in enabled_servers:
-            continue
-        mcp_tool = tool_info["mcp_tool"]
-        mcp_tools.append(
-            {
-                "name": tool_key,
-                "description": mcp_tool.description or mcp_tool.name,
-                "server": tool_info.get("server_name", ""),
-            }
-        )
-    return {"skills": skills, "mcpTools": mcp_tools}
+    return {"skills": skills}
 
 
 def _folder_skill_dir(name: str) -> str | None:

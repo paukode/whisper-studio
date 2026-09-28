@@ -77,9 +77,11 @@
           <code>/goal make the login page pass tsc, eslint, and its tests</code>. That one command does
           both halves: it arms the gate with your text as the goal, <b>and</b> sends the same text as your
           first message, so the work begins immediately. A goal banner appears above the composer so you
-          always see what it's working toward, with a chip reading <b>working…</b>, <b>achieved</b> or
-          <b>blocked</b>. If a turn is already running when you type it, the goal text is folded into that
-          turn rather than starting a second one.</p>
+          always see what it's working toward, with a chip reading <b>working…</b>, <b>achieved</b>,
+          <b>blocked</b> or <b>not checked</b>. <b>Not checked</b> is neutral: the goal could not be judged
+          this time (the reason is on the chip's hover and in the <b>Goal check</b> row), and it stays set
+          and is checked again when the next turn ends. If a turn is already running when you type it, the
+          goal text is folded into that turn rather than starting a second one.</p>
       </li>
       <li>
         <h4>Optional: name a check it must pass</h4>
@@ -95,8 +97,11 @@
         <p>When the model stops, the <a href="arch-goals.html">completion gate</a> runs a set of checks
           instead of ending the turn: any <a href="arch-hooks.html">Stop hooks</a>, then whether the files
           the reply claims to have written actually exist, then whether anything green ran after the last
-          code edit, then your gate commands, and only then a cheap evaluator. If something is missing it
-          feeds back what, and the turn continues, so you don't have to keep typing "keep going".</p>
+          code edit, then your gate commands, and only then a judge (a cheap cloud evaluator, or an
+          on-device session's own model). If something is missing it feeds back what, and the turn
+          continues, so you don't have to keep typing "keep going". On an on-device model, add a gate with
+          <code>/goal gate add &lt;test command&gt;</code>: a small model judging its own work is a weaker
+          signal than a test that has to pass.</p>
       </li>
       <li>
         <h4>Clear it when you're done</h4>
@@ -142,8 +147,8 @@
       <a href="arch-preview.html#verify-loop">Verifying the UI in the loop</a>.</p>
 
     <h2 id="when-not">When a goal is overkill</h2>
-    <p>Don't set a goal for a plain question or a one-line edit. A goal adds a small evaluator check at the
-      end of each turn, which is wasted effort when there was never any doubt the task was done. Keep goals
+    <p>Don't set a goal for a plain question or a one-line edit. A goal adds a judge check at the end of each
+      turn (on-device, one more answer from the session's own model), which is wasted effort when there was never any doubt the task was done. Keep goals
       for genuinely multi-step, "run until it holds up" work. And you can always steer mid-goal: your next
       message is still just a message; the goal is the backdrop, not a cage.</p>
 

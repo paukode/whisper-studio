@@ -32,6 +32,10 @@ category_modes (optional, in permissions.json):
   resolve_static_decision below: "github-destructive", and any command
   input that is rm or a close cousin (is_rm_command).
 
+A preview_start that names a .whisper/launch.json config whose command a person
+has approved once starts in every mode (server/preview/start_policy.py); a new
+or changed config, and an ad-hoc preview command, follow the mode.
+
 "auto" mode's classifier can flip-flop over a long turn; record_classifier_verdict /
 is_auto_mode_tripped / resume_auto_mode below implement a per-turn circuit breaker
 that forces the effective decision back to "ask" once denials pile up (see their
@@ -247,34 +251,24 @@ def evaluate_rules(tool_name: str, tool_input: dict, rules: list | None = None) 
     return rule.get("action", "ask") if rule is not None else None
 
 
-def resolve_static_decision(
-    tool_name: str,
-    tool_input: dict,
-    category: str,
-    session_approvals: dict,
-    mode: str,
-    auto_allow_trusted: bool = False,
-) -> str | None:
-    """Resolve an approval-gated tool call's decision without the async auto-mode
-    classifier.
+def approval_floor(tool_name: str, tool_input: dict, category: str) -> str | None:
+    """The hard floor this call hits, or None.
 
-    Returns "allow" | "ask" | "deny", or None when mode is "auto" and nothing
-    else resolved it — the caller should fall back to the classifier in that case.
-
-    Evaluation order: github-destructive (absolute) → rm-class command
-    (absolute) → category mode override → bypassPermissions (absolute) →
-    trusted skill script → session approvals ("yes/no for all this session")
-    → explicit custom rules → dontAsk → acceptEdits (write category only) →
-    auto (defer) → ask.
+    A floor always asks a human: no permission mode, category override,
+    trusted-skill flag, session approval ("Yes, all" / "Block"), custom rule
+    or default decides it. Returns which floor ("github-destructive", "rm",
+    "sandbox-escalation", "mcp-approve"). Any floor marks the approval card's
+    request ``always_asks``, so the card never offers a remember-for-session
+    choice that would then be ignored.
     """
     # Destructive GitHub mutations (repo/ref delete, PR merge, archive/rename,
     # API DELETE) ALWAYS require an explicit human approval — no bypass mode,
     # autopilot, trusted-skill, blanket session approval, or category mode
     # override may cover them, given the irreversibility and remote blast
     # radius. Checked before everything, including the category mode lookup
-    # right below.
+    # in resolve_static_decision.
     if category == "github-destructive":
-        return "ask"
+        return "github-destructive"
 
     # rm (and its close cousins — see is_rm_command): the same absolute floor
     # as github-destructive, for the same reason — no bypass mode, category
@@ -283,13 +277,19 @@ def resolve_static_decision(
     # without a real human clicking Approve. Checked against whatever shell
     # command the tool input actually carries, so it applies uniformly to
     # ws_run_command, terminal_run, and any future command-shaped tool
-    # without needing its own category or tool-name special case.
-    command = tool_input.get("command")
-    if isinstance(command, str) and command.strip():
-        from server.security.command_validator import is_rm_command
+    # without needing its own category or tool-name special case. A
+    # preview_start that names a launch config carries no command of its own,
+    # so the one .whisper/launch.json resolves it to, and the one pinned into
+    # the call, are checked too (never instead of a "command" key the input
+    # may also carry).
+    from server.preview.start_policy import floor_commands
 
-        if is_rm_command(command):
-            return "ask"
+    for command in (tool_input.get("command"), *floor_commands(tool_name, tool_input)):
+        if isinstance(command, str) and command.strip():
+            from server.security.command_validator import is_rm_command
+
+            if is_rm_command(command):
+                return "rm"
 
     # Sandbox escalation (sandbox_permissions="danger-full-access"): the same
     # absolute floor as rm. The parameter's entire meaning is "run this ONE
@@ -299,7 +299,7 @@ def resolve_static_decision(
     # may cover it. Without this, "Yes, all cli" would silently convert every
     # later escalated call into an unconfined auto-run.
     if str(tool_input.get("sandbox_permissions") or "").strip() == "danger-full-access":
-        return "ask"
+        return "sandbox-escalation"
 
     # MCP tool calls: a dedicated tier on top of (not instead of) everything
     # below. A server/tool marked `approval_mode: "approve"` in
@@ -316,7 +316,33 @@ def resolve_static_decision(
         from server.mcp import mcp_manager
 
         if mcp_manager.get_tool_approval_tier_for_tool_name(tool_name) == "approve":
-            return "ask"
+            return "mcp-approve"
+    return None
+
+
+def resolve_static_decision(
+    tool_name: str,
+    tool_input: dict,
+    category: str,
+    session_approvals: dict,
+    mode: str,
+    auto_allow_trusted: bool = False,
+) -> str | None:
+    """Resolve an approval-gated tool call's decision without the async auto-mode
+    classifier.
+
+    Returns "allow" | "ask" | "deny", or None when mode is "auto" and nothing
+    else resolved it (the caller then falls back to the classifier).
+
+    Evaluation order: hard floors (github-destructive, rm-class command,
+    sandbox escalation, MCP server marked approve; see approval_floor) →
+    category mode override → bypassPermissions (absolute) → trusted skill
+    script → session approvals ("yes/no for all this session") → explicit
+    custom rules → a preview_start naming an approved launch.json config
+    (allow) → dontAsk → acceptEdits (write category only) → auto (defer) → ask.
+    """
+    if approval_floor(tool_name, tool_input, category) is not None:
+        return "ask"
 
     # Per-category default overrides the global mode for everything that
     # follows (including the bypassPermissions check right below) — that's
@@ -340,6 +366,16 @@ def resolve_static_decision(
     rule_decision = evaluate_rules(tool_name, tool_input)
     if rule_decision is not None:
         return rule_decision
+
+    # A preview_start naming a .whisper/launch.json config whose command a
+    # person approved once starts whatever the mode says
+    # (server/preview/start_policy.py): it stands in for the mode defaults
+    # below, so the floors, session approvals and custom rules above still
+    # decide first and an explicit deny keeps refusing it.
+    from server.preview.start_policy import starts_without_approval
+
+    if starts_without_approval(tool_name, tool_input):
+        return "allow"
 
     if mode == MODE_DONT_ASK:
         return "deny"

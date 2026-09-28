@@ -205,12 +205,15 @@
         run first: a red gate is deterministic proof the goal is not met, its output tail becomes the
         feedback, and the evaluator is not consulted. A gate that fails
         <code>GATE_MAX_RETRIES</code> (3) times in a row pauses the goal instead of looping. Only
-        when the gates are green does an auxiliary model judge the goal.</p></li>
+        when the gates are green is the goal judged: by the <code>goal_evaluator</code> auxiliary
+        model for a cloud session, by the session's own resident model for an on-device one. A judge
+        that cannot run gives <code>not_checked</code>, which ends the turn and keeps the goal.</p></li>
     </ol>
     <p>A block re-injects <code>[completion gate]</code> feedback as a user message and the loop
       continues, bounded by <code>goal_max_consecutive_blocks</code> (default 8). The local preset
-      turns the gate off entirely, so an on-device turn stays fully offline. See
-      <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</p>
+      sets <code>gate_requires_goal</code>: an on-device turn runs the gate only while a goal is
+      active, and then judges on its own model, so the turn stays fully offline and plain local chat
+      is unchanged. See <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</p>
 
     <h2 id="executing-tools">Executing tools</h2>
     <p>When the model asks for tools, <code>execute_tool_batch()</code>
@@ -229,9 +232,9 @@
         <em>deny</em> or <em>rewrite</em> a call, and <code>PostToolUse</code>, which can inject
         <code>additionalContext</code>. A <code>Stop</code> gate (<code>check_stop_hooks</code>,
         <code class="path">server/hooks/engine.py</code>) runs at end of turn via the completion
-        gate, shared by every chat loop (Claude, GPT, and local, all on the unified engine) and
-        cron runs; sub-agents and headless turns run with the gate off, and cron additionally
-        verifies its runs separately (<code>cron_verify</code>). See
+        gate on interactive chat, all on the unified engine: Claude and GPT turns every time, local
+        turns only while a goal is active. Sub-agents, cron and headless turns run with the gate
+        off, and cron verifies its runs separately (<code>cron_verify</code>). See
         <a href="arch-hooks.html">Blocking hooks</a>.</li>
     </ul>
     <p>Dispatch itself is a pure mapping in <code class="path">server/tool_router.py</code>; the
@@ -272,7 +275,6 @@
         <tr><td><code>skill</code> / <code>skill_input</code> / <code>skill_result</code></td><td>A tool call started, its parsed input, and a truncated preview of its output.</td></tr>
         <tr><td><code>skill_progress</code></td><td>How many characters of a still-streaming tool call's arguments have arrived. A whole HTML app can take minutes to stream, so the running step shows the size so far next to its spinner.</td></tr>
         <tr><td><code>usage</code></td><td>Token counters, cost estimate, and remaining context (<code>context_used</code>/<code>context_max</code>).</td></tr>
-        <tr><td><code>tool_pool</code></td><td>Progressive-disclosure telemetry: how many tools were advertised, how many deferred, and the estimated token cost of the deferred index.</td></tr>
         <tr><td><code>team_progress</code> / <code>team_results</code></td><td>Sub-agent and team events (spawn, progress, completion) and the final per-agent reports.</td></tr>
         <tr><td><code>grounding</code></td><td>Index-search metadata (folders searched, passages retrieved, and the id of the persisted sources behind the expandable chip).</td></tr>
         <tr><td><code>status</code></td><td>Coarse turn-setup stage. The stream opens from byte zero, so these frames replace a silent wait while condensation, grounding, and dispatch run. Every turn starts <code>preparing</code> then <code>connecting</code>.</td></tr>

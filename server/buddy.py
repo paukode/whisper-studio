@@ -322,7 +322,9 @@ async def buddy_fact():
     user enables "fresh facts (AI)" in the buddy bubble, a deliberate request on
     click, not a background timer. The default fact source is the curated
     client-side pack (no call). Falls back to a static fact if the model is
-    unavailable so the bubble never empties.
+    unavailable so the bubble never empties. In Local mode no model is called:
+    the reply carries only the reason, and the widget shows a pack fact and
+    turns the toggle off with that reason.
     """
     import random
 
@@ -333,6 +335,12 @@ async def buddy_fact():
     fallback = "A day on Venus is longer than its entire year."
     try:
         config = load_config()
+        from server.infrastructure.cloud_guard import cloud_refusal
+
+        refusal = cloud_refusal("Fresh facts (AI)", config)
+        if refusal:
+            # Local mode never calls Bedrock: no fact, only why.
+            return {"reason": refusal}
         chat_models = config.get("chat_models", DEFAULTS["chat_models"])
         model = (
             chat_models.get("haiku")
@@ -361,8 +369,10 @@ async def buddy_fact():
         )
 
         def _invoke():
-            resp = bedrock.invoke_model(modelId=model, body=body)
-            return json.loads(resp["body"].read())["content"][0]["text"].strip()
+            from server.costs.calls import invoke_claude
+
+            payload = invoke_claude(bedrock, model_id=model, body=body, source="buddy")
+            return payload["content"][0]["text"].strip()
 
         text = await asyncio.get_running_loop().run_in_executor(None, _invoke)
         return {"fact": text or fallback}

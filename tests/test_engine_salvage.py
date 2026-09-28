@@ -82,3 +82,27 @@ def test_reactive_trim_still_retries_long_histories(monkeypatch):
     assert "Compacting context (prompt too long)" in joined
     # Salvage was NOT needed.
     assert "synthesizing a final answer" not in joined
+
+
+def test_a_salvage_round_with_a_goal_says_the_goal_was_not_checked(monkeypatch):
+    """The salvage round is the turn's last, so the gate cannot run. An active
+    goal is reported as not checked, with the reason, and never judged."""
+    from server.goals import store as goal_store
+
+    def no_judge(*a, **k):
+        raise AssertionError("the judge ran on a salvage round")
+
+    monkeypatch.setattr("server.goals.evaluator.evaluate", no_judge)
+    sid = "salvage-with-goal"
+    goal_store.set_goal(sid, "summarise the huge question")
+    client = RejectingThenServingClient(
+        [[msg_start(), *text_block("Salvaged summary."), *msg_end()]],
+        rejections=1,
+    )
+    lines = run_chat_turn(monkeypatch, client, {"question": "huge question", "session_id": sid})
+    evals = [json.loads(ln)["goal_eval"] for ln in lines if ln.startswith('{"goal_eval"')]
+    assert [e["verdict"] for e in evals] == ["not_checked"]
+    assert "no longer fit the model's context window" in evals[0]["feedback"]
+    assert goal_store.is_active(sid)
+    assert goal_store.get_goal(sid)["state"]["last_verdict"] == "not_checked"
+    assert lines[-1] == "[DONE]"

@@ -35,14 +35,34 @@ def test_model_key_reverse_lookup(monkeypatch):
 
 def test_turn_usage_accumulation():
     total = TurnUsage()
-    total.add(TurnUsage(input_tokens=100, output_tokens=10, cache_read_tokens=50))
-    total.add(TurnUsage(input_tokens=20, output_tokens=5, cache_creation_tokens=7))
+    total.add(TurnUsage(input_tokens=100, output_tokens=10, cache_read_tokens=50, cost_usd=0.5))
+    total.add(TurnUsage(input_tokens=20, output_tokens=5, cache_creation_tokens=7, cost_usd=0.25))
     assert total.as_dict() == {
         "input_tokens": 120,
         "output_tokens": 15,
         "cache_read_tokens": 50,
         "cache_creation_tokens": 7,
+        "cost_usd": 0.75,
     }
+
+
+def test_a_calls_usage_is_priced_at_its_own_tier():
+    # The cost is fixed per call, so a sum of calls never re-prices summed
+    # counts that cross a long-context break no call did.
+    from server.costs.tracker import call_cost
+
+    counts = {
+        "input_tokens": 200_000,
+        "output_tokens": 50,
+        "cache_read_tokens": 190_000,
+        "cache_write_tokens": 0,
+    }
+    one = TurnUsage.from_counts(counts, "gpt5.6-sol")
+    assert one.cost_usd == pytest.approx(call_cost("gpt5.6-sol", 200_000, 50, 190_000))
+    total = TurnUsage()
+    total.add(one)
+    total.add(TurnUsage.from_counts(counts, "gpt5.6-sol"))
+    assert total.cost_usd == pytest.approx(2 * one.cost_usd)
 
 
 def test_canonical_to_responses_items_roundtrip_shapes():
@@ -137,11 +157,14 @@ def test_anthropic_adapter_effort_usage_and_redacted_thinking(anthropic_adapter)
     body = fake.requests[0]
     assert body["thinking"] == {"type": "adaptive"}
     assert body["output_config"] == {"effort": "high"}
+    from server.costs.tracker import call_cost
+
     assert turn.usage.as_dict() == {
         "input_tokens": 11,
         "output_tokens": 7,
         "cache_read_tokens": 3,
         "cache_creation_tokens": 2,
+        "cost_usd": pytest.approx(call_cost("opus4.8", 11, 7, 3, 2)),
     }
     # redacted_thinking preserved for replay
     types = [b["type"] for b in turn.assistant_blocks]

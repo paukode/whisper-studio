@@ -153,6 +153,7 @@ async def dream_consolidate(memory_dir: str, *, scope: str, model_id: str) -> st
             agent_type="memory_consolidator",
             session_id="dream",
             depth=1,
+            cost_source="memory",
         )
 
         # Update metadata

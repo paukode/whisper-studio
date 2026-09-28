@@ -104,27 +104,19 @@ async def _dispatch(fork: ReviewFork, tool_use: dict) -> str:
 
 def _record_usage(fork: ReviewFork, round_num: int, usage: Any) -> None:
     try:
-        from server.chat.infra import _estimate_cost
         from server.costs.tracker import record_turn
 
-        cached_in_input = getattr(fork.adapter, "cached_in_input", False)
-        cost = _estimate_cost(
-            fork.model_key,
-            usage.input_tokens,
-            usage.output_tokens,
-            usage.cache_read_tokens,
-            usage.cache_write_tokens,
-            cached_in_input=cached_in_input,
-        )
         record_turn(
             session_id=fork.session_id,
             turn_number=REVIEW_TURN_BASE + round_num,
             model=fork.model_key,
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
-            cost_usd=cost,
             cache_read_tokens=usage.cache_read_tokens,
             cache_creation_tokens=usage.cache_write_tokens,
+            source="memory",
+            estimated=usage.estimated,
+            detail=usage.detail,
         )
     except Exception as e:  # noqa: BLE001
         log.debug("review fork usage not recorded: %s", e)
@@ -175,6 +167,17 @@ async def run_review(
             log.warning("learning review aborted: %s", e)
             stats["ended"] = "error"
             return stats
+        finally:
+            # An attempt that failed mid-stream was still billed for what the
+            # provider processed (the same rule as the turn engine).
+            probe = getattr(fork.adapter, "inflight_usage", None)
+            try:
+                unfinished = probe() if result is None and callable(probe) else None
+            except Exception as e:  # noqa: BLE001 - a cost read never breaks the review
+                log.debug("review fork inflight usage unreadable: %s", e)
+                unfinished = None
+            if unfinished is not None:
+                _record_usage(fork, round_num, unfinished)
         if result is None:
             return stats
         stats["rounds"] += 1

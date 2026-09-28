@@ -153,7 +153,7 @@ def test_evaluator_parses_clean_json(monkeypatch):
     monkeypatch.setattr(
         evaluator,
         "_one_shot",
-        lambda s, u: '{"verdict":"achieved","feedback":"ok","confidence":0.9}',
+        lambda s, u, k="", sid="": '{"verdict":"achieved","feedback":"ok","confidence":0.9}',
     )
     v = evaluator.evaluate("goal", [{"role": "assistant", "content": "done"}])
     assert v.is_achieved and v.confidence == 0.9
@@ -165,8 +165,10 @@ def test_evaluator_extracts_json_from_prose(monkeypatch):
     monkeypatch.setattr(
         evaluator,
         "_one_shot",
-        lambda s,
-        u: 'Here is my verdict:\n{"verdict": "not_achieved", "feedback": "add tests", "confidence": 0.6}\nDone.',
+        lambda s, u, k="", sid="": (
+            'Here is my verdict:\n{"verdict": "not_achieved", "feedback": "add tests", '
+            '"confidence": 0.6}\nDone.'
+        ),
     )
     v = evaluator.evaluate("goal", [])
     assert v.verdict == "not_achieved" and v.feedback == "add tests"
@@ -175,32 +177,54 @@ def test_evaluator_extracts_json_from_prose(monkeypatch):
 def test_evaluator_coerces_out_of_enum(monkeypatch):
     from server.goals import evaluator
 
-    monkeypatch.setattr(evaluator, "_one_shot", lambda s, u: '{"verdict":"done","confidence":2.0}')
+    monkeypatch.setattr(
+        evaluator, "_one_shot", lambda s, u, k="", sid="": '{"verdict":"done","confidence":2.0}'
+    )
     v = evaluator.evaluate("goal", [])
     assert v.verdict == "achieved" and v.confidence == 1.0
 
 
-def test_evaluator_retries_then_allows(monkeypatch):
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "not json at all",
+        '{"verdict": "achieved"}',  # no confidence
+        '{"verdict": "probably", "confidence": 0.9}',  # unknown verdict
+        '{"feedback": "looks fine", "confidence": 0.9}',  # no verdict
+        '{"verdict": "achieved", "confidence": "high"}',  # non-numeric confidence
+    ],
+)
+def test_evaluator_retries_an_unreadable_answer_then_reports_not_checked(monkeypatch, raw):
+    """An answer the parser cannot read is never defaulted into a verdict: one
+    retry, then not_checked with the reason."""
     from server.goals import evaluator
 
     calls = {"n": 0}
 
-    def flaky(s, u):
+    def flaky(s, u, k="", sid=""):
         calls["n"] += 1
-        return "not json at all"
+        return raw
 
     monkeypatch.setattr(evaluator, "_one_shot", flaky)
     v = evaluator.evaluate("goal", [])
     assert calls["n"] == 2  # one retry
-    assert v.is_achieved  # allow-with-warning, never wedge
+    assert v.is_not_checked and not v.is_achieved
+    assert "readable verdict" in v.feedback
 
 
-def test_evaluator_no_model_allows(monkeypatch):
+def test_evaluator_failure_is_not_checked_with_the_reason(monkeypatch):
     from server.goals import evaluator
 
-    monkeypatch.setattr(evaluator, "_one_shot", lambda s, u: None)
+    calls = {"n": 0}
+
+    def down(s, u, k="", sid=""):
+        calls["n"] += 1
+        raise RuntimeError("no Claude cloud model id available")
+
+    monkeypatch.setattr(evaluator, "_one_shot", down)
     v = evaluator.evaluate("goal", [])
-    assert v.is_achieved and v.confidence == 0.0
+    assert calls["n"] == 1  # a failed call is not retried
+    assert v.is_not_checked and "no Claude cloud model id available" in v.feedback
 
 
 def test_looks_verified():
@@ -252,7 +276,10 @@ def test_gate_calls_real_evaluate_signature(monkeypatch):
     monkeypatch.setattr(
         evaluator,
         "_one_shot",
-        lambda s, u: '{"verdict":"not_achieved","feedback":"keep going","confidence":0.5}',
+        lambda s,
+        u,
+        k="",
+        sid="": '{"verdict":"not_achieved","feedback":"keep going","confidence":0.5}',
     )
     sid = _mk_session()
     store.set_goal(sid, "g")
@@ -266,7 +293,10 @@ def test_gate_calls_real_evaluate_signature(monkeypatch):
     assert d.block and d.source == "evaluator" and "keep going" in d.feedback
 
 
-def test_gate_fails_open_on_evaluator_crash(monkeypatch):
+def test_gate_reports_not_checked_on_evaluator_crash(monkeypatch):
+    """A broken judge never aborts the turn and never passes the goal: the
+    turn ends on not_checked with the reason, the goal stays active, and it is
+    not counted as a block."""
     from server.goals import gate, store
 
     def boom(*a, **k):
@@ -276,7 +306,12 @@ def test_gate_fails_open_on_evaluator_crash(monkeypatch):
     sid = _mk_session()
     store.set_goal(sid, "g")
     d = _run(gate.run_completion_gate(_ctx(sid, goal="g")))
-    assert not d.block  # fail open: a broken evaluator never aborts the turn
+    assert not d.block and not d.goal_achieved
+    frame = d.frame["goal_eval"]
+    assert frame["verdict"] == "not_checked" and "evaluator exploded" in frame["feedback"]
+    state = store.get_goal(sid)["state"]
+    assert store.is_active(sid) and state["last_verdict"] == "not_checked"
+    assert state["consecutive_blocks"] == 0
 
 
 def test_gate_no_goal_no_hooks_is_fast_allow():
@@ -430,3 +465,38 @@ def test_gate_deliverable_block_respects_the_cap(tmp_path, monkeypatch):
     d = _run(gate.run_completion_gate(_ctx(sid, messages=msgs, attempt=2)))
     assert not d.block and d.source == "cap"
     assert d.frame["goal_cap_reached"]["source"] == "deliverable"
+
+
+def _set_mode(monkeypatch, mode):
+    from server.infrastructure import config as cfg_mod
+
+    real = cfg_mod.load_config()
+    monkeypatch.setattr(cfg_mod, "load_config", lambda *a, **k: {**real, "model_mode": mode})
+
+
+@pytest.mark.parametrize("mode", ["local", "hybrid"])
+def test_gate_never_records_an_unjudged_goal_as_achieved(monkeypatch, mode):
+    """Local mode refuses the cloud judge: the turn ends on a 'not_checked'
+    verdict naming the reason, the judge is never called, and the goal stays
+    set for when it can be judged. Hybrid still judges."""
+    from server.goals import gate, store
+
+    _set_mode(monkeypatch, mode)
+    judged: list[str] = []
+
+    def judge(task, system, user, **kw):
+        judged.append(task)
+        return '{"verdict":"not_achieved","feedback":"keep going","confidence":0.5}'
+
+    monkeypatch.setattr("server.infrastructure.auxiliary.aux_one_shot", judge)
+    sid = _mk_session()
+    store.set_goal(sid, "g")
+    d = _run(gate.run_completion_gate(_ctx(sid, goal="g")))
+    state = store.get_goal(sid)["state"]
+    if mode == "local":
+        assert judged == [] and not d.block and not d.goal_achieved
+        assert d.frame["goal_eval"]["verdict"] == "not_checked"
+        assert "Local mode" in d.frame["goal_eval"]["feedback"]
+        assert state["last_verdict"] != "achieved" and store.is_active(sid)
+    else:
+        assert judged == ["goal_evaluator"] and d.block

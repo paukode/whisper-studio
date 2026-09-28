@@ -10,8 +10,8 @@ import { useSettingsStore } from '@/stores/settingsStore';
 
 /** The notice is config-gated: it only appears once the loaded config says
  *  it is unseen (the pre-load default is seen). */
-function markUnseen(): void {
-  useSettingsStore.setState((s) => ({ config: { ...s.config, modeNoticeSeen: false } }));
+function markUnseen(modelMode: 'cloud' | 'hybrid' | 'local' = 'local'): void {
+  useSettingsStore.setState((s) => ({ config: { ...s.config, modeNoticeSeen: false, modelMode } }));
 }
 
 describe('ModelModeNotice', () => {
@@ -23,16 +23,31 @@ describe('ModelModeNotice', () => {
 
   it('stays hidden until the loaded config reports it unseen (no pre-load flash)', () => {
     render(<ModelModeNotice />);
-    expect(screen.queryByText(/starting in Local mode/i)).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('shows once config says unseen and explains the three modes', () => {
-    markUnseen();
+    markUnseen('local');
     render(<ModelModeNotice />);
-    expect(screen.getByText(/starting in Local mode/i)).toBeInTheDocument();
+    expect(screen.getByText(/You're in Local mode/)).toBeInTheDocument();
     expect(screen.getByText('Local')).toBeInTheDocument();
     expect(screen.getByText('Hybrid')).toBeInTheDocument();
     expect(screen.getByText('Cloud')).toBeInTheDocument();
+    expect(screen.getByTestId('mode-notice-local').getAttribute('aria-current')).toBe('true');
+  });
+
+  it('states the mode the config actually has (an upgrader in Cloud mode)', () => {
+    markUnseen('cloud');
+    render(<ModelModeNotice />);
+    expect(screen.getByText(/You're in Cloud mode/)).toBeInTheDocument();
+    expect(screen.queryByText(/Local mode/)).toBeNull();
+    expect(screen.getByTestId('mode-notice-cloud').getAttribute('aria-current')).toBe('true');
+    expect(screen.getByTestId('mode-notice-local').getAttribute('aria-current')).toBeNull();
+    // Still a notice, not a chooser: the two dismiss buttons and nothing else.
+    expect(screen.getAllByRole('button').map((b) => b.textContent)).toEqual([
+      'Open model settings',
+      'Got it',
+    ]);
   });
 
   it('dismiss persists to config (survives origin changes) and across mounts', () => {
@@ -43,13 +58,13 @@ describe('ModelModeNotice', () => {
     expect(useSettingsStore.getState().config.modeNoticeSeen).toBe(true);
     unmount();
     render(<ModelModeNotice />);
-    expect(screen.queryByText(/starting in Local mode/i)).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('the legacy localStorage flag still suppresses it', () => {
     markUnseen();
     localStorage.setItem('whisper_mode_notice_v1', '1');
     render(<ModelModeNotice />);
-    expect(screen.queryByText(/starting in Local mode/i)).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 });

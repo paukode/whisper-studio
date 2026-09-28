@@ -14,6 +14,7 @@ import logging
 import os
 import subprocess
 import threading
+import time
 
 from server.infrastructure.paths import data_root
 from server.tasks import registry
@@ -29,6 +30,8 @@ OUTPUT_DIR = os.path.join(data_root(), "background_output")
 # runaway model-issued command (a whole-home-directory find) can't sit
 # 'running' for hours.
 MAX_RUNTIME_S = 30 * 60
+# How often a task whose leader exited checks whether its group is gone yet.
+_GROUP_POLL_S = 0.2
 
 _procs: dict[str, subprocess.Popen] = {}
 _profiles: dict[str, str | None] = {}
@@ -63,16 +66,21 @@ def start_shell_task(
     import uuid
 
     from server.sandbox import popen_sandboxed
+    from server.tasks import owner as work_owner
 
     task_id = uuid.uuid4().hex[:12]
     out_path = output_path_for(task_id)
+    meta = {"cwd": cwd}
+    # The run that started it, so a chat Stop spares another run's task.
+    if work_owner.current():
+        meta["owner"] = work_owner.current()
     registry.create_task(
         "shell",
         session_id=session_id,
         title=command,
         command=command,
         output_path=out_path,
-        meta={"cwd": cwd},
+        meta=meta,
         task_id=task_id,
     )
 
@@ -126,30 +134,40 @@ def adopt_running_process(
 
 
 def _waiter(task_id: str, proc: subprocess.Popen, output_path: str, session_id: str) -> None:
+    from server.process_utils import kill_process_group, wait_group_gone
+
+    started = time.monotonic()
     timed_out = False
+    exit_code: int | None = None
     try:
         exit_code = proc.wait(timeout=MAX_RUNTIME_S)
+        # The leader is only part of the task: a shell that backgrounded work
+        # (`npm run dev &`) exits while that work keeps running in its group.
+        # The row stays running until the whole group is gone, so Stop,
+        # task_cancel and the runtime cap still reach what is left.
+        remaining = MAX_RUNTIME_S - (time.monotonic() - started)
+        timed_out = not wait_group_gone(proc, max(0.0, remaining), poll_s=_GROUP_POLL_S)
     except subprocess.TimeoutExpired:
+        timed_out = True
+    except Exception as e:  # pragma: no cover, wait() failing is exotic
+        log.error("tasks.shell: wait failed for %s: %s", task_id, e)
+        exit_code = -1
+    if timed_out:
         # Nothing bounded a background command before this: a model-issued
         # `find / -type f ...` over a whole home directory ran for hours,
         # invisible, still 'running' in the registry. Kill the group and
         # record an explicit stop so the model's next turn sees WHY.
-        timed_out = True
-        from server.process_utils import kill_process_group
-
         log.warning(
             "tasks.shell: %s exceeded the %ds background runtime cap; killing",
             task_id,
             MAX_RUNTIME_S,
         )
         kill_process_group(proc)
-        try:
-            exit_code = proc.wait(timeout=10)
-        except Exception:  # noqa: BLE001 — refused to die; report it anyway
-            exit_code = -1
-    except Exception as e:  # pragma: no cover — wait() failing is exotic
-        log.error("tasks.shell: wait failed for %s: %s", task_id, e)
-        exit_code = -1
+        if exit_code is None:
+            try:
+                exit_code = proc.wait(timeout=10)
+            except Exception:  # noqa: BLE001, refused to die; report it anyway
+                exit_code = -1
     with _lock:
         was_stopped = task_id in _stopped
         _stopped.discard(task_id)
@@ -189,27 +207,31 @@ def stop_task(task_id: str) -> bool:
     close the row first-wins (the adoption watcher's later 'completed'
     transition then no-ops), and emit the stop event here.
     """
+    from server.process_utils import group_running, kill_process_group
+
     with _lock:
         proc = _procs.get(task_id)
         if proc is not None:
-            if proc.poll() is not None:
+            # The leader exiting is not the end of the task: work it left
+            # running in its group is still this task's to stop.
+            if not group_running(proc):
                 return False
             _stopped.add(task_id)
     if proc is not None:
-        from server.process_utils import kill_process_group
-
         kill_process_group(proc)
         return True
 
-    # Adopted-task fallback: no handle, but the row knows the group leader.
+    # Adopted-task fallback: no handle, but the row knows the group leader,
+    # whose pid is the group id (every task is spawned as a group leader), so
+    # the group is reachable even once the leader itself has exited.
     task = registry.get_task(task_id)
     if not task or task.get("status") != "running" or not task.get("pid"):
         return False
     import signal
 
     try:
-        os.killpg(os.getpgid(int(task["pid"])), signal.SIGTERM)
-    except (ProcessLookupError, PermissionError, OSError):
+        os.killpg(int(task["pid"]), signal.SIGTERM)
+    except OSError:
         return False
     finished = registry.finish_task(
         task_id,

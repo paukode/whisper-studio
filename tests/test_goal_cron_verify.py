@@ -46,11 +46,12 @@ def _run(monkeypatch, verdict_seq, *, max_rounds_calls=4):
     ``verdict_seq`` in turn (last repeats)."""
     import server.goals.cron_verify as CV
 
-    calls = {"n": 0}
+    calls = {"n": 0, "main_model_key": None}
 
-    def fake_verify(prompt, messages, notifications=None):
+    def fake_verify(prompt, messages, notifications=None, *, main_model_key="", session_id=""):
         i = min(calls["n"], len(verdict_seq) - 1)
         calls["n"] += 1
+        calls["main_model_key"] = main_model_key
         return verdict_seq[i]
 
     monkeypatch.setattr(CV, "verify", fake_verify)
@@ -109,17 +110,24 @@ def test_verify_sees_notify_user_content(monkeypatch):
 
     seen = {}
 
-    def fake_evaluate(goal, messages, *, provider="anthropic"):
+    def fake_evaluate(goal, messages, *, main_model_key="", announce=None, session_id=""):
         from server.goals import Verdict
         from server.goals.tail import render_tail
 
         seen["tail"] = render_tail(messages)
+        seen["main_model_key"] = main_model_key
         return Verdict("achieved", "report delivered", 0.9)
 
     monkeypatch.setattr(EV, "evaluate", fake_evaluate)
-    v = CV.verify("send the weekly report", [], ["Here is the weekly report: all systems go"])
+    v = CV.verify(
+        "send the weekly report",
+        [],
+        ["Here is the weekly report: all systems go"],
+        main_model_key="haiku",
+    )
     assert v.is_achieved
     assert "all systems go" in seen["tail"]
+    assert seen["main_model_key"] == "haiku"
 
 
 def test_final_round_is_still_verified(monkeypatch):
@@ -136,8 +144,8 @@ def test_final_round_is_still_verified(monkeypatch):
     assert recorded["text"].startswith("[UNVERIFIED]")
 
 
-def test_verify_helper_never_fails_the_run(monkeypatch):
-    # cron_verify.verify must return achieved (not raise) if the evaluator dies.
+def test_verify_helper_reports_a_dead_evaluator_as_not_checked(monkeypatch):
+    # cron_verify.verify never raises, and never passes a run it could not judge.
     import server.goals.cron_verify as CV
     import server.goals.evaluator as EV
 
@@ -146,7 +154,32 @@ def test_verify_helper_never_fails_the_run(monkeypatch):
 
     monkeypatch.setattr(EV, "evaluate", boom)
     v = CV.verify("prompt", [])
-    assert v.is_achieved
+    assert v.is_not_checked and not v.is_achieved
+    assert "evaluator down" in v.feedback
+
+
+def test_not_checked_spends_no_continuation_and_marks_the_run_unverified(monkeypatch):
+    """A verifier that could not judge the run is not a reason to run again:
+    the run ends on the first check, is reported failed and [UNVERIFIED] with
+    the reason, and never passes silently."""
+    from server.goals import Verdict
+
+    recorded, calls = _run(
+        monkeypatch, [Verdict("not_checked", "The goal evaluator (Haiku) could not run: 503")]
+    )
+    assert calls["n"] == 1
+    assert recorded["status"] == "failed"
+    assert recorded["text"].startswith("[UNVERIFIED] Not checked: ")
+    assert "could not run: 503" in recorded["text"]
+    assert "weekly report: all good" in recorded["text"]  # the report is kept
+
+
+def test_verify_is_given_the_runs_model_key(monkeypatch):
+    # "main" in auxiliary_models.goal_evaluator resolves to the run's model.
+    from server.goals import Verdict
+
+    _, calls = _run(monkeypatch, [Verdict("achieved", "done", 0.9)])
+    assert calls["main_model_key"]
 
 
 @pytest.mark.parametrize("flag_on", [True, False])
@@ -160,7 +193,9 @@ def test_flag_off_is_legacy_behavior(monkeypatch, flag_on):
     import server.goals.cron_verify as CV
 
     monkeypatch.setattr(
-        CV, "verify", lambda p, m, n=None: Verdict("not_achieved", "would fail", 0.9)
+        CV,
+        "verify",
+        lambda p, m, n=None, *, main_model_key="": Verdict("not_achieved", "would fail", 0.9),
     )
     recorded: dict = {}
     _run_cron_job(monkeypatch, dict(_JOB), _end_turn_stream(1), _noop_route, recorded)

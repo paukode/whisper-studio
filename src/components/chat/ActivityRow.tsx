@@ -311,6 +311,20 @@ function displayName(name: string): string {
   return DISPLAY_NAMES[name] ?? name;
 }
 
+/** How a goal_eval card names its verdict. */
+const VERDICT_LABELS: Record<string, string> = {
+  achieved: 'achieved',
+  not_achieved: 'not achieved',
+  blocked: 'blocked',
+  not_checked: 'not checked',
+};
+
+/** A goal check whose judge could not run or could not be understood: neither
+ *  a pass nor a failure, so it renders neutral and opens to show the reason. */
+export function isUncheckedGoal(tool: ToolUseEvent): boolean {
+  return tool.toolName === 'goal_eval' && (tool.input ?? {}).verdict === 'not_checked';
+}
+
 /** Build a one-line description of what this tool call did. */
 /** "12 KB" style size for a tool call whose arguments are still arriving. */
 function formatKb(chars: number): string {
@@ -334,7 +348,8 @@ export function summariseTool(tool: ToolUseEvent): string {
     const attempt = input.attempt as number | undefined;
     const cap = input.cap as number | undefined;
     const n = attempt && cap ? ` (${attempt}/${cap})` : '';
-    return `${verdict}${n}${feedback ? ` — ${preview(feedback, 70)}` : ''}`;
+    const label = VERDICT_LABELS[verdict] ?? verdict;
+    return `${label}${n}${feedback ? `: ${preview(feedback, 70)}` : ''}`;
   }
   const path = (input.path ?? input.file_path ?? input.filepath) as string | undefined;
   const pattern = (input.pattern ?? input.query) as string | undefined;
@@ -377,20 +392,25 @@ export function summariseTool(tool: ToolUseEvent): string {
 }
 
 /** Aggregate status for the collapsed header. 'stopped' (the user cut the
- *  turn short) is terminal: it must never read as running. */
-function aggregateStatus(tools: ToolUseEvent[]): 'running' | 'error' | 'stopped' | 'ok' {
+ *  turn short) is terminal: it must never read as running. 'unchecked' (a
+ *  goal the judge could not check) is neither a pass nor a failure. */
+function aggregateStatus(
+  tools: ToolUseEvent[],
+): 'running' | 'error' | 'stopped' | 'unchecked' | 'ok' {
   if (tools.some((t) => t.status === 'error')) return 'error';
   if (tools.some((t) => t.status === 'running' || t.status === 'pending')) return 'running';
   if (tools.some((t) => t.status === 'stopped')) return 'stopped';
+  if (tools.some(isUncheckedGoal)) return 'unchecked';
   return 'ok';
 }
 
 export const ActivityRow: React.FC<ActivityRowProps> = ({ tools }) => {
   const agg = aggregateStatus(tools);
   const hasError = agg === 'error';
-  // Open by default if anything errored — never hide failures behind a
-  // chevron. Otherwise the user explicitly clicks to expand.
-  const [open, setOpen] = useState<boolean>(hasError);
+  // Open by default if anything errored (never hide failures behind a
+  // chevron), or a goal went unchecked, so its reason is in view. Otherwise
+  // the user explicitly clicks to expand.
+  const [open, setOpen] = useState<boolean>(hasError || agg === 'unchecked');
   // Set of expanded step keys — each step toggles independently.
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
 
@@ -424,11 +444,12 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools }) => {
 
   const counts = useMemo(() => {
     const total = tools.length;
-    const done = tools.filter((t) => t.status === 'complete').length;
+    const unchecked = tools.filter(isUncheckedGoal).length;
+    const done = tools.filter((t) => t.status === 'complete' && !isUncheckedGoal(t)).length;
     const errored = tools.filter((t) => t.status === 'error').length;
     const running = tools.filter((t) => t.status === 'running' || t.status === 'pending').length;
     const stopped = tools.filter((t) => t.status === 'stopped').length;
-    return { total, done, errored, running, stopped };
+    return { total, done, errored, running, stopped, unchecked };
   }, [tools]);
 
   return (
@@ -454,7 +475,10 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools }) => {
           {counts.stopped > 0 && (
             <span className="activity-badge stopped" title="Stopped">{'\u23F9'} {counts.stopped}</span>
           )}
-          {counts.errored === 0 && counts.running === 0 && counts.stopped === 0 && (
+          {counts.unchecked > 0 && (
+            <span className="activity-badge unchecked" title="The goal was not checked">not checked</span>
+          )}
+          {counts.errored === 0 && counts.running === 0 && counts.stopped === 0 && counts.done > 0 && (
             <span className="activity-badge ok" title="All complete">✓ {counts.done}</span>
           )}
         </button>
@@ -478,12 +502,13 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools }) => {
             const detail = [summary, count].filter(Boolean).join(' · ');
             const isError = tool.status === 'error';
             const isRunning = tool.status === 'running' || tool.status === 'pending';
+            const unchecked = isUncheckedGoal(tool);
             const result = tool.result ?? '';
             const isExpanded = expandedKeys.has(key);
             return (
               <li
                 key={key}
-                className={`activity-step status-${tool.status}${isError ? ' errored' : ''}`}
+                className={`activity-step status-${unchecked ? 'unchecked' : tool.status}${isError ? ' errored' : ''}`}
               >
                 <span className="activity-step-icon" aria-hidden="true">
                   {iconFor(tool.toolName)}
@@ -498,7 +523,10 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools }) => {
                     </span>
                   ) : null}
                   {isRunning && <span className="activity-spinner" aria-label="running">◐</span>}
-                  {tool.status === 'complete' && <span className="activity-check">✓</span>}
+                  {tool.status === 'complete' && !unchecked && <span className="activity-check">✓</span>}
+                  {unchecked && (
+                    <span className="activity-unchecked" aria-label="not checked" title="Not checked">○</span>
+                  )}
                   {isError && <span className="activity-x">⚠</span>}
                   {tool.status === 'stopped' && <span className="activity-stopped" aria-label="stopped">{'\u23F9'}</span>}
                 </span>

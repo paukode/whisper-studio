@@ -1,18 +1,21 @@
-"""Canary ASR backend — NVIDIA Canary-1B-v2 via vendored MLX code.
+"""Canary ASR backend: NVIDIA Canary-1B-v2 via vendored MLX code.
 
 Transcribes 25 European languages AND translates any of them to English with
 a real speech-translation head (unlike Whisper checkpoints without one, whose
 translate task is silently ignored). Emits a live word-by-word draft like
-the Parakeet backend — the in-flight utterance is re-decoded on every audio
-chunk (steady-state decode ~0.4 s, under the ~1 s chunk cadence) — with the
+the Parakeet backend (the in-flight utterance is re-decoded on every audio
+chunk, steady-state decode ~0.4 s, under the ~1 s chunk cadence), with the
 clean, settled final at each silence boundary.
 
 One Canary limitation shapes this module: the model has NO language
-head — every decode needs an explicit ``source_lang``. A small on-CPU
-language-ID classifier (server/asr/lid.py) supplies it per utterance,
-constrained to the ``whisper_language`` allowlist when one is set, so Canary
-handles mixed-language meetings like Whisper does. A single-entry allowlist
-skips detection entirely (pinned language, zero overhead).
+head. Every decode names a source and a target, and Canary follows the
+target token rather than the audio, so a wrong pick comes out as a fluent
+translation into that language. A small on-CPU language-ID classifier
+(server/asr/lid.py) picks the language per utterance among the
+transcription languages (server/asr/languages.py: the setting, or English
+plus the Mac's preferred languages when it is blank), and a per-take
+tracker only settles on strong evidence. A single candidate skips detection
+entirely (pinned language, zero overhead).
 
 Model load is lazy (first session); importing this module is cheap.
 """
@@ -29,6 +32,7 @@ from pathlib import Path
 
 import numpy as np
 
+from server.asr import languages
 from server.audio_buffer import UtteranceBuffer
 from server.infrastructure.paths import models_root
 
@@ -39,7 +43,7 @@ CANARY_MODEL_DIR = os.path.join(MODELS_DIR, "canary-1b-v2")
 SAMPLE_RATE = 16000
 
 # Don't run an interim decode until the in-flight utterance carries at least
-# this much audio — below ~0.5 s the draft is empty or one unreliable
+# this much audio: below ~0.5 s the draft is empty or one unreliable
 # fragment, not worth the decode or the UI flicker (same idea as the
 # Parakeet backend).
 _MIN_INTERIM_SECONDS = 0.5
@@ -166,57 +170,35 @@ def unload() -> None:
     log.info("Canary model unloaded.")
 
 
-def _allowed_languages() -> list[str]:
-    """Canary-supported codes from the ``whisper_language`` allowlist."""
-    from server.asr.whisper_backend import _parse_languages
-    from server.infrastructure.config import get as config_get
-
-    allowed = []
-    for code in _parse_languages(config_get("whisper_language")):
-        if code in CANARY_LANGUAGES:
-            allowed.append(code)
-        else:
-            log.warning("Canary: unsupported language %r in whisper_language, skipping", code)
-    return allowed
+def _candidates() -> tuple[str, ...]:
+    """The languages Canary may decode with for the next utterance, read per
+    utterance so a Settings edit applies to a live recording. Raises
+    languages.NoDecodableLanguage when the setting names nothing Canary
+    decodes: Canary then refuses rather than decode with other languages."""
+    return languages.resolve(CANARY_LANGUAGES, "Canary").languages
 
 
-# Sticky-detection tuning. VoxLingua on SHORT, noisy mic utterances misroutes
-# hard (observed live: Polish speech tagged sl/nl/mt/ru), so a detection only
-# gets to SET or SWITCH the session language when the clip is long enough to
-# carry a real language signature and the winner clearly beats the other
-# candidates; anything weaker inherits the previous utterance's language.
-_LID_MIN_SECONDS = 1.5
-_LID_MIN_CONFIDENCE = 0.6
-
-
-def _utterance_language(audio: np.ndarray, previous: str | None = None) -> str:
-    """Source language for one utterance.
-
-    A single-entry allowlist pins the language (no detection cost). Otherwise
-    the LID classifier detects it, constrained to the allowlist when one is
-    set or to Canary's 25 languages when not — but only a CONFIDENT detection
-    on a long-enough clip is believed outright; weak ones fall back to
-    ``previous`` (the session's sticky language), then the allowlist head,
-    then English.
-    """
-    allowed = _allowed_languages()
-    if len(allowed) == 1:
-        return allowed[0]
+def _lid(audio: np.ndarray, candidates: tuple[str, ...]) -> tuple[str | None, float]:
+    """Language ID over ``candidates`` (resolved at call time, so tests and
+    callers see a patched ``lid.detect``)."""
     from server.asr import lid
 
-    detected, confidence = lid.detect(audio, allowed or CANARY_LANGUAGES)
-    duration = len(audio) / SAMPLE_RATE
-    if (
-        detected in CANARY_LANGUAGES
-        and confidence >= _LID_MIN_CONFIDENCE
-        and duration >= _LID_MIN_SECONDS
-    ):
-        return detected
-    if previous in CANARY_LANGUAGES:
-        return previous
-    if detected in CANARY_LANGUAGES:
-        return detected
-    return allowed[0] if allowed else "en"
+    return lid.detect(audio, candidates)
+
+
+def _is_junk(text: str, language: str) -> bool:
+    """Whether a decode is noise rather than speech.
+
+    Whisper's phrase blocklist is English filler plus Whisper's own
+    YouTube-outro artifacts, so it only judges English output: on any other
+    language it would drop real words (Polish "No." is "well"). Every
+    language keeps the language-neutral loop check.
+    """
+    from server.asr import whisper_backend
+
+    if language == "en":
+        return whisper_backend._is_junk(text)
+    return whisper_backend.is_repetition_hallucination(text)
 
 
 def _generate(audio: np.ndarray, source_lang: str, target_lang: str) -> str:
@@ -230,14 +212,16 @@ def translate_utterance(
 ) -> str:
     """Translation of one utterance via Canary's native AST head.
 
-    Canary is the app's universal model translator — this runs on Canary's
+    Canary is the app's universal model translator: this runs on Canary's
     own executor regardless of which engine transcribed the audio, so
     Whisper and Parakeet sessions can translate through it too. ``language``
     is the transcribing engine's language ID when it has one; utterances
-    from engines without language ID (Parakeet) are detected here.
+    from engines without language ID (Parakeet) are detected here, within a
+    typed Transcription Languages list, or among all of Canary's languages
+    when it is blank (languages.translation_sources says why).
 
     Canary translates bidirectionally with ENGLISH AS THE HUB: any of its 25
-    languages → English, and English → any of them — never X → Y with both
+    languages → English, and English → any of them, never X → Y with both
     non-English. An unsupported pair (or same-language input) returns "" so
     the client's pending slot clears without a bogus line.
 
@@ -246,11 +230,20 @@ def translate_utterance(
     (every exit path counts as done).
     """
     _note_translation_done()
-    from server.asr.whisper_backend import _is_junk
+    from server.asr.whisper_backend import is_repetition_hallucination
 
-    source = language if language in CANARY_LANGUAGES else _utterance_language(audio_data)
-    # (translation keeps stateless detection: the transcribing engine's own
-    # language ID rides on the event for every engine that has one)
+    source = language
+    if source not in CANARY_LANGUAGES:
+        # Stateless: an engine without language ID (Parakeet) sent this, so
+        # detect the source here, without touching any take's tracker.
+        try:
+            candidates = languages.translation_sources(CANARY_LANGUAGES, "Canary")
+        except languages.NoDecodableLanguage:
+            return ""  # resolve logged the reason; Settings shows it
+        duration = len(audio_data) / SAMPLE_RATE
+        source = languages.pick_once(
+            candidates, duration, lambda: _lid(audio_data, candidates)
+        ).language
     if source == target:
         return ""
     if target not in CANARY_LANGUAGES or (source != "en" and target != "en"):
@@ -259,7 +252,10 @@ def translate_utterance(
     text = ""
     try:
         text = _generate(audio_data, source_lang=source, target_lang=target)
-        if text and _is_junk(text):
+        # Only the loop check: the source already passed its own engine's
+        # transcript filter, so a short phrase here ("Thank you." for
+        # "Dziekuje.") is a real translation, not a silence hallucination.
+        if text and is_repetition_hallucination(text):
             text = ""
     except Exception as e:
         log.warning("Canary translation error: %s", e)
@@ -267,45 +263,58 @@ def translate_utterance(
 
 
 def _decode_utterance(
-    utterance_pcm: bytes, previous: str | None = None
+    utterance_pcm: bytes, tracker: languages.LanguageTracker
 ) -> tuple[str, np.ndarray, str | None]:
-    """PCM16 utterance -> (filtered text, float32 audio, source language)."""
-    from server.asr.whisper_backend import _is_junk
+    """PCM16 utterance -> (filtered text, float32 audio, decode language).
 
-    # No energy gate — the VAD is the only speech filter (matching Parakeet;
+    The tracker picks the language and is updated only when the decode
+    produced text, so noise, junk or a failed decode never settles or
+    switches the take's language. Logs one INFO line per utterance with the
+    evidence behind the language, which is what makes a wrong-language
+    report diagnosable. A setting that names nothing Canary decodes yields
+    no text and no language: Canary refuses instead of guessing.
+    """
+    # No energy gate: the VAD is the only speech filter (matching Parakeet;
     # RMS gates silently ate quiet mics, proven live).
     audio = np.frombuffer(utterance_pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    duration = len(audio) / SAMPLE_RATE
 
-    language = _utterance_language(audio, previous)
+    try:
+        candidates = _candidates()
+    except languages.NoDecodableLanguage as e:
+        log.info("Canary utterance: %.2f s, not decoded: %s", duration, e)
+        return "", audio, None
+    choice = tracker.final(candidates, duration, lambda: _lid(audio, candidates))
     text = ""
     try:
-        text = _generate(audio, source_lang=language, target_lang=language)
-        if text and _is_junk(text):
+        text = _generate(audio, source_lang=choice.language, target_lang=choice.language)
+        if text and _is_junk(text, choice.language):
             log.debug("Canary: hallucination filter dropped %r", text[:80])
             text = ""
     except Exception as e:
         log.warning("Canary transcription error: %s", e)
-    return text, audio, language
+    if text:
+        tracker.commit(choice)
+    log.info("Canary utterance: %s%s", choice.describe(), "" if text else ", no text")
+    return text, audio, choice.language
 
 
 class CanarySession:
     """One per-connection decoder: live interim drafts plus settled finals.
 
-    Tracks the session's sticky language: short or ambiguous utterances
-    inherit it instead of trusting a shaky per-clip detection (a meeting
-    rarely changes language mid-sentence)."""
+    The language lives in the take's tracker (languages.tracker_for), not on
+    this object, so a watchdog reconnect or a live engine switch within one
+    take keeps the settled language; the websocket forgets it on an explicit
+    stop."""
 
-    def __init__(self) -> None:
+    def __init__(self, session_id: str | None = None, take: str = "") -> None:
         self._buf = UtteranceBuffer()
-        self._language: str | None = None
+        self._languages = languages.tracker_for(session_id, take)
         self._last_interim = ""
         self._last_interim_at = 0.0
 
     def _decode(self, utterance_pcm: bytes) -> tuple[str, np.ndarray, str | None]:
-        text, audio, language = _decode_utterance(utterance_pcm, self._language)
-        if language:
-            self._language = language
-        return text, audio, language
+        return _decode_utterance(utterance_pcm, self._languages)
 
     def process(self, raw_pcm: bytes) -> list[dict]:
         events: list[dict] = []
@@ -318,18 +327,37 @@ class CanarySession:
                         {"kind": "final", "text": text, "audio": audio, "language": language}
                     )
             # An utterance just closed; the next interim starts a fresh window.
-            self._last_interim = ""
-            return events
+            return self._close_draft(events)
 
-        # No boundary this chunk — re-decode the growing in-flight utterance
-        # as a volatile draft (mirrors the Parakeet backend). The draft reuses
-        # the session's sticky language when one is settled; language
-        # detection itself still only updates on finals, so a half-word
-        # fragment can't flip it.
+        # No boundary this chunk: re-decode the growing in-flight utterance
+        # as a volatile draft (mirrors the Parakeet backend). The draft only
+        # renders in a language the final would also use (pinned, settled,
+        # what a strong detection of this window would settle or switch to,
+        # or the candidates' head while the classifier is down), so a guessed
+        # language never shows as a live translation. Drafts never move the
+        # tracker; only finals do.
         pending = self._buf.pending()
+        if self._last_interim and not pending:
+            # The VAD discarded the utterance the draft belonged to (too
+            # little voiced audio): it closed without a final.
+            return self._close_draft(events)
         if len(pending) >= _MIN_INTERIM_BYTES and self._draft_due(len(pending)):
             audio = np.frombuffer(pending, dtype=np.int16).astype(np.float32) / 32768.0
-            language = self._language or _utterance_language(audio)
+            try:
+                candidates = _candidates()
+            except languages.NoDecodableLanguage:
+                return events  # Canary refuses; the final logs why
+            choice = self._languages.draft(
+                candidates, len(audio) / SAMPLE_RATE, lambda: _lid(audio, candidates)
+            )
+            if choice is None:
+                return events
+            if not choice.drafts:
+                # Detection ran and was weak: wait a draft interval before
+                # spending the thread on it again.
+                self._last_interim_at = time.monotonic()
+                return events
+            language = choice.language
             try:
                 text = _generate(audio, source_lang=language, target_lang=language)
             except Exception as e:
@@ -351,6 +379,15 @@ class CanarySession:
         )
         return (time.monotonic() - self._last_interim_at) >= interval
 
+    def _close_draft(self, events: list[dict]) -> list[dict]:
+        """End the in-flight utterance's draft. When the utterance produced
+        no final (junk-filtered, empty decode, or too little voiced audio for
+        the VAD), an empty interim withdraws the draft still on screen."""
+        if self._last_interim and not events:
+            events.append({"kind": "interim", "text": ""})
+        self._last_interim = ""
+        return events
+
     def finish(self) -> list[dict]:
         events: list[dict] = []
         try:
@@ -363,11 +400,14 @@ class CanarySession:
                     )
         except Exception as e:
             log.debug("Canary finish flush failed: %s", e)
-        return events
+        return self._close_draft(events)
 
     def close(self) -> None:
         pass
 
 
-def create_session() -> CanarySession:
-    return CanarySession()
+def create_session(session_id: str | None = None, take: str = "") -> CanarySession:
+    """A decoder for one connection; ``session_id`` (the chat session the
+    recording belongs to) and ``take`` (the recording's take id) select the
+    language tracker it shares with a reconnect of the same take."""
+    return CanarySession(session_id, take)

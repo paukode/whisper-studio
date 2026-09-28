@@ -366,8 +366,9 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
     changed = 0
     cancelled = False
     # Read this workspace's typed-relations setting once per build (enabled +
-    # which engine: cloud Haiku or on-device Gemma).
-    _ws_settings = wssettings.get_settings(ws_path)
+    # which engine: cloud Haiku or on-device Gemma). Local mode skips the Haiku
+    # passes here, once, for every pass below.
+    _ws_settings = wssettings.settings_for_build(ws_path)
     _tr = _ws_settings["typed_relations"]
     typed_rel = _tr["enabled"]
     typed_engine = _tr["engine"]
@@ -386,8 +387,36 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
     # header-less, so explicitly choosing filename/llm MUST re-embed. (The earlier
     # "grandfather None → never force" logic silently skipped a user's explicit
     # switch, stamping the new mode while leaving the old header-less vectors.)
-    _prev_cc = store.get_meta(ws_path).get("context_mode") or "off"
+    _prev_meta = store.get_meta(ws_path)
+    _prev_cc = _prev_meta.get("context_mode") or "off"
     force_ctx_reembed = _prev_cc != cc_mode
+    # Files a Local-mode build indexed with a per-file LLM pass skipped (no
+    # AI-written chunk header, no typed relations): the index stamps record
+    # the folder's choice, so the cheap gate alone would never redo them.
+    # They are redone by the first build that runs the pass again.
+    _stored = wssettings.get_settings(ws_path)
+    _skipped = {
+        p for p in wssettings.LLM_PASSES if _stored[p]["engine"] != _ws_settings[p]["engine"]
+    }
+    ctx_pass_skipped = cc_mode == "llm" and "chunk_context" in _skipped
+    rel_pass_skipped = typed_rel and "typed_relations" in _skipped
+    owed = {p: set(v) for p, v in (_prev_meta.get("local_skipped") or {}).items()}
+    redo: set[str] = set()
+    if cc_mode == "llm" and cc_engine != wssettings.SKIP_ENGINE:
+        redo |= owed.get("chunk_context", set())
+    if typed_rel and typed_engine != wssettings.SKIP_ENGINE:
+        redo |= owed.get("typed_relations", set())
+
+    def _note_passes(rel: str, *, indexed: bool) -> None:
+        """Record which skipped passes ``rel`` still owes after this build."""
+        for p, skipped in (
+            ("chunk_context", ctx_pass_skipped),
+            ("typed_relations", rel_pass_skipped),
+        ):
+            if indexed and skipped:
+                owed.setdefault(p, set()).add(rel)
+            else:
+                owed.get(p, set()).discard(rel)
 
     try:
         for i, (ap, rel) in enumerate(candidates):
@@ -403,16 +432,13 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
                 continue
             prev = manifest.get(rel)
             # Cheap gate: unchanged size + mtime → skip without hashing. Bypassed
-            # when the contextual-header mode changed (every file must re-embed).
-            if (
-                not force_ctx_reembed
-                and prev
-                and prev["size"] == st.st_size
-                and prev["mtime"] == st.st_mtime
-            ):
+            # when the contextual-header mode changed (every file must re-embed)
+            # and for a file that still owes a pass Local mode skipped.
+            reindex = force_ctx_reembed or rel in redo
+            if not reindex and prev and prev["size"] == st.st_size and prev["mtime"] == st.st_mtime:
                 continue
             h = _file_hash(ap)
-            if not force_ctx_reembed and prev and prev["hash"] == h:
+            if not reindex and prev and prev["hash"] == h:
                 store.touch_file(ws_path, rel, st.st_size, st.st_mtime)
                 continue
             ext = os.path.splitext(rel)[1].lower()
@@ -427,6 +453,7 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
                 # skips this file next run instead of re-extracting/re-OCR'ing
                 # it on every daily refresh forever.
                 store.replace_file(ws_path, rel, fmeta, [])
+                _note_passes(rel, indexed=False)
                 continue
             ctxs = _chunk_contexts(ws_root, rel, text, chunks, cc_mode, cc_engine)
             # For heading-structured docs, fold each chunk's section breadcrumb into
@@ -492,6 +519,7 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
                         }
                     )
                 relstore.set_file_relations_v2(ws_path, rel, facts)
+            _note_passes(rel, indexed=True)
             changed += 1
 
         # On cancel we stopped mid-walk, so `seen` is incomplete — skip the
@@ -500,6 +528,7 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
         if not cancelled:
             for gone in set(manifest) - seen:
                 store.delete_file(ws_path, gone)
+                _note_passes(gone, indexed=False)
             # Collapse case/spacing/punctuation variants of the same entity into
             # one node so the graph shows one bubble per person/topic.
             store.dedupe_entities(ws_path)
@@ -530,6 +559,8 @@ def _build_locked(ws_path: str, ws_root: str, progress) -> dict:
                 workspace=ws_root,
                 context_mode=cc_mode,
             )
+        # Kept on a cancel too: the files it did index are what they owe.
+        store.set_meta(ws_path, local_skipped={p: sorted(v) for p, v in owed.items() if v})
     finally:
         cancel.clear()
         # Free the heavy models — an index run shouldn't hold RAM afterward.

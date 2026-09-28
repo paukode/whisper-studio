@@ -1,6 +1,7 @@
 """
-Diagnostics endpoint — checks AWS credentials, Bedrock connectivity,
-workspace state, and sessions DB.
+Diagnostics endpoint: checks AWS credentials, Bedrock connectivity,
+workspace state, and sessions DB. In Local mode the two AWS checks are
+skipped, since that mode makes no AWS calls.
 """
 
 import asyncio
@@ -15,37 +16,12 @@ log = logging.getLogger("whisper-studio")
 
 router = APIRouter(prefix="/api/doctor", tags=["doctor"])
 
+_LOCAL_MODE_SKIP = "Skipped: Local mode makes no AWS calls."
+_CREDS = "AWS credentials"
+_BEDROCK = "Bedrock connectivity"
 
-@router.get("")
-async def doctor(model: str = None):
-    results = []
 
-    # ── 1. AWS credentials ────────────────────────────────────────────────────
-    has_env = bool(os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"))
-    creds_file = os.path.expanduser("~/.aws/credentials")
-    has_file = os.path.isfile(creds_file)
-    has_profile = bool(os.environ.get("AWS_PROFILE") or os.environ.get("AWS_DEFAULT_PROFILE"))
-    if has_env or has_file or has_profile:
-        detail = []
-        if has_env:
-            detail.append("env vars")
-        if has_file:
-            detail.append("~/.aws/credentials")
-        if has_profile:
-            detail.append(
-                f"profile={os.environ.get('AWS_PROFILE') or os.environ.get('AWS_DEFAULT_PROFILE')}"
-            )
-        results.append({"check": "AWS credentials", "status": "ok", "detail": ", ".join(detail)})
-    else:
-        results.append(
-            {
-                "check": "AWS credentials",
-                "status": "error",
-                "detail": "No AWS credentials found. Set AWS_ACCESS_KEY_ID/SECRET or configure ~/.aws/credentials",
-            }
-        )
-
-    # ── 2. Bedrock connectivity ───────────────────────────────────────────────
+async def _bedrock_check(model: str | None) -> dict:
     try:
         import boto3
 
@@ -72,23 +48,80 @@ async def doctor(model: str = None):
         )
 
         def _invoke():
-            bedrock.invoke_model(
-                modelId=ping_model,
+            from server.costs.calls import invoke_claude
+
+            invoke_claude(
+                bedrock,
+                model_id=ping_model,
                 contentType="application/json",
                 accept="application/json",
                 body=body,
+                source="doctor",
             )
 
         await asyncio.get_running_loop().run_in_executor(None, _invoke)
-        results.append(
-            {
-                "check": "Bedrock connectivity",
-                "status": "ok",
-                "detail": f"region={region}, model={ping_model}",
-            }
-        )
+        return {"check": _BEDROCK, "status": "ok", "detail": f"region={region}, model={ping_model}"}
     except Exception as e:
-        results.append({"check": "Bedrock connectivity", "status": "error", "detail": str(e)})
+        return {"check": _BEDROCK, "status": "error", "detail": str(e)}
+
+
+def _credential_source() -> str | None:
+    """How AWS credentials resolve through botocore's real provider chain (the
+    chain every client uses), or None when nothing resolves. Refreshable
+    credentials (SSO, assume-role, credential_process) are frozen here so an
+    expired SSO session shows up in this row, not on the first turn. Blocking
+    (subprocesses, the SSO cache, metadata lookups): call it off the loop."""
+    from server.infrastructure.aws_clients import bedrock_api_key_present, resolve_credentials
+
+    creds = resolve_credentials()
+    if creds is not None:
+        creds.get_frozen_credentials()
+        return getattr(creds, "method", "") or "provider chain"
+    if bedrock_api_key_present():
+        return "Bedrock API key (AWS_BEARER_TOKEN_BEDROCK)"
+    return None
+
+
+async def _credentials_check() -> dict:
+    try:
+        source = await asyncio.get_running_loop().run_in_executor(None, _credential_source)
+    except Exception as e:  # noqa: BLE001 - a broken profile is the diagnosis
+        return {
+            "check": _CREDS,
+            "status": "error",
+            "detail": f"Could not load AWS credentials: {e}",
+        }
+    if source is None:
+        return {
+            "check": _CREDS,
+            "status": "error",
+            "detail": (
+                "No AWS credentials found. Run `aws configure`, or `aws sso login` for an "
+                "SSO profile in ~/.aws/config."
+            ),
+        }
+    return {"check": _CREDS, "status": "ok", "detail": f"resolved via {source}"}
+
+
+@router.get("")
+async def doctor(model: str = None):
+    results = []
+
+    from server.infrastructure.cloud_guard import cloud_allowed
+
+    local_mode = not cloud_allowed()
+
+    # ── 1. AWS credentials ────────────────────────────────────────────────────
+    if local_mode:
+        results.append({"check": _CREDS, "status": "ok", "detail": _LOCAL_MODE_SKIP})
+    else:
+        results.append(await _credentials_check())
+
+    # ── 2. Bedrock connectivity ───────────────────────────────────────────────
+    if local_mode:
+        results.append({"check": _BEDROCK, "status": "ok", "detail": _LOCAL_MODE_SKIP})
+    else:
+        results.append(await _bedrock_check(model))
 
     # ── 3. Workspace ──────────────────────────────────────────────────────────
     try:
@@ -140,18 +173,36 @@ async def doctor(model: str = None):
 
     # ── 5. Config ─────────────────────────────────────────────────────────────
     try:
+        from server.chat.infra import mode_chat_catalog
         from server.infrastructure.config import load_config
+        from server.infrastructure.model_mode import NO_LOCAL_MODEL_REASON
+        from server.workspace import get_workspace_path
 
-        cfg = load_config()
+        # The model a turn would run on: the active mode's default, resolved
+        # exactly as /api/models resolves it (not the raw config key, which
+        # names a cloud model even in Local mode).
+        cfg = load_config(get_workspace_path())
+        _visible, _meta, mode, model = mode_chat_catalog(cfg)
         effort = cfg.get("effort_level", "high")
-        model = cfg.get("default_chat_model", "opus4.6")
-        results.append(
-            {
-                "check": "Config",
-                "status": "ok",
-                "detail": f"model={model}, effort={effort}, region={cfg.get('bedrock_region', 'us-east-1')}",
-            }
-        )
+        if not model:
+            reason = (
+                NO_LOCAL_MODEL_REASON
+                if mode == "local"
+                else "No chat model is available. Enable one in Settings > Models."
+            )
+            results.append(
+                {"check": "Config", "status": "warn", "detail": f"mode={mode}: {reason}"}
+            )
+        else:
+            # A Bedrock region means nothing in Local mode.
+            region = "" if mode == "local" else f", region={cfg.get('bedrock_region', 'us-east-1')}"
+            results.append(
+                {
+                    "check": "Config",
+                    "status": "ok",
+                    "detail": f"mode={mode}, model={model}, effort={effort}{region}",
+                }
+            )
     except Exception as e:
         results.append({"check": "Config", "status": "error", "detail": str(e)})
 

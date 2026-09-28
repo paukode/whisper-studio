@@ -61,6 +61,7 @@
         <tr><td>Backend and frontend</td><td colspan="2">Identical. The app bundles the compiled frontend and runs the same <code>server.main</code>.</td></tr>
         <tr><td>Python</td><td>A standalone CPython 3.13 inside the bundle. Nothing is installed on your system.</td><td>A <code class="path">venv/</code> built from your own Python 3.12 or newer.</td></tr>
         <tr><td>Bundled binaries</td><td><code>llama-server</code>, <code>ffmpeg</code>, <code>ffprobe</code>, Node 22.16.0 and the Playwright Chromium build ship inside the app.</td><td><code>setup.sh</code> installs the same pieces: llama.cpp and ffmpeg via Homebrew, Node 22.16.0 into the venv, Playwright Chromium into the shared <code class="path">~/Library/Caches/ms-playwright</code> cache. Live preview works the same either way; the app just never downloads a browser at runtime.</td></tr>
+        <tr><td>Code tools</td><td colspan="2">Identical. ruff and pylsp run with the app's own Python (bundled, or the venv), and ruff is on the shell PATH in both; the assistant's JS/TS checks run the workspace's own ESLint with Node. Neither install ships typescript-language-server: install it with <code>npm install -g typescript-language-server typescript</code> for JS/TS in the editor. Settings &gt; Tools and automation &gt; Code tools shows what works.</td></tr>
         <tr><td>Models and defaults</td><td colspan="2">Identical. Both ship the three always-on speech models (language ID and the two speaker encoders) and no chat model; both seed the same first-run config.</td></tr>
         <tr><td>Where your files live</td><td>Session history and logs under <code class="path">~/Library/Application Support/WhisperStudio</code>; everything user-editable (config, <code class="path">models/</code>, <code class="path">skills/</code>, <code class="path">plugins/</code>, <code class="path">agents/</code>, <code class="path">data/</code>) at <code class="path">~/.whisper</code>.</td><td>All of it at the repo root: <code class="path">config.user.json</code>, <code class="path">models/</code>, <code class="path">storage/</code>, <code class="path">data/</code>.</td></tr>
         <tr><td>System-audio capture</td><td>Native. The headphones menu beside <b>Record</b> taps system audio or one running app (macOS 14.4 or later).</td><td>Browser only. Share a Chrome tab, or route audio through a virtual device such as BlackHole.</td></tr>
@@ -291,8 +292,8 @@ bash setup.sh</code></pre></div>
           reinstall from scratch. It also takes a timestamped backup of
           <code class="path">config.json</code> and <code class="path">config.user.json</code> and
           <em>removes</em> them, so the seeding step recreates a config with the first-run defaults;
-          <code class="path">pricing.json</code> is backed up and rewritten from
-          <code class="path">pricing.example.json</code>. Re-add your Tavily key and any custom settings
+          <code class="path">pricing.json</code> (your rate overrides, if any) is backed up and
+          removed, so rates come from <code class="path">pricing.example.json</code>. Re-add your Tavily key and any custom settings
           afterwards, or restore them from the backups (they are the only copy, since both files are
           gitignored).</td></tr>
         <tr><td><code>--dev</code></td><td>Development mode: run the backend plus the Vite dev server with

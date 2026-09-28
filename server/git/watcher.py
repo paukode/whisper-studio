@@ -78,11 +78,19 @@ class GitFileWatcher:
         log.info("GitFileWatcher stopped")
 
     def set_workspace(self, workspace: str | None) -> None:
-        """Point the watcher at a new workspace. Clears cache + re-resolves paths."""
+        """Point the watcher at a new workspace. Clears cache + re-resolves paths.
+
+        Subscribers are told at once. The poll loop only fires on an mtime
+        change under a watched .git path, which cannot happen after a
+        disconnect (nothing is watched), so without this every open
+        /api/git/events stream kept its old branch until the client
+        re-subscribed, and a reconnect sent no fresh one either.
+        """
         with self._cache_lock:
             self._cache.clear()
         self._workspace = workspace
         self._refresh_watched_paths()
+        self._notify_subscribers()
 
     # ── Subscriber API ─────────────────────────────────────────────
 

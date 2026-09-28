@@ -1,7 +1,8 @@
 """Shell execution endpoints: run a command (foreground or background) and stop
-a session's background tasks.
+what a session's stopped turn started.
 """
 
+import asyncio
 import json
 import os
 import subprocess
@@ -59,20 +60,26 @@ async def ws_shell_endpoint(request: Request):
     # Working directory persistence: use session's last cwd
     from server.cwd_tracker import (
         extract_cwd_from_output,
+        generation,
         get_cwd,
         update_cwd,
         wrap_command_for_cwd,
     )
     from server.shell_snapshot import wrap_command
 
+    cwd_generation = generation()
     effective_cwd = get_cwd(session_id, ws) if session_id else ws
     # Background execution: start task and return immediately
     if body.get("background", False):
         from server.tasks.shell import start_shell_task
 
         bg_command = wrap_command(command, session_id) if session_id else command
-        task_info = start_shell_task(
-            command, cwd=effective_cwd, session_id=session_id, exec_command=bg_command
+        task_info = await asyncio.to_thread(
+            start_shell_task,
+            command,
+            cwd=effective_cwd,
+            session_id=session_id,
+            exec_command=bg_command,
         )
         return {"background": True, **task_info}
     # P0: Stdin redirect to prevent interactive hangs (before first pipe)
@@ -83,7 +90,9 @@ async def ws_shell_endpoint(request: Request):
     try:
         from server.sandbox import run_sandboxed
 
-        result = run_sandboxed(exec_command, cwd=effective_cwd, timeout=60)
+        # Off the event loop: a slow command here must not stall every
+        # session's stream while it runs.
+        result = await asyncio.to_thread(run_sandboxed, exec_command, cwd=effective_cwd, timeout=60)
         output = ""
         if result.stdout:
             output += result.stdout
@@ -93,7 +102,7 @@ async def ws_shell_endpoint(request: Request):
         output_text = output.strip()
         clean_output, new_cwd = extract_cwd_from_output(output_text)
         if session_id and new_cwd and os.path.isdir(new_cwd):
-            update_cwd(session_id, new_cwd)
+            update_cwd(session_id, new_cwd, generation=cwd_generation)
         if not clean_output:
             output = (
                 "Done." if result.returncode == 0 and _is_silent_command(command) else "(no output)"
@@ -119,20 +128,23 @@ async def ws_shell_endpoint(request: Request):
 
 @router.post("/shell/tasks/stop")
 async def ws_shell_tasks_stop(request: Request):
-    """Stop every running background task the given session started.
+    """Stop what the session's stopped turn started.
 
-    Wired to the ESC kill switch (streamControl.killSessionStream) so a
-    runaway background command dies with the rest of the turn instead of
-    outliving it."""
-    from server.tasks.shell import stop_session_tasks
+    Wired to the Stop and ESC kill switch (streamControl.killSessionStream).
+    ``since`` is when the stopped turn's stream began (epoch seconds): the
+    foreground commands and background shell tasks the session started from
+    then on die with the turn, while work from earlier turns (the dev server
+    the app is running on) keeps going. The kills run off the event loop so a
+    process that ignores SIGTERM cannot freeze other sessions."""
+    from server.tasks.handoff import stop_turn_work
 
     body = await request.json()
     session_id = (body.get("session_id") or "").strip()
-    if not session_id:
+    since = body.get("since")
+    if not session_id or isinstance(since, bool) or not isinstance(since, (int, float)):
         return Response(
-            content=json.dumps({"error": "session_id required"}),
+            content=json.dumps({"error": "session_id and since (epoch seconds) required"}),
             status_code=400,
             media_type="application/json",
         )
-    stopped = stop_session_tasks(session_id)
-    return {"stopped": stopped}
+    return await asyncio.to_thread(stop_turn_work, session_id, float(since))

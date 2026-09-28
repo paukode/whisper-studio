@@ -143,7 +143,7 @@
       or "N days ago"). The whole block is wrapped in <code>&lt;memory-context&gt;</code>.</p>
     <p>Which model runs it is configurable. <code>aux_model_id("memory_recall")</code> reads the
       <code>auxiliary_models</code> config map (<code class="path">server/infrastructure/auxiliary.py</code>);
-      unset, it stays on Haiku, the cheapest entry. The call site is a direct Bedrock invoke, so an
+      unset, it stays on Haiku, the cheapest Claude entry. The call site is a direct Bedrock invoke, so an
       on-device key is refused there and falls back to Haiku.</p>
     <p>The selector's reply is parsed leniently. It is asked for bare JSON, but a model that wraps the
       object in a <code>```json</code> fence is still accepted: <code>_bare_json()</code> strips the

@@ -65,12 +65,45 @@ def test_visibility_hybrid_shows_all():
     assert mm.visible_chat_keys(keys, meta, "hybrid") == keys
 
 
-def test_visibility_empty_filter_falls_back_to_all():
-    # A cloud install left in local mode with no on-device models must not
-    # produce a blank picker.
-    meta = {"opus4.8": {}, "gpt5.5": {}}
+def test_visibility_local_with_no_on_device_model_offers_nothing():
+    # Local mode promises nothing leaves this Mac, so a cloud-only catalog (every
+    # fresh install, before a Discover download) offers no chat model at all
+    # rather than falling back to the cloud models it promised not to use.
+    meta = {"opus4.8": {}, "gpt5.5": {"provider": "openai_bedrock"}}
     keys = ["opus4.8", "gpt5.5"]
-    assert mm.visible_chat_keys(keys, meta, "local") == keys
+    assert mm.visible_chat_keys(keys, meta, "local") == []
+
+
+def test_visibility_cloud_with_only_on_device_models_offers_nothing():
+    meta = {"local_gemma": {"is_local": True}}
+    assert mm.visible_chat_keys(["local_gemma"], meta, "cloud") == []
+
+
+def test_mode_default_follows_what_the_mode_offers():
+    meta = {"opus5.0": {}, "local_gemma": {"is_local": True}}
+    keys = ["opus5.0", "local_gemma"]
+    # The configured default wins whenever the mode offers it ...
+    assert mm.mode_default_model(keys, meta, "cloud", "opus5.0") == "opus5.0"
+    assert mm.mode_default_model(keys, meta, "hybrid", "opus5.0") == "opus5.0"
+    # ... otherwise the first offered model, never a hidden one ...
+    local_default = mm.mode_default_model(keys, meta, "local", "opus5.0")
+    assert local_default in mm.visible_chat_keys(keys, meta, "local")
+    # ... and nothing at all when the mode offers nothing.
+    assert mm.mode_default_model(["opus5.0"], meta, "local", "opus5.0") == ""
+
+
+def test_turn_refusal_blocks_cloud_models_only_in_local_mode():
+    reason = mm.turn_model_refusal("opus5.0", on_device=False, label="Opus 5", mode="local")
+    assert reason and "Opus 5" in reason and "Discover" in reason
+    assert mm.turn_model_refusal("local_gemma", on_device=True, label="", mode="local") is None
+    for mode in ("cloud", "hybrid"):
+        assert mm.turn_model_refusal("opus5.0", on_device=False, label="", mode=mode) is None
+
+
+def test_turn_refusal_with_no_model_says_why():
+    local = mm.turn_model_refusal("", on_device=False, label="", mode="local")
+    assert local == mm.NO_LOCAL_MODEL_REASON
+    assert mm.turn_model_refusal("", on_device=False, label="", mode="cloud")
 
 
 def test_config_defaults_expose_model_mode():
@@ -195,6 +228,24 @@ def test_default_catalog_is_sourced_from_the_template_not_a_code_copy():
     for key, entry in DEFAULTS["chat_models"].items():
         if key.startswith("opus"):
             assert entry["id"].startswith("global."), (key, entry["id"])
+
+
+def test_code_fallback_default_is_the_shipped_default_and_a_cloud_model():
+    # One meaning for "the default model": the code fallback (used when the
+    # template is unreadable or names an unknown key) is the key the template
+    # ships, and it is a real cloud catalog entry, so Hybrid and Cloud open on
+    # the same model whichever layer supplied it.
+    import json
+
+    from server.infrastructure.config import DEFAULTS, EXAMPLE_CONFIG_PATH
+
+    with open(EXAMPLE_CONFIG_PATH) as f:
+        template = json.load(f)
+    shipped = template["default_chat_model"]
+    assert DEFAULTS["default_chat_model"] == shipped
+    entry = template["chat_models"][shipped]
+    assert not entry.get("is_local")
+    assert not str(entry["id"]).startswith("local:")
 
 
 def test_defaults_catalog_used_only_when_config_omits_chat_models(monkeypatch):

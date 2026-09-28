@@ -14,6 +14,8 @@ _distill_structured has no local branch.
 import asyncio
 import inspect
 
+import pytest
+
 
 def _cfg(models, default=None):
     cfg = {"chat_models": models}
@@ -125,6 +127,33 @@ def test_run_agent_refuses_structured_schema_on_local(monkeypatch):
     assert "cloud" in res.output
 
 
+@pytest.mark.parametrize("schema", [None, {"type": "object"}])
+def test_local_mode_refusals_never_send_the_user_to_a_cloud_model_it_cannot_pick(
+    monkeypatch, schema
+):
+    """Local mode offers no cloud model, so an agent refusal there points to
+    Discover or the mode switch; in Hybrid a cloud model is a fine remedy."""
+    from server.agents.runtime import run_agent
+
+    supports = schema is not None
+    monkeypatch.setattr("server.agents.providers.model_key_for_id", lambda mid: "tiny")
+    monkeypatch.setattr("server.local.runtime.supports_tools", lambda key: supports)
+    outputs = {}
+    for mode in ("local", "hybrid"):
+        monkeypatch.setattr(
+            "server.infrastructure.model_mode.current_mode", lambda *a, _m=mode, **k: _m
+        )
+        res = asyncio.run(
+            run_agent("t", model_id_override="local:tiny-3b", structured_schema=schema)
+        )
+        assert res.status == "failed"
+        outputs[mode] = res.output
+    assert "Settings > Model mode" in outputs["local"]
+    assert "or a cloud model" not in outputs["local"]
+    assert "with a cloud one" not in outputs["local"]
+    assert "cloud" in outputs["hybrid"]
+
+
 # ── loop wiring pins ─────────────────────────────────────────────────────────
 
 
@@ -139,7 +168,8 @@ def test_local_loop_wiring_is_pinned():
 
     src_loop = inspect.getsource(runtime._run_agent_loop)
     assert "LocalAdapter(" in src_loop
-    assert "mark_busy=True" in src_loop
+    # serve_turn registers the run (mark_busy) and releases it on a cancel.
+    assert "serving.serve_turn(" in src_loop
     assert "_serving.end_turn()" in src_loop
     assert 'tool_exec_model_id=("" if _is_local_agent else model_id)' in src_loop
     assert "model_id=(model_key if _is_local_agent else model_id)" in src_loop

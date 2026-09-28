@@ -22,23 +22,36 @@ export const VoiceLiveMessage: React.FC = () => {
   const status = useVoiceStore((s) => s.status);
   const liveText = useVoiceStore((s) => s.liveText);
   const steps = useVoiceStore((s) => s.steps);
-  const teamReports = useVoiceStore((s) => s.teamReports);
+  const allTeamReports = useVoiceStore((s) => s.teamReports);
+  const teamRuns = useVoiceStore((s) => s.teamRuns);
+  // Subscribed so the card re-renders whenever a hung-up call starts or stops
+  // draining; which session that work belongs to comes from the controller.
   const draining = useVoiceStore((s) => s.draining);
-  const runSessionId = useVoiceStore((s) => s.runSessionId);
+  const callSessionId = useVoiceStore((s) => s.sessionId);
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
   const voiceId = useVoiceStore((s) => s.voiceId);
   const voices = useVoiceStore((s) => s.voices);
-  const pending = useVoiceStore((s) => s.pendingRequest);
+  const allPending = useVoiceStore((s) => s.pendingRequest);
 
-  const tools = useMemo(() => stepsToToolUse(steps.filter((st) => st.source === 'assistant')), [steps]);
+  // Voice work belongs to the session it started in: the open call to the
+  // session it was started from, each delegated run to the session of the
+  // call that started it (a hung-up call keeps delivering there). Any other
+  // session, and the welcome screen, shows none of it, so the Stop below
+  // reaches exactly the work this card shows.
+  const ownedHere = (runId?: string): boolean =>
+    !!currentSessionId && (runId ? voiceController.runSession(runId) : callSessionId) === currentSessionId;
+  const tools = stepsToToolUse(steps.filter((st) => st.source === 'assistant' && ownedHere(st.runId)));
+  const teamReports = Object.fromEntries(
+    Object.entries(allTeamReports).filter(([teamId]) => ownedHere(teamRuns[teamId])),
+  );
+  const pending = allPending && ownedHere(allPending.runId) ? allPending : null;
   const reportCount = Object.keys(teamReports).length;
   const voiceName = voices.find((v) => v.id === voiceId)?.label ?? voiceId;
 
-  const live = status !== 'off' && status !== 'connecting' && status !== 'ending';
+  const callHere = !!currentSessionId && callSessionId === currentSessionId;
+  const live = callHere && status !== 'off' && status !== 'connecting' && status !== 'ending';
   const hasRunWork = tools.length > 0 || reportCount > 0 || !!pending;
-  // Voice work belongs to the session it started in; a new or other session
-  // must not show it.
-  if (runSessionId && currentSessionId && runSessionId !== currentSessionId) return null;
+  const drainingHere = draining > 0 && voiceController.hasDrainingRuns(currentSessionId);
   if (!live && !hasRunWork) return null;
   if (!liveText && !hasRunWork && status !== 'thinking') return null;
   const showHeader = live && (status === 'speaking' || status === 'thinking');
@@ -62,14 +75,14 @@ export const VoiceLiveMessage: React.FC = () => {
         {(tools.length > 0 || reportCount > 0) && (
           <VoiceRunActivity tools={tools} teamReports={teamReports} />
         )}
-        {!live && draining > 0 && hasRunWork && (
+        {!live && drainingHere && hasRunWork && (
           <div className="voice-draining-note">
             <span className="pulse voice-request-dot" aria-hidden="true" />
             Voice is off; the assistant is still finishing this work.
             <button
               type="button"
               className="voice-request-btn no voice-draining-stop"
-              onClick={() => voiceController.cancelRuns()}
+              onClick={() => voiceController.cancelRuns(currentSessionId)}
               title="Stop the background work"
             >
               Stop

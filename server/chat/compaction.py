@@ -408,6 +408,7 @@ async def _compact_strategies(
             # so a GPT or local turn never depends on the Anthropic path.
             # auxiliary_models.compaction may name a different (cheaper) key.
             summary_key = _summary_model_key(model_key)
+            direct_ok = _direct_bedrock_allowed(model_id)
             if summary_key:
                 try:
                     from server.infrastructure.oneshot import one_shot
@@ -415,7 +416,12 @@ async def _compact_strategies(
 
                     if is_local_model(summary_key):
                         return one_shot(
-                            _summary_system, summary_prompt, max_tokens=1024, engine=summary_key
+                            _summary_system,
+                            summary_prompt,
+                            max_tokens=1024,
+                            engine=summary_key,
+                            feature=_SUMMARY_FEATURE,
+                            source="compaction",
                         )
                     return one_shot(
                         _summary_system,
@@ -423,15 +429,26 @@ async def _compact_strategies(
                         max_tokens=1024,
                         engine="cloud",
                         cloud_model_key=summary_key,
+                        feature=_SUMMARY_FEATURE,
+                        source="compaction",
+                        session_id=session_id or "",
                     )
                 except Exception as os_err:
                     log.warning(
-                        "one_shot compaction summarizer failed (%s); trying direct Bedrock",
+                        "one_shot compaction summarizer failed (%s); %s",
                         os_err,
+                        "trying direct Bedrock" if direct_ok else "truncating instead",
                     )
-            bedrock = _get_bedrock_client()
-            resp = bedrock.invoke_model(
-                modelId=model_id,
+            if not direct_ok:
+                # The direct rung sends an Anthropic body to ``model_id``: only
+                # a Claude Bedrock id can take it, and never in Local mode. An
+                # on-device or GPT session truncates instead.
+                return ""
+            from server.costs.calls import invoke_claude
+
+            result = invoke_claude(
+                _get_bedrock_client(),
+                model_id=model_id,
                 contentType="application/json",
                 accept="application/json",
                 body=json.dumps(
@@ -442,8 +459,9 @@ async def _compact_strategies(
                         "messages": [{"role": "user", "content": summary_prompt}],
                     }
                 ),
+                source="compaction",
+                session_id=session_id or "",
             )
-            result = json.loads(resp["body"].read())
             return result.get("content", [{}])[0].get("text", "")
 
         summary = await loop.run_in_executor(_executor, _call)
@@ -494,16 +512,52 @@ def _summary_extras(old_messages: list, session_id: str) -> str:
         return ""
 
 
+_SUMMARY_FEATURE = "Context compaction"
+
+
 def _summary_model_key(model_key: str) -> str:
     """The chat_models key the summarizer runs on: ``auxiliary_models.compaction``
-    when set to a real key, else the session's own model."""
+    when set to a real key, else the session's own model.
+
+    In Local mode a cloud ``auxiliary_models.compaction`` key is not used: the
+    session's own on-device model summarises instead (the on-device path), and
+    a session with no on-device model gets the cloud guard's refusal from
+    one_shot, then truncation."""
     try:
         from server.infrastructure.auxiliary import MAIN, aux_model_key
 
         key = aux_model_key("compaction", MAIN)
-        return model_key if key == MAIN else key
+        if key == MAIN:
+            return model_key
+        from server.infrastructure.cloud_guard import cloud_allowed
+        from server.local.runtime import is_local_model
+
+        if not cloud_allowed() and not is_local_model(key):
+            log.info(
+                "auxiliary_models.compaction=%r is a cloud model; Local mode summarises on %r",
+                key,
+                model_key,
+            )
+            return model_key
+        return key
     except Exception:  # noqa: BLE001
         return model_key
+
+
+def _direct_bedrock_allowed(model_id: str) -> bool:
+    """True when the last-resort direct InvokeModel rung may run: ``model_id``
+    is a Claude id on Bedrock (the rung sends an Anthropic Messages body) and
+    the app is not in Local mode. An on-device key or a GPT-on-mantle id is
+    never sent there."""
+    mid = (model_id or "").lower()
+    if not mid or mid.startswith("local") or mid.startswith("openai.") or "claude" not in mid:
+        return False
+    try:
+        from server.infrastructure.cloud_guard import cloud_allowed
+
+        return cloud_allowed()
+    except Exception:  # noqa: BLE001 - an unreadable mode never opens the cloud rung
+        return False
 
 
 def _compact_messages_simple(messages: list, model_id: str, model_key: str = "") -> list:

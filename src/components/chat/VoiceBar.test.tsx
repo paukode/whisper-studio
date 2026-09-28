@@ -5,14 +5,25 @@ vi.mock('@/api/client', () => ({ get: vi.fn(), put: vi.fn(), post: vi.fn(), del:
 
 // vi.mock factories are hoisted above imports, so the shared mock object must
 // be created through vi.hoisted to exist when the factory runs.
-const controller = vi.hoisted(() => ({
-  stop: vi.fn(),
-  resolveRequest: vi.fn(),
-  setMuted: vi.fn(),
-  start: vi.fn(),
-  sendText: vi.fn(),
-  loadStatus: vi.fn(),
-}));
+// runSession / hasDrainingRuns answer from the two records below, the way the
+// real controller answers from its per-socket bookkeeping.
+const controller = vi.hoisted(() => {
+  const runSessions: Record<string, string> = {};
+  const drainingSessions = new Set<string>();
+  return {
+    runSessions,
+    drainingSessions,
+    stop: vi.fn(),
+    resolveRequest: vi.fn(),
+    setMuted: vi.fn(),
+    start: vi.fn(),
+    sendText: vi.fn(),
+    loadStatus: vi.fn(),
+    cancelRuns: vi.fn(),
+    runSession: vi.fn((runId: string) => runSessions[runId] ?? null),
+    hasDrainingRuns: vi.fn((sid: string | null) => !!sid && drainingSessions.has(sid)),
+  };
+});
 vi.mock('@/services/voiceController', () => ({ voiceController: controller }));
 
 import { VoiceBar } from './VoiceBar';
@@ -67,6 +78,9 @@ describe('VoiceBar', () => {
 
 describe('VoiceLiveMessage', () => {
   beforeEach(() => {
+    for (const k of Object.keys(controller.runSessions)) delete controller.runSessions[k];
+    controller.drainingSessions.clear();
+    controller.cancelRuns.mockClear();
     useVoiceStore.getState().reset();
     useSessionStore.setState({ currentSessionId: 's1' });
     useVoiceStore.getState().begin('s1');
@@ -88,6 +102,8 @@ describe('VoiceLiveMessage', () => {
   });
 
   it('shows run work only in the session it belongs to, even after voice is off', () => {
+    controller.runSessions.r1 = 's1';
+    controller.drainingSessions.add('s1');
     act(() => {
       useVoiceStore.getState().upsertStep({ id: 'a1', name: 'spawn_agent', status: 'running', detail: 'review', source: 'assistant', runId: 'r1' });
       useVoiceStore.getState().adjustDraining(1);
@@ -104,6 +120,58 @@ describe('VoiceLiveMessage', () => {
     expect(container.querySelector('[data-testid="voice-live-message"]')).toBeNull();
     act(() => {
       useVoiceStore.getState().adjustDraining(-1);
+      useVoiceStore.getState().reset();
+      useSessionStore.setState({ currentSessionId: 's1' });
+    });
+  });
+
+  it('the welcome screen shows no session\'s voice work, so it offers no Stop', () => {
+    controller.runSessions.r1 = 's1';
+    controller.drainingSessions.add('s1');
+    act(() => {
+      useVoiceStore.getState().upsertStep({ id: 'a1', name: 'ws_run_command', status: 'running', detail: 'build', source: 'assistant', runId: 'r1' });
+      useVoiceStore.getState().adjustDraining(1);
+      useVoiceStore.getState().reset();
+      useSessionStore.setState({ currentSessionId: null });
+    });
+    const { container } = render(<VoiceLiveMessage />);
+    expect(container.querySelector('[data-testid="voice-live-message"]')).toBeNull();
+    act(() => {
+      useVoiceStore.getState().adjustDraining(-1);
+      useVoiceStore.getState().reset();
+    });
+  });
+
+  // Two hung-up calls from different sessions drain at once: each session's
+  // card shows its own runs only, and its Stop cancels exactly those.
+  it('each session shows only its own draining work, and its Stop cancels that work', () => {
+    controller.runSessions.rA = 'sA';
+    controller.runSessions.rB = 'sB';
+    controller.drainingSessions.add('sA');
+    controller.drainingSessions.add('sB');
+    act(() => {
+      useVoiceStore.getState().upsertStep({ id: 'a1', name: 'web_search', status: 'running', detail: 'A', source: 'assistant', runId: 'rA' });
+      useVoiceStore.getState().upsertStep({ id: 'b1', name: 'ws_run_command', status: 'running', detail: 'B', source: 'assistant', runId: 'rB' });
+      useVoiceStore.getState().adjustDraining(2);
+      useVoiceStore.getState().reset();
+      useSessionStore.setState({ currentSessionId: 'sA' });
+    });
+    const { container, rerender } = render(<VoiceLiveMessage />);
+    // The activity row counts the steps it holds: one run each, never both.
+    const shown = () => container.querySelector('[data-testid="voice-live-message"]')?.textContent ?? '';
+    expect(shown()).toContain('1 step');
+    expect(shown()).not.toContain('2 steps');
+    fireEvent.click(container.querySelector('.voice-draining-stop')!);
+    expect(controller.cancelRuns).toHaveBeenLastCalledWith('sA');
+
+    act(() => { useSessionStore.setState({ currentSessionId: 'sB' }); });
+    rerender(<VoiceLiveMessage />);
+    expect(shown()).toContain('1 step');
+    expect(shown()).not.toContain('2 steps');
+    fireEvent.click(container.querySelector('.voice-draining-stop')!);
+    expect(controller.cancelRuns).toHaveBeenLastCalledWith('sB');
+    act(() => {
+      useVoiceStore.getState().adjustDraining(-2);
       useVoiceStore.getState().reset();
       useSessionStore.setState({ currentSessionId: 's1' });
     });

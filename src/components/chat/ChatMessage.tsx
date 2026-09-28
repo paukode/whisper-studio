@@ -19,6 +19,7 @@ import { WorkflowRunCard } from '@/components/chat/WorkflowRunCard';
 import { CIStatusCard } from '@/components/chat/CIStatusCard';
 import { CIDiagnosisCard } from '@/components/chat/CIDiagnosisCard';
 import { PreviewScreenshotCard } from '@/components/chat/PreviewScreenshotCard';
+import { saveMediaSize } from '@/components/chat/MediaResize';
 import { findMatchingTeamReports } from '@/hooks/chatStream/teamProgress';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
 import { formatMessageTimestamp } from '@/utils/formatTimestamp';
@@ -51,7 +52,7 @@ export interface ChatMessageProps {
  *     div.chat-msg.user | div.chat-msg.assistant
  *       (content)
  */
-export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCheckpoint, taskCheckpointLive, noEnter }) => {
+const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheckpoint, taskCheckpointLive, noEnter }) => {
   const isCronEvent = message.role === 'cron_event';
   const isUser = message.role === 'user';
   const [isEditing, setIsEditing] = useState(false);
@@ -358,6 +359,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
               const displayName = pathHint && typeof pathHint === 'string'
                 ? `${label}: ${pathHint.split('/').pop()}`
                 : label;
+              // Keyed by the step's place in toolUse, which never changes once
+              // the message is committed, unlike the grouped index above.
+              const shotKey = `shot-${message.toolUse?.indexOf(tool) ?? idx}`;
               return (
                 <details key={`${tool.toolName}-${idx}`} className={`skill-trace ${tool.status === 'complete' ? 'done' : tool.status}`}>
                   <summary className="skill-trace-summary">
@@ -381,6 +385,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
                         mediaType={tool.previewImage.media_type}
                         data={tool.previewImage.data}
                         caption={tool.result}
+                        size={message.mediaSizes?.[shotKey]}
+                        onResize={(size) => saveMediaSize(message, shotKey, size)}
                       />
                     </div>
                   ) : tool.result && (
@@ -443,7 +449,12 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
             {/* The sentence that introduces the picture renders above it. */}
             {message.content && <MarkdownRenderer content={message.content} stepFormat={!message.spoken} />}
             {message.visuals.map((viz, i) => (
-              <VizCard key={`viz-${i}`} viz={viz} />
+              <VizCard
+                key={`viz-${i}`}
+                viz={viz}
+                size={message.mediaSizes?.[`viz-${i}`]}
+                onResize={(size) => saveMediaSize(message, `viz-${i}`, size)}
+              />
             ))}
           </>
         ) : !isUser && message.programArtifact ? (
@@ -585,3 +596,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message, index, taskCh
     </div>
   );
 };
+
+/** Memoized: the panel re-renders for its own state (the new-messages pill,
+ *  a turn starting or ending), and a long session must not re-render every
+ *  message each time. Messages are immutable store objects, so identity is
+ *  the right comparison. */
+export const ChatMessage = React.memo(ChatMessageView);

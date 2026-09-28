@@ -1,112 +1,164 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// settingsStore / the panel import the api client; the list query goes
-// through get(). Mutations (post/put/del) are exercised in the
-// remote/approval-granularity and elicitation describe blocks below.
-const { getMock, postMock } = vi.hoisted(() => ({ getMock: vi.fn(), postMock: vi.fn() }));
-vi.mock('@/api/client', () => ({ get: getMock, put: vi.fn(), post: postMock, del: vi.fn() }));
+// The panel reads the one MCP store (mcpStore); its refresh goes through
+// get() and the enable switch through patch(). Mutations (post/put/del) are
+// exercised in the remote/approval-granularity and elicitation blocks below.
+const { getMock, postMock, patchMock } = vi.hoisted(() => ({
+  getMock: vi.fn(),
+  postMock: vi.fn(),
+  patchMock: vi.fn(),
+}));
+vi.mock('@/api/client', () => ({ get: getMock, put: vi.fn(), post: postMock, del: vi.fn(), patch: patchMock }));
 
 import { MCPSettings, parseMcpArgs } from './MCPSettings';
 import { MoreMenu } from '@/components/chat/MoreMenu';
+import { useMcpStore, type MCPServerInfo } from '@/stores/mcpStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useUIStore } from '@/stores/uiStore';
 
-const SERVERS_RESPONSE = {
-  servers: {
-    echo: { command: 'python3', args: ['echo.py'], env: {}, enabled: true, status: 'connected', error: null },
-    other: { command: 'npx', args: [], env: {}, enabled: false, status: 'stopped', error: null },
-  },
-};
-
-function renderWithClient(ui: React.ReactElement) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function server(name: string, over: Partial<MCPServerInfo> = {}): MCPServerInfo {
   return {
-    queryClient,
-    ...render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>),
+    name,
+    command: 'python3',
+    args: [],
+    env: {},
+    enabled: true,
+    status: 'connected',
+    tools: [],
+    error: null,
+    url: '',
+    bearer_token_env_var: '',
+    approval_mode: 'auto',
+    tool_overrides: {},
+    enabled_tools: [],
+    disabled_tools: [],
+    ...over,
   };
 }
 
-describe('MCPSettings — enabled switch', () => {
-  let fetchSpy: ReturnType<typeof vi.fn>;
+/** The GET /api/mcp/servers body for a list of servers. */
+function responseFor(servers: MCPServerInfo[], revision = 1) {
+  return {
+    servers: Object.fromEntries(servers.map(({ name, ...info }) => [name, info])),
+    revision,
+    config_error: null,
+    pending_elicitations: [],
+  };
+}
 
+function seed(servers: MCPServerInfo[], extra: Partial<ReturnType<typeof useMcpStore.getState>> = {}) {
+  useMcpStore.setState({
+    servers,
+    pendingElicitations: [],
+    configError: null,
+    revision: 1,
+    loadFailed: false,
+    ...extra,
+  });
+}
+
+function renderWithClient(ui: React.ReactElement) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
+
+const ECHO = server('echo', { args: ['echo.py'], tools: ['mcp__echo__ping', 'mcp__echo__pong'] });
+const OTHER = server('other', { command: 'npx', enabled: false, status: 'stopped' });
+
+describe('MCPSettings: enabled switch', () => {
   beforeEach(() => {
     getMock.mockReset();
-    getMock.mockResolvedValue(SERVERS_RESPONSE);
-    fetchSpy = vi.fn();
-    vi.stubGlobal('fetch', fetchSpy);
+    patchMock.mockReset();
+    getMock.mockResolvedValue(responseFor([ECHO, OTHER]));
     useUIStore.setState({ addToast: vi.fn().mockReturnValue('t') as never });
-    useSettingsStore.setState({
-      mcpServers: [
-        { name: 'echo', status: 'connected', enabled: true },
-        { name: 'other', status: 'stopped', enabled: false },
-      ] as never,
-      loadMCP: vi.fn().mockResolvedValue(undefined) as never,
-    });
+    seed([ECHO, OTHER]);
   });
 
-  afterEach(() => vi.unstubAllGlobals());
-
-  it('renders the Skills-style toggle-switch (not a bare checkbox) reflecting each enabled flag', async () => {
+  it('renders the Skills-style toggle-switch (not a bare checkbox) reflecting each enabled flag', () => {
     const { container } = renderWithClient(<MCPSettings />);
-    await waitFor(() => expect(screen.getByText('echo')).toBeInTheDocument());
+    expect(screen.getByText('echo')).toBeInTheDocument();
 
     const switches = container.querySelectorAll('label.toggle-switch');
     expect(switches).toHaveLength(2);
     // Same markup contract as SkillsPanel: input + .toggle-slider inside the label.
     expect(container.querySelectorAll('label.toggle-switch .toggle-slider')).toHaveLength(2);
 
-    const echoSwitch = screen.getByRole('switch', { name: /disable mcp server echo/i });
-    const otherSwitch = screen.getByRole('switch', { name: /enable mcp server other/i });
-    expect(echoSwitch).toBeChecked();
-    expect(otherSwitch).not.toBeChecked();
+    expect(screen.getByRole('switch', { name: /disable mcp server echo/i })).toBeChecked();
+    expect(screen.getByRole('switch', { name: /enable mcp server other/i })).not.toBeChecked();
   });
 
   it('toggles optimistically and PATCHes the shared endpoint', async () => {
-    // Deferred fetch: hold the PATCH open so the optimistic (pre-response)
-    // state is observable.
-    let resolveFetch!: (v: unknown) => void;
-    fetchSpy.mockReturnValue(new Promise((r) => { resolveFetch = r; }));
+    // Deferred PATCH: hold it open so the optimistic state is observable.
+    let resolvePatch!: (v: unknown) => void;
+    patchMock.mockReturnValue(new Promise((r) => { resolvePatch = r; }));
     renderWithClient(<MCPSettings />);
-    await waitFor(() => expect(screen.getByText('echo')).toBeInTheDocument());
 
     const echoSwitch = screen.getByRole('switch', { name: /disable mcp server echo/i });
     fireEvent.click(echoSwitch);
 
-    // Optimistic: unchecked while the PATCH is still in flight.
     await waitFor(() => expect(echoSwitch).not.toBeChecked());
-    expect(fetchSpy).toHaveBeenCalledWith(
-      '/api/mcp/servers/echo',
-      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ enabled: false }) }),
-    );
-    // The composer's store copy flipped too (same write path).
-    expect(useSettingsStore.getState().mcpServers.find((s) => s.name === 'echo')?.enabled).toBe(false);
+    expect(patchMock).toHaveBeenCalledWith('/api/mcp/servers/echo', { enabled: false });
+    // The composer reads the same store, so its copy flipped too.
+    expect(useMcpStore.getState().servers.find((s) => s.name === 'echo')?.enabled).toBe(false);
 
-    resolveFetch({
-      ok: true,
-      json: async () => ({ name: 'echo', enabled: false, status: 'stopped', tools: [], error: null }),
-    });
-    await waitFor(() => expect(echoSwitch).not.toBeChecked()); // stays off after the live echo
+    getMock.mockResolvedValue(responseFor([{ ...ECHO, enabled: false, status: 'stopped' }, OTHER], 2));
+    resolvePatch({ name: 'echo', enabled: false, status: 'stopped', tools: [], error: null });
+    await waitFor(() => expect(useMcpStore.getState().revision).toBe(2));
+    expect(echoSwitch).not.toBeChecked();
   });
 
   it('reverts the switch and surfaces an error toast when the PATCH fails', async () => {
-    let resolveFetch!: (v: unknown) => void;
-    fetchSpy.mockReturnValue(new Promise((r) => { resolveFetch = r; }));
+    let rejectPatch!: (e: unknown) => void;
+    patchMock.mockReturnValue(new Promise((_r, rej) => { rejectPatch = rej; }));
     renderWithClient(<MCPSettings />);
-    await waitFor(() => expect(screen.getByText('echo')).toBeInTheDocument());
 
     const echoSwitch = screen.getByRole('switch', { name: /disable mcp server echo/i });
     fireEvent.click(echoSwitch);
     await waitFor(() => expect(echoSwitch).not.toBeChecked()); // optimistic
 
-    resolveFetch({ ok: false, status: 500 });
+    rejectPatch(new Error('HTTP 500'));
     await waitFor(() => expect(echoSwitch).toBeChecked()); // reverted
-    expect(useSettingsStore.getState().mcpServers.find((s) => s.name === 'echo')?.enabled).toBe(true);
     expect(useUIStore.getState().addToast).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'error' }),
     );
+  });
+});
+
+describe('MCPSettings: one live list', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    useUIStore.setState({ addToast: vi.fn().mockReturnValue('t') as never });
+    seed([ECHO]);
+  });
+
+  it('shows a server added elsewhere (the assistant, an editor) without reopening', async () => {
+    renderWithClient(<MCPSettings />);
+    expect(screen.queryByText('creds-agent')).toBeNull();
+
+    getMock.mockResolvedValue(
+      responseFor([ECHO, server('creds-agent', { command: 'aim', args: ['mcp', 'start-server'] })], 2),
+    );
+    // What the shared event channel does on a backend mcp_changed event.
+    act(() => useMcpStore.getState().applyChange(2));
+
+    await waitFor(() => expect(screen.getByText('creds-agent')).toBeInTheDocument());
+  });
+
+  it('shows each server\'s tool count, or why it failed', () => {
+    seed([ECHO, server('broken', { status: 'error', error: 'Command "aim" was not found.' })]);
+    renderWithClient(<MCPSettings />);
+
+    expect(screen.getByText('python3 echo.py · 2 tools')).toBeInTheDocument();
+    expect(screen.getByText('python3 · Command "aim" was not found.')).toBeInTheDocument();
+  });
+
+  it('reports an unreadable mcp_servers.json', () => {
+    seed([ECHO], { configError: 'mcp_servers.json is not a valid server list' });
+    renderWithClient(<MCPSettings />);
+    expect(screen.getByText('mcp_servers.json is not a valid server list')).toBeInTheDocument();
   });
 });
 
@@ -130,14 +182,9 @@ describe('composer MoreMenu has no MCP toggle (moved to Settings → MCP)', () =
   };
 
   beforeEach(() => {
-    getMock.mockReset();
-    getMock.mockResolvedValue(SERVERS_RESPONSE);
     useUIStore.setState({ addToast: vi.fn().mockReturnValue('t') as never });
-    useSettingsStore.setState({
-      mcpServers: [{ name: 'echo', status: 'connected', enabled: true }] as never,
-      skills: [] as never,
-      loadMCP: vi.fn().mockResolvedValue(undefined) as never,
-    });
+    useSettingsStore.setState({ skills: [] as never });
+    seed([ECHO]);
   });
 
   it('renders no MCP section, tick, or "MCP servers" row even with a server configured', () => {
@@ -180,14 +227,10 @@ describe('MCPSettings — remote/approval-granularity fields', () => {
   beforeEach(() => {
     getMock.mockReset();
     postMock.mockReset();
-    getMock.mockResolvedValue({ servers: {} });
+    getMock.mockResolvedValue(responseFor([]));
     postMock.mockResolvedValue({});
     useUIStore.setState({ addToast: vi.fn().mockReturnValue('t') as never });
-    useSettingsStore.setState({
-      mcpServers: [] as never,
-      loadMCP: vi.fn().mockResolvedValue(undefined) as never,
-      loadSkills: vi.fn().mockResolvedValue(undefined) as never,
-    });
+    seed([]);
   });
 
   it('saving a new server with a URL (no command) posts url/bearer_token_env_var/approval_mode', async () => {
@@ -281,46 +324,34 @@ describe('MCPSettings — remote/approval-granularity fields', () => {
   });
 });
 
-describe('MCPSettings — pending elicitations', () => {
+describe('MCPSettings: pending elicitations', () => {
+  const ELICITATION = {
+    elicitation_id: 'elicit-1',
+    server: 'weather',
+    session_id: 'chat-1',
+    mode: 'form',
+    message: 'Please provide your API key',
+    requested_schema: { type: 'object', properties: { key: { type: 'string' } } },
+    url: null,
+  };
+
   beforeEach(() => {
     getMock.mockReset();
     postMock.mockReset();
     postMock.mockResolvedValue({ ok: true });
+    getMock.mockResolvedValue(responseFor([]));
     useUIStore.setState({ addToast: vi.fn().mockReturnValue('t') as never });
-    useSettingsStore.setState({
-      mcpServers: [] as never,
-      loadMCP: vi.fn().mockResolvedValue(undefined) as never,
-      loadSkills: vi.fn().mockResolvedValue(undefined) as never,
-    });
+    seed([], { pendingElicitations: [ELICITATION] });
   });
 
-  const RESPONSE_WITH_ELICITATION = {
-    servers: {},
-    pending_elicitations: [
-      {
-        elicitation_id: 'elicit-1',
-        server: 'weather',
-        session_id: 'chat-1',
-        mode: 'form',
-        message: 'Please provide your API key',
-        requested_schema: { type: 'object', properties: { key: { type: 'string' } } },
-        url: null,
-      },
-    ],
-  };
-
-  it('renders a pending elicitation with the server name and message', async () => {
-    getMock.mockResolvedValue(RESPONSE_WITH_ELICITATION);
+  it('renders a pending elicitation with the server name and message', () => {
     renderWithClient(<MCPSettings />);
-
-    await waitFor(() => expect(screen.getByText(/weather needs input/i)).toBeInTheDocument());
+    expect(screen.getByText(/weather needs input/i)).toBeInTheDocument();
     expect(screen.getByText('Please provide your API key')).toBeInTheDocument();
   });
 
   it('Accept posts mcp_elicit_respond with the parsed JSON content', async () => {
-    getMock.mockResolvedValue(RESPONSE_WITH_ELICITATION);
     renderWithClient(<MCPSettings />);
-    await waitFor(() => expect(screen.getByText(/weather needs input/i)).toBeInTheDocument());
 
     fireEvent.change(screen.getByPlaceholderText('{}'), { target: { value: '{"key": "abc123"}' } });
     fireEvent.click(screen.getByText('Accept'));
@@ -333,9 +364,7 @@ describe('MCPSettings — pending elicitations', () => {
   });
 
   it('Decline posts mcp_elicit_respond with no content', async () => {
-    getMock.mockResolvedValue(RESPONSE_WITH_ELICITATION);
     renderWithClient(<MCPSettings />);
-    await waitFor(() => expect(screen.getByText(/weather needs input/i)).toBeInTheDocument());
 
     fireEvent.click(screen.getByText('Decline'));
 
@@ -346,11 +375,11 @@ describe('MCPSettings — pending elicitations', () => {
     });
   });
 
-  it('renders nothing extra when there are no pending elicitations', async () => {
-    getMock.mockResolvedValue({ servers: {}, pending_elicitations: [] });
+  it('renders nothing extra when there are no pending elicitations', () => {
+    seed([]);
     renderWithClient(<MCPSettings />);
 
-    await waitFor(() => expect(screen.getByText('No MCP servers configured.')).toBeInTheDocument());
+    expect(screen.getByText('No MCP servers configured.')).toBeInTheDocument();
     expect(screen.queryByText(/needs input/i)).toBeNull();
   });
 });

@@ -9,7 +9,7 @@ ignorant of each other and of diarization — deleting a backend is
 deleting its file plus one registry line.
 
 Message protocol to the client:
-    {"type": "interim",  "text": str}
+    {"type": "interim",  "text": str}   ("" withdraws the draft on screen)
     {"type": "transcript", "text": str, "speaker": str, "chunk_id": int}
     {"type": "speaker_update", "updates": [{"chunk_id": int, "speaker": str}]}
     {"type": "pong"} / {"type": "session_ended"}
@@ -21,14 +21,18 @@ utterances whose label changed.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import threading
+import time
+from concurrent.futures import Future, InvalidStateError
+from dataclasses import dataclass, field
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from server import diarization
-from server.asr import get_backend, resolve_name
+from server.asr import get_backend, languages, resolve_name
 from server.infrastructure.config import get as config_get
 
 log = logging.getLogger("whisper-studio")
@@ -49,7 +53,8 @@ def resolve_translator(
     - Canary: bidirectional with English as the hub (25 langs <-> en, never
       X -> Y with both non-English). Runs server-side on Canary's executor
       regardless of which engine transcribed; an unknown source language is
-      detected there (LID), so language None is still serviceable.
+      detected there (LID), so language None is still serviceable. A known
+      source Canary cannot read (Whisper heard ja or ar) gets no line.
     - Apple: any pair among its ~20 languages, on the client via the shell
       bridge; auto-detects an unknown source.
     Legacy stored modes from the earlier design ("auto"/"model") map to
@@ -67,6 +72,11 @@ def resolve_translator(
 
         if target not in CANARY_LANGUAGES:
             return None
+        # A known source outside Canary's languages is not "unknown": handing
+        # it over would re-detect it among the European languages and decode
+        # a confident translation of the wrong language.
+        if language is not None and language not in CANARY_LANGUAGES:
+            return None
         # A known non-English source with a non-English target is the one
         # pair shape Canary can never serve. Unknown sources are attempted —
         # the backend detects and returns "" when the pair is unsupported.
@@ -74,6 +84,36 @@ def resolve_translator(
             return None
         return "canary"
     return None
+
+
+async def _translate_on_canary(audio, language: str | None, target: str) -> str:
+    """One translation decode on Canary's executor, counted in and out of the
+    draft scheduler exactly once.
+
+    note_translation_queued() makes every Canary session's live drafts yield
+    while the job waits; translate_utterance counts it out on entry. A job
+    cancelled while still queued (the socket closed without a stop) never
+    enters, so the done callback counts it out instead. Without that, the
+    process-wide count never returns to zero and no Canary recording shows a
+    live draft again until the backend restarts.
+    """
+    from server.asr import canary_backend
+
+    canary_backend.note_translation_queued()
+    try:
+        job = canary_backend.executor.submit(
+            canary_backend.translate_utterance, audio, language, target
+        )
+    except BaseException:
+        canary_backend._note_translation_done()
+        raise
+
+    def _count_out_if_never_ran(done) -> None:
+        if done.cancelled():
+            canary_backend._note_translation_done()
+
+    job.add_done_callback(_count_out_if_never_ran)
+    return await asyncio.wrap_future(job)
 
 
 # ── Monotonic chunk-id resume across reconnects ─────────────────────────
@@ -129,12 +169,138 @@ def _reset_chunk_counter(session_id: str | None) -> None:
         _chunk_counters.pop(session_id, None)
 
 
+# ── The in-flight utterance survives a dropped socket ───────────────────
+# A recorder connection that ends without `stop` (a fault in this handler,
+# the client's watchdog replacing a dead socket) still holds the utterance
+# in progress in its VAD buffer: up to 8 s of speech the client already
+# sent. Rather than throw it away, the handler flushes it on the backend's
+# executor and hands the result to the next connection of the same take,
+# which relays it through its own emit path (chunk ids, speaker labels and
+# translation carry on as for any final).
+#
+# A take is one press of Record. The client names it with ``take`` on the
+# URL and every watchdog reconnect repeats it, so a lost sentence reaches a
+# reconnect of its own take only. When Stop never reached the server (the
+# socket was down), the client has already kept that sentence's draft, and
+# the next take must not replay it: the first connection of a new take
+# drops whatever the last one left, and a `stop` ends its take's hand-off.
+#
+# Order: a connection reserves its place (a Future, its "slot") when it
+# opens, not when it finally notices that its socket died. A reconnect waits
+# for every earlier slot of its take (bounded) before it decodes a word of
+# its own audio, so the older utterance always comes out first.
+#
+# A dropped take nobody resumes holds its utterance (audio included) this
+# long, then the next connection to open clears it.
+_CARRYOVER_TTL_S = 30.0
+# How long a reconnect waits for an earlier connection to let go.
+_CARRYOVER_WAIT_S = 10.0
+
+
+@dataclass
+class _TakeHandoff:
+    """The open connections of one take, oldest first. Each slot resolves to
+    the events its connection left in flight (``[]`` for none)."""
+
+    take: str
+    slots: list[Future] = field(default_factory=list)
+    touched: float = field(default_factory=time.monotonic)
+
+
+_carryover: dict[str, _TakeHandoff] = {}
+_carryover_lock = threading.Lock()
+
+
+def _settle(slot: Future, events: list[dict] | None = None) -> None:
+    """Resolve a slot unless a reconnect already gave up waiting on it."""
+    try:
+        slot.set_result(events or [])
+    except InvalidStateError:
+        pass
+
+
+def _open_slot(session_id: str, take: str) -> Future:
+    """Reserve a new connection's place in its take's hand-off. The first
+    connection of a new take drops what the previous take left."""
+    slot: Future = Future()
+    now = time.monotonic()
+    with _carryover_lock:
+        stale = now - _CARRYOVER_TTL_S
+        for sid, entry in list(_carryover.items()):
+            if entry.touched < stale and all(s.done() for s in entry.slots):
+                del _carryover[sid]
+        entry = _carryover.get(session_id)
+        if entry is None or entry.take != take:
+            entry = _carryover[session_id] = _TakeHandoff(take)
+        entry.slots.append(slot)
+        entry.touched = now
+    return slot
+
+
+def _claim_earlier(session_id: str, slot: Future) -> list[Future]:
+    """Take the slots of this take's earlier connections, oldest first."""
+    with _carryover_lock:
+        entry = _carryover.get(session_id)
+        if entry is None or slot not in entry.slots:
+            return []
+        at = entry.slots.index(slot)
+        earlier, entry.slots = entry.slots[:at], entry.slots[at:]
+    return earlier
+
+
+def _hand_over(session_id: str, slot: Future, flushed: Future | None) -> None:
+    """A connection dropped: its slot resolves to what ``flushed`` (its
+    in-flight utterance, decoding on the executor) produces."""
+    with _carryover_lock:
+        entry = _carryover.get(session_id)
+        if entry is not None and slot in entry.slots:
+            entry.touched = time.monotonic()
+    if flushed is None:
+        _settle(slot)
+        return
+
+    def _relay(done: Future) -> None:
+        if done.cancelled():
+            _settle(slot)
+        elif done.exception() is not None:
+            try:
+                slot.set_exception(done.exception())
+            except InvalidStateError:
+                pass
+        else:
+            _settle(slot, done.result())
+
+    flushed.add_done_callback(_relay)
+
+
+def _end_take(session_id: str, slot: Future) -> None:
+    """The take ended with `stop`: nothing of it is left to resume."""
+    _settle(slot)
+    with _carryover_lock:
+        entry = _carryover.get(session_id)
+        if entry is not None and slot in entry.slots:
+            del _carryover[session_id]
+
+
+def _flush_then_close(session) -> list[dict]:
+    """Executor job for a connection that dropped: flush the in-flight
+    utterance, then release the session (in that order on any pool size)."""
+    try:
+        return session.finish()
+    finally:
+        try:
+            session.close()
+        except Exception as e:
+            log.debug("ASR close after a dropped connection failed: %s", e)
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
     session_id: str | None = None,
     backend: str | None = None,
     dictation: str | None = None,
+    take: str | None = None,
 ):
     """``session_id`` is read from the query string (e.g. ``/ws?session_id=…``)
     so speaker labels survive reconnects within the server's lifetime. We
@@ -144,6 +310,10 @@ async def websocket_endpoint(
     a LIVE path, not legacy tolerance: dictation before any session exists
     connects with the bare ``/ws`` URL (see useChatInputMic's no-session
     fallback).
+
+    ``take`` names the recording (one press of Record) a recorder connection
+    belongs to; the client's watchdog reconnects repeat it (see _carryover).
+    Dictation sends none.
     """
     # Reject cross-site WebSocket handshakes (the HTTP Origin middleware does
     # not see WS upgrades). Prevents a malicious page from opening this audio
@@ -178,9 +348,13 @@ async def websocket_endpoint(
     def _backend_label(name: str) -> str:
         return {"parakeet": "Parakeet", "canary": "Canary"}.get(resolve_name(name), "Whisper")
 
-    # ?dictation=1 (the chat mic) skips speaker-ID: dictation is
-    # single-user, so diarization is pointless and its compute is wasted.
-    skip_speaker = (dictation or "").strip().lower() in ("1", "true", "yes")
+    # ?dictation=1 is the chat mic: its text goes straight into the composer.
+    # It skips speaker-ID (dictation is single-user, so diarization is
+    # pointless and its compute is wasted) and never translates (the mic
+    # renders no translation line, so a decode would only load Canary and
+    # stall a live recording's drafts for output nobody reads).
+    is_dictation = (dictation or "").strip().lower() in ("1", "true", "yes")
+    skip_speaker = is_dictation
     speakers = None if skip_speaker else diarization.get_session(session_id)
     # Cut utterances at speaker handovers (needs word timestamps from the
     # engine; Whisper and Parakeet report them, Canary does not). Read once
@@ -213,7 +387,7 @@ async def websocket_endpoint(
     # is untouched); Apple translations run on the client. The pending set
     # lets `stop` drain in-flight decodes so the last utterance's translation
     # isn't lost with the socket.
-    translate_mode = str(config_get("translate_mode") or "off")
+    translate_mode = "off" if is_dictation else str(config_get("translate_mode") or "off")
     translate_target = str(config_get("translate_target") or "en")
     apple_available = False
     pending_translations: set[asyncio.Task] = set()
@@ -247,10 +421,12 @@ async def websocket_endpoint(
         nonlocal chunk_counter
         for ev in events:
             text = ev.get("text", "")
-            if not text:
-                continue
             if ev["kind"] == "interim":
+                # An empty draft is relayed too: it withdraws the one on
+                # screen when its utterance closed without a final.
                 await send_json({"type": "interim", "text": text})
+                continue
+            if not text:
                 continue
 
             # final. One utterance can carry more than one speaker turn;
@@ -374,19 +550,8 @@ async def websocket_endpoint(
         transcript decodes. An empty translation is still sent — the client
         uses it to clear the pending slot for this chunk.
         """
-        from server.asr import canary_backend
-
-        # Registers this translation with Canary's draft scheduler so live
-        # drafts yield the decode thread until it has run.
-        canary_backend.note_translation_queued()
         try:
-            translated = await loop.run_in_executor(
-                canary_backend.executor,
-                canary_backend.translate_utterance,
-                audio,
-                language,
-                target,
-            )
+            translated = await _translate_on_canary(audio, language, target)
         except Exception as e:
             log.warning("Translation task failed for chunk %s: %s", chunk_id, e)
             translated = ""
@@ -464,9 +629,17 @@ async def websocket_endpoint(
             # Construct on the backend's own executor so model load and
             # warmup happen on the thread that will run every decode
             # (MLX streams are thread-local).
-            asr_session = await loop.run_in_executor(
-                backend_mod.executor, backend_mod.create_session
-            )
+            factory = backend_mod.create_session
+            if backend_name == "canary":
+                # Canary keeps the settled language keyed by the chat session
+                # and the take, so a watchdog reconnect or a live switch back
+                # to Canary resumes it and a new take starts unsettled.
+                # Dictation shares the chat session id but is not part of the
+                # recording, so it stays private.
+                factory = functools.partial(
+                    backend_mod.create_session, None if skip_speaker else session_id, take_id
+                )
+            asr_session = await loop.run_in_executor(backend_mod.executor, factory)
         return asr_session
 
     async def finish_session() -> None:
@@ -479,6 +652,27 @@ async def websocket_endpoint(
             await emit_events(events)
         except Exception as e:
             log.debug("ASR finish failed: %s", e)
+
+    async def replay_carryover() -> None:
+        """Emit what earlier connections of this take still had in flight
+        (see _carryover), ahead of anything this connection hears. Waits for
+        a connection that has not yet noticed its socket died."""
+        nonlocal inherited_relayed, chunk_counter
+        if inherited_relayed:
+            return
+        inherited_relayed = True
+        for earlier in _claim_earlier(session_id, slot):
+            try:
+                events = await asyncio.wait_for(asyncio.wrap_future(earlier), _CARRYOVER_WAIT_S)
+            except Exception as e:
+                log.warning("Lost the utterance a dropped connection left in flight: %s", e)
+                continue
+            # That connection may have closed chunks after this one opened
+            # and read the counter: resume past them.
+            chunk_counter = max(chunk_counter, _next_chunk_start(session_id))
+            if events:
+                log.info("Relaying %d event(s) a dropped connection left in flight", len(events))
+            await emit_events(events)
 
     async def switch_backend(requested: str, variant: str | None = None) -> None:
         """Live model switch from the transcript panel header (or Settings).
@@ -520,12 +714,25 @@ async def websocket_endpoint(
         backend_mod = get_backend(new_name)
         log.info("Transcription model switched to %s", new_name)
 
-    # A reconnect inherits the session's speaker state, names included, so
-    # replay them: the client's rename map is per-tab and would otherwise
-    # show "Speaker 2" for somebody the server already knows as Anna.
-    await push_names(force=True)
+    # This connection's place in its take's hand-off, reserved before the
+    # first await so a reconnect can never overtake it (see _carryover), and
+    # released in the finally below on every exit. Dictation text belongs to
+    # a composer, never to a take.
+    take_id = (take or "").strip()
+    slot = _open_slot(session_id, take_id) if session_id and take_id and not is_dictation else None
+    # Whether the earlier connections' slots were claimed and relayed.
+    inherited_relayed = slot is None
+    # Set when the client ends the take with `stop`. Any other exit hands the
+    # in-flight utterance to a reconnect of the take.
+    ended_by_stop = False
 
     try:
+        # A reconnect inherits the session's speaker state, names included,
+        # so replay them: the client's rename map is per-tab and would
+        # otherwise show "Speaker 2" for somebody the server already knows
+        # as Anna.
+        await push_names(force=True)
+
         while True:
             message = await websocket.receive()
 
@@ -552,7 +759,10 @@ async def websocket_endpoint(
                 if msg.get("type") == "set_translate":
                     # Translate dropdown state + whether the client has the
                     # Apple on-device bridge. Sent at connect and on change;
-                    # applies from the next final onward.
+                    # applies from the next final onward. Dictation stays
+                    # off whatever a client sends.
+                    if is_dictation:
+                        continue
                     translate_mode = str(msg.get("mode") or "off")
                     translate_target = str(msg.get("target") or "en")
                     apple_available = bool(msg.get("apple_available"))
@@ -568,10 +778,21 @@ async def websocket_endpoint(
                     continue
 
                 if msg.get("type") == "stop":
+                    ended_by_stop = True
+                    # Relay what earlier connections of this take left in
+                    # flight first. The take's hand-off ends with the take
+                    # (see the finally), so nothing replays into the next.
+                    await replay_carryover()
                     # Drain whatever's in flight so the last sentence isn't
                     # clipped, then reset per-session state. The ack can race
                     # the client's close (the Header recorder closes the
                     # socket the instant it sends `stop`) — send_json guards.
+                    if not skip_speaker:
+                        # Forget the take's language before draining. The
+                        # live session keeps its own reference, so the flush
+                        # below still decodes with the settled language, and
+                        # a take that already opened keeps its own tracker.
+                        languages.forget_tracker(session_id, take_id)
                     await finish_session()
                     # Drain in-flight translations before ending the session:
                     # the client closes the socket after `session_ended`, and
@@ -614,6 +835,7 @@ async def websocket_endpoint(
             # ordering trivial without dropping frames.
             if "bytes" in message and message["bytes"]:
                 raw_audio = message["bytes"]
+                await replay_carryover()
                 session = await ensure_session()
                 events = await loop.run_in_executor(
                     backend_mod.executor, session.process, raw_audio
@@ -632,15 +854,29 @@ async def websocket_endpoint(
         else:
             log.error("WebSocket error: %s", e)
     finally:
-        # Connection ended without an explicit ``stop`` (network blip, tab
-        # close). Release decoder state; speaker labels stay in the RAM
-        # registry so a reconnect under the same session id continues
-        # where it left off. In-flight translations have no socket to land
-        # on — cancel them rather than burn decode time on a dead client.
+        # Unless the take ended with ``stop``, the connection dropped (network
+        # blip, tab close, a fault above). Speaker labels stay in the RAM
+        # registry so a reconnect under the same session id continues where
+        # it left off, and a recorder's in-flight utterance is flushed and
+        # handed to that reconnect instead of discarded. In-flight
+        # translations have no socket to land on: cancel them rather than
+        # burn decode time on a dead client. Nothing here awaits before the
+        # hand-off, so it happens even when the handler is being cancelled.
         for task in tuple(pending_translations):
             task.cancel()
-        if asr_session is not None:
-            try:
-                await loop.run_in_executor(backend_mod.executor, asr_session.close)
-            except Exception:
-                pass
+        if slot is not None and not ended_by_stop:
+            flushed = None
+            if asr_session is not None:
+                try:
+                    flushed = backend_mod.executor.submit(_flush_then_close, asr_session)
+                except RuntimeError as e:  # executor already shut down
+                    log.debug("Could not flush a dropped connection: %s", e)
+            _hand_over(session_id, slot, flushed)
+        else:
+            if slot is not None:
+                _end_take(session_id, slot)
+            if asr_session is not None:
+                try:
+                    await loop.run_in_executor(backend_mod.executor, asr_session.close)
+                except Exception:
+                    pass

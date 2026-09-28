@@ -115,3 +115,96 @@ def test_listing_and_read_back_endpoints(snap_root):
     assert missing.status_code == 404
     traversal = asyncio.run(snap.read_request_snapshot("sess-1", "../../etc/passwd"))
     assert traversal.status_code == 404
+
+
+def _read_all(sdir):
+    out = []
+    for p in sorted(sdir.iterdir()):
+        with gzip.open(p, "rt") as f:
+            out.append(json.load(f))
+    return sorted(out, key=lambda s: s["ts"])
+
+
+def test_local_snapshots_hold_the_exact_bodies_posted_including_the_retry(snap_root, monkeypatch):
+    """The local adapter reshapes the request (OpenAI chat messages, roles
+    merged, an empty assistant row dropped) and may retry within a round. The
+    snapshots must hold what llama-server received on each request."""
+    import asyncio
+
+    import server.local.server_stream as SS
+    from server.chat.engine.local import LocalAdapter
+    from server.chat.engine.policy import LOCAL_POLICY
+    from server.chat.engine.runner import TurnContext, run_turn
+
+    posted: list[dict] = []
+    replies = iter([[], [("text", "recovered")]])  # empty completion, then an answer
+
+    async def fake_stream(base_url, payload):
+        posted.append(payload)
+        for piece in next(replies):
+            yield piece
+        yield ("done", {"calls": [], "finish_reason": "stop", "usage": {}})
+
+    monkeypatch.setattr(SS, "_stream_round", fake_stream)
+    history = [
+        {"role": "user", "content": "hey!"},
+        {"role": "assistant", "content": ""},
+        {"role": "user", "content": "second"},
+    ]
+    ctx = TurnContext(
+        cost_source="chat",
+        session_id="snap-local",
+        model_key="local_gemma",
+        model_id="local_gemma",
+        messages=list(history),
+        adapter=LocalAdapter(
+            model_key="local_gemma",
+            base_url="http://x",
+            system_prompt="sys",
+            thinking=True,
+            tools_enabled=False,
+        ),
+        policy=LOCAL_POLICY,
+        loop=None,
+        executor=None,
+        tool_exec_model_id="",
+        memory_hooks=lambda msgs: None,
+    )
+
+    async def go():
+        return [c async for c in run_turn(ctx)]
+
+    asyncio.run(go())
+    snaps = _read_all(snap_root / "request_snapshots" / "snap-local")
+    assert len(posted) == 2
+    assert [s["attempt"] for s in snaps] == [0, 1]
+    assert [s["wire_request"] for s in snaps] == posted
+    # The canonical history still rides along, so the reshaping is visible.
+    assert {"role": "assistant", "content": ""} in snaps[0]["messages"]
+    assert all(m["role"] != "assistant" for m in snaps[0]["wire_request"]["messages"])
+
+
+def test_a_wire_body_that_cannot_be_built_is_recorded_as_the_finding(snap_root):
+    def boom():
+        raise TypeError("can only join str")
+
+    snap.record_request_snapshot(
+        session_id="sess-1", round_num=0, adapter=_Adapter(), tools=[], messages=[], wire=boom
+    )
+    (data,) = _read_all(snap_root / "request_snapshots" / "sess-1")
+    assert "can only join str" in data["wire_request"]["error"]
+
+
+def test_oversized_wire_messages_are_replaced_like_the_canonical_ones(snap_root, monkeypatch):
+    monkeypatch.setattr(snap, "MAX_SNAPSHOT_BYTES", 1000)
+    snap.record_request_snapshot(
+        session_id="sess-1",
+        round_num=0,
+        adapter=_Adapter(),
+        tools=[],
+        messages=[{"role": "user", "content": "x" * 5000}],
+        wire={"model": "m", "messages": [{"role": "user", "content": "x" * 5000}]},
+    )
+    (data,) = _read_all(snap_root / "request_snapshots" / "sess-1")
+    assert data["wire_request"]["model"] == "m"
+    assert "omitted" in data["wire_request"]["messages"]

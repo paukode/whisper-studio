@@ -11,13 +11,7 @@
  * local turn resumed on the default cloud model.
  */
 import { useSettingsStore } from '@/stores/settingsStore';
-
-export interface TurnModelSettings {
-  model: string;
-  effort_level: string;
-  verbosity: string;
-  brief_mode: boolean;
-}
+import type { ChatMessage, TurnModelSettings } from '@/types/chat';
 
 export function turnModelSettings(): TurnModelSettings {
   const s = useSettingsStore.getState();
@@ -33,4 +27,25 @@ export function turnModelSettings(): TurnModelSettings {
     verbosity: s.verbosity,
     brief_mode: supportsVerbosity ? false : s.verbosity === 'low',
   };
+}
+
+/** The settings a question or folder-prompt answer resumes its turn on: those
+ *  recorded on the message whose card is being answered (readSSEStream stamps
+ *  them there when the turn pauses). Null when none of `toolUseIds` belongs
+ *  to such a message, which is only the case for a row saved before turns
+ *  recorded their settings; the picker is then the only record there is. */
+export function pausedTurnSettings(
+  messages: ChatMessage[],
+  toolUseIds: string[],
+): TurnModelSettings | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m.turnSettings) continue;
+    const cardIds = [
+      ...(m.userQuestions ?? []).map((q) => q.toolUseId),
+      ...(m.toolUse ?? []).filter((t) => t.toolName === 'ws_workspace_prompt').map((t) => t.toolId),
+    ];
+    if (cardIds.some((id) => toolUseIds.includes(id))) return m.turnSettings;
+  }
+  return null;
 }

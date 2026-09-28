@@ -5,6 +5,7 @@ import type {
   LspHoverResult,
   LspPublishDiagnosticsParams,
 } from '@/types/lsp';
+import { closeFailureReason, proxyFailureMessage } from './lsp/failure';
 import { JsonRpcConnection } from './lsp/jsonrpc';
 import {
   diagnosticsToMarkers,
@@ -57,6 +58,10 @@ export interface UseLspReturn {
   status: LspStatus;
   /** Whether a language server is applicable here (supported language + workspace). */
   active: boolean;
+  /** Why the language server is not running, as the backend reported it
+   *  (for example "typescript-language-server is not installed ..."). Null
+   *  while it runs, and when nothing went wrong. */
+  failure: string | null;
 }
 
 /** Capabilities we advertise. Full-text sync keeps didChange trivial and robust. */
@@ -90,6 +95,7 @@ export function useLsp(params: UseLspParams): UseLspReturn {
   // Tracks only the live connection lifecycle. The inactive 'closed' state is
   // derived below so the effect never sets state synchronously in its body.
   const [connStatus, setConnStatus] = useState<LspStatus>('closed');
+  const [connFailure, setConnFailure] = useState<string | null>(null);
 
   const lspLanguage = toLspLanguage(language);
   const active = Boolean(enabled && workspacePath && lspLanguage);
@@ -118,7 +124,10 @@ export function useLsp(params: UseLspParams): UseLspReturn {
     // Announce 'connecting' off the synchronous effect path (a fresh connection
     // may follow a stale 'error'/'closed' from a prior run within this mount).
     queueMicrotask(() => {
-      if (!disposed) setConnStatus('connecting');
+      if (!disposed) {
+        setConnStatus('connecting');
+        setConnFailure(null);
+      }
     });
     const socket = new WebSocket(url);
 
@@ -126,7 +135,25 @@ export function useLsp(params: UseLspParams): UseLspReturn {
       if (socket.readyState === WebSocket.OPEN) socket.send(data);
     });
 
+    // The proxy's reason for a server that cannot start or stopped. Kept in a
+    // local too, so the close that follows keeps it instead of reading 'off'.
+    let failure: string | null = null;
+    const fail = (reason: string) => {
+      failure = reason;
+      if (!disposed) {
+        setConnFailure(reason);
+        setConnStatus('error');
+      }
+    };
+
     conn.onNotification = (method, rawParams) => {
+      // Only the proxy's own marked notification ends the connection; a live
+      // server's error popup leaves it (and the status) as it is.
+      const proxyFailure = proxyFailureMessage(method, rawParams);
+      if (proxyFailure) {
+        fail(proxyFailure);
+        return;
+      }
       if (method !== 'textDocument/publishDiagnostics') return;
       const p = rawParams as LspPublishDiagnosticsParams | undefined;
       if (!p || !fileUriMatches(p.uri, fileUri)) return; // ignore diagnostics for other documents
@@ -151,8 +178,16 @@ export function useLsp(params: UseLspParams): UseLspReturn {
     socket.onerror = () => {
       if (!disposed) setConnStatus('error');
     };
-    socket.onclose = () => {
-      if (!disposed) setConnStatus('closed');
+    socket.onclose = (ev: CloseEvent) => {
+      // Requests still waiting (initialize) can never be answered now: fail
+      // them at once instead of after their 15 s timeout.
+      conn.dispose('Language server connection closed');
+      const reason = failure ?? closeFailureReason(ev.code, ev.reason);
+      if (reason) {
+        fail(reason);
+      } else if (!disposed) {
+        setConnStatus('closed');
+      }
     };
     socket.onopen = () => {
       conn
@@ -281,5 +316,5 @@ export function useLsp(params: UseLspParams): UseLspReturn {
   // When inactive the connection is definitionally closed; otherwise reflect the
   // live socket lifecycle.
   const status: LspStatus = active ? connStatus : 'closed';
-  return { status, active };
+  return { status, active, failure: active ? connFailure : null };
 }

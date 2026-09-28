@@ -1,10 +1,8 @@
 import { useCallback, useState } from 'react';
 import { getChatStore, useActiveChatStore } from '@/stores/sessionRuntimes';
 import type { PendingApproval } from '@/stores/chatStore';
-import { sendApprovalContinuation } from '@/hooks/useChatStream';
+import { answerApproval } from '@/hooks/chatStream/approvalLeg';
 import { useUIStore } from '@/stores/uiStore';
-import { executeApproval, type ApprovalOutcome } from '@/api/approval';
-import { toError } from '@/utils/toError';
 import { DiffPreview } from './previews/DiffPreview';
 import { CommandPreview } from './previews/CommandPreview';
 import { FileListPreview } from './previews/FileListPreview';
@@ -20,79 +18,20 @@ export function ApprovalBanner() {
   const approvalQueue = useActiveChatStore((s) => s.approvalQueue);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Handlers bind the approval's OWNING session store once, up front: the
-  // continuation can outlive a session switch, and resolving "active" after
-  // an await would mutate whichever session the user happens to be viewing.
-  const handleApprove = useCallback(async (approval: PendingApproval, approveAll: boolean) => {
+  // One handler for every button. The leg binds the approval's OWNING session
+  // store up front (the continuation can outlive a session switch) and keeps
+  // that session busy from the click until the resumed turn has the stream,
+  // so Stop, ESC and the composer all see it working (hooks/chatStream/approvalLeg).
+  const handleAnswer = useCallback(async (approval: PendingApproval, accepted: boolean, forSession: boolean) => {
     setIsProcessing(true);
     const chat = getChatStore(approval.sessionId);
-
-    if (approveAll) {
-      chat.getState().setSessionApproval(approval.category, 'allow');
-    }
-    chat.getState().clearCurrentApproval();
-
     try {
-      // Single executor: backend looks up the spec and runs its registered
-      // function. No per-action switch on the frontend.
-      //
-      // executeApproval THROWS an ApiError on any non-2xx / network failure.
-      // Letting that escape rejected the whole handler: the continuation was
-      // never sent, so the paused turn sat there with no card, no message and
-      // no toast, and the user had to nudge the model by hand to discover the
-      // approval had gone nowhere. Convert it into a truthful FAILED outcome
-      // instead (same guard the auto-approve path in sseStream applies) so the
-      // model learns the action did not happen and can react.
-      let outcome: ApprovalOutcome;
-      try {
-        outcome = await executeApproval({ action: approval.action, payload: approval.payload });
-      } catch (err) {
-        console.error('Approval execution failed:', err);
-        outcome = { ok: false, error: toError(err).message };
-      }
-
-      if (!outcome.ok) {
-        useUIStore.getState().addToast({
-          type: 'error',
-          message: `Approval failed: ${outcome.error ?? 'unknown error'}`,
-          duration: 6000,
-          key: 'approval-apply-error',
-        });
-      } else {
-        // An action may have connected a new workspace (e.g. git_clone with
-        // open=true). Switch the active workspace so the panel opens — the
-        // backend already updated its config, this brings the UI in line.
-        if (outcome.ws_folder_opened) {
-          useUIStore.getState().setWsConnected(true, outcome.ws_folder_opened);
-        }
-        window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
-      }
-
-      await sendApprovalContinuation(approval, approval.sessionId, true, undefined, outcome);
+      await answerApproval(approval, accepted, forSession);
     } finally {
       // Always recover the card UI. Skipping this on the failure path left
       // `isProcessing` stuck true, which disabled every button on the NEXT
-      // approval card ("Running…") until a reload, and left queued approvals
+      // approval card ("Running...") until a reload, and left queued approvals
       // permanently unshown.
-      if (!chat.getState().currentApproval) {
-        chat.getState().showNextApproval();
-      }
-      setIsProcessing(false);
-    }
-  }, []);
-
-  const handleDeny = useCallback(async (approval: PendingApproval, denyAll: boolean) => {
-    setIsProcessing(true);
-    const chat = getChatStore(approval.sessionId);
-
-    if (denyAll) {
-      chat.getState().setSessionApproval(approval.category, 'deny');
-    }
-    chat.getState().clearCurrentApproval();
-
-    try {
-      await sendApprovalContinuation(approval, approval.sessionId, false);
-    } finally {
       if (!chat.getState().currentApproval) {
         chat.getState().showNextApproval();
       }
@@ -166,6 +105,11 @@ export function ApprovalBanner() {
 
   const allowAllLabel = `Yes, all ${currentApproval.category}`;
   const blockLabel = `Block ${currentApproval.category}`;
+  // A hard floor (rm, a destructive GitHub call, a sandbox escalation, an MCP
+  // server marked approve) is asked every time: the server checks it before
+  // the session's remembered choice, so "Yes, all" and "Block" would do
+  // nothing for it. The card offers only this one answer and says why.
+  const offerSessionChoice = !currentApproval.alwaysAsks;
   const showUndo = currentApproval.preview === 'diff' && !!payload.path;
 
   return (
@@ -204,24 +148,32 @@ export function ApprovalBanner() {
         <div style={{ marginBottom: 12 }}>{PreviewBody}</div>
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <button onClick={() => void handleApprove(currentApproval, false)} disabled={isProcessing} type="button"
+          <button onClick={() => void handleAnswer(currentApproval, true, false)} disabled={isProcessing} type="button"
             style={btnStyle('#3fb950', '#3fb950', '#fff', isProcessing)}>
             {isProcessing ? 'Running…' : '✓ Yes'}
           </button>
-          <button onClick={() => void handleApprove(currentApproval, true)} disabled={isProcessing} type="button"
-            title={`Allow all ${currentApproval.category} this session`}
-            style={btnStyle('#3fb950', 'transparent', '#3fb950', isProcessing)}>
-            ✓ {allowAllLabel}
-          </button>
-          <button onClick={() => void handleDeny(currentApproval, false)} disabled={isProcessing} type="button"
+          {offerSessionChoice && (
+            <button onClick={() => void handleAnswer(currentApproval, true, true)} disabled={isProcessing} type="button"
+              title={`Allow all ${currentApproval.category} this session`}
+              style={btnStyle('#3fb950', 'transparent', '#3fb950', isProcessing)}>
+              ✓ {allowAllLabel}
+            </button>
+          )}
+          <button onClick={() => void handleAnswer(currentApproval, false, false)} disabled={isProcessing} type="button"
             style={btnStyle('#f87171', 'transparent', '#f87171', isProcessing)}>
             ✕ No
           </button>
-          <button onClick={() => void handleDeny(currentApproval, true)} disabled={isProcessing} type="button"
-            title={`Block all ${currentApproval.category} this session`}
-            style={btnStyle('#f87171', '#f87171', '#fff', isProcessing)}>
-            ✕ {blockLabel}
-          </button>
+          {offerSessionChoice ? (
+            <button onClick={() => void handleAnswer(currentApproval, false, true)} disabled={isProcessing} type="button"
+              title={`Block all ${currentApproval.category} this session`}
+              style={btnStyle('#f87171', '#f87171', '#fff', isProcessing)}>
+              ✕ {blockLabel}
+            </button>
+          ) : (
+            <span style={{ fontSize: '0.78em', color: 'var(--text-muted)' }}>
+              This action always asks.
+            </span>
+          )}
           {showUndo && (
             <button onClick={() => void handleUndo(currentApproval)} disabled={isProcessing} type="button"
               title="Undo this change"

@@ -98,9 +98,6 @@ def test_upsert_reindexes_and_delete_drops_rows():
         segments="[]",
         chat_history_frontend=[{"role": "user", "content": "now about terraform state"}],
         speaker_names="{}",
-        workspace_path="",
-        compaction_count=0,
-        latched_config="{}",
     )
     assert [h["session_id"] for h in ss.search("terraform")] == ["kube"]
     assert [h["session_id"] for h in ss.search("rollback")] == ["kube"]  # title row
@@ -179,9 +176,6 @@ def test_reindex_is_incremental_and_edits_reindex_from_the_change():
         segments="[]",
         chat_history_frontend=history,
         speaker_names="{}",
-        workspace_path="",
-        compaction_count=0,
-        latched_config="{}",
     )
     assert [h["session_id"] for h in ss.search("openshift")] == ["kube"]
     assert ss.search("kubernetes") == []

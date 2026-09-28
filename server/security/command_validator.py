@@ -100,29 +100,121 @@ def check_dangerous_patterns(command: str) -> str | None:
 # Kept separate from find/xargs invocation below, which needs its own check.
 _DELETE_VERBS = frozenset({"rm", "rmdir", "unlink", "shred", "srm"})
 # Wrapper commands whose ARGUMENT list eventually names the command actually
-# run — strip them so `sudo rm`, `env FOO=bar rm`, `nice -19 rm`, `xargs rm`
-# are still caught. `env`'s own VAR=value arguments are handled by re-running
-# the var-assignment skip after each wrapper, since `env` can take several
-# before the real command.
+# run: strip them so `sudo rm`, `env FOO=bar rm`, `nice -19 rm`, `xargs rm`,
+# `nohup rm`, `time rm` are still caught. `env`'s own VAR=value arguments are
+# handled by re-running the var-assignment skip after each wrapper, since
+# `env` can take several before the real command. A wrapper option that takes
+# a value (`sudo -u root rm`, `timeout 10 rm`, `xargs -I {} rm {}`) would hide
+# the real command from that skip, so once a wrapper is seen every later word
+# is checked too (see _segment_deletes).
 _INVOKE_WRAPPERS = frozenset(
-    {"sudo", "env", "command", "nice", "exec", "doas", "xargs", "parallel"}
+    {
+        "sudo",
+        "env",
+        "command",
+        "nice",
+        "exec",
+        "doas",
+        "xargs",
+        "parallel",
+        "nohup",
+        "time",
+        "timeout",
+        "setsid",
+        "stdbuf",
+        "caffeinate",
+        "ionice",
+        "chrt",
+        "taskset",
+        "watch",
+    }
 )
+# Shell reserved words that start a statement whose command follows them
+# (`if rm x; then`, `then rm -rf dist; fi`): skipped like a wrapper, and
+# everything after them is checked.
+_SHELL_KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{"})
+# Shells whose -c argument is a whole script of its own (`sh -c "rm -rf x"`,
+# `bash -lc '...'`): the script is checked like any other command line.
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh", "mksh", "ash", "fish", "csh", "tcsh"})
+# Shell options that consume the next word (`bash -o pipefail -c ...`).
+_SHELL_LONG_OPTS_WITH_VALUE = frozenset({"--rcfile", "--init-file"})
+# Scripts nested deeper than this (`sh -c "bash -c '...'"`) are treated as
+# rm-like: fail toward asking.
+_MAX_SCRIPT_DEPTH = 4
 # find's own -delete action, and the common find ... -exec rm pattern, destroy
 # files without the literal token "rm" ever being find's own argv[0].
 _FIND_DELETE_RE = re.compile(r"\bfind\b.*?(-delete\b|-exec\s+rm\b)")
 
 
-def _leading_command_token(segment: str) -> str | None:
-    """The basename of the first real command word in a shell segment, after
-    stripping environment-variable assignments (FOO=bar rm ...) and any
-    invocation wrapper (sudo/env/nice/xargs/... rm ...). None if the segment
-    can't be tokenized (unbalanced quotes) — callers should treat that as
-    suspicious rather than as "not rm", since a parse failure is exactly the
-    kind of thing an obfuscated command produces."""
+def _shell_script(tokens: list[str], i: int) -> str | None:
+    """The script a shell at ``tokens[i]`` runs with -c, or None when it has
+    no -c (``bash build.sh`` runs a file this check cannot see)."""
+    has_c = False
+    j = i + 1
+    while j < len(tokens):
+        tok = tokens[j]
+        if tok == "--":
+            j += 1
+            break
+        if tok.startswith("--"):
+            j += 2 if tok in _SHELL_LONG_OPTS_WITH_VALUE else 1
+            continue
+        if len(tok) > 1 and tok[0] in "-+":
+            flags = tok[1:]
+            has_c = has_c or "c" in flags
+            # -o option / +O shopt_name: the option cluster ends in a letter
+            # that takes the next word as its value.
+            j += 2 if flags[-1] in "oO" else 1
+            continue
+        break
+    if has_c and j < len(tokens):
+        return tokens[j]
+    return None
+
+
+def shell_scripts(argv: list[str]) -> list[str]:
+    """The scripts an argv hands to a shell with -c, wherever the shell sits in
+    it (``["nohup", "bash", "-lc", "rm -rf dist"]``). For a command that is
+    exec'd without a shell, so its arguments were never one command line: the
+    rm check reads each script as a command line of its own."""
+    scripts = []
+    for i, tok in enumerate(argv):
+        if _base(tok) in _SHELLS:
+            script = _shell_script(argv, i)
+            if script is not None:
+                scripts.append(script)
+    return scripts
+
+
+def _base(token: str) -> str:
+    """A word's command name: its basename, past a subshell's opening paren."""
+    return token.lstrip("(").rsplit("/", 1)[-1]
+
+
+def _runs_deleting_script(tokens: list[str], i: int, depth: int) -> bool:
+    """True when ``tokens[i]`` is a shell whose -c script, or ``eval`` whose
+    arguments, delete files."""
+    base = _base(tokens[i])
+    if base == "eval":
+        return _is_rm(" ".join(tokens[i + 1 :]), depth + 1)
+    if base in _SHELLS:
+        script = _shell_script(tokens, i)
+        return script is not None and _is_rm(script, depth + 1)
+    return False
+
+
+def _segment_deletes(segment: str, depth: int) -> bool:
+    """One pipeline stage: its leading command (past environment-variable
+    assignments such as ``FOO=bar rm`` and any invocation wrapper) is a delete
+    verb, or a shell/eval running a deleting script. Behind a wrapper (or a
+    reserved word such as ``then``) every later word is checked as well, since
+    a wrapper option's value can sit where the command's name would be. A segment that cannot be tokenized
+    (unbalanced quotes) or names no command at all counts as deleting: a parse
+    failure is exactly the kind of thing an obfuscated command produces."""
     try:
         tokens = shlex.split(segment, posix=True)
     except ValueError:
-        return None
+        return True
 
     def _skip_assignments_and_flags(i: int) -> int:
         while i < len(tokens) and (
@@ -132,27 +224,26 @@ def _leading_command_token(segment: str) -> str | None:
         return i
 
     i = _skip_assignments_and_flags(0)
-    while i < len(tokens) and tokens[i].rsplit("/", 1)[-1] in _INVOKE_WRAPPERS:
-        i += 1
-        i = _skip_assignments_and_flags(i)  # the wrapper's own flags/env args
+    wrapped = False
+    while i < len(tokens) and (
+        _base(tokens[i]) in _INVOKE_WRAPPERS or tokens[i] in _SHELL_KEYWORDS
+    ):
+        wrapped = True
+        i = _skip_assignments_and_flags(i + 1)  # the wrapper's own flags/env args
     if i >= len(tokens):
-        return None
-    return tokens[i].rsplit("/", 1)[-1]
+        return True
+    last = len(tokens) if wrapped else i + 1
+    for j in range(i, last):
+        if _base(tokens[j]) in _DELETE_VERBS:
+            return True
+        if _runs_deleting_script(tokens, j, depth):
+            return True
+    return False
 
 
-def is_rm_command(command: str) -> bool:
-    """True if any statement in this shell command deletes files: rm and its
-    close cousins directly, `sudo`/`env`/etc.-wrapped, piped, chained with
-    ;/&&/||, on its own line with no separator (a multi-line terminal_run/
-    workflow script), or find's own -delete / -exec rm. A parse failure on
-    any segment (unbalanced quotes — the kind of thing a disguised command
-    produces) is treated as rm-like: fail toward requiring approval, not
-    away from it.
-
-    Heredoc bodies are stripped first — they are literal data (e.g. a file
-    being written), not commands, so text that merely CONTAINS the word "rm"
-    must not trip this.
-    """
+def _is_rm(command: str, depth: int) -> bool:
+    if depth > _MAX_SCRIPT_DEPTH:
+        return True
     command = strip_heredoc_bodies(command)
     if _FIND_DELETE_RE.search(command):
         return True
@@ -164,12 +255,26 @@ def is_rm_command(command: str) -> bool:
         for sub in split_subcommands(line):
             for segment in sub.split("|"):
                 segment = segment.strip()
-                if not segment:
-                    continue
-                token = _leading_command_token(segment)
-                if token is None or token in _DELETE_VERBS:
+                if segment and _segment_deletes(segment, depth):
                     return True
     return False
+
+
+def is_rm_command(command: str) -> bool:
+    """True if any statement in this shell command deletes files: rm and its
+    close cousins directly, `sudo`/`env`/`nohup`/`time`/etc.-wrapped, piped,
+    chained with ;/&&/||, on its own line with no separator (a multi-line
+    terminal_run/workflow script), inside a shell's -c script (`sh -c
+    "rm -rf build"`, `bash -lc '...'`) or an `eval`, or find's own -delete /
+    -exec rm. A parse failure on any segment (unbalanced quotes, the kind of
+    thing a disguised command produces) is treated as rm-like: fail toward
+    requiring approval, not away from it.
+
+    Heredoc bodies are stripped first: they are literal data (e.g. a file
+    being written), not commands, so text that merely CONTAINS the word "rm"
+    must not trip this.
+    """
+    return _is_rm(command, 0)
 
 
 # ---------------------------------------------------------------------------

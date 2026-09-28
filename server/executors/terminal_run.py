@@ -17,6 +17,7 @@ they never reach the PTY and can't hang the chat turn.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -132,18 +133,124 @@ def _resolve_sandbox_permissions(payload: dict) -> tuple[str, str, str]:
     return perms, justification, ""
 
 
+def uses_workspace_cwd(payload_cwd: str | None) -> bool:
+    """True when _resolve_cwd falls back to the workspace for this cwd: none
+    was given, or the one given is not a directory."""
+    return not payload_cwd or not os.path.isdir(os.path.expanduser(payload_cwd))
+
+
+def _lost_workspace_refusal(payload_cwd: str | None) -> str | None:
+    """The refusal for a command that would fall back to the workspace in a
+    turn whose workspace the user disconnected mid-turn, else None. Without it
+    the command quietly moves to $HOME (write access widened to match) or to
+    the folder connected in its place."""
+    if not uses_workspace_cwd(payload_cwd):
+        return None
+    from server.workspace.state import workspace_lost_message
+
+    return workspace_lost_message()
+
+
 def _resolve_cwd(payload_cwd: str | None) -> str:
     """Resolve the cwd argument: expanduser, fall back to workspace then $HOME."""
-    if payload_cwd:
-        path = os.path.expanduser(payload_cwd)
-        if os.path.isdir(path):
-            return path
+    if not uses_workspace_cwd(payload_cwd):
+        return os.path.expanduser(payload_cwd)
     from server.workspace import get_workspace_path
 
     ws = get_workspace_path()
     if ws and os.path.isdir(ws):
         return ws
     return os.path.expanduser("~")
+
+
+def _visible_busy(program: str) -> str:
+    who = program or "a program"
+    return (
+        f"The visible terminal is busy: {who} is running in its foreground, so a "
+        "command typed there would go to that program instead of the shell. Wait for it "
+        "to exit, use mode='sandbox', or drive a program of your own with terminal_send."
+    )
+
+
+# Programs that hold the terminal's foreground while sitting at a prompt of
+# their own: a nested shell (bash, nix develop's bash), a multiplexer, a
+# remote or elevated shell. A command typed into one runs at that prompt and
+# prints its completion marker as usual, so they do not make the terminal busy.
+_PROMPT_HOSTS = frozenset(
+    {
+        "sh",
+        "bash",
+        "zsh",
+        "fish",
+        "dash",
+        "ksh",
+        "mksh",
+        "tcsh",
+        "csh",
+        "nu",
+        "xonsh",
+        "elvish",
+        "pwsh",
+        "tmux",
+        "screen",
+        "zellij",
+        "ssh",
+        "mosh-client",
+        "sudo",
+        "su",
+        "doas",
+        "login",
+    }
+)
+
+
+def _process_name(pid: int) -> str:
+    """The executable name of ``pid``: its basename, with a login shell's
+    leading '-' dropped. Empty when it cannot be read (a leaderless group)."""
+    import subprocess
+    import sys
+
+    try:
+        if sys.platform.startswith("linux"):
+            with open(f"/proc/{pid}/comm", encoding="utf-8", errors="replace") as f:
+                name = f.read().strip()
+        else:
+            out = subprocess.run(
+                ["ps", "-o", "comm=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=1.0,
+            )
+            name = out.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return os.path.basename(name).lstrip("-")
+
+
+def _foreground_program(session) -> str | None:
+    """The program holding the PTY's foreground when it is not at a shell
+    prompt, else None.
+
+    The login shell is its own session and group leader (setsid at spawn), so
+    its pid is its group id; a foreground child runs in a group of its own. A
+    child that is itself a prompt host (a nested shell, tmux, ssh) does not
+    count. Unknown (the fd or the shell is gone) is not busy: the write then
+    fails on its own and says so. Returns "" for a busy group whose leader's
+    name cannot be read. Blocking (it may ask ``ps``)."""
+    from server.terminal import _foreground_pgrp
+
+    fg = _foreground_pgrp(session)
+    try:
+        shell_pgrp = os.getpgid(session.process.pid)
+    except OSError:
+        return None
+    if not fg or fg == shell_pgrp:
+        return None
+    # A group's id is its leader's pid.
+    name = _process_name(fg)
+    if name in _PROMPT_HOSTS:
+        return None
+    return name
 
 
 async def do_terminal_run(payload: dict) -> tuple[bool, str]:
@@ -229,6 +336,12 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
                 "No visible terminal session is open. Either open a terminal in the UI "
                 "first, or call this tool with mode='sandbox' to run invisibly."
             )
+        program = await asyncio.to_thread(_foreground_program, session)
+        if program is not None:
+            # Typing now would feed the command to that program's stdin (a dev
+            # server another chat left running, say), and a Ctrl-C meant for
+            # this command would stop that program instead.
+            return False, _visible_busy(program)
         result = await run_in_session(session, command, timeout=timeout)
 
     # Format the result for the model: exit code on its own line, then
@@ -237,6 +350,11 @@ async def do_terminal_run(payload: dict) -> tuple[bool, str]:
     summary = f"exit_code: {result['exit_code']}"
     if result.get("timed_out"):
         summary = f"TIMED OUT after {timeout:.0f}s; partial output below.\n{summary}"
+        if mode == "visible":
+            summary += (
+                "\nThe command may still be running in the foreground of the visible "
+                "terminal; further visible runs there are refused until it exits."
+            )
     output = result.get("output") or "(no output)"
 
     # A failed confined run whose output looks like an OS write denial gets a
@@ -338,6 +456,9 @@ def _exec_terminal_send(tool_input, transcript, current_attachments):
     session_id = tool_input.pop("__session_id__", "")
     if tool_input.get("input") is None:
         return "Error: input is required."
+    lost = _lost_workspace_refusal(tool_input.get("cwd"))
+    if lost:
+        return lost
     payload = json.dumps(
         {
             "action": "terminal_send",
@@ -365,6 +486,9 @@ def _exec_terminal_run(tool_input, transcript, current_attachments):
     command = (tool_input.get("command") or "").strip()
     if not command:
         return "Error: command is required."
+    lost = _lost_workspace_refusal(tool_input.get("cwd"))
+    if lost:
+        return lost
     mode = (tool_input.get("mode") or "sandbox").strip()
     payload = json.dumps(
         {

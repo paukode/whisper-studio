@@ -273,9 +273,18 @@ export const TerminalPanel: React.FC = () => {
     };
   }, [refitActive]);
 
-  // Cleanup on unmount
+  // AppShell keeps this panel mounted while it has open terminals, even after
+  // the workspace is disconnected, so the shells the session started (a dev
+  // server, a build) are never killed by a disconnect.
+  useEffect(() => {
+    useUIStore.getState().setTerminalLive(sessions.length > 0);
+  }, [sessions.length]);
+
+  // Cleanup on unmount: only reached once no terminal is open (see above) or
+  // when the app itself goes away.
   useEffect(() => {
     return () => {
+      useUIStore.getState().setTerminalLive(false);
       sessionsRef.current.forEach((s) => {
         void deleteTerminalSession(s.id).catch(() => {});
       });

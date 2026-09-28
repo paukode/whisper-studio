@@ -7,6 +7,10 @@
     border-radius: 3px;
 }
 .ws-lsp-status:hover { background: var(--bg-secondary); }
+/* A failed server's pill is a button to Settings > Code tools. */
+button.ws-lsp-status {
+    border: none; background: none; color: inherit; font-family: inherit;
+}
 
 .ws-lsp-dot {
     width: 6px; height: 6px; border-radius: 50%;
@@ -96,4 +100,21 @@
 .ws-problem-location {
     color: var(--text-muted); font-size: var(--fs-caption); white-space: nowrap;
     margin-left: auto; padding-left: 8px;
+}
+
+/* Settings > Tools and automation > Code tools (CodeToolsPanel.tsx) */
+.code-tool-name {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+}
+.code-tool-version {
+    font-weight: 400; color: var(--text-muted); font-size: var(--fs-caption);
+}
+.code-tool-state {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: inherit; font-weight: 500; font-size: var(--fs-caption);
+    color: var(--text-muted);
+}
+.code-tool-command {
+    font-family: 'IBM Plex Mono', monospace; font-size: var(--fs-caption);
+    overflow-wrap: anywhere;
 }

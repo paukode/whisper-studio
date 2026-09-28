@@ -9,7 +9,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import { useGoalStore } from '@/stores/goalStore';
 import { launchRun } from '@/api/workflows';
 import { startWatch, planAutofix } from '@/api/ci';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { noChatModelHint, useSettingsStore } from '@/stores/settingsStore';
 import type { SettingsState } from '@/stores/settingsStore';
 import type { UseChatStreamReturn } from '@/hooks/useChatStream';
 import { requestModelChange } from '@/components/chat/dataRetentionConsent';
@@ -188,9 +188,13 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               addToast({ type: 'success', message: `Model set to ${pickedLabel}`, duration: 2000, persist: false });
             }
           });
+        } else if (validKeys.length === 0) {
+          // Nothing to pick (Local mode before an on-device model is installed):
+          // say where to get one, never list cloud keys the mode cannot run.
+          const hint = noChatModelHint(useSettingsStore.getState().needsLocalModel);
+          addToast({ type: 'info', message: hint, duration: 6000, persist: false });
         } else {
-          const usage = validKeys.length > 0 ? validKeys.join('|') : 'haiku|sonnet|opus4.8';
-          addToast({ type: 'info', message: `Usage: /model ${usage}`, duration: 3000, persist: false });
+          addToast({ type: 'info', message: `Usage: /model ${validKeys.join('|')}`, duration: 3000, persist: false });
         }
         return true;
       }
@@ -327,6 +331,8 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               body: JSON.stringify({
                 question: fullQuestion,
                 model: selectedModel,
+                // Attributes the side question's cost to this session.
+                session_id: sessionId,
                 recent_history: getChatStore(sessionId).getState().messages.slice(-4).map(m => ({ role: m.role, content: m.content })),
               }),
             });
@@ -335,6 +341,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             const decoder = new TextDecoder();
             let buffer = '';
             let btwContent = '';
+            let btwError = '';
             for (;;) {
               const { done, value } = await reader.read();
               if (done) break;
@@ -349,11 +356,15 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
                 try {
                   const evt: Record<string, unknown> = JSON.parse(payload);
                   if (typeof evt.text === 'string') btwContent += evt.text;
+                  else if (typeof evt.error === 'string') btwError = evt.error;
                 } catch { /* skip malformed JSON */ }
               }
             }
             if (btwContent) {
               useUIStore.getState().setBtwPopup({ question: fullQuestion, answer: btwContent });
+            } else if (btwError) {
+              // A refusal (for example Local mode) says why instead of going silent.
+              addToast({ type: 'error', message: btwError, duration: 6000 });
             }
           } catch {
             addToast({ type: 'error', message: 'BTW request failed.', duration: 3000 });
@@ -649,7 +660,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         const teamId = `subagent-${crypto.randomUUID()}`;
         const controller = new AbortController();
         let stopped = false;
-        useSubagentStore.getState().register(teamId, () => {
+        // Owned by this session: Stop and ESC elsewhere leave it running, and
+        // the session is never evicted while the run can still deliver.
+        useSubagentStore.getState().register(teamId, sessionId, () => {
           stopped = true;
           controller.abort();
         });
@@ -728,6 +741,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             }
           } finally {
             useSubagentStore.getState().unregister(teamId);
+            // The final patch keeps the message count, which the runtime's
+            // own save trigger keys on, so persist the outcome explicitly.
+            if (sessionId) useSessionStore.getState().debouncedSave(sessionId);
           }
         })();
         return true;

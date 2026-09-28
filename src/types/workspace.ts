@@ -23,4 +23,14 @@ export interface EditorTab {
   comparePath?: string;
   /** For 'diff' tabs: the right-hand (modified) file's content. */
   compareContent?: string;
+  /** The workspace root the tab was opened in. `path` is relative to it, so
+   *  a save while another root (or none) is connected is refused rather than
+   *  writing this content into the other workspace's file of the same name.
+   *  A tab of another root is a different file: an inline write, a refresh,
+   *  an open and the language server of the connected root leave it alone. */
+  root?: string;
+  /** What the last inline write left on disk and showed in this tab
+   *  (syncAutoAppliedTab). A dirty tab still holding exactly this carries no
+   *  edits of the user's. */
+  appliedContent?: string;
 }

@@ -15,7 +15,6 @@ from .spawn import (
     _budget_exceeded_message,
     _concurrency_limit_message,
     _persist_agent_result,
-    _record_agent_cost,
     _release_agent_slot,
     _try_reserve_agent_slot,
 )
@@ -218,7 +217,6 @@ async def execute_team_create(
                 # even if this call never returns (cancelled team).
                 agent_id=member_id,
             )
-            _record_agent_cost(session_id, model_id, result)
             _persist_agent_result(session_id, task, agent_type, model_id, result)
             return {
                 "name": name,
@@ -264,11 +262,13 @@ async def execute_team_create(
         # unreliable (the gather can surface a child's CancelledError as a
         # plain exception before its own state flips to cancelled).
         if not _teams.get(team_id, {}).get("stop_requested"):
-            # The OUTER turn was cancelled (ESC / stream disconnect / server
-            # shutdown) and nobody will read this tool result. Stop the
+            # The OUTER turn was cancelled (Stop / ESC / stream disconnect /
+            # server shutdown) and nobody will read this tool result. Stop the
             # members, let their salvage reports land, and deliver those
             # reports into the session as a row the NEXT turn reads, so the
-            # work is not lost with the turn that launched it.
+            # work is not lost with the turn that launched it. No wake turn:
+            # the user stopped this turn, and an answer arriving after Stop
+            # is one they did not ask for.
             gather_task.cancel()
             await _settle_cancelled_members(gather_task)
             orphaned = _reports_from_journals(agents, member_ids, session_id)
@@ -290,6 +290,7 @@ async def execute_team_create(
                     ),
                     "agents": orphaned,
                 },
+                wake=False,
             )
             raise
         # Stop-team path: the members already published their "stopped"

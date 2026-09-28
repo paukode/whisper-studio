@@ -9,6 +9,14 @@ export interface VizArtifact {
   source: string;
 }
 
+/** The size a user dragged a picture in the chat to, in CSS pixels. A diagram
+ *  or a screenshot keeps its aspect ratio, so its width alone sizes it; only
+ *  a chart carries a height of its own. */
+export interface MediaSize {
+  w: number;
+  h?: number;
+}
+
 /** Inline cron card payload. Persisted as a ChatMessage row with
  *  role='cron_event' so it shows up both live (via SSE) and on
  *  session resume. Never enters Claude's prompt — the backend's
@@ -61,6 +69,15 @@ export interface SessionMessagePayload {
   from_title: string;
   content: string;
   timestamp: string;
+}
+
+/** The per-turn model settings every /api/chat body carries (see
+ *  hooks/chatStream/turnSettings). */
+export interface TurnModelSettings {
+  model: string;
+  effort_level: string;
+  verbosity: string;
+  brief_mode: boolean;
 }
 
 export interface ChatMessage {
@@ -146,9 +163,18 @@ export interface ChatMessage {
     toolUseId: string;
     answered?: boolean;
   }>;
+  /** On the message that carries a question card or a workspace-folder
+   *  prompt: the settings of the turn that paused on it. The answer resumes
+   *  that turn on exactly these, whatever the window-wide picker shows by
+   *  the time the user answers. */
+  turnSettings?: TurnModelSettings;
   /** Diagrams and charts from create_visual / create_chart. A list: one
    *  turn can emit several (e.g. three layout options to choose between). */
   visuals?: VizArtifact[];
+  /** Sizes the user dragged this message's pictures to, keyed `viz-<index>`
+   *  for a visual and `shot-<tool index>` for a preview screenshot. A missing
+   *  key is the natural size. UI-only: the prompt never reads it. */
+  mediaSizes?: Record<string, MediaSize>;
   /** Inline artifact from the create_artifact tool */
   programArtifact?: {
     title: string;
@@ -338,6 +364,9 @@ export interface ApprovalRequest {
   payload: Record<string, unknown>;
   risk_hint?: RiskHint | null;
   explanation?: string | Record<string, unknown> | null;
+  /** The server asks for this call every time (a hard floor), so a
+   *  remember-for-session choice on its card would be ignored. */
+  always_asks?: boolean;
 }
 
 export interface Attachment {
@@ -350,6 +379,11 @@ export interface Attachment {
 
 /** Approval category — extensible string (backend registry decides values). */
 export type ApprovalCategory = string;
+
+/** A goal_eval verdict. 'not_checked' is not a judgment: the judge could not
+ *  run or could not be understood, and the feedback says why. The goal stays
+ *  active and the check is neither a pass nor a block. */
+export type GoalVerdict = 'achieved' | 'not_achieved' | 'blocked' | 'not_checked';
 
 /** All SSE event types from the server */
 export interface SSEEventData {
@@ -377,7 +411,13 @@ export interface SSEEventData {
   approval_request?: ApprovalRequest;
 
   // Workspace integration
-  ws_auto_applied?: { path?: string; original?: string; content?: string };
+  ws_auto_applied?: {
+    path?: string;
+    original?: string;
+    content?: string;
+    /** The root the write was bound to; null when none was connected. */
+    workspace_root?: string | null;
+  };
   ws_workspace_prompt?: Record<string, unknown>;
   ws_folder_opened?: string;
 
@@ -388,7 +428,7 @@ export interface SSEEventData {
   /** Auto-mode's classifier circuit breaker tripped for the rest of this
    *  turn (server.security.permissions.record_classifier_verdict). */
   auto_mode_breaker?: { reason?: string };
-  goal_eval?: { verdict?: string; feedback?: string; confidence?: number; attempt?: number; cap?: number };
+  goal_eval?: { verdict?: GoalVerdict; feedback?: string; confidence?: number; attempt?: number; cap?: number };
   stop_hook_block?: { reason?: string; attempt?: number };
   goal_cap_reached?: { attempt?: number; cap?: number; source?: string };
   workflow_preview?: { script: string; name?: string; description?: string; phases?: unknown[]; budget_tokens?: number | null; args?: unknown; model_id?: string; effort_label?: string; workspace_path?: string };
@@ -401,13 +441,6 @@ export interface SSEEventData {
   viz_artifact?: Record<string, unknown>;
   plan_generated?: Record<string, unknown>;
   notify_user?: Record<string, unknown>;
-  /** Progressive tool disclosure telemetry (once per turn). */
-  tool_pool?: {
-    advertised: number;
-    deferred: number;
-    total: number;
-    deferred_tokens_est: number;
-  };
   team_results?: Record<string, unknown>;
   /** Live per-agent progress emitted by server/agents/event_bus.py.
    *  Dispatched by useChatStream into the owning message's `teamReports`

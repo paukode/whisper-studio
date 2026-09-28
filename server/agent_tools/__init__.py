@@ -3,18 +3,18 @@
 Split out of the former single ``server/agent_tools.py`` (900 lines) into
 focused submodules, one per tool family:
 
-    schemas       — the ``*_TOOL`` schema dicts + the ``AGENT_TOOLS`` list
-    config_tools  — config_get / config_set
-    skill_tools   — skill_list
-    mcp_tools     — list_mcp_resources / read_mcp_resource
-    search_tools  — tool_search (progressive tool activation)
-    spawn         — spawn_agent / send_message / list_agents (+ cost rollup)
-    cross_session — list_sessions / send_session_message (between sessions,
-                    not within one — see spawn's send_message/list_agents)
-    teams         — team_create / team_delete (+ the shared ``_teams`` store)
-    promote       — promote_agent_type (saves an ephemeral agent_definition
-                    used via spawn_agent as a persistent .whisper/agents/
-                    <name>.md custom type — see server/agents/custom_config.py)
+    schemas:       the ``*_TOOL`` schema dicts + the ``AGENT_TOOLS`` list
+    config_tools:  config_get / config_set
+    skill_tools:   skill_list
+    mcp_tools:     list_mcp_resources / read_mcp_resource
+    search_tools:  tool_search (progressive tool activation)
+    spawn:         spawn_agent / send_message / list_agents
+    cross_session: list_sessions / send_session_message (between sessions,
+                   not within one; see spawn's send_message/list_agents)
+    teams:         team_create / team_delete (+ the shared ``_teams`` store)
+    promote:       promote_agent_type (saves an ephemeral agent_definition
+                   used via spawn_agent as a persistent .whisper/agents/
+                   <name>.md custom type; see server/agents/custom_config.py)
 
 Every name external code reads off ``server.agent_tools`` is re-exported here
 so importers (server/tool_router.py, server/chat/*, tests) keep working
@@ -63,7 +63,6 @@ from .skill_manage import execute_skill_manage  # noqa: F401
 from .skill_tools import execute_skill_list  # noqa: F401
 from .spawn import (  # noqa: F401
     DETACHED_PER_SESSION_CAP,
-    _record_agent_cost,
     _start_detached_from_tool,
     execute_list_agents,
     execute_send_message,

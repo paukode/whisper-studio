@@ -78,7 +78,14 @@ def test_under_threshold_is_noop(monkeypatch):
 def test_condense_preserves_boundary_sentinel_and_marks_note(monkeypatch):
     # Echo each chunk body so a sentinel placed at a chunk boundary is observable.
     def echo(
-        system, user, *, max_tokens, engine=None, cloud_model_key="haiku", local_model_key=None
+        system,
+        user,
+        *,
+        max_tokens,
+        engine=None,
+        cloud_model_key="haiku",
+        local_model_key=None,
+        **kw,
     ):
         return user.split("\n\n", 1)[1]
 
@@ -125,7 +132,14 @@ def test_local_engine_produces_more_chunks(monkeypatch):
     seen = {"haiku": 0, "local": 0}
 
     def rec(
-        system, user, *, max_tokens, engine=None, cloud_model_key="haiku", local_model_key=None
+        system,
+        user,
+        *,
+        max_tokens,
+        engine=None,
+        cloud_model_key="haiku",
+        local_model_key=None,
+        **kw,
     ):
         seen[engine] += 1
         return "x"
@@ -307,7 +321,7 @@ def test_one_shot_local_follows_resident_model(monkeypatch):
     used = _fake_runtime(
         monkeypatch, resident="local_gemma_coder", downloaded={"local_gemma", "local_gemma_coder"}
     )
-    out = oneshot.one_shot("sys", "usr", max_tokens=100, engine="local")
+    out = oneshot.one_shot("sys", "usr", max_tokens=100, engine="local", source="condensation")
     assert out == "OUT"
     assert used == ["local_gemma_coder"]
 
@@ -319,7 +333,12 @@ def test_one_shot_local_prefers_passed_key_over_resident(monkeypatch):
         monkeypatch, resident="local_gemma", downloaded={"local_gemma", "local_gemma_coder"}
     )
     oneshot.one_shot(
-        "sys", "usr", max_tokens=100, engine="local", local_model_key="local_gemma_coder"
+        "sys",
+        "usr",
+        max_tokens=100,
+        engine="local",
+        local_model_key="local_gemma_coder",
+        source="condensation",
     )
     assert used == ["local_gemma_coder"]
 
@@ -328,7 +347,7 @@ def test_one_shot_local_falls_back_to_downloaded_coder(monkeypatch):
     # Nothing resident and the default local_gemma is NOT downloaded; the first
     # downloaded model (the coder) runs the map instead of failing.
     used = _fake_runtime(monkeypatch, resident=None, downloaded={"local_gemma_coder"})
-    out = oneshot.one_shot("sys", "usr", max_tokens=100, engine="local")
+    out = oneshot.one_shot("sys", "usr", max_tokens=100, engine="local", source="condensation")
     assert out == "OUT"
     assert used == ["local_gemma_coder"]
 
@@ -338,7 +357,7 @@ def test_one_shot_local_never_downloads(monkeypatch):
     # rather than let complete()/ensure_downloaded() pull multi-GB weights.
     used = _fake_runtime(monkeypatch, resident=None, downloaded=set())
     with pytest.raises(RuntimeError, match="not downloaded"):
-        oneshot.one_shot("sys", "usr", max_tokens=100, engine="local")
+        oneshot.one_shot("sys", "usr", max_tokens=100, engine="local", source="condensation")
     assert used == []  # complete() never ran
 
 

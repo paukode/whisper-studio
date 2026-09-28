@@ -23,6 +23,7 @@ import { __resetNativeAudioForTests } from './nativeAudioSource';
 import { useRecordingStore } from '@/stores/recordingStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
+import { answerStopLikeServer } from '@/test/mocks/asrServer';
 
 /** Base64-encode Int16 samples little-endian, like the Swift shell does. */
 function encodeInt16(samples: number[]): string {
@@ -46,6 +47,12 @@ const FRAMES_PER_CHUNK = CHUNK / FRAME;
 interface TrackedWS {
   _getSentMessages(): (string | ArrayBuffer)[];
   readyState: number;
+}
+interface MockSocket {
+  readyState: number;
+  send(data: string | ArrayBuffer): void;
+  close(): void;
+  _receiveMessage(data: object): void;
 }
 
 // ── Web Audio fakes (jsdom has neither AudioContext nor AudioWorkletNode) ──
@@ -117,10 +124,14 @@ beforeEach(() => {
   };
 
   RealWS = globalThis.WebSocket;
-  class TrackingWS extends (RealWS as unknown as { new (url: string): object }) {
+  class TrackingWS extends (RealWS as unknown as { new (url: string): MockSocket }) {
     constructor(url: string) {
       super(url);
       wsInstances.push(this as unknown as TrackedWS);
+    }
+    send(data: string | ArrayBuffer): void {
+      super.send(data);
+      answerStopLikeServer(this, data);
     }
   }
   globalThis.WebSocket = TrackingWS as unknown as typeof WebSocket;
