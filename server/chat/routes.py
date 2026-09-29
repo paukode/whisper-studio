@@ -2031,6 +2031,7 @@ async def chat_endpoint(request: Request):
         # adapter, and hands it off.
         from server.chat.engine.policy import CHAT_POLICY
         from server.chat.engine.runner import TurnContext, run_turn
+        from server.goals.deliverables import verified_deliveries
 
         # Same latched, workspace-aware metadata the effort was resolved from
         # (_model_meta above) — NOT a fresh global lookup. A model defined only in
@@ -2093,6 +2094,7 @@ async def chat_endpoint(request: Request):
             heartbeat=_heartbeat,
             is_disconnected=request.is_disconnected,
             midturn_inbox=True,
+            earlier_deliveries=verified_deliveries(chat_history),
         )
 
         async def guarded_stream():

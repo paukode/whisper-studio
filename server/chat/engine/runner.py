@@ -223,6 +223,9 @@ class TurnContext:
     tool_scope: Any = None
     # The turn's claim guard (server/chat/claim_guard.py); run_turn makes one.
     claims: Any = None
+    # The deliveries earlier replies of the chat verified (their chips, sent
+    # with the history): what a recap of earlier work is checked against.
+    earlier_deliveries: list = field(default_factory=list)
 
 
 def _assemble_round_tools(ctx: TurnContext) -> tuple[list, int | None]:
@@ -858,6 +861,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                             final_reply=result_content,
                             turn_started_at=ctx.claims.started_at,
                             claim_calls=ctx.claims.ledger(),
+                            claim_receipts=ctx.earlier_deliveries,
                             tools_enabled=getattr(ctx.adapter, "tools_enabled", True),
                             plan_mode=ctx.plan_mode,
                             attempt=stop_blocks_used,
@@ -932,16 +936,24 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     round_num,
                 )
 
-                # Post-turn memory hooks (fire-and-forget background tasks).
+                # Post-turn memory hooks (fire-and-forget background tasks),
+                # without the sentences the claim guard held back.
+                _seen_turn = ctx.claims.redact(messages)
                 if ctx.memory_hooks is not None:
-                    ctx.memory_hooks(messages)
+                    ctx.memory_hooks(_seen_turn)
                 else:
                     _fire_memory_hooks(
-                        messages,
+                        _seen_turn,
                         session_id,
                         ctx.ws_path,
                         ctx.model_id,
-                        fork=_build_review_fork(ctx, tools, core_count, messages, result_content),
+                        fork=_build_review_fork(
+                            ctx,
+                            tools,
+                            core_count,
+                            _seen_turn,
+                            ctx.claims.redact_content(result_content),
+                        ),
                     )
 
                 yield "data: [DONE]\n\n"

@@ -110,6 +110,7 @@ def local_chat_response(
         from server.chat.engine.local import LocalAdapter
         from server.chat.engine.policy import LOCAL_POLICY
         from server.chat.engine.runner import TurnContext, run_turn
+        from server.goals.deliverables import verified_deliveries
         from server.local import serving
         from server.local.server_stream import _spawn_memory_hooks
         from server.utils import ndjson_dumps
@@ -171,6 +172,7 @@ def local_chat_response(
                 heartbeat=heartbeat,
                 is_disconnected=is_disconnected,
                 midturn_inbox=True,
+                earlier_deliveries=verified_deliveries(body.get("history")),
                 # Offline invariants: no permission-explainer model, and the
                 # local-aware memory hooks (model_mode gating) instead of the
                 # generic cloud ones.
