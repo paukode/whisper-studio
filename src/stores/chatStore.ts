@@ -1,6 +1,7 @@
 import { createStore } from 'zustand/vanilla';
-import type { ChatMessage, ApprovalCategory, ToolUseEvent, PreviewKind, RiskHint, TeamProgressEvent, TeamReportData, TurnModelSettings } from '@/types/chat';
+import type { ChatMessage, ApprovalCategory, Delivery, ToolUseEvent, PreviewKind, RiskHint, TeamProgressEvent, TeamReportData, TurnModelSettings } from '@/types/chat';
 import { foldTeamProgressIntoMap, foldTeamResultsInto } from '@/hooks/chatStream/teamProgress';
+import { mergeDeliveries } from '@/hooks/chatStream/deliveries';
 
 /**
  * Generic pending approval. The shape is the same regardless of action —
@@ -57,6 +58,14 @@ export interface ChatState {
    *  StreamingMessage; taken (and cleared) at commit time so the report ends
    *  up on the final assistant message and persists with chat_history. */
   liveTeamReports: Record<string, TeamReportData>;
+  /** Deliveries the server verified in the text streamed since the last
+   *  commit (`deliveries` SSE frames), merged by kind + target. Rendered live
+   *  by StreamingMessage. The message that commits that text takes them
+   *  (flushStreamSegment, finishStream, or takeDeliveries for a message built
+   *  outside the store); any still here when a stream ends, or when the next
+   *  one starts, go to the last assistant message. A verified delivery never
+   *  leaves the transcript. */
+  liveDeliveries: Delivery[];
 
   /** Queue of pending approvals (FIFO) */
   approvalQueue: PendingApproval[];
@@ -120,14 +129,23 @@ export interface ChatState {
    *  Called exactly once per commit site so the report lands on the message
    *  being committed and never leaks into a later turn. */
   takeTeamReports: () => Record<string, TeamReportData> | undefined;
+  /** Merge one `deliveries` frame's items into liveDeliveries. Takes the
+   *  items unchecked: a frame that failed validation arrives raw. */
+  addLiveDeliveries: (items: unknown) => void;
+  /** Return the live deliveries (undefined when none) and clear them, for a
+   *  commit site that builds its message outside the store. */
+  takeDeliveries: () => Delivery[] | undefined;
   setStreaming: (streaming: boolean) => void;
-  /** Atomically stop streaming and add the final message in one render pass. */
+  /** Atomically stop streaming and add the final message in one render pass.
+   *  The final message takes the live deliveries; without one, the last
+   *  assistant message does. */
   finishStream: (message?: ChatMessage) => void;
   /** Commit what the turn has streamed SO FAR as its own assistant message and
    *  reset the live accumulators, WITHOUT ending the turn. Used right before a
    *  standalone card (workflow approval, workspace picker, CI status) is
    *  appended mid-turn, so the card lands below the prose that introduced it
-   *  and whatever the model says next lands below the card. */
+   *  and whatever the model says next lands below the card. The segment
+   *  takes the live deliveries, which its text claimed. */
   flushStreamSegment: (message: ChatMessage) => void;
   clearMessages: () => void;
 
@@ -188,6 +206,25 @@ const DEFAULT_SESSION_APPROVALS: SessionApprovals = {
  *  token-bleed bug parallel sessions exist to fix. */
 export type StoreGetter = () => ChatState;
 
+/** `message` carrying `live` as well (the same object when there are none). */
+function withDeliveries(message: ChatMessage, live: Delivery[]): ChatMessage {
+  if (live.length === 0) return message;
+  return { ...message, deliveries: mergeDeliveries(message.deliveries, live) };
+}
+
+/** The transcript with deliveries no commit took added to the last assistant
+ *  message, whose text claimed them (the same array when there are none). */
+function settleDeliveries(messages: ChatMessage[], live: Delivery[]): ChatMessage[] {
+  if (live.length === 0) return messages;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role !== 'assistant') continue;
+    const next = messages.slice();
+    next[i] = withDeliveries(messages[i], live);
+    return next;
+  }
+  return messages;
+}
+
 /**
  * Per-session chat store factory. Each live session owns one instance,
  * created and tracked by the runtime registry (sessionRuntimes.ts).
@@ -203,6 +240,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   streamStatus: null,
   currentStreamToolUse: [],
   liveTeamReports: {},
+  liveDeliveries: [],
   approvalQueue: [],
   currentApproval: null,
   sessionApprovals: { ...DEFAULT_SESSION_APPROVALS },
@@ -289,9 +327,25 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
     return reports;
   },
 
+  addLiveDeliveries: (items: unknown) => {
+    set((state) => ({ liveDeliveries: mergeDeliveries(state.liveDeliveries, items) }));
+  },
+
+  takeDeliveries: () => {
+    const live = get().liveDeliveries;
+    if (live.length === 0) return undefined;
+    set({ liveDeliveries: [] });
+    return live;
+  },
+
   setStreaming: (streaming: boolean) => {
+    // Deliveries a stream left untaken belong to the text it committed, never
+    // to the next stream's.
+    const { messages, liveDeliveries } = get();
+    const settled = { messages: settleDeliveries(messages, liveDeliveries), liveDeliveries: [] };
     if (streaming) {
       set({
+        ...settled,
         isStreaming: true,
         currentStreamContent: '',
         currentThinkingContent: '',
@@ -314,6 +368,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       });
     } else {
       set({
+        ...settled,
         isStreaming: false,
         streamStatus: null,
         currentStreamContent: '',
@@ -334,6 +389,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       const cleaned = state.messages.map((m) =>
         m._inFlight ? { ...m, _inFlight: undefined } : m,
       );
+      const live = state.liveDeliveries;
       return {
         isStreaming: false,
         streamStatus: null,
@@ -341,7 +397,10 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         currentThinkingContent: '',
         currentStreamToolUse: [],
         thinkingStartTime: null,
-        messages: message ? [...cleaned, message] : cleaned,
+        liveDeliveries: [],
+        messages: message
+          ? [...cleaned, withDeliveries(message, live)]
+          : settleDeliveries(cleaned, live),
       };
     });
   },
@@ -355,7 +414,8 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
     // its live timer reads the wait since the card, not since the top of a
     // turn whose earlier thinking is already committed above.
     set((state) => ({
-      messages: [...state.messages, message],
+      messages: [...state.messages, withDeliveries(message, state.liveDeliveries)],
+      liveDeliveries: [],
       currentStreamContent: '',
       currentThinkingContent: '',
       currentStreamToolUse: [],
@@ -367,6 +427,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   clearMessages: () => {
     set({
       messages: [],
+      liveDeliveries: [],
       currentStreamContent: '',
       currentThinkingContent: '',
       isStreaming: false,

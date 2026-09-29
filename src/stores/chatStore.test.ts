@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createChatStore, type PendingApproval } from './chatStore';
-import type { ChatMessage } from '@/types/chat';
+import type { ChatMessage, Delivery } from '@/types/chat';
 
 let store: ReturnType<typeof createChatStore>;
 
@@ -177,5 +177,51 @@ describe('chatStore — session usage totals', () => {
     store.getState().hydrateSessionUsage(400_000, 10_000, 2.0);
     expect(store.getState().sessionInputTokens).toBe(500_000);
     expect(store.getState().sessionCost).toBeCloseTo(3.5, 6);
+  });
+});
+
+describe('chatStore: live deliveries', () => {
+  const report: Delivery = { kind: 'file', target: '/tmp/report.html', label: 'report.html' };
+  const push: Delivery = { kind: 'push', target: 'main', label: 'main' };
+  const reply = (content: string): ChatMessage => ({
+    role: 'assistant',
+    content,
+    timestamp: new Date().toISOString(),
+  });
+
+  it('go to the last assistant message when a stream ends with no message to take them', () => {
+    store.getState().addMessage(userMessage('write it'));
+    store.getState().setStreaming(true);
+    store.getState().flushStreamSegment(reply('Saved report.html.'));
+    // The frame came after its text was committed, and no text followed.
+    store.getState().addLiveDeliveries([report]);
+    store.getState().addMessage({ role: 'cron_event', content: '', timestamp: 't' });
+    store.getState().finishStream();
+    const s = store.getState();
+    expect(s.messages[1].deliveries).toEqual([report]);
+    expect(s.messages[2].deliveries).toBeUndefined();
+    expect(s.liveDeliveries).toEqual([]);
+  });
+
+  it('never carry over into the next stream: what one left is settled on its reply first', () => {
+    store.getState().setStreaming(true);
+    store.getState().addMessage(reply('Pushed main.'));
+    store.getState().addLiveDeliveries([push]);
+    store.getState().addMessage(userMessage('and tag it'));
+    store.getState().setStreaming(true);
+    expect(store.getState().messages[0].deliveries).toEqual([push]);
+    expect(store.getState().liveDeliveries).toEqual([]);
+
+    store.getState().finishStream(reply('Tagged v1.0.'));
+    expect(store.getState().messages[2].deliveries).toBeUndefined();
+  });
+
+  it('are taken once: a message built outside the store gets them, the next commit does not', () => {
+    store.getState().setStreaming(true);
+    store.getState().addLiveDeliveries([report]);
+    expect(store.getState().takeDeliveries()).toEqual([report]);
+    expect(store.getState().takeDeliveries()).toBeUndefined();
+    store.getState().finishStream(reply('Done.'));
+    expect(store.getState().messages[0].deliveries).toBeUndefined();
   });
 });
