@@ -225,6 +225,23 @@ def test_an_artifact_card_holds_with_a_card_this_turn_or_the_sessions():
         ("ws_merge_worktree", "Failed to merge worktree: conflict", False),
         ("github_api_write", '{"error": "Not Found"}', False),
         ("aws_cli", "[WS_APPROVAL]{}", False),
+        # What an approval card sends back (src/hooks/chatStream/sseStream.ts).
+        ("save_file", "[User approved] save_to_path: a.md. The action succeeded.", True),
+        (
+            "save_file",
+            "[User approved but the operation FAILED] save_to_path: a.md. Error: x",
+            False,
+        ),
+        (
+            "save_file",
+            "[User approved but the operation was NOT executed] save_to_path: a.md.",
+            False,
+        ),
+        (
+            "aws_cli",
+            "[User denied] run_aws: s3 cp. The user rejected this action; it did not run.",
+            False,
+        ),
         ("save_file", "Saved to /Users/me/a.md", True),
     ],
 )

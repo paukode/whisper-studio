@@ -47,10 +47,12 @@ _COMMAND_TOOLS = frozenset(
 )
 
 # What a failed or not yet run call returns: the executor's own markers
-# (tool_executor, the loop guard, the approval card), an error or traceback,
-# or a JSON error body.
+# (tool_executor, the loop guard, the approval card, and the result an
+# approval card sends back when the user denied the action or it failed), an
+# error or traceback, or a JSON error body.
 _FAILED_RESULT_RE = re.compile(
-    r"^\s*(?:\[(?:tool error|denied|skipped|refused|blocked|ws_approval|error|failed|cancel)"
+    r"^\s*(?:\[(?:tool error|denied|skipped|refused|blocked|ws_approval|error|failed|cancel"
+    r"|user denied|user approved but)"
     r"|(?:error|failed|failure|blocked|refused|denied)\b|[\w ]{0,40}\berror:"
     r"|traceback \(most recent call last\)|\{\s*\"(?:error|errors)\")",
     re.IGNORECASE,
