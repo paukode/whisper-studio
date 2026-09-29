@@ -67,9 +67,10 @@ def test_a_declared_ladder_is_the_one_its_bedrock_id_infers():
 
 
 @pytest.mark.parametrize("version", [(4, 5), (4, 6), (5, 0), (5, 5), (5, 6), (6, 0)])
-def test_sonnet_gains_the_xhigh_rung_at_5_5(version):
-    # Sonnet 5 stops at max; Sonnet 5.5 and later add xhigh ("extra"). The
-    # key and the Bedrock id each carry the version and must agree.
+def test_the_app_offers_sonnet_the_xhigh_rung_from_5_5(version):
+    # The app keeps Sonnet 5 and earlier on the standard ladder and offers
+    # xhigh ("extra") from Sonnet 5.5 on. The key and the Bedrock id each carry
+    # the version and must agree.
     major, minor = version
     model_id = f"global.anthropic.claude-sonnet-{major}" + (f"-{minor}" if minor else "")
     key = f"sonnet{major}.{minor}"

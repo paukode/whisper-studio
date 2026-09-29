@@ -94,7 +94,8 @@ _OPUS_ID_RE = re.compile(r"claude-opus-(\d+)", re.IGNORECASE)
 # "claude-sonnet-5-5"), so capture both parts.
 _OPUS_ID_VER_RE = re.compile(r"claude-opus-(\d+)(?:-(\d+))?", re.IGNORECASE)
 _SONNET_ID_VER_RE = re.compile(r"claude-sonnet-(\d+)(?:-(\d+))?", re.IGNORECASE)
-# The first Sonnet whose ladder has the xhigh rung. Sonnet 5 stops at max.
+# The first Sonnet this app offers the xhigh rung on; the app keeps Sonnet 5
+# on the standard ladder.
 _SONNET_FULL_FROM = (5, 5)
 # OpenAI-on-Bedrock ids carry their version right after "gpt-": "openai.gpt-5.6-sol",
 # "openai.gpt-6-astra" (no minor). The gpt-oss ids ("openai.gpt-oss-120b") don't match.
