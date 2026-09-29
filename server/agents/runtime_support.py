@@ -369,6 +369,7 @@ def budget_readout(
         next_turn >= cap
         or (deadline_s is not None and elapsed >= SOFT_LIMIT_FRACTION * deadline_s)
         or cost_capped
+        or bool(ext.get("finish"))
     )
     return {
         "max_turns": cap,

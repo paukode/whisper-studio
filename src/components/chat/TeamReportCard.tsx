@@ -37,6 +37,7 @@ const STOP_REASON_LABEL: Record<string, string> = {
   turn_limit: 'stopped at the turn limit · report written',
   deadline: 'stopped at the time limit · report written',
   cost_cap: 'stopped at the cost cap · report written',
+  refused_calls: 'stopped after repeated refused calls · report written',
   cancelled: 'cancelled · report salvaged',
   error: 'failed',
 };

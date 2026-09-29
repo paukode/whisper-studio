@@ -442,10 +442,10 @@ def _is_write_tool(name: str) -> bool:
     meta = EXECUTOR_META.get(name)
     if meta is not None and not meta.get("read_only", False):
         return True
-    if meta is None:
-        from server.mcp_read_only import is_mcp_tool, is_read_only_mcp_tool
+    if meta is None and name.startswith("mcp__"):
+        from server.mcp_read_only import is_read_only_mcp_tool
 
-        return is_mcp_tool(name) and not is_read_only_mcp_tool(name)
+        return not is_read_only_mcp_tool(name)
     return False
 
 

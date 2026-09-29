@@ -40,6 +40,7 @@ def round_cap(extension: dict, max_rounds: int, round_num: int) -> int:
     (server.agents.extensions). Once the run is told to finish (its "finish"
     flag), the cap stops at the round after the one that saw the flag, so
     that round is the last and the loop ends after it."""
+    cap = max_rounds + int(extension.get("rounds") or 0)
     if extension.get("finish"):
-        return int(extension.setdefault("finish_at", round_num + 1))
-    return max_rounds + int(extension.get("rounds") or 0)
+        return min(cap, int(extension.setdefault("finish_at", round_num + 1)))
+    return cap

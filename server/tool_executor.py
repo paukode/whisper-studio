@@ -320,10 +320,11 @@ async def execute_tool_batch(
         if tool_scope is not None:
             tool_scope.ran()
         # An agent this call starts inherits the turn's plan mode (run_agent
-        # makes it read-only); reset after, so the flag never outlives it.
-        from server.agents.tool_access import plan_mode_scope
+        # makes it read-only); a read-only scope already on stays on. Reset
+        # after, so the flag never outlives the call.
+        from server.agents.tool_access import read_only_scope
 
-        _plan_token = plan_mode_scope.set(plan_mode)
+        _ro_token = read_only_scope.set(plan_mode or read_only_scope.get())
         try:
             output, side_effects = await route_tool(
                 tool_name,
@@ -410,7 +411,7 @@ async def execute_tool_batch(
             if tool_name in _COMMAND_TOOLS:
                 command_error = f"{tool_name}: {e}"
         finally:
-            plan_mode_scope.reset(_plan_token)
+            read_only_scope.reset(_ro_token)
 
     # --- Execute batches ---
     from server.workspace.state import reset_turn_latch, set_turn_latch

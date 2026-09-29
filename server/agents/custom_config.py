@@ -154,15 +154,21 @@ def build_agent_config(
     allowed = frozenset(tool_list) if tool_list else None
 
     if is_read_only and allowed:
-        safe = frozenset(t for t in allowed if not _is_write_tool(t))
-        if safe != allowed:
+        # Built-in write tools are stripped here, and filter_tools_for_agent
+        # refuses them again every round. An MCP tool stays: whether it is
+        # read-only is known only once its server connects
+        # (server/mcp_read_only.py), so the run-time filter decides. A
+        # whitelist of writes alone leaves the agent none of its own tools,
+        # never the whole read-only catalog.
+        writes = frozenset(t for t in allowed if not t.startswith("mcp__") and _is_write_tool(t))
+        if writes:
             log.warning(
                 "custom/ephemeral agent type %r requested read_only=True with "
                 "write tool(s) in its allowed_tools whitelist; stripping them: %s",
                 name,
-                sorted(allowed - safe),
+                sorted(writes),
             )
-        allowed = safe or None
+            allowed = allowed - writes
 
     prompt = (system_prompt or "").strip() or None
     mt = _as_int_or_none(max_turns)

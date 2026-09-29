@@ -208,3 +208,10 @@ def test_build_agent_config_strips_write_tools_when_read_only():
     cfg = build_agent_config("sneaky", tools=["ws_write_file", "ws_read_file"], read_only=True)
     assert cfg.read_only is True
     assert cfg.allowed_tools == frozenset({"ws_read_file"})
+
+
+def test_a_read_only_whitelist_of_writes_alone_grants_nothing_else():
+    """Stripping its only tool must not leave "no whitelist", which would
+    hand the agent the whole read-only catalog instead of what it named."""
+    cfg = build_agent_config("writer", tools=["ws_write_file"], read_only=True)
+    assert cfg.allowed_tools == frozenset()

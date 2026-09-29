@@ -1,7 +1,8 @@
 """Rules an agent run keeps beyond its own type's tool list.
 
-- An agent started from a plan-mode turn runs read-only, and the flag lasts
-  only as long as the call that started it.
+- An agent started from a plan-mode turn, by a read-only agent, or while the
+  app is in plan mode runs read-only, and the flag lasts only as long as the
+  call or run that set it.
 - A read-only agent runs an MCP tool only when it is marked read-only.
 - Refused calls end a run: REFUSAL_STREAK_LIMIT in a row make the next round
   the last, with no tools, instead of spending the whole budget.
@@ -19,16 +20,19 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 import server.tool_executor as te
+from server.agents import extensions
 from server.agents import journal as journal_mod
 from server.agents.config import AGENT_TYPES, _is_write_tool, filter_tools_for_agent
+from server.agents.custom_config import build_agent_config
 from server.agents.runtime import run_agent
 from server.agents.tool_access import (
     REFUSAL_STREAK_LIMIT,
     AgentToolAccess,
     ToolScope,
-    plan_mode_scope,
-    started_in_plan_mode,
+    read_only_scope,
+    started_read_only,
 )
+from server.chat.engine.policy import round_cap
 from server.chat.tool_partition import CHAT_CORE_TOOLS, core_names, partition_pool
 from server.tasks import registry, shell
 from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block, tool_use_block
@@ -90,11 +94,11 @@ def _access(agent_type: str) -> AgentToolAccess:
 def test_an_agent_started_in_plan_mode_cannot_write(monkeypatch, workspace):
     create = ("ws_create_file", {"path": "made.txt", "content": "x"})
     fake = _script(monkeypatch, create)
-    token = plan_mode_scope.set(True)
+    token = read_only_scope.set(True)
     try:
         _run(agent_type="general", workspace_path=str(workspace))
     finally:
-        plan_mode_scope.reset(token)
+        read_only_scope.reset(token)
     assert _result(fake, 0).startswith("[Refused] 'ws_create_file'")
     assert list(workspace.iterdir()) == []
 
@@ -108,7 +112,7 @@ def test_the_executor_hands_plan_mode_to_the_call_and_takes_it_back(monkeypatch)
     seen: list[bool] = []
 
     async def route(name, tool_input, **kwargs):
-        seen.append(started_in_plan_mode())
+        seen.append(started_read_only())
         return "ok", []
 
     monkeypatch.setattr(te, "route_tool", route)
@@ -127,7 +131,7 @@ def test_the_executor_hands_plan_mode_to_the_call_and_takes_it_back(monkeypatch)
             model_id="claude",
             plan_mode=plan_mode,
         )
-        return started_in_plan_mode()
+        return started_read_only()
 
     try:
         assert asyncio.run(batch(True)) is False, "the flag never outlives the call"
@@ -135,6 +139,45 @@ def test_the_executor_hands_plan_mode_to_the_call_and_takes_it_back(monkeypatch)
     finally:
         executor.shutdown(wait=False)
     assert seen == [True, False]
+
+
+def test_what_a_read_only_agent_runs_is_read_only_too(monkeypatch, workspace):
+    """A read-only agent keeps send_message, which resumes a finished agent;
+    that resume, like anything else it starts, may only read."""
+    (workspace / "notes.txt").write_text("the notes")
+    seen: dict[str, bool] = {}
+
+    async def route(name, tool_input, **kwargs):
+        seen[kwargs.get("session_id", "")] = started_read_only()
+        return "ok", []
+
+    monkeypatch.setattr(te, "route_tool", route)
+    for agent_type in ("explore", "general"):
+        _script(monkeypatch, ("ws_read_file", {"path": "notes.txt"}))
+        _run(agent_type=agent_type, workspace_path=str(workspace), session_id=agent_type)
+    assert seen == {"explore": True, "general": False}
+    assert started_read_only() is False, "the run's scope ends with it"
+
+
+def test_while_the_app_is_in_plan_mode_agents_start_read_only(monkeypatch, workspace):
+    """A workflow approved from its card or /subagent starts an agent outside
+    any tool call; the app's plan mode still holds it to reads, while the
+    app's own memory agents keep their tools."""
+    monkeypatch.setattr("server.workspace.state.is_plan_mode", lambda: True)
+    fake = _script(monkeypatch, ("ws_create_file", {"path": "made.txt", "content": "x"}))
+    _run(agent_type="general", workspace_path=str(workspace))
+    assert _result(fake, 0).startswith("[Refused] 'ws_create_file'")
+    assert list(workspace.iterdir()) == []
+
+    captured = {}
+
+    async def fake_loop(**kw):
+        captured["read_only"] = kw["config"].read_only
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr("server.agents.runtime._run_agent_loop", fake_loop)
+    _run(agent_type="memory_extractor")
+    assert captured["read_only"] is False
 
 
 # ── MCP tools for read-only agents ──────────────────────────────────────────
@@ -182,6 +225,25 @@ def test_an_mcp_tool_is_a_read_only_when_it_is_marked_one(monkeypatch, hint, con
     assert _is_write_tool("mcp__srv__lookup") is is_write
 
 
+def test_an_mcp_name_no_server_knows_is_kept_from_read_only_agents(monkeypatch):
+    _fake_mcp(monkeypatch, [], {})
+    assert _is_write_tool("mcp__gone__lookup") is True
+
+
+def test_a_read_only_custom_whitelist_stays_as_written(monkeypatch):
+    """An MCP tool unmarked at load time (its server may not be connected
+    yet) must not turn the whitelist into the whole read-only catalog."""
+    _fake_mcp(monkeypatch, [_McpTool("search")], {})
+    cfg = build_agent_config(
+        "jira_reader", read_only=True, tools=["mcp__srv__search"], system_prompt="read jira"
+    )
+    assert cfg.allowed_tools == frozenset({"mcp__srv__search"})
+    pool = [{"name": "mcp__srv__search"}, {"name": "ws_read_file"}]
+    assert filter_tools_for_agent(pool, cfg) == [], "unmarked: refused, nothing else added"
+    _fake_mcp(monkeypatch, [_McpTool("search", True)], {})
+    assert [t["name"] for t in filter_tools_for_agent(pool, cfg)] == ["mcp__srv__search"]
+
+
 def test_a_read_only_agent_is_offered_only_the_marked_mcp_tools(monkeypatch):
     _fake_mcp(monkeypatch, [_McpTool("lookup", True), _McpTool("create_issue")], {})
     pool = [{"name": "mcp__srv__lookup"}, {"name": "mcp__srv__create_issue"}]
@@ -217,7 +279,44 @@ def test_an_agent_that_keeps_calling_what_it_may_not_run_answers_early(monkeypat
     assert len(fake.requests) == REFUSAL_STREAK_LIMIT + 1
     assert "tools" not in fake.requests[-1]
     assert list(workspace.iterdir()) == []
+    # Reported as a stop, so a worktree agent's partial work is kept, not applied.
     assert result.status == "completed"
+    assert result.stopped_early is True
+    assert result.stop_reason == "refused_calls"
+
+
+def test_the_card_shows_finishing_up_once_the_run_is_told_to_finish():
+    from server.agents.runtime_support import budget_readout
+
+    def state(ext):
+        return budget_readout(
+            AGENT_TYPES["explore"],
+            ext,
+            next_turn=2,
+            elapsed=1.0,
+            usage={"cost_usd": 0.0},
+            cost_capped=False,
+        )["budget_state"]
+
+    assert state({"rounds": 0}) == "working"
+    assert state({"rounds": 0, "finish": True}) == "finishing"
+
+
+def test_the_finish_round_never_passes_the_cap_and_a_grant_lifts_it():
+    assert round_cap({}, 10, 3) == 10
+    ext = {"rounds": 0, "finish": True}
+    assert round_cap(ext, 10, 3) == 4
+    assert round_cap(ext, 10, 4) == 4, "pinned where it was first seen"
+    # Told to finish during the last normal round: that round was the last.
+    assert round_cap({"finish": True}, 5, 5) == 5, "never beyond the normal cap"
+
+    extensions.register("probe-finish", ext)
+    try:
+        extensions.extend("probe-finish", rounds=5)
+    finally:
+        extensions.unregister("probe-finish")
+    assert "finish" not in ext and "finish_at" not in ext
+    assert round_cap(ext, 10, 4) == 15
 
 
 def test_the_loop_guards_refusals_count_too(monkeypatch, workspace):
@@ -260,6 +359,21 @@ def test_scheduled_and_voice_turns_defer_the_memory_tools(monkeypatch):
     assert CHAT_CORE_TOOLS <= {t["name"] for t in chat}
     assert CHAT_CORE_TOOLS.isdisjoint({t["name"] for t in other})
     assert CHAT_CORE_TOOLS <= {t["name"] for t in deferred}
+
+
+def test_a_voice_turn_keeps_the_memory_tools_an_unattended_run_defers(monkeypatch):
+    from server.chat import tool_pool
+    from server.exec.headless import _round_catalog
+
+    catalog = [{"name": n} for n in sorted(CHAT_CORE_TOOLS | {"ws_read_file", "tool_search"})]
+    monkeypatch.setattr(tool_pool, "assemble_full_catalog", lambda **kw: list(catalog))
+    monkeypatch.setattr(
+        "server.infrastructure.feature_flags.is_enabled", lambda name, *a, **k: True
+    )
+    voice = {t["name"] for t in _round_catalog("s-voice", False, attended=True)}
+    unattended = {t["name"] for t in _round_catalog("s-wake", False)}
+    assert CHAT_CORE_TOOLS <= voice
+    assert CHAT_CORE_TOOLS.isdisjoint(unattended)
 
 
 def test_an_agent_can_still_load_the_memory_tools_it_is_not_offered(monkeypatch):

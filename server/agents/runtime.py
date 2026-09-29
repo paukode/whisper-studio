@@ -152,12 +152,15 @@ async def run_agent(
     # built-in AGENT_TYPES preset).
     if config is None:
         config = get_agent_config(agent_type)
-    # A plan-mode turn reads and plans, and agents approve their own writes,
-    # so an agent it starts runs read-only, whatever its type
-    # (server.agents.tool_access.plan_mode_scope).
-    from server.agents.tool_access import started_in_plan_mode
+    # Agents approve their own writes, so an agent may only read when it is
+    # started from a plan-mode turn or by a read-only agent (a resume through
+    # send_message included; server.agents.tool_access.read_only_scope), or
+    # while the app is in plan mode (a workflow approved from its card,
+    # /subagent). The app's own memory agents keep their tools.
+    from server.agents.tool_access import read_only_scope, started_read_only
+    from server.workspace.state import is_plan_mode
 
-    if started_in_plan_mode() and not config.read_only:
+    if not config.read_only and not config.internal and (started_read_only() or is_plan_mode()):
         from dataclasses import replace as _dc_replace
 
         config = _dc_replace(config, read_only=True)
@@ -362,6 +365,8 @@ async def run_agent(
         # connection happens to be by the time this particular agent starts.
         _override_path = workspace_path
         _ws_token = _pin_plain_override(_override_path)
+    # Whatever a read-only agent starts or resumes may only read as well.
+    _ro_token = read_only_scope.set(True) if config.read_only else None
     try:
         result = await _run_agent_loop(
             effort_label=effort_label,
@@ -472,6 +477,8 @@ async def run_agent(
             stop_reason="error",
         )
     finally:
+        if _ro_token is not None:
+            read_only_scope.reset(_ro_token)
         if _ws_token is not None:
             try:
                 from server.workspace.state import reset_workspace_override
@@ -1076,7 +1083,9 @@ async def _run_agent_loop(
         else None
     )
     _time_up = _deadline_total is not None and elapsed >= SOFT_LIMIT_FRACTION * _deadline_total
-    stopped_early = cost_capped or rounds_used >= _cap or _time_up
+    # Repeated refused calls ended the run (ToolScope.refused, round_cap).
+    _refused_stop = bool(_ext.get("finish"))
+    stopped_early = cost_capped or rounds_used >= _cap or _time_up or _refused_stop
 
     collected_text = "\n\n".join(all_text_parts)
     # The report is the final round's message (the agent's last word is its
@@ -1114,6 +1123,8 @@ async def _run_agent_loop(
             stop_reason, reason_text = "cost_cap", "reached the session cost cap"
         elif _time_up:
             stop_reason, reason_text = "deadline", "reached time limit"
+        elif _refused_stop and rounds_used < _cap:
+            stop_reason, reason_text = "refused_calls", "stopped after repeated refused calls"
         else:
             stop_reason, reason_text = "turn_limit", f"reached turn limit ({_cap})"
         stop_note = f"[Agent stopped - {reason_text}]"

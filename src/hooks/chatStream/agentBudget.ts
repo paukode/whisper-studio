@@ -54,7 +54,13 @@ export function agentBudget(agent: TeamAgentReport): AgentBudget {
     state = stateEv?.budget_state === 'finishing' ? 'finishing' : 'working';
   } else if (reason === 'cancelled' || agent.status === 'stopped') {
     state = 'salvaged';
-  } else if (reason === 'turn_limit' || reason === 'deadline' || reason === 'cost_cap' || agent.status === 'turn_limit') {
+  } else if (
+    reason === 'turn_limit' ||
+    reason === 'deadline' ||
+    reason === 'cost_cap' ||
+    reason === 'refused_calls' ||
+    agent.status === 'turn_limit'
+  ) {
     state = 'limit';
   } else if (agent.status === 'failed' || reason === 'error') {
     state = 'failed';

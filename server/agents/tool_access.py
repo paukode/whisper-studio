@@ -29,7 +29,8 @@ offered) and the parent chat's tools array is left alone.
 The rules are fixed for the run; the catalog they apply to is read again each
 round, so an MCP server that connects mid-run is available to the agent from
 its next round, through the same filters. An agent started from a plan-mode
-turn runs read-only (plan_mode_scope, applied in run_agent). Refused calls
+turn or by a read-only agent runs read-only (read_only_scope, applied in
+run_agent), and so does anything it starts or resumes. Refused calls
 count: REFUSAL_STREAK_LIMIT of them in a row, the executor's scope refusals
 and the loop guard's alike, make the agent's next round its last, so a model
 that keeps calling what it may not run answers with what it has instead of
@@ -41,20 +42,24 @@ from dataclasses import dataclass
 
 from server.agents.config import AgentConfig, filter_tools_for_agent
 
-# The plan mode of the turn whose tool call is dispatching, set by the tool
-# executor around each call. asyncio tasks copy the context when they are
-# created, so an agent started by that call (a detached one too) still sees
-# it, while the post-turn memory hooks, started by the runner, never do.
-plan_mode_scope: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "plan_mode_scope", default=False
+# True while the code running may only read: a tool call of a plan-mode turn
+# (set by the tool executor around each call) or anything a read-only agent
+# runs (set by run_agent for the agent's whole run). It only ever turns on
+# down a chain, never off. asyncio tasks copy the context when they are
+# created, so an agent started under it (a detached one, a resume through
+# send_message) still sees it, while the post-turn memory hooks, started by
+# the runner, never do.
+read_only_scope: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "read_only_scope", default=False
 )
 
 REFUSAL_STREAK_LIMIT = 3
 
 
-def started_in_plan_mode() -> bool:
-    """True when the running tool call belongs to a plan-mode turn."""
-    return plan_mode_scope.get()
+def started_read_only() -> bool:
+    """True when the running code belongs to a plan-mode turn or a read-only
+    agent, so an agent it starts must be read-only too."""
+    return read_only_scope.get()
 
 
 def activation_key(agent_id: str) -> str:
