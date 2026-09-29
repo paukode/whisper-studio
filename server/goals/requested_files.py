@@ -28,9 +28,9 @@ from server.goals.deliverables import (
     OUTSIDE_WRITERS,
     asked_by_row,
     asserted_paths,
+    assistant_named_paths,
     called_tools,
     exists_non_empty,
-    named_paths,
     reply_texts,
     resolve_path,
     turn_messages,
@@ -57,6 +57,11 @@ _DISK_TOOLS = frozenset(
         "office_script",
     }
 )
+# Tools that may write a file again under a name the turn used before: the
+# ones that write outside the workspace, the workspace command runner (this
+# check never runs in plan mode, where it is refused), and a skill, whose
+# agent writes with tools of its own.
+_REMAKERS = OUTSIDE_WRITERS | {"ws_run_command", "skill_invoke"}
 # Plus the ones that hand the user something in the chat itself. Enough for
 # "make me a diagram", not for "save it to Downloads".
 _FILE_TOOLS = _DISK_TOOLS | {
@@ -175,20 +180,21 @@ def produced_a_file(
     a script rather than by a file tool. Every reply counts, so a later reply
     that answers a mid-turn question without naming the file again does not
     undo it, but only a path a reply says it made: an input file it read is
-    not the deliverable. From a later row, a path the turn named before it is
-    the file made for an earlier ask ("Saved the report to X" restated in the
-    reply that answers "also make a PNG chart"), unless a tool that writes
-    files ran since and may have made it again. With ``on_disk`` an artifact
-    card does not count: the user asked for a file somewhere they can open
-    it."""
+    not the deliverable. From a later row, a path the assistant named before
+    it is the file made for an earlier ask ("Saved the report to X" restated
+    in the reply that answers "also make a PNG chart"), unless a tool that may
+    write it again ran since (_REMAKERS). A path the user gave is theirs to
+    name: the file made there answers the request. With ``on_disk`` an
+    artifact card does not count: the user asked for a file somewhere they
+    can open it."""
     accepted = _DISK_TOOLS if on_disk else _FILE_TOOLS
     turn = turn_messages(messages)
     ran = called_tools(turn[since:])
     if any(name in accepted for name in ran):
         return True
     earlier: set[str] = set()
-    if since and not any(name in OUTSIDE_WRITERS for name in ran):
-        earlier = named_paths(turn[:since], workspace)
+    if since and not any(name in _REMAKERS for name in ran):
+        earlier = assistant_named_paths(turn[:since], workspace)
     return any(
         exists_non_empty(p, workspace) and resolve_path(p, workspace) not in earlier
         for text in reply_texts(messages, since=since)

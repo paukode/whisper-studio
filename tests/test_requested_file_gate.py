@@ -346,6 +346,56 @@ def test_a_file_made_after_the_message_answers_it(after, tmp_path):
     assert rf.requested_file_feedback(msgs, None) is None
 
 
+@pytest.mark.parametrize(
+    "maker",
+    [
+        ("spawn_agent", {"prompt": "export the totals to the path the user gave"}),
+        ("mcp__files__write_file", {"path": "totals.csv", "content": "region,total"}),
+    ],
+    ids=["a-subagent", "an-mcp-tool"],
+)
+def test_a_path_the_user_names_mid_turn_is_answered_by_the_file_made_there(maker, report):
+    # The user's own words name the file; they are not the assistant naming
+    # a file it made before the message.
+    totals = report.parent / "totals.csv"
+    msgs = _late(_report_saved(report), f"also export the totals to {totals}")
+    totals.write_text("region,total\n")
+    msgs += [
+        _tool(*maker),
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
+        },
+        {"role": "assistant", "content": f"Exported the totals to `{totals}`."},
+    ]
+    assert rf.requested_file_feedback(msgs, None) is None
+
+
+@pytest.mark.parametrize(
+    "runner",
+    [
+        ("ws_run_command", {"command": "python build_report.py"}),
+        ("skill_invoke", {"skill_name": "docx", "input": "add the totals table to the report"}),
+    ],
+    ids=["a-workspace-command", "a-skill"],
+)
+def test_a_command_or_a_skill_run_after_the_message_may_have_made_the_file_again(runner, report):
+    # Out of plan mode these write files too: the report the reply restates
+    # may be the one they rebuilt for the later request.
+    msgs = _late(_report_saved(report), "update the report docx with the totals")
+    msgs += [
+        _tool(*runner),
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
+        },
+        {"role": "assistant", "content": f"Updated `{report}` with the totals."},
+    ]
+    assert rf.requested_file_feedback(msgs, None) is None
+    # With nothing run after the message, the restated report answers nothing.
+    assert rf.requested_file_feedback([*msgs[:-3], msgs[-1]], None) is not None
+
+
 def test_a_message_folded_onto_the_prompt_has_the_whole_turn(report):
     # It reached the turn before the first round: the save answers both.
     msgs = _late([{"role": "user", "content": _PROMPT}], _LATER)

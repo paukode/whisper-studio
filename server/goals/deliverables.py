@@ -569,10 +569,9 @@ def exists_non_empty(path: str, workspace: str | None) -> bool:
         return False
 
 
-def _row_strings(m: dict) -> list[str]:
-    """Every text one message carries: its text blocks, each tool call's
-    input and each tool result."""
-    content = m.get("content")
+def _assistant_strings(content) -> list[str]:
+    """What one assistant row says: its text blocks, and each tool call's
+    arguments."""
     if isinstance(content, str):
         return [content]
     out: list[str] = []
@@ -580,28 +579,23 @@ def _row_strings(m: dict) -> list[str]:
         if not isinstance(b, dict):
             continue
         if b.get("type") in ("tool_use", "function_call"):
-            given = b.get("input", b.get("arguments"))
-            if not isinstance(given, str):
-                given = json.dumps(given, ensure_ascii=False, default=str)
-            out.append(given)
-        elif b.get("type") in _TOOL_RESULT_TYPES:
-            raw = b.get("content", b.get("output", ""))
-            if isinstance(raw, list):
-                raw = " ".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in raw)
-            out.append(str(raw or ""))
+            out.append(json.dumps(_call_input(b), ensure_ascii=False, default=str))
         else:
             out.append(str(b.get("text", "")))
     return out
 
 
-def named_paths(rows: list, workspace: str | None) -> set[str]:
-    """Every deliverable path ``rows`` name anywhere (a reply, a tool call's
-    input, a tool result), resolved (``resolve_path``)."""
+def assistant_named_paths(rows: list, workspace: str | None) -> set[str]:
+    """Every deliverable path the assistant rows among ``rows`` name, in a
+    reply or in a tool call's arguments, resolved (``resolve_path``). A user
+    row names none: the user's own words, even when they give the path of the
+    file they want, and a tool's result are not the assistant naming a file
+    it made."""
     return {
         resolve_path(p, workspace)
         for m in rows
-        if isinstance(m, dict)
-        for text in _row_strings(m)
+        if isinstance(m, dict) and m.get("role") == "assistant"
+        for text in _assistant_strings(m.get("content"))
         for p in claimed_paths(text)
     }
 
