@@ -706,6 +706,10 @@ def run_workspace_command(
     meaning = _interpret_exit_code(command, result.returncode)
     if meaning:
         output += f"\n(exit code {result.returncode}: {meaning})"
+    elif result.returncode not in (0, None):
+        # Said for every failure, so neither the model nor the claim check
+        # (server/goals/evidence.py) reads a failed command as done.
+        output += f"\n(exit code {result.returncode})"
     if result.task_id:
         output += "\n" + _left_running_message(result.task_id, result.output_path)
     return CommandRun(text=output, returncode=result.returncode, stopped=result.stopped)
