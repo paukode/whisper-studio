@@ -857,6 +857,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                             workspace=ctx.ws_path,
                             final_reply=result_content,
                             turn_started_at=ctx.claims.started_at,
+                            claim_calls=ctx.claims.ledger(),
                             tools_enabled=getattr(ctx.adapter, "tools_enabled", True),
                             plan_mode=ctx.plan_mode,
                             attempt=stop_blocks_used,
