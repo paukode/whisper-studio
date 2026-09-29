@@ -84,6 +84,101 @@ def region_for(model_key: str) -> str:
     return override or load_config()["bedrock_region"]
 
 
+# Where bedrock-mantle serves the OpenAI models: every EU region answered 404
+# for all of them (live-checked 2026-09-28), and GPT-6 Astra answers only from
+# us-west-2. Read only to explain a failure (a 404, /doctor); a call always
+# goes to the configured region and is never rerouted.
+GPT_REGIONS = ("us-east-1", "us-west-2")
+# (id marker, name, regions) for a model served in fewer regions than those.
+_GPT_REGION_EXCEPTIONS = (("gpt-6-astra", "GPT-6 Astra", ("us-west-2",)),)
+
+
+def _spoken(regions: tuple[str, ...], last: str = "and") -> str:
+    if len(regions) < 2:
+        return "".join(regions)
+    return f"{', '.join(regions[:-1])} {last} {regions[-1]}"
+
+
+def gpt_serving_regions(model_id: str) -> tuple[str, ...]:
+    """The regions where bedrock-mantle serves this OpenAI model id."""
+    mid = (model_id or "").lower()
+    for marker, _name, regions in _GPT_REGION_EXCEPTIONS:
+        if marker in mid:
+            return regions
+    return GPT_REGIONS
+
+
+def gpt_regions_note() -> str:
+    """Where Bedrock serves GPT, as one sentence for an error or /doctor."""
+    note = f"Bedrock serves the GPT models only in {_spoken(GPT_REGIONS)}"
+    fewer = "; ".join(f"{name} only in {_spoken(r)}" for _m, name, r in _GPT_REGION_EXCEPTIONS)
+    return f"{note} ({fewer})." if fewer else f"{note}."
+
+
+def _fix(regions: tuple[str, ...], pinned: bool, entry: str) -> str:
+    # A pinned model (openai_region set) follows its pin, so bedrock_region
+    # would not move it.
+    choices = _spoken(regions, "or")
+    if pinned:
+        return f"change openai_region on {entry} to {choices}"
+    return f"set bedrock_region to {choices}, or pin openai_region on {entry}"
+
+
+def _placement(model_key: str, region: str) -> tuple[tuple[str, ...], bool] | None:
+    """(the regions that serve this model, whether its entry pins
+    openai_region) when ``region`` is not one of them, else None."""
+    meta = _model_meta(model_key)
+    regions = gpt_serving_regions(str(meta.get("id") or ""))
+    if region in regions:
+        return None
+    return regions, bool((meta.get("openai_region") or "").strip())
+
+
+def region_fix(model_key: str, region: str) -> str | None:
+    """What to set so this GPT model runs where bedrock-mantle serves it, or
+    None when ``region`` is already one of those."""
+    placement = _placement(model_key, region)
+    if placement is None:
+        return None
+    return _fix(*placement, f"the {model_key} entry in chat_models")
+
+
+def region_problems(model_keys: list[str]) -> list[str]:
+    """One sentence per group of these GPT models that resolve (as a call
+    resolves them) to a region Bedrock does not serve them in, with the fix;
+    empty when every one is served where it runs."""
+    groups: dict[tuple, list[str]] = {}
+    for key in model_keys:
+        region = region_for(key)
+        placement = _placement(key, region)
+        if placement is not None:
+            name = _model_meta(key).get("label") or key
+            groups.setdefault((region, *placement), []).append(name)
+    out = []
+    for (region, regions, pinned), names in groups.items():
+        one = len(names) == 1
+        entry = "its chat_models entry" if one else "their chat_models entries"
+        verb = "resolves" if one else "resolve"
+        out.append(f"{_spoken(tuple(names))} {verb} to {region}: {_fix(regions, pinned, entry)}.")
+    return out
+
+
+def not_found_advice(model_key: str, region: str) -> str:
+    """What a 404 from bedrock-mantle means for this model in ``region``:
+    where the model is served and the setting that gets it there, or, when
+    the region is right, what else to check."""
+    name = _model_meta(model_key).get("label") or model_key or "The GPT model"
+    where = region or "the configured region"
+    fix = region_fix(model_key, region) if model_key and region else None
+    if fix:
+        return f"{name} is not served in {where}. {gpt_regions_note()} To fix it, {fix}."
+    return (
+        f"{name} was not found in {where}. {gpt_regions_note()} Check the model id "
+        "in chat_models and that OpenAI model access is enabled for the account "
+        "in that region."
+    )
+
+
 def verbosity_for(model_key: str, body: dict | None = None) -> str:
     """GPT-5.x verbosity (text.verbosity). Per-request override wins, then the
     model's config default, else 'medium'."""

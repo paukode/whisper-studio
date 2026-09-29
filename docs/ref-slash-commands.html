@@ -292,8 +292,8 @@
 
     <h3 id="doctor">/doctor</h3>
     <p><code>/doctor</code> runs an automated diagnostics pass and shows the results in a dialog: a set
-      of checks (dependencies, AWS access, and related environment health) each marked as ok, warn, or
-      fail. It calls the <code>/api/doctor</code> endpoint served by
+      of checks (dependencies, AWS access, whether each GPT model resolves to a region Bedrock serves
+      it in, and related environment health) each marked as ok, warn, or fail. It calls the <code>/api/doctor</code> endpoint served by
       <code class="path">server/doctor.py</code>. Run it first whenever chat is not responding or a
       model call errors.</p>
     <p><code>/doctor context</code> is a separate check for prompt health: it calls

@@ -382,7 +382,12 @@
         <code>chat_model_meta</code>. Every GPT model follows <code>bedrock_region</code>
         (<code>us-east-1</code> by default) except GPT-6 Astra, which ships with <code>us-west-2</code>
         pinned: bedrock-mantle serves it there only and answers 404 from <code>us-east-1</code>,
-        even though the model is listed in every US region.</p></div>
+        even though the model is listed in every US region. The other GPT models run from
+        <code>us-east-1</code> and <code>us-west-2</code>; every EU region answers 404. Nothing reroutes
+        a call to another region: the 404 names the regions that serve the model and the setting to
+        change (<code>bedrock_region</code>, or <code>openai_region</code> on the model's entry), and
+        <code>/doctor</code> warns about a GPT model whose region Bedrock does not serve it in before
+        the first turn fails.</p></div>
     </div>
 
     <p>The decision chain above describes the <em>top-level</em> chat turn. The
