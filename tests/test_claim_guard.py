@@ -330,3 +330,19 @@ def test_a_correction_after_an_attempt_is_not_nudged_again(tmp_path):
 
 def _say(text: str) -> dict:
     return {"role": "assistant", "content": [{"type": "text", "text": text}]}
+
+
+def test_the_deliverable_check_flag_turns_the_guard_off(monkeypatch):
+    # One control: the flag that stops the gate's claim check stops the hold.
+    from server.infrastructure import feature_flags
+
+    monkeypatch.setattr(feature_flags, "is_enabled", lambda name: name != "deliverable_check")
+    ctx = SimpleNamespace(
+        turn_scope_id=None,
+        session_id="s-flag",
+        messages=list(_PROMPT),
+        ws_path="",
+        plan_mode=False,
+        cost_source="chat",
+    )
+    assert not ClaimGuard.for_turn(ctx).enabled

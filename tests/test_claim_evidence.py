@@ -259,3 +259,14 @@ def test_a_call_with_no_result_did_nothing():
     ]
     (call,) = turn_calls(rows)
     assert not call.ok
+
+
+def test_a_failed_workspace_command_says_its_exit_code(tmp_path):
+    # Without it a failing command looked like a success to the claim check.
+    from server.workspace.executors import run_workspace_command
+
+    failed = run_workspace_command('sh -c "echo nope; exit 3"', str(tmp_path))
+    assert failed.text.rstrip().endswith("(exit code 3)")
+    assert not succeeded("ws_run_command", failed.text)
+    done = run_workspace_command("echo fine", str(tmp_path))
+    assert "exit code" not in done.text and succeeded("ws_run_command", done.text)
