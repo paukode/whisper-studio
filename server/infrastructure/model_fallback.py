@@ -44,6 +44,7 @@ _STATIC_FALLBACK_CHAIN = [
     "gpt5.5",
     "gpt5.6-terra",
     "gpt5.4",
+    "sonnet5.5",
     "sonnet5",
     "sonnet",
     "gpt6-sol",

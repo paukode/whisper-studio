@@ -79,7 +79,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Model</th><th>Input cap</th></tr></thead>
       <tbody>
-        <tr><td>Fable 5.1, Fable 5.0, Opus 5.5, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6</td><td>1,000,000 tokens</td></tr>
+        <tr><td>Fable 5.1, Fable 5.0, Opus 5.5, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5.5, Sonnet 5, Sonnet 4.6</td><td>1,000,000 tokens</td></tr>
         <tr><td>Haiku 4.5</td><td>200,000 tokens</td></tr>
         <tr><td>GPT-6 Astra</td><td>922,000 tokens (OpenAI's published max input; mantle accepted a 348K prompt)</td></tr>
         <tr><td>GPT-6 Sol, GPT-6 Luna, GPT-5.6 Sol, Terra, Luna, GPT-5.5, GPT-5.4</td><td>278,528 tokens (the cap the mantle deployments enforce; GPT-6 Sol and Luna publish 922,000 upstream but stay here until mantle is shown to accept more)</td></tr>
@@ -102,7 +102,7 @@
 
     <h2 id="anthropic-path">The Anthropic adapter (default)</h2>
     <p>This is the adapter most turns use, running the Claude models in your config: Fable 5.1 and 5.0,
-      Opus 5.5, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6, and Haiku 4.5. The engine loop from
+      Opus 5.5, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5.5, Sonnet 5, Sonnet 4.6, and Haiku 4.5. The engine loop from
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> drives it, so the
       backend-specific parts are the Bedrock client, the request body (prompt-cache checkpoints,
       effort/thinking), and the resilience wrappers around each round.</p>

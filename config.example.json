@@ -39,6 +39,13 @@
       "context_window": 1000000,
       "thinking": "adaptive"
     },
+    "sonnet5.5": {
+      "id": "global.anthropic.claude-sonnet-5-5",
+      "label": "Sonnet 5.5",
+      "context_window": 1000000,
+      "thinking": "adaptive",
+      "effort_tier": "full"
+    },
     "sonnet5": {
       "id": "global.anthropic.claude-sonnet-5",
       "label": "Sonnet 5",
