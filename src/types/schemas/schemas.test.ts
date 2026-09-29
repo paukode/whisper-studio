@@ -282,4 +282,43 @@ describe('SSEEventDataSchema', () => {
       expect(result.data.workflow_preview?.workspace_path).toBe('/Users/me/Downloads/project1');
     }
   });
+
+  // A verified delivery reaches its chip only through the keys the schema
+  // names: the nested objects drop the rest, the same trap as model_id above.
+  it('keeps every field of a deliveries frame item', () => {
+    const item = {
+      kind: 'file',
+      target: '/Users/me/Downloads/report.html',
+      label: 'report.html',
+      detail: '12.4 KB, saved 19:31',
+      href: '#wsfile=%2FUsers%2Fme%2FDownloads%2Freport.html&open=os',
+      at: '2026-09-29T19:31:02+00:00',
+    };
+    const result = SSEEventDataSchema.safeParse({ deliveries: { items: [item] } });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.deliveries?.items).toEqual([item]);
+  });
+
+  it('accepts a delivery with only its required fields, null optional ones, or an unknown kind', () => {
+    const items = [
+      { kind: 'push', target: 'main', label: 'main' },
+      { kind: 'message', target: 'ana@example.com', label: 'Email to Ana', detail: null, href: null, at: null },
+      { kind: 'fax', target: '+48 22 555 01 01', label: 'Fax to the office' },
+    ];
+    const result = SSEEventDataSchema.safeParse({ deliveries: { items } });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.deliveries?.items).toEqual(items);
+  });
+
+  it('keeps stop_hook_block.source so a held-back delivery claim is labeled as one', () => {
+    const result = SSEEventDataSchema.safeParse({
+      stop_hook_block: {
+        reason: 'A delivery the reply claimed could not be verified.',
+        attempt: 1,
+        source: 'deliverable',
+      },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.stop_hook_block?.source).toBe('deliverable');
+  });
 });
