@@ -145,25 +145,29 @@ _ENGINE_PREFIXES = (_GATE_PREFIX, _MIDTURN_OPEN, _REMINDER_OPEN, _CONTINUE_PREFI
 _TOOL_RESULT_TYPES = ("tool_result", "function_call_output")
 _ARTIFACT_TOOLS = ("create_artifact", "edit_artifact")
 
-# Tools that can write a file outside the workspace. Plan mode refuses only
-# the ws_* workspace writers (tool_executor._PLAN_MODE_BLOCKED) and these still
-# run there behind their approval card, so once one ran, a path the reply says
-# it saved may be a save that happened, and it is checked as on any other
-# turn. The scripts among them can also write a file again under a name the
-# turn used before (requested_files).
-OUTSIDE_WRITERS = frozenset(
-    {
-        "save_file",
-        "run_python",
-        "terminal_run",
-        "terminal_send",
-        "create_docx",
-        "create_pptx",
-        "create_xlsx",
-        "create_pdf",
-        "office_script",
-    }
-)
+# Tools that can write a file outside the workspace, and where a call names
+# the file it writes. Plan mode refuses only the ws_* workspace writers
+# (tool_executor._PLAN_MODE_BLOCKED) and these still run there behind their
+# approval card, so a path the reply says it saved is checked in plan mode
+# when one of these calls named it (``targeted_paths``); any other path there
+# is a file the plan will write. A document tool names its file in its
+# arguments and adds its extension to a bare one; a script or a command names
+# it somewhere in its text. The scripts can also write a file again under a
+# name the turn used before (requested_files).
+_DOCUMENT_TOOLS = {
+    "create_docx": ".docx",
+    "create_pptx": ".pptx",
+    "create_xlsx": ".xlsx",
+    "create_pdf": ".pdf",
+    "office_script": "",
+}
+_COMMAND_TEXT = {
+    "run_python": "code",
+    "terminal_run": "command",
+    "terminal_send": "input",
+    "aws_cli": "command",
+}
+OUTSIDE_WRITERS = frozenset({"save_file", *_DOCUMENT_TOOLS, *_COMMAND_TEXT})
 
 
 def _is_user_prompt(m: dict) -> bool:
@@ -618,10 +622,64 @@ def artifact_claim_unmet(messages: list) -> bool:
     return claims_an_artifact("\n".join(reply_texts(messages))) and not artifact_created(messages)
 
 
-def wrote_outside_workspace(messages: list) -> bool:
-    """True when this turn called a tool that can write a file outside the
-    workspace, which plan mode lets run (OUTSIDE_WRITERS)."""
-    return any(name in OUTSIDE_WRITERS for name in called_tools(turn_messages(messages)))
+def _call_input(block: dict) -> dict:
+    """A tool call's arguments: an Anthropic block's input, or a Responses
+    item's arguments, which arrive as JSON text."""
+    given = block.get("input", block.get("arguments"))
+    if isinstance(given, str):
+        try:
+            given = json.loads(given)
+        except ValueError:
+            return {}
+    return given if isinstance(given, dict) else {}
+
+
+def _write_targets(name: str, given: dict) -> list[str]:
+    """The files one call of a tool in OUTSIDE_WRITERS writes, as its executor
+    resolves them: a save's destination (a folder gets the file's own name) or
+    else the folder it suggests; a document tool's destination, or else its
+    workspace path or the Documents folder, with the extension the tool adds
+    to a bare name; each deliverable path in a script's code or a command's
+    text."""
+    if name in _COMMAND_TEXT:
+        return claimed_paths(str(given.get(_COMMAND_TEXT[name]) or ""))
+    dest = str(given.get("destination_path") or "").strip()
+    if name == "save_file":
+        filename = os.path.basename(str(given.get("filename") or "").strip())
+        if dest:
+            return [dest, os.path.join(dest, filename)] if filename else [dest]
+        folder = given.get("suggested_location")
+        folder = folder if folder in ("Documents", "Downloads") else "Documents"
+        return [f"~/{folder}/{filename}"] if filename else []
+    if name not in _DOCUMENT_TOOLS:
+        return []
+    path = str(given.get("path") or "").strip()
+    named = [dest] if dest else [path, f"~/Documents/{os.path.basename(path) or 'document'}"]
+    ext = _DOCUMENT_TOOLS[name]
+    return [
+        target
+        for p in named
+        if p
+        for target in ([p] if not ext or p.lower().endswith(ext) else [p, p + ext])
+    ]
+
+
+def targeted_paths(messages: list, workspace: str | None) -> set[str]:
+    """The files this turn's calls of the tools in OUTSIDE_WRITERS named as
+    what they write, resolved (``resolve_path``)."""
+    return {
+        resolve_path(p, workspace)
+        for m in turn_messages(messages)
+        if isinstance(m, dict)
+        and m.get("role") == "assistant"
+        and isinstance(m.get("content"), list)
+        for b in m["content"]
+        if isinstance(b, dict)
+        and b.get("type") in ("tool_use", "function_call")
+        and b.get("name") in OUTSIDE_WRITERS
+        for p in _write_targets(str(b["name"]), _call_input(b))
+        if p
+    }
 
 
 def claim_nudges_used(messages: list) -> int:
@@ -653,17 +711,20 @@ def check_claims(
     a reply about that card claims nothing false, and holding it only made
     the model rebuild the card.
 
-    Plan mode refuses the workspace writes, so a path there is usually the
-    file the plan will write: paths are checked only once a tool that writes
-    outside the workspace ran (OUTSIDE_WRITERS), and an artifact-card claim
-    always is."""
+    Plan mode refuses the workspace writes, so a path there is usually a
+    file the plan will write: only a path that a call this turn of a tool
+    that writes outside the workspace named as its target is checked
+    (``targeted_paths``), and an artifact-card claim always is. A look around
+    with terminal_run makes no planned file a claim."""
     if claim_nudges_used(messages) >= max_attempts:
         return None
     text = "\n".join(reply_texts(messages))
     if not text:
         return None
-    reads_paths = not plan_mode or wrote_outside_workspace(messages)
-    paths = asserted_paths(text) if reads_paths else []
+    paths = asserted_paths(text)
+    if plan_mode:
+        targets = targeted_paths(messages, workspace)
+        paths = [p for p in paths if resolve_path(p, workspace) in targets]
     missing = [p for p in paths if not exists_non_empty(p, workspace)]
     artifact_missing = not session_has_artifact and artifact_claim_unmet(messages)
     if not missing and not artifact_missing:

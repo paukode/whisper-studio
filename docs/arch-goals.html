@@ -79,10 +79,12 @@
         must exist and be non-empty, and a card must have been made, by a <code>create_artifact</code> or
         <code>edit_artifact</code> call this turn or by an earlier turn of the session (the app keeps a
         session's cards with its saved history, so a restart does not forget them). In plan mode a path
-        counts only once a tool that writes outside the workspace ran (<code>save_file</code>,
-        <code>run_python</code>, a terminal command or a document tool); until then it is a file the
-        plan will write. A miss names the missing items and tells the model to produce them or correct
-        the reply, never to report a deliverable it has not verified. One nudge per turn.</p></li>
+        counts only when a call this turn that writes outside the workspace named it as its target: the
+        destination of <code>save_file</code> or a document tool, or a path in the code or command of
+        <code>run_python</code>, a terminal command or <code>aws_cli</code>. Any other path, such as a
+        file listed after a look around with <code>terminal_run ls</code>, is a file the plan will
+        write. A miss names the missing items and tells the model to produce them or correct the reply,
+        never to report a deliverable it has not verified. One nudge per turn.</p></li>
       <li><h4>Requested file (always)</h4><p>Behind the <code>requested_file_check</code> flag, and quiet
         in plan mode. When the user asked for a file and the turn produced none (no file or document tool
         ran, and no reply names a file it made that exists), the gate asks for it once, or for a plain

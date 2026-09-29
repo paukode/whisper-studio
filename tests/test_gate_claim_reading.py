@@ -436,14 +436,14 @@ def test_plan_mode_checks_the_artifact_card_but_not_the_files_it_will_write(tmp_
     assert "artifact card" in check_claims(history, None, plan_mode=True)
 
 
-def _plan_turn(tool: str, reply: str) -> list:
+def _plan_turn(tool: str, reply: str, tool_input: dict | None = None) -> list:
     return [
         {"role": "user", "content": "plan the quarterly report and save the outline"},
         {
             "role": "assistant",
             "content": [
-                {"type": "text", "text": "Saving the outline."},
-                {"type": "tool_use", "id": "t1", "name": tool, "input": {}},
+                {"type": "text", "text": "Working on the outline."},
+                {"type": "tool_use", "id": "t1", "name": tool, "input": tool_input or {}},
             ],
         },
         {
@@ -454,19 +454,120 @@ def _plan_turn(tool: str, reply: str) -> list:
     ]
 
 
+# How each tool plan mode lets write names the file it writes, and the
+# extension that file gets.
+_WRITES = {
+    "save_file": (
+        ".docx",
+        lambda p: {"filename": "outline.docx", "content": "x", "destination_path": p},
+    ),
+    "create_docx": (
+        ".docx",
+        lambda p: {"path": "outline.docx", "html_content": "<p>x</p>", "destination_path": p},
+    ),
+    "create_pptx": (".pptx", lambda p: {"path": "o.pptx", "slides": [], "destination_path": p}),
+    "create_xlsx": (".xlsx", lambda p: {"path": "o.xlsx", "sheets": [], "destination_path": p}),
+    "create_pdf": (".pdf", lambda p: {"path": "o.pdf", "paragraphs": [], "destination_path": p}),
+    "office_script": (
+        ".docx",
+        lambda p: {"path": "o.docx", "code": "doc.save(OUTPUT_PATH)", "destination_path": p},
+    ),
+    "run_python": (".docx", lambda p: {"code": f"doc.save({p!r})"}),
+    "terminal_run": (".docx", lambda p: {"command": f"pandoc outline.md -o '{p}'"}),
+    "terminal_send": (".docx", lambda p: {"input": f"cp /tmp/outline.docx {p}\n"}),
+    "aws_cli": (".docx", lambda p: {"command": f"aws s3 cp s3://bucket/outline.docx {p}"}),
+}
+
+
+def test_every_tool_plan_mode_lets_write_names_its_target_here():
+    assert set(_WRITES) == OUTSIDE_WRITERS
+
+
 @pytest.mark.parametrize("tool", sorted(OUTSIDE_WRITERS))
-def test_plan_mode_checks_a_save_once_a_tool_wrote_outside_the_workspace(tool, tmp_path):
+def test_plan_mode_checks_the_file_a_writing_call_targeted(tool, tmp_path):
     # Plan mode refuses only the ws_* writers; these still run there behind
-    # their approval card, so "Saved to" after one is a claim like any other.
-    history = _plan_turn(tool, f"Saved the outline to {tmp_path}/outline.docx.")
+    # their approval card, so "Saved to" the file one of them wrote is a
+    # claim like any other.
+    ext, given = _WRITES[tool]
+    target = f"{tmp_path}/outline{ext}"
+    history = _plan_turn(tool, f"Saved the outline to {target}.", given(target))
     feedback = check_claims(history, None, plan_mode=True)
-    assert feedback is not None and f"{tmp_path}/outline.docx" in feedback
+    assert feedback is not None and target in feedback
+    (tmp_path / f"outline{ext}").write_bytes(b"x")
+    assert check_claims(history, None, plan_mode=True) is None
+
+
+def test_plan_mode_leaves_a_planned_file_alone_after_a_command_that_looked_around(tmp_path):
+    # Plan mode refuses ws_run_command, so the model looks around with
+    # terminal_run, then lists the files its plan will make.
+    plan = (
+        "Here is the plan:\n\n| File | Purpose |\n|---|---|\n"
+        f"| {tmp_path}/q3.docx | the report |\n| {tmp_path}/q3 chart.png | the chart |"
+    )
+    history = _plan_turn("terminal_run", plan, {"command": f"ls -la {tmp_path}"})
+    assert check_claims(history, None, plan_mode=True) is None
+    # Out of plan mode the same rows are claims, as before.
+    assert f"{tmp_path}/q3.docx" in check_claims(history, None)
+
+
+def test_plan_mode_checks_only_the_file_the_save_targeted(tmp_path):
+    reply = (
+        f"Saved the outline to {tmp_path}/outline.docx.\n\n"
+        f"Plan: the report is saved to {tmp_path}/q3.docx once you approve it."
+    )
+    given = _WRITES["save_file"][1](f"{tmp_path}/outline.docx")
+    feedback = check_claims(_plan_turn("save_file", reply, given), None, plan_mode=True)
+    assert f"{tmp_path}/outline.docx" in feedback and f"{tmp_path}/q3.docx" not in feedback
+
+
+@pytest.mark.parametrize(
+    ("tool", "given", "saved"),
+    [
+        # A document tool adds its extension to a bare destination.
+        (
+            "create_docx",
+            {"path": "outline", "destination_path": "~/Reports/outline"},
+            "~/Reports/outline.docx",
+        ),
+        # save_file into a folder lands the file under its own name there.
+        (
+            "save_file",
+            {"filename": "outline.docx", "destination_path": "~/Reports"},
+            "~/Reports/outline.docx",
+        ),
+        # With no destination, a save goes to the folder it suggests.
+        (
+            "save_file",
+            {"filename": "outline.docx", "suggested_location": "Downloads"},
+            "~/Downloads/outline.docx",
+        ),
+    ],
+)
+def test_plan_mode_reads_where_a_writing_call_writes(tool, given, saved, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    history = _plan_turn(tool, f"Saved the outline to {saved}.", given)
+    feedback = check_claims(history, None, plan_mode=True)
+    assert feedback is not None and saved in feedback
+
+
+def test_plan_mode_reads_a_workspace_path_against_the_workspace(tmp_path):
+    history = _plan_turn(
+        "create_docx",
+        "Saved: [q3.docx](#wsfile=reports/q3.docx&open=os)",
+        {"path": "reports/q3.docx", "html_content": "<p>x</p>"},
+    )
+    feedback = check_claims(history, str(tmp_path), plan_mode=True)
+    assert feedback is not None and "reports/q3.docx" in feedback
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "q3.docx").write_bytes(b"docx")
+    assert check_claims(history, str(tmp_path), plan_mode=True) is None
 
 
 @pytest.mark.parametrize("tool", ["ws_read_file", "ws_write_file", "web_search"])
 def test_plan_mode_leaves_the_plans_files_alone_when_nothing_could_write_them(tool, tmp_path):
     # A read, a search, or a workspace write that plan mode refused.
-    history = _plan_turn(tool, f"Plan: the outline goes to {tmp_path}/outline.docx.")
+    target = f"{tmp_path}/outline.docx"
+    history = _plan_turn(tool, f"Plan: the outline goes to {target}.", {"path": target})
     assert check_claims(history, None, plan_mode=True) is None
     assert check_claims(history, None, plan_mode=False) is not None
 
@@ -628,3 +729,66 @@ def test_a_reply_about_a_card_the_session_never_had_is_held_once(claims_only):
     assert out.count("stop_hook_block") == 1
     feedback = adapter.calls[1][-1]
     assert feedback["role"] == "user" and "create_artifact" in feedback["content"]
+
+
+class _LookThenPlan:
+    """Round 0 looks around with terminal_run, as a plan-mode turn does since
+    ws_run_command is refused there; each later round answers with the next
+    reply."""
+
+    provider = "test"
+
+    def __init__(self, command: str, *replies: str):
+        self.command = command
+        self.replies = list(replies)
+        self.calls: list[list[dict]] = []
+
+    async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
+        self.calls.append([dict(m) for m in messages])
+        if round_num == 0:
+            content = [
+                {"type": "text", "text": "Looking at the folder first."},
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "terminal_run",
+                    "input": {"command": self.command},
+                },
+            ]
+            yield TextDelta(text=content[0]["text"])
+            yield RoundResult(stop_reason="tool_use", content=content, usage=Usage())
+            return
+        text = self.replies.pop(0)
+        yield TextDelta(text=text)
+        yield RoundResult(
+            stop_reason="end_turn", content=[{"type": "text", "text": text}], usage=Usage()
+        )
+
+
+def test_the_engine_ends_a_plan_mode_turn_whose_plan_lists_its_files(
+    claims_only, monkeypatch, tmp_path
+):
+    import server.tool_executor as TE
+
+    async def batch(tool_uses, **kw):
+        return list(tool_uses)
+
+    async def process(states, budget_fn, **kw):
+        results = [
+            {"type": "tool_result", "tool_use_id": t["id"], "content": "q3-data.csv"}
+            for t in states
+        ]
+        return (results, [], False, False)
+
+    monkeypatch.setattr(TE, "execute_tool_batch", batch)
+    monkeypatch.setattr(TE, "process_tool_results", process)
+    plan = (
+        "Here is the plan:\n\n| File | Purpose |\n|---|---|\n"
+        f"| {tmp_path}/q3.docx | the report |\n| {tmp_path}/q3.png | the chart |"
+    )
+    adapter = _LookThenPlan(f"ls -la {tmp_path}", plan, *["Nothing was saved yet."] * 5)
+    out = _run("claims-plan-looked-around", adapter, "plan the q3 report", plan_mode=True)
+
+    # The look-around round and the plan; the gate did not hold the plan.
+    assert len(adapter.calls) == 2
+    assert "stop_hook_block" not in out
