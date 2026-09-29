@@ -89,10 +89,17 @@
         file must be gone; a card must have been made, by a <code>create_artifact</code> or
         <code>edit_artifact</code> call this turn or by an earlier turn of the session (the app keeps a
         session's cards with its saved history, so a restart does not forget them). Every other act
-        must match a call of this turn that did it and succeeded (its result is no error, its command
-        exited 0, it is not still waiting for approval, and the tool is not one that only reads),
-        naming the claim's target when the claim names one. A claim that points back to an earlier
-        turn needs only its file to exist or its link to appear earlier in the conversation. In plan
+        must be one that a call of this turn did and that succeeded
+        (<code class="path">server/goals/acts.py</code> reads what each call did from what it is
+        and what it was given: a git or gh command line, the <code>github</code> tool's arguments,
+        an API call's method and endpoint, an MCP tool's verb; never words that merely appear in its
+        arguments or result), naming the claim's target when the claim names one. A call that
+        failed, was refused or denied, still waits for approval or still runs in the background did
+        nothing. A claim that restates one the conversation made before, about something this turn
+        did not try again, is a recap: its file needs only to exist and its act is let through,
+        since it was checked when it was first made. A passive or a row of a table of changes can
+        describe how something works or what someone else did ("the image is pushed to ECR"), so
+        such a claim is checked only when the turn tried that act or wrote that file. In plan
         mode a path counts only when a call this turn that writes outside the workspace named it as
         its target: the destination of <code>save_file</code> or a document tool, or a path in the code
         or command of <code>run_python</code>, a terminal command or <code>aws_cli</code>. Any other
@@ -105,14 +112,19 @@
         the chat shows as "Verified" chips under the reply (a file's chip opens it). A sentence whose
         claim does not hold is not shown; in a round that calls tools it first waits for them, since a
         sentence may run ahead of the call that makes it true. The gate then names the held sentences
-        to the model, says the user has not seen them, and asks it to do the work or say plainly that
-        it was not done; the card in the chat reads "Checking a claimed delivery" and never repeats the
-        sentence. A second nudge follows only when the model acted on the first (it called a tool
+        to the model, says the user has not seen them, and asks it to do what this turn asked for or
+        say plainly that it was not done, and never to repeat an action that may already have
+        happened (a message, a push, a payment); the card in the chat reads "Checking a claimed
+        delivery" and never repeats the sentence. A second nudge follows only when the model acted on the first (it called a tool
         since). When the turn ends, each held claim that still does not hold is stated in the server's
         own words ("Not saved: <code>~/a.docx</code> does not exist."), unless a later sentence named
         its target, so a false claim is never shown as fact. The same guard covers subagents,
-        scheduled and headless runs and voice, which have no gate to send the model back: there the
-        note is the answer. The memory agents' notes are not replies and are not held.</p></li>
+        scheduled and headless runs and voice; a run with no gate to send the model back ends its
+        last round with the note, so a subagent's report carries it. A turn that pauses for an
+        approval hands its held sentences to its continuation, which checks them against the call
+        the user approved. The guard keeps every call of the turn it has seen, so compaction or a
+        salvage round cannot make a done act look undone. The memory agents' notes are not replies
+        and are not held.</p></li>
       <li><h4>Requested file (always)</h4><p>Behind the <code>requested_file_check</code> flag, and quiet
         in plan mode. When the user asked for a file and the turn produced none (no file or document tool
         ran, and no reply names a file it made that exists), the gate asks for it once, or for a plain
@@ -289,7 +301,8 @@
       <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate(GateContext) → GateDecision</code>; the ordered phases and the shared cap. Callers build their own <code>GateContext</code>.</dd>
       <dt><code class="path">server/goals/deliverables.py</code></dt><dd>The turn's replies, calls and prompts as the checks read them, and the claim check's feedback (<code>check_claims</code>).</dd>
       <dt><code class="path">server/goals/claims.py</code></dt><dd>What a reply says it delivered, clause by clause, each claim with the offsets of the clause that makes it.</dd>
-      <dt><code class="path">server/goals/evidence.py</code></dt><dd>Whether a claim holds: the disk for files, folders and removals, the turn's successful calls for every other act.</dd>
+      <dt><code class="path">server/goals/evidence.py</code></dt><dd>Whether a claim holds: the disk for files, folders and removals, the turn's successful calls for every other act, recaps of earlier claims.</dd>
+      <dt><code class="path">server/goals/acts.py</code></dt><dd>What each tool call did (pushed, committed, merged, opened a PR or issue, uploaded, sent, published, scheduled, removed) and which files it wrote, from its name and input.</dd>
       <dt><code class="path">server/chat/claim_guard.py</code></dt><dd>The stream guard: holds a claiming sentence until it is verified, sends the <code>deliveries</code> receipts, and notes at the turn's end what did not happen.</dd>
       <dt><code class="path">server/goals/requested_files.py</code></dt><dd>Which files the user asked for this turn, and whether what the turn did after each request produced one.</dd>
       <dt><code class="path">server/goals/verification.py</code></dt><dd>The passive ledger: which tools edit code, which commands verify it, and whether the evidence is fresh.</dd>
