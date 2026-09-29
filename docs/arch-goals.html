@@ -71,11 +71,25 @@
         hook's reason and the turn continues. The <code>goal_loop</code> flag gates <em>only</em> the
         evaluator phase, so turning goals off never disables your Stop hooks.</p></li>
       <li><h4>Claimed deliverables (always)</h4><p>Behind the <code>deliverable_check</code> flag, and with
-        or without a goal. If the turn's last reply tells you a file was saved, or points at an artifact
-        card, the gate checks that the file exists and is non-empty, and that a
-        <code>create_artifact</code> or <code>edit_artifact</code> call actually happened in this turn. A
-        miss names the missing items and tells the model to produce them or correct the reply, never to
-        report a deliverable it has not verified.</p></li>
+        or without a goal. The gate reads every reply of the turn for what it says was made: a path after
+        "saved to" or a word like it, the app's own file link, the rows of a table whose header names a
+        file, path, location, output or saved column, and an artifact card. A file name may hold spaces
+        where the reply marks its ends (backticks, double quotes, a link target, a cell of such a table);
+        a question, an offer, a plan or a negation is not a claim, and neither is a web address. Each file
+        must exist and be non-empty, and a card must have been made, by a <code>create_artifact</code> or
+        <code>edit_artifact</code> call this turn or by an earlier turn of the session (the app keeps a
+        session's cards with its saved history, so a restart does not forget them). In plan mode a path
+        counts only once a tool that writes outside the workspace ran (<code>save_file</code>,
+        <code>run_python</code>, a terminal command or a document tool); until then it is a file the
+        plan will write. A miss names the missing items and tells the model to produce them or correct
+        the reply, never to report a deliverable it has not verified. One nudge per turn.</p></li>
+      <li><h4>Requested file (always)</h4><p>Behind the <code>requested_file_check</code> flag, and quiet
+        in plan mode. When the user asked for a file and the turn produced none (no file or document tool
+        ran, and no reply names a file it made that exists), the gate asks for it once, or for a plain
+        statement that it will not be made. Each request is checked on its own: one in the prompt against
+        the whole turn, and one in a message sent while the turn ran ("also make a PNG chart") against
+        only what came after that message, so restating the file made for the prompt does not answer it.
+        A file the user called off ("no need to save a file") is not a request.</p></li>
       <li><h4>Verification evidence (always)</h4><p>Behind the <code>verify_on_stop</code> flag. Purely
         deterministic, no model call: if the turn edited code but no test, lint, typecheck or build ran
         green <em>after the last edit</em>, the gate asks for the run, or for an honest statement of what
@@ -111,11 +125,12 @@
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></span>
-      <div class="callout__body"><p>Three of these checks run whether or not a goal is set, and all of them
+      <div class="callout__body"><p>Four of these checks run whether or not a goal is set, and all of them
         surface in the UI through the same <code>stop_hook_block</code> frame, which the transcript labels
         <b>Continuing (Stop hook)</b>. So a turn that keeps going with no Stop hook configured at all is
         normal: the decision's <code>source</code> field (<code>stop_hook</code>, <code>deliverable</code>,
-        <code>verify</code>, <code>gate</code> or <code>evaluator</code>) is what says which check spoke.</p></div>
+        <code>requested_file</code>, <code>verify</code>, <code>gate</code> or <code>evaluator</code>) is
+        what says which check spoke.</p></div>
     </div>
 
     <h2 id="quality-gates">Quality gates</h2>
@@ -242,7 +257,8 @@
       <code>DELETE /goal/gates</code> for the quality gates.</p>
     <div class="spec">
       <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate(GateContext) → GateDecision</code>; the ordered phases and the shared cap. Callers build their own <code>GateContext</code>.</dd>
-      <dt><code class="path">server/goals/deliverables.py</code></dt><dd>Which file claims and artifact claims count, and whether they hold up this turn.</dd>
+      <dt><code class="path">server/goals/deliverables.py</code></dt><dd>Which file claims and artifact claims a turn's replies make, and whether they hold up.</dd>
+      <dt><code class="path">server/goals/requested_files.py</code></dt><dd>Which files the user asked for this turn, and whether what the turn did after each request produced one.</dd>
       <dt><code class="path">server/goals/verification.py</code></dt><dd>The passive ledger: which tools edit code, which commands verify it, and whether the evidence is fresh.</dd>
       <dt><code class="path">server/goals/gates.py</code></dt><dd>Running a goal's quality-gate commands, the retry budget, and the failure text.</dd>
       <dt><code class="path">server/goals/evaluator.py</code></dt><dd>The judge's prompt, the verdict schema and strict parser, and the cloud judge (<code>evaluate</code>, keyword-only <code>main_model_key</code>).</dd>
