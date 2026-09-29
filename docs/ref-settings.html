@@ -538,6 +538,7 @@
       <dt><code class="path">approval_mode</code></dt><dd>The server's default approval tier: <code>auto</code> (no approval, the default for an unconfigured server), <code>prompt</code> (every call goes through the normal approval pipeline, category <code>mcp</code>), <code>writes</code> (calls that look read-only by name auto-execute, everything else prompts), or <code>approve</code> (every call always asks - a hard floor that no bypass mode or blanket session approval can skip).</dd>
       <dt><code class="path">tool_overrides</code></dt><dd>A map of tool name to approval tier, overriding <code>approval_mode</code> for specific tools on that server.</dd>
       <dt><code class="path">enabled_tools</code> / <code class="path">disabled_tools</code></dt><dd>Allow/deny lists of tool names for the server. An empty allowlist permits everything; <code>disabled_tools</code> wins on overlap with <code>enabled_tools</code>.</dd>
+      <dt><code class="path">read_only</code> / <code class="path">read_only_tools</code></dt><dd>Which of the server's tools a read-only agent (explore, plan, or any agent started in plan mode) may run. <code>true</code> marks every tool, <code>read_only_tools</code> names some, and <code>false</code> ignores the server's own <code>readOnlyHint</code> annotations. Unmarked tools are kept from read-only agents.</dd>
     </div>
     <p>When a connected server asks the human a question mid-call (an <b>elicitation</b>), it is
       surfaced through the approval pipeline under its own category, <code>mcp-elicit</code>, rather

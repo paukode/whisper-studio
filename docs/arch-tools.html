@@ -337,11 +337,16 @@
       <code>assemble_partitioned_pool</code> and carry the deferred index, and
       <a href="arch-agents.html">sub-agents</a> get the same disclosure through their own tool
       access, so <code>tool_search</code> works inside agents and scheduled runs too.</p>
-    <p>Sub-agents go through <code class="path">server/agents/tool_access.py</code>. What an agent
-      may run is fixed when it starts: its own catalogue (the chat catalogue outside ultracode plus
-      the agent-only tools) through its type's filter, and the executor refuses every other name. A
-      tool it may run that its round merely deferred still runs by name, as in chat. Two things
-      differ from chat. An agent with an <code>allowed_tools</code> whitelist is offered its whole
+    <p>Sub-agents go through <code class="path">server/agents/tool_access.py</code>. The rules of
+      what an agent may run are fixed when it starts: its own catalogue (the chat catalogue outside
+      ultracode plus the agent-only tools) through its type's filter, and the executor refuses every
+      other name. The catalogue those rules apply to is read again each round, so an MCP server that
+      connects mid-run is available from the next round, under the same filter. A tool it may run
+      that its round merely deferred still runs by name, as in chat. Three refused calls in a row
+      (the executor's refusals and the loop guard's alike) make the agent's next round its last, with
+      no tools, so it answers with what it has. The memory tools are core in chat turns only
+      (<code>CHAT_CORE_TOOLS</code>, for the learning review's replay); agents, scheduled tasks
+      and voice turns reach them through <code>tool_search</code>. Two things differ from chat. An agent with an <code>allowed_tools</code> whitelist is offered its whole
       whitelist every round and gets no deferred index: the memory agents cannot call
       <code>tool_search</code>, so deferral would leave their own tools out of reach. Any other agent
       is offered the core set plus the session's activations and its own; its index lists only tools

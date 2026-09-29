@@ -251,7 +251,13 @@
       and a name outside it gets a <code>[Refused]</code> result before hooks, approvals or the
       handler see it, whatever name the model emits. Agents approve their own writes, so that check,
       not the tools array, is what makes read-only hold: an <code>explore</code> or
-      <code>plan</code> agent cannot mutate your project.</p>
+      <code>plan</code> agent cannot mutate your project. An agent started from a plan-mode turn
+      runs read-only whatever its type, and so does a detached one started there. A read-only agent
+      runs an MCP tool only when it is marked read-only: by the server's <code>readOnlyHint</code>
+      annotation, or in <code>mcp_servers.json</code> (<code>"read_only": true</code> for a whole
+      server, <code>"read_only_tools"</code> for some of its tools, <code>"read_only": false</code> to
+      ignore the server's hints). Three refused calls in a row end a run: its next round is the last,
+      with no tools.</p>
 
     <h3 id="custom-types">Custom and ephemeral agent types</h3>
     <p>The built-in table is not the whole story
