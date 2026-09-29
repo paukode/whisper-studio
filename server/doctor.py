@@ -29,7 +29,11 @@ def _gpt_region_check() -> dict:
     set. The region is resolved exactly as a call resolves it."""
     from server.chat.infra import mode_chat_catalog
     from server.infrastructure.config import load_config
-    from server.openai_bedrock.runtime import gpt_regions_note, region_problems
+    from server.openai_bedrock.runtime import (
+        gpt_regions_note,
+        region_problems,
+        unmeasured_models,
+    )
     from server.workspace import get_workspace_path
 
     visible, meta, _mode, _default = mode_chat_catalog(load_config(get_workspace_path()))
@@ -38,11 +42,11 @@ def _gpt_region_check() -> dict:
         return {"check": _GPT_REGIONS, "status": "ok", "detail": "No GPT model configured"}
     problems = region_problems(gpt)
     if not problems:
-        return {
-            "check": _GPT_REGIONS,
-            "status": "ok",
-            "detail": f"{len(gpt)} GPT model(s), each in a region Bedrock serves it in",
-        }
+        unknown = unmeasured_models(gpt)
+        detail = f"{len(gpt) - len(unknown)} GPT model(s), each in a region Bedrock serves it in"
+        if unknown:
+            detail += f"; no measured regions for {', '.join(unknown)}"
+        return {"check": _GPT_REGIONS, "status": "ok", "detail": detail}
     return {
         "check": _GPT_REGIONS,
         "status": "warn",

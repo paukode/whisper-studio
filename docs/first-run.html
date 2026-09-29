@@ -145,9 +145,11 @@
         chat turn can actually reach a model. (The ping uses a known-good model, not necessarily your
         configured default.)</li>
       <li><b>GPT regions</b>: every GPT model the picker offers resolves to a region Bedrock serves it
-        in (us-east-1 or us-west-2; GPT-6 Astra only us-west-2). A warning here names the models and
-        the setting to change (<code>bedrock_region</code>, or <code>openai_region</code> on the
-        model's entry).</li>
+        in. Each model has its own US regions (<code>us-east-1</code> serves all of them but GPT-6
+        Astra, which ships pinned to <code>us-west-2</code>; see
+        <a href="arch-backends.html">Model backends</a>). A warning here names the models and the
+        setting to change (<code>bedrock_region</code>, or <code>openai_region</code> on the model's
+        entry).</li>
       <li><b>Workspace</b>: the connected folder, if any, still exists on disk.</li>
       <li><b>Sessions DB</b>: the session store opens and answers a query.</li>
       <li><b>Config</b>: the effective config loads, reporting your model, effort, and region.</li>

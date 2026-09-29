@@ -161,13 +161,18 @@ def _gpt_models() -> dict:
     return {k: meta[k] for k in visible if meta[k].get("provider") == "openai_bedrock"}
 
 
-def _named(detail: str) -> set[str]:
-    """The GPT models a warning names, leaving out the closing note (which
-    names GPT-6 Astra whatever its state)."""
+def _problem_sentences(detail: str) -> list[str]:
+    """The warning's sentences about models, without the closing note."""
     from server.openai_bedrock.runtime import gpt_regions_note
 
-    problems = detail.replace(gpt_regions_note(), "")
-    return {k for k, m in _gpt_models().items() if m["label"] in problems}
+    problems = detail.replace(gpt_regions_note(), "").strip()
+    return [s for s in problems.split(". ") if s]
+
+
+def _named(detail: str) -> set[str]:
+    """The GPT models a warning names."""
+    sentences = _problem_sentences(detail)
+    return {k for k, m in _gpt_models().items() if any(m["label"] in s for s in sentences)}
 
 
 def test_the_shipped_gpt_models_pass_the_region_check(aws_home, mode_layer):
@@ -175,23 +180,34 @@ def test_the_shipped_gpt_models_pass_the_region_check(aws_home, mode_layer):
     assert doctor._gpt_region_check()["status"] == "ok"
 
 
-def test_an_eu_region_warns_for_exactly_the_gpt_models_it_leaves_unserved(aws_home, mode_layer):
-    from server.openai_bedrock.runtime import gpt_serving_regions, region_for
+@pytest.mark.parametrize("region", ["eu-central-1", "us-west-2", "us-east-2"])
+def test_a_region_warns_for_exactly_the_gpt_models_it_leaves_unserved(aws_home, mode_layer, region):
+    # us-west-2 and us-east-2 serve some GPT models and not others (measured
+    # per model); an EU region serves none of them.
+    from server.openai_bedrock.runtime import (
+        _spoken,
+        gpt_regions_note,
+        gpt_serving_regions,
+        region_for,
+    )
 
     layer, _downloaded = mode_layer
-    layer["bedrock_region"] = "eu-central-1"
-    unserved = {
-        k for k, m in _gpt_models().items() if region_for(k) not in gpt_serving_regions(m["id"])
-    }
+    layer["bedrock_region"] = region
+    models = _gpt_models()
+    served = {k: gpt_serving_regions(m["id"]) for k, m in models.items()}
+    unserved = {k for k in models if region_for(k) not in served[k]}
     assert unserved
 
     row = doctor._gpt_region_check()
     assert row["status"] == "warn"
     assert _named(row["detail"]) == unserved
-    assert "resolve to eu-central-1" in row["detail"]
-    assert "set bedrock_region to us-east-1 or us-west-2" in row["detail"]
-    assert "pin openai_region" in row["detail"]
-    assert "us-east-1 and us-west-2 (GPT-6 Astra only in us-west-2)" in row["detail"]
+    assert row["detail"].endswith(gpt_regions_note())
+    for key in unserved:
+        (sentence,) = [s for s in _problem_sentences(row["detail"]) if models[key]["label"] in s]
+        assert f"to {region}:" in sentence
+        # Each model is sent to the regions that serve it, and no others.
+        fix = f"set bedrock_region to {_spoken(served[key], 'or')}, or pin openai_region"
+        assert fix in sentence
 
 
 def test_a_pin_outside_the_served_regions_is_told_to_move(aws_home, mode_layer):
@@ -200,8 +216,9 @@ def test_a_pin_outside_the_served_regions_is_told_to_move(aws_home, mode_layer):
     row = doctor._gpt_region_check()
     assert row["status"] == "warn"
     assert _named(row["detail"]) == {"gpt6-astra"}
-    assert "resolves to us-east-1: change openai_region" in row["detail"]
-    assert "to us-west-2." in row["detail"]
+    assert (
+        "resolves to us-east-1: change openai_region on its chat_models entry to" in (row["detail"])
+    )
 
 
 def test_the_region_row_is_part_of_the_report(aws_home, stub_bedrock, mode_layer, monkeypatch):
