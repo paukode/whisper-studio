@@ -69,25 +69,31 @@ CORE_TOOLS: frozenset[str] = frozenset(
         "sleep",
         "git_status",
         "git_diff",
-        # memory: in the catalog only while auto_memory is on, so core exactly
-        # then. The post-turn learning review replays the turn's tools array
-        # byte for byte (server/memory/review_fork.py) and cannot load a
-        # deferred tool, so the tools it saves with must be advertised here.
-        "memory_read",
-        "memory_write",
-        "memory_list",
-        "memory_delete",
     }
 )
 
+# Core in a chat turn only. The memory tools are in the catalog only while
+# auto_memory is on, so core exactly then: the post-turn learning review
+# replays the chat turn's tools array byte for byte
+# (server/memory/review_fork.py) and cannot load a deferred tool, so the
+# tools it saves with must be advertised. Agents, scheduled tasks and voice
+# turns have no review fork; there the tools stay one tool_search away, so an
+# unattended run does not carry their schemas on every request nor write or
+# delete memories unasked.
+CHAT_CORE_TOOLS: frozenset[str] = frozenset(
+    {"memory_read", "memory_write", "memory_list", "memory_delete"}
+)
 
-def core_names() -> frozenset[str]:
-    """The effective core set: curated constant, skill_manage while
-    skill_self_improvement is on, plus config extras.
+
+def core_names(*, chat: bool = True) -> frozenset[str]:
+    """The effective core set: curated constant, the chat-only memory tools
+    and skill_manage while skill_self_improvement is on (``chat``), plus
+    config extras.
 
     skill_manage is in the catalog either way (its executor refuses while the
-    flag is off); it is core while the flag lets the chat and the learning
-    review call it, for the same replay reason as the memory tools.
+    flag is off); in a chat turn it is core while the flag lets the chat and
+    the learning review call it, for the same replay reason as the memory
+    tools.
 
     ``progressive_tools_core_extra`` / ``progressive_tools_defer_extra`` are
     hand-edit-only operator knobs (no UI, not in the example config): lists of
@@ -101,16 +107,20 @@ def core_names() -> frozenset[str]:
         cfg = load_config()
         extra = {str(n) for n in (cfg.get("progressive_tools_core_extra") or [])}
         defer = {str(n) for n in (cfg.get("progressive_tools_defer_extra") or [])}
-        if is_enabled("skill_self_improvement"):
+        if chat and is_enabled("skill_self_improvement"):
             extra.add("skill_manage")
     except Exception:
         pass
+    if chat:
+        extra |= CHAT_CORE_TOOLS
     # tool_search is the way back to everything else; it can never defer.
     defer.discard("tool_search")
     return (CORE_TOOLS | extra) - defer
 
 
-def partition_pool(catalog: list[dict], activated: list[str]) -> tuple[list[dict], list[dict], int]:
+def partition_pool(
+    catalog: list[dict], activated: list[str], *, chat: bool = True
+) -> tuple[list[dict], list[dict], int]:
     """Split a post-mode-filter catalog into (advertised, deferred, core_count).
 
     Advertised ordering is cache-critical: core tools keep the catalog's
@@ -121,7 +131,7 @@ def partition_pool(catalog: list[dict], activated: list[str]) -> tuple[list[dict
     places a breakpoint on tools[core_count-1] so the prefix keeps hitting
     across activation events.
     """
-    core = core_names()
+    core = core_names(chat=chat)
     by_name = {t["name"]: t for t in catalog}
     advertised: list[dict] = [t for t in catalog if t["name"] in core]
     core_count = len(advertised)

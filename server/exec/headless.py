@@ -136,7 +136,7 @@ def _round_catalog(session_id: str, ws_connected: bool) -> list[dict]:
     from server.chat.tool_pool import assemble_partitioned_pool
 
     advertised, _deferred, _core = assemble_partitioned_pool(
-        plan_mode=False, ws_connected=ws_connected, session_id=session_id
+        plan_mode=False, ws_connected=ws_connected, session_id=session_id, chat=False
     )
     seen: set[str] = set()
     tools: list[dict] = []
@@ -387,7 +387,7 @@ async def run_headless_turn(
         # appended to the system prompt below.
         activate_from_history(session_id, messages)
         _advertised0, deferred, _core_count = assemble_partitioned_pool(
-            plan_mode=False, ws_connected=bool(ws_path), session_id=session_id
+            plan_mode=False, ws_connected=bool(ws_path), session_id=session_id, chat=False
         )
         deferred_tool_index = build_deferred_index(deferred)
 

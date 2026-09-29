@@ -254,6 +254,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
             ws_connected=bool(ws_latch.path),
             suppress_workspace_search=False,
             session_id=session_id,
+            chat=False,
         )
         deferred_tool_index = build_deferred_index(deferred)
         cron_tools = _assemble_cron_tools(advertised)
