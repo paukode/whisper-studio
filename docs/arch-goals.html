@@ -211,8 +211,10 @@
     <h2 id="cron-verify">Verified cron</h2>
     <p>The same idea guards scheduled work. <code class="path">server/goals/cron_verify.py</code> lets a
       <a href="arch-cron.html">cron</a> run verify it actually achieved its prompt before reporting
-      <code>ok</code>: it folds any <code>notify_user</code> bodies in as a synthetic assistant message, runs
-      the evaluator, and continues the run (up to two continuations) if the goal is unmet. A run that never
+      <code>ok</code>: it reads the run's history with the reply the run finished on (the engine's own
+      history stops before that reply), folds any <code>notify_user</code> bodies in as a synthetic
+      assistant message, runs the evaluator, and continues the run (up to two continuations, each with
+      its last reply in view) if the goal is unmet. A run that never
       meets its goal is marked <code>failed</code> and its report is prefixed <code>[UNVERIFIED]</code>.
       A verifier that cannot judge the run spends no continuation: the run is marked the same way, with
       <code>[UNVERIFIED] Not checked:</code> and the reason, and never passes silently.

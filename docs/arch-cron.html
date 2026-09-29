@@ -116,7 +116,8 @@
         clamped 1..200), and <code>ask_user_question</code> is dropped from the tool list - an
         unattended run could never answer it.</p></li>
       <li><h4>Verifies the finish</h4><p>Every natural finish is judged by the completion verifier
-        (<code>server/goals/cron_verify.py</code>): if the job's goal looks unmet, the run is continued,
+        (<code>server/goals/cron_verify.py</code>), which reads the transcript with the run's final reply
+        appended: if the job's goal looks unmet, the run is continued with that reply and the feedback,
         up to <code>MAX_CONTINUATIONS</code> (2), before the result is accepted.</p></li>
       <li><h4>Delivers and closes the lease</h4><p>The final text is pushed to the originating session and
         <code>finish_run()</code> closes the lease with <code>ok</code> or <code>failed</code>, the duration,

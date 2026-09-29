@@ -15,7 +15,13 @@ import pytest
 sys.path.insert(0, os.path.dirname(__file__))
 from test_cron_tools import _run_cron_job  # noqa: E402
 
-from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block  # noqa: E402
+from tests.golden_harness import (  # noqa: E402
+    FakeBedrockClient,
+    msg_end,
+    msg_start,
+    text_block,
+    tool_use_block,
+)
 
 _JOB = {
     "id": "job-verify",
@@ -128,6 +134,83 @@ def test_verify_sees_notify_user_content(monkeypatch):
     assert v.is_achieved
     assert "all systems go" in seen["tail"]
     assert seen["main_model_key"] == "haiku"
+
+
+def _judged_by_verify(monkeypatch, verdict_seq) -> list[list]:
+    """Stub the verifier (as _run does) and keep every history it is given."""
+    import server.goals.cron_verify as CV
+
+    seen: list[list] = []
+
+    def fake_verify(prompt, messages, notifications=None, *, main_model_key="", session_id=""):
+        seen.append(list(messages))
+        return verdict_seq[min(len(seen), len(verdict_seq)) - 1]
+
+    monkeypatch.setattr(CV, "verify", fake_verify)
+    return seen
+
+
+def _text_of(message: dict) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    return "".join(b.get("text", "") for b in content if isinstance(b, dict))
+
+
+def test_the_verifier_reads_the_answer_the_run_finished_on(monkeypatch):
+    # A tool round, then the answer in plain text. The runner keeps the tool
+    # round in its history but not the reply the turn ends on; the verifier
+    # used to judge the history without it, so a task that answered in text
+    # was not achieved, re-run twice and pushed as [UNVERIFIED].
+    from server.goals import Verdict
+
+    seen = _judged_by_verify(monkeypatch, [Verdict("achieved", "report is there", 0.9)])
+    stream = FakeBedrockClient(
+        [
+            [
+                msg_start(),
+                *text_block("Checking the numbers."),
+                *tool_use_block("tu_1", "web_search", {"query": "weekly numbers"}, index=1),
+                *msg_end(stop_reason="tool_use"),
+            ],
+            [msg_start(), *text_block("weekly report: all good"), *msg_end(stop_reason="end_turn")],
+        ]
+    )
+    recorded: dict = {}
+    _run_cron_job(monkeypatch, dict(_JOB), stream, _noop_route, recorded, cron_verify=True)
+
+    assert recorded["status"] == "ok"
+    (judged,) = seen
+    assert judged[-1] == {"role": "assistant", "content": "weekly report: all good"}
+    # Only the missing reply is added: the tool round is not repeated.
+    rendered = [_text_of(m) for m in judged]
+    assert sum("weekly report: all good" in t for t in rendered) == 1
+    assert sum("Checking the numbers." in t for t in rendered) == 1
+
+
+def test_a_verify_continuation_answers_with_its_last_reply_in_view(monkeypatch):
+    from server.goals import Verdict
+
+    seen = _judged_by_verify(
+        monkeypatch,
+        [Verdict("not_achieved", "Add the summary.", 0.5), Verdict("achieved", "done", 0.9)],
+    )
+    stream = FakeBedrockClient(
+        [
+            [msg_start(), *text_block("draft report"), *msg_end(stop_reason="end_turn")],
+            [msg_start(), *text_block("report with summary"), *msg_end(stop_reason="end_turn")],
+        ]
+    )
+    recorded: dict = {}
+    _run_cron_job(monkeypatch, dict(_JOB), stream, _noop_route, recorded, cron_verify=True)
+
+    assert recorded["status"] == "ok"
+    assert [_text_of(j[-1]) for j in seen] == ["draft report", "report with summary"]
+    # The continuation sees its first reply once, then the verifier's note.
+    continued = [(m["role"], _text_of(m)) for m in stream.requests[1]["messages"]]
+    assert continued[-2] == ("assistant", "draft report")
+    assert continued[-1][0] == "user" and continued[-1][1].startswith("[verify] Add the summary.")
+    assert sum("draft report" in text for _role, text in continued) == 1
 
 
 def test_final_round_is_still_verified(monkeypatch):
