@@ -19,6 +19,7 @@ Pure functions over the provider-neutral message list; no I/O beyond stat.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from typing import NamedTuple
@@ -146,7 +147,8 @@ _ARTIFACT_TOOLS = ("create_artifact", "edit_artifact")
 # the ws_* workspace writers (tool_executor._PLAN_MODE_BLOCKED) and these still
 # run there behind their approval card, so once one ran, a path the reply says
 # it saved may be a save that happened, and it is checked as on any other
-# turn.
+# turn. The scripts among them can also write a file again under a name the
+# turn used before (requested_files).
 OUTSIDE_WRITERS = frozenset(
     {
         "save_file",
@@ -218,31 +220,38 @@ def turn_messages(messages: list) -> list:
     return list(messages)
 
 
-def last_user_prompt(messages: list) -> str:
-    """What the user asked for this turn: the real prompt it is answering,
-    then the words of each message the user sent while it ran, whether it was
-    folded onto the prompt (loop_hints.inject_reminder) or onto a later row (a
-    tool result, or a row of its own after an assistant tail). Gate feedback,
-    tool results and engine reminders, agent reports among them, are never
-    part of it."""
+def asked_by_row(messages: list) -> list[tuple[int, str]]:
+    """What the user asked for this turn, piece by piece, each with the row
+    of the turn (``turn_messages`` order) that carries it: the real prompt it
+    is answering, then the words of each message the user sent while it ran.
+    Words folded onto the prompt (loop_hints.inject_reminder) come with the
+    prompt's row, -1, just before the turn's first; words folded onto a later
+    row (a tool result, or a row of their own after an assistant tail) come
+    with that row. Gate feedback, tool results and engine reminders, agent
+    reports among them, are never part of it."""
     for i in range(len(messages) - 1, -1, -1):
         if _is_user_prompt(messages[i]):
             break
     else:
-        return ""
+        return []
     asked = [
-        _midturn_words(t) or t
+        (-1, _midturn_words(t) or t)
         for t in _texts(messages[i].get("content"))
         if not t.startswith(_REMINDER_OPEN)
     ]
     asked += [
-        words
-        for m in messages[i + 1 :]
+        (row, words)
+        for row, m in enumerate(messages[i + 1 :])
         if isinstance(m, dict) and m.get("role") == "user"
         for t in _texts(m.get("content"))
         if (words := _midturn_words(t))
     ]
-    return "\n\n".join(t for t in asked if t)
+    return [(row, t) for row, t in asked if t]
+
+
+def last_user_prompt(messages: list) -> str:
+    """What the user asked for this turn (``asked_by_row``) as one text."""
+    return "\n\n".join(t for _row, t in asked_by_row(messages))
 
 
 def called_tools(rows: list) -> list[str]:
@@ -265,15 +274,16 @@ def _calls_a_tool(content) -> bool:
     )
 
 
-def reply_texts(messages: list) -> list[str]:
+def reply_texts(messages: list, *, since: int = 0) -> list[str]:
     """The text of each reply of this turn, oldest first: the assistant rows
     that call no tool, and the last assistant row (the reply being gated)
     whatever it holds. A reply a pending mid-turn message kept from the gate
     is one of them, and the two halves of a max_tokens split are joined into
-    one, as the chat shows them."""
+    one, as the chat shows them. With ``since``, only the replies from that
+    row of the turn (``turn_messages`` order) on."""
     rows: list[str] = []
     joins_next = False
-    turn = [m for m in turn_messages(messages) if isinstance(m, dict)]
+    turn = [m for m in turn_messages(messages)[since:] if isinstance(m, dict)]
     last = max((i for i, m in enumerate(turn) if m.get("role") == "assistant"), default=-1)
     for i, m in enumerate(turn):
         if m.get("role") == "user":
@@ -529,16 +539,61 @@ def claims_an_artifact(text: str) -> bool:
     return False
 
 
-def exists_non_empty(path: str, workspace: str | None) -> bool:
-    """True when the path resolves to a file with content (workspace-relative
-    paths resolve against the workspace)."""
+def resolve_path(path: str, workspace: str | None) -> str:
+    """Where ``path`` points: the home folder expanded, a workspace-relative
+    path joined to the workspace, and the result normalised, so two spellings
+    of one file compare equal."""
     resolved = os.path.expanduser(path)
     if not os.path.isabs(resolved) and workspace:
         resolved = os.path.join(workspace, resolved)
+    return os.path.normpath(resolved)
+
+
+def exists_non_empty(path: str, workspace: str | None) -> bool:
+    """True when the path resolves to a file with content (workspace-relative
+    paths resolve against the workspace)."""
+    resolved = resolve_path(path, workspace)
     try:
         return os.path.isfile(resolved) and os.path.getsize(resolved) > 0
     except OSError:
         return False
+
+
+def _row_strings(m: dict) -> list[str]:
+    """Every text one message carries: its text blocks, each tool call's
+    input and each tool result."""
+    content = m.get("content")
+    if isinstance(content, str):
+        return [content]
+    out: list[str] = []
+    for b in content if isinstance(content, list) else []:
+        if not isinstance(b, dict):
+            continue
+        if b.get("type") in ("tool_use", "function_call"):
+            given = b.get("input", b.get("arguments"))
+            if not isinstance(given, str):
+                given = json.dumps(given, ensure_ascii=False, default=str)
+            out.append(given)
+        elif b.get("type") in _TOOL_RESULT_TYPES:
+            raw = b.get("content", b.get("output", ""))
+            if isinstance(raw, list):
+                raw = " ".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in raw)
+            out.append(str(raw or ""))
+        else:
+            out.append(str(b.get("text", "")))
+    return out
+
+
+def named_paths(rows: list, workspace: str | None) -> set[str]:
+    """Every deliverable path ``rows`` name anywhere (a reply, a tool call's
+    input, a tool result), resolved (``resolve_path``)."""
+    return {
+        resolve_path(p, workspace)
+        for m in rows
+        if isinstance(m, dict)
+        for text in _row_strings(m)
+        for p in claimed_paths(text)
+    }
 
 
 def artifact_created(messages: list) -> bool:

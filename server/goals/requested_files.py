@@ -8,24 +8,31 @@ afterwards, the model was honest ("no revised file was created, I
 misunderstood your request as a text-only correction"), but the user only
 found out by asking.
 
-So: when this turn's user prompt asks for a file and the turn produced none,
-the gate says so once and the model either produces it or states plainly that
-it will not. One nudge per turn, because the detection is a heuristic over
-prose and a wrong guess must cost at most one round.
+So: when the user asks for a file this turn and the turn produced none, the
+gate says so once and the model either produces it or states plainly that it
+will not. Each request is checked on its own: one in the prompt against the
+whole turn, and one in a message the user sent while the turn ran ("also make
+a PNG chart") against only what happened after that message, since a file
+made before it cannot be the one it asks for. One nudge per turn, naming what
+is still owed, because the detection is a heuristic over prose and a wrong
+guess must cost at most one round.
 
 Pure functions over the provider-neutral message list; no I/O beyond stat.
 """
 
 from __future__ import annotations
 
-import json
 import re
 
 from server.goals.deliverables import (
+    OUTSIDE_WRITERS,
+    asked_by_row,
     asserted_paths,
+    called_tools,
     exists_non_empty,
-    last_user_prompt,
+    named_paths,
     reply_texts,
+    resolve_path,
     turn_messages,
 )
 
@@ -105,58 +112,80 @@ _ASKING_ABOUT_RE = re.compile(
 )
 
 
-def _tool_input(block: dict) -> dict:
-    inp = block.get("input") or block.get("arguments") or {}
-    if isinstance(inp, str):
-        try:
-            inp = json.loads(inp)
-        except (TypeError, ValueError):
-            inp = {}
-    return inp if isinstance(inp, dict) else {}
+# Calling a file off is not asking for one: "no need to save a file", "don't
+# write the pdf", "stop exporting it". A producing verb counts only where
+# none of these sits in the two words before it ("don't forget to save it"
+# still asks), so "don't save anything, just make me a diagram" asks for the
+# diagram.
+_CALLED_OFF_RE = re.compile(
+    r"\b(?:don['\u2019]?t|do not|no need to|never|not|without|stop)\s+"
+    r"(?:(?!forget\b)\w+\s+){0,2}$",
+    re.IGNORECASE,
+)
 
 
-def requested_clause(prompt: str) -> str | None:
-    """The clause where the user asks for a file, or None.
+def requested_clauses(text: str) -> list[str]:
+    """Each clause where the user asks for a file, in order.
 
-    A clause qualifies on a producing verb plus either a file extension or a
-    file-shaped noun. Both have to sit in the same clause."""
-    for clause in _CLAUSE_SPLIT_RE.split(prompt or ""):
+    A clause qualifies on a producing verb the user did not call off, plus
+    either a file extension or a file-shaped noun. Both have to sit in the
+    same clause."""
+    found: list[str] = []
+    for clause in _CLAUSE_SPLIT_RE.split(text or ""):
         clause = clause.strip()
-        if not clause or not _PRODUCE_RE.search(clause):
+        if not clause or _ASKING_ABOUT_RE.search(clause):
             continue
-        if _ASKING_ABOUT_RE.search(clause):
+        if not any(
+            not _CALLED_OFF_RE.search(clause[: m.start()]) for m in _PRODUCE_RE.finditer(clause)
+        ):
             continue
         if _EXT_RE.search(clause) or _FILE_NOUN_RE.search(clause):
-            return " ".join(clause.split())[:160]
-    return None
+            found.append(" ".join(clause.split())[:160])
+    return found
 
 
-def produced_a_file(messages: list, workspace: str | None, *, on_disk: bool = False) -> bool:
+def file_requests(messages: list) -> list[tuple[str, int]]:
+    """Each file the user asked for this turn, with the row of the turn
+    (``turn_messages`` order) from which what the turn did can answer it: 0,
+    the whole turn, for the prompt and for words folded onto the prompt row;
+    the row after it for a message the user sent while the turn ran, folded
+    onto a tool result or given a row of its own. Nothing that came before a
+    message can be the file it asks for (``produced_a_file``)."""
+    return [
+        (clause, row + 1)
+        for row, words in asked_by_row(messages)
+        for clause in requested_clauses(words)
+    ]
+
+
+def produced_a_file(
+    messages: list, workspace: str | None, *, on_disk: bool = False, since: int = 0
+) -> bool:
     """True when this turn actually put a file (or artifact) in front of the
-    user: a file tool ran, or one of its replies names a path that really
-    exists.
+    user from row ``since`` of the turn on: a file tool ran, or one of its
+    replies names a path that really exists.
 
     The second arm matters for the skill path, where a document is written by
-    a script rather than by a file tool. Every reply of the turn counts, so a
-    later reply that answers a mid-turn question without naming the file
-    again does not undo it, but only a path a reply says it made: an input
-    file it read is not the deliverable. With ``on_disk`` an artifact card
-    does not count: the user asked for a file somewhere they can open it."""
+    a script rather than by a file tool. Every reply counts, so a later reply
+    that answers a mid-turn question without naming the file again does not
+    undo it, but only a path a reply says it made: an input file it read is
+    not the deliverable. From a later row, a path the turn named before it is
+    the file made for an earlier ask ("Saved the report to X" restated in the
+    reply that answers "also make a PNG chart"), unless a tool that writes
+    files ran since and may have made it again. With ``on_disk`` an artifact
+    card does not count: the user asked for a file somewhere they can open
+    it."""
     accepted = _DISK_TOOLS if on_disk else _FILE_TOOLS
-    for m in turn_messages(messages):
-        if not isinstance(m, dict) or m.get("role") != "assistant":
-            continue
-        content = m.get("content")
-        if not isinstance(content, list):
-            continue
-        for b in content:
-            if not isinstance(b, dict):
-                continue
-            if b.get("type") in ("tool_use", "function_call") and b.get("name") in accepted:
-                return True
+    turn = turn_messages(messages)
+    ran = called_tools(turn[since:])
+    if any(name in accepted for name in ran):
+        return True
+    earlier: set[str] = set()
+    if since and not any(name in OUTSIDE_WRITERS for name in ran):
+        earlier = named_paths(turn[:since], workspace)
     return any(
-        exists_non_empty(p, workspace)
-        for text in reply_texts(messages)
+        exists_non_empty(p, workspace) and resolve_path(p, workspace) not in earlier
+        for text in reply_texts(messages, since=since)
         for p in asserted_paths(text)
     )
 
@@ -186,34 +215,44 @@ def requested_file_feedback(
     max_attempts: int = MAX_REQUEST_NUDGES,
 ) -> str | None:
     """Gate feedback when the user asked for a file this turn and none was
-    produced, or None when there is nothing to ask for.
+    produced, or None when there is nothing to ask for. Each request is
+    checked against what came after it (``file_requests``), and the feedback
+    names every one still owed.
 
     Silent in plan mode: the workspace writes are refused there by design,
     so the turn is supposed to end with a plan and no file."""
-    if plan_mode:
+    if plan_mode or request_nudges_used(messages) >= max_attempts:
         return None
-    clause = requested_clause(last_user_prompt(messages))
-    if not clause:
+    owed: list[str] = []
+    for clause, since in file_requests(messages):
+        on_disk = bool(_LOCATION_RE.search(clause))
+        if clause not in owed and not produced_a_file(
+            messages, workspace, on_disk=on_disk, since=since
+        ):
+            owed.append(clause)
+    if not owed:
         return None
-    if produced_a_file(messages, workspace, on_disk=bool(_LOCATION_RE.search(clause))):
-        return None
-    if request_nudges_used(messages) >= max_attempts:
-        return None
+    asked = "; ".join(f'"{c}"' for c in owed[:3])
+    if len(owed) > 3:
+        asked += f" and {len(owed) - 3} more"
+    what, it = ("a file", "it") if len(owed) == 1 else ("files", "them")
     return (
-        f'{REQUEST_MARKER} the user asked you for a file ("{clause}") and this turn has not '
-        "produced one: no file tool ran and your reply names no file that exists. Write it now "
-        "(save_file for a path the user named such as ~/Downloads, the workspace file tools for "
-        "the connected workspace), confirm the path from the tool result, and give that path in "
-        "your reply. If you are not going to produce it, say so plainly and why, in the reply "
-        "itself, rather than answering in chat as though no file was asked for."
+        f"{REQUEST_MARKER} the user asked you for {what} ({asked}) and this turn has not "
+        f"produced {it}: no file tool ran after the request and no reply since names a file "
+        f"that exists. Write {it} now (save_file for a path the user named such as "
+        "~/Downloads, the workspace file tools for the connected workspace), confirm the path "
+        "from the tool result, and give that path in your reply. If you are not going to "
+        f"produce {it}, say so plainly and why, in the reply itself, rather than answering in "
+        "chat as though no file was asked for."
     )
 
 
 __all__ = [
     "MAX_REQUEST_NUDGES",
     "REQUEST_MARKER",
+    "file_requests",
     "produced_a_file",
     "request_nudges_used",
-    "requested_clause",
+    "requested_clauses",
     "requested_file_feedback",
 ]
