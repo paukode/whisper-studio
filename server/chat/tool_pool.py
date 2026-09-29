@@ -109,8 +109,8 @@ def assemble_partitioned_pool(
     """(advertised, deferred, core_count) for callers that also need the
     deferred list (the system-prompt index) and the cache-breakpoint count.
     Flag off (or no session): full catalog, nothing deferred. ``chat`` False
-    (scheduled tasks, headless and voice turns) leaves the chat-only core
-    tools deferred (tool_partition.CHAT_CORE_TOOLS)."""
+    (scheduled tasks and unattended headless turns; voice passes True) leaves
+    the chat-only core tools deferred (tool_partition.CHAT_CORE_TOOLS)."""
     catalog = assemble_full_catalog(
         plan_mode=plan_mode,
         ws_connected=ws_connected,

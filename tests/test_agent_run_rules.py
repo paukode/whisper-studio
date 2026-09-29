@@ -310,13 +310,20 @@ def test_the_finish_round_never_passes_the_cap_and_a_grant_lifts_it():
     # Told to finish during the last normal round: that round was the last.
     assert round_cap({"finish": True}, 5, 5) == 5, "never beyond the normal cap"
 
+    # The final round already started (finish_at pinned): a grant can no
+    # longer lift it, so the run still ends and is reported as stopped.
     extensions.register("probe-finish", ext)
     try:
         extensions.extend("probe-finish", rounds=5)
+        assert ext.get("finish") is True
+        # Told to finish, not yet in its final round: the grant lets it go on.
+        late = {"rounds": 0, "finish": True}
+        extensions.register("probe-finish", late)
+        extensions.extend("probe-finish", rounds=5)
     finally:
         extensions.unregister("probe-finish")
-    assert "finish" not in ext and "finish_at" not in ext
-    assert round_cap(ext, 10, 4) == 15
+    assert "finish" not in late
+    assert round_cap(late, 10, 4) == 15
 
 
 def test_the_loop_guards_refusals_count_too(monkeypatch, workspace):
@@ -330,6 +337,82 @@ def test_the_loop_guards_refusals_count_too(monkeypatch, workspace):
     assert refused, "the loop guard refused the repeats"
     assert len(fake.requests) < len(reads) + 1
     assert "tools" not in fake.requests[-1]
+
+
+def test_a_scheduled_run_starts_with_the_read_only_scope_off(monkeypatch):
+    """The scheduler's timer can carry the context of a plan-mode cron_create;
+    a scheduled run must not inherit it."""
+    import asyncio as _asyncio
+
+    import server.cron_scheduler as sched
+    from server.infrastructure import async_tasks
+
+    seen = {}
+
+    def fake_spawn(coro, *, name=None, context=None):
+        seen["read_only"] = context.run(started_read_only)
+        coro.close()
+
+    async def go():
+        monkeypatch.setattr(sched, "_server_loop", _asyncio.get_running_loop())
+        monkeypatch.setattr(async_tasks, "spawn", fake_spawn)
+        token = read_only_scope.set(True)
+        try:
+            sched._spawn_cron_run("job-x")
+        finally:
+            read_only_scope.reset(token)
+
+    _asyncio.run(go())
+    assert seen == {"read_only": False}
+
+
+def test_a_stopped_runs_report_reaches_its_structured_result(monkeypatch):
+    from server.agents import runtime_support
+    from server.agents.providers.base import ProviderTurn
+
+    sent = {}
+
+    class Adapter:
+        async def invoke(self, *, messages, **kw):
+            sent["messages"] = messages
+            return ProviderTurn(text="", tool_calls=[], usage=None, structured_output={"ok": 1})
+
+    monkeypatch.setattr("server.agents.providers.get_adapter", lambda key, mid: Adapter())
+    usage = dict.fromkeys(
+        ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "cost_usd"),
+        0,
+    )
+    result, _ = asyncio.run(
+        runtime_support.distill_run_output(
+            model_key="k",
+            model_id="m",
+            system="s",
+            messages=[{"role": "user", "content": "task"}],
+            final_text="REPORT: three findings",
+            stopped_early=True,
+            schema={"type": "object"},
+            config=AGENT_TYPES["general"],
+            usage=usage,
+            session_id="s1",
+            source="workflow",
+        )
+    )
+    assert result == {"ok": 1}
+    texts = [
+        b.get("text", "")
+        for m in sent["messages"]
+        if m["role"] == "assistant"
+        for b in m["content"]
+    ]
+    assert "REPORT: three findings" in texts
+
+
+def test_the_journal_keeps_a_refused_call_stop(tmp_path):
+    journal = journal_mod.AgentJournal.open(
+        "probe-journal", session_id="s1", task="t", agent_type="explore", model="m"
+    )
+    journal.finish(status="completed", stop_reason="refused_calls", report="r", turns_used=4)
+    assert journal_mod.load("probe-journal", "s1")["meta"]["stop_reason"] == "refused_calls"
 
 
 # ── memory tools are core in chat only ──────────────────────────────────────
@@ -346,7 +429,7 @@ def test_the_memory_tools_are_core_in_chat_turns_only():
     assert CHAT_CORE_TOOLS <= {t["name"] for t in deferred}
 
 
-def test_scheduled_and_voice_turns_defer_the_memory_tools(monkeypatch):
+def test_scheduled_turns_defer_the_memory_tools(monkeypatch):
     from server.chat import tool_pool
 
     catalog = [{"name": n} for n in sorted(CHAT_CORE_TOOLS | {"ws_read_file", "tool_search"})]

@@ -55,6 +55,7 @@ def _status_label(r: dict) -> str:
         "turn_limit": "stopped at the turn limit" + turns_s + ", report written",
         "deadline": "stopped at the time limit" + turns_s + ", report written",
         "cost_cap": "stopped at the cost cap" + turns_s + ", report written",
+        "refused_calls": "stopped after repeated refused calls" + turns_s + ", report written",
         "cancelled": "cancelled" + turns_s + ", report assembled by the runtime",
         "error": "failed" + turns_s,
         "stopped": "stopped" + turns_s,

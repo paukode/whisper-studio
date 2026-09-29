@@ -215,9 +215,9 @@ async def distill_run_output(
 
     The calls go through the old provider adapters (server.agents.providers):
     a one-shot structured-output call the chat/engine adapters have no
-    equivalent for. A run that stopped on a limit already ends with its last
-    tool result; a natural finish gets its final answer appended as one more
-    assistant turn first."""
+    equivalent for. The run's closing words (its report, or its final answer)
+    are appended as one more assistant turn first, since the runner keeps
+    them out of ctx.messages however the run ended."""
     from server.agents.providers import TurnUsage, get_adapter
 
     total = TurnUsage(
@@ -227,7 +227,10 @@ async def distill_run_output(
         cache_creation_tokens=usage["cache_creation_tokens"],
         cost_usd=usage["cost_usd"],
     )
-    if not stopped_early:
+    # The run's closing words are its report, and the runner keeps them out
+    # of ctx.messages whether it finished or stopped on a limit (turns, time,
+    # cost, refused calls), so they are appended either way.
+    if final_text or not stopped_early:
         answer = {
             "role": "assistant",
             "content": [{"type": "text", "text": final_text or "(done)"}],

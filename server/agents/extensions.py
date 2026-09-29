@@ -48,10 +48,11 @@ def extend(agent_id: str, *, rounds: int = 0, seconds: float = 0.0) -> dict | No
             return None
         ext["rounds"] = int(ext.get("rounds") or 0) + max(0, int(rounds or 0))
         ext["seconds"] = float(ext.get("seconds") or 0.0) + max(0.0, float(seconds or 0.0))
-        if rounds and ext.pop("finish", None):
-            # A run told to finish after refused calls goes on with the grant;
-            # one more refused call ends it again.
-            ext.pop("finish_at", None)
+        if rounds and ext.get("finish") and "finish_at" not in ext:
+            # A run told to finish after refused calls goes on with the grant,
+            # unless its final round has already started without tools (the
+            # runner pinned finish_at); one more refused call ends it again.
+            ext.pop("finish")
         return dict(ext)
 
 

@@ -285,7 +285,7 @@ export interface AgentReportRow {
   task: string;
   result: string;
   status: string;
-  /** completed | turn_limit | deadline | cost_cap | cancelled | error */
+  /** completed | turn_limit | deadline | cost_cap | refused_calls | cancelled | error */
   stop_reason?: string;
   turns_used?: number;
 }
@@ -320,7 +320,7 @@ export interface TeamAgentReport {
   parent_agent_id?: string | null;
   turns_used?: number;
   result?: string;
-  /** Why the run ended, when the backend named it (turn_limit, deadline, cost_cap, cancelled). */
+  /** Why the run ended, when the backend named it (turn_limit, deadline, cost_cap, refused_calls, cancelled). */
   stop_reason?: string;
   events: TeamProgressEvent[];
 }
