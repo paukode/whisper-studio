@@ -180,17 +180,22 @@ def test_plan_mode_checks_an_outright_claim_of_an_edit(tmp_path):
 # ── true replies that were dropped ───────────────────────────────────────
 
 
-def test_a_recap_of_an_earlier_turn_is_let_through():
+def test_a_recap_rests_on_what_an_earlier_reply_verified():
     before = [
         {"role": "user", "content": "push the fix and tell Dana"},
         {"role": "assistant", "content": "Pushed `fix-x` to origin. Emailed Dana the notes."},
     ]
+    # The deliveries that reply's chips verified, as the chat sends them.
+    receipts = [{"kind": "push", "target": "fix-x"}, {"kind": "message", "target": "Dana"}]
     reply = "Yes, I pushed `fix-x` and emailed Dana."
-    ev = Evidence.of(_turn(prompt="did you push it and tell Dana?", before=before))
+    turn = _turn(prompt="did you push it and tell Dana?", before=before)
+    ev = Evidence.of(turn, receipts=receipts)
     assert [check(cl, ev).ok for cl in read_claims(reply)] == [True, True]
+    # The earlier reply's words alone are no record of what happened.
+    assert not any(check(cl, Evidence.of(turn)).ok for cl in read_claims(reply))
     # Tried again this turn and failed: then the claim is checked.
     failed = ("git_push", {"branch": "fix-x"}, "Error: rejected")
-    ev = Evidence.of(_turn(failed, prompt="push again", before=before))
+    ev = Evidence.of(_turn(failed, prompt="push again", before=before), receipts=receipts)
     assert not check(read_claims("I pushed `fix-x`.")[0], ev).ok
 
 
@@ -444,16 +449,27 @@ def test_a_claim_word_holds_its_sentence_from_the_start():
     assert "I made two" not in shown
 
 
-def test_a_cut_round_settles_its_text_within_the_round():
+def test_a_cut_is_no_sentence_end_and_the_continuation_completes_it(tmp_path):
+    missing = tmp_path / "q3.docx"
     guard = ClaimGuard(started_at=time.time())
     out = _wrap(
         guard,
-        [TextDelta(text="Half of the answer"), RoundResult(stop_reason="max_tokens", content=[])],
+        [
+            TextDelta(text="Half of the answer. I saved the report to"),
+            RoundResult(stop_reason="max_tokens", content=[]),
+        ],
     )
     at_end = next(i for i, ev in enumerate(out) if isinstance(ev, RoundResult))
-    assert (
-        "".join(ev.text for ev in out[:at_end] if isinstance(ev, TextDelta)) == "Half of the answer"
+    first = "".join(ev.text for ev in out[:at_end] if isinstance(ev, TextDelta))
+    assert first == "Half of the answer."
+    out = _wrap(
+        guard,
+        [TextDelta(text=f" `{missing}`. It has three sections."), RoundResult("end_turn", [])],
     )
+    second = "".join(ev.text for ev in out if isinstance(ev, TextDelta))
+    assert "saved the report" not in second and "It has three sections." in second
+    notes = "".join(json.loads(f[6:]).get("text", "") for f in guard.finish())
+    assert f"Not saved: `{missing}` does not exist." in notes
 
 
 def test_a_true_claim_keeps_its_chip_when_a_sibling_fails(tmp_path):

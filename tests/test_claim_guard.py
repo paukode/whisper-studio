@@ -185,7 +185,7 @@ def test_a_paused_turn_notes_nothing_and_its_continuation_keeps_its_start(tmp_pa
     resumed = ClaimGuard.for_turn(ctx)
     assert resumed.started_at == guard.started_at
     # A new turn with another prompt starts its own clock.
-    claim_guard._PAUSED_STARTS["s-pause"] = (1.0, "something else")
+    claim_guard._PAUSED_STARTS["s-pause"] = claim_guard._Paused(1.0, "something else", [])
     assert ClaimGuard.for_turn(ctx).started_at != 1.0
 
 
