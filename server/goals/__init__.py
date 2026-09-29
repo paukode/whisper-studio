@@ -103,6 +103,9 @@ class GateContext:
     # When the turn began (wall clock): a file the reply says it saved must
     # have been written since. None checks that it exists only.
     turn_started_at: float | None = None
+    # The turn's tool calls as the stream guard kept them (compaction may
+    # have taken some out of ``messages``).
+    claim_calls: list | None = None
 
 
 @dataclass

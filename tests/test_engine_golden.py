@@ -114,20 +114,30 @@ def test_golden_mid_stream_error(monkeypatch):
 
 
 def test_golden_verified_claim_receipt(monkeypatch):
-    # The reply says it shared the link the prompt gave: the claim holds, and
-    # a deliveries frame follows the sentence (server/chat/claim_guard.py).
+    # The reply says it saved a memory after a memory_write that succeeded:
+    # the claim holds, and a deliveries frame follows the sentence
+    # (server/chat/claim_guard.py).
+    import server.memory.executor  # noqa: F401 - registers memory_write
+
+    note = {
+        "filename": "golden_note.md",
+        "name": "golden note",
+        "type": "user",
+        "scope": "global",
+        "description": "answer length",
+        "content": "Prefers short answers.",
+    }
     client = FakeBedrockClient(
         [
             [
                 msg_start(),
-                *text_block("I shared the draft at https://example.com/draft."),
-                *msg_end(),
+                *tool_use_block("tu_m", "memory_write", note),
+                *msg_end(stop_reason="tool_use"),
             ],
+            [msg_start(), *text_block("Saved that to your memory."), *msg_end()],
         ]
     )
-    lines = run_chat_turn(
-        monkeypatch, client, {"question": "the draft is https://example.com/draft"}
-    )
+    lines = run_chat_turn(monkeypatch, client, {"question": "remember I like short answers"})
     assert_golden("verified_claim_receipt", lines)
 
 

@@ -113,12 +113,20 @@ def test_a_folder_written_to_needs_something_new_in_it(tmp_path):
     assert verdict.ok and "q3.png" in verdict.receipt["detail"]
 
 
-def test_a_removed_file_must_be_gone(tmp_path):
+def test_a_removed_file_must_be_gone_and_removed_by_a_call(tmp_path):
     ev = Evidence.of(_turn(), started_at=time.time() - 5)
     kept = tmp_path / "kept.md"
     kept.write_text("x")
     assert "still exists" in check(Claim(c.REMOVED, str(kept)), ev).note
-    assert check(Claim(c.REMOVED, str(tmp_path / "never.md")), ev).ok
+    # A file that was never there was not removed by anything.
+    never = check(Claim(c.REMOVED, str(tmp_path / "never.md")), ev)
+    assert not never.ok and "no call in this turn removed" in never.note
+    gone = tmp_path / "gone.md"
+    removed = Evidence.of(_turn(("ws_run_command", {"command": f"rm {gone}"}, "Done.")))
+    assert check(Claim(c.REMOVED, str(gone)), removed).ok
+    # Removing its folder removes it too.
+    folder = Evidence.of(_turn(("ws_run_command", {"command": f"rm -rf {tmp_path}/build"}, "")))
+    assert check(Claim(c.REMOVED, str(tmp_path / "build" / "a.o")), folder).ok
 
 
 def test_a_relative_path_reads_against_the_workspace(tmp_path):
@@ -175,7 +183,7 @@ def test_a_pull_request_holds_with_the_call_that_opened_it():
     opened = _turn(
         (
             "github_api_write",
-            {"path": "/repos/a/b/pulls", "method": "POST"},
+            {"endpoint": "/repos/a/b/pulls", "method": "POST"},
             json.dumps({"number": 12, "html_url": "https://github.com/a/b/pull/12"}),
         )
     )
@@ -243,6 +251,7 @@ def test_an_artifact_card_holds_with_a_card_this_turn_or_the_sessions():
             False,
         ),
         ("save_file", "Saved to /Users/me/a.md", True),
+        ("ws_run_command", "[Background Task Started] task_id=1\nCommand: vercel deploy", False),
     ],
 )
 def test_a_result_says_whether_the_call_succeeded(name, result, ok):

@@ -33,6 +33,7 @@ Pure functions over text; no I/O.
 from __future__ import annotations
 
 import re
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 from urllib.parse import unquote
@@ -64,13 +65,17 @@ class Claim:
     only says where something is ("the report is at X"), so being there is
     enough; ``earlier`` marks a clause that points back to an earlier turn
     ("the file I saved earlier"). ``start`` and ``end`` are the clause's
-    offsets in the text read, and ``clause`` its words."""
+    offsets in the text read, and ``clause`` its words. ``firm`` is False
+    where the reader cannot tell the claim from a description (a passive, a
+    row of a table of changes): it is checked only where the turn tried what
+    it says (server/goals/evidence.py)."""
 
     kind: str
     target: str = ""
     made: bool = True
     earlier: bool = False
     deliverable: bool = False
+    firm: bool = True
     start: int = 0
     end: int = 0
     clause: str = ""
@@ -111,7 +116,8 @@ _CELL_PATH_RE = re.compile(rf"\s*[*_]*((?:~|/)[^|`\"<>\n]*?{_EXT})[*_]*\s*", re.
 _WHOLE_PATH_RE = re.compile(rf"(?:~|/).*{_EXT}", re.IGNORECASE)
 _TWO_PATHS_RE = re.compile(rf"\s(?:~|/)|{_EXT}\s", re.IGNORECASE)
 _ARTIFACT_CLAIM_RE = re.compile(
-    r"\bartifact (?:card )?(?:above|below|attached)\b|\bin the artifact\b|\bartifact card\b",
+    r"\bartifact (?:card )?(?:above|below|attached)\b|\bartifact card\b"
+    r"|\bin the artifact(?:\s+(?:above|below|panel|preview|view))?\b(?!['\u2019]s|\s+[a-z])",
     re.IGNORECASE,
 )
 
@@ -177,24 +183,24 @@ _MASK = "\0"
 # ── Beyond documents ───────────────────────────────────────────────────────
 # Any other file: under a local root or the home folder, or relative with a
 # folder in it ("server/app.py", which reads against the workspace), with an
-# extension; a hidden file at the home folder ("~/.zshrc"). A folder is a
-# home or rooted path whose last part has no extension ("~/Downloads",
+# extension; a hidden file or folder ("~/.zshrc", "~/.ssh/config"). A folder
+# is a home or rooted path whose last part has no extension ("~/Downloads",
 # "/Users/me/Projects/app/"). An absolute path counts only under a local root:
 # "/api/v1/users" is a route, not a place on disk.
 _APOS = "['\N{RIGHT SINGLE QUOTATION MARK}]"
 _ROOT = r"(?:~|/(?:Users|Volumes|private|tmp|var|opt|Applications|Library|home|mnt|srv)(?=/|\b))"
-_SEGMENT = r"[\w@+-][\w.@+-]*"
+_SEGMENT = r"\.?[\w@+-][\w.@+-]*"
 _OTHER_FILE_RE = re.compile(
     r"(?<![\w/.~@:%-])("
     rf"{_ROOT}/(?:{_SEGMENT}/)*{_SEGMENT}\.[A-Za-z0-9]{{1,10}}"
-    rf"|(?:\./)?(?:{_SEGMENT}/)+{_SEGMENT}\.[A-Za-z0-9]{{1,10}}"
+    rf"|(?:\./)?(?:[\w@+-][\w.@+-]*/)+{_SEGMENT}\.[A-Za-z0-9]{{1,10}}"
     r"|~/\.[\w.@+-]+"
     r")(?![\w/])"
 )
 _FOLDER_RE = re.compile(
-    rf"(?<![\w/.~@:%-])({_ROOT}(?:/[\w@+-][\w@+ -]*?)*/?)(?=[\s`'\".,;:)!?*_]|$)"
+    rf"(?<![\w/.~@:%-])({_ROOT}(?:/\.?[\w@+-][\w@+ .-]*?)+/?)(?=[\s`'\".,;:)!?*_]|$)"
 )
-_FILE_NAME_RE = re.compile(r"\.[A-Za-z0-9]{1,10}$")
+_FILE_NAME_RE = re.compile(r"(?<!^)(?<!/)\.[A-Za-z0-9]{1,10}$")
 
 # The verbs that say the assistant made, changed or removed a file, and the
 # words that say it only is somewhere ("is saved at", "is in").
@@ -211,49 +217,123 @@ _STATE_RE = re.compile(
     r"(?:saved|stored|located|kept|placed|available|ready|in|at|under|inside)\b",
     re.IGNORECASE,
 )
+# A sentence that points back to an earlier turn. "Already" does not: "I've
+# already pushed it" is as often this turn's work.
 _EARLIER_RE = re.compile(
-    r"\b(?:earlier|previously|already|yesterday|as before|before (?:this|now)"
-    r"|last (?:time|turn|session|week|night)"
+    r"\b(?:earlier|previously|yesterday|as before|before (?:this|now)"
+    r"|last (?:time|turn|session|week|night)|as (?:i|we) (?:mentioned|said|noted)"
     r"|(?:in|from|during) (?:the|a|an|my|our|your) (?:previous|earlier|last|prior) \w+)\b",
     re.IGNORECASE,
 )
 
-# Whose statement it is. Before the verb there may be connectors ("Done:",
-# "Also"), then "I" or "we" with helpers ("I've also", "we just"), or
-# nothing ("Pushed to main"); or a subject with an event passive ("the
-# branch was pushed", "it has been sent"). A plain "is" or "are" passive
-# ("the changes are pushed") counts only for the kinds where it reports the
-# assistant's own act.
-_SELF_SUBJECT_RE = re.compile(
-    r"^[\s\W]*"
-    r"(?:(?:and|also|then|finally|done|ok|okay|great|now|just|so|next|lastly|first|second"
-    r"|third|plus|all set|as requested|as asked|good news|update|result|summary)\b[\s\W]*)*"
-    rf"(?:(?:i|we)(?:{_APOS}(?:ve|d|m|re))?"
+# Whose statement it is. The assistant's own: connectors ("Done:", "Also"),
+# then "I" or "we" with helpers ("I've also"), or nothing ("Pushed to main");
+# or anything that ends in "I" or "we" ("After the tests passed I pushed"),
+# unless "I" opens a subordinate clause ("When I pushed, it failed").
+_CONNECTORS = (
+    r"(?:and|also|then|finally|done|ok|okay|great|now|just|so|next|lastly|first|second|third"
+    r"|plus|all set|as requested|as asked|good news|update|result|summary)"
+)
+_HELPERS = (
     r"(?:\s+(?:have|had|also|just|now|then|already|successfully|finally|quickly"
-    r"|went ahead and|was able to|were able to|managed to|did))*\s*)?$",
+    r"|went ahead and|was able to|were able to|managed to|did))*"
+)
+_SELF_SUBJECT_RE = re.compile(
+    rf"^[\s\W]*(?:{_CONNECTORS}\b[\s\W]*)*(?:(?:i|we)(?:{_APOS}(?:ve|d|m|re))?{_HELPERS}\s*)?$",
     re.IGNORECASE,
 )
+_SELF_END_RE = re.compile(rf"\b(?:i|we)(?:{_APOS}(?:ve|d))?{_HELPERS}\s*$", re.IGNORECASE)
+_SUBORDINATE_RE = re.compile(
+    r"\b(?:when|while|as|once|if|until|unless|whenever|because|since|though|although|before)"
+    r"\s+(?:i|we)\b",
+    re.IGNORECASE,
+)
+# A subject and an event passive ("the branch was pushed", "it has been
+# sent"): as often a report of someone else's act, so such a claim is checked
+# only where the turn tried the act (Claim.firm False).
 _EVENT_PASSIVE_RE = re.compile(
-    rf"(?:\b(?:was|were|has been|have been|had been|got|gets|is now|are now)|{_APOS}s(?:\s+now)?\s+been)"
-    r"(?:\s+(?:now|also|just|successfully|already|finally|all))*\s*$",
+    rf"(?:\b(?:was|were|has been|have been|had been|got|gets|is now|are now)"
+    rf"|{_APOS}s(?:\s+now)?\s+been)(?:\s+(?:now|also|just|successfully|already|finally|all))*\s*$",
     re.IGNORECASE,
 )
+# A subject and a present passive ("all changes are committed and pushed"):
+# as often a description of how something works ("the image is pushed to
+# ECR"), so it too is checked only where the turn tried the act.
 _STATE_PASSIVE_RE = re.compile(
-    rf"(?:\b(?:is|are)|{_APOS}s|{_APOS}re)(?:\s+(?:now|also|just|all|already))*\s*$", re.IGNORECASE
+    rf"(?:\b(?:is|are)|{_APOS}s|{_APOS}re)(?:\s+(?:now|also|just|all|already))*\s*$",
+    re.IGNORECASE,
 )
-# A third party did it: "merged by Dana", "pushed by the CI".
+# A passive whose subject is the work itself ("All changes are committed and
+# pushed", "the fix has been pushed", "branch `x` is merged") reports the
+# assistant's own act, and is checked as such.
+_WORK_SUBJECT_RE = re.compile(
+    r"(?:^|[\s\W])(?:all\s+(?:of\s+)?(?:the\s+|my\s+|your\s+|these\s+)?changes|(?:the|my|your"
+    r"|these|those)\s+(?:changes|commits?|fix(?:es)?|work)|everything)"
+    r"\s+(?:is|are|was|were|has\s+been|have\s+been)(?:\s+(?:now|also|all|already|both))*\s*$",
+    re.IGNORECASE,
+)
+# A sentence that reports what a source says ("According to the log, the
+# fix was pushed at 10:02") claims nothing of the assistant's own: its claims
+# are checked only where the turn tried the act.
+_REPORTED_RE = re.compile(
+    r"\baccording\s+to\b|\bper\s+the\b|\b(?:the|this|that)\s+(?:log|logs|output|history|ci"
+    r"|build|pipeline|report|audit\s+log|changelog)\s+(?:shows?|says?|states?|lists?)\b",
+    re.IGNORECASE,
+)
+# A passive in a clause about what will happen ("when they are posted",
+# "once it is merged").
+_PENDING_PASSIVE_RE = re.compile(
+    r"\b(?:when|once|if|until|after|before|as\s+soon\s+as|unless)\s+\S+(?:\s+\S+){0,3}\s+"
+    r"(?:is|are|was|were|has\s+been|have\s+been|gets?)\s*$",
+    re.IGNORECASE,
+)
+# A headline: a short phrase naming what was acted on, then the verb
+# ("Changes pushed to `main`", "Email sent to Dana"). The noun must be one the
+# act is done to, so "CI pushed a build" and "Dana merged it" are not.
+_HEADLINE_RE = re.compile(
+    r"^[\s\W]*(?:(?:the|your|all|my|both)\s+)?[A-Za-z][\w-]*(?:\s+[A-Za-z][\w-]*){0,2}[\s*_`]*$"
+)
+_NOT_HEADLINE_RE = re.compile(
+    r"\b(?:i|we|you|he|she|they|it|this|that|these|those|there|is|are|was|were|be|been|has"
+    r"|have|had|will|would|should|can|could|may|might|must|do|does|did|not|no)\b",
+    re.IGNORECASE,
+)
+# How a process works, not what the assistant did ("uploaded nightly").
+_PROCESS_RE = re.compile(
+    r"\b(?:nightly|daily|hourly|weekly|monthly|every|each\s+time|whenever|automatically"
+    r"|periodically|on\s+(?:each|every|failure|success|merge|push))\b",
+    re.IGNORECASE,
+)
+# A sentence about what happens when something is done ("When you run it,
+# the report is saved to X") claims nothing.
+_CONDITIONAL_RE = re.compile(
+    r"^[\s\W]*(?:when|once|after|whenever|each\s+time|every\s+time|if|as\s+soon\s+as)\s+"
+    r"(?:you|it|your|the\s+user|users?|someone|anyone|one|this|that|the\s+(?:job|script"
+    r"|pipeline|workflow|task|build|app|tool|command|scheduler|cron|process|service|server|bot"
+    r"|run))\b",
+    re.IGNORECASE,
+)
+# A third party did it: "merged by Dana", "pushed by the CI", "uploaded by
+# the release script".
 _BY_OTHER_RE = re.compile(
-    r"\bby\s+(?:@\w|[A-Z][\w-]*|(?i:the\s+(?:user|team|ci|bot|pipeline|workflow|action"
-    r"|scheduler|reviewer|maintainer)s?\b|ci\b|someone\b|another\b))"
+    r"\bby\s+(?:@\w|[A-Z][\w-]*|(?i:the\s+(?:[\w-]+\s+)?(?:user|team|ci|bot|pipeline|workflow"
+    r"|action|scheduler|reviewer|maintainer|script|job|build|process|system|tool|hook)s?\b"
+    r"|ci\b|someone\b|another\b))"
 )
+_NEGATED_AFTER_RE = re.compile(r"^[\s*_`]*(?:nothing|none|no\b|not\b)", re.IGNORECASE)
 
 # The kinds that are not files, each the past-tense verb that reports it.
 # PR, issue and merge need their object in the clause ("merged the PR",
-# "merged into main"; not "merged the two lists"); a message needs a message
-# or a recipient ("sent the summary to Dana"; not "sent a request").
+# "merged into main"; not "merged the two helpers into main.py"); a message
+# needs a message or a recipient ("sent the summary to Dana"; not "sent a
+# request").
 _MERGE_OBJECT = (
     r"\b(?:PRs?|pull[- ]requests?|MRs?|merge[- ]requests?|branch(?:es)?|worktrees?)\b|#\d+"
-    r"|\binto\s+[`'\"]?(?:main|master|develop|dev|trunk|release)\b"
+    r"|\binto\s+[`'\"]?(?:main|master|develop|dev|trunk|release)\b(?![.\w/-])"
+)
+_SETTING_NOT = (
+    r"dialog|page|screen|panel|view|component|file|menu|tab|modal|form|schema|type|key|section"
+    r"|ui|window|button|store|hook|route|sheet|module|class|object"
 )
 _KIND_PATTERNS = (
     (PUSH, re.compile(r"\b(?:force[- ]?)?pushed\b(?!\s+back\b)", re.IGNORECASE)),
@@ -292,16 +372,15 @@ _KIND_PATTERNS = (
     (
         MESSAGE,
         re.compile(
-            rf"\b(?:sent|emailed|e-mailed|messaged|posted|replied|forwarded|pinged|texted|notified|dm{_APOS}?e?d)\b",
+            r"\b(?:sent|emailed|e-mailed|messaged|posted|replied|forwarded|pinged|texted"
+            rf"|notified|dm{_APOS}?e?d)\b",
             re.IGNORECASE,
         ),
     ),
     (
         PUBLISH,
         re.compile(
-            r"\b(?:deployed|redeployed|published)\b"
-            r"|\breleased\b(?=.*?(?:\bv?\d+\.\d+|\bversions?\b|\breleases?\b|\bpackages?\b"
-            r"|\bto\s+(?:prod|production|staging|npm|pypi)\b))"
+            r"\b(?:deployed|redeployed|published|released)\b"
             r"|\b(?:is|are)\s+now\s+live\b|\bwent\s+live\b",
             re.IGNORECASE,
         ),
@@ -320,7 +399,7 @@ _KIND_PATTERNS = (
         MEMORY,
         re.compile(
             r"\b(?:saved|stored|added|noted|recorded|written|wrote|put|kept)\b"
-            r"(?=.*?\b(?:to|in|into)\s+(?:your\s+|my\s+|the\s+|long[- ]term\s+|session\s+)*memory\b)",
+            r"(?=.*?\b(?:to|in|into)\s+(?:your|my|long[- ]term|the\s+session\S*)\s+memory\b)",
             re.IGNORECASE,
         ),
     ),
@@ -328,13 +407,54 @@ _KIND_PATTERNS = (
         SETTING,
         re.compile(
             r"\b(?:set|changed|updated|switched|turned\s+(?:on|off)|enabled|disabled|toggled)\b"
-            r"(?=.*?\b(?:setting|settings|preferences?|feature\s+flags?)\b)",
+            rf"(?=.*?\b(?:setting|preference)s?\b(?!\s+(?:{_SETTING_NOT})s?\b)|.*?\bfeature\s+flags?\b)",
             re.IGNORECASE,
         ),
     ),
 )
-# Where "is" or "are" before the verb reports the assistant's own act.
-_STATE_PASSIVE_KINDS = frozenset({PUSH, COMMIT, UPLOAD, MESSAGE})
+# What the verb must be done to, where the verb alone says too little ("I
+# pushed the validation down into the model layer", "I committed the
+# transaction", "I published the event on the bus" are not deliveries).
+_OBJECTS = {
+    PUSH: re.compile(
+        r"^[\s.,;:!?*_]*$|^[^.;]*?(?:\bto\s+(?:the\s+)?(?:origin|upstream|remote|github|gitlab|bitbucket|main"
+        r"|master|develop|dev|trunk|release|production|prod|staging|ecr|docker\s*hub|registry"
+        r"|remote|branch|repo(?:sitory)?)\b|`|\b(?:branch(?:es)?|commits?|changes|fix(?:es)?|tags?"
+        r"|image|images|it|them|everything)\b)",
+        re.IGNORECASE,
+    ),
+    "committed": re.compile(
+        r"^[\s.,;:!?*_]*$|^[^.;]*?(?:`|\b(?:changes|fix(?:es)?|files?|work|code|updates?|everything|it|them)\b"
+        r"|\bto\s+(?:main|master|develop|the\s+(?:branch|repo))\b"
+        r"|\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b)",
+        re.IGNORECASE,
+    ),
+    "published": re.compile(
+        r"^[\s.,;:!?*_]*$|^[^.;]*?(?:\b(?:packages?|versions?|releases?|site|page|docs?|documentation|app|build"
+        r"|image|article|post|blog|extension|crate|gem|module|library|changelog|notes)\b"
+        r"|\bv?\d+\.\d+|\bto\s+(?:npm|pypi|production|prod|staging|github|the\s+app\s+store"
+        r"|vercel|netlify|crates\.io|rubygems|the\s+marketplace)\b|https?://|`)",
+        re.IGNORECASE,
+    ),
+    "deployed": re.compile(
+        r"^[\s.,;:!?*_]*$|^[^.;]*?(?:\b(?:app|site|service|stack|function|lambda|api|build|changes|fix(?:es)?"
+        r"|release|version|it|them|everything|infrastructure|worker|bot|image|backend|frontend"
+        r"|update|page)\b|\bto\s+\w+|https?://|`)",
+        re.IGNORECASE,
+    ),
+}
+_HEADLINE_NOUNS = {
+    PUSH: r"changes|commits?|branch(?:es)?|fix(?:es)?|code|tags?|images?|updates?",
+    COMMIT: r"changes|fix(?:es)?|files?|updates?",
+    MERGE: r"PRs?|pull\s+requests?|branch(?:es)?|MRs?",
+    PR: r"PR|pull\s+request|MR|merge\s+request",
+    ISSUE: r"issues?|tickets?",
+    UPLOAD: r"files?|exports?|reports?|data|backups?|artifacts?|images?|uploads?",
+    MESSAGE: r"e-?mails?|messages?|summar(?:y|ies)|notes?|invites?|invitations?|repl(?:y|ies)"
+    r"|updates?|reports?|notifications?|reminders?|recaps?|digests?",
+    PUBLISH: r"sites?|apps?|packages?|releases?|versions?|docs|builds?|images?|pages?",
+    SCHEDULE: r"tasks?|jobs?|reminders?|runs?|checks?|reports?",
+}
 _MESSAGE_NOUN_RE = re.compile(
     r"\b(?:e-?mails?|messages?|notes?|repl(?:y|ies)|invit(?:e|es|ation|ations)|summar(?:y|ies)"
     r"|updates?|dms?|notifications?|texts?|sms|posts?|comments?|reminders?|reports?"
@@ -355,18 +475,20 @@ _NOT_A_MESSAGE_RE = re.compile(
 _LINK_VERB_RE = re.compile(
     r"\b(?:created|generated|published|uploaded|posted|shared|deployed)\b", re.IGNORECASE
 )
+# Between a link verb and its address: a reference ("created the helper
+# following https://docs...") makes the address a source, not the delivery.
+_LINK_REFERENCE_RE = re.compile(
+    r"\b(?:following|per|from|see|using|based\s+on|like|as\s+in|described|according\s+to|via"
+    r"|docs?|documentation|reference|guide|example|pattern)\b",
+    re.IGNORECASE,
+)
 # An act with no subject ("Pushed to main") reads as the assistant's only
 # where its verb goes on like a verb phrase: into an object, a place, a
 # target or nothing. "Scheduled Python checks" and "Merged PRs:" are names of
 # things, not acts. A message verb may take its recipient ("Emailed Dana").
-_AGENTLESS_RE = re.compile(
-    r"^[\s\W]*(?:(?:and|also|then|finally|done|ok|okay|great|now|just|so|next|lastly|first"
-    r"|second|third|plus|all set|as requested|as asked|good news|update|result|summary)\b"
-    r"[\s\W]*)*$",
-    re.IGNORECASE,
-)
+_AGENTLESS_RE = re.compile(rf"^[\s\W]*(?:{_CONNECTORS}\b[\s\W]*)*$", re.IGNORECASE)
 _VERB_PHRASE_RE = re.compile(
-    r"^\s*(?:$|[.,;:!?)\]`'\"(\[#@~/\N{BULLET}\0]|https?://|\d|v\d"
+    r"^[\s*_]*(?:$|[.,;:!?)\]`'\"(\[#@~/\N{BULLET}\0]|https?://|\d|v\d"
     r"|(?:the|a|an|it|them|this|that|these|those|your|my|our|his|her|their|all|both|each"
     r"|every|one|two|three|to|into|in|on|at|from|with|for|over|back|up|out|off|and|then|as"
     r"|successfully|PR|MR|pull request|merge request|issue|ticket)\b)",
@@ -375,36 +497,35 @@ _VERB_PHRASE_RE = re.compile(
 _RECIPIENT_VERB_RE = re.compile(
     rf"^(?:emailed|e-mailed|messaged|pinged|texted|notified|dm{_APOS}?e?d)$", re.IGNORECASE
 )
-_NAME_NEXT_RE = re.compile(r"^\s*[A-Z][a-z]+\b")
+_NAME_NEXT_RE = re.compile(r"^[\s*_]*([A-Z][a-z]+)\b")
 _BACKTICK_TOKEN_RE = re.compile(r"`([^`\s]+)`")
 _TO_TOKEN_RE = re.compile(r"\b(?:to|into|on)\s+(?:the\s+)?[`'\"]?([\w./-]+)[`'\"]?", re.IGNORECASE)
 _GENERIC_BRANCHES = frozenset(
-    {
-        "remote",
-        "origin",
-        "github",
-        "gitlab",
-        "upstream",
-        "repo",
-        "repository",
-        "the",
-        "it",
-        "branch",
-        "server",
-        "your",
-        "my",
-        "a",
-        "an",
-    }
-)
-_SHA_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
+    {"remote", "origin", "github", "gitlab", "upstream", "repo", "repository", "the", "it",
+     "branch", "server", "your", "my", "a", "an", "registry"}
+)  # fmt: skip
+# A commit id: seven or more hex digits with a letter and a digit among them
+# ("1500000 rows" and "20260929" are not).
+_SHA_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b")
 _NUMBER_RE = re.compile(r"(?:#|\b(?:PR|MR|issue|pull request)\s+#?)(\d+)\b", re.IGNORECASE)
 _S3_RE = re.compile(r"\bs3://[^\s`'\"()<>\[\]]+")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_HANDLE_RE = re.compile(r"(?<![\w.])[@#][\w.-]*\w")
+_HANDLE_RE = re.compile(r"(?<![\w.])(?:@[\w.-]*\w|#(?!\d+\b)[\w.-]*\w)")
 _NAME_RE = re.compile(r"\bto\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)")
 _VERSION_RE = re.compile(r"\bv?\d+\.\d+(?:\.\d+)*\b")
 _TRAILING_PUNCT = ".,;:!?)]}>'\"`*"
+# What may make a sentence still being written a claim, for the stream guard
+# (server/chat/claim_guard.py): a path, an address, a link, code, a number
+# sign, or any verb this module reads.
+TRIGGER_RE = re.compile(
+    r"[~/`\[#]|://|\b\w+/\w"
+    rf"|\b(?:{_MADE_VERBS}|{_GONE_VERBS}|pushed|committed|commits?|merged|opened|raised|submitted"
+    r"|filed|logged|uploaded|synced|sent|emailed|e-mailed|messaged|posted|replied|forwarded"
+    r"|pinged|texted|notified|dm\w*|deployed|redeployed|published|released|scheduled|set|switched"
+    r"|enabled|disabled|toggled|turned|noted|recorded|kept|made|artifact|here|ready|available"
+    r"|find|located|lives|live|PRs?|pull request|memory)\b",
+    re.IGNORECASE,
+)
 
 
 # ── Finding the paths a text names ─────────────────────────────────────────
@@ -550,15 +671,23 @@ _PASSIVE_AFTER_RE = re.compile(
     rf"(?:\s+(?:also|now|just|successfully|finally))*\s+(?P<verb>{_MADE_VERBS}|{_GONE_VERBS})\b",
     re.IGNORECASE,
 )
-# A path right after "from" is where the work came from ("Added the rows from
-# `a.md`"), except after a verb of removing: "Removed the stale line from
-# ~/a.md" edited that file.
 _JOINED_RE = re.compile(r"(?:\band|&|,)\s*(?:then\s+|also\s+)?$", re.IGNORECASE)
-_FROM_AHEAD_RE = re.compile(r"\bfrom\s*[`'\"(\[]*$", re.IGNORECASE)
+# A path right after "from" is where the work came from ("Added the rows from
+# `a.md`"); after a verb of removing, a path after "from", "across", "in" and
+# the like was edited, not removed ("Removed unused imports across
+# `server/app.py`").
+_FROM_AHEAD_RE = re.compile(r"\bfrom\s*[`'\"(\[*_]*$", re.IGNORECASE)
+_EDIT_PREP_RE = re.compile(
+    r"\b(?:from|across|of|inside|within|in|throughout|out\s+of)\s*[`'\"(\[*_]*$", re.IGNORECASE
+)
+# "Renamed `old.ts` to `new.ts`": the first path is gone, the second made.
+_RENAME_VERB_RE = re.compile(r"^(?:renamed|moved)$", re.IGNORECASE)
+_RENAME_TO_RE = re.compile(r"^[\s`'\"*_)\]]*(?:to|into|as)\b", re.IGNORECASE)
 # The tail of a path with spaces written bare ("~/My Folder/a.py" read as
 # "~/My" and "Folder/a.py"): neither part is the path, so neither is read.
 _SPACED_PATH_AHEAD_RE = re.compile(r"(?:~|/)[^\s`'\"]*\s$")
 _SPACED_PATH_AFTER_RE = re.compile(r"\s[^\s/`'\"]+/")
+_SENTENCE_BREAK_RE = re.compile(r"[.!?][)\]\"'*_`]*\s+|\n")
 
 
 class _Found(NamedTuple):
@@ -667,15 +796,22 @@ def _made_verb(said: str) -> bool:
     return any(m.group("made") for m in _VERB_RE.finditer(said))
 
 
-def _self_subject(before: str, *, state_passive: bool = False) -> bool:
-    """True when the words ahead of a verb make it the assistant's own
-    statement (see _SELF_SUBJECT_RE)."""
+def _subject(before: str) -> str | None:
+    """Whose statement the verb after ``before`` makes: "firm" for the
+    assistant's own (see _SELF_SUBJECT_RE), "headline" for a short phrase
+    naming what was acted on, "soft" for an event passive, or None."""
     before = _LIST_ITEM_RE.sub("", before, count=1)
-    return bool(
-        _SELF_SUBJECT_RE.match(before)
-        or _EVENT_PASSIVE_RE.search(before)
-        or (state_passive and _STATE_PASSIVE_RE.search(before))
-    )
+    if _SELF_SUBJECT_RE.match(before):
+        return "firm"
+    if _SELF_END_RE.search(before) and not _SUBORDINATE_RE.search(before):
+        return "firm"
+    if _WORK_SUBJECT_RE.search(before):
+        return "firm"
+    if _EVENT_PASSIVE_RE.search(before) or _STATE_PASSIVE_RE.search(before):
+        return "soft"
+    if _HEADLINE_RE.match(before) and not _NOT_HEADLINE_RE.search(before):
+        return "headline"
+    return None
 
 
 def _agentless(before: str) -> bool:
@@ -694,19 +830,24 @@ def _verb_phrase(verb: str, after: str) -> bool:
 
 
 def _path_claims(
-    lead: str, masked: str, said: str, found: list[_Found], prev: tuple[bool, bool]
+    lead: str,
+    masked: str,
+    said: str,
+    found: list[_Found],
+    prev: tuple[bool, bool, bool],
+    negated: bool,
 ) -> list[Claim]:
-    """The paths one clause claims. A document or a folder is claimed as the
-    notes above _CODE_FENCE_RE say; any other file only where the assistant
-    says it made, changed or removed it. A clause of paths alone continues
-    the last one ("Saved to X, Y and Z")."""
-    prev_claimed, prev_made = prev
+    """The paths one clause claims. A document is claimed as the notes above
+    _CODE_FENCE_RE say; any other file or folder only where the assistant
+    says it made, changed or removed it ("firm"), or where a passive says so
+    of it (checked only if the turn wrote it). A clause of paths alone
+    continues the last one ("Saved to X, Y and Z")."""
+    prev_claimed, prev_made, prev_firm = prev
     done = bool(_DONE_RE.search(said))
     made_here = _made_verb(said) and not _STATE_RE.search(said)
-    earlier = bool(_EARLIER_RE.search(said))
     continuing = prev_claimed and not _PATHS_ONLY_RE.sub("", masked).strip()
     claims: list[Claim] = []
-    for f in found:
+    for i, f in enumerate(found):
         s = f.span
         ahead = masked[: s.start]
         if _OFFER_AHEAD_RE.search(f"{lead} {ahead}"):
@@ -717,23 +858,39 @@ def _path_claims(
             passive and re.fullmatch(_GONE_VERBS, passive.group("verb"), re.IGNORECASE)
         )
         located = bool(_LOCATED_RE.search(_LINK_OPEN_RE.sub("", ahead)))
-        source = bool(_FROM_AHEAD_RE.search(ahead))
-        if source and not gone:
+        if _FROM_AHEAD_RE.search(ahead) and not gone:
             # "Added the rows from `a.md`": where the work came from.
             continue
-        if gone and (located or source):
+        if gone and (located or _EDIT_PREP_RE.search(ahead)):
             gone = False
+        renamed_from = (
+            verb is not None
+            and _RENAME_VERB_RE.match(verb.group(0))
+            and i + 1 < len(found)
+            and _RENAME_TO_RE.match(masked[s.end :])
+        )
+        firm = True
         if f.deliverable:
-            if not (s.app_link or done or located or continuing or gone or passive):
+            if negated or not (s.app_link or done or located or continuing or gone or passive):
                 continue
         elif verb is not None:
-            if not _self_subject(ahead[: verb.start()]):
+            if _NOT_MADE_RE.search(f"{lead} {ahead}"):
                 continue
-        elif not (passive or continuing):
+            who = _subject(ahead[: verb.start()])
+            if who is None:
+                continue
+            firm = who != "soft"
+        elif passive:
+            firm = False
+        elif continuing:
+            firm = prev_firm
+        else:
             continue
-        kind = REMOVED if gone else (FOLDER if f.folder else FILE)
+        kind = REMOVED if (gone or renamed_from) else (FOLDER if f.folder else FILE)
         made = kind != REMOVED and (made_here or bool(passive) or (continuing and prev_made))
-        claims.append(Claim(kind, s.path, made=made, earlier=earlier, deliverable=f.deliverable))
+        claims.append(
+            Claim(kind, s.path, made=made, deliverable=f.deliverable, firm=firm or f.deliverable)
+        )
     return claims
 
 
@@ -744,9 +901,12 @@ def _act_target(kind: str, clause: str, at: int) -> str:
     rest = clause[at:]
     m = None
     if kind == PUSH:
-        m = _BACKTICK_TOKEN_RE.search(rest) or _TO_TOKEN_RE.search(rest)
-        token = (m.group(1) if m else "").strip(_TRAILING_PUNCT)
-        return "" if token.lower() in _GENERIC_BRANCHES else token
+        for pattern in (_TO_TOKEN_RE, _BACKTICK_TOKEN_RE):
+            m = pattern.search(rest)
+            token = (m.group(1) if m else "").strip(_TRAILING_PUNCT)
+            if token and token.lower() not in _GENERIC_BRANCHES:
+                return token
+        return ""
     if kind == COMMIT:
         m = _SHA_RE.search(clause)
     elif kind in (PR, ISSUE, MERGE):
@@ -760,50 +920,106 @@ def _act_target(kind: str, clause: str, at: int) -> str:
         m = _EMAIL_RE.search(rest) or _HANDLE_RE.search(rest)
         if not m:
             name = _NAME_RE.search(rest) or _NAME_NEXT_RE.match(rest)
-            return name.group(name.lastindex or 0).strip() if name else ""
+            return name.group(1).strip() if name else ""
     elif kind == PUBLISH:
         m = _URL_RE.search(rest) or _VERSION_RE.search(rest)
     return m.group(0).rstrip(_TRAILING_PUNCT) if m else ""
 
 
-def _act_claims(lead: str, clause: str, masked: str, earlier: bool) -> list[Claim]:
+_PR_HEADLINE_RE = re.compile(
+    r"^[\s\W]*(?:the\s+)?(?P<noun>PR|pull\s+request|MR|merge\s+request|issue)(?:\s+#\d+)?"
+    r"\s+(?:opened|created|raised|submitted|filed|is\s+up|up)\b",
+    re.IGNORECASE,
+)
+
+
+def _act_claims(lead: str, clause: str, masked: str) -> list[Claim]:
     """The claims one clause makes that are not paths: an artifact card, the
     acts in _KIND_PATTERNS, and a link the assistant says it made."""
     claims: list[Claim] = []
     m = _ARTIFACT_CLAIM_RE.search(masked)
-    if m and not _OFFER_AHEAD_RE.search(f"{lead} {masked[: m.start()]}"):
-        claims.append(Claim(ARTIFACT, made=False, earlier=earlier))
+    if (
+        m
+        and not _OFFER_AHEAD_RE.search(f"{lead} {masked[: m.start()]}")
+        and not _NOT_MADE_RE.search(f"{lead} {masked}")
+    ):
+        claims.append(Claim(ARTIFACT, made=False))
+    process = bool(_PROCESS_RE.search(masked))
     targets: set[str] = set()
+    headline = _PR_HEADLINE_RE.match(masked)
+    if headline:
+        kind = ISSUE if headline.group("noun").lower() == "issue" else PR
+        target = _act_target(kind, clause, headline.end())
+        targets.add(target)
+        claims.append(Claim(kind, target, made=True))
     acts = sorted(
         (m.start(), kind, m) for kind, pattern in _KIND_PATTERNS if (m := pattern.search(masked))
     )
-    said_so = False
+    said_so: Claim | None = None
+    short = len(masked.split()) <= 14
     for _at, kind, m in acts:
-        before, rest = masked[: m.start()], clause[m.end() :]
-        # "committed and pushed": a verb joined to one already claimed shares
-        # its subject.
-        joined = said_so and _JOINED_RE.search(before)
+        if headline and kind in (PR, ISSUE):
+            continue
+        before, rest, after = masked[: m.start()], clause[m.end() :], masked[m.end() :]
         if (
             _OFFER_AHEAD_RE.search(f"{lead} {before}")
+            or _NOT_MADE_RE.search(f"{lead} {before}")
+            or _NEGATED_AFTER_RE.match(after)
             or _BY_OTHER_RE.search(rest)
-            or not (joined or _self_subject(before, state_passive=kind in _STATE_PASSIVE_KINDS))
         ):
             continue
-        if _agentless(before) and not _verb_phrase(m.group(0), masked[m.end() :]):
+        # "committed and pushed": a verb joined to one already claimed shares
+        # its subject.
+        if said_so is not None and _JOINED_RE.search(before):
+            who = "firm" if said_so.firm else "soft"
+        else:
+            who = _subject(before)
+        if process and who in ("soft", "headline"):
+            # How a process works ("the export is uploaded nightly").
+            continue
+        if who == "headline":
+            nouns = _HEADLINE_NOUNS.get(kind)
+            if not (short and nouns and re.search(rf"\b(?:{nouns})\W*$", before, re.IGNORECASE)):
+                continue
+        elif who is None:
+            continue
+        if who == "firm" and _agentless(before) and not _verb_phrase(m.group(0), after):
+            continue
+        first = m.group(0).lower().split()[0]
+        first = {"released": "published", "redeployed": "deployed"}.get(first, first)
+        wanted = _OBJECTS.get(kind) if kind == PUSH else _OBJECTS.get(first)
+        # A passive names what it acted on ahead of the verb ("All changes are
+        # committed").
+        passive = bool(
+            _WORK_SUBJECT_RE.search(before)
+            or _EVENT_PASSIVE_RE.search(before)
+            or _STATE_PASSIVE_RE.search(before)
+        )
+        if wanted is not None and not (
+            wanted.match(before)
+            if passive and not after.strip(" .,;:!?*_")
+            else wanted.match(after) or (passive and wanted.match(before))
+        ):
+            # A bare verb ends its clause ("Committed."); a bare passive
+            # ("after that lock is released") names nothing delivered.
+            continue
+        if passive and _PENDING_PASSIVE_RE.search(before):
+            # "when they are posted": what will happen, not what did.
             continue
         if kind == MESSAGE and (
             _NOT_A_MESSAGE_RE.match(rest)
             or not (
                 _RECIPIENT_VERB_RE.match(m.group(0))
                 or _MESSAGE_NOUN_RE.search(rest)
+                or _MESSAGE_NOUN_RE.search(before)
                 or _RECIPIENT_RE.search(rest)
             )
         ):
             continue
         target = _act_target(kind, clause, m.end())
         targets.add(target)
-        claims.append(Claim(kind, target, made=True, earlier=earlier))
-        said_so = True
+        said_so = Claim(kind, target, made=True, firm=who != "soft")
+        claims.append(said_so)
     for u in _URL_RE.finditer(clause):
         url = u.group(0).rstrip(_TRAILING_PUNCT)
         if url in targets or url.lower().startswith("s3://"):
@@ -812,26 +1028,33 @@ def _act_claims(lead: str, clause: str, masked: str, earlier: bool) -> list[Clai
         verb = None
         for v in _LINK_VERB_RE.finditer(before):
             verb = v
+        if verb is None:
+            continue
+        between = before[verb.end() :]
+        who = _subject(before[: verb.start()])
         if (
-            verb is None
+            who not in ("firm", "soft")
+            or len(between) > 60
+            or _LINK_REFERENCE_RE.search(between)
             or _OFFER_AHEAD_RE.search(f"{lead} {before}")
-            or not _self_subject(before[: verb.start()])
+            or _NOT_MADE_RE.search(f"{lead} {before}")
             or (
-                _agentless(before[: verb.start()])
-                and not _verb_phrase(verb.group(0), before[verb.end() :])
+                who == "firm"
+                and _agentless(before[: verb.start()])
+                and not _verb_phrase(verb.group(0), between)
             )
         ):
             continue
-        claims.append(Claim(LINK, url, made=True, earlier=earlier))
+        claims.append(Claim(LINK, url, made=True, firm=who == "firm"))
         targets.add(url)
     return claims
 
 
 def _clause_claims(
-    lead: str, clause: str, prev: tuple[bool, bool]
-) -> tuple[list[Claim], tuple[bool, bool]]:
+    lead: str, clause: str, prev: tuple[bool, bool, bool]
+) -> tuple[list[Claim], tuple[bool, bool, bool]]:
     """The claims one clause of prose makes, and whether it claimed a path
-    (and a made one) for a next clause of paths alone."""
+    (a made one, a firm one) for a next clause of paths alone."""
     docs = _path_spans(clause)
     found = sorted(
         [_Found(s, True, False) for s in docs] + _other_paths(clause, docs),
@@ -839,20 +1062,26 @@ def _clause_claims(
     )
     masked = _masked(clause, [f.span for f in found])
     said = f"{lead} {masked}"
-    if _is_question(clause) or _NOT_MADE_RE.search(said):
-        return [], (False, False)
-    paths = _path_claims(lead, masked, said, found, prev) if found else []
-    acts = _act_claims(lead, clause, masked, bool(_EARLIER_RE.search(said)))
-    return paths + acts, (bool(paths), any(c.made for c in paths))
+    if _is_question(clause):
+        return [], (False, False, False)
+    # A document's clause is negated whole (the rules above _CODE_FENCE_RE);
+    # an act or another file is negated only around its own verb, so "Pushed
+    # the fix for the Not Found case" is still a push.
+    negated = bool(_NOT_MADE_RE.search(said))
+    paths = _path_claims(lead, masked, said, found, prev, negated) if found else []
+    acts = _act_claims(lead, clause, masked)
+    after = (bool(paths), any(p.made for p in paths), any(p.firm for p in paths))
+    return paths + acts, after
 
 
 def _row_claims(lead: str, row: str) -> list[Claim]:
     """The claims a row of a file table makes: every path in it, unless the
     row (with the table's lead-in line) negates, offers or asks, or says its
-    file moved. A row that says its file was deleted claims it is gone; a
+    file moved. A row that says its file was deleted claims it is gone. A
     file that is not a document is claimed only where the row or its lead
-    says what was done to it, and a document only says where it is unless
-    they do."""
+    says what was done to it, and then only where the turn wrote it (a table
+    reviewing a pull request lists changes someone else made); a document
+    only says where it is unless they do."""
     docs = _row_spans(row)
     others = _other_paths(row, docs)
     masked = _masked(row, docs + [f.span for f in others])
@@ -871,26 +1100,60 @@ def _row_claims(lead: str, row: str) -> list[Claim]:
     claims = [Claim(kind, s.path, made=made, deliverable=True) for s in docs]
     if gone or made:
         claims += [
-            Claim(REMOVED if gone else (FOLDER if f.folder else FILE), f.span.path, made=made)
+            Claim(
+                REMOVED if gone else (FOLDER if f.folder else FILE),
+                f.span.path,
+                made=made,
+                firm=False,
+            )
             for f in others
         ]
     return claims
 
 
+def _sentence(text: str, start: int, end: int, breaks: list[int]) -> str:
+    """The sentence of ``text`` that holds [start, end)."""
+    i = bisect_right(breaks, start)
+    begin = breaks[i - 1] if i else 0
+    j = bisect_left(breaks, end)
+    finish = breaks[j] if j < len(breaks) else len(text)
+    return text[begin:finish]
+
+
 def read_claims(text: str) -> list[Claim]:
     """Every delivery ``text`` claims, in text order (see the module notes),
-    each with the offsets of the clause that makes it."""
+    each with the offsets of the clause that makes it. A sentence that points
+    back to an earlier turn marks its claims ``earlier``; one about what
+    happens when something is done ("When you run it, ...") claims nothing."""
     text = text or ""
     out: list[Claim] = []
-    prev = (False, False)
+    prev = (False, False, False)
+    breaks = [m.end() for m in _SENTENCE_BREAK_RE.finditer(_reading_copy(text))]
     for lead, start, end, file_row in _clause_spans(text):
         clause = _readable(text[start:end])
         if file_row:
             found = _row_claims(lead, clause)
-            prev = (bool(found), any(c.made for c in found))
+            prev = (bool(found), any(x.made for x in found), any(x.firm for x in found))
         else:
             found, prev = _clause_claims(lead, clause, prev)
-        out += [replace(c, start=start, end=end, clause=text[start:end]) for c in found]
+        if not found:
+            continue
+        sentence = _sentence(text, start, end, breaks)
+        if _CONDITIONAL_RE.match(sentence):
+            continue
+        earlier = bool(_EARLIER_RE.search(f"{lead} {sentence}"))
+        reported = bool(_REPORTED_RE.search(sentence))
+        out += [
+            replace(
+                x,
+                start=start,
+                end=end,
+                clause=text[start:end],
+                earlier=x.earlier or earlier,
+                firm=x.firm and not (reported and not x.deliverable),
+            )
+            for x in found
+        ]
     return out
 
 
@@ -899,13 +1162,13 @@ def asserted_paths(text: str) -> list[str]:
     are (the ``deliverable`` files of ``read_claims``), in order,
     deduplicated."""
     out: list[str] = []
-    for c in read_claims(text):
-        if c.kind == FILE and c.deliverable and c.target not in out:
-            out.append(c.target)
+    for x in read_claims(text):
+        if x.kind == FILE and x.deliverable and x.target not in out:
+            out.append(x.target)
     return out
 
 
 def claims_an_artifact(text: str) -> bool:
     """True when ``text`` points at an artifact card as made, as opposed to
     offering one, asking about one or saying there is none."""
-    return any(c.kind == ARTIFACT for c in read_claims(text))
+    return any(x.kind == ARTIFACT for x in read_claims(text))

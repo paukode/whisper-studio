@@ -68,6 +68,7 @@ def test_the_assistants_own_statement_is_a_claim(text, claimed):
         "CI pushed a new build.",
         "Dana merged it yesterday.",
         "The PR was merged by Dana.",
+        "Dana sent the summary to the team.",
         "I merged the two CSV files into one table.",
         "I sent a request to the API and got a 200.",
         "Want me to push the branch?",

@@ -42,7 +42,18 @@ _CONTINUE_PREFIX = "Continue exactly where you left off. Do not repeat anything.
 # continue the turn and never start one. A compaction summary is not listed:
 # once it has replaced the prompt it is the best anchor left, and it quotes
 # the user verbatim.
-_ENGINE_PREFIXES = (_GATE_PREFIX, _MIDTURN_OPEN, _REMINDER_OPEN, _CONTINUE_PREFIX)
+# The salvage round's note (runner.py) and a scheduled run's verifier row
+# (cron_run.py) carry on the turn too.
+_SALVAGE_PREFIX = "[The conversation no longer fits"
+_VERIFY_PREFIX = "[verify]"
+_ENGINE_PREFIXES = (
+    _GATE_PREFIX,
+    _MIDTURN_OPEN,
+    _REMINDER_OPEN,
+    _CONTINUE_PREFIX,
+    _SALVAGE_PREFIX,
+    _VERIFY_PREFIX,
+)
 _TOOL_RESULT_TYPES = ("tool_result", "function_call_output")
 _ARTIFACT_TOOLS = ("create_artifact", "edit_artifact")
 
@@ -362,15 +373,17 @@ def _acted_since_last_nudge(messages: list) -> bool:
 
 
 def _settled_later(claim, later: list[str]) -> bool:
-    """True when a later reply of the turn names the claim's target: the
-    model came back to it (an honest correction, or the claim again, which
-    is then checked where it is made). The stream guard notes the same way
-    (claim_guard._corrected)."""
-    target = claim.target.strip()
+    """True when a later reply of the turn names the claim's target as a
+    whole word: the model came back to it (an honest correction, or the
+    claim again, which is then checked where it is made). The stream guard
+    notes the same way (claim_guard._corrected)."""
+    from server.goals.evidence import word_in
+
+    target = claim.target.strip().strip("`")
     if not target:
         return False
-    name = os.path.basename(target.rstrip("/"))
-    return any(target in text or (name and name in text) for text in later)
+    name = target.rstrip("/").rsplit("/", 1)[-1]
+    return any(word_in(target, text) or (len(name) >= 4 and word_in(name, text)) for text in later)
 
 
 def _shown(clause: str) -> str:
@@ -386,6 +399,7 @@ def check_claims(
     session_has_artifact: bool = False,
     max_attempts: int = MAX_CLAIM_NUDGES,
     started_at: float | None = None,
+    calls: list | None = None,
 ) -> str | None:
     """Gate feedback naming what this turn's replies claim was delivered but
     was not, or None when every claim holds: server/goals/claims.py reads the
@@ -394,6 +408,8 @@ def check_claims(
     of the turn that succeeded). Every reply of the turn is read, so one the
     gate never judged (a pending mid-turn message, or a Stop hook that
     blocked first) is checked too; a reply that passed passes again.
+    ``calls`` are the turn's calls the stream guard kept, which compaction
+    may have taken out of ``messages``.
 
     The stream guard (server/chat/claim_guard.py) held each sentence making
     such a claim back from the user, so the feedback says the user has not
@@ -426,6 +442,7 @@ def check_claims(
         started_at=started_at,
         session_has_artifact=session_has_artifact,
         plan_mode=plan_mode,
+        extra_calls=calls,
     )
     failed: dict[tuple[str, str], str] = {}
     for i, reply in enumerate(replies):
@@ -446,10 +463,12 @@ def check_claims(
     tail = f"\nFiles this turn's calls wrote: {', '.join(written[:5])}." if written else ""
     return (
         f"{CLAIM_MARKER} These sentences of your reply were held back from the user, because "
-        "what they claim did not happen:\n"
+        "this turn's tool results do not show that what they claim happened:\n"
         + "\n".join(shown)
-        + "\nThe user has not seen them. Do the work now and confirm it from the tool result, "
-        "then say it once in one sentence; or tell the user plainly that it was not done. Do "
-        "not mention the held sentences or apologize for them. Never report a delivery you "
-        "have not verified." + tail
+        + "\nThe user has not seen them. Never repeat an action that may already have happened "
+        "(a message, a push, an upload, a payment): if it was done in an earlier turn, say so "
+        "plainly. If the user asked for it in this turn and it has not been done, do it now "
+        "and confirm it from the tool result, then say it once. Otherwise tell the user "
+        "plainly that it was not done. Do not mention the held sentences or apologize for "
+        "them. Never report a delivery you have not verified." + tail
     )
