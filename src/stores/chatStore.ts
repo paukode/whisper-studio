@@ -129,8 +129,9 @@ export interface ChatState {
    *  Called exactly once per commit site so the report lands on the message
    *  being committed and never leaks into a later turn. */
   takeTeamReports: () => Record<string, TeamReportData> | undefined;
-  /** Merge one `deliveries` frame's items into liveDeliveries. Takes the
-   *  items unchecked: a frame that failed validation arrives raw. */
+  /** Merge one `deliveries` frame's items into liveDeliveries, or, with no
+   *  stream live, straight into the last assistant message. Takes the items
+   *  unchecked: a frame that failed validation arrives raw. */
   addLiveDeliveries: (items: unknown) => void;
   /** Return the live deliveries (undefined when none) and clear them, for a
    *  commit site that builds its message outside the store. */
@@ -328,7 +329,14 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   },
 
   addLiveDeliveries: (items: unknown) => {
-    set((state) => ({ liveDeliveries: mergeDeliveries(state.liveDeliveries, items) }));
+    set((state) => {
+      const merged = mergeDeliveries(state.liveDeliveries, items);
+      // A frame read after its stream was finalized (a Stop lands between
+      // two frames of one chunk) has no live segment left to wait on.
+      return state.isStreaming
+        ? { liveDeliveries: merged }
+        : { messages: settleDeliveries(state.messages, merged), liveDeliveries: [] };
+    });
   },
 
   takeDeliveries: () => {

@@ -216,6 +216,14 @@ describe('chatStore: live deliveries', () => {
     expect(store.getState().messages[2].deliveries).toBeUndefined();
   });
 
+  it('read after their stream was finalized go straight to its reply', () => {
+    store.getState().setStreaming(true);
+    store.getState().finishStream({ ...reply('Saved report.html. (Stopped)'), stopped: true });
+    store.getState().addLiveDeliveries([report]);
+    expect(store.getState().messages[0].deliveries).toEqual([report]);
+    expect(store.getState().liveDeliveries).toEqual([]);
+  });
+
   it('are taken once: a message built outside the store gets them, the next commit does not', () => {
     store.getState().setStreaming(true);
     store.getState().addLiveDeliveries([report]);
