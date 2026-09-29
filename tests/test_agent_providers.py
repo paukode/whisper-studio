@@ -442,3 +442,20 @@ def test_a_plain_text_reply_is_not_read_as_a_result_outside_a_structured_call():
         )
     )
     assert turn.structured_output is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'For example:\n```json\n{"answer": 0}\n```\nThe result:\n```json\n{"answer": 4}\n```',
+        'The helper:\n```python\nprint(1)\n```\nThe result:\n```json\n{"answer": 4}\n```',
+        '{"answer": 4}',
+        # A later block in another language is never the answer, even when it
+        # happens to parse as JSON.
+        'The result:\n```json\n{"answer": 4}\n```\nThe code:\n```python\n{"answer": 0}\n```',
+    ],
+)
+def test_a_text_answer_is_its_last_json_object(text):
+    from server.agents.providers.base import structured_from_text
+
+    assert structured_from_text(text) == {"answer": 4}

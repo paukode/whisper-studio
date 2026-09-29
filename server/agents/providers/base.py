@@ -120,19 +120,25 @@ class ModelAdapter(Protocol):
     ) -> ProviderTurn: ...
 
 
-_FENCED_JSON = re.compile(r"```(?:json)?[ \t]*\n(.*?)\n?[ \t]*```", re.DOTALL | re.IGNORECASE)
+_FENCED_BLOCK = re.compile(r"```([\w+-]*)[ \t]*\n(.*?)```", re.DOTALL)
 
 
 def structured_from_text(text: str) -> dict | None:
     """The result object of a structured call answered in text: the whole
-    reply as a JSON object, or the first fenced (```json) block holding one.
-    None for anything else, including a JSON value that is not an object.
-    Both adapters read a text answer this way, since the ask allows "the
-    required JSON format" as well as the emit_result tool."""
+    reply as a JSON object, else the LAST fenced json (or untagged) block
+    holding one, since an answer closes the reply while an example or a
+    quoted payload comes before it. Each block is read whole, so a code block
+    in another language never runs into the next one. None for anything else,
+    including a JSON value that is not an object. Both adapters read a text
+    answer this way, since the ask allows "the required JSON format" as well
+    as the emit_result tool."""
     candidates = [(text or "").strip()]
-    fenced = _FENCED_JSON.search(text or "")
-    if fenced:
-        candidates.append(fenced.group(1).strip())
+    blocks = [
+        m.group(2).strip()
+        for m in _FENCED_BLOCK.finditer(text or "")
+        if m.group(1).lower() in ("", "json")
+    ]
+    candidates.extend(reversed(blocks))
     for raw in candidates:
         try:
             value = json.loads(raw)
