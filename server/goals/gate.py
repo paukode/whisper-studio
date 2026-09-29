@@ -117,6 +117,25 @@ def _hook_model_id(ctx: GateContext) -> str:
     return ctx.model_id
 
 
+async def _session_has_artifact(session_id: str) -> bool:
+    """Whether the session already holds an artifact card, so a reply about a
+    card an earlier turn made is not a false claim. server.artifacts keeps
+    this process's record of every card and falls back to the programArtifact
+    rows the session's saved history carries, so the answer survives an app
+    restart and a session reload. That fallback is a database read, so it
+    runs off the event loop; a lookup that fails counts as no card, which
+    leaves the check as strict as a turn-only one."""
+    if not session_id:
+        return False
+    from server.artifacts import list_artifacts
+
+    try:
+        return bool(await asyncio.to_thread(list_artifacts, session_id))
+    except Exception as e:  # noqa: BLE001 - a lookup bug must never abort a turn
+        log.warning("artifact lookup for the deliverable check failed (%s)", e)
+        return False
+
+
 def _gated_messages(ctx: GateContext) -> list:
     """The transcript the checks and the judge read: the history with the
     reply being gated at its end. The runner persists that reply only after
@@ -166,18 +185,26 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
 
     # ── Phase 1.5: claimed deliverables (every gated turn, goal or not) ─────
     # The reply says a file was saved or points at an artifact card; check the
-    # file exists (non-empty) and the artifact call happened THIS turn. Twice
-    # in real sessions neither was true and the user found out only by asking.
-    # A miss is a block with the missing items named, at most
-    # MAX_CLAIM_NUDGES per turn under the same cap; plan mode checks paths
-    # only once a tool that writes outside the workspace ran, since until
-    # then they are files the plan will write. A model with no tools cannot
-    # produce the file, so it is not asked to.
+    # file exists (non-empty) and the card was made, this turn or by an earlier
+    # one of the session. Twice in real sessions neither was true and the user
+    # found out only by asking. A miss is a block with the missing items
+    # named, at most MAX_CLAIM_NUDGES per turn under the same cap; plan mode
+    # checks paths only once a tool that writes outside the workspace ran,
+    # since until then they are files the plan will write. A model with no
+    # tools cannot produce the file, so it is not asked to.
     if ctx.tools_enabled and _flag_on("deliverable_check"):
-        from server.goals.deliverables import check_claims
+        from server.goals.deliverables import artifact_claim_unmet, check_claims
 
         try:
-            claim_feedback = check_claims(messages, ctx.workspace, plan_mode=ctx.plan_mode)
+            has_artifact = artifact_claim_unmet(messages) and await _session_has_artifact(
+                ctx.session_id
+            )
+            claim_feedback = check_claims(
+                messages,
+                ctx.workspace,
+                plan_mode=ctx.plan_mode,
+                session_has_artifact=has_artifact,
+            )
         except Exception as e:  # noqa: BLE001 - a checker bug must never abort a turn
             log.warning("deliverable check failed (%s); skipping", e)
             claim_feedback = None

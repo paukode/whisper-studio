@@ -538,13 +538,13 @@ def claims_only(monkeypatch):
     monkeypatch.setattr(gate, "_flag_on", lambda name, default=True: name == "deliverable_check")
 
 
-def _run(sid: str, adapter, prompt: str, *, plan_mode: bool = False) -> str:
+def _run(sid: str, adapter, prompt: str, *, plan_mode: bool = False, history: tuple = ()) -> str:
     ctx = TurnContext(
         cost_source="chat",
         session_id=sid,
         model_key="k",
         model_id="k",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[*history, {"role": "user", "content": prompt}],
         adapter=adapter,
         policy=TurnPolicy(max_rounds=12, completion_gate=True),
         loop=None,
@@ -576,3 +576,42 @@ def test_an_honest_correction_ends_the_turn_after_one_nudge(claims_only, tmp_pat
     assert len(adapter.calls) == 2
     assert out.count("stop_hook_block") == 1
     assert "goal_cap_reached" not in out
+
+
+# The history a follow-up turn arrives with, as the chat route rebuilds it:
+# plain text, with no trace of the create_artifact call.
+_CARD_TURN = (
+    {"role": "user", "content": "draw the pipeline as a diagram"},
+    {"role": "assistant", "content": "Here it is in the artifact card above."},
+)
+_ABOUT_THE_CARD = "The deploy stage in the artifact card above is green."
+
+
+def test_a_reply_about_a_card_an_earlier_turn_made_ends_the_turn(claims_only):
+    from server import artifacts
+
+    sid = "claims-earlier-card"
+    artifacts.forget_session(sid)
+    # What the earlier turn's create_artifact call left (tool_router).
+    artifacts.record_artifact(sid, title="Pipeline", html="<p>pipeline</p>")
+    try:
+        adapter = _Replies(_ABOUT_THE_CARD, *["I rebuilt the card."] * 10)
+        out = _run(sid, adapter, "which colour is the deploy stage?", history=_CARD_TURN)
+        assert len(adapter.calls) == 1
+        assert "stop_hook_block" not in out
+    finally:
+        artifacts.forget_session(sid)
+
+
+def test_a_reply_about_a_card_the_session_never_had_is_held_once(claims_only):
+    from server import artifacts
+
+    sid = "claims-no-card"
+    artifacts.forget_session(sid)
+    correction = "Correction: there is no artifact card in this session yet."
+    adapter = _Replies(_ABOUT_THE_CARD, *[correction] * 10)
+    out = _run(sid, adapter, "which colour is the deploy stage?", history=_CARD_TURN)
+    assert len(adapter.calls) == 2
+    assert out.count("stop_hook_block") == 1
+    feedback = adapter.calls[1][-1]
+    assert feedback["role"] == "user" and "create_artifact" in feedback["content"]

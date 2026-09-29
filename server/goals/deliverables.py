@@ -7,10 +7,12 @@ user found out only by asking. This module reads the turn's replies (the
 reply being gated, one a pending mid-turn message kept from the gate, the
 first half of a max_tokens split), pulls out every file path they say was
 made, and checks the file exists and is non-empty (workspace-relative paths
-resolve against the workspace). An artifact-card claim is checked against a
-``create_artifact`` call in the same turn. A miss becomes gate feedback, and
-the turn continues until the file exists or the reply is corrected, at most
-MAX_CLAIM_NUDGES times per turn.
+resolve against the workspace). An artifact-card claim is met by a
+``create_artifact`` or ``edit_artifact`` call in the same turn, or by a card
+the session already holds from an earlier turn, which the caller looks up
+and passes in. A miss becomes gate feedback, and the turn continues until
+the file exists or the reply is corrected, at most MAX_CLAIM_NUDGES times per
+turn.
 
 Pure functions over the provider-neutral message list; no I/O beyond stat.
 """
@@ -121,8 +123,7 @@ _URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s<>()\[\]`\"']+", re.IGNORECASE)
 _MASK = "\0"
 
 # One nudge per turn, as for a requested file: claims are read out of prose,
-# so a wrong reading (a reply about an artifact card an earlier turn made)
-# costs a single round and never a loop to the cap.
+# so a wrong reading costs a single round and never a loop to the cap.
 MAX_CLAIM_NUDGES = 1
 CLAIM_MARKER = "[claim]"
 _GATE_PREFIX = "[completion gate]"
@@ -547,6 +548,15 @@ def artifact_created(messages: list) -> bool:
     return any(name in _ARTIFACT_TOOLS for name in called_tools(turn_messages(messages)))
 
 
+def artifact_claim_unmet(messages: list) -> bool:
+    """True when a reply of this turn points at an artifact card and no call
+    this turn made one. Whether the session already holds a card from an
+    earlier turn is the caller's to look up (check_claims'
+    ``session_has_artifact``): that lookup reads storage, and it is needed
+    only when this is True."""
+    return claims_an_artifact("\n".join(reply_texts(messages))) and not artifact_created(messages)
+
+
 def wrote_outside_workspace(messages: list) -> bool:
     """True when this turn called a tool that can write a file outside the
     workspace, which plan mode lets run (OUTSIDE_WRITERS)."""
@@ -569,12 +579,18 @@ def check_claims(
     workspace: str | None,
     *,
     plan_mode: bool = False,
+    session_has_artifact: bool = False,
     max_attempts: int = MAX_CLAIM_NUDGES,
 ) -> str | None:
     """Gate feedback naming what this turn's replies say was made but was
     not, or None when every claim checks out. Every reply of the turn is read,
     so one the gate never judged (a pending mid-turn message, or a Stop hook
     that blocked first) is checked too; a reply that passed passes again.
+
+    An artifact-card claim is met by a card this turn made or, with
+    ``session_has_artifact``, by one the session holds from an earlier turn:
+    a reply about that card claims nothing false, and holding it only made
+    the model rebuild the card.
 
     Plan mode refuses the workspace writes, so a path there is usually the
     file the plan will write: paths are checked only once a tool that writes
@@ -588,7 +604,7 @@ def check_claims(
     reads_paths = not plan_mode or wrote_outside_workspace(messages)
     paths = asserted_paths(text) if reads_paths else []
     missing = [p for p in paths if not exists_non_empty(p, workspace)]
-    artifact_missing = claims_an_artifact(text) and not artifact_created(messages)
+    artifact_missing = not session_has_artifact and artifact_claim_unmet(messages)
     if not missing and not artifact_missing:
         return None
     parts: list[str] = []
@@ -602,7 +618,8 @@ def check_claims(
         )
     if artifact_missing:
         parts.append(
-            "your reply refers to an artifact card, but no create_artifact call happened this turn"
+            "your reply refers to an artifact card, but this session has none: no "
+            "create_artifact call has made one"
         )
     return (
         f"{CLAIM_MARKER} "
