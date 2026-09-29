@@ -236,9 +236,9 @@ async def _execute_cron_prompt(job_id: str) -> None:
 
         # Progressive tool disclosure: re-derive this session's activations
         # from visible history first (self-healing across restarts, exactly
-        # like server/chat/routes.py), then assemble the same core+activated
-        # pool an interactive chat turn gets, built ONCE for the whole run
-        # (agents rebuild theirs every round, see server/agents/tool_access.py).
+        # like server/chat/routes.py), then assemble the core+activated pool,
+        # rebuilt every round like a chat turn's so a tool the job loads with
+        # tool_search is offered from its next round, as the index promises.
         # Everything else is deferred into a compact index folded into the
         # system prompt below.
         activate_from_history(session_id, visible_chat_history(messages))
@@ -249,7 +249,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
         from server.workspace.state import latch_workspace
 
         ws_latch = latch_workspace(get_workspace_path)
-        advertised, deferred, _core_count = assemble_partitioned_pool(
+        _advertised, deferred, _core_count = assemble_partitioned_pool(
             plan_mode=False,
             ws_connected=bool(ws_latch.path),
             suppress_workspace_search=False,
@@ -257,10 +257,16 @@ async def _execute_cron_prompt(job_id: str) -> None:
             chat=False,
         )
         deferred_tool_index = build_deferred_index(deferred)
-        cron_tools = _assemble_cron_tools(advertised)
 
         def _tool_catalog() -> tuple[list[dict], int | None]:
-            return cron_tools, None
+            pool, _deferred, _core = assemble_partitioned_pool(
+                plan_mode=False,
+                ws_connected=bool(ws_latch.path),
+                suppress_workspace_search=False,
+                session_id=session_id,
+                chat=False,
+            )
+            return _assemble_cron_tools(pool), None
 
         from server.prompts.rules import append_rules
 
