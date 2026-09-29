@@ -152,6 +152,15 @@ async def run_agent(
     # built-in AGENT_TYPES preset).
     if config is None:
         config = get_agent_config(agent_type)
+    # A plan-mode turn reads and plans, and agents approve their own writes,
+    # so an agent it starts runs read-only, whatever its type
+    # (server.agents.tool_access.plan_mode_scope).
+    from server.agents.tool_access import started_in_plan_mode
+
+    if started_in_plan_mode() and not config.read_only:
+        from dataclasses import replace as _dc_replace
+
+        config = _dc_replace(config, read_only=True)
 
     # Resolve model. Agents inherit the session-selected model via
     # model_id_override (threaded from /api/chat through the spawn handlers).
@@ -634,13 +643,20 @@ async def _run_agent_loop(
         user_content += f"Task: {task}"
         messages = [{"role": "user", "content": user_content}]
 
-    # Tool access (server/agents/tool_access.py): what this run may execute is
-    # fixed here, and the engine refuses every other name (ctx.tool_scope).
-    # Each round's array is rebuilt from it, so a tool loaded with tool_search
-    # is offered from the next round. A resumed run's own earlier calls
-    # re-activate into its own set, never the parent session's.
+    # Tool access (server/agents/tool_access.py): the rules of what this run
+    # may execute are fixed here and applied to the current catalog each
+    # round, and the engine refuses every other name (ctx.tool_scope). Each
+    # round's array is rebuilt from it, so a tool loaded with tool_search is
+    # offered from the next round. A resumed run's own earlier calls
+    # re-activate into its own set, never the parent session's. Repeated
+    # refused calls end the run through the live budget (extension).
     access = AgentToolAccess(
-        config, agent_id=agent_id, depth=depth, session_id=session_id, ws_connected=bool(ws_path)
+        config,
+        agent_id=agent_id,
+        depth=depth,
+        session_id=session_id,
+        ws_connected=bool(ws_path),
+        budget=extension,
     )
     activate_from_history(access.scope.activation_key, messages)
     deferred_tool_index = access.deferred_index()

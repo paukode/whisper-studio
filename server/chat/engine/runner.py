@@ -45,7 +45,7 @@ from .events import (
     ToolCallStart,
 )
 from .pause import paused_sessions
-from .policy import TurnPolicy
+from .policy import TurnPolicy, round_cap
 
 log = logging.getLogger("whisper-studio")
 
@@ -417,7 +417,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
     for round_num in itertools.count():
         # The cap and the deadline are re-read every round so a live
         # extension (server.agents.extensions) applies to the next round.
-        cap = max_rounds + int(_ext.get("rounds") or 0)
+        cap = round_cap(_ext, max_rounds, round_num)
         if round_num >= cap:
             break
         _deadline_now = (

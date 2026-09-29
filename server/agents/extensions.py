@@ -5,7 +5,10 @@ user (through POST /api/agents/{id}/extend) grant a running agent more
 rounds or seconds while its context is still hot, instead of letting it
 stop at the limit and resuming it later with a reloaded context. The runner
 reads the extension dict at every round start (TurnContext.budget_extension),
-so a grant applies to the very next round.
+so a grant applies to the very next round. The same dict can also end a run
+early: a true "finish" makes the next round the last one, tools off, so the
+agent answers with what it has (set by ToolScope.refused after repeated
+refused calls, server/agents/tool_access.py).
 """
 
 from __future__ import annotations
