@@ -35,7 +35,7 @@ _THOUGHT = "Planning the answer."
 _ANSWER = "Hello there, twenty chars"
 
 
-def _claude_stream(*, deltas=(420,), metrics=None, error_after_thinking=False):
+def _claude_stream(*, deltas=(420,), metrics=None, error_after_thinking=False, answer=_ANSWER):
     ev = [
         _chunk({"type": "message_start", "message": {"usage": dict(_START_USAGE)}}),
         _chunk({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking"}}),
@@ -57,7 +57,7 @@ def _claude_stream(*, deltas=(420,), metrics=None, error_after_thinking=False):
             {
                 "type": "content_block_delta",
                 "index": 1,
-                "delta": {"type": "text_delta", "text": _ANSWER},
+                "delta": {"type": "text_delta", "text": answer},
             }
         ),
         _chunk({"type": "content_block_stop", "index": 1}),
@@ -229,10 +229,23 @@ def test_a_retried_attempt_is_recorded_once_with_its_output_estimated(_quiet_tur
 
 
 def test_a_stopped_round_is_recorded(_quiet_turn):
-    adapter = _claude([_claude_stream()])
+    # The answer's first sentence streams while the round is still running,
+    # and the user stops there: the round's output is estimated.
+    answer = "Hello there, twenty chars. And the rest of the answer"
+    adapter = _claude([_claude_stream(answer=answer)])
     _turn(adapter, "stop-sess", stop_after='"text"')
     (row,) = tracker.get_session_costs("stop-sess")
     assert row["input_tokens"] == 12 and row["estimated_fields"] == "output"
+
+
+def test_a_stop_while_the_held_answer_is_sent_records_the_round(_quiet_turn):
+    # A short answer is held until its sentence ends, here at the end of the
+    # round (server/chat/claim_guard.py): the provider has reported the
+    # round's usage, and a Stop as the answer is sent records it.
+    adapter = _claude([_claude_stream()])
+    _turn(adapter, "held-stop", stop_after='"text"')
+    (row,) = tracker.get_session_costs("held-stop")
+    assert (row["input_tokens"], row["output_tokens"]) == (12, 420)
 
 
 def test_a_round_stopped_while_its_usage_frame_is_sent_is_still_recorded(_quiet_turn):

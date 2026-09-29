@@ -1,0 +1,42 @@
+[
+  {
+    "status": "preparing"
+  },
+  {
+    "status": "connecting"
+  },
+  {
+    "text": "I shared the draft at https://example.com/draft."
+  },
+  {
+    "deliveries": {
+      "items": [
+        {
+          "kind": "link",
+          "target": "https://example.com/draft",
+          "label": "Link",
+          "detail": "https://example.com/draft",
+          "href": "https://example.com/draft"
+        }
+      ]
+    }
+  },
+  {
+    "usage": {
+      "input_tokens": 100,
+      "output_tokens": 50,
+      "total_input": 100,
+      "total_output": 50,
+      "total_prompt": 100,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "total_cache_read": 0,
+      "total_cache_creation": 0,
+      "estimated_cost_usd": 0,
+      "model": "opus5.0",
+      "context_used": 100,
+      "context_max": 872000
+    }
+  },
+  "[DONE]"
+]

@@ -111,3 +111,39 @@ def test_golden_mid_stream_error(monkeypatch):
     )
     lines = run_chat_turn(monkeypatch, client, {"question": "explode"})
     assert_golden("mid_stream_error", lines)
+
+
+def test_golden_verified_claim_receipt(monkeypatch):
+    # The reply says it shared the link the prompt gave: the claim holds, and
+    # a deliveries frame follows the sentence (server/chat/claim_guard.py).
+    client = FakeBedrockClient(
+        [
+            [
+                msg_start(),
+                *text_block("I shared the draft at https://example.com/draft."),
+                *msg_end(),
+            ],
+        ]
+    )
+    lines = run_chat_turn(
+        monkeypatch, client, {"question": "the draft is https://example.com/draft"}
+    )
+    assert_golden("verified_claim_receipt", lines)
+
+
+def test_golden_false_claim_held(monkeypatch):
+    # The reply says it saved a file that does not exist: the sentence is never
+    # sent, the gate sends the model back (a stop_hook_block whose source is
+    # "deliverable"), and the corrected answer is what the user reads.
+    client = FakeBedrockClient(
+        [
+            [
+                msg_start(),
+                *text_block("Saved the report to /Users/nobody-golden/report.docx."),
+                *msg_end(),
+            ],
+            [msg_start(), *text_block("I could not write report.docx."), *msg_end()],
+        ]
+    )
+    lines = run_chat_turn(monkeypatch, client, {"question": "summarize the meeting"})
+    assert_golden("false_claim_held", lines)
