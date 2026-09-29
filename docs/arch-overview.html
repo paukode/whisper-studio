@@ -65,8 +65,8 @@
       <code>PreToolUse</code>, <code>PostToolUse</code>, and <code>Stop</code> (see
       <a href="arch-hooks.html">Blocking hooks</a>). A <b>completion gate</b>
       (<code class="path">server/goals/</code>, <code>run_completion_gate</code>) decides whether a
-      turn may end: it runs the Stop hooks, checks that the files and artifacts the reply claims
-      actually exist, asks for a real test or build run when code was edited without one, and judges
+      turn may end: it runs the Stop hooks, checks that what the reply claims it delivered actually
+      happened (a stream guard holds each claiming sentence back until it is checked), asks for a real test or build run when code was edited without one, and judges
       an active goal (see <a href="arch-goals.html">The goal loop</a>). The <b>ultracode workflow
       runtime</b> (<code class="path">server/workflows/</code>) runs model-authored deterministic JS
       in a Node-24 <code>vm</code> harness over JSON-RPC into Python; see

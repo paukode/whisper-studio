@@ -102,7 +102,9 @@
         turn. A heartbeat (every round, and every 30 seconds of silence) keeps the slot alive through
         a long tool call; a slot with no sign of life for 900 seconds is reclaimed.</li>
       <li><b>The turn cannot end on its own say-so.</b> The completion gate runs the Stop hooks,
-        verifies that files and artifact cards the reply claims actually exist, asks for a real test,
+        verifies that what the reply claims it delivered (files, artifact cards, pushes, pull requests,
+        uploads, messages) actually happened, holding each claiming sentence back until it is checked,
+        asks for a real test,
         lint or build run when code was edited without one, and judges an active goal. Each block
         re-injects feedback and continues the turn, bounded by
         <code>goal_max_consecutive_blocks</code> (default 8).</li>
