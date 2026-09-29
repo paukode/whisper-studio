@@ -106,6 +106,9 @@ class GateContext:
     # The turn's tool calls as the stream guard kept them (compaction may
     # have taken some out of ``messages``).
     claim_calls: list | None = None
+    # The deliveries earlier replies verified (the chat sends them with its
+    # history): what a recap of earlier work may rest on.
+    claim_receipts: list | None = None
 
 
 @dataclass

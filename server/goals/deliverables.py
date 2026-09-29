@@ -221,6 +221,20 @@ def reply_texts(messages: list, *, since: int = 0) -> list[str]:
     return [t for t in rows if t]
 
 
+def verified_deliveries(history) -> list[dict]:
+    """The deliveries the chat's earlier replies verified: the chips each
+    assistant row of the history carries (the chat sends them with it, and
+    they never reach the model's prompt), oldest first."""
+    out: list[dict] = []
+    for m in history if isinstance(history, list) else []:
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        for d in m.get("deliveries") or []:
+            if isinstance(d, dict) and d.get("kind"):
+                out.append({k: str(d.get(k) or "") for k in ("kind", "target", "detail", "href")})
+    return out[-500:]
+
+
 def resolve_path(path: str, workspace: str | None) -> str:
     """Where ``path`` points: the home folder expanded, a workspace-relative
     path joined to the workspace, and the result normalised, so two spellings
@@ -373,17 +387,13 @@ def _acted_since_last_nudge(messages: list) -> bool:
 
 
 def _settled_later(claim, later: list[str]) -> bool:
-    """True when a later reply of the turn names the claim's target as a
-    whole word: the model came back to it (an honest correction, or the
-    claim again, which is then checked where it is made). The stream guard
-    notes the same way (claim_guard._corrected)."""
-    from server.goals.evidence import word_in
+    """True when a later reply of the turn corrects the claim: a sentence
+    that names its target and says it was not so (the claim made again is
+    checked where it is made, and an instruction that names it, "Open
+    `q3.docx`", corrects nothing). The stream guard notes the same way."""
+    from server.goals.evidence import mentions_as_correction
 
-    target = claim.target.strip().strip("`")
-    if not target:
-        return False
-    name = target.rstrip("/").rsplit("/", 1)[-1]
-    return any(word_in(target, text) or (len(name) >= 4 and word_in(name, text)) for text in later)
+    return any(mentions_as_correction(claim.target, text) for text in later)
 
 
 def _shown(clause: str) -> str:
@@ -400,6 +410,7 @@ def check_claims(
     max_attempts: int = MAX_CLAIM_NUDGES,
     started_at: float | None = None,
     calls: list | None = None,
+    receipts: list | None = None,
 ) -> str | None:
     """Gate feedback naming what this turn's replies claim was delivered but
     was not, or None when every claim holds: server/goals/claims.py reads the
@@ -409,7 +420,8 @@ def check_claims(
     gate never judged (a pending mid-turn message, or a Stop hook that
     blocked first) is checked too; a reply that passed passes again.
     ``calls`` are the turn's calls the stream guard kept, which compaction
-    may have taken out of ``messages``.
+    may have taken out of ``messages``; ``receipts`` the deliveries earlier
+    replies verified, which a recap may rest on.
 
     The stream guard (server/chat/claim_guard.py) held each sentence making
     such a claim back from the user, so the feedback says the user has not
@@ -443,14 +455,17 @@ def check_claims(
         session_has_artifact=session_has_artifact,
         plan_mode=plan_mode,
         extra_calls=calls,
+        receipts=receipts,
     )
     failed: dict[tuple[str, str], str] = {}
+    running = False
     for i, reply in enumerate(replies):
         for claim in c.read_claims(reply):
             if (claim.kind, claim.target) in failed or _settled_later(claim, replies[i + 1 :]):
                 continue
             verdict = check(claim, ev)
             if not verdict.ok:
+                running = running or verdict.pending
                 note = verdict.note
                 if claim.kind == c.ARTIFACT:
                     note += " (no create_artifact call has made an artifact card)"
@@ -461,6 +476,13 @@ def check_claims(
     shown = lines[:6] + ([f"- and {len(lines) - 6} more"] if len(lines) > 6 else [])
     written = sorted(p for p in targeted_paths(messages, workspace) if exists_non_empty(p, None))
     tail = f"\nFiles this turn's calls wrote: {', '.join(written[:5])}." if written else ""
+    if running:
+        # A call that is still running may yet do it: starting it again
+        # would do it twice.
+        tail = (
+            "\nA call of this turn that started one of these has not finished: check on it "
+            "(task_status, task_output, terminal_send) and never start it again." + tail
+        )
     return (
         f"{CLAIM_MARKER} These sentences of your reply were held back from the user, because "
         "this turn's tool results do not show that what they claim happened:\n"

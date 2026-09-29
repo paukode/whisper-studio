@@ -192,21 +192,30 @@ def test_a_pull_request_holds_with_the_call_that_opened_it():
     assert not check(Claim(c.PR, "#13"), Evidence.of(opened)).ok
 
 
-def test_a_link_holds_where_a_call_or_the_conversation_named_it():
+def test_a_link_holds_where_a_call_made_it_or_an_earlier_reply_verified_it():
     made = _turn(("run_python", {"code": "..."}, "(exit code 0)\nhttps://gist.github.com/a/1"))
     assert check(Claim(c.LINK, "https://gist.github.com/a/1"), Evidence.of(made)).ok
+    # Named only by the user: no call made it.
     before = [
         {"role": "user", "content": "the gist is https://gist.github.com/a/1"},
         {"role": "assistant", "content": "Noted."},
         *_turn(),
     ]
-    assert check(Claim(c.LINK, "https://gist.github.com/a/1"), Evidence.of(before)).ok
+    assert not check(Claim(c.LINK, "https://gist.github.com/a/1"), Evidence.of(before)).ok
+    receipts = [{"kind": "link", "target": "https://gist.github.com/a/1"}]
+    recap = Claim(c.LINK, "https://gist.github.com/a/1", earlier=True)
+    assert check(recap, Evidence.of(before, receipts=receipts)).ok
     assert not check(Claim(c.LINK, "https://gist.github.com/a/2"), Evidence.of(made)).ok
 
 
-def test_an_earlier_act_cannot_be_seen_and_is_let_through():
-    verdict = check(Claim(c.PUSH, "main", earlier=True), Evidence.of(_turn()))
-    assert verdict.ok and not verdict.checked
+def test_an_earlier_act_holds_only_where_an_earlier_reply_verified_it():
+    earlier = Claim(c.PUSH, "main", earlier=True)
+    assert not check(earlier, Evidence.of(_turn())).ok
+    receipts = [{"kind": "push", "target": "main", "label": "Pushed", "detail": "to main"}]
+    verdict = check(earlier, Evidence.of(_turn(), receipts=receipts))
+    assert verdict.ok and not verdict.checked and verdict.receipt is None
+    other = Claim(c.PUSH, "fix-y", earlier=True)
+    assert not check(other, Evidence.of(_turn(), receipts=receipts)).ok
 
 
 def test_an_artifact_card_holds_with_a_card_this_turn_or_the_sessions():

@@ -214,6 +214,7 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
                 session_has_artifact=has_artifact,
                 started_at=ctx.turn_started_at,
                 calls=ctx.claim_calls,
+                receipts=ctx.claim_receipts,
             )
         except Exception as e:  # noqa: BLE001 - a checker bug must never abort a turn
             log.warning("deliverable check failed (%s); skipping", e)
