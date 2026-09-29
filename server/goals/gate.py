@@ -169,9 +169,10 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
     # file exists (non-empty) and the artifact call happened THIS turn. Twice
     # in real sessions neither was true and the user found out only by asking.
     # A miss is a block with the missing items named, at most
-    # MAX_CLAIM_NUDGES per turn under the same cap; plan mode checks only the
-    # artifact card, since its paths are files the plan will write. A model
-    # with no tools cannot produce the file, so it is not asked to.
+    # MAX_CLAIM_NUDGES per turn under the same cap; plan mode checks paths
+    # only once a tool that writes outside the workspace ran, since until
+    # then they are files the plan will write. A model with no tools cannot
+    # produce the file, so it is not asked to.
     if ctx.tools_enabled and _flag_on("deliverable_check"):
         from server.goals.deliverables import check_claims
 

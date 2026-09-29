@@ -20,6 +20,7 @@ from server.chat.engine.runner import TurnContext, run_turn
 from server.goals import gate
 from server.goals.deliverables import (
     CLAIM_MARKER,
+    OUTSIDE_WRITERS,
     asserted_paths,
     check_claims,
     claims_an_artifact,
@@ -420,6 +421,58 @@ def test_plan_mode_checks_the_artifact_card_but_not_the_files_it_will_write(tmp_
     assert check_claims(history, None, plan_mode=True) is None
     history[-1] = _say(plan + " The outline is in the artifact card above.")
     assert "artifact card" in check_claims(history, None, plan_mode=True)
+
+
+def _plan_turn(tool: str, reply: str) -> list:
+    return [
+        {"role": "user", "content": "plan the quarterly report and save the outline"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Saving the outline."},
+                {"type": "tool_use", "id": "t1", "name": tool, "input": {}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
+        },
+        _say(reply),
+    ]
+
+
+@pytest.mark.parametrize("tool", sorted(OUTSIDE_WRITERS))
+def test_plan_mode_checks_a_save_once_a_tool_wrote_outside_the_workspace(tool, tmp_path):
+    # Plan mode refuses only the ws_* writers; these still run there behind
+    # their approval card, so "Saved to" after one is a claim like any other.
+    history = _plan_turn(tool, f"Saved the outline to {tmp_path}/outline.docx.")
+    feedback = check_claims(history, None, plan_mode=True)
+    assert feedback is not None and f"{tmp_path}/outline.docx" in feedback
+
+
+@pytest.mark.parametrize("tool", ["ws_read_file", "ws_write_file", "web_search"])
+def test_plan_mode_leaves_the_plans_files_alone_when_nothing_could_write_them(tool, tmp_path):
+    # A read, a search, or a workspace write that plan mode refused.
+    history = _plan_turn(tool, f"Plan: the outline goes to {tmp_path}/outline.docx.")
+    assert check_claims(history, None, plan_mode=True) is None
+    assert check_claims(history, None, plan_mode=False) is not None
+
+
+def test_the_plan_mode_writers_are_tools_plan_mode_lets_write():
+    # Register the executors the way server/main.py does.
+    import server.documents.executors  # noqa: F401
+    import server.executors.code  # noqa: F401
+    import server.executors.terminal_run  # noqa: F401
+    import server.workspace  # noqa: F401
+    from server.chat.tool_pool import assemble_full_catalog
+    from server.executors import EXECUTOR_META
+    from server.tool_executor import _PLAN_MODE_BLOCKED
+
+    catalog = {t["name"] for t in assemble_full_catalog(plan_mode=True, ws_connected=True)}
+    for name in OUTSIDE_WRITERS:
+        assert name in catalog, name
+        assert name not in _PLAN_MODE_BLOCKED, name
+        assert EXECUTOR_META[name]["read_only"] is False, name
 
 
 def test_a_file_named_in_an_earlier_reply_of_the_turn_counts_as_produced(tmp_path):

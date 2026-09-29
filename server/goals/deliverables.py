@@ -139,6 +139,26 @@ _CONTINUE_PREFIX = "Continue exactly where you left off. Do not repeat anything.
 # the user verbatim.
 _ENGINE_PREFIXES = (_GATE_PREFIX, _MIDTURN_OPEN, _REMINDER_OPEN, _CONTINUE_PREFIX)
 _TOOL_RESULT_TYPES = ("tool_result", "function_call_output")
+_ARTIFACT_TOOLS = ("create_artifact", "edit_artifact")
+
+# Tools that can write a file outside the workspace. Plan mode refuses only
+# the ws_* workspace writers (tool_executor._PLAN_MODE_BLOCKED) and these still
+# run there behind their approval card, so once one ran, a path the reply says
+# it saved may be a save that happened, and it is checked as on any other
+# turn.
+OUTSIDE_WRITERS = frozenset(
+    {
+        "save_file",
+        "run_python",
+        "terminal_run",
+        "terminal_send",
+        "create_docx",
+        "create_pptx",
+        "create_xlsx",
+        "create_pdf",
+        "office_script",
+    }
+)
 
 
 def _is_user_prompt(m: dict) -> bool:
@@ -222,6 +242,20 @@ def last_user_prompt(messages: list) -> str:
         if (words := _midturn_words(t))
     ]
     return "\n\n".join(t for t in asked if t)
+
+
+def called_tools(rows: list) -> list[str]:
+    """The names of the tools the assistant rows among ``rows`` call (an
+    Anthropic tool_use block or a Responses function_call item), in order."""
+    return [
+        str(b.get("name") or "")
+        for m in rows
+        if isinstance(m, dict)
+        and m.get("role") == "assistant"
+        and isinstance(m.get("content"), list)
+        for b in m["content"]
+        if isinstance(b, dict) and b.get("type") in ("tool_use", "function_call")
+    ]
 
 
 def _calls_a_tool(content) -> bool:
@@ -510,20 +544,13 @@ def artifact_created(messages: list) -> bool:
     """True if this turn contains a create_artifact or edit_artifact call
     (Anthropic tool_use block or Responses function_call item); both put a
     card in the chat."""
-    for m in turn_messages(messages):
-        if not isinstance(m, dict) or m.get("role") != "assistant":
-            continue
-        content = m.get("content")
-        if not isinstance(content, list):
-            continue
-        for b in content:
-            if (
-                isinstance(b, dict)
-                and b.get("type") in ("tool_use", "function_call")
-                and b.get("name") in ("create_artifact", "edit_artifact")
-            ):
-                return True
-    return False
+    return any(name in _ARTIFACT_TOOLS for name in called_tools(turn_messages(messages)))
+
+
+def wrote_outside_workspace(messages: list) -> bool:
+    """True when this turn called a tool that can write a file outside the
+    workspace, which plan mode lets run (OUTSIDE_WRITERS)."""
+    return any(name in OUTSIDE_WRITERS for name in called_tools(turn_messages(messages)))
 
 
 def claim_nudges_used(messages: list) -> int:
@@ -549,14 +576,17 @@ def check_claims(
     so one the gate never judged (a pending mid-turn message, or a Stop hook
     that blocked first) is checked too; a reply that passed passes again.
 
-    Plan mode refuses the workspace writes, so a path there is the file the
-    plan will write, and only an artifact-card claim is checked."""
+    Plan mode refuses the workspace writes, so a path there is usually the
+    file the plan will write: paths are checked only once a tool that writes
+    outside the workspace ran (OUTSIDE_WRITERS), and an artifact-card claim
+    always is."""
     if claim_nudges_used(messages) >= max_attempts:
         return None
     text = "\n".join(reply_texts(messages))
     if not text:
         return None
-    paths = [] if plan_mode else asserted_paths(text)
+    reads_paths = not plan_mode or wrote_outside_workspace(messages)
+    paths = asserted_paths(text) if reads_paths else []
     missing = [p for p in paths if not exists_non_empty(p, workspace)]
     artifact_missing = claims_an_artifact(text) and not artifact_created(messages)
     if not missing and not artifact_missing:
