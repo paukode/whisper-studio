@@ -345,7 +345,8 @@
       that its round merely deferred still runs by name, as in chat. Three refused calls in a row
       (the executor's refusals and the loop guard's alike) make the agent's next round its last, with
       no tools, so it answers with what it has. The memory tools are core in chat and voice turns
-      only (<code>CHAT_CORE_TOOLS</code>, for the learning review's replay); agents and scheduled
+      only (<code>CHAT_CORE_TOOLS</code>: the learning review replays a chat turn's tools, and a
+      person can ask for a memory by voice); agents and scheduled
       tasks reach them through <code>tool_search</code>, and a scheduled task's tools are rebuilt
       every round, so what it loads is offered from its next round. Two things differ from chat. An agent with an <code>allowed_tools</code> whitelist is offered its whole
       whitelist every round and gets no deferred index: the memory agents cannot call
