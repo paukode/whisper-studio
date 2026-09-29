@@ -192,7 +192,9 @@
         reads every reply of the turn for what it says was delivered (a file saved, a folder, a
         removal, an artifact card, a push, commit, pull request, merge, issue, upload, message, deploy,
         schedule, link, memory or setting) and checks each claim against the disk or the turn's
-        successful tool calls. A file the reply says it made must have been written in this turn; a
+        successful tool calls (a recap of earlier work, against the deliveries earlier replies
+        verified, which the chat sends with its history). A file the reply says it made must have
+        been written in this turn; a
         claim about an artifact card is met by a <code>create_artifact</code> or
         <code>edit_artifact</code> call this turn or by a card an earlier turn of the session made.
         "Saved to report.docx" with no file is a block, not an answer, and the user never saw it: the

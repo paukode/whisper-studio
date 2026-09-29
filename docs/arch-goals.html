@@ -72,58 +72,86 @@
         evaluator phase, so turning goals off never disables your Stop hooks.</p></li>
       <li><h4>Claimed deliverables (always)</h4><p>Behind the <code>deliverable_check</code> flag, and with
         or without a goal. The gate reads every reply of the turn for what it says was delivered
-        (<code class="path">server/goals/claims.py</code>): a document path after "saved to" or a word
-        like it, the app's own file link, the rows of a table whose header names a file, path, location,
-        output or saved column, a folder written to, a file removed, a code or other file the reply says
-        it made or changed ("I updated <code>server/app.py</code>"), an artifact card, and the acts that
-        leave nothing on this disk: a push, a commit, a pull request, a merge, an issue, an upload, a
-        message or email, a deploy or publish, a scheduled task, a link, a memory and a setting. A file
-        name may hold spaces where the reply marks its ends (backticks, double quotes, a link target, a
-        cell of such a table). A question, an offer, a plan, a negation, an example, a description of
-        work or a third party's act ("CI pushed a build") is not a claim, and neither is a web address
-        on its own.</p>
+        (<code class="path">server/goals/claims.py</code>, with the words in
+        <code class="path">claim_text.py</code>, paths in <code class="path">claim_paths.py</code> and acts
+        in <code class="path">claim_acts.py</code>): a document path after "saved to" or a word like it,
+        the app's own file link, the rows of a table whose header names a file, path, location, output
+        or saved column, a folder written to, a file removed, a code or other file the reply says it
+        made or changed ("I updated <code>server/app.py</code>", or an item under "I updated these
+        files:"), an artifact card, and the acts that leave nothing on this disk: a push, a commit, a
+        pull request, a merge, an issue, an upload, a message or email, a pull request comment, a
+        deploy or publish, a scheduled task, a link, a memory and a setting. The assistant's own act
+        counts however it is put: "I fixed the bug and pushed it", "Pushed <code>fix-x</code> to
+        origin", "The email has been sent to Dana", "PR #12 merged". Some claims say what now is
+        rather than what was done ("PR #12 is merged", "The fix is on <code>main</code>", "Here's the
+        PR: &lt;address&gt;", "It's live at &lt;address&gt;"). A question, an offer, a plan, a negation,
+        an example, what happens when something else does ("On failure, an alert is sent"), a dated
+        description ("the commit pushed at 10:02"), code ("scheduled the task with
+        <code>asyncio.create_task</code>"), a third party's act ("CI pushed a build", "The PR updated
+        the README"), the items under a line about someone else's work ("Summary of your changes:"),
+        a code block, a quoted line and a draft the reply hands over ("Here's a draft you can send:")
+        are not claims, and neither is a web address on its own.</p>
         <p>Each claim is checked against the world, never the model's word
         (<code class="path">server/goals/evidence.py</code>). A file must exist and be non-empty, and
-        where the reply says it was made, written since the turn began (a copy that kept its old times
-        counts when a call of the turn named it); a folder written to must hold something new; a removed
-        file must be gone; a card must have been made, by a <code>create_artifact</code> or
-        <code>edit_artifact</code> call this turn or by an earlier turn of the session (the app keeps a
-        session's cards with its saved history, so a restart does not forget them). Every other act
-        must be one that a call of this turn did and that succeeded
-        (<code class="path">server/goals/acts.py</code> reads what each call did from what it is
-        and what it was given: a git or gh command line, the <code>github</code> tool's arguments,
-        an API call's method and endpoint, an MCP tool's verb; never words that merely appear in its
-        arguments or result), naming the claim's target when the claim names one. A call that
-        failed, was refused or denied, still waits for approval or still runs in the background did
-        nothing. A claim that restates one the conversation made before, about something this turn
-        did not try again, is a recap: its file needs only to exist and its act is let through,
-        since it was checked when it was first made. A passive or a row of a table of changes can
-        describe how something works or what someone else did ("the image is pushed to ECR"), so
-        such a claim is checked only when the turn tried that act or wrote that file. In plan
-        mode a path counts only when a call this turn that writes outside the workspace named it as
-        its target: the destination of <code>save_file</code> or a document tool, or a path in the code
-        or command of <code>run_python</code>, a terminal command or <code>aws_cli</code>. Any other
-        path, such as a file listed after a look around with <code>terminal_run ls</code>, is a file
-        the plan will write.</p>
+        where the reply says it was made, written since the turn began or by a call of the turn that
+        named that exact path; a file the reply only says is somewhere must be new when the turn tried
+        to write it and failed; a folder written to must hold something new; a removed file must be
+        gone (one taken out of git only must be untracked); a card must have been made, by a
+        <code>create_artifact</code> or <code>edit_artifact</code> call this turn or by an earlier turn
+        of the session. Every other act must be one that a call of this turn did and that succeeded,
+        or that an agent reported this turn (<code class="path">server/goals/acts.py</code> reads
+        what each call did from what it is and what it was given: a git, gh or glab command line,
+        also behind runners such as <code>npx</code> and <code>python -m</code>, the
+        <code>github</code> tool's arguments, an API call's method and endpoint, an MCP tool's verb
+        and arguments; never words that merely appear in its arguments or result). The act must name
+        the claim's target (the pull request its own result names, never a number in its body) and
+        go where the claim says: an email is not a chat post, a pull request comment or a message to
+        an agent, a preview deploy is not production, and a site is not a package. A dry run, a draft
+        release, an auto-merge still waiting for its checks, a push that deletes a branch and a push
+        the remote already had did nothing. <code class="path">server/goals/call_results.py</code>
+        reads whether each call finished: one that failed, was refused or denied, still waits for
+        approval or for input, ran past its time limit, or still runs in the background did nothing
+        yet; a background command counts once a later <code>task_status</code> or
+        <code>task_output</code> shows it finished with exit 0.</p>
+        <p>A claim the turn did not back rests on earlier work only as a recap. The conversation must
+        show it was done (a delivery an earlier reply verified, which the chat sends along with its
+        history and never puts in the model's prompt, or an agent's report), the turn must not have
+        tried it again, and the claim must read as a recap: it says so ("earlier", "as I mentioned",
+        but not "the crash you reported earlier"), it says what now is, or the user asked about
+        earlier work ("did you push it?") rather than for new work. So "Pushed the retry fix to
+        main" after an earlier push to main, when the user asked for a new fix and a push, is held.
+        A row of a table of changes or what a log says can describe someone else's work, so such a
+        claim is checked only when the turn tried that act or wrote that file. In plan mode a path
+        counts when a call this turn that writes outside the workspace named it, or the reply says it
+        made the file.</p>
         <p>The user never reads a claim before it is checked. The stream guard
         (<code class="path">server/chat/claim_guard.py</code>) sits between the model's text and the
         chat: text flows at once, but a sentence that could make a claim is held until it ends and its
-        claims are checked. A verified sentence is released with a <code>deliveries</code> frame, which
-        the chat shows as "Verified" chips under the reply (a file's chip opens it). A sentence whose
-        claim does not hold is not shown; in a round that calls tools it first waits for them, since a
-        sentence may run ahead of the call that makes it true. The gate then names the held sentences
-        to the model, says the user has not seen them, and asks it to do what this turn asked for or
-        say plainly that it was not done, and never to repeat an action that may already have
-        happened (a message, a push, a payment); the card in the chat reads "Checking a claimed
-        delivery" and never repeats the sentence. A second nudge follows only when the model acted on the first (it called a tool
-        since). When the turn ends, each held claim that still does not hold is stated in the server's
-        own words ("Not saved: <code>~/a.docx</code> does not exist."), unless a later sentence named
-        its target, so a false claim is never shown as fact. The same guard covers subagents,
+        claims are checked, reading the reply the same way the gate does (code, quotes and drafts
+        flow through unread, and a list keeps its lead line across a blank line). A verified sentence
+        is released with a <code>deliveries</code> frame, which the chat shows as "Verified" chips
+        under the reply (a file's chip opens it). A sentence whose claim does not hold is not shown,
+        nor what follows it. In a round that calls tools, the tool cards wait behind it until the
+        round's calls are known: a sentence none of them could make true is dropped then and the rest
+        released in order before the tools run; one a call could make true waits for the calls, with
+        the tool cards sent first, and follows them as its own paragraph. A cut at the output limit
+        is no sentence end: the sentence goes on in the continuation, a retried one too, and is read
+        whole. The gate then names the held sentences to the model, says the user has not seen them,
+        and asks it to do what this turn asked for or say plainly that it was not done, never to
+        repeat an action that may already have happened (a message, a push, a payment), and never to
+        start again one a call started that is still running; the card in the chat reads "Checking a
+        claimed delivery" and never repeats the sentence. A second nudge follows only when the model
+        acted on the first (it called a tool since). When the turn ends, each held claim that still
+        does not hold is stated in the server's own words ("Not saved: <code>~/a.docx</code> does not
+        exist.", "Not confirmed yet: the deploy is still running."), unless a later sentence
+        corrected it, so a false claim is never shown as fact. The same guard covers subagents,
         scheduled and headless runs and voice; a run with no gate to send the model back ends its
         last round with the note, so a subagent's report carries it. A turn that pauses for an
-        approval hands its held sentences to its continuation, which checks them against the call
-        the user approved. The guard keeps every call of the turn it has seen, so compaction or a
-        salvage round cannot make a done act look undone. The memory agents' notes are not replies
+        approval hands its dropped claims and everything from its first held sentence on to its
+        continuation, which checks them against the call the user approved and shows them first, in
+        order. The guard keeps every call of the turn as it first read it, so compaction or a salvage
+        round cannot make a done act look undone, or a failed one done, and the memory hooks read the
+        turn without the sentences the user was not shown. The memory agents' notes are not replies
         and are not held.</p></li>
       <li><h4>Requested file (always)</h4><p>Behind the <code>requested_file_check</code> flag, and quiet
         in plan mode. When the user asked for a file and the turn produced none (no file or document tool
@@ -300,10 +328,11 @@
     <div class="spec">
       <dt><code class="path">server/goals/gate.py</code></dt><dd><code>run_completion_gate(GateContext) → GateDecision</code>; the ordered phases and the shared cap. Callers build their own <code>GateContext</code>.</dd>
       <dt><code class="path">server/goals/deliverables.py</code></dt><dd>The turn's replies, calls and prompts as the checks read them, and the claim check's feedback (<code>check_claims</code>).</dd>
-      <dt><code class="path">server/goals/claims.py</code></dt><dd>What a reply says it delivered, clause by clause, each claim with the offsets of the clause that makes it.</dd>
-      <dt><code class="path">server/goals/evidence.py</code></dt><dd>Whether a claim holds: the disk for files, folders and removals, the turn's successful calls for every other act, recaps of earlier claims.</dd>
-      <dt><code class="path">server/goals/acts.py</code></dt><dd>What each tool call did (pushed, committed, merged, opened a PR or issue, uploaded, sent, published, scheduled, removed) and which files it wrote, from its name and input.</dd>
-      <dt><code class="path">server/chat/claim_guard.py</code></dt><dd>The stream guard: holds a claiming sentence until it is verified, sends the <code>deliveries</code> receipts, and notes at the turn's end what did not happen.</dd>
+      <dt><code class="path">server/goals/claims.py</code></dt><dd>What a reply says it delivered, clause by clause, each claim with the offsets of the clause that makes it; the words it reads by are in <code class="path">claim_text.py</code> (whose statement it is, what negates or points back, which lines are code, quotes or drafts), paths in <code class="path">claim_paths.py</code> and acts in <code class="path">claim_acts.py</code>.</dd>
+      <dt><code class="path">server/goals/evidence.py</code></dt><dd>Whether a claim holds: the disk for files, folders and removals, the turn's successful calls and agent reports for every other act, where each act went, and recaps of work earlier replies verified.</dd>
+      <dt><code class="path">server/goals/acts.py</code></dt><dd>What each tool call did (pushed, committed, merged, opened a PR or issue, uploaded, sent, commented, published, scheduled, removed), where it went, and which files it wrote, from its name and input.</dd>
+      <dt><code class="path">server/goals/call_results.py</code></dt><dd>Whether each call finished and succeeded, background commands a later call shows finished, the calls as first read, and the agent reports a turn read.</dd>
+      <dt><code class="path">server/chat/claim_guard.py</code></dt><dd>The stream guard: holds a claiming sentence (and the tool cards behind it) until it is verified, sends the <code>deliveries</code> receipts, carries a cut or a paused turn's text on in order, and notes at the turn's end what did not happen.</dd>
       <dt><code class="path">server/goals/requested_files.py</code></dt><dd>Which files the user asked for this turn, and whether what the turn did after each request produced one.</dd>
       <dt><code class="path">server/goals/verification.py</code></dt><dd>The passive ledger: which tools edit code, which commands verify it, and whether the evidence is fresh.</dd>
       <dt><code class="path">server/goals/gates.py</code></dt><dd>Running a goal's quality-gate commands, the retry budget, and the failure text.</dd>
