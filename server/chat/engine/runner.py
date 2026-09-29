@@ -31,6 +31,7 @@ from typing import Any
 
 from server.utils import BoundedUUIDSet, ndjson_dumps
 
+from .continuation import CONTINUE_AFTER_MAX_TOKENS, continuable_assistant, strip_partial_tool_use
 from .events import (
     Heartbeat,
     Incomplete,
@@ -60,35 +61,6 @@ _ROUND_RETRIES_MAX = 2
 # starts. The last tenth is reserved for writing the report.
 SOFT_LIMIT_FRACTION = 0.9
 _ROUND_RETRY_BACKOFF_S = 2.0
-
-
-def strip_partial_tool_use(content: list[dict]) -> list[dict]:
-    """Prepare an assistant turn for re-injection without a tool_result.
-
-    ``max_tokens`` (or a completion-gate loop) can leave partial ``tool_use``
-    blocks in the assistant turn; feeding them back without matching
-    tool_results is a non-retryable provider error. Drop them, keeping the
-    text/thinking, and never return an empty turn."""
-    if not any(b.get("type") == "tool_use" for b in content):
-        return content
-    kept = [b for b in content if b.get("type") != "tool_use"]
-    return kept or [{"type": "text", "text": "(continuing)"}]
-
-
-def _continuable_assistant(content: list[dict]) -> list[dict]:
-    """The round's assistant content, shaped so the turn can carry on after it.
-
-    Used wherever the loop decides an apparent end-of-turn is not the end (a
-    completion-gate block, a mid-turn message that landed after the last
-    drain). Partial tool_use blocks go, and a turn with no usable text gets a
-    placeholder: some providers reject an assistant turn that is empty or
-    text-less, which would kill the very turn we are trying to continue."""
-    assistant = strip_partial_tool_use(content)
-    has_text = isinstance(assistant, list) and any(
-        isinstance(b, dict) and b.get("type") == "text" and (b.get("text") or "").strip()
-        for b in assistant
-    )
-    return assistant if has_text else [{"type": "text", "text": "(continuing)"}]
 
 
 def _remind(messages: list, text: str) -> None:
@@ -797,18 +769,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                 messages.append(
                     {"role": "assistant", "content": strip_partial_tool_use(result_content)}
                 )
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Continue exactly where you left off. Do not repeat anything. "
-                            "IMPORTANT: If you were in the middle of a code block (```html or similar), "
-                            "continue the code directly — do NOT close and reopen the fence, do NOT add explanation text "
-                            "before or inside the code. Just continue the code from the exact point it was cut off. "
-                            "The output will be concatenated to your previous response."
-                        ),
-                    }
-                )
+                messages.append({"role": "user", "content": CONTINUE_AFTER_MAX_TOKENS})
                 if estimate_message_size(messages) > thresholds_for(ctx.model_key)[0]:
                     messages = await compact_messages_with_claude(
                         messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
@@ -900,7 +861,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                         messages.append(
                             {
                                 "role": "assistant",
-                                "content": _continuable_assistant(result_content),
+                                "content": continuable_assistant(result_content),
                             }
                         )
                         messages.append(
@@ -940,7 +901,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     messages.append(
                         {
                             "role": "assistant",
-                            "content": _continuable_assistant(result_content),
+                            "content": continuable_assistant(result_content),
                         }
                     )
                     # The client joins every text frame of a turn into one
