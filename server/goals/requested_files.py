@@ -24,10 +24,10 @@ from __future__ import annotations
 
 import re
 
+from server.goals.claims import asserted_paths
 from server.goals.deliverables import (
     OUTSIDE_WRITERS,
     asked_by_row,
-    asserted_paths,
     assistant_named_paths,
     called_tools,
     exists_non_empty,

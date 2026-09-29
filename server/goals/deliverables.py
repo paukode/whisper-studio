@@ -21,113 +21,14 @@ from __future__ import annotations
 
 import json
 import os
-import re
-from typing import NamedTuple
-from urllib.parse import unquote
 
+from server.goals.claims import claimed_paths, claims_an_artifact
 from server.goals.tail import _render_blocks
 
-# Extensions a reply plausibly hands the user as a finished artifact. Code and
-# config files are deliberately absent: a reply mentioning `/src/app.py` is
-# describing work, not claiming a deliverable.
-_DELIVERABLE_EXTS = "docx|xlsx|pptx|pdf|html?|md|csv|json|txt|png|svg|zip|dmg"
-_EXT = rf"\.(?:{_DELIVERABLE_EXTS})"
-_EXT_RE = re.compile(rf"{_EXT}\b", re.IGNORECASE)
-
-# The app's own file link: [label](#wsfile=/abs/or/relative/path&open=os). Its
-# builder url-quotes the path (server/index/citations.py), so a space arrives
-# as %20 and is decoded, as the chat's own link handler decodes it.
-_WSFILE = "#wsfile="
-_WSFILE_RE = re.compile(r"#wsfile=([^&)\s\"']+)")
-# An absolute or home-relative path with a deliverable extension, as it
-# appears in prose or backticks. The lookbehind keeps it from matching the
-# tail of a longer token, and a path never starts "//", which is the rest of a
-# web address ("https://host/a.pdf" names no file on disk); the trailing \b
-# keeps "report.docx." clean. A file:// address names the path after its
-# scheme.
-_ABS_PATH_RE = re.compile(rf"(?<![\w/.])((?:~|/(?!/))[^\s`'\"()\[\]<>]*?{_EXT})\b", re.IGNORECASE)
-_FILE_URL_RE = re.compile(rf"\bfile://((?:~|/)[^\s`'\"()\[\]<>]*?{_EXT})\b", re.IGNORECASE)
-# Where the reply marks both ends of a path, the path may hold spaces, as Mac
-# file names often do ("~/Downloads/Q3 Report.docx"): inside backticks or
-# double quotes, as a markdown link's target (bare, <angle-bracketed>, or
-# url-encoded, which is decoded), or as a whole table cell. A marked run that
-# holds a second path or a path and more words ("~/a.md and ~/b.md") is not
-# one path, and the bare paths inside it are read instead.
-_BACKTICK_PATH_RE = re.compile(rf"`((?:~|/)[^`\n]*?{_EXT})`", re.IGNORECASE)
-_QUOTED_PATH_RE = re.compile(
-    rf"[\"\u201c]((?:~|/)[^\"\u201c\u201d\n]*?{_EXT})[\"\u201d]", re.IGNORECASE
-)
-_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(\s*(?:<([^<>\n]+)>|([^()<>\n]+?))\s*\)")
-_CELL_PATH_RE = re.compile(rf"\s*[*_]*((?:~|/)[^|`\"<>\n]*?{_EXT})[*_]*\s*", re.IGNORECASE)
-_WHOLE_PATH_RE = re.compile(rf"(?:~|/).*{_EXT}", re.IGNORECASE)
-_TWO_PATHS_RE = re.compile(rf"\s(?:~|/)|{_EXT}\s", re.IGNORECASE)
-_ARTIFACT_CLAIM_RE = re.compile(
-    r"\bartifact (?:card )?(?:above|below|attached)\b|\bin the artifact\b|\bartifact card\b",
-    re.IGNORECASE,
-)
-
-# ── Reading a reply for claims ─────────────────────────────────────────────
-# A path is a claim only where the reply says the file was made. Its clause
-# has a completion word ("saved", "created", "is ready", "here"), or puts the
-# path right after a location word ("to", "at", "in", "as", a colon); the
-# app's own file link is a claim by itself. A clause that negates, speaks of
-# what would happen, gives an example, or offers or plans in the first person
-# ahead of the path is not a claim, and neither is a question or a code
-# block. So "Saved to X, but the logo was not included" claims X, while "Want
-# me to save it as X?", "I could not write X", "I will write X next", "2.
-# write X" and "for example X" claim nothing, and a correction that names the
-# missing path settles the check instead of repeating it. A list item is read
-# with the line that introduces it ("I created these files:"). The words of a
-# file name are not the reply's words ("~/Not Final.docx" negates nothing),
-# and a comma or dash inside a marked path does not split its clause.
-#
-# A markdown table whose header names a file, path, location, output or saved
-# column lists deliverables: each of its rows is read whole, with the table's
-# lead-in line, and every path in a row is claimed unless the row negates,
-# offers or asks, or says its file is gone ("| old.md | deleted |" in a table
-# of changes). The rows of any other table read as prose, as before.
-_CODE_FENCE_RE = re.compile(r"```.*?(?:```|\Z)", re.DOTALL)
-_ABBREVIATIONS = {"e.g.": "for example", "i.e.": "that is"}
-_ABBREV_RE = re.compile(r"\b(?:e\.g|i\.e)\.", re.IGNORECASE)
-_LIST_ITEM_RE = re.compile(r"^\s*(?:[-*\u2022]|\d+[.)])\s+")
-_TABLE_RULE_RE = re.compile(r"\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*")
-_FILE_COLUMN_RE = re.compile(
-    r"\b(?:file(?:name|path)?s?|paths?|locations?|outputs?|saved)\b", re.IGNORECASE
-)
-_GONE_RE = re.compile(r"\b(?:deleted|removed|trashed|moved|renamed)\b", re.IGNORECASE)
-_CLAUSE_SPLIT_RE = re.compile(
-    r"(?<=[.!?])\s+|[;,]\s+|\s+[-\u2013]\s+"
-    r"|\s+(?:but|though|although|however|so|then|while|whereas)\s+",
-    re.IGNORECASE,
-)
-_DONE_RE = re.compile(
-    r"\b(?:saved|wrote|written|created|exported|generated|produced|stored|placed|put"
-    r"|rendered|built|converted|updated|downloaded|attached|ready|available|here|find"
-    r"|located|lives)\b|\b(?:is|are) (?:now )?(?:at|in)\b",
-    re.IGNORECASE,
-)
-_LOCATED_RE = re.compile(r"(?:\b(?:to|at|in|as|into|under)|:)[\s`*_\"'(\[]*$", re.IGNORECASE)
-_LINK_OPEN_RE = re.compile(r"\[[^\]]*\]\(\s*$")
-_NOT_MADE_RE = re.compile(
-    r"\b(?:not|never|unable|failed|cannot|no longer|would|could|might|for example"
-    r"|such as|example)\b|n['\u2019]t\b",
-    re.IGNORECASE,
-)
-_OFFER_AHEAD_RE = re.compile(
-    r"\b(?:i|we)(?:['\u2019](?:ll|d)|\s+(?:will|shall|may|am going to|are going to))\b"
-    r"|\b(?:i|we)\s+can\b(?!\s+(?:confirm|see|tell|verify))"
-    r"|\b(?:i|we)['\u2019](?:m|re)\s+going to\b"
-    r"|\blet me\b(?!\s+know)"
-    r"|\b(?:shall i|should i|want me to|like me to|if you|will be|going to be|no)\b",
-    re.IGNORECASE,
-)
-_PATHS_ONLY_RE = re.compile(r"[^A-Za-z]+|\band\b|\bor\b", re.IGNORECASE)
-_URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s<>()\[\]`\"']+", re.IGNORECASE)
-_MASK = "\0"
-
-# One nudge per turn, as for a requested file: claims are read out of prose,
-# so a wrong reading costs a single round and never a loop to the cap.
-MAX_CLAIM_NUDGES = 1
+# Claims are read out of prose, so a wrong reading must cost a round, never
+# a loop to the cap: a second nudge only after the model acted on the first
+# (check_claims).
+MAX_CLAIM_NUDGES = 2
 CLAIM_MARKER = "[claim]"
 _GATE_PREFIX = "[completion gate]"
 _MIDTURN_OPEN = "<user_message_mid_turn>"
@@ -309,246 +210,6 @@ def reply_texts(messages: list, *, since: int = 0) -> list[str]:
     return [t for t in rows if t]
 
 
-# ── Finding the paths a text names ─────────────────────────────────────────
-
-
-class _Span(NamedTuple):
-    """One path a text names: where its mention starts and ends (a link's
-    "[", an opening quote, or the path itself), the path, whether it is the
-    app's own file link, and where the part that is the path's own text
-    begins (a link's prose label, "here", stays readable)."""
-
-    start: int
-    end: int
-    path: str
-    app_link: bool
-    mask_from: int
-
-
-def _free(spans: list[_Span], start: int, end: int) -> bool:
-    return all(end <= s.start or start >= s.end for s in spans)
-
-
-def _link_path(target: str) -> tuple[str, bool] | None:
-    """The file a markdown link's target names, decoded, and whether it is the
-    app's own file link; None for any other target (a web page, an anchor, a
-    relative name). The app's link splits at its first raw "&" before
-    decoding, as the chat's handler does."""
-    target = target.strip()
-    if target.startswith(_WSFILE):
-        path = unquote(target[len(_WSFILE) :].split("&", 1)[0]).strip()
-        return (path, True) if path else None
-    if target[:7].lower() == "file://":
-        target = target[7:]
-    path = unquote(target)
-    if _WHOLE_PATH_RE.fullmatch(path) and not _TWO_PATHS_RE.search(path):
-        return path, False
-    return None
-
-
-def _path_spans(text: str) -> list[_Span]:
-    """Every path ``text`` names as a deliverable, in text order: a marked
-    path first (a link target, backticks, double quotes), then a file://
-    address, the app's link and a bare path outside those."""
-    spans: list[_Span] = []
-    for m in _LINK_RE.finditer(text):
-        found = _link_path(m.group(2) or m.group(3) or "")
-        if found and _free(spans, *m.span()):
-            # A label that names a file is part of the name; "here" is prose.
-            label_is_name = bool(_EXT_RE.search(m.group(1)))
-            mask_from = m.start() if label_is_name else m.end(1)
-            spans.append(_Span(m.start(), m.end(), found[0], found[1], mask_from))
-    for pattern in (_BACKTICK_PATH_RE, _QUOTED_PATH_RE):
-        for m in pattern.finditer(text):
-            if not _TWO_PATHS_RE.search(m.group(1)) and _free(spans, *m.span()):
-                spans.append(_Span(m.start(), m.end(), m.group(1), False, m.start()))
-    for m in _FILE_URL_RE.finditer(text):
-        if _free(spans, *m.span()):
-            spans.append(_Span(m.start(), m.end(), unquote(m.group(1)), False, m.start()))
-    for m in _WSFILE_RE.finditer(text):
-        if _free(spans, *m.span()):
-            spans.append(_Span(m.start(), m.end(), unquote(m.group(1)), True, m.start()))
-    for m in _ABS_PATH_RE.finditer(text):
-        if _free(spans, *m.span(1)):
-            spans.append(_Span(m.start(1), m.end(1), m.group(1), False, m.start(1)))
-    return sorted(s._replace(path=s.path.strip()) for s in spans if s.path.strip())
-
-
-def _row_spans(row: str) -> list[_Span]:
-    """The paths a table row names: those ``_path_spans`` finds, and a cell
-    that holds nothing but a path, spaces and all, since the pipes mark its
-    ends."""
-    spans = _path_spans(row)
-    at = 0
-    for cell in row.split("|"):
-        m = _CELL_PATH_RE.fullmatch(cell)
-        if m and not _TWO_PATHS_RE.search(m.group(1)):
-            start, end = at + m.start(1), at + m.end(1)
-            if _free(spans, start, end):
-                spans.append(_Span(start, end, m.group(1), False, start))
-        at += len(cell) + 1
-    return sorted(spans)
-
-
-def _masked(text: str, spans: list[_Span]) -> str:
-    """``text`` with each path's own text, and each web address, hidden
-    behind a run of NULs of the same length, so the words of a file name or
-    an address ("example.com") read as neither a negation nor a claim and
-    every position stays put."""
-    chars = list(text)
-    hidden = [(s.mask_from, s.end) for s in spans] + [m.span() for m in _URL_RE.finditer(text)]
-    for start, end in hidden:
-        chars[start:end] = _MASK * (end - start)
-    return "".join(chars)
-
-
-def claimed_paths(text: str) -> list[str]:
-    """File paths the text names as deliverables, in order, deduplicated."""
-    out: list[str] = []
-    for s in _path_spans(text or ""):
-        if s.path not in out:
-            out.append(s.path)
-    return out
-
-
-def _file_table_rows(lines: list[str]) -> dict[int, bool]:
-    """Line index to True for each body row of a markdown table whose header
-    names a file, path, location, output or saved column, and to False for
-    that table's header and rule lines. The lines of any other table are left
-    out, so they read as prose."""
-    rows: dict[int, bool] = {}
-    i = 0
-    while i + 1 < len(lines):
-        head, rule = lines[i], lines[i + 1]
-        if "|" not in head or "|" not in rule or not _TABLE_RULE_RE.fullmatch(rule):
-            i += 1
-            continue
-        end = i + 2
-        while end < len(lines) and "|" in lines[end]:
-            end += 1
-        if _FILE_COLUMN_RE.search(head):
-            rows.update(dict.fromkeys((i, i + 1), False))
-            rows.update(dict.fromkeys(range(i + 2, end), True))
-        i = end
-    return rows
-
-
-def _split_clauses(line: str) -> list[str]:
-    """The clauses of one line. A split that falls inside a path's mention (a
-    comma or " - " in a quoted file name) is part of the name."""
-    spans = _path_spans(line)
-    parts: list[str] = []
-    start = 0
-    for m in _CLAUSE_SPLIT_RE.finditer(line):
-        if _free(spans, *m.span()):
-            parts.append(line[start : m.start()])
-            start = m.end()
-    parts.append(line[start:])
-    return parts
-
-
-def _clauses(text: str):
-    """(lead, clause, file_row) for each clause of each line outside code
-    blocks. The lead is the line that introduces a list or a table, for its
-    items; a row of a table that lists files is one clause of its own
-    (``file_row``)."""
-    text = _CODE_FENCE_RE.sub("\n", text or "")
-    text = _ABBREV_RE.sub(lambda m: _ABBREVIATIONS[m.group(0).lower()], text)
-    lines = text.splitlines()
-    table = _file_table_rows(lines)
-    lead = ""
-    for i, line in enumerate(lines):
-        if not line.strip() or table.get(i) is False:
-            continue
-        if table.get(i):
-            yield lead, line, True
-            continue
-        item = bool(_LIST_ITEM_RE.match(line))
-        if not item:
-            lead = line if line.rstrip().endswith(":") else ""
-        for clause in _split_clauses(line):
-            if clause and clause.strip():
-                yield (lead if item else ""), clause, False
-
-
-def _is_question(clause: str) -> bool:
-    return clause.rstrip(" \t\"')]*_`").endswith("?")
-
-
-def _row_claims(lead: str, row: str) -> list[str]:
-    """The paths a row of a file table claims: all of them, unless the row
-    (with the table's lead-in line) negates, offers or asks, or the row itself
-    says its file is gone. Only the row: "I removed the old drafts and
-    created these:" still introduces files that were made."""
-    spans = _row_spans(row)
-    masked = _masked(row, spans)
-    said = f"{lead} {masked}"
-    if (
-        any(_is_question(cell) for cell in said.split("|"))
-        or _NOT_MADE_RE.search(said)
-        or _OFFER_AHEAD_RE.search(said)
-        or _GONE_RE.search(masked)
-    ):
-        return []
-    return [s.path for s in spans]
-
-
-def asserted_paths(text: str) -> list[str]:
-    """The paths ``text`` says were made (see the notes above
-    _CODE_FENCE_RE); claimed_paths less those it only offers, plans, supposes,
-    negates or asks about."""
-    out: list[str] = []
-    prev_claimed = False
-    for lead, clause, file_row in _clauses(text):
-        if file_row:
-            claimed = _row_claims(lead, clause)
-            out += [p for p in dict.fromkeys(claimed) if p not in out]
-            prev_claimed = bool(claimed)
-            continue
-        spans = _path_spans(clause)
-        if not spans:
-            prev_claimed = False
-            continue
-        masked = _masked(clause, spans)
-        said = f"{lead} {masked}"
-        # "Saved to X, Y and Z": a clause of paths alone continues the last.
-        paths_only = not _PATHS_ONLY_RE.sub("", masked).strip()
-        claimed_here = False
-        if not _is_question(clause) and not _NOT_MADE_RE.search(said):
-            done = bool(_DONE_RE.search(said))
-            for s in spans:
-                ahead = masked[: s.start]
-                if _OFFER_AHEAD_RE.search(f"{lead} {ahead}"):
-                    continue
-                if (
-                    s.app_link
-                    or done
-                    or _LOCATED_RE.search(_LINK_OPEN_RE.sub("", ahead))
-                    or (paths_only and prev_claimed)
-                ):
-                    claimed_here = True
-                    if s.path not in out:
-                        out.append(s.path)
-        prev_claimed = claimed_here
-    return out
-
-
-def claims_an_artifact(text: str) -> bool:
-    """True when ``text`` points at an artifact card as made, as opposed to
-    offering one, asking about one or saying there is none."""
-    for lead, clause, _file_row in _clauses(text):
-        said = _masked(clause, _path_spans(clause))
-        m = _ARTIFACT_CLAIM_RE.search(said)
-        if (
-            m
-            and not _is_question(clause)
-            and not _NOT_MADE_RE.search(f"{lead} {said}")
-            and not _OFFER_AHEAD_RE.search(f"{lead} {said[: m.start()]}")
-        ):
-            return True
-    return False
-
-
 def resolve_path(path: str, workspace: str | None) -> str:
     """Where ``path`` points: the home folder expanded, a workspace-relative
     path joined to the workspace, and the result normalised, so two spellings
@@ -579,7 +240,7 @@ def _assistant_strings(content) -> list[str]:
         if not isinstance(b, dict):
             continue
         if b.get("type") in ("tool_use", "function_call"):
-            out.append(json.dumps(_call_input(b), ensure_ascii=False, default=str))
+            out.append(json.dumps(call_input(b), ensure_ascii=False, default=str))
         else:
             out.append(str(b.get("text", "")))
     return out
@@ -616,7 +277,7 @@ def artifact_claim_unmet(messages: list) -> bool:
     return claims_an_artifact("\n".join(reply_texts(messages))) and not artifact_created(messages)
 
 
-def _call_input(block: dict) -> dict:
+def call_input(block: dict) -> dict:
     """A tool call's arguments: an Anthropic block's input, or a Responses
     item's arguments, which arrive as JSON text."""
     given = block.get("input", block.get("arguments"))
@@ -671,20 +332,38 @@ def targeted_paths(messages: list, workspace: str | None) -> set[str]:
         if isinstance(b, dict)
         and b.get("type") in ("tool_use", "function_call")
         and b.get("name") in OUTSIDE_WRITERS
-        for p in _write_targets(str(b["name"]), _call_input(b))
+        for p in _write_targets(str(b["name"]), call_input(b))
         if p
     }
 
 
-def claim_nudges_used(messages: list) -> int:
-    """How many claim nudges the gate already issued this turn."""
-    return sum(
-        1
-        for m in turn_messages(messages)
-        if isinstance(m, dict)
+def _is_claim_nudge(m) -> bool:
+    return (
+        isinstance(m, dict)
         and m.get("role") == "user"
         and any(t.startswith(f"{_GATE_PREFIX} {CLAIM_MARKER}") for t in _texts(m.get("content")))
     )
+
+
+def claim_nudges_used(messages: list) -> int:
+    """How many claim nudges the gate already issued this turn."""
+    return sum(1 for m in turn_messages(messages) if _is_claim_nudge(m))
+
+
+def _acted_since_last_nudge(messages: list) -> bool:
+    """True when an assistant row after the turn's last claim nudge called a
+    tool: the model tried to make its claim true rather than only answer."""
+    turn = turn_messages(messages)
+    last = max((i for i, m in enumerate(turn) if _is_claim_nudge(m)), default=-1)
+    return last >= 0 and any(
+        isinstance(m, dict) and m.get("role") == "assistant" and _calls_a_tool(m.get("content"))
+        for m in turn[last + 1 :]
+    )
+
+
+def _shown(clause: str) -> str:
+    clause = " ".join(clause.split())
+    return clause if len(clause) <= 160 else clause[:157] + "..."
 
 
 def check_claims(
@@ -694,11 +373,21 @@ def check_claims(
     plan_mode: bool = False,
     session_has_artifact: bool = False,
     max_attempts: int = MAX_CLAIM_NUDGES,
+    started_at: float | None = None,
 ) -> str | None:
-    """Gate feedback naming what this turn's replies say was made but was
-    not, or None when every claim checks out. Every reply of the turn is read,
-    so one the gate never judged (a pending mid-turn message, or a Stop hook
-    that blocked first) is checked too; a reply that passed passes again.
+    """Gate feedback naming what this turn's replies claim was delivered but
+    was not, or None when every claim holds: server/goals/claims.py reads the
+    claims and server/goals/evidence.py checks each one (a file written since
+    ``started_at`` where the reply says it was made, an act done by a call
+    of the turn that succeeded). Every reply of the turn is read, so one the
+    gate never judged (a pending mid-turn message, or a Stop hook that
+    blocked first) is checked too; a reply that passed passes again.
+
+    The stream guard (server/chat/claim_guard.py) held each sentence making
+    such a claim back from the user, so the feedback says the user has not
+    seen it. A second nudge follows only when the model acted on the first
+    (it called a tool since): a reply that only corrected itself is not
+    asked again, and the guard notes to the user what did not happen.
 
     An artifact-card claim is met by a card this turn made or, with
     ``session_has_artifact``, by one the session holds from an earlier turn:
@@ -710,36 +399,42 @@ def check_claims(
     that writes outside the workspace named as its target is checked
     (``targeted_paths``), and an artifact-card claim always is. A look around
     with terminal_run makes no planned file a claim."""
-    if claim_nudges_used(messages) >= max_attempts:
+    used = claim_nudges_used(messages)
+    if used >= max_attempts or (used and not _acted_since_last_nudge(messages)):
         return None
     text = "\n".join(reply_texts(messages))
     if not text:
         return None
-    paths = asserted_paths(text)
-    if plan_mode:
-        targets = targeted_paths(messages, workspace)
-        paths = [p for p in paths if resolve_path(p, workspace) in targets]
-    missing = [p for p in paths if not exists_non_empty(p, workspace)]
-    artifact_missing = not session_has_artifact and artifact_claim_unmet(messages)
-    if not missing and not artifact_missing:
+    from server.goals import claims as c
+    from server.goals.evidence import Evidence, check
+
+    ev = Evidence.of(
+        messages,
+        workspace=workspace,
+        started_at=started_at,
+        session_has_artifact=session_has_artifact,
+        plan_mode=plan_mode,
+    )
+    failed: dict[tuple[str, str], str] = {}
+    for claim in c.read_claims(text):
+        verdict = check(claim, ev)
+        if not verdict.ok and (claim.kind, claim.target) not in failed:
+            note = verdict.note
+            if claim.kind == c.ARTIFACT:
+                note += " (no create_artifact call has made an artifact card)"
+            failed[(claim.kind, claim.target)] = f'- "{_shown(claim.clause)}": {note}'
+    if not failed:
         return None
-    parts: list[str] = []
-    if missing:
-        shown = ", ".join(missing[:5]) + (
-            f" and {len(missing) - 5} more" if len(missing) > 5 else ""
-        )
-        parts.append(
-            f"your reply tells the user these files were saved, but they do not exist "
-            f"or are empty: {shown}"
-        )
-    if artifact_missing:
-        parts.append(
-            "your reply refers to an artifact card, but this session has none: no "
-            "create_artifact call has made one"
-        )
+    lines = list(failed.values())
+    shown = lines[:6] + ([f"- and {len(lines) - 6} more"] if len(lines) > 6 else [])
+    written = sorted(p for p in targeted_paths(messages, workspace) if exists_non_empty(p, None))
+    tail = f"\nFiles this turn's calls wrote: {', '.join(written[:5])}." if written else ""
     return (
-        f"{CLAIM_MARKER} "
-        + "; ".join(parts)
-        + ". Produce it now and confirm from the tool result, or correct your reply to say it "
-        "was not produced. Never report a deliverable you have not verified."
+        f"{CLAIM_MARKER} These sentences of your reply were held back from the user, because "
+        "what they claim did not happen:\n"
+        + "\n".join(shown)
+        + "\nThe user has not seen them. Do the work now and confirm it from the tool result, "
+        "then say it once in one sentence; or tell the user plainly that it was not done. Do "
+        "not mention the held sentences or apologize for them. Never report a delivery you "
+        "have not verified." + tail
     )

@@ -18,12 +18,11 @@ from server.chat.engine.events import RoundResult, TextDelta, Usage
 from server.chat.engine.policy import TurnPolicy
 from server.chat.engine.runner import TurnContext, run_turn
 from server.goals import gate
+from server.goals.claims import asserted_paths, claims_an_artifact
 from server.goals.deliverables import (
     CLAIM_MARKER,
     OUTSIDE_WRITERS,
-    asserted_paths,
     check_claims,
-    claims_an_artifact,
     last_user_prompt,
     turn_messages,
 )

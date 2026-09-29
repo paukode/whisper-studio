@@ -36,6 +36,14 @@ from server.goals import store as goal_store
 log = logging.getLogger("whisper-studio")
 
 
+# What the chat shows while the model is sent back over a claim that did not
+# hold (server/chat/claim_guard.py held the sentence back).
+CLAIM_HELD_REASON = (
+    "Held back a sentence claiming something was delivered, because it could not be "
+    "verified. The model is doing the work now or will say it was not done."
+)
+
+
 def _flag_on(name: str, default: bool = True) -> bool:
     try:
         from server.infrastructure.feature_flags import is_enabled
@@ -204,6 +212,7 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
                 ctx.workspace,
                 plan_mode=ctx.plan_mode,
                 session_has_artifact=has_artifact,
+                started_at=ctx.turn_started_at,
             )
         except Exception as e:  # noqa: BLE001 - a checker bug must never abort a turn
             log.warning("deliverable check failed (%s); skipping", e)
@@ -222,10 +231,18 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
                     source="cap",
                 )
             log.info("completion gate: deliverable claim unmet; continuing the turn")
+            # The user never saw the held sentence, so the card must not
+            # repeat it: the feedback quoting it goes to the model only.
             return GateDecision(
                 block=True,
                 feedback=claim_feedback,
-                frame={"stop_hook_block": {"reason": claim_feedback, "attempt": ctx.attempt + 1}},
+                frame={
+                    "stop_hook_block": {
+                        "reason": CLAIM_HELD_REASON,
+                        "attempt": ctx.attempt + 1,
+                        "source": "deliverable",
+                    }
+                },
                 source="deliverable",
             )
 
