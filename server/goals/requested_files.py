@@ -41,7 +41,8 @@ from server.goals.deliverables import (
 MAX_REQUEST_NUDGES = 1
 REQUEST_MARKER = "[file]"
 
-# Tools that write a real file to disk.
+# Tools that write a real file to disk: the file tools, and the document
+# tools, which build the document and save it behind their approval card.
 _DISK_TOOLS = frozenset(
     {
         "save_file",
@@ -49,6 +50,11 @@ _DISK_TOOLS = frozenset(
         "ws_create_file",
         "ws_edit_file",
         "notebook_edit",
+        "create_docx",
+        "create_pptx",
+        "create_xlsx",
+        "create_pdf",
+        "office_script",
     }
 )
 # Plus the ones that hand the user something in the chat itself. Enough for

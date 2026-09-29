@@ -96,6 +96,24 @@ def test_a_file_tool_counts_as_produced(name):
     assert rf.produced_a_file(msgs, None) is True
 
 
+@pytest.mark.parametrize(
+    "name", ["create_docx", "create_pptx", "create_xlsx", "create_pdf", "office_script"]
+)
+def test_a_document_tool_answers_a_request_to_save_a_file(name):
+    # They write the document to disk behind their approval card; the reply
+    # need not repeat the path for the request to be met.
+    from server.chat.tool_pool import assemble_full_catalog
+
+    assert name in {t["name"] for t in assemble_full_catalog(ws_connected=True)}
+    msgs = [
+        {"role": "user", "content": "write the report as a docx and save it to Downloads"},
+        _tool(name),
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1"}]},
+        {"role": "assistant", "content": "The report is ready."},
+    ]
+    assert rf.requested_file_feedback(msgs, None) is None
+
+
 def test_a_reply_naming_a_file_that_really_exists_counts_as_produced(tmp_path):
     # The skill path writes documents with a script, not a file tool.
     real = tmp_path / "flow.png"
