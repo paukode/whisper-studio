@@ -17,6 +17,7 @@ from server.agents.providers.base import (
     CountsHook,
     ProviderTurn,
     TurnUsage,
+    structured_from_text,
 )
 
 log = logging.getLogger("whisper-studio")
@@ -64,10 +65,10 @@ class AnthropicBedrockAdapter:
             # Swap tools for a single schema-shaped emit_result tool. The model
             # decides whether to call it (tool_choice auto): Opus 5.5, Sonnet
             # 5.5, Fable 5.1 and Mythos 5.1 reject a forced tool_choice with a
-            # 400, and the caller's ask names the tool and retries once when
-            # the reply is not a call. Thinking stays unset, which every
-            # catalog model accepts: Fable, Opus 5.x and Sonnet 5.x then think
-            # adaptively, the others do not think.
+            # 400. The caller's ask names the tool or a JSON answer (read from
+            # the text below) and retries once when neither comes back.
+            # Thinking stays unset, which every catalog model accepts: Fable,
+            # Opus 5.x and Sonnet 5.x then think adaptively, the others do not.
             body["tools"] = [
                 {
                     "name": STRUCTURED_TOOL_NAME,
@@ -146,9 +147,14 @@ class AnthropicBedrockAdapter:
                 # conversation with missing thinking blocks is rejected once
                 # adaptive thinking is enabled.
                 assistant_blocks.append(block)
+        text = "\n\n".join(t for t in text_parts if t)
+        if force_structured is not None and structured is None:
+            # Nothing forces the emit_result call, and the ask also allows the
+            # required JSON format: an object answered in text is the result.
+            structured = structured_from_text(text)
 
         return ProviderTurn(
-            text="\n\n".join(t for t in text_parts if t),
+            text=text,
             tool_calls=tool_calls,
             assistant_blocks=assistant_blocks,
             stop_reason=response.get("stop_reason", "end_turn"),

@@ -8,7 +8,9 @@ each adapter converts at the wire and nothing else changes.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -116,6 +118,29 @@ class ModelAdapter(Protocol):
         force_structured: dict | None = None,
         on_counts: CountsHook | None = None,
     ) -> ProviderTurn: ...
+
+
+_FENCED_JSON = re.compile(r"```(?:json)?[ \t]*\n(.*?)\n?[ \t]*```", re.DOTALL | re.IGNORECASE)
+
+
+def structured_from_text(text: str) -> dict | None:
+    """The result object of a structured call answered in text: the whole
+    reply as a JSON object, or the first fenced (```json) block holding one.
+    None for anything else, including a JSON value that is not an object.
+    Both adapters read a text answer this way, since the ask allows "the
+    required JSON format" as well as the emit_result tool."""
+    candidates = [(text or "").strip()]
+    fenced = _FENCED_JSON.search(text or "")
+    if fenced:
+        candidates.append(fenced.group(1).strip())
+    for raw in candidates:
+        try:
+            value = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
 
 
 def model_key_for_id(model_id: str) -> str:

@@ -375,3 +375,70 @@ def test_two_replies_without_a_valid_object_return_none():
     out, requests = _distill([_text("four"), _text("still four")])
     assert out is None
     assert len(requests) == 2
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        '{"answer": 4}',
+        '  {"answer": 4}\n',
+        '```json\n{"answer": 4}\n```',
+        'Here is the result:\n\n```\n{"answer": 4}\n```',
+    ],
+)
+def test_a_json_text_answer_on_claude_is_the_structured_object(reply):
+    # The ask allows "the required JSON format" as well as the tool, and
+    # nothing forces the call: a Claude reply that answers in JSON text is
+    # taken, not thrown away (two such answers used to return None).
+    out, requests = _distill([_text(reply)])
+    assert out == {"answer": 4}
+    assert len(requests) == 1
+
+
+def test_a_json_text_answer_that_fails_the_schema_gets_the_repair_retry():
+    out, requests = _distill([_text('{"answer": "four"}'), _text('{"answer": 4}')])
+    assert out == {"answer": 4}
+    assert len(requests) == 2
+    assert "did not validate" in _last_user_text(requests[1])
+
+
+def test_the_emit_result_call_wins_over_json_in_the_text():
+    from server.agents.providers.anthropic import AnthropicBedrockAdapter
+
+    reply = _emit({"answer": 4})
+    reply["content"].insert(0, {"type": "text", "text": '{"answer": 5}'})
+    adapter = AnthropicBedrockAdapter(model_key="sonnet5.5", model_id="test-model")
+    adapter._bedrock = _FakeBedrock([reply])
+    turn = asyncio.run(
+        adapter.invoke(
+            system="s",
+            messages=[{"role": "user", "content": "q"}],
+            tools=None,
+            max_tokens=64,
+            force_structured=_ANSWER_SCHEMA,
+        )
+    )
+    assert turn.structured_output == {"answer": 4}
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["The answer is 4.", "[1, 2]", '"just a string"', "", '{"answer": 4', "```\nnot json\n```"],
+)
+def test_text_that_holds_no_json_object_is_not_a_result(text):
+    from server.agents.providers.base import structured_from_text
+
+    assert structured_from_text(text) is None
+
+
+def test_a_plain_text_reply_is_not_read_as_a_result_outside_a_structured_call():
+    from server.agents.providers.anthropic import AnthropicBedrockAdapter
+
+    adapter = AnthropicBedrockAdapter(model_key="sonnet5.5", model_id="test-model")
+    adapter._bedrock = _FakeBedrock([_text('{"answer": 4}')])
+    turn = asyncio.run(
+        adapter.invoke(
+            system="s", messages=[{"role": "user", "content": "q"}], tools=None, max_tokens=64
+        )
+    )
+    assert turn.structured_output is None
