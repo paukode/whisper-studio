@@ -189,7 +189,7 @@ describe('parseSkillMention', () => {
 
   it('leaves a bare @<name> mention untouched when the name is not a known skill', () => {
     // A session mention like "@my_session_b also doing feature Y" must not
-    // get misread as an attempt to force a nonexistent skill — it's resolved
+    // get misread as a request for a nonexistent skill: it's resolved
     // separately, server-side, from the raw text.
     expect(parseSkillMention('@my_session_b also doing feature Y', KNOWN)).toEqual({
       messageToSend: '@my_session_b also doing feature Y',

@@ -563,9 +563,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({ sessionId }) => {
       // skip this on purpose so the mic stays on through ephemeral states.
 
       // Pull an @skills:<name> or @<name> prefix off the front of
-      // the message so we can enforce that exact skill server-side
-      // (via tool_choice). Without this the prefix is just literal
-      // text and the model can — and often does — ignore it. The
+      // the message and send it as force_skill: the server activates that
+      // skill's tool and asks the model plainly to call it (no provider is
+      // sent a forced tool_choice; several models reject one). Without this
+      // the prefix is just literal text the model can easily ignore. The
       // submenu autocomplete already inserts ``@skills:<name>``;
       // the bare ``@<name>`` form is supported as a convenience for
       // users who type it without the helper.
