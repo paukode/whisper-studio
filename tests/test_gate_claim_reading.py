@@ -138,6 +138,128 @@ def test_an_artifact_card_is_claimed_only_by_a_statement(text, claims):
     assert claims_an_artifact(text) is claims
 
 
+# ── a file name with spaces ────────────────────────────────────────────────
+# Mac file names often hold spaces. Where the reply marks both ends of the
+# path, the whole name is read; a bare one still stops at the first space and
+# names nothing, as before.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Saved to `~/Downloads/Q3 Report.docx`.",
+        'Saved to "~/Downloads/Q3 Report.docx".',
+        "Saved to \N{LEFT DOUBLE QUOTATION MARK}~/Downloads/Q3 Report.docx"
+        "\N{RIGHT DOUBLE QUOTATION MARK}.",
+        "Saved to [Q3 Report](<~/Downloads/Q3 Report.docx>).",
+        "Saved to [Q3 Report](~/Downloads/Q3 Report.docx).",
+        "Saved to [Q3 Report](~/Downloads/Q3%20Report.docx).",
+        "Done: [Q3 Report.docx](#wsfile=~/Downloads/Q3%20Report.docx&open=os)",
+        "Done: [Q3 Report.docx](#wsfile=~/Downloads/Q3 Report.docx&open=os)",
+    ],
+)
+def test_a_marked_path_keeps_the_spaces_in_its_name(text):
+    assert asserted_paths(text) == ["~/Downloads/Q3 Report.docx"]
+
+
+@pytest.mark.parametrize(
+    ("text", "claimed"),
+    [
+        # The words of a file name are not the reply's own words.
+        ("Saved to `~/Downloads/Not Final, v2.docx`.", ["~/Downloads/Not Final, v2.docx"]),
+        ("Saved as ~/Downloads/example.csv.", ["~/Downloads/example.csv"]),
+        ("I read ~/Downloads/ready.docx and summarized it.", []),
+        # Two paths in one pair of quotes are two paths.
+        ('Saved "~/a.md and ~/b.md".', ["~/a.md", "~/b.md"]),
+        # A bare name with a space names no file at all, rather than half of one.
+        ("Saved to ~/Downloads/Q3 Report.docx", []),
+        ('Want me to save it as "~/Downloads/Q3 Report.docx"?', []),
+        ("I could not write `~/Downloads/Q3 Report.docx`.", []),
+    ],
+)
+def test_a_file_name_is_read_as_a_name(text, claimed):
+    assert asserted_paths(text) == claimed
+
+
+def test_the_apps_own_link_to_a_file_with_spaces_checks_out(tmp_path):
+    # The app's link url-quotes the path; read raw, a real file was reported
+    # missing on every such save.
+    from server.index.citations import created_file_link
+
+    report = tmp_path / "Q3 Report (final).docx"
+    report.write_bytes(b"docx")
+    history = [
+        {"role": "user", "content": "write the q3 report"},
+        _say(f"Saved: {created_file_link(report.name, str(report))}"),
+    ]
+    assert check_claims(history, None) is None
+    report.unlink()
+    assert str(report) in check_claims(history, None)
+
+
+@pytest.mark.parametrize(
+    ("text", "claimed"),
+    [
+        ("The report is available at https://acme.com/report.pdf.", []),
+        ("Uploaded to s3://bucket/q3/report.csv and saved to ~/r.csv.", ["~/r.csv"]),
+        ("Saved `~/a.md` (the guide is at https://example.com/help.html).", ["~/a.md"]),
+        ("Saved to file:///Users/me/Q3%20Report.docx.", ["/Users/me/Q3 Report.docx"]),
+        ("Saved:/Users/me/q3.docx", ["/Users/me/q3.docx"]),
+    ],
+)
+def test_a_web_address_is_not_a_file_on_disk(text, claimed):
+    assert asserted_paths(text) == claimed
+
+
+# ── a table of files ───────────────────────────────────────────────────────
+# A table whose header names a file, path, location, output or saved column
+# lists what was made, with no completion word in the row to say so.
+
+
+@pytest.mark.parametrize("column", ["File", "Path", "Location", "Output", "Saved to", "file name"])
+def test_a_table_that_lists_files_claims_its_rows(column):
+    table = (
+        f"| Deliverable | {column} |\n|---|:---:|\n"
+        "| Report | ~/Downloads/q3.docx |\n"
+        "| Chart | `~/Downloads/Q3 Chart.png` |\n"
+        "| Notes | ~/Downloads/Q3 Notes.md |"
+    )
+    assert asserted_paths("Done:\n\n" + table) == [
+        "~/Downloads/q3.docx",
+        "~/Downloads/Q3 Chart.png",
+        "~/Downloads/Q3 Notes.md",
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # No file column: a path in a cell is a mention, as in prose.
+        "| Step | Result |\n|---|---|\n| Export | ~/Downloads/q3.docx |",
+        # The row itself negates, offers or asks.
+        "| File | Status |\n|---|---|\n| ~/Downloads/q3.docx | not created |",
+        "| File | Status |\n|---|---|\n| ~/Downloads/q3.docx | will be written after review |",
+        "| File | Status |\n|---|---|\n| ~/Downloads/q3.docx | create it now? |",
+        # So does the line that introduces the table.
+        "I will create these files:\n\n| File | Purpose |\n|---|---|\n| ~/Downloads/q3.docx | report |",
+        "I could not save these:\n\n| File | Reason |\n|---|---|\n| ~/Downloads/q3.docx | locked |",
+    ],
+)
+def test_a_table_row_that_does_not_say_the_file_was_made_is_not_a_claim(text):
+    assert asserted_paths(text) == []
+
+
+def test_a_row_of_a_file_table_names_the_missing_file(tmp_path):
+    (tmp_path / "q3.docx").write_bytes(b"docx")
+    reply = (
+        "Everything is saved:\n\n| File | Contents |\n|---|---|\n"
+        f"| {tmp_path}/q3.docx | the report |\n| {tmp_path}/q3 chart.png | the chart |"
+    )
+    feedback = check_claims([{"role": "user", "content": "write the q3 report"}, _say(reply)], None)
+    assert feedback is not None
+    assert f"{tmp_path}/q3 chart.png" in feedback and f"{tmp_path}/q3.docx" not in feedback
+
+
 # ── which rows the checks read ────────────────────────────────────────────
 
 

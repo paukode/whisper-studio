@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import os
 import re
+from typing import NamedTuple
+from urllib.parse import unquote
 
 from server.goals.tail import _render_blocks
 
@@ -26,15 +28,36 @@ from server.goals.tail import _render_blocks
 # config files are deliberately absent: a reply mentioning `/src/app.py` is
 # describing work, not claiming a deliverable.
 _DELIVERABLE_EXTS = "docx|xlsx|pptx|pdf|html?|md|csv|json|txt|png|svg|zip|dmg"
+_EXT = rf"\.(?:{_DELIVERABLE_EXTS})"
+_EXT_RE = re.compile(rf"{_EXT}\b", re.IGNORECASE)
 
-# The app's own file link: [label](#wsfile=/abs/or/relative/path&open=os).
+# The app's own file link: [label](#wsfile=/abs/or/relative/path&open=os). Its
+# builder url-quotes the path (server/index/citations.py), so a space arrives
+# as %20 and is decoded, as the chat's own link handler decodes it.
+_WSFILE = "#wsfile="
 _WSFILE_RE = re.compile(r"#wsfile=([^&)\s\"']+)")
 # An absolute or home-relative path with a deliverable extension, as it
 # appears in prose or backticks. The lookbehind keeps it from matching the
-# tail of a longer token; the trailing \b keeps "report.docx." clean.
-_ABS_PATH_RE = re.compile(
-    rf"(?<![\w/.])((?:~|/)[^\s`'\"()\[\]<>]*?\.(?:{_DELIVERABLE_EXTS}))\b", re.IGNORECASE
+# tail of a longer token, and a path never starts "//", which is the rest of a
+# web address ("https://host/a.pdf" names no file on disk); the trailing \b
+# keeps "report.docx." clean. A file:// address names the path after its
+# scheme.
+_ABS_PATH_RE = re.compile(rf"(?<![\w/.])((?:~|/(?!/))[^\s`'\"()\[\]<>]*?{_EXT})\b", re.IGNORECASE)
+_FILE_URL_RE = re.compile(rf"\bfile://((?:~|/)[^\s`'\"()\[\]<>]*?{_EXT})\b", re.IGNORECASE)
+# Where the reply marks both ends of a path, the path may hold spaces, as Mac
+# file names often do ("~/Downloads/Q3 Report.docx"): inside backticks or
+# double quotes, as a markdown link's target (bare, <angle-bracketed>, or
+# url-encoded, which is decoded), or as a whole table cell. A marked run that
+# holds a second path or a path and more words ("~/a.md and ~/b.md") is not
+# one path, and the bare paths inside it are read instead.
+_BACKTICK_PATH_RE = re.compile(rf"`((?:~|/)[^`\n]*?{_EXT})`", re.IGNORECASE)
+_QUOTED_PATH_RE = re.compile(
+    rf"[\"\u201c]((?:~|/)[^\"\u201c\u201d\n]*?{_EXT})[\"\u201d]", re.IGNORECASE
 )
+_LINK_RE = re.compile(r"\[([^\]\n]*)\]\(\s*(?:<([^<>\n]+)>|([^()<>\n]+?))\s*\)")
+_CELL_PATH_RE = re.compile(rf"\s*[*_]*((?:~|/)[^|`\"<>\n]*?{_EXT})[*_]*\s*", re.IGNORECASE)
+_WHOLE_PATH_RE = re.compile(rf"(?:~|/).*{_EXT}", re.IGNORECASE)
+_TWO_PATHS_RE = re.compile(rf"\s(?:~|/)|{_EXT}\s", re.IGNORECASE)
 _ARTIFACT_CLAIM_RE = re.compile(
     r"\bartifact (?:card )?(?:above|below|attached)\b|\bin the artifact\b|\bartifact card\b",
     re.IGNORECASE,
@@ -51,11 +74,22 @@ _ARTIFACT_CLAIM_RE = re.compile(
 # me to save it as X?", "I could not write X", "I will write X next", "2.
 # write X" and "for example X" claim nothing, and a correction that names the
 # missing path settles the check instead of repeating it. A list item is read
-# with the line that introduces it ("I created these files:").
+# with the line that introduces it ("I created these files:"). The words of a
+# file name are not the reply's words ("~/Not Final.docx" negates nothing),
+# and a comma or dash inside a marked path does not split its clause.
+#
+# A markdown table whose header names a file, path, location, output or saved
+# column lists deliverables: each of its rows is read whole, with the table's
+# lead-in line, and every path in a row is claimed unless the row negates,
+# offers or asks. The rows of any other table read as prose, as before.
 _CODE_FENCE_RE = re.compile(r"```.*?(?:```|\Z)", re.DOTALL)
 _ABBREVIATIONS = {"e.g.": "for example", "i.e.": "that is"}
 _ABBREV_RE = re.compile(r"\b(?:e\.g|i\.e)\.", re.IGNORECASE)
 _LIST_ITEM_RE = re.compile(r"^\s*(?:[-*\u2022]|\d+[.)])\s+")
+_TABLE_RULE_RE = re.compile(r"\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*")
+_FILE_COLUMN_RE = re.compile(
+    r"\b(?:file(?:name|path)?s?|paths?|locations?|outputs?|saved)\b", re.IGNORECASE
+)
 _CLAUSE_SPLIT_RE = re.compile(
     r"(?<=[.!?])\s+|[;,]\s+|\s+[-\u2013]\s+"
     r"|\s+(?:but|though|although|however|so|then|while|whereas)\s+",
@@ -83,6 +117,8 @@ _OFFER_AHEAD_RE = re.compile(
     re.IGNORECASE,
 )
 _PATHS_ONLY_RE = re.compile(r"[^A-Za-z]+|\band\b|\bor\b", re.IGNORECASE)
+_URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s<>()\[\]`\"']+", re.IGNORECASE)
+_MASK = "\0"
 
 # One nudge per turn, as for a requested file: claims are read out of prose,
 # so a wrong reading (a reply about an artifact card an earlier turn made)
@@ -222,42 +258,184 @@ def reply_texts(messages: list) -> list[str]:
     return [t for t in rows if t]
 
 
+# ── Finding the paths a text names ─────────────────────────────────────────
+
+
+class _Span(NamedTuple):
+    """One path a text names: where its mention starts and ends (a link's
+    "[", an opening quote, or the path itself), the path, whether it is the
+    app's own file link, and where the part that is the path's own text
+    begins (a link's prose label, "here", stays readable)."""
+
+    start: int
+    end: int
+    path: str
+    app_link: bool
+    mask_from: int
+
+
+def _free(spans: list[_Span], start: int, end: int) -> bool:
+    return all(end <= s.start or start >= s.end for s in spans)
+
+
+def _link_path(target: str) -> tuple[str, bool] | None:
+    """The file a markdown link's target names, decoded, and whether it is the
+    app's own file link; None for any other target (a web page, an anchor, a
+    relative name). The app's link splits at its first raw "&" before
+    decoding, as the chat's handler does."""
+    target = target.strip()
+    if target.startswith(_WSFILE):
+        path = unquote(target[len(_WSFILE) :].split("&", 1)[0]).strip()
+        return (path, True) if path else None
+    if target[:7].lower() == "file://":
+        target = target[7:]
+    path = unquote(target)
+    if _WHOLE_PATH_RE.fullmatch(path) and not _TWO_PATHS_RE.search(path):
+        return path, False
+    return None
+
+
+def _path_spans(text: str) -> list[_Span]:
+    """Every path ``text`` names as a deliverable, in text order: a marked
+    path first (a link target, backticks, double quotes), then a file://
+    address, the app's link and a bare path outside those."""
+    spans: list[_Span] = []
+    for m in _LINK_RE.finditer(text):
+        found = _link_path(m.group(2) or m.group(3) or "")
+        if found and _free(spans, *m.span()):
+            # A label that names a file is part of the name; "here" is prose.
+            label_is_name = bool(_EXT_RE.search(m.group(1)))
+            mask_from = m.start() if label_is_name else m.end(1)
+            spans.append(_Span(m.start(), m.end(), found[0], found[1], mask_from))
+    for pattern in (_BACKTICK_PATH_RE, _QUOTED_PATH_RE):
+        for m in pattern.finditer(text):
+            if not _TWO_PATHS_RE.search(m.group(1)) and _free(spans, *m.span()):
+                spans.append(_Span(m.start(), m.end(), m.group(1), False, m.start()))
+    for m in _FILE_URL_RE.finditer(text):
+        if _free(spans, *m.span()):
+            spans.append(_Span(m.start(), m.end(), unquote(m.group(1)), False, m.start()))
+    for m in _WSFILE_RE.finditer(text):
+        if _free(spans, *m.span()):
+            spans.append(_Span(m.start(), m.end(), unquote(m.group(1)), True, m.start()))
+    for m in _ABS_PATH_RE.finditer(text):
+        if _free(spans, *m.span(1)):
+            spans.append(_Span(m.start(1), m.end(1), m.group(1), False, m.start(1)))
+    return sorted(s._replace(path=s.path.strip()) for s in spans if s.path.strip())
+
+
+def _row_spans(row: str) -> list[_Span]:
+    """The paths a table row names: those ``_path_spans`` finds, and a cell
+    that holds nothing but a path, spaces and all, since the pipes mark its
+    ends."""
+    spans = _path_spans(row)
+    at = 0
+    for cell in row.split("|"):
+        m = _CELL_PATH_RE.fullmatch(cell)
+        if m and not _TWO_PATHS_RE.search(m.group(1)):
+            start, end = at + m.start(1), at + m.end(1)
+            if _free(spans, start, end):
+                spans.append(_Span(start, end, m.group(1), False, start))
+        at += len(cell) + 1
+    return sorted(spans)
+
+
+def _masked(text: str, spans: list[_Span]) -> str:
+    """``text`` with each path's own text, and each web address, hidden
+    behind a run of NULs of the same length, so the words of a file name or
+    an address ("example.com") read as neither a negation nor a claim and
+    every position stays put."""
+    chars = list(text)
+    hidden = [(s.mask_from, s.end) for s in spans] + [m.span() for m in _URL_RE.finditer(text)]
+    for start, end in hidden:
+        chars[start:end] = _MASK * (end - start)
+    return "".join(chars)
+
+
 def claimed_paths(text: str) -> list[str]:
     """File paths the text names as deliverables, in order, deduplicated."""
-    found: list[str] = []
-    for m in _WSFILE_RE.finditer(text or ""):
-        found.append(m.group(1))
-    for m in _ABS_PATH_RE.finditer(text or ""):
-        found.append(m.group(1))
-    seen: set[str] = set()
     out: list[str] = []
-    for p in found:
-        p = p.strip()
-        if p and p not in seen:
-            seen.add(p)
-            out.append(p)
+    for s in _path_spans(text or ""):
+        if s.path not in out:
+            out.append(s.path)
     return out
 
 
+def _file_table_rows(lines: list[str]) -> dict[int, bool]:
+    """Line index to True for each body row of a markdown table whose header
+    names a file, path, location, output or saved column, and to False for
+    that table's header and rule lines. The lines of any other table are left
+    out, so they read as prose."""
+    rows: dict[int, bool] = {}
+    i = 0
+    while i + 1 < len(lines):
+        head, rule = lines[i], lines[i + 1]
+        if "|" not in head or "|" not in rule or not _TABLE_RULE_RE.fullmatch(rule):
+            i += 1
+            continue
+        end = i + 2
+        while end < len(lines) and "|" in lines[end]:
+            end += 1
+        if _FILE_COLUMN_RE.search(head):
+            rows.update(dict.fromkeys((i, i + 1), False))
+            rows.update(dict.fromkeys(range(i + 2, end), True))
+        i = end
+    return rows
+
+
+def _split_clauses(line: str) -> list[str]:
+    """The clauses of one line. A split that falls inside a path's mention (a
+    comma or " - " in a quoted file name) is part of the name."""
+    spans = _path_spans(line)
+    parts: list[str] = []
+    start = 0
+    for m in _CLAUSE_SPLIT_RE.finditer(line):
+        if _free(spans, *m.span()):
+            parts.append(line[start : m.start()])
+            start = m.end()
+    parts.append(line[start:])
+    return parts
+
+
 def _clauses(text: str):
-    """(lead, clause) for each clause of each line outside code blocks; the
-    lead is the line that introduces a list, for the list's items."""
+    """(lead, clause, file_row) for each clause of each line outside code
+    blocks. The lead is the line that introduces a list or a table, for its
+    items; a row of a table that lists files is one clause of its own
+    (``file_row``)."""
     text = _CODE_FENCE_RE.sub("\n", text or "")
     text = _ABBREV_RE.sub(lambda m: _ABBREVIATIONS[m.group(0).lower()], text)
+    lines = text.splitlines()
+    table = _file_table_rows(lines)
     lead = ""
-    for line in text.splitlines():
-        if not line.strip():
+    for i, line in enumerate(lines):
+        if not line.strip() or table.get(i) is False:
+            continue
+        if table.get(i):
+            yield lead, line, True
             continue
         item = bool(_LIST_ITEM_RE.match(line))
         if not item:
             lead = line if line.rstrip().endswith(":") else ""
-        for clause in _CLAUSE_SPLIT_RE.split(line):
+        for clause in _split_clauses(line):
             if clause and clause.strip():
-                yield (lead if item else ""), clause
+                yield (lead if item else ""), clause, False
 
 
 def _is_question(clause: str) -> bool:
     return clause.rstrip(" \t\"')]*_`").endswith("?")
+
+
+def _row_claims(lead: str, row: str) -> list[str]:
+    """The paths a row of a file table claims: all of them, unless the row
+    (with the table's lead-in line) negates, offers or asks."""
+    spans = _row_spans(row)
+    said = f"{lead} {_masked(row, spans)}"
+    if (
+        any(_is_question(cell) for cell in said.split("|"))
+        or _NOT_MADE_RE.search(said)
+        or _OFFER_AHEAD_RE.search(said)
+    ):
+        return []
+    return [s.path for s in spans]
 
 
 def asserted_paths(text: str) -> list[str]:
@@ -266,31 +444,36 @@ def asserted_paths(text: str) -> list[str]:
     negates or asks about."""
     out: list[str] = []
     prev_claimed = False
-    for lead, clause in _clauses(text):
-        paths = claimed_paths(clause)
-        if not paths:
+    for lead, clause, file_row in _clauses(text):
+        if file_row:
+            claimed = _row_claims(lead, clause)
+            out += [p for p in dict.fromkeys(claimed) if p not in out]
+            prev_claimed = bool(claimed)
+            continue
+        spans = _path_spans(clause)
+        if not spans:
             prev_claimed = False
             continue
+        masked = _masked(clause, spans)
+        said = f"{lead} {masked}"
         # "Saved to X, Y and Z": a clause of paths alone continues the last.
-        paths_only = not _PATHS_ONLY_RE.sub("", _ABS_PATH_RE.sub("", clause)).strip()
+        paths_only = not _PATHS_ONLY_RE.sub("", masked).strip()
         claimed_here = False
-        if not _is_question(clause) and not _NOT_MADE_RE.search(f"{lead} {clause}"):
-            for p in paths:
-                at = max(clause.find(p), 0)
-                ahead = clause[:at]
+        if not _is_question(clause) and not _NOT_MADE_RE.search(said):
+            done = bool(_DONE_RE.search(said))
+            for s in spans:
+                ahead = masked[: s.start]
                 if _OFFER_AHEAD_RE.search(f"{lead} {ahead}"):
                     continue
-                link = ahead.endswith("#wsfile=")
-                ahead = _LINK_OPEN_RE.sub("", ahead.removesuffix("#wsfile="))
                 if (
-                    link
-                    or _DONE_RE.search(f"{lead} {clause}")
-                    or _LOCATED_RE.search(ahead)
+                    s.app_link
+                    or done
+                    or _LOCATED_RE.search(_LINK_OPEN_RE.sub("", ahead))
                     or (paths_only and prev_claimed)
                 ):
                     claimed_here = True
-                    if p not in out:
-                        out.append(p)
+                    if s.path not in out:
+                        out.append(s.path)
         prev_claimed = claimed_here
     return out
 
@@ -298,13 +481,14 @@ def asserted_paths(text: str) -> list[str]:
 def claims_an_artifact(text: str) -> bool:
     """True when ``text`` points at an artifact card as made, as opposed to
     offering one, asking about one or saying there is none."""
-    for lead, clause in _clauses(text):
-        m = _ARTIFACT_CLAIM_RE.search(clause)
+    for lead, clause, _file_row in _clauses(text):
+        said = _masked(clause, _path_spans(clause))
+        m = _ARTIFACT_CLAIM_RE.search(said)
         if (
             m
             and not _is_question(clause)
-            and not _NOT_MADE_RE.search(f"{lead} {clause}")
-            and not _OFFER_AHEAD_RE.search(f"{lead} {clause[: m.start()]}")
+            and not _NOT_MADE_RE.search(f"{lead} {said}")
+            and not _OFFER_AHEAD_RE.search(f"{lead} {said[: m.start()]}")
         ):
             return True
     return False
