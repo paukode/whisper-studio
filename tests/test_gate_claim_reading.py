@@ -244,10 +244,23 @@ def test_a_table_that_lists_files_claims_its_rows(column):
         # So does the line that introduces the table.
         "I will create these files:\n\n| File | Purpose |\n|---|---|\n| ~/Downloads/q3.docx | report |",
         "I could not save these:\n\n| File | Reason |\n|---|---|\n| ~/Downloads/q3.docx | locked |",
+        # A table of changes lists a file that is gone.
+        "| File | Change |\n|---|---|\n| /Users/me/repo/docs/old-guide.md | Deleted |",
+        "| File | Change |\n|---|---|\n| /Users/me/repo/notes.md | moved to the archive |",
     ],
 )
 def test_a_table_row_that_does_not_say_the_file_was_made_is_not_a_claim(text):
     assert asserted_paths(text) == []
+
+
+def test_only_the_row_says_its_file_is_gone():
+    # The lead-in may mention what went away; the rows are what was made.
+    table = (
+        "I removed the old drafts and created these:\n\n| File |\n|---|\n| ~/Downloads/q3.docx |"
+    )
+    assert asserted_paths(table) == ["~/Downloads/q3.docx"]
+    changes = "| File | Change |\n|---|---|\n| ~/a.md | updated |\n| ~/b.md | removed |"
+    assert asserted_paths(changes) == ["~/a.md"]
 
 
 def test_a_row_of_a_file_table_names_the_missing_file(tmp_path):

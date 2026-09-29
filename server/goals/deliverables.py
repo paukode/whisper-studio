@@ -84,7 +84,8 @@ _ARTIFACT_CLAIM_RE = re.compile(
 # A markdown table whose header names a file, path, location, output or saved
 # column lists deliverables: each of its rows is read whole, with the table's
 # lead-in line, and every path in a row is claimed unless the row negates,
-# offers or asks. The rows of any other table read as prose, as before.
+# offers or asks, or says its file is gone ("| old.md | deleted |" in a table
+# of changes). The rows of any other table read as prose, as before.
 _CODE_FENCE_RE = re.compile(r"```.*?(?:```|\Z)", re.DOTALL)
 _ABBREVIATIONS = {"e.g.": "for example", "i.e.": "that is"}
 _ABBREV_RE = re.compile(r"\b(?:e\.g|i\.e)\.", re.IGNORECASE)
@@ -93,6 +94,7 @@ _TABLE_RULE_RE = re.compile(r"\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*")
 _FILE_COLUMN_RE = re.compile(
     r"\b(?:file(?:name|path)?s?|paths?|locations?|outputs?|saved)\b", re.IGNORECASE
 )
+_GONE_RE = re.compile(r"\b(?:deleted|removed|trashed|moved|renamed)\b", re.IGNORECASE)
 _CLAUSE_SPLIT_RE = re.compile(
     r"(?<=[.!?])\s+|[;,]\s+|\s+[-\u2013]\s+"
     r"|\s+(?:but|though|although|however|so|then|while|whereas)\s+",
@@ -471,13 +473,17 @@ def _is_question(clause: str) -> bool:
 
 def _row_claims(lead: str, row: str) -> list[str]:
     """The paths a row of a file table claims: all of them, unless the row
-    (with the table's lead-in line) negates, offers or asks."""
+    (with the table's lead-in line) negates, offers or asks, or the row itself
+    says its file is gone. Only the row: "I removed the old drafts and
+    created these:" still introduces files that were made."""
     spans = _row_spans(row)
-    said = f"{lead} {_masked(row, spans)}"
+    masked = _masked(row, spans)
+    said = f"{lead} {masked}"
     if (
         any(_is_question(cell) for cell in said.split("|"))
         or _NOT_MADE_RE.search(said)
         or _OFFER_AHEAD_RE.search(said)
+        or _GONE_RE.search(masked)
     ):
         return []
     return [s.path for s in spans]
