@@ -1628,9 +1628,9 @@ async def chat_endpoint(request: Request):
         _caching_on = _is_ff_enabled("prompt_caching")
 
         # Progressive tool disclosure: re-derive this session's activations from
-        # visible history (self-healing across restarts/pauses), force-activate a
-        # requested skill so @skills: forcing still works when its tool is
-        # deferred, then compute the deferred index for the static system block.
+        # visible history (self-healing across restarts/pauses), activate a
+        # requested skill so an @skills: request can call its tool even when it
+        # is deferred, then compute the deferred index for the static system block.
         # The suppress flag isn't known yet (grounding resolves later); the index
         # may list a few tools a strict-RAG round hides — harmless, tool_search
         # activation still intersects with the post-filter catalog per round.
@@ -1856,13 +1856,14 @@ async def chat_endpoint(request: Request):
                 parts.append(f"[Transcript so far]\n{transcript}")
             parts.append(question)
             # When the user explicitly requested a skill via @skills:NAME,
-            # tell the model what arguments to pass. tool_choice (set
-            # below) makes the call mandatory; this hint makes the
-            # arguments correct. For transcript-driven skills the
-            # transcript above is the obvious payload — without the
-            # hint the model sometimes passes the literal question
-            # text instead. Generic on purpose: the app never names
-            # specific skills; whichever the user forced gets the rule.
+            # this line is what gets it called: no provider is sent a
+            # forced tool_choice (several models reject one), so the model
+            # is asked plainly to call the tool and told what arguments to
+            # pass. For transcript-driven skills the transcript above is
+            # the obvious payload; without the hint the model sometimes
+            # passes the literal question text instead. Generic on
+            # purpose: the app never names specific skills; whichever the
+            # user requested gets the rule.
             if force_skill and transcript.strip():
                 parts.append(
                     f"Call the `{force_skill}` tool now. If it accepts a `notes`, "
@@ -2060,7 +2061,6 @@ async def chat_endpoint(request: Request):
                 caching_on=_caching_on,
                 cache_ttl=_cache_ttl,
                 effort_label=effort_label,
-                force_skill=force_skill,
                 loop=loop,
                 executor=executor,
                 # The SAME metadata the effort was resolved from, so the label and the

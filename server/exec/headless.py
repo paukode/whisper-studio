@@ -442,7 +442,6 @@ async def run_headless_turn(
                 caching_on=False,
                 cache_ttl="5m",
                 effort_label=_effort_label,
-                force_skill=None,
                 loop=loop,
                 executor=_HEADLESS_EXECUTOR,
             )

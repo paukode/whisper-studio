@@ -574,7 +574,7 @@ async def _run_agent_loop(
     that shares the same session_id (e.g. the chat turn whose spawn_agent
     call is still awaiting this very run).
 
-    Not migrated, by design: _distill_structured (a one-shot forced-tool
+    Not migrated, by design: _distill_structured (a one-shot structured-output
     call over the finished transcript; chat/engine's adapters have no
     equivalent yet) still goes through server.agents.providers' own adapter
     system, unchanged — run_agent refuses structured_schema on a local model
@@ -727,7 +727,6 @@ async def _run_agent_loop(
             caching_on=False,
             cache_ttl="5m",
             effort_label=effort_label,
-            force_skill=None,
             loop=loop,
             executor=_agent_executor,
         )
@@ -1093,7 +1092,7 @@ async def _run_agent_loop(
 
     structured = None
     if structured_schema is not None:
-        # One-shot forced-tool calls on the old provider adapters
+        # One-shot structured-output calls on the old provider adapters
         # (server.agents.providers): the chat/engine adapters have no
         # equivalent. See distill_run_output.
         structured, final_usage = await distill_run_output(

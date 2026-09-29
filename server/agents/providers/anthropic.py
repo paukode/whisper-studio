@@ -1,7 +1,7 @@
 """Anthropic-on-Bedrock adapter: the runtime's original invoke_model path,
 plus what it always should have had: effort/adaptive thinking, token counts
-through server.costs.capture, redacted_thinking preservation, and structured
-forcing.
+through server.costs.capture, redacted_thinking preservation, and the
+structured-output call.
 """
 
 from __future__ import annotations
@@ -61,10 +61,13 @@ class AnthropicBedrockAdapter:
             "messages": messages,
         }
         if force_structured is not None:
-            # Swap tools for a single schema-shaped emit_result tool and force
-            # it. Pinned Bedrock constraint: forced tool_choice combined with
-            # extended/adaptive thinking raises ValidationException — omit
-            # thinking on this one call.
+            # Swap tools for a single schema-shaped emit_result tool. The model
+            # decides whether to call it (tool_choice auto): Opus 5.5, Sonnet
+            # 5.5, Fable 5.1 and Mythos 5.1 reject a forced tool_choice with a
+            # 400, and the caller's ask names the tool and retries once when
+            # the reply is not a call. Thinking stays unset, which every
+            # catalog model accepts: Fable, Opus 5.x and Sonnet 5.x then think
+            # adaptively, the others do not think.
             body["tools"] = [
                 {
                     "name": STRUCTURED_TOOL_NAME,
@@ -75,7 +78,7 @@ class AnthropicBedrockAdapter:
                     "input_schema": force_structured,
                 }
             ]
-            body["tool_choice"] = {"type": "tool", "name": STRUCTURED_TOOL_NAME}
+            body["tool_choice"] = {"type": "auto"}
         else:
             if tools:
                 body["tools"] = tools

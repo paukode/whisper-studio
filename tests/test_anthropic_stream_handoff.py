@@ -70,7 +70,6 @@ def test_each_delta_is_yielded_when_it_is_produced(monkeypatch):
             caching_on=False,
             cache_ttl="5m",
             effort_label=None,
-            force_skill=None,
             loop=asyncio.get_running_loop(),
             executor=ThreadPoolExecutor(max_workers=4),
             meta={},

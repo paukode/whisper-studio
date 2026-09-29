@@ -23,7 +23,6 @@ def _adapter(monkeypatch, model_id: str, meta: dict):
         caching_on=False,
         cache_ttl="5m",
         effort_label=None,
-        force_skill=None,
         loop=None,
         executor=None,
         meta=meta,

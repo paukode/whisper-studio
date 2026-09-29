@@ -107,7 +107,6 @@ def _claude(streams) -> AnthropicAdapter:
     a.caching_on = False
     a.cache_ttl = None
     a.effort_label = None
-    a.force_skill = None
     a._meta = {}
     a.max_tokens = 1000
     a._client = _Client(streams)

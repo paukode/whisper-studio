@@ -333,7 +333,6 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 caching_on=_caching_on,
                 cache_ttl=cache_ttl_for(model_id),
                 effort_label=_effort_label,
-                force_skill=None,
                 loop=loop,
                 executor=_CRON_EXECUTOR,
             )

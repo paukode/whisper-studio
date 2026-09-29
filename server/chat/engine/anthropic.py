@@ -68,7 +68,6 @@ class AnthropicAdapter:
         caching_on: bool,
         cache_ttl: str,
         effort_label: str | None,
-        force_skill: str | None,
         loop,
         executor,
         meta: dict | None = None,
@@ -81,7 +80,6 @@ class AnthropicAdapter:
         self.caching_on = caching_on
         self.cache_ttl = cache_ttl
         self.effort_label = effort_label
-        self.force_skill = force_skill
         self._loop = loop
         self._executor = executor
         self._client = _get_bedrock_client()
@@ -128,7 +126,6 @@ class AnthropicAdapter:
             "caching_on": self.caching_on,
             "cache_ttl": self.cache_ttl,
             "effort_label": self.effort_label,
-            "force_skill": self.force_skill,
             "max_tokens": getattr(self, "max_tokens", None),
         }
 
@@ -180,16 +177,10 @@ class AnthropicAdapter:
                 body["messages"] = annotate_messages_cache(messages, self.cache_ttl)
             else:
                 body["tools"] = tools
-            # Force the requested skill ONLY on round 0, and only when thinking
-            # is off — Bedrock rejects forced tool_choice combined with
-            # adaptive/extended thinking.
-            if (
-                self.force_skill
-                and round_num == 0
-                and "thinking" not in body
-                and any(t.get("name") == self.force_skill for t in tools)
-            ):
-                body["tool_choice"] = {"type": "tool", "name": self.force_skill}
+            # No tool_choice: the model always decides which tool to call. A
+            # requested skill (@skills:) is asked for in the user message
+            # (server/chat/routes.py), since Opus 5.5, Sonnet 5.5, Fable 5.1
+            # and Mythos 5.1 reject a forced tool_choice with a 400.
         return body
 
     # ── One streamed round ────────────────────────────────────────────────────
