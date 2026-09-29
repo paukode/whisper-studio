@@ -1,8 +1,9 @@
 """Cohere Embed v4 backend (Amazon Bedrock) — text → 1536-d L2-normalized vectors.
 
 The cloud counterpart to the on-device Qwen3 embedder. Called via bedrock-runtime
-InvokeModel against Embed v4's global profile (``global.cohere.embed-v4:0``) from
-us-east-1, the region Rerank 3.5 also runs in. Cohere uses an asymmetric recipe:
+InvokeModel against Embed v4's global profile (``global.cohere.embed-v4:0``) in
+the Bedrock region set in Settings, where Rerank 3.5 also runs. Cohere uses an
+asymmetric recipe:
 documents are embedded with ``input_type=search_document`` and queries with
 ``search_query``. Cohere vectors are not unit-length, so we L2-normalize each row
 to match the store's cosine search (dot product on unit vectors).
@@ -19,7 +20,7 @@ import threading
 
 import numpy as np
 
-from .config import COHERE_EMBED_DIM, COHERE_EMBED_MODEL_ID, COHERE_REGION
+from .config import COHERE_EMBED_DIM, COHERE_EMBED_MODEL_ID
 
 log = logging.getLogger("whisper-studio")
 
@@ -31,19 +32,22 @@ _client_lock = threading.Lock()
 
 
 def _bedrock():
-    """A bedrock-runtime client in COHERE_REGION (us-east-1), independent of
-    the chat region. Cached process-wide once credentials resolve, so adding
-    them later takes effect without a relaunch."""
+    """A bedrock-runtime client in the Bedrock region set in Settings
+    (``bedrock_region``), the region every Bedrock call uses. Cached per region
+    once credentials resolve, so adding them later or changing the region
+    takes effect without a relaunch."""
     from botocore.config import Config as BotoConfig
 
     from server.infrastructure.aws_clients import cached_client
+    from server.infrastructure.config import load_config
 
+    region = load_config()["bedrock_region"]
     return cached_client(
         _clients,
         _client_lock,
-        COHERE_REGION,
+        region,
         "bedrock-runtime",
-        region_name=COHERE_REGION,
+        region_name=region,
         config=BotoConfig(
             read_timeout=120,
             connect_timeout=10,

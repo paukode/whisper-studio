@@ -49,18 +49,17 @@ RERANK_BATCH = int(os.environ.get("WHISPER_INDEX_RERANK_BATCH", 8))
 RERANK_MAX_TOKENS = int(os.environ.get("WHISPER_INDEX_RERANK_MAX_TOKENS", 2048))
 
 # ── Cohere on Bedrock (cloud embed + rerank backends) ────────────────────────
-# Cohere Embed v4 + Rerank 3.5 are invoked via bedrock-runtime InvokeModel from
-# us-east-1, the app's one region. Embed v4 goes through its global inference
-# profile like every model that has one (its vectors match the in-region id's,
-# so an index built with either stays valid); Rerank 3.5 has no global profile
-# and runs in-region. Embeddings are L2-normalized to match the store's cosine
+# Cohere Embed v4 + Rerank 3.5 are invoked via bedrock-runtime InvokeModel in
+# the Bedrock region set in Settings (bedrock_region), like every Bedrock call.
+# Embed v4 goes through its global inference profile like every model that has
+# one (its vectors match the in-region id's, so an index built with either
+# stays valid); Rerank 3.5 has no global profile and runs in-region. Embeddings are L2-normalized to match the store's cosine
 # search; input_type differs for documents vs queries (Cohere's asymmetric
 # retrieval recipe).
 COHERE_EMBED_MODEL_ID = os.environ.get(
     "WHISPER_INDEX_COHERE_EMBED_MODEL", "global.cohere.embed-v4:0"
 )
 COHERE_RERANK_MODEL_ID = os.environ.get("WHISPER_INDEX_COHERE_RERANK_MODEL", "cohere.rerank-v3-5:0")
-COHERE_REGION = os.environ.get("WHISPER_INDEX_COHERE_REGION", "us-east-1")
 COHERE_EMBED_DIM = int(
     os.environ.get("WHISPER_INDEX_COHERE_EMBED_DIM", 1536)
 )  # Embed v4 default output dim

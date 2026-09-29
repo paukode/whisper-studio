@@ -352,8 +352,8 @@ bash setup.sh</code></pre></div>
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg></span>
       <div class="callout__body"><p><b>Each embedder keeps its own index.</b> Switching modes never
         rebuilds the other backend's index, so you re-index a folder once under a given backend to search
-        it there. Cohere embed and rerank are called from <code>us-east-1</code> (embed through its
-        global profile); chat can run in any region. Transcription is always on-device (Whisper, Parakeet, or Canary) in every mode.</p></div>
+        it there. Cohere embed and rerank run in the Bedrock Region you set, like chat (embed through
+        its global profile). Transcription is always on-device (Whisper, Parakeet, or Canary) in every mode.</p></div>
     </div>
     <p>For the full picture of how each backend is wired, see
       <a href="tut-model-modes.html">Model modes</a> and the architecture page
