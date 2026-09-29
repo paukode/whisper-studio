@@ -311,6 +311,16 @@ function displayName(name: string): string {
   return DISPLAY_NAMES[name] ?? name;
 }
 
+/** What a step is called in the list. A Stop-hook card the server raised
+ *  because the reply claimed a delivery it could not verify says so; every
+ *  other source keeps the generic hook label. */
+export function stepLabel(tool: ToolUseEvent): string {
+  if (tool.toolName === 'stop_hook_block' && (tool.input ?? {}).source === 'deliverable') {
+    return 'Checking a claimed delivery';
+  }
+  return displayName(tool.toolName);
+}
+
 /** How a goal_eval card names its verdict. */
 const VERDICT_LABELS: Record<string, string> = {
   achieved: 'achieved',
@@ -513,7 +523,7 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools }) => {
                 <span className="activity-step-icon" aria-hidden="true">
                   {iconFor(tool.toolName)}
                 </span>
-                <span className="activity-step-name">{displayName(tool.toolName)}</span>
+                <span className="activity-step-name">{stepLabel(tool)}</span>
                 {detail && <span className="activity-step-detail">{detail}</span>}
                 <span className="activity-step-spacer" />
                 <span className="activity-step-status">
