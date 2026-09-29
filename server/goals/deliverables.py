@@ -361,6 +361,18 @@ def _acted_since_last_nudge(messages: list) -> bool:
     )
 
 
+def _settled_later(claim, later: list[str]) -> bool:
+    """True when a later reply of the turn names the claim's target: the
+    model came back to it (an honest correction, or the claim again, which
+    is then checked where it is made). The stream guard notes the same way
+    (claim_guard._corrected)."""
+    target = claim.target.strip()
+    if not target:
+        return False
+    name = os.path.basename(target.rstrip("/"))
+    return any(target in text or (name and name in text) for text in later)
+
+
 def _shown(clause: str) -> str:
     clause = " ".join(clause.split())
     return clause if len(clause) <= 160 else clause[:157] + "..."
@@ -402,8 +414,8 @@ def check_claims(
     used = claim_nudges_used(messages)
     if used >= max_attempts or (used and not _acted_since_last_nudge(messages)):
         return None
-    text = "\n".join(reply_texts(messages))
-    if not text:
+    replies = reply_texts(messages)
+    if not replies:
         return None
     from server.goals import claims as c
     from server.goals.evidence import Evidence, check
@@ -416,13 +428,16 @@ def check_claims(
         plan_mode=plan_mode,
     )
     failed: dict[tuple[str, str], str] = {}
-    for claim in c.read_claims(text):
-        verdict = check(claim, ev)
-        if not verdict.ok and (claim.kind, claim.target) not in failed:
-            note = verdict.note
-            if claim.kind == c.ARTIFACT:
-                note += " (no create_artifact call has made an artifact card)"
-            failed[(claim.kind, claim.target)] = f'- "{_shown(claim.clause)}": {note}'
+    for i, reply in enumerate(replies):
+        for claim in c.read_claims(reply):
+            if (claim.kind, claim.target) in failed or _settled_later(claim, replies[i + 1 :]):
+                continue
+            verdict = check(claim, ev)
+            if not verdict.ok:
+                note = verdict.note
+                if claim.kind == c.ARTIFACT:
+                    note += " (no create_artifact call has made an artifact card)"
+                failed[(claim.kind, claim.target)] = f'- "{_shown(claim.clause)}": {note}'
     if not failed:
         return None
     lines = list(failed.values())

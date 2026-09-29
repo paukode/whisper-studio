@@ -297,3 +297,36 @@ def test_the_engine_sends_a_receipt_for_what_it_verified(claims_only, tmp_path):
     assert f"Saved the report to {report}." in _said(frames)
     (delivered,) = [f["deliveries"] for f in frames if "deliveries" in f]
     assert delivered["items"][0]["target"] == str(report)
+
+
+def test_a_correction_after_an_attempt_is_not_nudged_again(tmp_path):
+    # Seen live: the model tried an upload the user denied, then said so;
+    # the original claim must not draw a second nudge over the correction.
+    from server.goals.deliverables import check_claims
+
+    claim = "I uploaded the notes to s3://claim-e2e-bucket/notes.md."
+    history = [
+        {"role": "user", "content": "upload the notes"},
+        {"role": "assistant", "content": [{"type": "text", "text": claim}]},
+    ]
+    first = check_claims(history, None)
+    assert first and "s3://claim-e2e-bucket/notes.md" in first
+    history += [
+        {"role": "user", "content": f"[completion gate] {first}"},
+        {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "t1", "name": "aws_cli", "input": {}}],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "[User denied] x"}],
+        },
+    ]
+    correction = "The note was not uploaded to s3://claim-e2e-bucket/notes.md: the copy was denied."
+    assert check_claims([*history, _say(correction)], None) is None
+    # The claim made again is checked where it is made, and draws the second nudge.
+    assert check_claims([*history, _say(claim)], None) is not None
+
+
+def _say(text: str) -> dict:
+    return {"role": "assistant", "content": [{"type": "text", "text": text}]}
