@@ -344,9 +344,10 @@
       connects mid-run is available from the next round, under the same filter. A tool it may run
       that its round merely deferred still runs by name, as in chat. Three refused calls in a row
       (the executor's refusals and the loop guard's alike) make the agent's next round its last, with
-      no tools, so it answers with what it has. The memory tools are core in chat turns only
-      (<code>CHAT_CORE_TOOLS</code>, for the learning review's replay); agents, scheduled tasks
-      and voice turns reach them through <code>tool_search</code>. Two things differ from chat. An agent with an <code>allowed_tools</code> whitelist is offered its whole
+      no tools, so it answers with what it has. The memory tools are core in chat and voice turns
+      only (<code>CHAT_CORE_TOOLS</code>, for the learning review's replay); agents and scheduled
+      tasks reach them through <code>tool_search</code>, and a scheduled task's tools are rebuilt
+      every round, so what it loads is offered from its next round. Two things differ from chat. An agent with an <code>allowed_tools</code> whitelist is offered its whole
       whitelist every round and gets no deferred index: the memory agents cannot call
       <code>tool_search</code>, so deferral would leave their own tools out of reach. Any other agent
       is offered the core set plus the session's activations and its own; its index lists only tools
