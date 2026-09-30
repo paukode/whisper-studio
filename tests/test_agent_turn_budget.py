@@ -220,7 +220,7 @@ def test_turn_limit_distills_structured_output(monkeypatch):
     )
     _patch_common(monkeypatch, fake_stream)
 
-    # The distillation pass (OLD adapter system) forces emit_result.
+    # The distillation pass (OLD adapter system) offers emit_result, never forced.
     structured_resp = {
         "stop_reason": "tool_use",
         "content": [
@@ -249,9 +249,10 @@ def test_turn_limit_distills_structured_output(monkeypatch):
     assert result.status == "completed"
     assert result.stopped_early is True
     assert "turn limit" in result.output.lower()
-    # The distillation call went out with the forced tool_choice, no schema
-    # validation loop needed since it validated on the first attempt.
-    assert fake_old.requests[-1]["tool_choice"] == {"type": "tool", "name": "emit_result"}
+    # The distillation call left the choice to the model (tool_choice auto),
+    # no retry needed since it validated on the first attempt.
+    assert fake_old.requests[-1]["tool_choice"] == {"type": "auto"}
+    assert len(fake_old.requests) == 1
 
 
 def test_turn_limit_finalizes_text_when_no_schema(monkeypatch):

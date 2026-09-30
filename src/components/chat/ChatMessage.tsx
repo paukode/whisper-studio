@@ -25,6 +25,7 @@ import { getActiveChatStore } from '@/stores/sessionRuntimes';
 import { formatMessageTimestamp } from '@/utils/formatTimestamp';
 import { UserQuestionCard, UserQuestionGroupCard } from '@/components/chat/UserQuestionCard';
 import { AnswerSources } from '@/components/chat/AnswerSources';
+import { DeliveryChips } from '@/components/chat/DeliveryChips';
 import { extractFlatCronPayload, exportSingleMessage, copyRichText } from '@/components/chat/messageActions';
 
 export interface ChatMessageProps {
@@ -523,6 +524,12 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
         ) : message.content ? (
           <MarkdownRenderer content={message.content} stepFormat={!message.spoken} />
         ) : null}
+
+        {/* What the server verified this reply delivered, under the text that
+         *  claimed it (the streaming bubble showed the same chips live). */}
+        {!isUser && message.deliveries && message.deliveries.length > 0 && (
+          <DeliveryChips deliveries={message.deliveries} />
+        )}
 
         {/* Timestamp */}
         {message.timestamp && (

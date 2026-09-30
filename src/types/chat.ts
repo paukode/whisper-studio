@@ -17,6 +17,39 @@ export interface MediaSize {
   h?: number;
 }
 
+/** A delivery the server verified before it let the sentence claiming it
+ *  through (an unverified claim is held back and never shown). Arrives in
+ *  `deliveries` SSE frames and stays on the assistant message, where it
+ *  renders as a "Verified" chip. `kind` + `target` identify it. */
+export interface Delivery {
+  /** What was delivered: file, folder, removed, artifact, push, commit, pr,
+   *  merge, issue, upload, message, publish, schedule or link. Any other
+   *  string still renders, as a generic delivery. */
+  kind: string;
+  /** The delivered thing itself: an absolute path, a URL, a branch, a
+   *  recipient. */
+  target: string;
+  /** Short display text. */
+  label: string;
+  /** Secondary text: size and time for a file, "to origin/main" for a push,
+   *  the recipient of a message. */
+  detail?: string;
+  /** Where the chip leads: the app's `#wsfile=<quoted path>&open=os` link for
+   *  a file or folder, an https URL for a PR, issue, page or link. No href,
+   *  no link. */
+  href?: string;
+  /** ISO time of the evidence. */
+  at?: string;
+}
+
+/** One item of a `deliveries` frame: a Delivery whose optional fields may
+ *  also arrive as null, which reads as absent. */
+export type DeliveryFrameItem = Omit<Delivery, 'detail' | 'href' | 'at'> & {
+  detail?: string | null;
+  href?: string | null;
+  at?: string | null;
+};
+
 /** Inline cron card payload. Persisted as a ChatMessage row with
  *  role='cron_event' so it shows up both live (via SSE) and on
  *  session resume. Never enters Claude's prompt — the backend's
@@ -171,6 +204,11 @@ export interface ChatMessage {
   /** Diagrams and charts from create_visual / create_chart. A list: one
    *  turn can emit several (e.g. three layout options to choose between). */
   visuals?: VizArtifact[];
+  /** What the server verified this message's text delivered, merged from
+   *  `deliveries` frames by kind + target in first-seen order. Renders as
+   *  chips under the body. Saved and restored with the message; the model
+   *  never reads it (history rows carry role and content). */
+  deliveries?: Delivery[];
   /** Sizes the user dragged this message's pictures to, keyed `viz-<index>`
    *  for a visual and `shot-<tool index>` for a preview screenshot. A missing
    *  key is the natural size. UI-only: the prompt never reads it. */
@@ -285,7 +323,7 @@ export interface AgentReportRow {
   task: string;
   result: string;
   status: string;
-  /** completed | turn_limit | deadline | cost_cap | cancelled | error */
+  /** completed | turn_limit | deadline | cost_cap | refused_calls | cancelled | error */
   stop_reason?: string;
   turns_used?: number;
 }
@@ -320,7 +358,7 @@ export interface TeamAgentReport {
   parent_agent_id?: string | null;
   turns_used?: number;
   result?: string;
-  /** Why the run ended, when the backend named it (turn_limit, deadline, cost_cap, cancelled). */
+  /** Why the run ended, when the backend named it (turn_limit, deadline, cost_cap, refused_calls, cancelled). */
   stop_reason?: string;
   events: TeamProgressEvent[];
 }
@@ -429,7 +467,14 @@ export interface SSEEventData {
    *  turn (server.security.permissions.record_classifier_verdict). */
   auto_mode_breaker?: { reason?: string };
   goal_eval?: { verdict?: GoalVerdict; feedback?: string; confidence?: number; attempt?: number; cap?: number };
-  stop_hook_block?: { reason?: string; attempt?: number };
+  /** `source` names the gate phase that refused to end the turn.
+   *  'deliverable': the reply claimed a delivery the server could not
+   *  verify, so it held that sentence back and sent the model back to
+   *  produce it or correct itself (the reason never repeats the claim). */
+  stop_hook_block?: { reason?: string; attempt?: number; source?: string };
+  /** Claims the server verified in the reply so far, one frame per verified
+   *  sentence. Merged into the current assistant message's `deliveries`. */
+  deliveries?: { items: DeliveryFrameItem[] };
   goal_cap_reached?: { attempt?: number; cap?: number; source?: string };
   workflow_preview?: { script: string; name?: string; description?: string; phases?: unknown[]; budget_tokens?: number | null; args?: unknown; model_id?: string; effort_label?: string; workspace_path?: string };
   workflow_started?: { run_id: string; name?: string; resumed_from?: string };

@@ -58,5 +58,8 @@ export function buildHistoryPayload(
     ...(m.agentReport ? { agentReport: m.agentReport } : {}),
     ...(m.agentAnswer ? { agentAnswer: m.agentAnswer } : {}),
     ...(m.sessionMessage ? { sessionMessage: m.sessionMessage } : {}),
+    // What the reply's chips verified: the server checks a recap of earlier
+    // work against it, and keeps it out of the model's prompt.
+    ...(m.role === 'assistant' && m.deliveries?.length ? { deliveries: m.deliveries } : {}),
   }));
 }

@@ -70,3 +70,29 @@ def test_a_bedrock_api_key_counts_as_credentials(aws_home, monkeypatch):
     getter, _cache = GETTERS["chat"]
     # Without this the fd-conserving cache would rebuild a client per call.
     assert getter() is getter()
+
+
+def test_cohere_runs_in_the_settings_region_and_follows_a_change(aws_home, monkeypatch):
+    # Cohere embed and rerank use the Bedrock region from Settings like every
+    # other Bedrock call; changing it moves them without a relaunch.
+    import json
+
+    from server.infrastructure import config as cfg
+
+    (aws_home / "credentials").write_text(
+        "[default]\naws_access_key_id = AKIDEXAMPLE\naws_secret_access_key = example-secret\n"
+    )
+    layer = {"bedrock_region": "us-west-2"}
+    monkeypatch.setattr(cfg, "_load_user_config", lambda: json.loads(json.dumps(layer)))
+    cfg._invalidate_cache()
+    try:
+        west = embedder_cohere._bedrock()
+        assert west.meta.region_name == "us-west-2"
+
+        layer["bedrock_region"] = "us-east-2"
+        cfg._invalidate_cache()
+        east = embedder_cohere._bedrock()
+        assert east.meta.region_name == "us-east-2"
+        assert embedder_cohere._bedrock() is east
+    finally:
+        cfg._invalidate_cache()

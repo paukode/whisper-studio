@@ -115,6 +115,127 @@ def test_check_claims_flags_an_artifact_card_claim_without_a_create_artifact_cal
     assert d.check_claims(with_call, None) is None
 
 
+# ── an artifact card an earlier turn made ──────────────────────────────────
+# A follow-up turn talks about the card the last one made ("the deploy stage
+# in the artifact card above is green"). The history the chat route rebuilds
+# is plain text, so the create_artifact call is not in it; the session's own
+# artifact list (server.artifacts) is where the card is known. Holding such a
+# reply only made the model rebuild a card that was already there.
+
+
+def _follow_up(reply: str) -> list:
+    return [
+        {"role": "user", "content": "draw the pipeline as a diagram"},
+        {"role": "assistant", "content": "Here it is in the artifact card above."},
+        {"role": "user", "content": "which colour is the deploy stage?"},
+        {"role": "assistant", "content": reply},
+    ]
+
+
+def test_a_card_the_session_already_holds_meets_a_claim_about_it():
+    msgs = _follow_up("The deploy stage in the artifact card above is green.")
+    assert d.artifact_claim_unmet(msgs) is True
+    assert d.check_claims(msgs, None, session_has_artifact=True) is None
+    held = d.check_claims(msgs, None)
+    assert held and "artifact card" in held and "create_artifact" in held
+
+
+def test_a_session_card_does_not_excuse_a_missing_file(tmp_path):
+    msgs = _follow_up(f"The artifact card above is also saved to {tmp_path}/pipeline.png.")
+    held = d.check_claims(msgs, None, session_has_artifact=True)
+    assert held and f"{tmp_path}/pipeline.png" in held and "create_artifact" not in held
+
+
+@pytest.fixture
+def claim_gate(monkeypatch):
+    """The gate with only the deliverable check on and the Stop hooks quiet."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from server import hooks
+    from server.goals import GateContext, gate
+
+    async def no_stop(*a, **k):
+        return SimpleNamespace(blocked=False, reason="")
+
+    monkeypatch.setattr(hooks, "check_stop_hooks", no_stop)
+    monkeypatch.setattr(gate, "_flag_on", lambda name, default=True: name == "deliverable_check")
+
+    def decide(sid: str, reply: str):
+        msgs = _follow_up(reply)
+        ctx = GateContext(session_id=sid, messages=msgs[:-1], final_reply=msgs[-1]["content"])
+        return asyncio.run(gate.run_completion_gate(ctx))
+
+    return decide
+
+
+_CARD_REPLY = "The deploy stage in the artifact card above is green."
+
+
+def test_the_gate_passes_a_claim_about_a_card_an_earlier_turn_made(claim_gate):
+    from server import artifacts
+
+    sid = "earlier-card-in-memory"
+    artifacts.forget_session(sid)
+    try:
+        assert claim_gate(sid, _CARD_REPLY).block is True
+        # What the earlier turn's create_artifact call recorded (tool_router).
+        artifacts.record_artifact(sid, title="Pipeline", html="<p>pipeline</p>")
+        assert claim_gate(sid, _CARD_REPLY).block is False
+    finally:
+        artifacts.forget_session(sid)
+
+
+def test_the_card_is_still_known_after_a_restart(claim_gate):
+    # A restart empties the process's record; the programArtifact row the
+    # frontend saved with the session's history still holds the card.
+    from server import artifacts
+    from server.infrastructure import sessions
+
+    sid = "earlier-card-after-restart"
+    artifacts.forget_session(sid)
+    sessions._ensure_db()
+    sessions._append_message_sync(sid, {"role": "user", "content": "draw the pipeline"})
+    sessions._append_message_sync(
+        sid,
+        {
+            "role": "assistant",
+            "content": "Here it is in the artifact card above.",
+            "programArtifact": {"title": "Pipeline", "html": "<!DOCTYPE html><p>pipeline</p>"},
+        },
+    )
+    assert claim_gate(sid, _CARD_REPLY).block is False
+
+
+def test_a_claim_about_a_card_the_session_never_had_is_held(claim_gate):
+    from server import artifacts
+
+    sid = "never-had-a-card"
+    artifacts.forget_session(sid)
+    held = claim_gate(sid, _CARD_REPLY)
+    assert held.block is True and held.source == "deliverable"
+    assert "create_artifact" in held.feedback
+
+
+def test_a_lookup_that_fails_holds_the_claim(claim_gate, monkeypatch):
+    # As strict as a check of this turn alone, never a pass by default.
+    from server import artifacts
+
+    sid = "card-lookup-fails"
+    artifacts.forget_session(sid)
+    artifacts.record_artifact(sid, title="Pipeline", html="<p>pipeline</p>")
+    try:
+        assert claim_gate(sid, _CARD_REPLY).block is False
+
+        def broken(session_id):
+            raise RuntimeError("database is locked")
+
+        monkeypatch.setattr(artifacts, "list_artifacts", broken)
+        assert claim_gate(sid, _CARD_REPLY).block is True
+    finally:
+        artifacts.forget_session(sid)
+
+
 # ── rows the engine writes into a running turn ─────────────────────────────
 # When the loop carries on past an apparent end of turn (a late mid-turn
 # message, a pause_turn, a max_tokens cut), what it writes next is a user row

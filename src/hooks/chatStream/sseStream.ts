@@ -479,8 +479,9 @@ export async function readSSEStream(
                 userQuestions: [entry],
                 toolUse: toolUseEntries.length > 0 ? toolUseEntries : undefined,
                 // Team activity from before the question stays with its
-                // traces on this message.
+                // traces on this message, and the deliveries with the prose.
                 teamReports: st.takeTeamReports(),
+                deliveries: st.takeDeliveries(),
                 _thinkingMs: thinkingMs > 0 ? Math.round(thinkingMs) : undefined,
                 _thinkingText: thinkingText || undefined,
                 _inFlight: true,
@@ -695,6 +696,13 @@ export async function readSSEStream(
           // the commit sites move it onto the final assistant message.
           if (parsed.team_progress) {
             store().foldTeamEvent(parsed.team_progress as TeamProgressEvent);
+          }
+
+          // ── deliveries (claims the server verified, one frame a sentence) ──
+          // Held with the live segment the same way: StreamingMessage shows
+          // the chips under the text, and the message committing it takes them.
+          if (parsed.deliveries) {
+            store().addLiveDeliveries(parsed.deliveries.items);
           }
 
           // ── team_results ──
@@ -1101,6 +1109,9 @@ export async function sendApprovalContinuation(
           ? { input_tokens: result.inputTokens, output_tokens: result.outputTokens }
           : undefined,
         grounding: result.grounding,
+        // Taken here, not left for setStreaming(false): that waits while
+        // another approval is pending.
+        deliveries: store().takeDeliveries(),
       });
     }
 

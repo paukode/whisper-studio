@@ -422,23 +422,30 @@ def get_agent_config(agent_type: str) -> AgentConfig:
 def _is_write_tool(name: str) -> bool:
     """True if a tool must be kept away from a read_only agent.
 
-    Two layers, both fail toward denial:
+    Three layers, all fail toward denial:
       1. Explicit denylist (WRITE_TOOLS) — always wins. Covers skill-/handler-/
          MCP-backed tools the executor registry never sees, plus tools that are
          registered read_only but must still be gated (e.g. aws_boto3).
       2. Registry backstop — any tool a native executor registered with
          `read_only=False` is a write, even if nobody remembered to add it to
          WRITE_TOOLS. This keeps future native executors gated by default.
+      3. MCP tools — a server's tool is a write unless it is marked read-only
+         (its readOnlyHint, or mcp_servers.json; server/mcp_read_only.py), since
+         a server can expose a write under any name.
 
-    Tools that are neither denylisted nor known to the registry (e.g. an MCP
-    read tool) are treated as reads and kept — the denylist is the place to add
-    any such tool that actually writes.
+    Other tools neither denylisted nor known to the registry are treated as
+    reads and kept; the denylist is the place to add any such tool that
+    actually writes.
     """
     if name in WRITE_TOOLS:
         return True
     meta = EXECUTOR_META.get(name)
     if meta is not None and not meta.get("read_only", False):
         return True
+    if meta is None and name.startswith("mcp__"):
+        from server.mcp_read_only import is_read_only_mcp_tool
+
+        return not is_read_only_mcp_tool(name)
     return False
 
 

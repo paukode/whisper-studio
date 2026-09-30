@@ -152,6 +152,18 @@ async def run_agent(
     # built-in AGENT_TYPES preset).
     if config is None:
         config = get_agent_config(agent_type)
+    # Agents approve their own writes, so an agent may only read when it is
+    # started from a plan-mode turn or by a read-only agent (a resume through
+    # send_message included; server.agents.tool_access.read_only_scope), or
+    # while the app is in plan mode (a workflow approved from its card,
+    # /subagent). The app's own memory agents keep their tools.
+    from server.agents.tool_access import read_only_scope, started_read_only
+    from server.workspace.state import is_plan_mode
+
+    if not config.read_only and not config.internal and (started_read_only() or is_plan_mode()):
+        from dataclasses import replace as _dc_replace
+
+        config = _dc_replace(config, read_only=True)
 
     # Resolve model. Agents inherit the session-selected model via
     # model_id_override (threaded from /api/chat through the spawn handlers).
@@ -353,6 +365,8 @@ async def run_agent(
         # connection happens to be by the time this particular agent starts.
         _override_path = workspace_path
         _ws_token = _pin_plain_override(_override_path)
+    # Whatever a read-only agent starts or resumes may only read as well.
+    _ro_token = read_only_scope.set(True) if config.read_only else None
     try:
         result = await _run_agent_loop(
             effort_label=effort_label,
@@ -463,6 +477,8 @@ async def run_agent(
             stop_reason="error",
         )
     finally:
+        if _ro_token is not None:
+            read_only_scope.reset(_ro_token)
         if _ws_token is not None:
             try:
                 from server.workspace.state import reset_workspace_override
@@ -565,7 +581,7 @@ async def _run_agent_loop(
     that shares the same session_id (e.g. the chat turn whose spawn_agent
     call is still awaiting this very run).
 
-    Not migrated, by design: _distill_structured (a one-shot forced-tool
+    Not migrated, by design: _distill_structured (a one-shot structured-output
     call over the finished transcript; chat/engine's adapters have no
     equivalent yet) still goes through server.agents.providers' own adapter
     system, unchanged — run_agent refuses structured_schema on a local model
@@ -634,13 +650,20 @@ async def _run_agent_loop(
         user_content += f"Task: {task}"
         messages = [{"role": "user", "content": user_content}]
 
-    # Tool access (server/agents/tool_access.py): what this run may execute is
-    # fixed here, and the engine refuses every other name (ctx.tool_scope).
-    # Each round's array is rebuilt from it, so a tool loaded with tool_search
-    # is offered from the next round. A resumed run's own earlier calls
-    # re-activate into its own set, never the parent session's.
+    # Tool access (server/agents/tool_access.py): the rules of what this run
+    # may execute are fixed here and applied to the current catalog each
+    # round, and the engine refuses every other name (ctx.tool_scope). Each
+    # round's array is rebuilt from it, so a tool loaded with tool_search is
+    # offered from the next round. A resumed run's own earlier calls
+    # re-activate into its own set, never the parent session's. Repeated
+    # refused calls end the run through the live budget (extension).
     access = AgentToolAccess(
-        config, agent_id=agent_id, depth=depth, session_id=session_id, ws_connected=bool(ws_path)
+        config,
+        agent_id=agent_id,
+        depth=depth,
+        session_id=session_id,
+        ws_connected=bool(ws_path),
+        budget=extension,
     )
     activate_from_history(access.scope.activation_key, messages)
     deferred_tool_index = access.deferred_index()
@@ -711,7 +734,6 @@ async def _run_agent_loop(
             caching_on=False,
             cache_ttl="5m",
             effort_label=effort_label,
-            force_skill=None,
             loop=loop,
             executor=_agent_executor,
         )
@@ -1061,7 +1083,9 @@ async def _run_agent_loop(
         else None
     )
     _time_up = _deadline_total is not None and elapsed >= SOFT_LIMIT_FRACTION * _deadline_total
-    stopped_early = cost_capped or rounds_used >= _cap or _time_up
+    # Repeated refused calls ended the run (ToolScope.refused, round_cap).
+    _refused_stop = bool(_ext.get("finish"))
+    stopped_early = cost_capped or rounds_used >= _cap or _time_up or _refused_stop
 
     collected_text = "\n\n".join(all_text_parts)
     # The report is the final round's message (the agent's last word is its
@@ -1077,7 +1101,7 @@ async def _run_agent_loop(
 
     structured = None
     if structured_schema is not None:
-        # One-shot forced-tool calls on the old provider adapters
+        # One-shot structured-output calls on the old provider adapters
         # (server.agents.providers): the chat/engine adapters have no
         # equivalent. See distill_run_output.
         structured, final_usage = await distill_run_output(
@@ -1099,6 +1123,8 @@ async def _run_agent_loop(
             stop_reason, reason_text = "cost_cap", "reached the session cost cap"
         elif _time_up:
             stop_reason, reason_text = "deadline", "reached time limit"
+        elif _refused_stop and rounds_used < _cap:
+            stop_reason, reason_text = "refused_calls", "stopped after repeated refused calls"
         else:
             stop_reason, reason_text = "turn_limit", f"reached turn limit ({_cap})"
         stop_note = f"[Agent stopped - {reason_text}]"

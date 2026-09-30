@@ -79,7 +79,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Model</th><th>Input cap</th></tr></thead>
       <tbody>
-        <tr><td>Fable 5.1, Fable 5.0, Opus 5.5, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6</td><td>1,000,000 tokens</td></tr>
+        <tr><td>Fable 5.1, Fable 5.0, Opus 5.5, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5.5, Sonnet 5, Sonnet 4.6</td><td>1,000,000 tokens</td></tr>
         <tr><td>Haiku 4.5</td><td>200,000 tokens</td></tr>
         <tr><td>GPT-6 Astra</td><td>922,000 tokens (OpenAI's published max input; mantle accepted a 348K prompt)</td></tr>
         <tr><td>GPT-6 Sol, GPT-6 Luna, GPT-5.6 Sol, Terra, Luna, GPT-5.5, GPT-5.4</td><td>278,528 tokens (the cap the mantle deployments enforce; GPT-6 Sol and Luna publish 922,000 upstream but stay here until mantle is shown to accept more)</td></tr>
@@ -102,7 +102,7 @@
 
     <h2 id="anthropic-path">The Anthropic adapter (default)</h2>
     <p>This is the adapter most turns use, running the Claude models in your config: Fable 5.1 and 5.0,
-      Opus 5.5, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5, Sonnet 4.6, and Haiku 4.5. The engine loop from
+      Opus 5.5, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5.5, Sonnet 5, Sonnet 4.6, and Haiku 4.5. The engine loop from
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> drives it, so the
       backend-specific parts are the Bedrock client, the request body (prompt-cache checkpoints,
       effort/thinking), and the resilience wrappers around each round.</p>
@@ -382,8 +382,25 @@
         <code>chat_model_meta</code>. Every GPT model follows <code>bedrock_region</code>
         (<code>us-east-1</code> by default) except GPT-6 Astra, which ships with <code>us-west-2</code>
         pinned: bedrock-mantle serves it there only and answers 404 from <code>us-east-1</code>,
-        even though the model is listed in every US region.</p></div>
+        even though the model is listed in every US region. Each GPT model is served in its own set
+        of US regions (the table below) and every EU region answers 404, so
+        <code>us-east-1</code> is the one region that serves every GPT model but Astra. Nothing
+        reroutes a call to another region: the 404 names the regions that serve the model and the
+        setting to change (<code>bedrock_region</code>, or <code>openai_region</code> on the model's
+        entry), and <code>/doctor</code> warns about a GPT model whose region Bedrock does not serve
+        it in before the first turn fails.</p></div>
     </div>
+    <p>Where bedrock-mantle serves each GPT model, measured with one call per model and region on
+      2026-09-29 (<code class="path">server/openai_bedrock/runtime.py</code> carries the same table):</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Model</th><th>us-east-1</th><th>us-east-2</th><th>us-west-2</th></tr></thead>
+      <tbody>
+        <tr><td>GPT-6 Astra</td><td>404</td><td>404</td><td>served</td></tr>
+        <tr><td>GPT-6 Sol, GPT-6 Luna</td><td>served</td><td>404</td><td>404</td></tr>
+        <tr><td>GPT-5.6 Sol, GPT-5.5</td><td>served</td><td>served</td><td>404</td></tr>
+        <tr><td>GPT-5.6 Terra, GPT-5.6 Luna, GPT-5.4</td><td>served</td><td>served</td><td>served</td></tr>
+      </tbody>
+    </table></div>
 
     <p>The decision chain above describes the <em>top-level</em> chat turn. The
       agent and subagent runtime is provider-agnostic too (WS-C):

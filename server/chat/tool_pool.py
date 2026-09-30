@@ -104,10 +104,13 @@ def assemble_partitioned_pool(
     suppress_workspace_search: bool = False,
     session_id: str = "",
     ultracode: bool = False,
+    chat: bool = True,
 ) -> tuple[list[dict], list[dict], int]:
     """(advertised, deferred, core_count) for callers that also need the
     deferred list (the system-prompt index) and the cache-breakpoint count.
-    Flag off (or no session): full catalog, nothing deferred."""
+    Flag off (or no session): full catalog, nothing deferred. ``chat`` False
+    (scheduled tasks and unattended headless turns; voice passes True) leaves
+    the chat-only core tools deferred (tool_partition.CHAT_CORE_TOOLS)."""
     catalog = assemble_full_catalog(
         plan_mode=plan_mode,
         ws_connected=ws_connected,
@@ -121,7 +124,7 @@ def assemble_partitioned_pool(
     from server.chat.tool_activation import get_ordered
     from server.chat.tool_partition import partition_pool
 
-    return partition_pool(catalog, get_ordered(session_id))
+    return partition_pool(catalog, get_ordered(session_id), chat=chat)
 
 
 def assemble_full_catalog(

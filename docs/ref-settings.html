@@ -167,7 +167,7 @@
         <tr>
           <td><b>Model</b> dropdown</td>
           <td><code>default_chat_model</code></td>
-          <td>The model this session runs on: Haiku 4.5, Sonnet 4.6, Sonnet 5, Opus 4.6 / 4.7 / 4.8,
+          <td>The model this session runs on: Haiku 4.5, Sonnet 4.6 / 5 / 5.5, Opus 4.6 / 4.7 / 4.8,
             Opus 5 / 5.5, Fable 5.0 / 5.1, GPT-5.4 / 5.5, GPT-5.6 Sol / Terra / Luna, GPT-6 Astra /
             Sol / Luna, or an
             on-device model you installed. The picker only shows models valid for the current model
@@ -408,7 +408,7 @@
         <tr><td><code>session_memory</code></td><td><code>true</code></td><td>Per-session structured summaries injected into the prompt.</td></tr>
         <tr><td><code>session_search</code></td><td><code>true</code></td><td>Full-text search over past sessions: the <code>session_search</code> tool and the sidebar's content search share one SQLite FTS5 index, with no model call. Also puts a recovery pointer in every compaction summary so summarized-away messages can be read back verbatim.</td></tr>
         <tr><td><code>goal_loop</code></td><td><code>true</code></td><td>Goal loop + completion gate: a session goal (set with <code>/goal</code>) auto-continues the turn until a judge says it is achieved (the <code>goal_evaluator</code> model for a cloud session, the session's own model on-device), capped by <code>goal_max_consecutive_blocks</code> (8). See <a href="arch-goals.html">The goal loop &amp; completion gate</a>.</td></tr>
-        <tr><td><code>deliverable_check</code></td><td><code>true</code></td><td>Before a turn ends, verify that every file path the reply claims was saved exists and is not empty, and that an artifact card it mentions was really created. Otherwise the turn continues with the missing items named.</td></tr>
+        <tr><td><code>deliverable_check</code></td><td><code>true</code></td><td>Check every delivery a reply claims (a file saved, a folder, a removal, an artifact card, a push, commit, pull request, merge, issue, upload, message, deploy, schedule, link, memory or setting) against the disk and the turn's successful tool calls (a recap of earlier work against what earlier replies verified), and hold back from the chat each sentence whose claim does not hold. The turn continues with the held sentences named to the model, and ends with a note on what did not happen. Off, replies stream unchecked.</td></tr>
         <tr><td><code>verify_on_stop</code></td><td><code>true</code></td><td>When a turn edited code files but no test, lint, typecheck or build command ran successfully afterwards, the completion gate asks for a real verification or an honest blocker before the turn ends. At most two nudges per turn; prose-only edits never trigger it.</td></tr>
         <tr><td><code>tool_loop_guard</code></td><td><code>true</code></td><td>Refuse a tool call that repeats the same arguments after two identical results, one that already failed three times unchanged, or a repeating cycle of calls; cap runaway web searches and delegation per turn. See <a href="#loop-caps">Loop-guard caps</a>.</td></tr>
         <tr><td><code>cron_verify</code></td><td><code>true</code></td><td>Verify a cron run actually achieved its prompt before pushing an "ok" status.</td></tr>
@@ -538,6 +538,7 @@
       <dt><code class="path">approval_mode</code></dt><dd>The server's default approval tier: <code>auto</code> (no approval, the default for an unconfigured server), <code>prompt</code> (every call goes through the normal approval pipeline, category <code>mcp</code>), <code>writes</code> (calls that look read-only by name auto-execute, everything else prompts), or <code>approve</code> (every call always asks - a hard floor that no bypass mode or blanket session approval can skip).</dd>
       <dt><code class="path">tool_overrides</code></dt><dd>A map of tool name to approval tier, overriding <code>approval_mode</code> for specific tools on that server.</dd>
       <dt><code class="path">enabled_tools</code> / <code class="path">disabled_tools</code></dt><dd>Allow/deny lists of tool names for the server. An empty allowlist permits everything; <code>disabled_tools</code> wins on overlap with <code>enabled_tools</code>.</dd>
+      <dt><code class="path">read_only</code> / <code class="path">read_only_tools</code></dt><dd>Which of the server's tools a read-only agent (explore, plan, or any agent started in plan mode) may run. <code>true</code> marks every tool, <code>read_only_tools</code> names some, and <code>false</code> ignores the server's own <code>readOnlyHint</code> annotations. Unmarked tools are kept from read-only agents.</dd>
     </div>
     <p>When a connected server asks the human a question mid-call (an <b>elicitation</b>), it is
       surfaced through the approval pipeline under its own category, <code>mcp-elicit</code>, rather

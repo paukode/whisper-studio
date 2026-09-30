@@ -158,12 +158,13 @@
     </div>
 
     <h2 id="regions">A note on regions</h2>
-    <p>Cohere embed and rerank are called from <code>us-east-1</code>: embed through its global
-      inference profile (<code>global.cohere.embed-v4:0</code>), rerank in-region, since it has no
-      global profile. Your chat model can run in any region you set as the <b>Bedrock Region</b>, so
-      cloud indexing works even when your chat traffic goes elsewhere. You do not need to move your
-      chat region to <code>us-east-1</code> to use cloud or hybrid mode; the indexing calls target
-      <code>us-east-1</code> on their own.</p>
+    <p>Cohere embed and rerank run in the <b>Bedrock Region</b> you set in Settings, like chat and
+      every other Bedrock call: embed through its global inference profile
+      (<code>global.cohere.embed-v4:0</code>), rerank in-region, since it has no global profile. The
+      default, <code>us-east-1</code>, serves both. Rerank 3.5 is not served in every region (on
+      2026-09-29 it answered in <code>us-east-1</code> and <code>us-west-2</code>, not
+      <code>us-east-2</code>); where it is not, search skips the rerank and keeps its fused
+      order.</p>
 
     <h2 id="changing-mode">Changing the mode</h2>
     <p>You can set the mode at install time or change it any time from the app.</p>

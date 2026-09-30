@@ -236,9 +236,9 @@ async def _execute_cron_prompt(job_id: str) -> None:
 
         # Progressive tool disclosure: re-derive this session's activations
         # from visible history first (self-healing across restarts, exactly
-        # like server/chat/routes.py), then assemble the same core+activated
-        # pool an interactive chat turn gets, built ONCE for the whole run
-        # (agents rebuild theirs every round, see server/agents/tool_access.py).
+        # like server/chat/routes.py), then assemble the core+activated pool,
+        # rebuilt every round like a chat turn's so a tool the job loads with
+        # tool_search is offered from its next round, as the index promises.
         # Everything else is deferred into a compact index folded into the
         # system prompt below.
         activate_from_history(session_id, visible_chat_history(messages))
@@ -249,17 +249,24 @@ async def _execute_cron_prompt(job_id: str) -> None:
         from server.workspace.state import latch_workspace
 
         ws_latch = latch_workspace(get_workspace_path)
-        advertised, deferred, _core_count = assemble_partitioned_pool(
+        _advertised, deferred, _core_count = assemble_partitioned_pool(
             plan_mode=False,
             ws_connected=bool(ws_latch.path),
             suppress_workspace_search=False,
             session_id=session_id,
+            chat=False,
         )
         deferred_tool_index = build_deferred_index(deferred)
-        cron_tools = _assemble_cron_tools(advertised)
 
         def _tool_catalog() -> tuple[list[dict], int | None]:
-            return cron_tools, None
+            pool, _deferred, _core = assemble_partitioned_pool(
+                plan_mode=False,
+                ws_connected=bool(ws_latch.path),
+                suppress_workspace_search=False,
+                session_id=session_id,
+                chat=False,
+            )
+            return _assemble_cron_tools(pool), None
 
         from server.prompts.rules import append_rules
 
@@ -332,7 +339,6 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 caching_on=_caching_on,
                 cache_ttl=cache_ttl_for(model_id),
                 effort_label=_effort_label,
-                force_skill=None,
                 loop=loop,
                 executor=_CRON_EXECUTOR,
             )
@@ -385,6 +391,13 @@ async def _execute_cron_prompt(job_id: str) -> None:
         turn_no = 0  # rounds consumed so far, across every run_turn() call
         final_text_parts: list[str] = []
         round_text_parts: list[str] = []
+        # The reply the last run_turn() call finished on. The runner keeps
+        # every round it continues from (a tool round, a cut-off answer) in
+        # ctx.messages, but not that final one, so the verifier and a verify
+        # continuation get it from here: the text of the last round, unless
+        # that round called tools.
+        final_reply = ""
+        round_called_tools = False
         had_error: str | None = None
         verify_continuations = 0
         verdict = None
@@ -408,6 +421,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 # like the old single hand-rolled loop.
                 ctx.policy = _dc_replace(ctx.policy, max_rounds=remaining)
 
+            final_reply = ""
             async for chunk in run_turn(ctx):
                 for raw_line in chunk.splitlines():
                     if not raw_line.startswith("data: "):
@@ -421,7 +435,10 @@ async def _execute_cron_prompt(job_id: str) -> None:
                         continue
 
                     if "usage" in frame:
+                        # A round's calls stream before its usage frame.
                         turn_no += 1
+                        final_reply = "" if round_called_tools else "".join(round_text_parts)
+                        round_called_tools = False
                         _flush_round_text()
                         cron_events.emit_progress(
                             session_id,
@@ -436,6 +453,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
                     elif "error" in frame:
                         had_error = frame["error"]
                     elif "skill_input" in frame:
+                        round_called_tools = True
                         tool_name = frame["skill_input"]
                         cron_events.emit_progress(
                             session_id,
@@ -480,12 +498,17 @@ async def _execute_cron_prompt(job_id: str) -> None:
             # is round-gated). Synchronous and safe to block a worker thread
             # on (never the event loop) — same reasoning as
             # server.goals.gate.run_completion_gate's own evaluator call.
+            # The verifier reads the history WITH the final reply, in a new
+            # list (as the chat gate's _gated_messages does): the runner's
+            # list lacks it, and a task that answers in text was judged as
+            # having produced nothing.
+            reply = [{"role": "assistant", "content": final_reply}] if final_reply.strip() else []
             verdict = await loop.run_in_executor(
                 _CRON_EXECUTOR,
                 functools.partial(
                     _cron_verify,
                     job["prompt"],
-                    ctx.messages,
+                    [*ctx.messages, *reply],
                     notifications,
                     main_model_key=model_key,
                     session_id=session_id,
@@ -501,6 +524,9 @@ async def _execute_cron_prompt(job_id: str) -> None:
             ):
                 break
             verify_continuations += 1
+            # The continuation answers the feedback with its own last reply
+            # in view, the way a chat gate block keeps it.
+            ctx.messages.extend(reply)
             ctx.messages.append(
                 {
                     "role": "user",

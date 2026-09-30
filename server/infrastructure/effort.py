@@ -83,14 +83,20 @@ _LABEL_ALIASES = {"xhigh": "extra", "minimal": "low", "none": "none"}
 DEFAULT_EFFORT = "high"
 
 _OPUS_RE = re.compile(r"opus(\d+)\.(\d+)$", re.IGNORECASE)
+_SONNET_RE = re.compile(r"sonnet(\d+)\.(\d+)$", re.IGNORECASE)
 # Both the config key ("sonnet5", "sonnet5.0") and the Bedrock model id
 # ("global.anthropic.claude-sonnet-5") name their version; either is enough.
 _SONNET_KEY_RE = re.compile(r"sonnet(\d+)", re.IGNORECASE)
 _SONNET_ID_RE = re.compile(r"claude-sonnet-(\d+)", re.IGNORECASE)
 _OPUS_ID_RE = re.compile(r"claude-opus-(\d+)", re.IGNORECASE)
-# The Bedrock id's own version, for a key that doesn't carry one. Opus ids
-# spell the minor separately ("claude-opus-4-8"), so capture both parts.
+# The Bedrock id's own version, for a key that doesn't carry one. Opus and
+# Sonnet ids spell the minor separately ("claude-opus-4-8",
+# "claude-sonnet-5-5"), so capture both parts.
 _OPUS_ID_VER_RE = re.compile(r"claude-opus-(\d+)(?:-(\d+))?", re.IGNORECASE)
+_SONNET_ID_VER_RE = re.compile(r"claude-sonnet-(\d+)(?:-(\d+))?", re.IGNORECASE)
+# The first Sonnet this app offers the xhigh rung on; the app keeps Sonnet 5
+# on the standard ladder.
+_SONNET_FULL_FROM = (5, 5)
 # OpenAI-on-Bedrock ids carry their version right after "gpt-": "openai.gpt-5.6-sol",
 # "openai.gpt-6-astra" (no minor). The gpt-oss ids ("openai.gpt-oss-120b") don't match.
 _GPT_ID_VER_RE = re.compile(r"openai\.gpt-(\d+)(?:\.(\d+))?", re.IGNORECASE)
@@ -117,9 +123,10 @@ def openai_effort_tier_for(model_id: str) -> str:
 def infer_effort_tier(key: str, model_id: str = "") -> str:
     """Infer a model's raw reasoning ladder when the entry does not declare one.
 
-    full     — Opus ≥ 4.8 and Fable (low…max, including the xhigh rung)
-    standard — Sonnet and Opus 4.0–4.7 (low/medium/high/max)
-    none     — Haiku (no effort/thinking)
+    full:     Opus 4.8 and up, Sonnet 5.5 and up, and Fable (low to max,
+              including the xhigh rung)
+    standard: Sonnet up to 5 and Opus 4.0 to 4.7 (low/medium/high/max)
+    none:     Haiku (no effort/thinking)
 
     Reads the config key first, then falls back to the Bedrock model id, so a
     renamed or dotless entry ("my-opus", "opus5") keeps the ladder of the
@@ -134,6 +141,9 @@ def infer_effort_tier(key: str, model_id: str = "") -> str:
     m = _OPUS_RE.match(k)
     if m and (int(m.group(1)), int(m.group(2))) >= (4, 8):
         return "full"
+    m = _SONNET_RE.match(k)
+    if m and (int(m.group(1)), int(m.group(2))) >= _SONNET_FULL_FROM:
+        return "full"
 
     mid = (model_id or "").lower()
     if mid:
@@ -143,6 +153,9 @@ def infer_effort_tier(key: str, model_id: str = "") -> str:
             return "full"
         m = _OPUS_ID_VER_RE.search(mid)
         if m and (int(m.group(1)), int(m.group(2) or 0)) >= (4, 8):
+            return "full"
+        m = _SONNET_ID_VER_RE.search(mid)
+        if m and (int(m.group(1)), int(m.group(2) or 0)) >= _SONNET_FULL_FROM:
             return "full"
     return "standard"
 

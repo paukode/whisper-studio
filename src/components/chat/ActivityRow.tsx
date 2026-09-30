@@ -37,7 +37,9 @@ const icon = (children: React.ReactNode) => (
   </svg>
 );
 
-const ICON = {
+/** Exported for DeliveryChips, which draws each verified delivery with the
+ *  glyph of the tool that makes it. */
+export const ICON = {
   file: icon(<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></>),
   pencil: icon(<path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />),
   plus: icon(<><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></>),
@@ -311,6 +313,16 @@ function displayName(name: string): string {
   return DISPLAY_NAMES[name] ?? name;
 }
 
+/** What a step is called in the list. A Stop-hook card the server raised
+ *  because the reply claimed a delivery it could not verify says so; every
+ *  other source keeps the generic hook label. */
+export function stepLabel(tool: ToolUseEvent): string {
+  if (tool.toolName === 'stop_hook_block' && (tool.input ?? {}).source === 'deliverable') {
+    return 'Checking a claimed delivery';
+  }
+  return displayName(tool.toolName);
+}
+
 /** How a goal_eval card names its verdict. */
 const VERDICT_LABELS: Record<string, string> = {
   achieved: 'achieved',
@@ -513,7 +525,7 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools }) => {
                 <span className="activity-step-icon" aria-hidden="true">
                   {iconFor(tool.toolName)}
                 </span>
-                <span className="activity-step-name">{displayName(tool.toolName)}</span>
+                <span className="activity-step-name">{stepLabel(tool)}</span>
                 {detail && <span className="activity-step-detail">{detail}</span>}
                 <span className="activity-step-spacer" />
                 <span className="activity-step-status">

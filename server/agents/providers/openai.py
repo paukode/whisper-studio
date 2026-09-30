@@ -19,6 +19,7 @@ from server.agents.providers.base import (
     CountsHook,
     ProviderTurn,
     TurnUsage,
+    structured_from_text,
 )
 
 log = logging.getLogger("whisper-studio")
@@ -213,14 +214,7 @@ class OpenAIBedrockAdapter:
         if tool_calls:
             stop_reason = "tool_use"
 
-        structured: dict | None = None
-        if force_structured is not None and text:
-            try:
-                parsed = json.loads(text)
-                if isinstance(parsed, dict):
-                    structured = parsed
-            except json.JSONDecodeError:
-                structured = None
+        structured = structured_from_text(text) if force_structured is not None else None
 
         return ProviderTurn(
             text=text,

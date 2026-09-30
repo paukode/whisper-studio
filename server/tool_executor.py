@@ -224,6 +224,7 @@ async def execute_tool_batch(
                 "not run. Continue with the tools you have."
             )
             log.info("agent tool scope refused %s", tool_name)
+            tool_scope.refused()
             return
 
         # Sibling abort: skip writes if a command tool failed
@@ -278,6 +279,8 @@ async def execute_tool_batch(
                 state.status = "skipped"
                 state.output = _guard.message
                 log.info("loop guard refused %s (%s)", tool_name, _guard.reason)
+                if tool_scope is not None:
+                    tool_scope.refused()
                 return
 
         # --- Hook: PreToolUse (in-process plugins + shell hooks; can block/rewrite) ---
@@ -314,6 +317,14 @@ async def execute_tool_batch(
                 call_input["__agent__"] = True
 
         # --- Dispatch ---
+        if tool_scope is not None:
+            tool_scope.ran()
+        # An agent this call starts inherits the turn's plan mode (run_agent
+        # makes it read-only); a read-only scope already on stays on. Reset
+        # after, so the flag never outlives the call.
+        from server.agents.tool_access import read_only_scope
+
+        _ro_token = read_only_scope.set(plan_mode or read_only_scope.get())
         try:
             output, side_effects = await route_tool(
                 tool_name,
@@ -399,6 +410,8 @@ async def execute_tool_batch(
             # Command errors cascade to subsequent writes
             if tool_name in _COMMAND_TOOLS:
                 command_error = f"{tool_name}: {e}"
+        finally:
+            read_only_scope.reset(_ro_token)
 
     # --- Execute batches ---
     from server.workspace.state import reset_turn_latch, set_turn_latch

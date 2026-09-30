@@ -33,3 +33,14 @@ class TurnPolicy:
 
 CHAT_POLICY = TurnPolicy()
 LOCAL_POLICY = TurnPolicy(gate_requires_goal=True)
+
+
+def round_cap(extension: dict, max_rounds: int, round_num: int) -> int:
+    """This round's cap on the turn: the policy's rounds plus any live grant
+    (server.agents.extensions). Once the run is told to finish (its "finish"
+    flag), the cap stops at the round after the one that saw the flag, so
+    that round is the last and the loop ends after it."""
+    cap = max_rounds + int(extension.get("rounds") or 0)
+    if extension.get("finish"):
+        return min(cap, int(extension.setdefault("finish_at", round_num + 1)))
+    return cap

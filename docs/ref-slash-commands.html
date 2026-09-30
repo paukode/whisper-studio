@@ -75,7 +75,7 @@
     <h3 id="model">/model</h3>
     <p><code>/model &lt;name&gt;</code> switches the model for every subsequent turn in this session. The
       valid names are the keys in your configured model list, so they track whatever you have enabled:
-      <code>haiku</code>, <code>sonnet</code>, <code>sonnet5</code>, <code>opus4.8</code>,
+      <code>haiku</code>, <code>sonnet</code>, <code>sonnet5</code>, <code>sonnet5.5</code>, <code>opus4.8</code>,
       <code>opus5.0</code>, <code>fable5.1</code>, <code>gpt6-astra</code>, and the rest. On success you
       get a toast confirming the version label ("Model set to Sonnet 4.6"), not the raw key. Pass an
       unknown name and the composer replies with the usage string listing the models you can pick.</p>
@@ -204,8 +204,8 @@
     <dl class="spec">
       <dt><code>@file:</code></dt><dd>Reference a workspace file, searchable by path as you type.</dd>
       <dt><code>@skills:</code></dt><dd>Browse skills. A bare <code>@&lt;skill-name&gt;</code> works too
-        and forces that skill for the message; with no text of your own, the skill runs on the
-        conversation so far.</dd>
+        and asks the model to call that skill for the message (no model is forced to call a tool);
+        with no text of your own, the skill runs on the conversation so far.</dd>
       <dt><code>@mcp:</code></dt><dd>Browse the tools of your connected MCP servers.</dd>
       <dt><code>@index</code></dt><dd>Force a search of your indexed folders for this message (see
         <a href="tut-index-search.html#ask-with-grounding">Index &amp; semantic search</a>).</dd>
@@ -292,8 +292,8 @@
 
     <h3 id="doctor">/doctor</h3>
     <p><code>/doctor</code> runs an automated diagnostics pass and shows the results in a dialog: a set
-      of checks (dependencies, AWS access, and related environment health) each marked as ok, warn, or
-      fail. It calls the <code>/api/doctor</code> endpoint served by
+      of checks (dependencies, AWS access, whether each GPT model resolves to a region Bedrock serves
+      it in, and related environment health) each marked as ok, warn, or fail. It calls the <code>/api/doctor</code> endpoint served by
       <code class="path">server/doctor.py</code>. Run it first whenever chat is not responding or a
       model call errors.</p>
     <p><code>/doctor context</code> is a separate check for prompt health: it calls

@@ -1,0 +1,53 @@
+[
+  {
+    "status": "preparing"
+  },
+  {
+    "status": "connecting"
+  },
+  {
+    "usage": {
+      "input_tokens": 100,
+      "output_tokens": 50,
+      "total_input": 100,
+      "total_output": 50,
+      "total_prompt": 100,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "total_cache_read": 0,
+      "total_cache_creation": 0,
+      "estimated_cost_usd": 0,
+      "model": "opus5.0",
+      "context_used": 100,
+      "context_max": 872000
+    }
+  },
+  {
+    "stop_hook_block": {
+      "reason": "Held back a sentence claiming something was delivered, because it could not be verified. The model is doing the work now or will say it was not done.",
+      "attempt": 1,
+      "source": "deliverable"
+    }
+  },
+  {
+    "text": "I could not write report.docx."
+  },
+  {
+    "usage": {
+      "input_tokens": 100,
+      "output_tokens": 50,
+      "total_input": 200,
+      "total_output": 100,
+      "total_prompt": 200,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "total_cache_read": 0,
+      "total_cache_creation": 0,
+      "estimated_cost_usd": 0,
+      "model": "opus5.0",
+      "context_used": 100,
+      "context_max": 872000
+    }
+  },
+  "[DONE]"
+]

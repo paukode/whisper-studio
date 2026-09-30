@@ -38,10 +38,10 @@ def _rerank_backend() -> str:
 
 
 def _rerank_cohere(query: str, passages: list[str]) -> list[float]:
-    """Cohere Rerank 3.5 on Bedrock (us-east-1). Returns a relevance score per
-    passage aligned to input order; [] on any failure so the caller keeps the
-    fused order. Each call is billed, so each is in the cost log (source
-    ``index``)."""
+    """Cohere Rerank 3.5 on Bedrock, in the region set in Settings. Returns a
+    relevance score per passage aligned to input order; [] on any failure so
+    the caller keeps the fused order. Each call is billed, so each is in the
+    cost log (source ``index``)."""
     try:
         import json
 

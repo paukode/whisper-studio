@@ -278,7 +278,7 @@ class OpenAIResponsesAdapter:
             if _is_prompt_too_long(msg):
                 raise PromptTooLongError(msg) from e
             log.warning("OpenAI responses.create failed (%s): %s", self.model_key, e)
-            yield RoundError(message=_friendly_error(e))
+            yield RoundError(message=_friendly_error(e, self.model_key, self.region))
             return
 
         loop = asyncio.get_event_loop()
@@ -339,7 +339,8 @@ class OpenAIResponsesAdapter:
                         raise PromptTooLongError(msg) from payload
                     log.warning("OpenAI stream broke mid-round (%s): %r", self.model_key, payload)
                     yield RoundError(
-                        message=_friendly_error(payload), retryable=_is_transient(msg, payload)
+                        message=_friendly_error(payload, self.model_key, self.region),
+                        retryable=_is_transient(msg, payload),
                     )
                     return
 
@@ -506,23 +507,22 @@ class OpenAIResponsesAdapter:
         )
 
 
-def _friendly_error(e: Exception) -> str:
-    """Actionable text for the common GPT-on-Bedrock failure classes."""
+def _friendly_error(e: Exception, model_key: str = "", region: str = "") -> str:
+    """Actionable text for the common GPT-on-Bedrock failure classes.
+    ``model_key`` and ``region`` are the model and the region the call went
+    to, so a 404 can say where the model does run and what to set."""
     # Transport exceptions can stringify to nothing (httpx.ReadTimeout('')),
     # which left the user with "request failed: " and no clue why.
     msg = str(e) or f"{type(e).__name__} (the model stopped responding mid-stream)"
     low = msg.lower()
     if any(s in low for s in ("auth", "401", "403", "denied", "credential", "token")):
         return (
-            "GPT-5.x auth/access failed. Enable OpenAI model access in the "
+            "GPT auth/access failed. Enable OpenAI model access in the "
             "Bedrock console for this region, confirm your AWS credentials are "
             f"valid, and that the model runs in the configured region. ({msg[:200]})"
         )
     if any(s in low for s in ("not found", "404", "does not exist", "no such model")):
-        return (
-            "GPT-5.x not found in this region. GPT-5.5 is served only in "
-            "us-east-1 / us-east-2 (GPT-5.4 adds us-west-2). Point bedrock_region "
-            "at a supported region, or set the model's openai_region override to "
-            f"one. ({msg[:200]})"
-        )
+        from server.openai_bedrock.runtime import not_found_advice
+
+        return f"{not_found_advice(model_key, region)} ({msg[:200]})"
     return f"OpenAI (Bedrock) request failed: {msg[:240]}"

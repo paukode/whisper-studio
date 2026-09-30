@@ -74,7 +74,10 @@ def _run_cron_job(
     monkeypatch.setattr(C, "load_cron_jobs", lambda: [job])
     monkeypatch.setattr("server.chat.engine.anthropic._get_bedrock_client", lambda: fake_stream)
     _tools = tools or []
-    monkeypatch.setattr(TP, "assemble_partitioned_pool", lambda **k: (_tools, [], len(_tools)))
+    # A fresh list per call, as the real pool returns.
+    monkeypatch.setattr(
+        TP, "assemble_partitioned_pool", lambda **k: (list(_tools), [], len(_tools))
+    )
     monkeypatch.setattr(WS, "get_workspace_path", lambda: "")
     monkeypatch.setattr(R, "append_rules", lambda s: s)
     monkeypatch.setattr(H, "start_run", lambda *a, **k: None)
@@ -260,3 +263,47 @@ def test_route_tool_receives_session_and_agent_stamp_without_leaking(monkeypatch
     body_2 = json.dumps(fake_stream.requests[1])
     assert "__session_id__" not in body_2
     assert "__agent__" not in body_2
+
+
+def test_a_tool_loaded_mid_run_is_offered_the_next_round(monkeypatch):
+    """The deferred index tells the job a loaded tool is callable on its next
+    round, so the job's tools are assembled every round, not once."""
+    from tests.golden_harness import (
+        FakeBedrockClient,
+        msg_end,
+        msg_start,
+        text_block,
+        tool_use_block,
+    )
+
+    tools = [{"name": "tool_search", "description": "d", "input_schema": {"type": "object"}}]
+    stream = FakeBedrockClient(
+        [
+            [
+                msg_start(),
+                *tool_use_block("t0", "tool_search", {"query": "memory"}),
+                *msg_end("tool_use"),
+            ],
+            [msg_start(), *text_block("done"), *msg_end()],
+        ]
+    )
+
+    async def route(name, tool_input, **kwargs):
+        tools.append(
+            {"name": "memory_write", "description": "d", "input_schema": {"type": "object"}}
+        )
+        return "loaded memory_write", []
+
+    recorded: dict = {}
+    job = {
+        "id": "job-load",
+        "name": "load-job",
+        "prompt": "note it",
+        "session_id": "sess-load",
+        "schedule": {"type": "interval", "seconds": 1800},
+        "enabled": True,
+    }
+    _run_cron_job(monkeypatch, job, stream, route, recorded, tools=tools)
+    offered = [{t["name"] for t in r.get("tools", [])} for r in stream.requests]
+    assert "memory_write" not in offered[0]
+    assert "memory_write" in offered[1]

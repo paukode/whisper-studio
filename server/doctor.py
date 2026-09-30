@@ -1,7 +1,7 @@
 """
-Diagnostics endpoint: checks AWS credentials, Bedrock connectivity,
-workspace state, and sessions DB. In Local mode the two AWS checks are
-skipped, since that mode makes no AWS calls.
+Diagnostics endpoint: checks AWS credentials, Bedrock connectivity, the
+regions the GPT models resolve to, workspace state, and sessions DB. In Local
+mode the AWS and GPT rows are skipped, since that mode makes no AWS calls.
 """
 
 import asyncio
@@ -19,6 +19,39 @@ router = APIRouter(prefix="/api/doctor", tags=["doctor"])
 _LOCAL_MODE_SKIP = "Skipped: Local mode makes no AWS calls."
 _CREDS = "AWS credentials"
 _BEDROCK = "Bedrock connectivity"
+_GPT_REGIONS = "GPT regions"
+
+
+def _gpt_region_check() -> dict:
+    """Warn when a GPT model the picker offers resolves to a region where
+    bedrock-mantle does not serve it (an EU bedrock_region, say): its first
+    turn would fail with a 404. Nothing is rerouted; this only says what to
+    set. The region is resolved exactly as a call resolves it."""
+    from server.chat.infra import mode_chat_catalog
+    from server.infrastructure.config import load_config
+    from server.openai_bedrock.runtime import (
+        gpt_regions_note,
+        region_problems,
+        unmeasured_models,
+    )
+    from server.workspace import get_workspace_path
+
+    visible, meta, _mode, _default = mode_chat_catalog(load_config(get_workspace_path()))
+    gpt = [k for k in visible if (meta.get(k) or {}).get("provider") == "openai_bedrock"]
+    if not gpt:
+        return {"check": _GPT_REGIONS, "status": "ok", "detail": "No GPT model configured"}
+    problems = region_problems(gpt)
+    if not problems:
+        unknown = unmeasured_models(gpt)
+        detail = f"{len(gpt) - len(unknown)} GPT model(s), each in a region Bedrock serves it in"
+        if unknown:
+            detail += f"; no measured regions for {', '.join(unknown)}"
+        return {"check": _GPT_REGIONS, "status": "ok", "detail": detail}
+    return {
+        "check": _GPT_REGIONS,
+        "status": "warn",
+        "detail": " ".join([*problems, gpt_regions_note()]),
+    }
 
 
 async def _bedrock_check(model: str | None) -> dict:
@@ -122,6 +155,15 @@ async def doctor(model: str = None):
         results.append({"check": _BEDROCK, "status": "ok", "detail": _LOCAL_MODE_SKIP})
     else:
         results.append(await _bedrock_check(model))
+
+    # ── 2b. GPT regions (config only, no AWS call) ────────────────────────────
+    if local_mode:
+        results.append({"check": _GPT_REGIONS, "status": "ok", "detail": _LOCAL_MODE_SKIP})
+    else:
+        try:
+            results.append(_gpt_region_check())
+        except Exception as e:  # noqa: BLE001 - a diagnostics row must not 500
+            results.append({"check": _GPT_REGIONS, "status": "error", "detail": str(e)})
 
     # ── 3. Workspace ──────────────────────────────────────────────────────────
     try:

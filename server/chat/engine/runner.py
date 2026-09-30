@@ -31,7 +31,9 @@ from typing import Any
 
 from server.utils import BoundedUUIDSet, ndjson_dumps
 
+from .continuation import CONTINUE_AFTER_MAX_TOKENS, continuable_assistant, strip_partial_tool_use
 from .events import (
+    Frame,
     Heartbeat,
     Incomplete,
     RoundError,
@@ -45,7 +47,7 @@ from .events import (
     ToolCallStart,
 )
 from .pause import paused_sessions
-from .policy import TurnPolicy
+from .policy import TurnPolicy, round_cap
 
 log = logging.getLogger("whisper-studio")
 
@@ -60,35 +62,6 @@ _ROUND_RETRIES_MAX = 2
 # starts. The last tenth is reserved for writing the report.
 SOFT_LIMIT_FRACTION = 0.9
 _ROUND_RETRY_BACKOFF_S = 2.0
-
-
-def strip_partial_tool_use(content: list[dict]) -> list[dict]:
-    """Prepare an assistant turn for re-injection without a tool_result.
-
-    ``max_tokens`` (or a completion-gate loop) can leave partial ``tool_use``
-    blocks in the assistant turn; feeding them back without matching
-    tool_results is a non-retryable provider error. Drop them, keeping the
-    text/thinking, and never return an empty turn."""
-    if not any(b.get("type") == "tool_use" for b in content):
-        return content
-    kept = [b for b in content if b.get("type") != "tool_use"]
-    return kept or [{"type": "text", "text": "(continuing)"}]
-
-
-def _continuable_assistant(content: list[dict]) -> list[dict]:
-    """The round's assistant content, shaped so the turn can carry on after it.
-
-    Used wherever the loop decides an apparent end-of-turn is not the end (a
-    completion-gate block, a mid-turn message that landed after the last
-    drain). Partial tool_use blocks go, and a turn with no usable text gets a
-    placeholder: some providers reject an assistant turn that is empty or
-    text-less, which would kill the very turn we are trying to continue."""
-    assistant = strip_partial_tool_use(content)
-    has_text = isinstance(assistant, list) and any(
-        isinstance(b, dict) and b.get("type") == "text" and (b.get("text") or "").strip()
-        for b in assistant
-    )
-    return assistant if has_text else [{"type": "text", "text": "(continuing)"}]
 
 
 def _remind(messages: list, text: str) -> None:
@@ -108,10 +81,11 @@ def _record_unfinished_round(ctx: "TurnContext", round_num: int) -> None:
     the adapter's inflight_usage (None when nothing was billed). Never raises:
     it runs in the round's finally, on cancellation too."""
     probe = getattr(ctx.adapter, "inflight_usage", None)
-    if not callable(probe):
-        return
     try:
-        usage = probe()
+        usage = probe() if callable(probe) else None
+        if usage is None and ctx.claims is not None:
+            # Finished, but stopped while the claim guard sent its held text.
+            usage = ctx.claims.held_usage()
         if usage is None:
             return
         from server.costs.tracker import record_turn
@@ -247,6 +221,11 @@ class TurnContext:
     # What an agent run may execute (server.agents.tool_access.ToolScope): the
     # tool batch refuses every other name. None (every other turn): unscoped.
     tool_scope: Any = None
+    # The turn's claim guard (server/chat/claim_guard.py); run_turn makes one.
+    claims: Any = None
+    # The deliveries earlier replies of the chat verified (their chips, sent
+    # with the history): what a recap of earlier work is checked against.
+    earlier_deliveries: list = field(default_factory=list)
 
 
 def _assemble_round_tools(ctx: TurnContext) -> tuple[list, int | None]:
@@ -294,15 +273,16 @@ class _TurnEnd:
     paused: bool = False
 
 
-def _close_midturn_inbox(ctx: TurnContext) -> list[str]:
-    """The chat turn's last look at its mid-turn inbox
-    (midturn_inbox.close_and_announce). Returns the frames to send before
-    [DONE]."""
-    if not ctx.midturn_inbox:
-        return []
+def _turn_end_frames(ctx: TurnContext, end: _TurnEnd) -> list[str]:
+    """The frames to send before [DONE]: the claim guard's last text and
+    notes, then, unless the turn paused, the chat turn's last look at its
+    mid-turn inbox (midturn_inbox.close_and_announce)."""
+    frames = ctx.claims.finish(paused=end.paused)
+    if not ctx.midturn_inbox or end.paused:
+        return frames
     from server.chat.engine import midturn_inbox as _inbox
 
-    return _inbox.close_and_announce(ctx.session_id)
+    return frames + _inbox.close_and_announce(ctx.session_id)
 
 
 async def run_turn(ctx: TurnContext):
@@ -314,11 +294,15 @@ async def run_turn(ctx: TurnContext):
     so nothing a turn accepted is left behind unread and unannounced. A pause
     for approval does not: its continuation reads what was queued."""
     end = _TurnEnd()
+    if ctx.claims is None:
+        from server.chat.claim_guard import ClaimGuard
+
+        ctx.claims = ClaimGuard.for_turn(ctx)
     rounds = _run_rounds(ctx, end)
     try:
         async for chunk in rounds:
-            if chunk == _DONE and not end.paused:
-                for frame in _close_midturn_inbox(ctx):
+            if chunk == _DONE:
+                for frame in _turn_end_frames(ctx, end):
                     yield frame
             yield chunk
     finally:
@@ -417,7 +401,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
     for round_num in itertools.count():
         # The cap and the deadline are re-read every round so a live
         # extension (server.agents.extensions) applies to the next round.
-        cap = max_rounds + int(_ext.get("rounds") or 0)
+        cap = round_cap(_ext, max_rounds, round_num)
         if round_num >= cap:
             break
         _deadline_now = (
@@ -575,8 +559,9 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
             # ── One model round via the provider adapter ─────────────────────
             round_result: RoundResult | None = None
             try:
-                round_events = ctx.adapter.stream_round(
-                    messages, tools, core_count, round_num, is_last_round
+                round_events = ctx.claims.wrap(
+                    ctx.adapter.stream_round(messages, tools, core_count, round_num, is_last_round),
+                    messages,
                 )
                 errored = False
                 retry_round = False
@@ -599,6 +584,8 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                         yield f"data: {ndjson_dumps({'skill_input': ev.name, 'input': ev.input})}\n\n"
                     elif isinstance(ev, Heartbeat):
                         yield ": hb\n\n"
+                    elif isinstance(ev, Frame):
+                        yield f"data: {ndjson_dumps(ev.payload)}\n\n"
                     elif isinstance(ev, Incomplete):
                         text_streamed = True
                         _trunc_note = "\n\n*(Response truncated: output token limit reached.)*"
@@ -797,18 +784,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                 messages.append(
                     {"role": "assistant", "content": strip_partial_tool_use(result_content)}
                 )
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Continue exactly where you left off. Do not repeat anything. "
-                            "IMPORTANT: If you were in the middle of a code block (```html or similar), "
-                            "continue the code directly — do NOT close and reopen the fence, do NOT add explanation text "
-                            "before or inside the code. Just continue the code from the exact point it was cut off. "
-                            "The output will be concatenated to your previous response."
-                        ),
-                    }
-                )
+                messages.append({"role": "user", "content": CONTINUE_AFTER_MAX_TOKENS})
                 if estimate_message_size(messages) > thresholds_for(ctx.model_key)[0]:
                     messages = await compact_messages_with_claude(
                         messages, ctx.model_id, session_id=session_id, model_key=ctx.model_key
@@ -883,6 +859,9 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                             model_key=ctx.model_key,
                             workspace=ctx.ws_path,
                             final_reply=result_content,
+                            turn_started_at=ctx.claims.started_at,
+                            claim_calls=ctx.claims.ledger(),
+                            claim_receipts=ctx.earlier_deliveries,
                             tools_enabled=getattr(ctx.adapter, "tools_enabled", True),
                             plan_mode=ctx.plan_mode,
                             attempt=stop_blocks_used,
@@ -900,7 +879,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                         messages.append(
                             {
                                 "role": "assistant",
-                                "content": _continuable_assistant(result_content),
+                                "content": continuable_assistant(result_content),
                             }
                         )
                         messages.append(
@@ -940,7 +919,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     messages.append(
                         {
                             "role": "assistant",
-                            "content": _continuable_assistant(result_content),
+                            "content": continuable_assistant(result_content),
                         }
                     )
                     # The client joins every text frame of a turn into one
@@ -957,16 +936,24 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     round_num,
                 )
 
-                # Post-turn memory hooks (fire-and-forget background tasks).
+                # Post-turn memory hooks (fire-and-forget background tasks),
+                # without the sentences the claim guard held back.
+                _seen_turn = ctx.claims.redact(messages)
                 if ctx.memory_hooks is not None:
-                    ctx.memory_hooks(messages)
+                    ctx.memory_hooks(_seen_turn)
                 else:
                     _fire_memory_hooks(
-                        messages,
+                        _seen_turn,
                         session_id,
                         ctx.ws_path,
                         ctx.model_id,
-                        fork=_build_review_fork(ctx, tools, core_count, messages, result_content),
+                        fork=_build_review_fork(
+                            ctx,
+                            tools,
+                            core_count,
+                            _seen_turn,
+                            ctx.claims.redact_content(result_content),
+                        ),
                     )
 
                 yield "data: [DONE]\n\n"
@@ -1094,6 +1081,8 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                 return
 
             messages.append({"role": "user", "content": tool_results})
+            for _frame in ctx.claims.after_tools(messages):
+                yield _frame
 
             # Proactive compaction — char estimate, supplemented by TOKEN
             # truth (the per-round usage crossed 80% of the window).

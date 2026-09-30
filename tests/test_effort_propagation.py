@@ -114,7 +114,6 @@ def test_anthropic_body_sends_sonnet5s_own_top_rung_for_ultracode(monkeypatch):
         caching_on=False,
         cache_ttl="5m",
         effort_label="ultracode",
-        force_skill=None,
         loop=None,
         executor=None,
     )
@@ -151,7 +150,6 @@ def test_thinking_asks_for_a_visible_summary(monkeypatch):
             caching_on=False,
             cache_ttl="5m",
             effort_label=effort_label,
-            force_skill=None,
             loop=None,
             executor=None,
         )
@@ -422,7 +420,6 @@ def test_adapter_uses_the_metadata_the_effort_was_resolved_from(monkeypatch):
         caching_on=False,
         cache_ttl="5m",
         effort_label="ultracode",
-        force_skill=None,
         loop=None,
         executor=None,
         meta={"id": "global.anthropic.claude-opus-5", "effort_tier": "full"},

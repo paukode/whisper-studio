@@ -158,6 +158,26 @@ async function openFileExternally(t: WsFileTarget, name: string): Promise<void> 
   }
 }
 
+/** The hover hint saying where a click on this chat link goes, or null for a
+ *  link these handlers leave to the browser. A chip that sets its own title
+ *  appends it, so every routed link explains itself the same way. */
+export function chatLinkHint(href: string): string | null {
+  if (LOCALHOST_RE.test(href)) return 'Opens in the Live preview pane';
+  if (href.startsWith(DOCS_PREFIX)) return 'Opens this documentation page in the side panel';
+  if (!href.startsWith(PREFIX)) return null;
+  // navigator.platform is deprecated; prefer userAgentData where available.
+  const platform = ((navigator as { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform ?? '').toLowerCase();
+  const isMac = platform.includes('mac');
+  // Non-mac says "file manager": Windows reveals in Explorer, but Linux only
+  // opens the containing folder, so don't promise a specific app there.
+  const revealHint = isMac
+    ? 'Cmd-click to reveal in Finder.'
+    : 'Ctrl-click to reveal in your file manager.';
+  return href.includes('&open=os')
+    ? `Click to open in your default app. ${revealHint}`
+    : `Click to open in the side panel. ${revealHint}`;
+}
+
 export function attachWsFileHandlers(container: HTMLElement): () => void {
   const onClick = (e: MouseEvent) => {
     const anchor = (e.target as HTMLElement | null)?.closest('a');
@@ -217,27 +237,8 @@ export function attachWsFileHandlers(container: HTMLElement): () => void {
   const onOver = (e: MouseEvent) => {
     const anchor = (e.target as HTMLElement | null)?.closest('a');
     if (!anchor || anchor.title) return;
-    const href = anchor.getAttribute('href') || '';
-    if (LOCALHOST_RE.test(href)) {
-      anchor.title = 'Opens in the Live preview pane';
-      return;
-    }
-    if (href.startsWith(DOCS_PREFIX)) {
-      anchor.title = 'Opens this documentation page in the side panel';
-      return;
-    }
-    if (!href.startsWith(PREFIX)) return;
-    // navigator.platform is deprecated; prefer userAgentData where available.
-    const platform = ((navigator as { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform ?? '').toLowerCase();
-    const isMac = platform.includes('mac');
-    // Non-mac says "file manager": Windows reveals in Explorer, but Linux only
-    // opens the containing folder, so don't promise a specific app there.
-    const revealHint = isMac
-      ? 'Cmd-click to reveal in Finder.'
-      : 'Ctrl-click to reveal in your file manager.';
-    anchor.title = href.includes('&open=os')
-      ? `Click to open in your default app. ${revealHint}`
-      : `Click to open in the side panel. ${revealHint}`;
+    const hint = chatLinkHint(anchor.getAttribute('href') || '');
+    if (hint) anchor.title = hint;
   };
 
   container.addEventListener('click', onClick);

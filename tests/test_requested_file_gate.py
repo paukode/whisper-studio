@@ -12,7 +12,9 @@ from types import SimpleNamespace
 import pytest
 
 from server.chat.engine import midturn_inbox
-from server.chat.engine.runner import _midturn_text, _remind
+from server.chat.engine.events import RoundResult, TextDelta, Usage
+from server.chat.engine.policy import TurnPolicy
+from server.chat.engine.runner import TurnContext, _midturn_text, _remind, run_turn
 from server.goals import requested_files as rf
 
 
@@ -39,7 +41,7 @@ def _tool(name: str, tool_input: dict | None = None) -> dict:
     ],
 )
 def test_a_request_for_a_file_is_recognised(prompt):
-    assert rf.requested_clause(prompt) is not None
+    assert rf.requested_clauses(prompt)
 
 
 @pytest.mark.parametrize(
@@ -54,13 +56,33 @@ def test_a_request_for_a_file_is_recognised(prompt):
     ],
 )
 def test_a_question_about_files_is_not_a_request_for_one(prompt):
-    assert rf.requested_clause(prompt) is None
+    assert rf.requested_clauses(prompt) == []
 
 
 def test_the_verb_and_the_noun_have_to_be_in_the_same_breath():
     # Reading one file then answering in chat owes the user nothing on disk.
-    assert rf.requested_clause("read the pdf. then tell me what changed") is None
-    assert rf.requested_clause("read the pdf, then write me a docx") is not None
+    assert rf.requested_clauses("read the pdf. then tell me what changed") == []
+    assert rf.requested_clauses("read the pdf, then write me a docx")
+
+
+def test_every_request_in_a_message_is_read():
+    asked = rf.requested_clauses("make a diagram of the flow. Also save a pdf copy to Downloads")
+    assert asked == ["make a diagram of the flow", "Also save a pdf copy to Downloads"]
+
+
+@pytest.mark.parametrize(
+    ("text", "asks"),
+    [
+        ("no need to save a file, just answer here", False),
+        ("don't write the pdf after all", False),
+        ("please do not create a file for this", False),
+        ("stop exporting the csv", False),
+        ("don't forget to save it as a pdf", True),
+        ("don't save anything, just make me a diagram", True),
+    ],
+)
+def test_a_file_called_off_is_not_asked_for(text, asks):
+    assert bool(rf.requested_clauses(text)) is asks
 
 
 # ── did the turn actually produce something ────────────────────────────────
@@ -72,6 +94,24 @@ def test_the_verb_and_the_noun_have_to_be_in_the_same_breath():
 def test_a_file_tool_counts_as_produced(name):
     msgs = [{"role": "user", "content": "make me a png"}, _tool(name)]
     assert rf.produced_a_file(msgs, None) is True
+
+
+@pytest.mark.parametrize(
+    "name", ["create_docx", "create_pptx", "create_xlsx", "create_pdf", "office_script"]
+)
+def test_a_document_tool_answers_a_request_to_save_a_file(name):
+    # They write the document to disk behind their approval card; the reply
+    # need not repeat the path for the request to be met.
+    from server.chat.tool_pool import assemble_full_catalog
+
+    assert name in {t["name"] for t in assemble_full_catalog(ws_connected=True)}
+    msgs = [
+        {"role": "user", "content": "write the report as a docx and save it to Downloads"},
+        _tool(name),
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1"}]},
+        {"role": "assistant", "content": "The report is ready."},
+    ]
+    assert rf.requested_file_feedback(msgs, None) is None
 
 
 def test_a_reply_naming_a_file_that_really_exists_counts_as_produced(tmp_path):
@@ -229,6 +269,182 @@ def test_one_nudge_per_turn_holds_across_a_late_mid_turn_message():
     assert rf.requested_file_feedback(msgs, None) is None
 
 
+# ── a file asked for while the turn runs ───────────────────────────────────
+# "also make a PNG chart" sent while the report is being written is a request
+# of its own. The prompt's request is answered by anything the turn made; the
+# late one only by what the turn did after the message reached it.
+
+_PROMPT = "write the q3 report as a docx"
+_LATER = "also make a png chart of the totals"
+
+
+def _report_saved(report) -> list:
+    """The prompt, and a save_file round whose result row is where a message
+    sent during it lands (loop_hints.inject_reminder)."""
+    return [
+        {"role": "user", "content": _PROMPT},
+        _tool("save_file", {"destination_path": str(report)}),
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": f"Saved to {report}"}
+            ],
+        },
+    ]
+
+
+@pytest.fixture
+def report(tmp_path):
+    path = tmp_path / "Q3 Report.docx"
+    path.write_bytes(b"docx")
+    return path
+
+
+def test_a_file_asked_for_mid_turn_is_owed_after_the_message(report):
+    msgs = _late(_report_saved(report), _LATER)
+    msgs.append({"role": "assistant", "content": "The totals are 3, 5 and 8."})
+    fb = rf.requested_file_feedback(msgs, None)
+    assert fb and fb.startswith(rf.REQUEST_MARKER)
+    assert _LATER in fb and _PROMPT not in fb
+
+
+def test_restating_the_earlier_file_does_not_answer_the_later_request(report):
+    # The reply that answers the late message usually recaps the turn.
+    msgs = _late(_report_saved(report), _LATER)
+    msgs.append(
+        {"role": "assistant", "content": f"Saved the report to `{report}`. The totals are 3, 5, 8."}
+    )
+    fb = rf.requested_file_feedback(msgs, None)
+    assert fb and _LATER in fb
+
+
+@pytest.mark.parametrize(
+    "after",
+    [
+        # A file tool after the message.
+        lambda tmp: [_tool("create_chart"), {"role": "assistant", "content": "Chart added."}],
+        # A reply after the message naming a new file that exists.
+        lambda tmp: [{"role": "assistant", "content": f"Saved the chart to `{tmp}/totals.png`."}],
+        # A script after the message rewrote the report with the chart in it.
+        lambda tmp: [
+            _tool("run_python"),
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1"}]},
+            {
+                "role": "assistant",
+                "content": f"Saved the report with the chart to `{tmp}/q3.docx`.",
+            },
+        ],
+    ],
+    ids=["file-tool", "new-file-named", "script-rewrote-it"],
+)
+def test_a_file_made_after_the_message_answers_it(after, tmp_path):
+    (tmp_path / "totals.png").write_bytes(b"png")
+    (tmp_path / "q3.docx").write_bytes(b"docx")
+    msgs = _report_saved(tmp_path / "q3.docx")
+    _late(msgs, _LATER)
+    msgs += after(tmp_path)
+    assert rf.requested_file_feedback(msgs, None) is None
+
+
+@pytest.mark.parametrize(
+    "maker",
+    [
+        ("spawn_agent", {"prompt": "export the totals to the path the user gave"}),
+        ("mcp__files__write_file", {"path": "totals.csv", "content": "region,total"}),
+    ],
+    ids=["a-subagent", "an-mcp-tool"],
+)
+def test_a_path_the_user_names_mid_turn_is_answered_by_the_file_made_there(maker, report):
+    # The user's own words name the file; they are not the assistant naming
+    # a file it made before the message.
+    totals = report.parent / "totals.csv"
+    msgs = _late(_report_saved(report), f"also export the totals to {totals}")
+    totals.write_text("region,total\n")
+    msgs += [
+        _tool(*maker),
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
+        },
+        {"role": "assistant", "content": f"Exported the totals to `{totals}`."},
+    ]
+    assert rf.requested_file_feedback(msgs, None) is None
+
+
+@pytest.mark.parametrize(
+    "runner",
+    [
+        ("ws_run_command", {"command": "python build_report.py"}),
+        ("skill_invoke", {"skill_name": "docx", "input": "add the totals table to the report"}),
+    ],
+    ids=["a-workspace-command", "a-skill"],
+)
+def test_a_command_or_a_skill_run_after_the_message_may_have_made_the_file_again(runner, report):
+    # Out of plan mode these write files too: the report the reply restates
+    # may be the one they rebuilt for the later request.
+    msgs = _late(_report_saved(report), "update the report docx with the totals")
+    msgs += [
+        _tool(*runner),
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}],
+        },
+        {"role": "assistant", "content": f"Updated `{report}` with the totals."},
+    ]
+    assert rf.requested_file_feedback(msgs, None) is None
+    # With nothing run after the message, the restated report answers nothing.
+    assert rf.requested_file_feedback([*msgs[:-3], msgs[-1]], None) is not None
+
+
+def test_a_message_folded_onto_the_prompt_has_the_whole_turn(report):
+    # It reached the turn before the first round: the save answers both.
+    msgs = _late([{"role": "user", "content": _PROMPT}], _LATER)
+    msgs += _report_saved(report)[1:]
+    msgs.append({"role": "assistant", "content": f"Saved to `{report}`."})
+    assert rf.file_requests(msgs) == [(_PROMPT, 0), (_LATER, 0)]
+    assert rf.requested_file_feedback(msgs, None) is None
+
+
+def test_a_late_message_after_the_reply_is_owed_by_what_follows_it(report):
+    msgs = _report_saved(report) + [{"role": "assistant", "content": f"Saved to `{report}`."}]
+    _late(msgs, _LATER)  # a row of its own after the assistant tail
+    assert msgs[-1]["role"] == "user"
+    msgs.append({"role": "assistant", "content": "The totals are 3, 5 and 8."})
+    # The turn's rows 0 to 2 are the save, its result and the reply; the
+    # message is row 3, so only row 4 on can answer it.
+    assert rf.file_requests(msgs) == [(_PROMPT, 0), (_LATER, 4)]
+    fb = rf.requested_file_feedback(msgs, None)
+    assert fb and _LATER in fb and _PROMPT not in fb
+
+
+def test_one_nudge_names_every_request_still_owed():
+    msgs = _late(
+        [
+            {"role": "user", "content": _PROMPT},
+            {"role": "assistant", "content": "Drafting it."},
+            {
+                "role": "user",
+                "content": "<system-reminder>Only 5 tool rounds remain.</system-reminder>",
+            },
+        ],
+        _LATER,
+    )
+    msgs.append({"role": "assistant", "content": "The report says revenue grew."})
+    fb = rf.requested_file_feedback(msgs, None)
+    assert fb and _PROMPT in fb and _LATER in fb
+    msgs += [
+        {"role": "user", "content": f"[completion gate] {fb}"},
+        {"role": "assistant", "content": "I did not make either file."},
+    ]
+    assert rf.requested_file_feedback(msgs, None) is None
+
+
+def test_calling_the_file_off_mid_turn_asks_for_nothing(report):
+    msgs = _late(_report_saved(report), "no need to save a chart file, just tell me the totals")
+    msgs.append({"role": "assistant", "content": "The totals are 3, 5 and 8."})
+    assert rf.requested_file_feedback(msgs, None) is None
+
+
 # ── the gate phase ─────────────────────────────────────────────────────────
 
 
@@ -270,3 +486,97 @@ def test_gate_stays_out_of_plan_mode(_gate_env):
         _gate_env.run_completion_gate(GateContext(session_id="s", messages=msgs, plan_mode=True))
     )
     assert decision.block is False
+
+
+# ── the engine ─────────────────────────────────────────────────────────────
+# A bare TurnContext, a scripted adapter and a faked tool batch (the pattern
+# from tests/test_gate_final_reply.py), with the mid-turn inbox the chat
+# route reads: no HTTP route, no real Bedrock.
+
+
+class _SaveThenAnswer:
+    """Round 0 saves the report, and while it runs the user asks for a chart
+    as well; every later round answers with the next scripted reply."""
+
+    provider = "test"
+
+    def __init__(self, sid: str, report, *replies: str):
+        self.sid = sid
+        self.report = report
+        self.replies = list(replies)
+        self.calls: list[list[dict]] = []
+
+    async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
+        self.calls.append([dict(m) for m in messages])
+        if round_num == 0:
+            midturn_inbox.push(self.sid, _LATER)
+            content = [
+                {"type": "text", "text": "Saving the report."},
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "save_file",
+                    "input": {"destination_path": str(self.report)},
+                },
+            ]
+            yield TextDelta(text=content[0]["text"])
+            yield RoundResult(stop_reason="tool_use", content=content, usage=Usage())
+            return
+        text = self.replies.pop(0)
+        yield TextDelta(text=text)
+        yield RoundResult(
+            stop_reason="end_turn", content=[{"type": "text", "text": text}], usage=Usage()
+        )
+
+
+def test_the_engine_asks_for_a_file_requested_mid_turn(_gate_env, monkeypatch, report):
+    import server.tool_executor as TE
+
+    async def batch(tool_uses, **kw):
+        return list(tool_uses)
+
+    async def process(states, budget_fn, **kw):
+        results = [
+            {"type": "tool_result", "tool_use_id": t["id"], "content": f"Saved to {report}"}
+            for t in states
+        ]
+        return (results, [], False, False)
+
+    monkeypatch.setattr(TE, "execute_tool_batch", batch)
+    monkeypatch.setattr(TE, "process_tool_results", process)
+
+    sid = "mid-turn-file-request"
+    midturn_inbox.clear(sid)
+    recap = f"Saved the report to `{report}`. The totals are 3, 5 and 8."
+    adapter = _SaveThenAnswer(sid, report, recap, "I have not made the chart: no data source.")
+    ctx = TurnContext(
+        cost_source="chat",
+        session_id=sid,
+        model_key="k",
+        model_id="k",
+        messages=[{"role": "user", "content": _PROMPT}],
+        adapter=adapter,
+        policy=TurnPolicy(max_rounds=10, completion_gate=True),
+        loop=None,
+        executor=None,
+        tool_exec_model_id="",
+        memory_hooks=lambda msgs: None,
+        midturn_inbox=True,
+    )
+
+    async def go():
+        return "".join([c async for c in run_turn(ctx)])
+
+    out = asyncio.run(go())
+
+    # The message landed on the save's result row, after the save.
+    result_row = adapter.calls[1][-1]
+    assert result_row["content"][0]["type"] == "tool_result"
+    assert _LATER in result_row["content"][-1]["text"]
+    # The recap round ended with the chart owed; the gate asked for it once.
+    assert len(adapter.calls) == 3
+    nudge = adapter.calls[2][-1]
+    assert nudge["content"].startswith(f"[completion gate] {rf.REQUEST_MARKER}")
+    assert _LATER in nudge["content"] and _PROMPT not in nudge["content"]
+    assert out.count("stop_hook_block") == 1
+    assert midturn_inbox.has_pending(sid) is False

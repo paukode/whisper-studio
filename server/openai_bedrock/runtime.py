@@ -84,6 +84,136 @@ def region_for(model_key: str) -> str:
     return override or load_config()["bedrock_region"]
 
 
+# Where bedrock-mantle serves each OpenAI model, measured with one call per
+# model and region on 2026-09-29 (us-east-1, us-east-2 and us-west-2; every EU
+# region answered 404 for all of them on 2026-09-28). Read only to explain a
+# failure (a 404, /doctor): a call always goes to the configured region and is
+# never rerouted. A model missing here was never measured, so nothing is
+# claimed about where it runs.
+_SERVED_IN = {
+    "openai.gpt-6-astra": ("us-west-2",),
+    "openai.gpt-6-sol": ("us-east-1",),
+    "openai.gpt-6-luna": ("us-east-1",),
+    "openai.gpt-5.6-sol": ("us-east-1", "us-east-2"),
+    "openai.gpt-5.6-terra": ("us-east-1", "us-east-2", "us-west-2"),
+    "openai.gpt-5.6-luna": ("us-east-1", "us-east-2", "us-west-2"),
+    "openai.gpt-5.5": ("us-east-1", "us-east-2"),
+    "openai.gpt-5.4": ("us-east-1", "us-east-2", "us-west-2"),
+}
+# Every region that serves at least one of them.
+GPT_REGIONS = tuple(sorted({r for regions in _SERVED_IN.values() for r in regions}))
+
+
+def _spoken(regions: tuple[str, ...], last: str = "and") -> str:
+    if len(regions) < 2:
+        return "".join(regions)
+    return f"{', '.join(regions[:-1])} {last} {regions[-1]}"
+
+
+def gpt_serving_regions(model_id: str) -> tuple[str, ...] | None:
+    """The regions where bedrock-mantle serves this OpenAI model id, or None
+    when it was never measured. A wire prefix before "openai." is ignored."""
+    mid = (model_id or "").strip().lower()
+    at = mid.find("openai.")
+    return _SERVED_IN.get(mid[at:] if at > 0 else mid)
+
+
+def gpt_regions_note() -> str:
+    """Where Bedrock serves GPT at all, as one sentence for an error or /doctor."""
+    return (
+        f"Bedrock serves the GPT models only in {_spoken(GPT_REGIONS)}, and not every "
+        "model in each."
+    )
+
+
+def _fix(regions: tuple[str, ...], pinned: bool, entry: str) -> str:
+    # A pinned model (openai_region set) follows its pin, so bedrock_region
+    # would not move it.
+    choices = _spoken(regions, "or")
+    if pinned:
+        return f"change openai_region on {entry} to {choices}"
+    return f"set bedrock_region to {choices}, or pin openai_region on {entry}"
+
+
+def _placement(model_key: str, region: str) -> tuple[tuple[str, ...], bool] | None:
+    """(the regions that serve this model, whether its entry pins
+    openai_region) when ``region`` is not one of them, else None, also for a
+    model whose regions were never measured."""
+    meta = _model_meta(model_key)
+    regions = gpt_serving_regions(str(meta.get("id") or ""))
+    if regions is None or region in regions:
+        return None
+    return regions, bool((meta.get("openai_region") or "").strip())
+
+
+def region_fix(model_key: str, region: str) -> str | None:
+    """What to set so this GPT model runs where bedrock-mantle serves it, or
+    None when ``region`` is already one of those (or nothing is known)."""
+    placement = _placement(model_key, region)
+    if placement is None:
+        return None
+    return _fix(*placement, f"the {model_key} entry in chat_models")
+
+
+def unmeasured_models(model_keys: list[str]) -> list[str]:
+    """The names of these GPT models whose serving regions were never
+    measured, so a region check cannot judge them."""
+    return [
+        _model_meta(k).get("label") or k
+        for k in model_keys
+        if gpt_serving_regions(str(_model_meta(k).get("id") or "")) is None
+    ]
+
+
+def region_problems(model_keys: list[str]) -> list[str]:
+    """One sentence per group of these GPT models that resolve (as a call
+    resolves them) to a region Bedrock does not serve them in, with the fix;
+    empty when every one is served where it runs."""
+    groups: dict[tuple, list[str]] = {}
+    for key in model_keys:
+        region = region_for(key)
+        placement = _placement(key, region)
+        if placement is not None:
+            name = _model_meta(key).get("label") or key
+            groups.setdefault((region, *placement), []).append(name)
+    out = []
+    for (region, regions, pinned), names in groups.items():
+        one = len(names) == 1
+        entry = "its chat_models entry" if one else "their chat_models entries"
+        verb = "resolves" if one else "resolve"
+        out.append(f"{_spoken(tuple(names))} {verb} to {region}: {_fix(regions, pinned, entry)}.")
+    return out
+
+
+def not_found_advice(model_key: str, region: str) -> str:
+    """What a 404 from bedrock-mantle means for this model in ``region``:
+    where the model is served and the setting that gets it there, or, when
+    the region serves it (or its regions are unknown), what else to check."""
+    meta = _model_meta(model_key)
+    name = meta.get("label") or model_key or "The GPT model"
+    where = region or "the configured region"
+    regions = gpt_serving_regions(str(meta.get("id") or ""))
+    fix = region_fix(model_key, region) if model_key and region else None
+    if fix:
+        return (
+            f"{name} is not served in {where}: Bedrock serves it only in "
+            f"{_spoken(regions)}. To fix it, {fix}."
+        )
+    if regions is not None and region in regions:
+        return (
+            f"{name} was not found in {where}, a region Bedrock serves it in. Check "
+            "the model id in chat_models and that OpenAI model access is enabled for "
+            "the account there."
+        )
+    entry = f"the {model_key} entry in chat_models" if model_key else "its chat_models entry"
+    return (
+        f"{name} was not found in {where}. {gpt_regions_note()} Check the model id "
+        "and that OpenAI model access is enabled for the account there; if Bedrock "
+        f"does not serve the model in {where}, set bedrock_region, or pin "
+        f"openai_region on {entry}, to a region that does."
+    )
+
+
 def verbosity_for(model_key: str, body: dict | None = None) -> str:
     """GPT-5.x verbosity (text.verbosity). Per-request override wins, then the
     model's config default, else 'medium'."""

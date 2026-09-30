@@ -36,6 +36,8 @@ describe('agentBudget', () => {
     expect(agentBudget(running).state).toBe('finishing');
     const limited = row({ status: 'completed', stop_reason: 'cost_cap', turns_used: 12, events: [] });
     expect(agentBudget(limited)).toMatchObject({ state: 'limit', turns: { used: 12, cap: null } });
+    const refused = row({ status: 'completed', stop_reason: 'refused_calls', turns_used: 4, events: [] });
+    expect(agentBudget(refused).state).toBe('limit');
     const salvaged = row({ status: 'stopped', stop_reason: 'cancelled', events: [] });
     expect(agentBudget(salvaged).state).toBe('salvaged');
     const done = row({ status: 'completed', stop_reason: 'completed', turns_used: 4, events: [] });

@@ -9,6 +9,7 @@ thread-based jobs with progress tracking.
 """
 
 import asyncio
+import contextvars
 import logging
 from collections.abc import Coroutine
 
@@ -17,9 +18,12 @@ log = logging.getLogger("whisper-studio")
 _TASKS: set[asyncio.Task] = set()
 
 
-def spawn(coro: Coroutine, *, name: str | None = None) -> asyncio.Task:
-    """Schedule ``coro`` as a task that survives GC and logs failures."""
-    task = asyncio.create_task(coro, name=name)
+def spawn(
+    coro: Coroutine, *, name: str | None = None, context: contextvars.Context | None = None
+) -> asyncio.Task:
+    """Schedule ``coro`` as a task that survives GC and logs failures, in
+    ``context`` when given (asyncio copies the current one otherwise)."""
+    task = asyncio.create_task(coro, name=name, context=context)
     _TASKS.add(task)
     task.add_done_callback(_on_done)
     return task

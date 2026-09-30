@@ -117,13 +117,17 @@ def _record_distill_call(counts: dict, *, session_id: str, model_key: str, sourc
 async def _distill_structured(
     adapter, system, messages, schema, config, total_usage, *, session_id, model_key, source
 ):
-    """One forced-structured call over the finished transcript, with a single
-    schema-repair retry, each attempt recorded in the cost log under the run's
+    """One structured-output call over the finished transcript, with a single
+    repair retry, each attempt recorded in the cost log under the run's
     ``source`` by the adapter's counts hook (so an attempt that breaks after
-    the request was accepted is recorded too). jsonschema is a hard dependency
-    of the venv (via mcp) but validation failing twice returns None rather
-    than raising; callers decide whether an unstructured fallback is
-    acceptable."""
+    the request was accepted is recorded too).
+
+    Nothing forces the emit_result call (several models reject a forced
+    tool_choice), so the ask names the tool, and the retry says what went
+    wrong: the object did not validate, or the reply was text instead of the
+    result. jsonschema is a hard dependency of the venv (via mcp) but a second
+    failure returns None rather than raising; callers decide whether an
+    unstructured fallback is acceptable."""
     from functools import partial
 
     from server.agents.providers.base import TurnUsage as _TU
@@ -169,14 +173,26 @@ async def _distill_structured(
                         {
                             "role": "user",
                             "content": f"That did not validate against the schema ({e}). "
-                            "Emit a corrected complete object.",
+                            "Call the emit_result tool again (or answer in the required "
+                            "JSON format) with a corrected complete object.",
                         },
                     ]
                     continue
                 log.warning("structured output failed validation twice: %s", e)
                 return None
-        if attempt == 0:
-            continue
+        if attempt == 0 and turn.text.strip():
+            # Answered in text instead of calling the tool: show the reply
+            # back and ask for the call. An empty reply is simply asked again.
+            attempt_messages = [
+                *attempt_messages,
+                {"role": "assistant", "content": turn.text},
+                {
+                    "role": "user",
+                    "content": "That reply was not the result object. Call the "
+                    "emit_result tool now (or answer in the required JSON format) "
+                    "with the complete object.",
+                },
+            ]
     return None
 
 
@@ -198,10 +214,10 @@ async def distill_run_output(
     run's usage with the distillation calls added.
 
     The calls go through the old provider adapters (server.agents.providers):
-    a one-shot forced-tool call the chat/engine adapters have no equivalent
-    for. A run that stopped on a limit already ends with its last tool
-    result; a natural finish gets its final answer appended as one more
-    assistant turn first."""
+    a one-shot structured-output call the chat/engine adapters have no
+    equivalent for. The run's closing words (its report, or its final answer)
+    are appended as one more assistant turn first, since the runner keeps
+    them out of ctx.messages however the run ended."""
     from server.agents.providers import TurnUsage, get_adapter
 
     total = TurnUsage(
@@ -211,7 +227,10 @@ async def distill_run_output(
         cache_creation_tokens=usage["cache_creation_tokens"],
         cost_usd=usage["cost_usd"],
     )
-    if not stopped_early:
+    # The run's closing words are its report, and the runner keeps them out
+    # of ctx.messages whether it finished or stopped on a limit (turns, time,
+    # cost, refused calls), so they are appended either way.
+    if final_text or not stopped_early:
         answer = {
             "role": "assistant",
             "content": [{"type": "text", "text": final_text or "(done)"}],
@@ -353,6 +372,7 @@ def budget_readout(
         next_turn >= cap
         or (deadline_s is not None and elapsed >= SOFT_LIMIT_FRACTION * deadline_s)
         or cost_capped
+        or bool(ext.get("finish"))
     )
     return {
         "max_turns": cap,

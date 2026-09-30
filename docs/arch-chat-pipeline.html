@@ -189,10 +189,19 @@
       <li><h4>Stop hooks</h4><p>The blocking <code>Stop</code> hooks always run, whatever the goal
         state. A block re-injects the hook's reason and the turn continues.</p></li>
       <li><h4>Claimed deliverables</h4><p><code class="path">server/goals/deliverables.py</code>
-        reads the final assistant text, pulls out every file path it presents as a finished
-        deliverable, and checks the file exists and is non-empty. A claim about an artifact card is
-        checked against a real <code>create_artifact</code> call in the same turn. "Saved to
-        report.docx" with no file is a block, not an answer.</p></li>
+        reads every reply of the turn for what it says was delivered (a file saved, a folder, a
+        removal, an artifact card, a push, commit, pull request, merge, issue, upload, message, deploy,
+        schedule, link, memory or setting) and checks each claim against the disk or the turn's
+        successful tool calls (a recap of earlier work, against the deliveries earlier replies
+        verified, which the chat sends with its history). A file the reply says it made must have
+        been written in this turn; a
+        claim about an artifact card is met by a <code>create_artifact</code> or
+        <code>edit_artifact</code> call this turn or by a card an earlier turn of the session made.
+        "Saved to report.docx" with no file is a block, not an answer, and the user never saw it: the
+        stream guard (<code class="path">server/chat/claim_guard.py</code>) held the sentence back
+        until it could be checked, and states what did not happen when the turn ends. Its mirror, <code class="path">server/goals/requested_files.py</code>, asks once for a
+        file the user requested and the turn never produced, and counts a request sent mid-turn only
+        against what came after it.</p></li>
       <li><h4>Verification evidence</h4><p><code class="path">server/goals/verification.py</code> is
         passive and deterministic: it never runs a suite itself. It reads the turn's messages and
         asks which code files were edited and whether a test, lint, typecheck, or build command ran

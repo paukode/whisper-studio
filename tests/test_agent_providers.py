@@ -1,4 +1,4 @@
-"""Provider adapters: selection, canonical conversion, usage, structured forcing."""
+"""Provider adapters: selection, canonical conversion, usage, structured output."""
 
 import asyncio
 import json
@@ -172,7 +172,7 @@ def test_anthropic_adapter_effort_usage_and_redacted_thinking(anthropic_adapter)
     assert turn.text == "answer"
 
 
-def test_anthropic_adapter_structured_forcing_omits_thinking(anthropic_adapter):
+def test_anthropic_adapter_structured_call_lets_the_model_call_emit_result(anthropic_adapter):
     adapter, fake = anthropic_adapter
     fake._responses = [
         {
@@ -195,13 +195,14 @@ def test_anthropic_adapter_structured_forcing_omits_thinking(anthropic_adapter):
             messages=[{"role": "user", "content": "q"}],
             tools=None,
             max_tokens=256,
-            effort_label="high",  # must be dropped: forced tool_choice + thinking is rejected
+            effort_label="high",  # dropped: unset thinking is valid on every catalog model
             force_structured=schema,
         )
     )
     body = fake.requests[-1]
     assert "thinking" not in body
-    assert body["tool_choice"] == {"type": "tool", "name": "emit_result"}
+    # Never forced: Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1 reject that.
+    assert body["tool_choice"] == {"type": "auto"}
     assert body["tools"][0]["input_schema"] == schema
     assert turn.structured_output == {"verdict": "ok"}
     assert turn.tool_calls == []  # emit_result is consumed, not dispatched
@@ -221,8 +222,8 @@ def test_openai_tier_offers_ultracode():
 
 
 def test_run_agent_structured_schema_end_to_end(monkeypatch):
-    """The loop finishes naturally, then one forced call distills a validated
-    structured object into AgentResult.structured_output.
+    """The loop finishes naturally, then one structured-output call distills a
+    validated object into AgentResult.structured_output.
 
     The main loop now runs through server/chat/engine/runner.py (the shared
     turn engine interactive chat uses), so its OWN model call is scripted
@@ -283,7 +284,178 @@ def test_run_agent_structured_schema_end_to_end(monkeypatch):
     # usage aggregated across BOTH calls (main loop turn + distillation)
     assert result.usage["input_tokens"] == 18
     assert result.usage["output_tokens"] == 8
-    # the distillation request forced emit_result without thinking
+    # the distillation request offered emit_result without forcing it
     body = fake_old.requests[-1]
-    assert body["tool_choice"] == {"type": "tool", "name": "emit_result"}
+    assert body["tool_choice"] == {"type": "auto"}
     assert "thinking" not in body
+
+
+# ── structured distillation under tool_choice auto ───────────────────────────
+
+_ANSWER_SCHEMA = {
+    "type": "object",
+    "properties": {"answer": {"type": "integer"}},
+    "required": ["answer"],
+}
+
+
+def _emit(result: dict) -> dict:
+    return {
+        "stop_reason": "tool_use",
+        "content": [{"type": "tool_use", "id": "e1", "name": "emit_result", "input": result}],
+        "usage": {"input_tokens": 4, "output_tokens": 2},
+    }
+
+
+def _text(text: str) -> dict:
+    return {
+        "stop_reason": "end_turn",
+        "content": [{"type": "text", "text": text}],
+        "usage": {"input_tokens": 4, "output_tokens": 2},
+    }
+
+
+def _distill(replies):
+    from types import SimpleNamespace
+
+    from server.agents.providers.anthropic import AnthropicBedrockAdapter
+    from server.agents.runtime_support import _distill_structured
+
+    adapter = AnthropicBedrockAdapter(model_key="sonnet5.5", model_id="test-model")
+    adapter._bedrock = _FakeBedrock(replies)
+    out = asyncio.run(
+        _distill_structured(
+            adapter,
+            "sys",
+            [{"role": "user", "content": "what is 2+2"}],
+            _ANSWER_SCHEMA,
+            SimpleNamespace(max_tokens=100),
+            TurnUsage(),
+            session_id="s-distill-auto",
+            model_key="sonnet5.5",
+            source="agent",
+        )
+    )
+    return out, adapter._bedrock.requests
+
+
+def _last_user_text(body: dict) -> str:
+    content = body["messages"][-1]["content"]
+    return content if isinstance(content, str) else json.dumps(content)
+
+
+def test_distillation_returns_the_object_the_model_emits_under_auto():
+    out, requests = _distill([_emit({"answer": 4})])
+    assert out == {"answer": 4}
+    assert len(requests) == 1
+    assert requests[0]["tool_choice"] == {"type": "auto"}
+    assert "emit_result" in _last_user_text(requests[0])
+
+
+def test_a_text_reply_gets_one_retry_that_asks_for_the_call():
+    out, requests = _distill([_text("The answer is 4."), _emit({"answer": 4})])
+    assert out == {"answer": 4}
+    assert len(requests) == 2
+    retry = requests[1]
+    assert retry["tool_choice"] == {"type": "auto"}
+    # The reply is shown back, then the call is asked for by name.
+    assert retry["messages"][-2] == {"role": "assistant", "content": "The answer is 4."}
+    assert "emit_result" in _last_user_text(retry)
+
+
+def test_an_invalid_object_gets_the_schema_repair_retry():
+    out, requests = _distill([_emit({"answer": "four"}), _emit({"answer": 4})])
+    assert out == {"answer": 4}
+    assert len(requests) == 2
+    repair = _last_user_text(requests[1])
+    assert "did not validate" in repair and "emit_result" in repair
+
+
+def test_two_replies_without_a_valid_object_return_none():
+    out, requests = _distill([_text("four"), _text("still four")])
+    assert out is None
+    assert len(requests) == 2
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        '{"answer": 4}',
+        '  {"answer": 4}\n',
+        '```json\n{"answer": 4}\n```',
+        'Here is the result:\n\n```\n{"answer": 4}\n```',
+    ],
+)
+def test_a_json_text_answer_on_claude_is_the_structured_object(reply):
+    # The ask allows "the required JSON format" as well as the tool, and
+    # nothing forces the call: a Claude reply that answers in JSON text is
+    # taken, not thrown away (two such answers used to return None).
+    out, requests = _distill([_text(reply)])
+    assert out == {"answer": 4}
+    assert len(requests) == 1
+
+
+def test_a_json_text_answer_that_fails_the_schema_gets_the_repair_retry():
+    out, requests = _distill([_text('{"answer": "four"}'), _text('{"answer": 4}')])
+    assert out == {"answer": 4}
+    assert len(requests) == 2
+    assert "did not validate" in _last_user_text(requests[1])
+
+
+def test_the_emit_result_call_wins_over_json_in_the_text():
+    from server.agents.providers.anthropic import AnthropicBedrockAdapter
+
+    reply = _emit({"answer": 4})
+    reply["content"].insert(0, {"type": "text", "text": '{"answer": 5}'})
+    adapter = AnthropicBedrockAdapter(model_key="sonnet5.5", model_id="test-model")
+    adapter._bedrock = _FakeBedrock([reply])
+    turn = asyncio.run(
+        adapter.invoke(
+            system="s",
+            messages=[{"role": "user", "content": "q"}],
+            tools=None,
+            max_tokens=64,
+            force_structured=_ANSWER_SCHEMA,
+        )
+    )
+    assert turn.structured_output == {"answer": 4}
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["The answer is 4.", "[1, 2]", '"just a string"', "", '{"answer": 4', "```\nnot json\n```"],
+)
+def test_text_that_holds_no_json_object_is_not_a_result(text):
+    from server.agents.providers.base import structured_from_text
+
+    assert structured_from_text(text) is None
+
+
+def test_a_plain_text_reply_is_not_read_as_a_result_outside_a_structured_call():
+    from server.agents.providers.anthropic import AnthropicBedrockAdapter
+
+    adapter = AnthropicBedrockAdapter(model_key="sonnet5.5", model_id="test-model")
+    adapter._bedrock = _FakeBedrock([_text('{"answer": 4}')])
+    turn = asyncio.run(
+        adapter.invoke(
+            system="s", messages=[{"role": "user", "content": "q"}], tools=None, max_tokens=64
+        )
+    )
+    assert turn.structured_output is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'For example:\n```json\n{"answer": 0}\n```\nThe result:\n```json\n{"answer": 4}\n```',
+        'The helper:\n```python\nprint(1)\n```\nThe result:\n```json\n{"answer": 4}\n```',
+        '{"answer": 4}',
+        # A later block in another language is never the answer, even when it
+        # happens to parse as JSON.
+        'The result:\n```json\n{"answer": 4}\n```\nThe code:\n```python\n{"answer": 0}\n```',
+    ],
+)
+def test_a_text_answer_is_its_last_json_object(text):
+    from server.agents.providers.base import structured_from_text
+
+    assert structured_from_text(text) == {"answer": 4}

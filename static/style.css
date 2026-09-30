@@ -3922,6 +3922,49 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 
+/* Verified deliveries: what the server confirmed a reply delivered (a file
+   saved, a push, a PR, a message sent), as quiet chips under the text that
+   claimed it. Same pill as the index explorer's .xpl-chip; the row wraps and
+   long labels truncate, so a narrow column never scrolls sideways. */
+.delivery-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    margin: 8px 0 2px; min-width: 0;
+}
+.delivery-caption {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: var(--fs-caption); font-weight: 600;
+    letter-spacing: 0.4px; text-transform: uppercase;
+    color: var(--text-secondary);
+}
+.delivery-caption svg { color: var(--accent-live); flex-shrink: 0; }
+.delivery-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    max-width: 100%; min-width: 0; overflow: hidden;
+    padding: 2px 9px; border-radius: 10px;
+    background: var(--bg-secondary); border: 1px solid var(--border);
+    font-size: var(--fs-caption); line-height: 1.5;
+    color: var(--text-secondary);
+    transition: border-color 0.15s, color 0.15s;
+}
+/* A chip is not inline prose: drop the assistant bubble's link underline. */
+.chat-msg.assistant a.delivery-chip {
+    color: var(--text-secondary); text-decoration: none; cursor: pointer;
+}
+.chat-msg.assistant a.delivery-chip:hover { border-color: var(--accent); color: var(--accent); }
+.chat-msg.assistant a.delivery-chip:hover .delivery-label { color: var(--accent); }
+.delivery-glyph { display: inline-flex; flex-shrink: 0; }
+/* The detail gives way first: the label keeps its width and is cut only when
+   it alone is wider than the chip (the glyph and its gap take 17px). */
+.delivery-label {
+    flex: 0 0 auto; max-width: min(32ch, calc(100% - 17px));
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: 500; color: var(--text-primary);
+}
+.delivery-detail {
+    flex: 0 1 auto; min-width: 0; max-width: 40ch;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* Voice-to-code */
 
 /* ================================================================

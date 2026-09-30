@@ -81,7 +81,7 @@
             wins if both are present). Skip this entirely if you do not need web search yet.</li>
         </ul>
         <p>Click <b>Save</b>, close Settings, and pick a model from the <b>model chip</b> in the
-          composer toolbar. There is no default-model field in Settings. Sonnet 5 is a good balance of
+          composer toolbar. There is no default-model field in Settings. Sonnet 5.5 is a good balance of
           speed, cost, and capability while you confirm things work; you can switch any time from the
           chip or with <code>/model</code>.</p>
       </li>
@@ -138,12 +138,18 @@
     <p>Rather than eyeballing each subsystem, you can let the app check itself. Type
       <code>/doctor</code> in the chat input and send it. This runs an automated AWS-credentials and
       Bedrock-connectivity check and reports the results inline in the chat.</p>
-    <p>A healthy result confirms five things, without you having to record or connect anything:</p>
+    <p>A healthy result confirms six things, without you having to record or connect anything:</p>
     <ul>
       <li><b>AWS credentials</b> resolve (from env vars or <code class="path">~/.aws/credentials</code>).</li>
       <li><b>Bedrock connectivity</b>: a Claude model is invocable in your configured region, so a
         chat turn can actually reach a model. (The ping uses a known-good model, not necessarily your
         configured default.)</li>
+      <li><b>GPT regions</b>: every GPT model the picker offers resolves to a region Bedrock serves it
+        in. Each model has its own US regions (<code>us-east-1</code> serves all of them but GPT-6
+        Astra, which ships pinned to <code>us-west-2</code>; see
+        <a href="arch-backends.html">Model backends</a>). A warning here names the models and the
+        setting to change (<code>bedrock_region</code>, or <code>openai_region</code> on the model's
+        entry).</li>
       <li><b>Workspace</b>: the connected folder, if any, still exists on disk.</li>
       <li><b>Sessions DB</b>: the session store opens and answers a query.</li>
       <li><b>Config</b>: the effective config loads, reporting your model, effort, and region.</li>

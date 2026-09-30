@@ -371,11 +371,24 @@ def _spawn_cron_run(job_id: str) -> None:
         return
 
     def _spawn_tracked() -> None:
+        import contextvars
+
+        from server.agents.tool_access import read_only_scope
         from server.infrastructure.async_tasks import spawn
         from server.tasks.owner import run_owned
 
+        # A scheduled run is its own unattended turn, never a plan-mode one.
+        # The scheduler's timer can carry the context of whatever call last
+        # changed it (a cron_create from a plan-mode turn), so the run starts
+        # from a copy with the read-only scope off.
+        context = contextvars.copy_context()
+        context.run(read_only_scope.set, False)
         # Its commands are its own: a chat Stop in the job's session spares them.
-        spawn(run_owned(f"cron:{job_id}", _execute_cron_prompt(job_id)), name=f"cron-run-{job_id}")
+        spawn(
+            run_owned(f"cron:{job_id}", _execute_cron_prompt(job_id)),
+            name=f"cron-run-{job_id}",
+            context=context,
+        )
 
     try:
         running = asyncio.get_running_loop()

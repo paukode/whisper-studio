@@ -6,6 +6,7 @@ import { AgentCard, groupAgentTools, groupForActivity, isActivityEntry, isTasksE
 import { TaskCard } from '@/components/chat/TaskCard';
 import { ActivityRow } from '@/components/chat/ActivityRow';
 import { TeamReportCard } from '@/components/chat/TeamReportCard';
+import { DeliveryChips } from '@/components/chat/DeliveryChips';
 import { findMatchingTeamReports } from '@/hooks/chatStream/teamProgress';
 
 export interface StreamingMessageProps {
@@ -32,6 +33,9 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
   // Rendering them here is what makes agents visibly run in parallel DURING
   // the turn.
   const liveTeamReports = useActiveChatStore((s) => s.liveTeamReports);
+  // Deliveries the server verified in the text streamed so far: the chips the
+  // committed message keeps, shown the moment each one is verified.
+  const liveDeliveries = useActiveChatStore((s) => s.liveDeliveries);
   // Local on-device models don't emit thinking — the pre-first-token wait is
   // just generation warm-up, so label it honestly rather than "Thinking…".
   const isLocalModel = useSettingsStore((s) => s.models.find((m) => m.key === s.selectedModel)?.is_local ?? false);
@@ -233,6 +237,8 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
         {content && (
           <StreamingMarkdown content={content} isStreaming={isStreaming} />
         )}
+
+        {liveDeliveries.length > 0 && <DeliveryChips deliveries={liveDeliveries} />}
 
         {/* Live activity footer — keeps motion visible during the quiet
          *  phases (a long-running tool, or the gap between tool rounds while

@@ -100,6 +100,15 @@ class GateContext:
     # per-turn counter; goal_state owns the cross-turn one).
     attempt: int = 0
     max_consecutive_blocks: int = DEFAULT_MAX_CONSECUTIVE_BLOCKS
+    # When the turn began (wall clock): a file the reply says it saved must
+    # have been written since. None checks that it exists only.
+    turn_started_at: float | None = None
+    # The turn's tool calls as the stream guard kept them (compaction may
+    # have taken some out of ``messages``).
+    claim_calls: list | None = None
+    # The deliveries earlier replies verified (the chat sends them with its
+    # history): what a recap of earlier work may rest on.
+    claim_receipts: list | None = None
 
 
 @dataclass

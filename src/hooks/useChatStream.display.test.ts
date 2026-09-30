@@ -3,8 +3,9 @@ import { buildDisplayQuestion } from './useChatStream';
 import { SKILL_MENTION_PLACEHOLDER } from '@/components/chat/chatInputConstants';
 
 // Regression: a bare `@skill` send carries a synthetic anchor sentence as its
-// payload (so the API message is non-empty and the forced tool call has
-// something to anchor on), but the bubble must show only what the user typed.
+// payload (so the API message is non-empty and the model's call of the
+// requested skill has something to anchor on), but the bubble must show only
+// what the user typed.
 describe('buildDisplayQuestion', () => {
   it('renders a bare skill mention as just @skill, hiding the placeholder payload', () => {
     expect(

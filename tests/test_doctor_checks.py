@@ -92,7 +92,7 @@ def test_local_mode_skips_every_aws_check(aws_home, monkeypatch):
 
     monkeypatch.setattr(boto3, "client", _no_aws)
     monkeypatch.setattr("server.infrastructure.aws_clients.resolve_credentials", _no_aws)
-    for name in ("AWS credentials", "Bedrock connectivity"):
+    for name in ("AWS credentials", "Bedrock connectivity", "GPT regions"):
         row = _row(name)
         assert row["status"] == "ok"
         assert "Local mode" in row["detail"]
@@ -147,3 +147,83 @@ def test_the_config_row_names_the_model_the_picker_defaults_to(aws_home, mode_la
     default = _models_default()
     assert default
     assert f"model={default}," in _row("Config")["detail"]
+
+
+# ── GPT regions: every offered GPT model runs where Bedrock serves it ───────
+
+
+def _gpt_models() -> dict:
+    """{key: meta} of the GPT models the picker offers, as /doctor sees them."""
+    from server.chat.infra import mode_chat_catalog
+    from server.infrastructure.config import load_config
+
+    visible, meta, _mode, _default = mode_chat_catalog(load_config())
+    return {k: meta[k] for k in visible if meta[k].get("provider") == "openai_bedrock"}
+
+
+def _problem_sentences(detail: str) -> list[str]:
+    """The warning's sentences about models, without the closing note."""
+    from server.openai_bedrock.runtime import gpt_regions_note
+
+    problems = detail.replace(gpt_regions_note(), "").strip()
+    return [s for s in problems.split(". ") if s]
+
+
+def _named(detail: str) -> set[str]:
+    """The GPT models a warning names."""
+    sentences = _problem_sentences(detail)
+    return {k for k, m in _gpt_models().items() if any(m["label"] in s for s in sentences)}
+
+
+def test_the_shipped_gpt_models_pass_the_region_check(aws_home, mode_layer):
+    assert _gpt_models()
+    assert doctor._gpt_region_check()["status"] == "ok"
+
+
+@pytest.mark.parametrize("region", ["eu-central-1", "us-west-2", "us-east-2"])
+def test_a_region_warns_for_exactly_the_gpt_models_it_leaves_unserved(aws_home, mode_layer, region):
+    # us-west-2 and us-east-2 serve some GPT models and not others (measured
+    # per model); an EU region serves none of them.
+    from server.openai_bedrock.runtime import (
+        _spoken,
+        gpt_regions_note,
+        gpt_serving_regions,
+        region_for,
+    )
+
+    layer, _downloaded = mode_layer
+    layer["bedrock_region"] = region
+    models = _gpt_models()
+    served = {k: gpt_serving_regions(m["id"]) for k, m in models.items()}
+    unserved = {k for k in models if region_for(k) not in served[k]}
+    assert unserved
+
+    row = doctor._gpt_region_check()
+    assert row["status"] == "warn"
+    assert _named(row["detail"]) == unserved
+    assert row["detail"].endswith(gpt_regions_note())
+    for key in unserved:
+        (sentence,) = [s for s in _problem_sentences(row["detail"]) if models[key]["label"] in s]
+        assert f"to {region}:" in sentence
+        # Each model is sent to the regions that serve it, and no others.
+        fix = f"set bedrock_region to {_spoken(served[key], 'or')}, or pin openai_region"
+        assert fix in sentence
+
+
+def test_a_pin_outside_the_served_regions_is_told_to_move(aws_home, mode_layer):
+    layer, _downloaded = mode_layer
+    layer["chat_models"] = {"gpt6-astra": {"openai_region": "us-east-1"}}
+    row = doctor._gpt_region_check()
+    assert row["status"] == "warn"
+    assert _named(row["detail"]) == {"gpt6-astra"}
+    assert (
+        "resolves to us-east-1: change openai_region on its chat_models entry to" in (row["detail"])
+    )
+
+
+def test_the_region_row_is_part_of_the_report(aws_home, stub_bedrock, mode_layer, monkeypatch):
+    _mode(monkeypatch, "cloud")
+    layer, _downloaded = mode_layer
+    layer["bedrock_region"] = "eu-west-1"
+    row = _row("GPT regions")
+    assert row["status"] == "warn" and "eu-west-1" in row["detail"]

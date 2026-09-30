@@ -45,6 +45,19 @@ export const TeamProgressEventSchema = z.object({
   agents_completed: z.number().optional(),
 }).passthrough();
 
+/** One claim the server verified (an item of the `deliveries` frame). Every
+ *  field is declared, since a nested z.object drops the keys it does not
+ *  name; the optional ones also accept null, which reads as absent. `kind`
+ *  stays an open string: a kind this client does not know yet still renders. */
+export const DeliverySchema = z.object({
+  kind: z.string(),
+  target: z.string(),
+  label: z.string(),
+  detail: z.string().nullable().optional(),
+  href: z.string().nullable().optional(),
+  at: z.string().nullable().optional(),
+});
+
 /** Schema for SSE event data parsed from JSON.parse in useChatStream. */
 export const SSEEventDataSchema = z.object({
   // Text streaming
@@ -120,6 +133,13 @@ export const SSEEventDataSchema = z.object({
   stop_hook_block: z.object({
     reason: z.string().optional(),
     attempt: z.number().optional(),
+    // The gate phase that refused ('deliverable': a claimed delivery the
+    // server could not verify). Undeclared, it never reached the card.
+    source: z.string().optional(),
+  }).optional(),
+  // Claims the server verified, one frame per verified sentence.
+  deliveries: z.object({
+    items: z.array(DeliverySchema),
   }).optional(),
   goal_cap_reached: z.object({
     attempt: z.number().optional(),

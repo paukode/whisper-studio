@@ -109,6 +109,14 @@ class Incomplete:
 
 
 @dataclass(frozen=True)
+class Frame:
+    """A ready SSE payload an engine layer adds between the provider's events
+    (the claim guard's verified deliveries, server/chat/claim_guard.py)."""
+
+    payload: dict = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class Heartbeat:
     """Idle-gap keepalive; the SSE sink forwards it as a comment frame."""
 

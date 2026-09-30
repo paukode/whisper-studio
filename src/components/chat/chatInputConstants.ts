@@ -147,8 +147,9 @@ export function resolveDictationFinal(base: string, clean: string): { text: stri
 
 /** Synthetic anchor sent as the payload when the user submits a bare `@skill`
  *  mention with no text of their own. Keeps the API message non-empty and
- *  gives the forced tool call something to anchor on. NEVER shown in the UI —
- *  the bubble renders `displayText` (what the user actually typed) instead. */
+ *  gives the model's call of the requested skill something to anchor on.
+ *  NEVER shown in the UI: the bubble renders `displayText` (what the user
+ *  actually typed) instead. */
 export const SKILL_MENTION_PLACEHOLDER =
   'Run the requested skill on the conversation context.';
 
@@ -156,17 +157,18 @@ const SKILL_MENTION_RE = /^@(?:skills:)?([a-zA-Z_][\w-]*)\b\s*/;
 
 /** Split an `@skills:<name>` / `@<name>` prefix off a submitted message.
  *
- *  Returns the skill to force server-side (via tool_choice), the payload to
- *  send to the model (placeholder-substituted when the mention was bare), and
- *  the text the chat bubble should display (exactly what the user typed after
- *  the mention — possibly empty). Without a mention, the message passes
- *  through untouched.
+ *  Returns the requested skill (sent as `force_skill`; the server asks the
+ *  model to call it, nothing forces the call), the payload to send to the
+ *  model (placeholder-substituted when the mention was bare), and the text
+ *  the chat bubble should display (exactly what the user typed after the
+ *  mention, possibly empty). Without a mention, the message passes through
+ *  untouched.
  *
  *  `knownSkillNames` gates the bare `@<name>` form: only a name that's
- *  actually a loaded skill gets stripped and forced. Without this check, a
+ *  actually a loaded skill gets stripped and requested. Without this check, a
  *  leading `@my_session_b` (a session mention, resolved separately
- *  server-side) would be misread as an attempt to force a nonexistent skill
- *  and silently swallowed before the server ever saw it. */
+ *  server-side) would be misread as a request for a nonexistent skill and
+ *  silently swallowed before the server ever saw it. */
 export function parseSkillMention(
   trimmed: string,
   knownSkillNames: string[],

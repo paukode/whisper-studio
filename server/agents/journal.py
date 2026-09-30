@@ -31,7 +31,15 @@ from server.infrastructure.paths import storage_root
 
 log = logging.getLogger("whisper-studio")
 
-STOP_REASONS = ("completed", "turn_limit", "deadline", "cost_cap", "cancelled", "error")
+STOP_REASONS = (
+    "completed",
+    "turn_limit",
+    "deadline",
+    "cost_cap",
+    "refused_calls",
+    "cancelled",
+    "error",
+)
 
 # What the parent reads per member and what the registry keeps as result_text.
 REPORT_CHARS = 6000
@@ -141,6 +149,7 @@ def salvage_report(
         "cost_cap": "stopped at the cost cap before it could report",
         "deadline": "stopped at the time limit before it could report",
         "turn_limit": "stopped at the turn limit before it could report",
+        "refused_calls": "stopped after repeated refused calls before it could report",
     }.get(reason, f"stopped ({reason}) before it could report")
     lines = [
         f"[Agent {label}. This report was assembled by the runtime from the "

@@ -51,6 +51,20 @@ def test_unknown_key_does_not_raise():
     assert mf.get_next_fallback("") is None
 
 
+def test_the_static_chain_lists_every_shipped_cloud_model():
+    # The static order stands in when the price table is missing, so a model
+    # added to the catalog but not to the chain would never be a fallback.
+    import json
+    import os
+
+    path = os.path.join(os.path.dirname(__file__), "..", "config.example.json")
+    with open(path) as f:
+        catalog = json.load(f)["chat_models"]
+    cloud = {k for k, v in catalog.items() if not (isinstance(v, dict) and v.get("is_local"))}
+    assert cloud
+    assert cloud <= set(mf._STATIC_FALLBACK_CHAIN)
+
+
 def test_fallback_chain_covers_catalog_keys():
     # The chain used to walk chat_models is derived from pricing, so it must
     # contain the current catalog keys (not the stale opus4.6-only list).

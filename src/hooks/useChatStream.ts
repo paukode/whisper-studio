@@ -69,7 +69,7 @@ export interface UseChatStreamReturn {
   abort: () => void;
 }
 
-/** What the user's bubble shows. For forced-skill sends the mention is
+/** What the user's bubble shows. For an @skill send the mention is
  *  prepended and only the user's own text follows it — `displayText`
  *  (possibly empty) takes precedence over the payload `question`, which may
  *  carry a synthetic anchor sentence that must never be rendered. */

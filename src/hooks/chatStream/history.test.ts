@@ -88,6 +88,21 @@ describe('buildHistoryPayload', () => {
     expect(rows[0].content).toBe('m0');
   });
 
+  it("sends a reply's verified deliveries along for the recap check, beside its text", () => {
+    const report = { kind: 'file', target: '/tmp/report.html', label: 'report.html' };
+    const rows = buildHistoryPayload(
+      [
+        msg({ content: 'save the report' }),
+        msg({ role: 'assistant', content: 'Saved report.html.', deliveries: [report] }),
+      ],
+      true,
+    );
+    expect(rows).toEqual([
+      { role: 'user', content: 'save the report' },
+      { role: 'assistant', content: 'Saved report.html.', deliveries: [report] },
+    ]);
+  });
+
   it('caps to the last 40 rows', () => {
     const many = Array.from({ length: 50 }, (_, i) => msg({ content: `m${i}` }));
     const rows = buildHistoryPayload(many, true);
