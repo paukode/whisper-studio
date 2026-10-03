@@ -380,23 +380,23 @@
         to interpret timing phrases as "reason briefly." Requests route to the app-wide
         <code>bedrock_region</code>, with an optional per-model <code>openai_region</code> override in
         <code>chat_model_meta</code>. Every GPT model follows <code>bedrock_region</code>
-        (<code>us-east-1</code> by default) except GPT-6 Astra, which ships with <code>us-west-2</code>
-        pinned: bedrock-mantle serves it there only and answers 404 from <code>us-east-1</code>,
-        even though the model is listed in every US region. Each GPT model is served in its own set
-        of US regions (the table below) and every EU region answers 404, so
-        <code>us-east-1</code> is the one region that serves every GPT model but Astra. Nothing
+        (<code>us-east-1</code> by default), GPT-6 Astra included: it shipped pinned to
+        <code>us-west-2</code> until bedrock-mantle began serving it in <code>us-east-1</code> too
+        (measured 2026-10-03), and a saved copy of that old pin is ignored. Each GPT model is served
+        in its own set of US regions (the table below) and every EU region answers 404, so
+        <code>us-east-1</code> is the one region that serves every GPT model. Nothing
         reroutes a call to another region: the 404 names the regions that serve the model and the
         setting to change (<code>bedrock_region</code>, or <code>openai_region</code> on the model's
         entry), and <code>/doctor</code> warns about a GPT model whose region Bedrock does not serve
         it in before the first turn fails.</p></div>
     </div>
     <p>Where bedrock-mantle serves each GPT model, measured with one call per model and region on
-      2026-09-29, and for GPT-6.1 Sol on 2026-10-03
+      2026-09-29, and for GPT-6 Astra and GPT-6.1 Sol on 2026-10-03
       (<code class="path">server/openai_bedrock/runtime.py</code> carries the same table):</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Model</th><th>us-east-1</th><th>us-east-2</th><th>us-west-2</th></tr></thead>
       <tbody>
-        <tr><td>GPT-6 Astra</td><td>404</td><td>404</td><td>served</td></tr>
+        <tr><td>GPT-6 Astra</td><td>served</td><td>404</td><td>served</td></tr>
         <tr><td>GPT-6.1 Sol, GPT-6 Sol, GPT-6 Luna</td><td>served</td><td>404</td><td>404</td></tr>
         <tr><td>GPT-5.6 Sol, GPT-5.5</td><td>served</td><td>served</td><td>404</td></tr>
         <tr><td>GPT-5.6 Terra, GPT-5.6 Luna, GPT-5.4</td><td>served</td><td>served</td><td>served</td></tr>

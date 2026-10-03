@@ -73,8 +73,7 @@
       "thinking": "adaptive",
       "provider": "openai_bedrock",
       "effort_tier": "openai6",
-      "verbosity": "medium",
-      "openai_region": "us-west-2"
+      "verbosity": "medium"
     },
     "gpt6-sol": {
       "id": "openai.gpt-6-sol",

@@ -212,12 +212,12 @@ def test_a_region_warns_for_exactly_the_gpt_models_it_leaves_unserved(aws_home, 
 
 def test_a_pin_outside_the_served_regions_is_told_to_move(aws_home, mode_layer):
     layer, _downloaded = mode_layer
-    layer["chat_models"] = {"gpt6-astra": {"openai_region": "us-east-1"}}
+    layer["chat_models"] = {"gpt6-sol": {"openai_region": "us-west-2"}}
     row = doctor._gpt_region_check()
     assert row["status"] == "warn"
-    assert _named(row["detail"]) == {"gpt6-astra"}
+    assert _named(row["detail"]) == {"gpt6-sol"}
     assert (
-        "resolves to us-east-1: change openai_region on its chat_models entry to" in (row["detail"])
+        "resolves to us-west-2: change openai_region on its chat_models entry to" in (row["detail"])
     )
 
 
