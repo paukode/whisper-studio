@@ -169,7 +169,7 @@
           <td><code>default_chat_model</code></td>
           <td>The model this session runs on: Haiku 4.5, Sonnet 4.6 / 5 / 5.5, Opus 4.6 / 4.7 / 4.8,
             Opus 5 / 5.5, Fable 5.0 / 5.1, GPT-5.4 / 5.5, GPT-5.6 Sol / Terra / Luna, GPT-6 Astra /
-            Sol / Luna, or an
+            Sol / Luna, GPT-6.1 Sol, or an
             on-device model you installed. The picker only shows models valid for the current model
             mode. The shipped default is <code>gpt6-luna</code> (set in
             <code class="path">config.example.json</code>, the SYSTEM layer every install reads);
@@ -186,7 +186,7 @@
             trades latency and cost for deeper thinking. The levels a model exposes depend on its tier:
             Opus and Fable expose the full ladder <code>low</code> to <code>max</code>; Sonnet and the
             standard tier skip <code>extra</code>; GPT-5.4 / 5.5 / 5.6 run <code>none</code> to
-            <code>max</code>, GPT-6 Astra / Sol / Luna <code>low</code> to <code>max</code>; Haiku and the local
+            <code>max</code>, GPT-6 Astra / Sol / Luna and GPT-6.1 Sol <code>low</code> to <code>max</code>; Haiku and the local
             models have no effort control. <code>ultracode</code> is appended for any model that can
             orchestrate a workflow, and is a session mode rather than a plain level: it sends the
             model's own top reasoning rung plus dynamic-workflow orchestration. The value is clamped to

@@ -13,7 +13,7 @@ reviewed properly.
 
 1. **Pick a model with Ultracode.** Click the model chip in the composer. Opus
    4.8 and above, Fable, Sonnet 5 and 5.5, and the GPT models from 5.5 on
-   (GPT-6 Astra, Sol and Luna included) expose Ultracode. Haiku has no effort
+   (GPT-6.1 Sol and GPT-6 Astra, Sol and Luna included) expose Ultracode. Haiku has no effort
    levels at all, and the older models (Sonnet 4.6, Opus 4.7 and below,
    GPT-5.4) top out at Max.
 

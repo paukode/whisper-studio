@@ -359,6 +359,24 @@ def _lift_stale_context_window(value: int | None, model_id: str) -> int | None:
     return value
 
 
+# The us-west-2 pin GPT-6 Astra shipped with (2.7.0 to 2.11.2), from when
+# bedrock-mantle served Astra only there. It serves Astra in us-east-1 too
+# (measured 2026-10-03), so Astra follows bedrock_region like every other model.
+# config.user.json keeps whole entries, so a saved copy of the old entry still
+# carries that pin: read there, it is no pin at all.
+_RETIRED_REGION_PINS = {"openai.gpt-6-astra": "us-west-2"}
+
+
+def _drop_retired_pin(region: str | None, model_id: str) -> str | None:
+    """Upgrade-on-read for a region pin the app itself once shipped (see
+    _RETIRED_REGION_PINS). Any other pin is a deliberate per-model choice and
+    stands."""
+    retired = _RETIRED_REGION_PINS.get((model_id or "").strip().lower())
+    if isinstance(region, str) and retired and region.strip() == retired:
+        return None
+    return region
+
+
 def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
     """Split a chat_models map into (ids, meta).
 
@@ -436,7 +454,7 @@ def _normalize_chat_models(chat_models: dict) -> tuple[dict, dict]:
                 # (absent ⇒ the account-wide bedrock_region is used, same as the
                 # Anthropic path) and the GPT-5.x verbosity (text.verbosity).
                 # Ignored by other providers.
-                "openai_region": val.get("openai_region"),
+                "openai_region": _drop_retired_pin(val.get("openai_region"), model_id),
                 "verbosity": val.get("verbosity") or "medium",
                 # On-device weights, for is_local entries only. Carrying these on
                 # the SAME entry is what makes a new local model a one-place

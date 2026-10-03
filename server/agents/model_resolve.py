@@ -49,7 +49,8 @@ def resolve_model_override(
         # the override still never fails silently. Keys with the same version
         # ("gpt6-astra", "gpt6-sol", "gpt6-luna" are all version 6) go to the
         # FIRST one listed: the catalog lists each family's flagship first, so
-        # "gpt6" means Astra, not whichever smaller sibling was added last.
+        # a tie never goes to whichever smaller sibling was added last. A newer
+        # version wins outright: "gpt6" means GPT-6.1 Sol ("gpt6.1-sol").
         family = [k for k in models if k.lower().startswith(key.lower())]
         if family:
             key = max(family, key=_version_sort_key)

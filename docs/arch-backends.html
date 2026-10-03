@@ -81,7 +81,7 @@
       <tbody>
         <tr><td>Fable 5.1, Fable 5.0, Opus 5.5, Opus 5, Opus 4.8, Opus 4.7, Opus 4.6, Sonnet 5.5, Sonnet 5, Sonnet 4.6</td><td>1,000,000 tokens</td></tr>
         <tr><td>Haiku 4.5</td><td>200,000 tokens</td></tr>
-        <tr><td>GPT-6 Astra</td><td>922,000 tokens (OpenAI's published max input; mantle accepted a 348K prompt)</td></tr>
+        <tr><td>GPT-6 Astra, GPT-6.1 Sol</td><td>922,000 tokens (OpenAI's published max input; mantle accepted a 348K prompt for Astra and a 300K prompt for GPT-6.1 Sol)</td></tr>
         <tr><td>GPT-6 Sol, GPT-6 Luna, GPT-5.6 Sol, Terra, Luna, GPT-5.5, GPT-5.4</td><td>278,528 tokens (the cap the mantle deployments enforce; GPT-6 Sol and Luna publish 922,000 upstream but stay here until mantle is shown to accept more)</td></tr>
         <tr><td>Any other Claude id</td><td>200,000 tokens (the Anthropic family default)</td></tr>
         <tr><td>On-device models</td><td>The running context size, then the size you last asked for, then the registry <code>ctx</code></td></tr>
@@ -364,7 +364,7 @@
         <code>ultracode</code>) ride it, while only <code>extra</code> always collapses to
         <code>xhigh</code>. GPT-6 has no <code>none</code> rung in the app: bedrock-mantle rejects it
         for Astra (verified live), and the app currently applies Astra's ladder to every GPT-6 id, so
-        Astra, Sol and Luna all run <code>low</code> through <code>max</code> and a <code>none</code>
+        Astra, Sol, Luna and GPT-6.1 Sol all run <code>low</code> through <code>max</code> and a <code>none</code>
         label degrades to <code>low</code> instead of being rejected by the endpoint. OpenAI documents a
         <code>none</code> rung for Sol and Luna; the check narrows to Astra once mantle is shown to
         accept it for them.</li>
@@ -380,23 +380,24 @@
         to interpret timing phrases as "reason briefly." Requests route to the app-wide
         <code>bedrock_region</code>, with an optional per-model <code>openai_region</code> override in
         <code>chat_model_meta</code>. Every GPT model follows <code>bedrock_region</code>
-        (<code>us-east-1</code> by default) except GPT-6 Astra, which ships with <code>us-west-2</code>
-        pinned: bedrock-mantle serves it there only and answers 404 from <code>us-east-1</code>,
-        even though the model is listed in every US region. Each GPT model is served in its own set
-        of US regions (the table below) and every EU region answers 404, so
-        <code>us-east-1</code> is the one region that serves every GPT model but Astra. Nothing
+        (<code>us-east-1</code> by default), GPT-6 Astra included: it shipped pinned to
+        <code>us-west-2</code> until bedrock-mantle began serving it in <code>us-east-1</code> too
+        (measured 2026-10-03), and a saved copy of that old pin is ignored. Each GPT model is served
+        in its own set of US regions (the table below) and every EU region answers 404, so
+        <code>us-east-1</code> is the one region that serves every GPT model. Nothing
         reroutes a call to another region: the 404 names the regions that serve the model and the
         setting to change (<code>bedrock_region</code>, or <code>openai_region</code> on the model's
         entry), and <code>/doctor</code> warns about a GPT model whose region Bedrock does not serve
         it in before the first turn fails.</p></div>
     </div>
     <p>Where bedrock-mantle serves each GPT model, measured with one call per model and region on
-      2026-09-29 (<code class="path">server/openai_bedrock/runtime.py</code> carries the same table):</p>
+      2026-09-29, and for GPT-6 Astra and GPT-6.1 Sol on 2026-10-03
+      (<code class="path">server/openai_bedrock/runtime.py</code> carries the same table):</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Model</th><th>us-east-1</th><th>us-east-2</th><th>us-west-2</th></tr></thead>
       <tbody>
-        <tr><td>GPT-6 Astra</td><td>404</td><td>404</td><td>served</td></tr>
-        <tr><td>GPT-6 Sol, GPT-6 Luna</td><td>served</td><td>404</td><td>404</td></tr>
+        <tr><td>GPT-6 Astra</td><td>served</td><td>404</td><td>served</td></tr>
+        <tr><td>GPT-6.1 Sol, GPT-6 Sol, GPT-6 Luna</td><td>served</td><td>404</td><td>404</td></tr>
         <tr><td>GPT-5.6 Sol, GPT-5.5</td><td>served</td><td>served</td><td>404</td></tr>
         <tr><td>GPT-5.6 Terra, GPT-5.6 Luna, GPT-5.4</td><td>served</td><td>served</td><td>served</td></tr>
       </tbody>
@@ -464,10 +465,11 @@
       workflow script often asks for a family name instead (<code>opus</code>, <code>sonnet</code>,
       <code>haiku</code>). <code class="path">server/agents/model_resolve.py</code> resolves that to the
       newest configured key in the family and reports the substitution in the run's warning, rather than
-      failing silently back to the default model. Keys that tie on version, such as
-      <code>gpt6-astra</code>, <code>gpt6-sol</code> and <code>gpt6-luna</code>, go to the first one
-      listed: the catalog lists each family's flagship first, so <code>gpt6</code> means Astra and
-      <code>gpt5.6</code> means GPT-5.6 Sol. An override that still does not resolve, or that names
+      failing silently back to the default model. A newer version wins outright, so <code>gpt6</code>
+      means GPT-6.1 Sol (<code>gpt6.1-sol</code>). Keys that tie on version, such as
+      <code>gpt5.6-sol</code>, <code>gpt5.6-terra</code> and <code>gpt5.6-luna</code>, go to the first
+      one listed: the catalog lists each family's flagship first, so <code>gpt5.6</code> means GPT-5.6
+      Sol. An override that still does not resolve, or that names
       an on-device model without tool support, falls back to the default and says why.</p>
 
     <h2 id="modes-vs-models">Model backend is not model mode</h2>

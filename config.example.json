@@ -59,6 +59,13 @@
       "context_window": 200000,
       "thinking": "budget"
     },
+    "gpt6.1-sol": {
+      "id": "openai.gpt-6.1-sol",
+      "label": "GPT-6.1 Sol",
+      "context_window": 922000,
+      "thinking": "adaptive",
+      "provider": "openai_bedrock"
+    },
     "gpt6-astra": {
       "id": "openai.gpt-6-astra",
       "label": "GPT-6 Astra",
@@ -66,8 +73,7 @@
       "thinking": "adaptive",
       "provider": "openai_bedrock",
       "effort_tier": "openai6",
-      "verbosity": "medium",
-      "openai_region": "us-west-2"
+      "verbosity": "medium"
     },
     "gpt6-sol": {
       "id": "openai.gpt-6-sol",
