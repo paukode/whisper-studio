@@ -40,9 +40,9 @@ def test_every_shipped_gpt_model_has_measured_regions_among_the_gpt_regions():
 
 @pytest.mark.parametrize("region", ["us-east-1", "us-east-2", "us-west-2"])
 def test_each_probed_region_serves_some_shipped_gpt_models_and_not_others(region):
-    # The 2026-09-29 probe (one call per model and region) found every US
-    # region it tried serving part of the catalog, which is why the rule is
-    # per model: us-east-2 has the GPT-5 models only, us-west-2 lacks GPT-6
+    # The probes (one call per model and region) found every US region they
+    # tried serving part of the catalog, which is why the rule is per model:
+    # us-east-2 has the GPT-5 models only, us-west-2 lacks GPT-6.1 Sol, GPT-6
     # Sol and Luna, GPT-5.6 Sol and GPT-5.5, and us-east-1 lacks GPT-6 Astra.
     served_here = [region in _served(key) for key in _gpt_keys()]
     assert region in oai.GPT_REGIONS
@@ -125,3 +125,15 @@ def test_astra_pinned_to_an_east_region_is_told_to_move_its_pin(monkeypatch):
         oai.region_fix("gpt6-astra", "us-east-1")
         == f"change openai_region on the gpt6-astra entry in chat_models to {choices}"
     )
+
+
+def test_gpt_6_1_sol_runs_in_us_east_1_on_the_gpt_6_ladder():
+    from server.infrastructure.effort import gpt_version, openai_effort_tier_for
+
+    model_id = _meta("gpt6.1-sol")["id"]
+    assert model_id == "openai.gpt-6.1-sol"
+    assert oai.gpt_serving_regions(model_id) == ("us-east-1",)
+    assert gpt_version(model_id) == (6, 1)
+    assert openai_effort_tier_for(model_id) == "openai6"
+    assert oai.reasoning_effort_for("gpt6.1-sol", "max") == "max"
+    assert oai.reasoning_effort_for("gpt6.1-sol", "none") == "low"

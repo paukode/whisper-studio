@@ -216,9 +216,15 @@ def test_claude_cache_write_is_the_rate_of_the_ttl_the_app_sends():
     assert checked
 
 
+# The cached read as a share of input, where a model's card prices it other
+# than 10%: GPT-6.1 Sol's card prices it at $0.11 on $2.20 input (2026-10-03).
+_CACHE_READ_SHARE = {"gpt6.1-sol": 0.05}
+
+
 def test_gpt_cache_rates_follow_the_bedrock_cards():
-    # Every Bedrock OpenAI model card prices a cached read at 10% of input,
-    # and GPT-5.6 / GPT-6 bill their 30-minute cache write at 1.25x input.
+    # Every Bedrock OpenAI model card prices a cached read at 10% of input
+    # unless _CACHE_READ_SHARE says otherwise, and GPT-5.6 / GPT-6 bill their
+    # 30-minute cache write at 1.25x input.
     from server.openai_bedrock.runtime import is_openai_model
 
     gpt_keys = [k for k in _get_chat_models() if is_openai_model(k)]
@@ -226,7 +232,8 @@ def test_gpt_cache_rates_follow_the_bedrock_cards():
     for key in gpt_keys:
         rates = get_model_pricing(key)
         assert rates["cached_in_input"] is True, key
-        assert rates["cache_read"] == pytest.approx(0.1 * rates["input"]), key
+        share = _CACHE_READ_SHARE.get(key, 0.1)
+        assert rates["cache_read"] == pytest.approx(share * rates["input"]), key
         if key.startswith(("gpt5.6", "gpt6")):
             assert rates["cache_write"] == pytest.approx(1.25 * rates["input"]), key
 

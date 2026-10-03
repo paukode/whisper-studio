@@ -86,11 +86,12 @@ def region_for(model_key: str) -> str:
 
 # Where bedrock-mantle serves each OpenAI model, measured with one call per
 # model and region on 2026-09-29 (us-east-1, us-east-2 and us-west-2; every EU
-# region answered 404 for all of them on 2026-09-28). Read only to explain a
-# failure (a 404, /doctor): a call always goes to the configured region and is
-# never rerouted. A model missing here was never measured, so nothing is
-# claimed about where it runs.
+# region answered 404 for all of them on 2026-09-28), and for GPT-6.1 Sol on
+# 2026-10-03. Read only to explain a failure (a 404, /doctor): a call always
+# goes to the configured region and is never rerouted. A model missing here
+# was never measured, so nothing is claimed about where it runs.
 _SERVED_IN = {
+    "openai.gpt-6.1-sol": ("us-east-1",),
     "openai.gpt-6-astra": ("us-west-2",),
     "openai.gpt-6-sol": ("us-east-1",),
     "openai.gpt-6-luna": ("us-east-1",),
