@@ -1,10 +1,16 @@
 """The read-only classifier decides which ws_run_command calls run with no
 approval card, so it must fail closed: any shell syntax that can run a second
 command, and any argument or redirect that writes a file or launches another
-program, needs approval. Genuine read-only commands stay direct."""
+program, needs approval. Genuine read-only commands stay direct. What it
+lets through still runs under the read-only OS sandbox."""
+
+import platform
+import shutil
 
 import pytest
 
+from server import sandbox
+from server.workspace import executors
 from server.workspace.executors import _is_read_only_command
 
 
@@ -72,6 +78,10 @@ def test_chained_and_substituted_commands_need_approval(command):
         "cat <>file",
         "cat < /dev/tcp/example.com/80",
         "ls >",
+        # bash 3.2 writes a heredoc or herestring to a temp file, which the
+        # read-only sandbox refuses.
+        "grep foo <<< 'foo bar'",
+        "cat <<EOF",
     ],
 )
 def test_writers_and_launchers_need_approval(command):
@@ -257,3 +267,29 @@ def test_operand_shaped_writers_need_approval(command):
 )
 def test_list_and_print_forms_stay_direct(command):
     assert _is_read_only_command(command) is True
+
+
+@pytest.mark.skipif(
+    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
+    reason="needs macOS sandbox-exec",
+)
+def test_a_command_that_skips_approval_runs_without_write_access(tmp_path, monkeypatch):
+    # A classifier fooled into passing a writer must not be the last line: the
+    # direct path runs under the read-only sandbox, approved commands do not.
+    monkeypatch.setattr(executors, "get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr(executors, "_is_read_only_command", lambda command: True)
+
+    out = executors._exec_ws_run_command({"command": "echo seen; touch made"}, [], [])
+    assert "seen" in out
+    assert not (tmp_path / "made").exists()
+
+    executors.run_workspace_command("touch made", str(tmp_path))
+    assert (tmp_path / "made").exists()
+
+
+def test_the_bwrap_read_only_sandbox_binds_nothing_writable(tmp_path):
+    argv = sandbox._bwrap_argv("ls", str(tmp_path), None, "readonly")
+    binds = [argv[i + 1] for i, a in enumerate(argv) if a == "--bind"]
+    assert binds == []
+    assert argv[argv.index("--tmpfs") + 1] == "/tmp"
+    assert str(tmp_path) in sandbox._bwrap_argv("ls", str(tmp_path), None, "open")

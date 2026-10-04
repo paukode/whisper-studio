@@ -10,7 +10,8 @@ lexer does not model (substitution, subshells, newlines) needs approval.
 Some readers write through an operand instead of a flag (`git branch NAME`,
 `uniq IN OUT`, a sed `w` command). Those get an operand rule: their options
 are parsed against an allowlist, the way git and getopt read them, and the
-operands must be the read-only shape.
+operands must be the read-only shape. A command that passes still runs under
+the read-only OS sandbox, so a write the classifier missed fails there too.
 """
 
 from collections.abc import Callable
@@ -199,9 +200,11 @@ def _shell_tokens(command: str) -> list[tuple[str, str]] | None:
 
 def _redirect_is_safe(op: str, target: str) -> bool:
     """Reads, fd merges, and /dev/null sinks are safe; any other output
-    target is a file write, and a /dev path can be a bash network socket."""
+    target is a file write, and a /dev path can be a bash network socket.
+    A heredoc or herestring needs approval too: macOS /bin/sh (bash 3.2)
+    writes it to a temp file, which the read-only sandbox refuses."""
     if op in ("<<", "<<-", "<<<"):
-        return True  # heredoc delimiter or herestring: no file is opened
+        return False
     if op in (">&", "<&") and (target.isdigit() or target == "-"):
         return True
     if target == "/dev/null":
