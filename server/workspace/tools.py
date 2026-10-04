@@ -297,11 +297,12 @@ def get_workspace_write_tools() -> list[dict]:
                 "Parent directories are created automatically, so never create them "
                 "as a separate step. Do not read the file first; it does not exist yet. "
                 "If a workspace is connected, `path` is workspace-relative. If none is "
-                "connected, never ask the user where to save: pass destination_path "
-                "resolved from the user's own words ('in Downloads' -> "
-                "'~/Downloads/notes.txt'), or omit it to default to their Documents "
-                "folder — then tell the user the full path in your reply. The user "
-                "confirms the exact path on the approval card."
+                "connected, use it only for a file the user asked for (otherwise the "
+                "content belongs in your reply), and never ask where to save: pass "
+                "destination_path resolved from the user's own words ('in Downloads' -> "
+                "'~/Downloads/notes.txt'), or omit it to default to their Documents folder, "
+                "then tell the user the full path in your reply. The user confirms the exact "
+                "path on the approval card."
             ),
             "input_schema": {
                 "type": "object",
@@ -322,12 +323,13 @@ def get_workspace_write_tools() -> list[dict]:
         {
             "name": "save_file",
             "description": (
-                "[Workspace] Save a one-off file (a report, an export, a generated document) "
-                "directly to the user's disk, in ONE call — never ask the user where to save. "
-                "If the user named a location ('in Downloads', 'on my Desktop', a full path), "
-                "resolve it yourself and pass destination_path (~ is allowed, e.g. "
-                "'~/Downloads/report.pdf'). If they named none, omit destination_path — the "
-                "file goes to their Documents folder (or Downloads via suggested_location). "
+                "[Workspace] Save a file the user asked for directly to their disk: they said "
+                "save, export or download, or named a file, a format or a folder. Without such "
+                "a request the content belongs in your reply. Save it in ONE call and never "
+                "ask the user where: if they named a location ('in Downloads', 'on my "
+                "Desktop', a full path), resolve it yourself and pass destination_path (~ is "
+                "allowed, e.g. '~/Downloads/report.pdf'); if they named none, omit "
+                "destination_path and the file goes to their Documents folder. "
                 "The file is prepared immediately and the user confirms the exact path on an "
                 "approval card; your reply after approval must tell the user the full path it "
                 "was saved to. Use ws_create_file instead for files that belong in the "

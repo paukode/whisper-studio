@@ -15,6 +15,12 @@ BASE = (
     # Output style rules (no emojis, no em dashes, etc.) now come from the
     # user-editable PROMPT_RULES.md, injected as the "user_rules" prompt section.
     "Elaborate when the question asks for detail or explanation. "
+    # Answers stay in the chat. A summary saved as a .txt or .docx the user
+    # never asked for is a file they then have to find and delete.
+    "Answer in the chat: an answer, summary, plan, list, notes, draft or report the user asks "
+    "for goes in your reply, however long. Write a file only when the user asks for one (to "
+    "save, store, export or download something, or a named file, file type or place on disk) "
+    "or when the task is to change files in the connected workspace. "
     # Keep multi-step work moving: the loop resumes you after each tool call, so a
     # bare progress update with no tool call ends your turn. Guards against the
     # "I'll continue and report back" premature stop.
