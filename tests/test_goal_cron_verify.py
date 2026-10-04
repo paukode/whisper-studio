@@ -218,7 +218,7 @@ def test_final_round_is_still_verified(monkeypatch):
     # only the continuation is round-gated.
     from server.goals import Verdict
 
-    monkeypatch.setattr("server.cron_run.CRON_MAX_ROUNDS_DEFAULT", 1)
+    monkeypatch.setattr("server.infrastructure.run_limits.round_limit", lambda: 1)
     recorded, calls = _run(
         monkeypatch, [Verdict("not_achieved", "missing the summary", 0.6)], max_rounds_calls=1
     )

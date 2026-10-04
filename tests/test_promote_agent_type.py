@@ -22,7 +22,6 @@ def test_promote_writes_file_project_scope_and_round_trips(tmp_path, monkeypatch
             "description": "Scans logs for errors",
             "tools": ["ws_read_file", "ws_grep"],
             "read_only": True,
-            "max_turns": 15,
             "system_prompt": "Scan logs for ERROR/WARN lines and summarize them.",
         },
     )
@@ -41,8 +40,11 @@ def test_promote_writes_file_project_scope_and_round_trips(tmp_path, monkeypatch
     reloaded = types["log_scanner"]
     assert reloaded.read_only is True
     assert reloaded.allowed_tools == frozenset({"ws_read_file", "ws_grep"})
-    assert reloaded.max_turns == 15
     assert "Scan logs" in reloaded.system_prompt
+    # No round limit is written into the file: the type runs on Settings.
+    assert reloaded.max_turns is None
+    with open(path, encoding="utf-8") as f:
+        assert "max_turns" not in f.read()
 
 
 def test_promote_unknown_name_returns_error(tmp_path, monkeypatch):
@@ -108,7 +110,6 @@ def test_promote_re_strips_write_tool_even_if_stored_def_is_tampered(tmp_path, m
         tools=("ws_write_file", "ws_read_file"),
         read_only=True,
         model=stored.model,
-        max_turns=stored.max_turns,
         system_prompt=stored.system_prompt,
     )
     with cc._lock:
@@ -132,7 +133,6 @@ def test_promote_rejects_unsafe_name(tmp_path, monkeypatch):
             tools=None,
             read_only=True,
             model=None,
-            max_turns=None,
             system_prompt=None,
         )
 

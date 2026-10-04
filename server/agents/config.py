@@ -177,11 +177,14 @@ class AgentConfig:
 
     Attributes:
         agent_type: Type identifier (general, explore, plan, verify, coordinator).
-        max_turns: Maximum tool-use rounds before forced stop (a runaway backstop,
-            not the normal exit — pair it with deadline_seconds).
-        deadline_seconds: Wall-clock budget for the whole run. None = no time limit.
-            This is the primary "don't loop forever" brake: it stops a stuck agent
-            regardless of how few or many turns it has taken.
+        max_turns: Model rounds before the run is stopped. None takes the round
+            limit from Settings (server/infrastructure/run_limits.py), which is
+            what every type does except an internal preset with its own cap.
+        deadline_seconds: Wall-clock budget for the whole run. None takes the
+            time limit from Settings times ``time_limit_factor``; no preset
+            sets it.
+        time_limit_factor: How many Settings time limits the run gets: 2 for
+            the coordinator, which waits on the agents it starts, else 1.
         max_tokens: Max tokens per Bedrock response.
         read_only: If True, write tools are excluded from the tool pool.
         allowed_tools: If set, ONLY these tools are available (whitelist).
@@ -195,16 +198,17 @@ class AgentConfig:
             follow-up, deliberately left inert here to avoid guessing whether
             it should be a chat_models catalog key or a raw provider id.
         internal: True for a preset the app runs for itself (the memory
-            agents), never a type the user or the model spawns. The
-            ``agent_limits.default`` block does not reach it; only an entry
-            under its own name does (see get_agent_config). Custom and
-            ephemeral types are never internal.
+            agents), never a type the user or the model spawns. It keeps its
+            own small round cap instead of the Settings round limit: a
+            background job that finishes in a few rounds must not get the
+            budget of the agents people spawn. Custom and ephemeral types are
+            never internal.
 
     isolation is a run_agent parameter, not per-type state.
     """
 
     agent_type: str = "general"
-    max_turns: int = 30
+    max_turns: int | None = None
     deadline_seconds: float | None = None
     max_tokens: int = 16384
     read_only: bool = False
@@ -212,23 +216,18 @@ class AgentConfig:
     system_prompt: str | None = None
     model: str | None = None
     internal: bool = False
+    time_limit_factor: int = 1
 
 
 AGENT_TYPES: dict[str, AgentConfig] = {
+    # Every type takes its round and time limits from Settings (see
+    # get_agent_config); a preset sets max_turns only when it is internal.
     "general": AgentConfig(
         agent_type="general",
-        # High turn backstop + a wall-clock deadline as the real brake: workflow
-        # (ultracode) agents run as `general`, and a 30-turn cap was cutting them
-        # off mid-task (surfacing as null structured output). Tune per-deployment
-        # via config.json `agent_limits` (see get_agent_config).
-        max_turns=120,
-        deadline_seconds=900,
         max_tokens=16384,
     ),
     "explore": AgentConfig(
         agent_type="explore",
-        max_turns=30,
-        deadline_seconds=600,
         max_tokens=8192,
         read_only=True,
         system_prompt=(
@@ -241,8 +240,6 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     ),
     "plan": AgentConfig(
         agent_type="plan",
-        max_turns=40,
-        deadline_seconds=600,
         max_tokens=16384,
         read_only=True,
         system_prompt=(
@@ -256,8 +253,6 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     ),
     "verify": AgentConfig(
         agent_type="verify",
-        max_turns=30,
-        deadline_seconds=600,
         max_tokens=8192,
         system_prompt=(
             "You are a verification agent. Check that the implementation is correct by "
@@ -270,13 +265,12 @@ AGENT_TYPES: dict[str, AgentConfig] = {
         )
         + AGENT_METHOD,
     ),
-    # The memory agents run unattended and skip agent_limits.default (see
-    # get_agent_config), so each pairs its round cap with its own time limit:
-    # the 900 s the shipped default gave them before they skipped it.
+    # The memory agents are internal: each keeps its own small round cap (a
+    # background job that finishes in a few rounds) and takes the Settings
+    # time limit like every other run nobody is watching.
     "memory_extractor": AgentConfig(
         agent_type="memory_extractor",
         max_turns=5,
-        deadline_seconds=900,
         max_tokens=4096,
         allowed_tools=MEMORY_RW_TOOLS,
         # Single source of truth in server/memory/prompts.py.
@@ -291,7 +285,6 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     "memory_consolidator": AgentConfig(
         agent_type="memory_consolidator",
         max_turns=8,
-        deadline_seconds=900,
         max_tokens=4096,
         allowed_tools=MEMORY_RW_TOOLS,
         system_prompt=CONSOLIDATION_SYSTEM_PROMPT,
@@ -304,7 +297,6 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     "session_summarizer": AgentConfig(
         agent_type="session_summarizer",
         max_turns=5,
-        deadline_seconds=900,
         max_tokens=4096,
         allowed_tools=MEMORY_RO_TOOLS,
         system_prompt=SESSION_SUMMARY_PROMPT,
@@ -312,8 +304,9 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     ),
     "coordinator": AgentConfig(
         agent_type="coordinator",
-        max_turns=100,
-        deadline_seconds=1800,
+        # It waits on the agents it starts, each with a whole time limit of
+        # its own, so one limit would end it after about one wave of them.
+        time_limit_factor=2,
         max_tokens=16384,
         allowed_tools=COORDINATOR_TOOLS,
         system_prompt=(
@@ -330,31 +323,8 @@ AGENT_TYPES: dict[str, AgentConfig] = {
 }
 
 
-def _agent_limit_overrides() -> dict:
-    """Read the optional ``agent_limits`` block from config.json.
-
-    Shape (every key optional)::
-
-        "agent_limits": {
-          "default":  {"max_turns": 120, "deadline_seconds": 900},
-          "general":  {"max_turns": 200, "deadline_seconds": 1200},
-          "explore":  {"deadline_seconds": null}   // null disables the time limit
-        }
-
-    Lets turn/time budgets be tuned per deployment without editing code.
-    ``default`` covers the spawnable types only; see get_agent_config.
-    """
-    try:
-        from server.infrastructure.config import load_config
-
-        ov = load_config().get("agent_limits")
-        return ov if isinstance(ov, dict) else {}
-    except Exception:
-        return {}
-
-
 def _resolve_base_config(agent_type: str) -> AgentConfig:
-    """Resolve the base (pre agent_limits-override) config for a type name.
+    """Resolve the preset for a type name, before its limits are filled in.
 
     Checks, in order: an ephemeral type registered this process (Part 2 —
     server/agents/custom_config.py:register_ephemeral_type), a persistent
@@ -381,42 +351,34 @@ def _resolve_base_config(agent_type: str) -> AgentConfig:
 
 
 def get_agent_config(agent_type: str) -> AgentConfig:
-    """Resolve an agent config, applying config.json ``agent_limits`` overrides.
+    """Resolve an agent type's config with its round and time limits.
 
     Custom types (.whisper/agents/*.md) and ephemeral inline spawn_agent
     definitions are checked BEFORE the built-in AGENT_TYPES table (see
-    _resolve_base_config) — a custom file or an inline definition can use any
-    type name, including one that shadows a built-in preset name. Only
-    ``max_turns`` and ``deadline_seconds`` are overridable via agent_limits;
-    any unset key keeps the resolved preset.
-
-    ``default`` is the budget for the agents people spawn: the docs describe
-    it next to the spawnable types (docs/tut-subagents.html), it may raise
-    their presets as well as lower them, and the memory agents are documented
-    as "not ones you spawn directly". An internal preset therefore skips it
-    and keeps its own cap, which bounds an unattended background job; only an
-    entry under its own name retunes it, in either direction. The shipped
-    config.example.json sizes ``default`` for the general worker, which had
-    lifted every memory agent to that budget.
+    _resolve_base_config), so a custom file or an inline definition can use
+    any type name, including one that shadows a built-in preset name.
     """
-    base = _resolve_base_config(agent_type)
-    ov = _agent_limit_overrides()
-    default = {} if base.internal else (ov.get("default") or {})
-    merged = {**default, **(ov.get(agent_type) or {})}
-    if not merged:
-        return base
+    return with_run_limits(_resolve_base_config(agent_type))
 
-    changes: dict = {}
-    mt = merged.get("max_turns")
-    if isinstance(mt, int) and mt > 0:
-        changes["max_turns"] = mt
-    if "deadline_seconds" in merged:
-        ds = merged["deadline_seconds"]
-        if ds is None:
-            changes["deadline_seconds"] = None  # explicit: no time limit
-        elif isinstance(ds, (int, float)) and ds > 0:
-            changes["deadline_seconds"] = float(ds)
-    return replace(base, **changes) if changes else base
+
+def with_run_limits(config: AgentConfig) -> AgentConfig:
+    """``config`` with the limits it leaves unset taken from Settings.
+
+    Every type runs on the one round limit and time limit in Settings > Costs
+    > Budget (server/infrastructure/run_limits.py). An internal preset keeps
+    its own round cap; the coordinator gets twice the time limit
+    (time_limit_factor). An explicit value on a config built in code (a test,
+    a caller's own AgentConfig) is kept.
+    """
+    from server.infrastructure import run_limits
+
+    rounds = config.max_turns if config.max_turns is not None else run_limits.round_limit()
+    seconds = (
+        config.deadline_seconds
+        if config.deadline_seconds is not None
+        else run_limits.time_limit_seconds() * config.time_limit_factor
+    )
+    return replace(config, max_turns=rounds, deadline_seconds=seconds)
 
 
 def _is_write_tool(name: str) -> bool:

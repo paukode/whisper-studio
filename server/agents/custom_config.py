@@ -49,8 +49,6 @@ log = logging.getLogger("whisper-studio")
 
 AGENTS_SUBDIR = os.path.join(".whisper", "agents")
 
-_DEFAULT_MAX_TURNS = 30
-_DEFAULT_DEADLINE_SECONDS = 600
 _DEFAULT_MAX_TOKENS = 8192
 
 # A name becomes a bare `<name>.md` filename component when promoted — never
@@ -86,13 +84,6 @@ def _as_bool_or_none(value) -> bool | None:
     return None
 
 
-def _as_int_or_none(value) -> int | None:
-    try:
-        return int(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None
-
-
 def safe_type_name(raw: str) -> str | None:
     """A name safe to use as a bare ``<name>.md`` filename component.
 
@@ -116,7 +107,6 @@ def build_agent_config(
     tools=None,
     read_only=None,
     model: str | None = None,
-    max_turns=None,
     system_prompt: str | None = None,
     default_read_only: bool = False,
 ) -> AgentConfig:
@@ -171,12 +161,11 @@ def build_agent_config(
             allowed = allowed - writes
 
     prompt = (system_prompt or "").strip() or None
-    mt = _as_int_or_none(max_turns)
 
+    # No round or time limit here: every type takes them from Settings
+    # (server/agents/config.py:get_agent_config).
     return AgentConfig(
         agent_type=name,
-        max_turns=mt if mt and mt > 0 else _DEFAULT_MAX_TURNS,
-        deadline_seconds=_DEFAULT_DEADLINE_SECONDS,
         max_tokens=_DEFAULT_MAX_TOKENS,
         read_only=is_read_only,
         allowed_tools=allowed,
@@ -226,7 +215,6 @@ def _parse_agent_md(path: str) -> AgentConfig | None:
         tools=fm.get("tools"),
         read_only=fm.get("read_only"),
         model=fm.get("model"),
-        max_turns=fm.get("max_turns"),
         system_prompt=body,
         default_read_only=False,
     )
@@ -285,7 +273,6 @@ class EphemeralAgentDef:
     tools: tuple[str, ...] | None
     read_only: bool | None
     model: str | None
-    max_turns: int | None
     system_prompt: str | None
 
 
@@ -329,7 +316,6 @@ def register_ephemeral_type(session_id: str, definition: dict) -> tuple[str, Age
     tools = _as_list(definition.get("tools"))
     read_only = definition.get("read_only")
     model = definition.get("model")
-    max_turns = definition.get("max_turns")
     system_prompt = definition.get("system_prompt")
 
     config = build_agent_config(
@@ -337,7 +323,6 @@ def register_ephemeral_type(session_id: str, definition: dict) -> tuple[str, Age
         tools=tools,
         read_only=read_only,
         model=model,
-        max_turns=max_turns,
         system_prompt=system_prompt,
         # No human ever reviews an ephemeral definition before it runs — if
         # the model didn't ask for tools or state read_only explicitly, fail
@@ -355,7 +340,6 @@ def register_ephemeral_type(session_id: str, definition: dict) -> tuple[str, Age
             tools=tuple(tools) if tools else None,
             read_only=_as_bool_or_none(read_only),
             model=(str(model).strip() or None) if model else None,
-            max_turns=_as_int_or_none(max_turns),
             system_prompt=system_prompt,
         )
 
@@ -394,7 +378,6 @@ def _agent_md_text(config: AgentConfig, description: str) -> str:
     lines.append(f"read_only: {'true' if config.read_only else 'false'}")
     if config.model:
         lines.append(f"model: {config.model}")
-    lines.append(f"max_turns: {config.max_turns}")
     lines.append("---")
     body = (config.system_prompt or "").strip()
     text = "\n".join(lines) + "\n"
@@ -427,7 +410,6 @@ def promote_ephemeral_type(
         tools=list(stored.tools) if stored.tools else None,
         read_only=stored.read_only,
         model=stored.model,
-        max_turns=stored.max_turns,
         system_prompt=stored.system_prompt,
         default_read_only=True,
     )

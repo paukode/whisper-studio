@@ -1,12 +1,11 @@
-"""Agent turn/time budget: configurable limits + graceful finalize.
+"""Agent turn/time budget: the Settings limits + graceful finalize.
 
 Two behaviours guarded here:
 
-1. `get_agent_config` overlays config.json `agent_limits` (default then
-   type-specific) onto the built-in AGENT_TYPES preset, and a null
-   `deadline_seconds` disables the wall-clock brake. The default block never
-   reaches an internal preset (the memory agents); only an entry under the
-   preset's own name retunes one.
+1. Every agent type runs on the one round limit and time limit in Settings
+   (server/infrastructure/run_limits.py, resolved by get_agent_config): no
+   preset carries numbers of its own, the coordinator gets twice the time,
+   and the internal memory agents keep their own small round caps.
 
 2. When an agent exhausts its turn budget the loop must still yield a usable
    result: for a schema caller it distills structured output (previously the
@@ -17,82 +16,85 @@ Two behaviours guarded here:
 
 import asyncio
 import json
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 from server.agent_tools.schemas import SPAWN_AGENT_TOOL, TEAM_CREATE_TOOL
-from server.agents.config import AGENT_TYPES, AgentConfig, get_agent_config
+from server.agents.config import AGENT_TYPES, AgentConfig, get_agent_config, with_run_limits
 from server.agents.runtime import run_agent
 from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block, tool_use_block
 
-# ── get_agent_config overrides ────────────────────────────────────────────────
+# ── every type runs on the Settings limits ───────────────────────────────────
 
 
-def test_get_agent_config_no_overrides_keeps_preset(monkeypatch):
-    monkeypatch.setattr("server.infrastructure.config.load_config", lambda: {})
-    c = get_agent_config("general")
-    assert c.max_turns == 120
-    assert c.deadline_seconds == 900
-
-
-def test_get_agent_config_default_then_type_specific(monkeypatch):
-    monkeypatch.setattr(
-        "server.infrastructure.config.load_config",
-        lambda: {
-            "agent_limits": {
-                "default": {"max_turns": 200},
-                "general": {"deadline_seconds": 111},
-            }
-        },
-    )
-    c = get_agent_config("general")
-    assert c.max_turns == 200  # from default block
-    assert c.deadline_seconds == 111  # type-specific block adds on top
-
-
-def test_get_agent_config_null_disables_deadline(monkeypatch):
-    monkeypatch.setattr(
-        "server.infrastructure.config.load_config",
-        lambda: {"agent_limits": {"explore": {"deadline_seconds": None}}},
-    )
-    c = get_agent_config("explore")
-    assert c.deadline_seconds is None
-    assert c.max_turns == 30  # preset preserved
-
-
-def test_get_agent_config_ignores_invalid_values(monkeypatch):
-    monkeypatch.setattr(
-        "server.infrastructure.config.load_config",
-        lambda: {"agent_limits": {"general": {"max_turns": 0, "deadline_seconds": -5}}},
-    )
-    c = get_agent_config("general")
-    # Non-positive values are ignored; the preset stands.
-    assert c.max_turns == 120
-    assert c.deadline_seconds == 900
-
-
-# ── internal presets keep their own caps ──────────────────────────────────────
-#
-# agent_limits.default is the budget for the agents people spawn. The memory
-# agents are internal presets: the shipped default once lifted the dream
-# consolidator to the general worker's round budget, and a looping run spent
-# 28 rounds against a cap of 8.
-
-_ROOT = Path(__file__).resolve().parent.parent
+def _settings(monkeypatch, **values) -> None:
+    monkeypatch.setattr("server.infrastructure.config.load_config", lambda: dict(values))
 
 
 def _internal_types() -> list[str]:
     return sorted(name for name, cfg in AGENT_TYPES.items() if cfg.internal)
 
 
-def _shipped_agent_limits() -> dict:
-    return json.loads((_ROOT / "config.example.json").read_text())["agent_limits"]
+def test_no_preset_carries_a_limit_of_its_own():
+    """One control: a preset that hard-coded rounds or time would quietly
+    override Settings, the way a per-model region pin did. Only an internal
+    preset sets a round cap."""
+    for name, preset in AGENT_TYPES.items():
+        assert preset.deadline_seconds is None, name
+        assert (preset.max_turns is not None) == preset.internal, name
 
 
-def _with_limits(monkeypatch, limits: dict) -> None:
-    monkeypatch.setattr(
-        "server.infrastructure.config.load_config", lambda: {"agent_limits": limits}
+def test_every_spawnable_type_takes_the_settings_limits(monkeypatch):
+    _settings(monkeypatch, round_limit=33, time_limit_minutes=4)
+    for name, preset in AGENT_TYPES.items():
+        if preset.internal:
+            continue
+        cfg = get_agent_config(name)
+        assert cfg.max_turns == 33, name
+        assert cfg.deadline_seconds == 4 * 60 * preset.time_limit_factor, name
+
+
+def test_the_coordinator_gets_twice_the_time_limit(monkeypatch):
+    _settings(monkeypatch, round_limit=33, time_limit_minutes=4)
+    coordinator = get_agent_config("coordinator")
+    general = get_agent_config("general")
+    assert coordinator.deadline_seconds == 2 * general.deadline_seconds
+    assert coordinator.max_turns == general.max_turns
+
+
+def test_internal_presets_keep_their_rounds_and_take_the_settings_time(monkeypatch):
+    for limit in (1, 500):
+        _settings(monkeypatch, round_limit=limit, time_limit_minutes=4)
+        for name in _internal_types():
+            cfg = get_agent_config(name)
+            assert cfg.max_turns == AGENT_TYPES[name].max_turns, name
+            assert cfg.deadline_seconds == 4 * 60, name
+
+
+def test_invalid_settings_read_as_the_shipped_defaults(monkeypatch):
+    from server.infrastructure.config import DEFAULTS
+
+    for bad in (0, -5, "abc", None, True):
+        _settings(monkeypatch, round_limit=bad, time_limit_minutes=bad)
+        cfg = get_agent_config("general")
+        assert cfg.max_turns == DEFAULTS["round_limit"], bad
+        assert cfg.deadline_seconds == 60 * DEFAULTS["time_limit_minutes"], bad
+
+
+def test_the_retired_agent_limits_block_has_no_effect(monkeypatch):
+    _settings(
+        monkeypatch,
+        round_limit=33,
+        time_limit_minutes=4,
+        agent_limits={"default": {"max_turns": 7}, "explore": {"deadline_seconds": None}},
     )
+    explore = get_agent_config("explore")
+    assert (explore.max_turns, explore.deadline_seconds) == (33, 4 * 60)
+
+
+def test_a_limit_set_on_a_config_built_in_code_is_kept(monkeypatch):
+    _settings(monkeypatch, round_limit=33, time_limit_minutes=4)
+    cfg = with_run_limits(AgentConfig(agent_type="general", max_turns=2, deadline_seconds=5))
+    assert (cfg.max_turns, cfg.deadline_seconds) == (2, 5)
 
 
 def test_memory_presets_are_internal_and_never_offered_to_the_model():
@@ -102,59 +104,6 @@ def test_memory_presets_are_internal_and_never_offered_to_the_model():
     member = TEAM_CREATE_TOOL["input_schema"]["properties"]["agents"]["items"]
     offered |= set(member["properties"]["agent_type"]["enum"])
     assert offered and offered.isdisjoint(internal)
-
-
-def test_every_internal_preset_pairs_its_round_cap_with_a_time_limit():
-    """The memory agents run unattended and skip agent_limits.default, so a
-    stuck run still ends on its own clock, as the other presets do."""
-    for name in _internal_types():
-        assert AGENT_TYPES[name].deadline_seconds is not None, name
-
-
-def test_default_limits_do_not_raise_an_internal_preset(monkeypatch):
-    for name in _internal_types():
-        preset = AGENT_TYPES[name]
-        _with_limits(
-            monkeypatch,
-            {"default": {"max_turns": preset.max_turns + 100, "deadline_seconds": 3600}},
-        )
-        cfg = get_agent_config(name)
-        assert cfg.max_turns == preset.max_turns
-        assert cfg.deadline_seconds == preset.deadline_seconds
-
-
-def test_shipped_limits_leave_every_internal_preset_as_defined(monkeypatch):
-    _with_limits(monkeypatch, _shipped_agent_limits())
-    for name in _internal_types():
-        assert get_agent_config(name) == AGENT_TYPES[name]
-
-
-def test_default_limits_still_apply_to_every_spawnable_preset(monkeypatch):
-    for name, preset in AGENT_TYPES.items():
-        if preset.internal:
-            continue
-        _with_limits(monkeypatch, {"default": {"max_turns": preset.max_turns + 100}})
-        assert get_agent_config(name).max_turns == preset.max_turns + 100
-
-
-def test_an_entry_under_its_own_name_still_retunes_an_internal_preset(monkeypatch):
-    for name in _internal_types():
-        preset = AGENT_TYPES[name]
-        _with_limits(
-            monkeypatch,
-            {
-                "default": {"max_turns": preset.max_turns + 100},
-                name: {"max_turns": preset.max_turns + 2, "deadline_seconds": 60},
-            },
-        )
-        raised = get_agent_config(name)
-        assert raised.max_turns == preset.max_turns + 2
-        assert raised.deadline_seconds == 60
-
-        lower = preset.max_turns - 1
-        assert lower > 0
-        _with_limits(monkeypatch, {name: {"max_turns": lower}})
-        assert get_agent_config(name).max_turns == lower
 
 
 # ── graceful finalize at the turn limit ───────────────────────────────────────
@@ -297,11 +246,10 @@ def test_turn_limit_finalizes_text_when_no_schema(monkeypatch):
 # ── an internal run ends at its own cap ───────────────────────────────────────
 
 
-def test_consolidator_run_ends_at_its_own_cap_under_the_shipped_limits(monkeypatch, tmp_path):
-    """The field case end to end: under the shipped agent_limits, a
-    consolidator whose model never stops calling tools must end at the
-    consolidator's own cap, not at the budget the default gives spawned
-    agents."""
+def test_consolidator_run_ends_at_its_own_cap_under_a_larger_round_limit(monkeypatch, tmp_path):
+    """The field case end to end: a consolidator whose model never stops
+    calling tools ends at its own cap, not at the round limit in Settings
+    that every spawned agent gets."""
     cap = AGENT_TYPES["memory_consolidator"].max_turns
     fake_stream = FakeBedrockClient(
         [
@@ -314,7 +262,7 @@ def test_consolidator_run_ends_at_its_own_cap_under_the_shipped_limits(monkeypat
         ]
     )
     _patch_common(monkeypatch, fake_stream)
-    monkeypatch.setattr("server.agents.config._agent_limit_overrides", _shipped_agent_limits)
+    monkeypatch.setattr("server.infrastructure.run_limits.round_limit", lambda: cap + 100)
     monkeypatch.setattr("server.agents.journal.storage_root", lambda: str(tmp_path / "storage"))
     monkeypatch.setattr("server.costs.budget.check_budget", lambda session_id: None)
 

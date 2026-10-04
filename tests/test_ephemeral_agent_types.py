@@ -5,12 +5,14 @@ and test_detached_agents.py.
 """
 
 import asyncio
+import dataclasses
 import json
 from types import SimpleNamespace
 
 from server import agent_tools
 from server.agents.config import get_agent_config
 from server.agents.custom_config import register_ephemeral_type
+from server.infrastructure.run_limits import round_limit, time_limit_seconds
 
 
 class _Bus:
@@ -62,18 +64,16 @@ def test_register_ephemeral_type_strips_write_tool_when_read_only_requested():
     assert config.allowed_tools == frozenset({"ws_read_file"})
 
 
-def test_get_agent_config_resolves_ephemeral_by_resolution_key(monkeypatch):
-    # Neutralize the repo's real config.example.json agent_limits overrides
-    # (a "default" block rewrites max_turns/deadline_seconds for every type),
-    # so identity holds: get_agent_config returns the SAME object with no
-    # override changes applied.
-    monkeypatch.setattr("server.infrastructure.config.load_config", lambda *a, **k: {})
+def test_get_agent_config_resolves_ephemeral_by_resolution_key():
     resolution_key, config, _meta = register_ephemeral_type(
         "sess-lookup", {"name": "lookup_bot", "description": "d", "read_only": True}
     )
     resolved = get_agent_config(resolution_key)
-    assert resolved is config
+    # The registered definition, with only its limits filled in from Settings.
+    assert dataclasses.replace(resolved, max_turns=None, deadline_seconds=None) == config
     assert resolved.agent_type == "lookup_bot"
+    assert resolved.max_turns == round_limit()
+    assert resolved.deadline_seconds == time_limit_seconds()
 
 
 def test_ephemeral_inline_spawn_runs_and_surfaces_type(monkeypatch):

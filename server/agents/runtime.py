@@ -19,6 +19,7 @@ from server.agents import extensions as budget_extensions
 from server.agents.config import (
     AgentConfig,
     get_agent_config,
+    with_run_limits,
 )
 from server.agents.event_bus import event_bus
 from server.agents.journal import REPORT_TEMPLATE, AgentJournal, salvage_report
@@ -148,10 +149,9 @@ async def run_agent(
             status="failed",
         )
 
-    # Resolve config (applies config.json `agent_limits` overrides on top of the
-    # built-in AGENT_TYPES preset).
-    if config is None:
-        config = get_agent_config(agent_type)
+    # Resolve config; a config passed in takes the limits it leaves unset from
+    # Settings too (with_run_limits).
+    config = get_agent_config(agent_type) if config is None else with_run_limits(config)
     # Agents approve their own writes, so an agent may only read when it is
     # started from a plan-mode turn or by a read-only agent (a resume through
     # send_message included; server.agents.tool_access.read_only_scope), or

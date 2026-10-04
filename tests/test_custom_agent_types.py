@@ -14,6 +14,7 @@ from server.agents.custom_config import (
     load_custom_agent_types,
     safe_type_name,
 )
+from server.infrastructure.run_limits import round_limit
 from server.workspace.state import (
     get_workspace_path,
     reset_workspace_override,
@@ -57,7 +58,9 @@ def test_load_custom_agent_type_from_md_file(tmp_path, monkeypatch):
     # built-in memory_extractor pattern: an explicit whitelist without
     # read_only implies the author wants exactly those tools, writes included).
     assert cfg.read_only is False
-    assert cfg.max_turns == 12
+    # A max_turns line (files written before the limits moved to Settings)
+    # sets nothing: the type takes the round limit from Settings.
+    assert cfg.max_turns is None
     assert cfg.model == "sonnet4.5"
     assert "PDF extraction agent" in (cfg.system_prompt or "")
 
@@ -96,17 +99,16 @@ def test_project_custom_type_overrides_user_type_same_name(tmp_path, monkeypatch
     _write(
         user_home / "agents",
         "reviewer",
-        "---\nname: reviewer\ndescription: user-level\nmax_turns: 5\n---\nUser body.\n",
+        "---\nname: reviewer\ndescription: user-level\n---\nUser body.\n",
     )
     _write(
         project / ".whisper" / "agents",
         "reviewer",
-        "---\nname: reviewer\ndescription: project-level\nmax_turns: 99\n---\nProject body.\n",
+        "---\nname: reviewer\ndescription: project-level\n---\nProject body.\n",
     )
 
     types = load_custom_agent_types(workspace_path=str(project))
 
-    assert types["reviewer"].max_turns == 99
     assert "Project body" in types["reviewer"].system_prompt
 
 
@@ -116,13 +118,13 @@ def test_user_type_used_when_no_project_override(tmp_path, monkeypatch):
     _write(
         user_home / "agents",
         "solo",
-        "---\nname: solo\ndescription: user only\nmax_turns: 7\n---\nUser-only body.\n",
+        "---\nname: solo\ndescription: user only\n---\nUser-only body.\n",
     )
 
     # No project dir at all (or a project with no agents/ dir of its own).
     types = load_custom_agent_types(workspace_path=str(tmp_path / "empty_project"))
 
-    assert types["solo"].max_turns == 7
+    assert "User-only body" in types["solo"].system_prompt
 
 
 def test_load_custom_agent_types_default_resolves_current_workspace(tmp_path, monkeypatch):
@@ -146,11 +148,6 @@ def test_custom_type_overrides_builtin_by_same_name(tmp_path, monkeypatch):
     # Name collision between a built-in type ("explore") and a custom file:
     # the custom file wins (get_agent_config checks custom types first).
     monkeypatch.setattr("server.infrastructure.paths.config_dir", lambda: str(tmp_path / "home"))
-    # Neutralize the repo's real config.example.json agent_limits overrides
-    # (a "default" block there rewrites max_turns/deadline_seconds for every
-    # type) so this test only sees what get_agent_config resolves from the
-    # custom file itself.
-    monkeypatch.setattr("server.infrastructure.config.load_config", lambda *a, **k: {})
     _write(
         tmp_path / "project" / ".whisper" / "agents",
         "explore",
@@ -166,13 +163,13 @@ def test_custom_type_overrides_builtin_by_same_name(tmp_path, monkeypatch):
     finally:
         reset_workspace_override(token)
 
-    assert cfg.max_turns == 3
     assert "Custom explore body" in (cfg.system_prompt or "")
+    # Its max_turns line sets nothing: like every type, it runs on Settings.
+    assert cfg.max_turns == round_limit()
 
 
 def test_no_custom_type_falls_back_to_builtin(tmp_path, monkeypatch):
     monkeypatch.setattr("server.infrastructure.paths.config_dir", lambda: str(tmp_path / "home"))
-    monkeypatch.setattr("server.infrastructure.config.load_config", lambda *a, **k: {})
 
     token = set_workspace_override(str(tmp_path / "empty_project"))
     try:
@@ -181,7 +178,7 @@ def test_no_custom_type_falls_back_to_builtin(tmp_path, monkeypatch):
         reset_workspace_override(token)
 
     assert cfg.agent_type == "verify"
-    assert cfg.max_turns == 30  # built-in verify preset, untouched
+    assert cfg.max_turns == round_limit()  # the built-in preset, on Settings
 
 
 def test_safe_type_name_rejects_path_traversal_and_separators():

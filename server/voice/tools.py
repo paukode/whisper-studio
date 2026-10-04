@@ -47,13 +47,8 @@ EmitFn = Callable[[dict[str, Any]], Awaitable[None]]
 MAX_RESULT_CHARS = 12000
 _PREVIEW_CHARS = 160
 _LATE_NOTE_CHARS = 2500
-# Rounds one delegated turn may take (agents and multi-step work need room).
-ASSISTANT_MAX_ROUNDS = 40
 # How long ask_assistant waits before letting the run continue in the background.
 ASK_WAIT_S = 20.0
-# Safety cap for a background run. On expiry whatever it produced is delivered
-# with a note; work is never silently discarded.
-ASSISTANT_DEADLINE_S = 1800.0
 MAX_CONCURRENT_RUNS = 3
 WORKING_PREFIX = "Working on it:"
 
@@ -387,7 +382,6 @@ async def _ask_assistant(request: str, ctx: ToolContext) -> str:
         session_id=ctx.session_id,
         scope_id=run_id,
         event_channel=f"voice:{run_id}",
-        max_rounds=ASSISTANT_MAX_ROUNDS,
         attended=True,
         session_approvals=ctx.session_approvals,
         system_hint=VOICE_HINT,
@@ -502,20 +496,10 @@ async def _drive(
     errors: list[str] = []
     status = "completed"
     pending_req: dict[str, Any] | None = None
-    deadline = time.monotonic() + ASSISTANT_DEADLINE_S
+    # No time limit, as in chat: the user is there and can stop the run; the
+    # round limit from Settings bounds it (run_headless_turn).
     try:
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                status = "timeout"
-                break
-            try:
-                ev = await asyncio.wait_for(gen.__anext__(), timeout=remaining)
-            except StopAsyncIteration:
-                break
-            except asyncio.TimeoutError:
-                status = "timeout"
-                break
+        async for ev in gen:
             kind = ev.get("type")
             if kind == "text" and ev.get("text"):
                 texts.append(str(ev["text"]))
@@ -600,14 +584,7 @@ async def _drive(
         return _describe_request(pending_req, texts)
 
     answer = "\n\n".join(t.strip() for t in texts if t.strip()).strip()
-    if status == "timeout":
-        note = (
-            "The assistant hit the time limit and was stopped; this is what it had so far."
-            if answer
-            else "The assistant hit the time limit before producing an answer."
-        )
-        answer = f"{note}\n\n{answer}" if answer else note
-    elif not answer:
+    if not answer:
         if errors:
             answer = "The assistant could not complete this: " + "; ".join(errors)
         elif status == "turn_limit":
@@ -805,7 +782,6 @@ async def _resolve_request(decision: str, ctx: ToolContext) -> str:
         session_id=ctx.session_id,
         scope_id=str(req["run_id"]),
         event_channel=f"voice:{req['run_id']}",
-        max_rounds=ASSISTANT_MAX_ROUNDS,
         attended=True,
         session_approvals=ctx.session_approvals,
         system_hint=VOICE_HINT,

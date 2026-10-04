@@ -22,7 +22,12 @@ import pytest
 import server.tool_executor as te
 from server.agents import extensions
 from server.agents import journal as journal_mod
-from server.agents.config import AGENT_TYPES, _is_write_tool, filter_tools_for_agent
+from server.agents.config import (
+    AGENT_TYPES,
+    _is_write_tool,
+    filter_tools_for_agent,
+    get_agent_config,
+)
 from server.agents.custom_config import build_agent_config
 from server.agents.runtime import run_agent
 from server.agents.tool_access import (
@@ -290,7 +295,7 @@ def test_the_card_shows_finishing_up_once_the_run_is_told_to_finish():
 
     def state(ext):
         return budget_readout(
-            AGENT_TYPES["explore"],
+            get_agent_config("explore"),
             ext,
             next_turn=2,
             elapsed=1.0,

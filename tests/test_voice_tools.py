@@ -256,21 +256,24 @@ def test_resolve_question_and_missing_pending(monkeypatch):
     assert vague.startswith("Error: for an approval")
 
 
-def test_ask_assistant_deadline_keeps_partial_output(monkeypatch):
-    """The safety cap never discards what the run produced."""
-    monkeypatch.setattr(voice_tools, "ASSISTANT_DEADLINE_S", 0.05)
+def test_ask_assistant_runs_attended_on_the_settings_round_limit(monkeypatch):
+    """Voice is attended like chat: no round count of its own (the run takes
+    the Settings round limit) and no time limit cutting a long request."""
+    seen: dict = {}
 
-    async def slow(prompt, **kw):
+    async def run(prompt, **kw):
+        seen.update(kw)
         yield {"type": "text", "text": "Starting."}
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.05)
+        yield {"type": "text", "text": "Finished."}
         yield {"type": "done", "status": "completed", "session_id": "x"}
 
-    monkeypatch.setattr("server.exec.headless.run_headless_turn", slow)
+    monkeypatch.setattr("server.exec.headless.run_headless_turn", run)
     events = []
     out = asyncio.run(run_tool("ask_assistant", {"request": "x"}, _ctx(events)))
-    assert out.startswith("The assistant hit the time limit") and "Starting." in out
-    answers = [e for e in events if e["type"] == "assistant_answer"]
-    assert len(answers) == 1 and "Starting." in answers[0]["output"]
+    assert "Starting." in out and "Finished." in out
+    assert seen["attended"] is True
+    assert seen.get("max_rounds") is None
 
 
 @pytest.mark.parametrize("name", ["control_recording", "end_conversation"])

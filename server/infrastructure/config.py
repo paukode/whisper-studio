@@ -207,6 +207,10 @@ DEFAULTS = {
     "max_session_cost_usd": 0.0,  # 0 = unlimited
     "max_daily_cost_usd": 0.0,  # 0 = unlimited
     "model_fallback_enabled": False,  # Enable opus→sonnet→haiku fallback chain
+    # The one round limit and time limit every run takes (Settings > Costs >
+    # Budget); who gets which, and the exceptions: server/infrastructure/run_limits.py.
+    "round_limit": 120,
+    "time_limit_minutes": 15,
     # Scheduled tasks (cron). Timezone: "" means use the host system timezone
     # (resolved from /etc/localtime in server/cron_scheduler.py). A per-job
     # schedule.tz always overrides this, so wall-clock jobs ("daily at 09:00")
@@ -864,6 +868,28 @@ def migrate_user_config() -> bool:
         len(user_cfg.get("chat_models", {})),
     )
     return True
+
+
+# Keys the app no longer reads: the per-type agent budgets (agent_limits) and
+# the scheduled-run round cap (cron_max_rounds) gave way to the one round limit
+# and time limit every run takes (round_limit, time_limit_minutes).
+RETIRED_USER_KEYS = ("agent_limits", "cron_max_rounds")
+
+
+def retire_user_config_keys() -> list[str]:
+    """One-time upgrade of the USER layer: drop the RETIRED_USER_KEYS a saved
+    config still carries, so none lingers as a setting that does nothing.
+    Returns the keys it removed."""
+    with USER_CONFIG_LOCK:
+        raw = _load_user_config()
+        removed = [key for key in RETIRED_USER_KEYS if key in raw]
+        if not removed:
+            return []
+        for key in removed:
+            raw.pop(key)
+        save_config(raw)
+    log.info("Removed retired config key(s) %s: runs take Settings > Costs > Budget.", removed)
+    return removed
 
 
 def unfiltered_chat_models() -> tuple[dict, dict]:
