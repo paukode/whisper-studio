@@ -159,7 +159,14 @@
         statement that it will not be made. Each request is checked on its own: one in the prompt against
         the whole turn, and one in a message sent while the turn ran ("also make a PNG chart") against
         only what came after that message, so restating the file made for the prompt does not answer it.
-        A file the user called off ("no need to save a file") is not a request.</p></li>
+        A file the user called off ("no need to save a file") is not a request. Only an explicit ask
+        counts: a file name, a file or file type (a PDF, a docx), something to look at (a diagram, a
+        chart, a deck), or saving it somewhere. A summary, report or document asked for in words is
+        answered in the reply. The check reads what the user typed (<code>TurnContext.asked</code>,
+        kept across an approval pause), not the transcript, attachments and inlined mentions the chat
+        route puts in the same message: a meeting where someone said "export it to a pdf" asked the
+        assistant for nothing. The nudge asks for a file only where one was asked for, in the place the
+        user named, and for something to look at in the chat; it never picks a folder.</p></li>
       <li><h4>Verification evidence (always)</h4><p>Behind the <code>verify_on_stop</code> flag. Purely
         deterministic, no model call: if the turn edited code but no test, lint, typecheck or build ran
         green <em>after the last edit</em>, the gate asks for the run, or for an honest statement of what
@@ -333,7 +340,7 @@
       <dt><code class="path">server/goals/acts.py</code></dt><dd>What each tool call did (pushed, committed, merged, opened a PR or issue, uploaded, sent, commented, published, scheduled, removed), where it went, and which files it wrote, from its name and input.</dd>
       <dt><code class="path">server/goals/call_results.py</code></dt><dd>Whether each call finished and succeeded, background commands a later call shows finished, the calls as first read, and the agent reports a turn read.</dd>
       <dt><code class="path">server/chat/claim_guard.py</code></dt><dd>The stream guard: holds a claiming sentence (and the tool cards behind it) until it is verified, sends the <code>deliveries</code> receipts, carries a cut or a paused turn's text on in order, and notes at the turn's end what did not happen.</dd>
-      <dt><code class="path">server/goals/requested_files.py</code></dt><dd>Which files the user asked for this turn, and whether what the turn did after each request produced one.</dd>
+      <dt><code class="path">server/goals/requested_files.py</code></dt><dd>Which files the user asked for this turn, read from what they typed, whether only a file on disk answers each request, and whether what the turn did after each request produced one.</dd>
       <dt><code class="path">server/goals/verification.py</code></dt><dd>The passive ledger: which tools edit code, which commands verify it, and whether the evidence is fresh.</dd>
       <dt><code class="path">server/goals/gates.py</code></dt><dd>Running a goal's quality-gate commands, the retry budget, and the failure text.</dd>
       <dt><code class="path">server/goals/evaluator.py</code></dt><dd>The judge's prompt, the verdict schema and strict parser, and the cloud judge (<code>evaluate</code>, keyword-only <code>main_model_key</code>).</dd>

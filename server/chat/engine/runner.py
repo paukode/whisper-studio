@@ -226,6 +226,10 @@ class TurnContext:
     # The deliveries earlier replies of the chat verified (their chips, sent
     # with the history): what a recap of earlier work is checked against.
     earlier_deliveries: list = field(default_factory=list)
+    # What the user typed (the chat routes), kept apart from the transcript,
+    # attachments and mentions inlined into the same message: the gate reads
+    # it as their ask. Kept across an approval pause; None reads the message.
+    asked: str | None = None
 
 
 def _assemble_round_tools(ctx: TurnContext) -> tuple[list, int | None]:
@@ -862,6 +866,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                             turn_started_at=ctx.claims.started_at,
                             claim_calls=ctx.claims.ledger(),
                             claim_receipts=ctx.earlier_deliveries,
+                            asked=ctx.asked,
                             tools_enabled=getattr(ctx.adapter, "tools_enabled", True),
                             plan_mode=ctx.plan_mode,
                             attempt=stop_blocks_used,
@@ -1068,6 +1073,7 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     "messages": list(messages),
                     "pending_tool_results": list(tool_results),
                     "provider": ctx.adapter.provider,
+                    "asked": ctx.asked,
                 }
                 end.paused = True
                 yield "data: [DONE]\n\n"

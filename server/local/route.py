@@ -27,6 +27,7 @@ def local_chat_response(
     session_id: str,
     approved_tool_result,
     transcript: str = "",
+    asked: str | None = None,
     whisper_md_context: str,
     memory_context: str,
     session_memory_context: str,
@@ -173,6 +174,7 @@ def local_chat_response(
                 is_disconnected=is_disconnected,
                 midturn_inbox=True,
                 earlier_deliveries=verified_deliveries(body.get("history")),
+                asked=asked,
                 # Offline invariants: no permission-explainer model, and the
                 # local-aware memory hooks (model_mode gating) instead of the
                 # generic cloud ones.

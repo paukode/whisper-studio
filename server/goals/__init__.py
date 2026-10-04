@@ -109,6 +109,10 @@ class GateContext:
     # The deliveries earlier replies verified (the chat sends them with its
     # history): what a recap of earlier work may rest on.
     claim_receipts: list | None = None
+    # What the user typed this turn, without the transcript, attachments and
+    # inlined mentions that share its message (TurnContext.asked). None reads
+    # the whole message.
+    asked: str | None = None
 
 
 @dataclass

@@ -25,6 +25,10 @@
       default), the complete file is built and parked in the app's sandbox, and one card asks you to
       confirm the move. There is no folder picker, no "where should I put this?" question, and no
       half-written file if you say no.</p>
+    <p>A file is made only when you ask for one. An answer, a summary, a plan or a report you ask
+      for in words stays in the chat, however long. Say save, store, export or download, name a file
+      or a file type (a Word doc, a PDF, a spreadsheet, a deck), or name a place on disk, and you
+      get a file.</p>
 
     <figure class="diagram-figure wide">
       <div id="save-flow-diagram" class="diagram"></div>
@@ -168,9 +172,8 @@
     <p>Not everything is an Office document. Two more tools ride the same flow:</p>
     <ul>
       <li><b><code>save_file</code></b> saves any content as a one-shot file: Markdown notes, a CSV,
-        a script, even binary data. With no destination in your words it defaults to Documents (or
-        Downloads if that suits the file better), and it never consults or connects a workspace at
-        all.</li>
+        a script, even binary data. With no destination in your words it goes to Documents, and it
+        never consults or connects a workspace at all.</li>
       <li><b><code>ws_create_file</code></b> is the workspace "new file" tool, but it degrades
         gracefully: with a workspace connected it creates the file in the project behind the normal
         diff-preview card, and without one it stages the content and requests the same

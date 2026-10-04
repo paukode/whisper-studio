@@ -27,6 +27,14 @@ _OFFICE_SCRIPT_LIBRARIES = (
     "The standard library is available; there is no network access to rely on."
 )
 
+# Appended to every document-producing tool. Answers stay in the chat: a
+# summary or report the user asked for is not a file they asked for.
+_ONLY_WHEN_ASKED = (
+    "Make a document only when the user asks for a file (a file, a file type such "
+    "as a .docx, a PDF, a spreadsheet or a deck, or a place to save it) or to change "
+    "one; a summary, plan or report they ask for without one belongs in your reply."
+)
+
 # Appended to every document-producing tool. Exists because a model iterating
 # on one deliverable (fit the page, fix a table, apply feedback) otherwise
 # invents a fresh filename per attempt and litters the user's folder with
@@ -80,7 +88,7 @@ OFFICE_SCRIPT_TOOL = {
         "pass destination_path resolved from the user's own words ('in Downloads' -> "
         "'~/Downloads/report.docx', ~ allowed), or omit it to default to their "
         "Documents folder — then tell the user the full path in your reply. "
-        f"{_SAME_PATH_RULE}"
+        f"{_ONLY_WHEN_ASKED} {_SAME_PATH_RULE}"
     ),
     "input_schema": {
         "type": "object",
@@ -168,7 +176,7 @@ CREATE_DOCX_TOOL = {
         "to default to their Documents folder — then tell the user the full "
         "path in your reply. The document is built immediately and the user "
         "confirms the exact path on the approval card. "
-        f"{_SAME_PATH_RULE}"
+        f"{_ONLY_WHEN_ASKED} {_SAME_PATH_RULE}"
     ),
     "input_schema": {
         "type": "object",
@@ -212,7 +220,7 @@ CREATE_PPTX_TOOL = {
         "to default to their Documents folder — then tell the user the full "
         "path in your reply. The document is built immediately and the user "
         "confirms the exact path on the approval card. "
-        f"{_SAME_PATH_RULE}"
+        f"{_ONLY_WHEN_ASKED} {_SAME_PATH_RULE}"
     ),
     "input_schema": {
         "type": "object",
@@ -268,7 +276,7 @@ CREATE_XLSX_TOOL = {
         "or omit it to default to their Documents folder — then tell the user the "
         "full path in your reply. The document is built immediately and the user "
         "confirms the exact path on the approval card. "
-        f"{_SAME_PATH_RULE}"
+        f"{_ONLY_WHEN_ASKED} {_SAME_PATH_RULE}"
     ),
     "input_schema": {
         "type": "object",
@@ -321,7 +329,7 @@ CREATE_PDF_TOOL = {
         "or omit it to default to their Documents folder — then tell the user the "
         "full path in your reply. The document is built immediately and the user "
         "confirms the exact path on the approval card. "
-        f"{_SAME_PATH_RULE}"
+        f"{_ONLY_WHEN_ASKED} {_SAME_PATH_RULE}"
     ),
     "input_schema": {
         "type": "object",
