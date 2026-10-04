@@ -17,6 +17,12 @@ made before it cannot be the one it asks for. One nudge per turn, naming what
 is still owed, because the detection is a heuristic over prose and a wrong
 guess must cost at most one round.
 
+Only an explicit ask counts. What the user asks for goes in the reply unless
+they ask for a file, so a summary, report, plan or document is no file
+request, and neither are the transcript, attachments and inlined mentions
+that share the prompt's message (the gate reads what the user typed). Read
+that way, "summarize this" once came back as a saved .txt and a .docx.
+
 Pure functions over the provider-neutral message list; no I/O beyond stat.
 """
 
@@ -96,14 +102,26 @@ _PRODUCE_RE = re.compile(
     r"|give me|send me|hand me|provide)\b",
     re.IGNORECASE,
 )
+# Saving something somewhere asks for a file with or without a file word ("a
+# version that can be saved locally"). Not "saved": "I saved it in Downloads"
+# tells where a file already is.
+_SAVE_RE = re.compile(r"\b(?:sav(?:e|ing)|stor(?:e|ing)|be (?:saved|stored))\b", re.IGNORECASE)
 
-_FILE_NOUN_RE = re.compile(
-    r"\b(?:files?|documents?|reports?|spreadsheets?|workbooks?|decks?|slides"
-    r"|presentations?|diagrams?|flowcharts?|charts?|graphs?|images?|pictures?"
-    r"|screenshots?|visuals?|copy|version|export|attachments?|artifacts?"
-    r"|png|jpe?g|svg|pdf|docx?|xlsx?|pptx?|csv|tsv|ya?ml|json|markdown|zip)\b",
+# A file by name: only a written one will do.
+_DISK_NOUN_RE = re.compile(
+    r"\b(?:files?|pdf|docx?|xlsx?|pptx?|zip|exports?|attachments?)\b",
     re.IGNORECASE,
 )
+# Something to look at, which the chat can show as well as a file can.
+_SHOW_NOUN_RE = re.compile(
+    r"\b(?:diagrams?|flowcharts?|charts?|graphs?|images?|pictures?|screenshots?"
+    r"|visuals?|artifacts?|decks?|slides|presentations?|spreadsheets?|workbooks?"
+    r"|png|jpe?g|svg)\b",
+    re.IGNORECASE,
+)
+# Deliberately absent: report, document, summary, notes, copy, version,
+# markdown, json, csv. Text the user asks for belongs in the reply unless they
+# ask for a file, which the words above, a file name or a place on disk say.
 
 # Sentence-ish split: the verb and the noun have to be in the same breath, so
 # "read the pdf, then write a summary here" does not read as a file request.
@@ -135,36 +153,53 @@ _CALLED_OFF_RE = re.compile(
 )
 
 
+def _live(verbs: re.Pattern, clause: str) -> bool:
+    """A verb of ``verbs`` in the clause that the user did not call off."""
+    return any(not _CALLED_OFF_RE.search(clause[: m.start()]) for m in verbs.finditer(clause))
+
+
 def requested_clauses(text: str) -> list[str]:
     """Each clause where the user asks for a file, in order.
 
-    A clause qualifies on a producing verb the user did not call off, plus
-    either a file extension or a file-shaped noun. Both have to sit in the
-    same clause."""
+    A clause qualifies on a producing verb the user did not call off, plus a
+    file extension or a file-shaped noun (``_DISK_NOUN_RE``,
+    ``_SHOW_NOUN_RE``), or on saving something to a place (``_SAVE_RE``,
+    ``_LOCATION_RE``). Each pair has to sit in the same clause."""
     found: list[str] = []
     for clause in _CLAUSE_SPLIT_RE.split(text or ""):
         clause = clause.strip()
         if not clause or _ASKING_ABOUT_RE.search(clause):
             continue
-        if not any(
-            not _CALLED_OFF_RE.search(clause[: m.start()]) for m in _PRODUCE_RE.finditer(clause)
+        named = (
+            _EXT_RE.search(clause) or _DISK_NOUN_RE.search(clause) or _SHOW_NOUN_RE.search(clause)
+        )
+        if (named and _live(_PRODUCE_RE, clause)) or (
+            _LOCATION_RE.search(clause) and _live(_SAVE_RE, clause)
         ):
-            continue
-        if _EXT_RE.search(clause) or _FILE_NOUN_RE.search(clause):
             found.append(" ".join(clause.split())[:160])
     return found
 
 
-def file_requests(messages: list) -> list[tuple[str, int]]:
+def wants_disk(clause: str) -> bool:
+    """True when only a file on disk answers the clause: it names a place, a
+    file name, or a file (``_DISK_NOUN_RE``). A visual or a deck asked for
+    without one is answered in the chat too."""
+    return bool(
+        _LOCATION_RE.search(clause) or _EXT_RE.search(clause) or _DISK_NOUN_RE.search(clause)
+    )
+
+
+def file_requests(messages: list, asked: str | None = None) -> list[tuple[str, int]]:
     """Each file the user asked for this turn, with the row of the turn
     (``turn_messages`` order) from which what the turn did can answer it: 0,
     the whole turn, for the prompt and for words folded onto the prompt row;
     the row after it for a message the user sent while the turn ran, folded
     onto a tool result or given a row of its own. Nothing that came before a
-    message can be the file it asks for (``produced_a_file``)."""
+    message can be the file it asks for (``produced_a_file``). ``asked`` is
+    what the user typed, read in place of the prompt row (``asked_by_row``)."""
     return [
         (clause, row + 1)
-        for row, words in asked_by_row(messages)
+        for row, words in asked_by_row(messages, asked)
         for clause in requested_clauses(words)
     ]
 
@@ -225,37 +260,48 @@ def requested_file_feedback(
     *,
     plan_mode: bool = False,
     max_attempts: int = MAX_REQUEST_NUDGES,
+    asked: str | None = None,
 ) -> str | None:
     """Gate feedback when the user asked for a file this turn and none was
     produced, or None when there is nothing to ask for. Each request is
     checked against what came after it (``file_requests``), and the feedback
-    names every one still owed.
+    names every one still owed. ``asked`` is what the user typed this turn.
 
     Silent in plan mode: the workspace writes are refused there by design,
     so the turn is supposed to end with a plan and no file."""
     if plan_mode or request_nudges_used(messages) >= max_attempts:
         return None
     owed: list[str] = []
-    for clause, since in file_requests(messages):
-        on_disk = bool(_LOCATION_RE.search(clause))
+    for clause, since in file_requests(messages, asked):
         if clause not in owed and not produced_a_file(
-            messages, workspace, on_disk=on_disk, since=since
+            messages, workspace, on_disk=wants_disk(clause), since=since
         ):
             owed.append(clause)
     if not owed:
         return None
-    asked = "; ".join(f'"{c}"' for c in owed[:3])
+    listed = "; ".join(f'"{c}"' for c in owed[:3])
     if len(owed) > 3:
-        asked += f" and {len(owed) - 3} more"
+        listed += f" and {len(owed) - 3} more"
     what, it = ("a file", "it") if len(owed) == 1 else ("files", "them")
+    how = []
+    if any(wants_disk(c) for c in owed):
+        how.append(
+            "For a file: write it now (save_file, to the place the user named if they named "
+            "one, or the workspace file tools in the connected workspace), confirm the path "
+            "from the tool result, and give that path in your reply."
+        )
+    if not all(wants_disk(c) for c in owed):
+        how.append(
+            "For something to look at: show it in the chat now (create_visual or create_chart "
+            "for a diagram or chart, create_artifact for a page, a deck or a table), and do not "
+            "save it as a file unless the user asked for one."
+        )
     return (
-        f"{REQUEST_MARKER} the user asked you for {what} ({asked}) and this turn has not "
-        f"produced {it}: no file tool ran after the request and no reply since names a file "
-        f"that exists. Write {it} now (save_file for a path the user named such as "
-        "~/Downloads, the workspace file tools for the connected workspace), confirm the path "
-        "from the tool result, and give that path in your reply. If you are not going to "
-        f"produce {it}, say so plainly and why, in the reply itself, rather than answering in "
-        "chat as though no file was asked for."
+        f"{REQUEST_MARKER} the user asked you for {what} ({listed}) and this turn has not "
+        f"produced {it}: nothing that makes {it} ran after the request and no reply since "
+        f"names a file that exists. {' '.join(how)} If you are not going to produce {it}, say "
+        "so plainly and why, in the reply itself, rather than answering as though nothing was "
+        "asked for."
     )
 
 
@@ -267,4 +313,5 @@ __all__ = [
     "request_nudges_used",
     "requested_clauses",
     "requested_file_feedback",
+    "wants_disk",
 ]

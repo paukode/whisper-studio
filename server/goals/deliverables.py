@@ -138,7 +138,7 @@ def turn_messages(messages: list) -> list:
     return list(messages)
 
 
-def asked_by_row(messages: list) -> list[tuple[int, str]]:
+def asked_by_row(messages: list, prompt: str | None = None) -> list[tuple[int, str]]:
     """What the user asked for this turn, piece by piece, each with the row
     of the turn (``turn_messages`` order) that carries it: the real prompt it
     is answering, then the words of each message the user sent while it ran.
@@ -146,17 +146,25 @@ def asked_by_row(messages: list) -> list[tuple[int, str]]:
     prompt's row, -1, just before the turn's first; words folded onto a later
     row (a tool result, or a row of their own after an assistant tail) come
     with that row. Gate feedback, tool results and engine reminders, agent
-    reports among them, are never part of it."""
+    reports among them, are never part of it.
+
+    The prompt row also carries what the chat route puts around the user's
+    words (a transcript, attachments, indexed passages, inlined mentions).
+    ``prompt``, what the user typed, stands in for that row's own text when
+    the caller knows it; the words folded onto the row stay."""
     for i in range(len(messages) - 1, -1, -1):
         if _is_user_prompt(messages[i]):
             break
     else:
         return []
     asked = [
-        (-1, _midturn_words(t) or t)
+        (-1, words)
         for t in _texts(messages[i].get("content"))
         if not t.startswith(_REMINDER_OPEN)
+        if (words := _midturn_words(t) or (t if prompt is None else ""))
     ]
+    if prompt is not None:
+        asked.insert(0, (-1, prompt))
     asked += [
         (row, words)
         for row, m in enumerate(messages[i + 1 :])

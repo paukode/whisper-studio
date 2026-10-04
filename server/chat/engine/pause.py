@@ -11,5 +11,6 @@ frontend already treats as a resettable state (chat ⋯ menu).
 """
 
 # session_id -> {"messages": [...], "pending_tool_results": [...],
-#                "provider": "anthropic" | "openai" | "local", ...}
+#                "provider": "anthropic" | "openai" | "local",
+#                "asked": what the user typed (TurnContext.asked), ...}
 paused_sessions: dict[str, dict] = {}

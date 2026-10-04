@@ -200,8 +200,8 @@
         "Saved to report.docx" with no file is a block, not an answer, and the user never saw it: the
         stream guard (<code class="path">server/chat/claim_guard.py</code>) held the sentence back
         until it could be checked, and states what did not happen when the turn ends. Its mirror, <code class="path">server/goals/requested_files.py</code>, asks once for a
-        file the user requested and the turn never produced, and counts a request sent mid-turn only
-        against what came after it.</p></li>
+        file the user requested and the turn never produced, reading what they typed rather than the
+        transcript beside it, and counts a request sent mid-turn only against what came after it.</p></li>
       <li><h4>Verification evidence</h4><p><code class="path">server/goals/verification.py</code> is
         passive and deterministic: it never runs a suite itself. It reads the turn's messages and
         asks which code files were edited and whether a test, lint, typecheck, or build command ran

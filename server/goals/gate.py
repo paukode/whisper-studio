@@ -260,7 +260,7 @@ async def run_completion_gate(ctx: GateContext) -> GateDecision:
 
         try:
             file_feedback = requested_file_feedback(
-                messages, ctx.workspace, plan_mode=ctx.plan_mode
+                messages, ctx.workspace, plan_mode=ctx.plan_mode, asked=ctx.asked
             )
         except Exception as e:  # noqa: BLE001 - a checker bug must never abort a turn
             log.warning("requested-file check failed (%s); skipping", e)

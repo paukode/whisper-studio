@@ -1297,6 +1297,10 @@ async def chat_endpoint(request: Request):
     # paused awaiting user approval. When set, this is a continuation
     # rather than a new user message — the LLM resumes where it paused.
     approved_tool_result = body.get("approved_tool_result")
+    # What the user typed, before mentions are inlined and the transcript,
+    # attachments and grounding join it in one message: what the completion
+    # gate reads as their ask. A continuation takes it back from the pause.
+    asked = question if approved_tool_result is None else None
 
     # Same-session double-stream guard, claimed HERE — synchronously, before
     # any `await` past parsing the body, and before ANY of the turn's own
@@ -1390,10 +1394,11 @@ async def chat_endpoint(request: Request):
     async def _build_turn():
         # These prelude names are REASSIGNED below (condensation rewrites the
         # transcript, mention-resolution rewrites the question, fallback
-        # resolution rewrites the model, and the workspace latch is taken):
-        # without nonlocal each assignment would shadow the closure variable
-        # and the earlier reads would raise UnboundLocalError.
-        nonlocal question, transcript, model_key, ws_latch
+        # resolution rewrites the model, the workspace latch is taken, and a
+        # continuation takes the typed ask back from the pause): without
+        # nonlocal each assignment would shadow the closure variable and the
+        # earlier reads would raise UnboundLocalError.
+        nonlocal question, transcript, model_key, ws_latch, asked
         _status("preparing")
         _setup_t0 = time.monotonic()
         # The turn's tools run under this latch: a disconnect (or a switch in
@@ -1764,6 +1769,7 @@ async def chat_endpoint(request: Request):
                 answers = [approved_tool_result]
 
             paused = _paused_sessions.pop(session_id, None)
+            asked = (paused or {}).get("asked")
             if not paused:
                 log.warning(
                     "Continuation for session %s found no paused state (backend "
@@ -1929,6 +1935,7 @@ async def chat_endpoint(request: Request):
             session_id=session_id,
             approved_tool_result=approved_tool_result,
             transcript=transcript,
+            asked=asked,
             whisper_md_context=whisper_md_context,
             memory_context=memory_context,
             session_memory_context=session_memory_context,
@@ -2095,6 +2102,7 @@ async def chat_endpoint(request: Request):
             is_disconnected=request.is_disconnected,
             midturn_inbox=True,
             earlier_deliveries=verified_deliveries(chat_history),
+            asked=asked,
         )
 
         async def guarded_stream():
