@@ -261,10 +261,12 @@
       handler see it, whatever name the model emits. Agents approve their own writes, so that check,
       not the tools array, is what makes read-only hold: an <code>explore</code> or
       <code>plan</code> agent cannot mutate your project. An agent runs read-only whatever its type
-      when it is started from a plan-mode turn, by a read-only agent (a resume through
-      <code>send_message</code> included), or while the app is in plan mode (a workflow approved
-      from its card, <code>/subagent</code>); a detached one keeps it, and the app's own memory
-      agents keep their tools. A read-only agent
+      when it is started from a plan-mode turn or by a read-only agent (a resume through
+      <code>send_message</code> included), and a detached one keeps it. That holds for the app's
+      own memory agents too, since <code>send_message</code> can resume one by id. While the app
+      is in plan mode (a workflow approved from its card, <code>/subagent</code>) every other agent
+      starts read-only, and the memory agents keep their tools for their own post-turn runs. A
+      read-only agent
       runs an MCP tool only when it is marked read-only: by the server's <code>readOnlyHint</code>
       annotation, or in <code>mcp_servers.json</code> (<code>"read_only": true</code> for a whole
       server, <code>"read_only_tools"</code> for some of its tools, <code>"read_only": false</code> to

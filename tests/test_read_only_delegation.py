@@ -7,7 +7,10 @@ in server/agents/config.py). Two layers hold it:
 - spawn_agent, team_create and skill_invoke are write tools, so the tool
   executor refuses them from a read-only agent at execution.
 - Whatever a read-only agent still starts or resumes runs read-only
-  (server.agents.tool_access.read_only_scope, applied in run_agent).
+  (server.agents.tool_access.read_only_scope, applied in run_agent), the
+  app's own memory agents included. send_message resumes any finished agent
+  by id, and a memory agent resumed that way kept memory_write and
+  skill_manage.
 
 These run the REAL run_agent, router, delegation tools and catalog, as
 tests/test_agent_tool_access.py does. Only the model is scripted, one script
@@ -16,13 +19,17 @@ per agent, and the writes land in a real temporary workspace.
 
 import asyncio
 import json
+import os
 import uuid
 
 import pytest
 
 import server.agents.config as agent_config
+import server.memory.executor  # noqa: F401  registers the memory tools, as server/main.py does
 from server.agents import journal as journal_mod
 from server.agents.runtime import run_agent
+from server.memory import memdir
+from server.tasks import agents as task_agents
 from server.tasks import registry, shell
 from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block, tool_use_block
 
@@ -36,6 +43,16 @@ DELEGATIONS = {
     },
 }
 CREATE = ("ws_create_file", {"path": "made.txt", "content": "x"})
+NOTE = (
+    "memory_write",
+    {
+        "filename": "planted.md",
+        "name": "planted",
+        "type": "user",
+        "content": "x",
+        "scope": "global",
+    },
+)
 
 
 @pytest.fixture(autouse=True)
@@ -47,6 +64,7 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(registry, "STORAGE_DIR", str(tmp_path))
     monkeypatch.setattr(registry, "DB_PATH", str(tmp_path / "sessions.db"))
     monkeypatch.setattr(shell, "OUTPUT_DIR", str(tmp_path / "background_output"))
+    monkeypatch.setattr(memdir, "GLOBAL_MEMORY_DIR", str(tmp_path / "global_memory"))
     monkeypatch.setattr("server.costs.budget.check_budget", lambda session_id: None)
 
 
@@ -143,3 +161,54 @@ def test_what_a_read_only_agent_starts_may_only_read(monkeypatch, workspace, too
     assert CREATE[0] not in _offered(child)
     assert _result(child, 1).startswith(f"[Refused] '{CREATE[0]}'")
     assert list(workspace.iterdir()) == []
+
+
+def _resume_memory_agent(monkeypatch, model: _Agents, parent_type: str, workspace) -> None:
+    """A memory agent finishes; then a parent of parent_type messages it,
+    which resumes it, and the resumed run is awaited to its end."""
+    resumed: list[asyncio.Task] = []
+    real_resume = task_agents.resume_agent
+
+    def recording_resume(agent_id, message, **kw):
+        out = real_resume(agent_id, message, **kw)
+        resumed.append(task_agents._running[agent_id])
+        return out
+
+    monkeypatch.setattr(task_agents, "resume_agent", recording_resume)
+
+    async def scenario():
+        session_id = f"s-{uuid.uuid4().hex[:8]}"
+        memory = await _run("memory_extractor", "save what matters [memory]", session_id=session_id)
+        assert memory.status == "completed"
+        # The parent's script names the memory agent's id, known only now.
+        message = {"to_agent_id": memory.agent_id, "content": "save a note"}
+        model.fakes["parent"] = FakeBedrockClient(_calls(("send_message", message)))
+        await _run(
+            parent_type,
+            "look around [parent]",
+            session_id=session_id,
+            workspace_path=str(workspace),
+        )
+        assert resumed, "the message resumed the memory agent"
+        await asyncio.gather(*resumed)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("parent_type", "writes"), [("explore", False), ("general", True)])
+def test_a_memory_agent_resumed_by_a_read_only_agent_may_only_read(
+    monkeypatch, workspace, parent_type, writes
+):
+    """send_message resumes any finished agent by id, the app's own memory
+    agents included, and a resumed memory agent follows the message. From a
+    read-only agent it runs read-only; from a writing one (the control) it
+    keeps its memory tools and writes."""
+    model = _model(monkeypatch, memory=[*_calls(closing="nothing to save"), *_calls(NOTE)])
+    _resume_memory_agent(monkeypatch, model, parent_type, workspace)
+    memory = model.fakes["memory"]
+
+    # Request 0 is the first run; 1 and 2 are the resumed run's two rounds.
+    assert len(memory.requests) == 3
+    assert (NOTE[0] in _offered(memory, 1)) is writes
+    assert _result(memory, 2).startswith(f"[Refused] '{NOTE[0]}'") is not writes
+    assert os.path.exists(os.path.join(memdir.get_global_memory_dir(), "planted.md")) is writes
