@@ -492,50 +492,7 @@ def _run_bwrap_sandboxed(
     _bwrap_network_restriction_args's docstring for exactly what that does
     and does not cover.
     """
-    if write_mode == "readonly":
-        fs_args = [
-            "--ro-bind",
-            "/",
-            "/",  # read-only root (covers cwd too)
-            "--tmpfs",
-            "/tmp",  # writable but ephemeral — nothing persists
-        ]
-    else:
-        fs_args = [
-            "--ro-bind",
-            "/",
-            "/",  # read-only root
-            "--bind",
-            cwd,
-            cwd,  # read-write workspace
-            "--bind",
-            "/tmp",
-            "/tmp",  # read-write tmp
-        ]
-    bwrap_args = [
-        "bwrap",
-        *fs_args,
-        "--dev",
-        "/dev",  # device nodes
-        "--proc",
-        "/proc",  # proc filesystem
-        *_bwrap_network_restriction_args(),
-    ]
-
-    # Deny sensitive paths by making them inaccessible
-    for path in _effective_denied_paths(allow_paths):
-        if os.path.exists(path):
-            bwrap_args.extend(_bwrap_deny_args(path))
-
-    bwrap_args.extend(
-        [
-            "--chdir",
-            cwd,
-            "/bin/sh",
-            "-c",
-            command,
-        ]
-    )
+    bwrap_args = _bwrap_argv(command, cwd, allow_paths, write_mode)
 
     from server.process_utils import kill_process_group, new_process_group
 
@@ -557,11 +514,54 @@ def _run_bwrap_sandboxed(
     return subprocess.CompletedProcess(bwrap_args, proc.returncode, stdout, stderr)
 
 
+def _bwrap_argv(
+    command: str, cwd: str, allow_paths: list[str] | None, write_mode: str
+) -> list[str]:
+    """The bwrap argv that runs ``command`` in ``cwd``. Only "readonly" changes
+    the filesystem shape: no rw workspace bind, and /tmp a throwaway tmpfs."""
+    if write_mode == "readonly":
+        fs_args = [
+            "--ro-bind",
+            "/",
+            "/",  # read-only root (covers cwd too)
+            "--tmpfs",
+            "/tmp",  # writable but ephemeral, nothing persists
+        ]
+    else:
+        fs_args = [
+            "--ro-bind",
+            "/",
+            "/",  # read-only root
+            "--bind",
+            cwd,
+            cwd,  # read-write workspace
+            "--bind",
+            "/tmp",
+            "/tmp",  # read-write tmp
+        ]
+    argv = [
+        "bwrap",
+        *fs_args,
+        "--dev",
+        "/dev",  # device nodes
+        "--proc",
+        "/proc",  # proc filesystem
+        *_bwrap_network_restriction_args(),
+    ]
+    # Deny sensitive paths by making them inaccessible
+    for path in _effective_denied_paths(allow_paths):
+        if os.path.exists(path):
+            argv.extend(_bwrap_deny_args(path))
+    argv.extend(["--chdir", cwd, "/bin/sh", "-c", command])
+    return argv
+
+
 def popen_sandboxed(
     command: str,
     *,
     cwd: str,
     stdout_file,
+    write_mode: str = "open",
 ) -> tuple[subprocess.Popen, str | None]:
     """Start a sandbox-wrapped process streaming combined stdout/stderr to a file.
 
@@ -583,39 +583,23 @@ def popen_sandboxed(
     the proxy is the only way out on ports 80 and 443. Approved and read-only
     ws_run_command runs, their 30 s handoff and every background shell task
     start here, so this is where the parity has to hold.
+
+    ``write_mode`` is the ``run_sandboxed`` one: a read-only ws_run_command
+    passes "readonly", so a write its classifier missed is refused by the OS.
+    The output file is opened here, outside the sandbox, so output still flows.
     """
     from server.process_utils import new_process_group
 
     profile_path: str | None = None
     if _is_sandbox_exec_available():
-        profile = _generate_macos_profile(cwd)
+        profile = _generate_macos_profile(cwd, write_mode=write_mode)
         fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="whisper_bg_sandbox_")
         with os.fdopen(fd, "w") as f:
             f.write(profile)
         argv: list | str = ["sandbox-exec", "-f", profile_path, "/bin/sh", "-c", command]
         shell = False
     elif _is_bwrap_available():
-        argv = [
-            "bwrap",
-            "--ro-bind",
-            "/",
-            "/",
-            "--bind",
-            cwd,
-            cwd,
-            "--bind",
-            "/tmp",
-            "/tmp",
-            "--dev",
-            "/dev",
-            "--proc",
-            "/proc",
-            *_bwrap_network_restriction_args(),
-        ]
-        for path in _effective_denied_paths(None):
-            if os.path.exists(path):
-                argv.extend(_bwrap_deny_args(path))
-        argv.extend(["--chdir", cwd, "/bin/sh", "-c", command])
+        argv = _bwrap_argv(command, cwd, None, write_mode)
         shell = False
     else:
         argv = command

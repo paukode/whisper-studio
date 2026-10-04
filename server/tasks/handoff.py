@@ -82,6 +82,7 @@ def run_with_handoff(
     cwd: str,
     session_id: str = "",
     timeout: float = FOREGROUND_BUDGET_S,
+    write_mode: str = "open",
 ) -> HandoffResult:
     """Run ``exec_command`` foreground-first with a single spawn.
 
@@ -98,6 +99,9 @@ def run_with_handoff(
 
     Stopped by the session's Stop while still in the foreground: returns
     inline with whatever it printed, and is never handed off.
+
+    ``write_mode`` is the sandbox's (see ``popen_sandboxed``); a handed-off
+    process keeps the sandbox it started in.
     """
     from server.process_utils import wait_group_gone
     from server.sandbox import popen_sandboxed
@@ -109,7 +113,9 @@ def run_with_handoff(
     owner = work_owner.current()
     out_file = open(out_path, "w")
     try:
-        proc, profile_path = popen_sandboxed(exec_command, cwd=cwd, stdout_file=out_file)
+        proc, profile_path = popen_sandboxed(
+            exec_command, cwd=cwd, stdout_file=out_file, write_mode=write_mode
+        )
     finally:
         if not out_file.closed:
             out_file.close()

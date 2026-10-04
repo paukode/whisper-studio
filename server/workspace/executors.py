@@ -11,7 +11,7 @@ Also home to:
 - _WORKTREES: in-memory registry shared with the worktree route handlers
 
 ws_run_command asks read_only._is_read_only_command whether a command may skip
-the approval card.
+the approval card; one that does runs under the read-only OS sandbox.
 """
 
 import base64
@@ -610,14 +610,19 @@ def _exec_ws_run_command(tool_input, transcript, current_attachments):
     session_id = tool_input.pop("__session_id__", "")
     run_in_background = bool(tool_input.get("run_in_background", False))
 
-    # Read-only commands execute directly, no approval needed
+    # Read-only commands execute directly, no approval needed. The read-only
+    # sandbox refuses any write the classifier missed.
     if _is_read_only_command(command):
         warning = _validate_command(command)
         if warning:
             return f"Error: {warning}"
         try:
             return run_workspace_command(
-                command, ws, session_id=session_id, run_in_background=run_in_background
+                command,
+                ws,
+                session_id=session_id,
+                run_in_background=run_in_background,
+                write_mode="readonly",
             ).text
         except Exception as e:
             return f"Error: {e}"
@@ -652,7 +657,12 @@ class CommandRun:
 
 
 def run_workspace_command(
-    command: str, ws: str, *, session_id: str = "", run_in_background: bool = False
+    command: str,
+    ws: str,
+    *,
+    session_id: str = "",
+    run_in_background: bool = False,
+    write_mode: str = "open",
 ) -> CommandRun:
     """The one execution path for ws_run_command, read-only and approved alike.
 
@@ -661,7 +671,8 @@ def run_workspace_command(
     _AUTO_BACKGROUND_SECONDS and, if it is still running then, hands the SAME
     process to a background task (no restart, no kill) and returns its handle
     so the model polls instead of blocking. Blocking: call it off the event
-    loop.
+    loop. ``write_mode`` is the sandbox's: "readonly" for a command that skipped
+    approval, "open" for an approved one.
     """
     from server.cwd_tracker import (
         extract_cwd_from_output,
@@ -680,7 +691,9 @@ def run_workspace_command(
     exec_command = wrap_command_for_cwd(redirected)
 
     if run_in_background:
-        text = _start_background_command(command, exec_command, effective_cwd, session_id)
+        text = _start_background_command(
+            command, exec_command, effective_cwd, session_id, write_mode
+        )
         return CommandRun(text=text, background=True)
 
     result = run_with_handoff(
@@ -689,6 +702,7 @@ def run_workspace_command(
         cwd=effective_cwd,
         session_id=session_id,
         timeout=_AUTO_BACKGROUND_SECONDS,
+        write_mode=write_mode,
     )
     if result.background:
         text = _background_started_message(command, result.task_id, result.output_path)
@@ -725,12 +739,14 @@ def _left_running_message(task_id: str, output_path: str | None) -> str:
 
 
 def _start_background_command(
-    command: str, exec_command: str, cwd: str, session_id: str = ""
+    command: str, exec_command: str, cwd: str, session_id: str = "", write_mode: str = "open"
 ) -> str:
     """Start a command in the background and return a status message."""
     from server.tasks.shell import start_shell_task
 
-    task_info = start_shell_task(command, cwd=cwd, session_id=session_id, exec_command=exec_command)
+    task_info = start_shell_task(
+        command, cwd=cwd, session_id=session_id, exec_command=exec_command, write_mode=write_mode
+    )
     return _background_started_message(command, task_info["task_id"], task_info["output_path"])
 
 

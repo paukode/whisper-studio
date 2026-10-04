@@ -56,12 +56,14 @@ def start_shell_task(
     cwd: str,
     session_id: str = "",
     exec_command: str | None = None,
+    write_mode: str = "open",
 ) -> dict:
     """Start ``command`` in the background; returns {task_id, output_path, status}.
 
     ``exec_command`` is the possibly-wrapped form actually executed (cwd
     tracking, snapshot wrapping); ``command`` is what the user asked for and
-    becomes the task title.
+    becomes the task title. ``write_mode`` is the sandbox's (see
+    ``popen_sandboxed``).
     """
     import uuid
 
@@ -86,7 +88,9 @@ def start_shell_task(
 
     out_file = open(out_path, "w")
     try:
-        proc, profile_path = popen_sandboxed(exec_command or command, cwd=cwd, stdout_file=out_file)
+        proc, profile_path = popen_sandboxed(
+            exec_command or command, cwd=cwd, stdout_file=out_file, write_mode=write_mode
+        )
     except Exception as e:
         out_file.close()
         finished = registry.finish_task(

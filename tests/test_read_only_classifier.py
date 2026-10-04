@@ -1,10 +1,16 @@
 """The read-only classifier decides which ws_run_command calls run with no
 approval card, so it must fail closed: any shell syntax that can run a second
 command, and any argument or redirect that writes a file or launches another
-program, needs approval. Genuine read-only commands stay direct."""
+program, needs approval. Genuine read-only commands stay direct. What it
+lets through still runs under the read-only OS sandbox."""
+
+import platform
+import shutil
 
 import pytest
 
+from server import sandbox
+from server.workspace import executors
 from server.workspace.executors import _is_read_only_command
 
 
@@ -51,6 +57,7 @@ def test_chained_and_substituted_commands_need_approval(command):
         "rg --pre=sh foo",
         "rg --pre sh foo",
         "rg --hostname-bin=./x --hyperlink-format=default foo",
+        "ag --pager 'touch x' foo",
         "find . -exec rm {} ;",
         "find . '-delete'",
         # Readers with a flag that writes a file.
@@ -71,6 +78,10 @@ def test_chained_and_substituted_commands_need_approval(command):
         "cat <>file",
         "cat < /dev/tcp/example.com/80",
         "ls >",
+        # bash 3.2 writes a heredoc or herestring to a temp file, which the
+        # read-only sandbox refuses.
+        "grep foo <<< 'foo bar'",
+        "cat <<EOF",
     ],
 )
 def test_writers_and_launchers_need_approval(command):
@@ -113,3 +124,172 @@ def test_a_leading_cd_needs_a_command_after_it():
     assert _is_read_only_command("cd /tmp") is False
     assert _is_read_only_command("cd /tmp && rm x") is False
     assert _is_read_only_command("ls && cd /tmp && ls") is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Any remote subcommand but show and get-url rewrites the config; a
+        # silent set-url aims the next approved push somewhere else.
+        "git remote add evil https://evil/x.git",
+        "git remote set-url origin https://evil/x.git",
+        "git remote -v set-url origin https://evil/x.git",
+        "git remote --verb rm origin",
+        "git remote -- remove origin",
+        "git remote rename origin upstream",
+        "git remote set-head origin -a",
+        "git remote set-branches origin main",
+        "git remote prune origin",
+        "git remote update",
+        # An operand outside list mode is a branch or tag to create.
+        "git branch feature",
+        "git branch -v feature",
+        "git branch --format=%(refname) feature",
+        "git branch -a feature",
+        "git tag v1",
+        "git tag --sort=refname v1",
+        # Writer flags, short, bundled, abbreviated, or in list mode.
+        "git branch -d old",
+        "git branch -D old",
+        "git branch --del old",
+        "git branch -m old new",
+        "git branch -M new",
+        "git branch -c old new",
+        "git branch -C old new",
+        "git branch -f main HEAD~1",
+        "git branch -u origin/main",
+        "git branch --set-upstream-to=origin/main",
+        "git branch --unset-upstream",
+        "git branch --edit-description",
+        "git branch --track topic origin/topic",
+        "git branch -t topic origin/topic",
+        "git branch --list -d old",
+        "git branch -avd old",
+        "git tag -d v1",
+        "git tag --del v1",
+        "git tag -a v1 -m msg",
+        "git tag -s v1",
+        "git tag -f v1",
+        "git tag -F notes.txt v1",
+        "git tag -u key v1",
+        # uniq writes its second operand; BSD getopt reads a flag after the
+        # input as that operand.
+        "uniq in.txt out.txt",
+        "uniq -c in.txt out.txt",
+        "uniq -f 1 in.txt out.txt",
+        "uniq in.txt -c",
+        "uniq - out.txt",
+        "uniq -- in.txt out.txt",
+        # sed scripts that write or run a command.
+        "sed -n 'w out' file",
+        "sed -n '1w out' file",
+        "sed -n '/x/W out' file",
+        "sed -n 's/a/b/w out' file",
+        "sed -n 's/a/b/gw out' file",
+        "sed -n 's/a/b/ w out' file",
+        "sed -n 's/a/b/e' file",
+        "sed -n '1e touch x' file",
+        "sed -n -e 1p -e 'w out' file",
+        "sed -n --expression='w out' file",
+        # GNU ends a label at `;`, BSD at the newline.
+        "sed -n 'b end; w out' file",
+        # GNU ends the regex at the bracketed `/`, BSD does not.
+        "sed -n '/[/]/w out' file",
+        "sed -n 's/[/]/w out/' file",
+        # A trailing backslash joins the next -e script on.
+        "sed -n -e 's/a/b\\' -e '/w out' file",
+        # In-place, script-file, and option-after-operand forms.
+        "sed -n -I '' 1p file",
+        "sed -n -i.bak 1p file",
+        "sed -n -f prog.sed file",
+        "sed -n 1p file -i",
+        "sed -n",
+    ],
+)
+def test_operand_shaped_writers_need_approval(command):
+    assert _is_read_only_command(command) is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git remote",
+        "git remote -v",
+        "git remote --verbose",
+        "git remote show origin",
+        "git remote -v show -n origin",
+        "git remote get-url --push origin",
+        "git branch",
+        "git branch -a",
+        "git branch -r",
+        "git branch -vv",
+        "git branch --list",
+        "git branch --list 'feat*'",
+        "git branch -l 'feat*'",
+        "git branch --show-current",
+        "git branch --contains abc123",
+        "git branch --merged main",
+        "git branch --no-merged",
+        "git branch --sort=-committerdate",
+        "git branch --sort -committerdate",
+        "git branch --format='%(refname:short)'",
+        "git branch -a --contains HEAD 'feat*'",
+        "git tag",
+        "git tag -l",
+        "git tag --list 'v2.*'",
+        "git tag -l 'v2.*' --sort=-v:refname",
+        "git tag --contains HEAD",
+        "git tag --points-at HEAD",
+        "git tag -n3",
+        "uniq",
+        "uniq -c",
+        "uniq -c in.txt",
+        "uniq -f 1 in.txt",
+        "sort a | uniq -c | sort -rn",
+        "sed -n '$p' file",
+        "sed -n '$=' file",
+        "sed -n '/foo/Ip' file",
+        "sed -n '\\|a/b|p' file",
+        "sed -n '/start/,/end/p' file",
+        "sed -n '/start/,+3p' file",
+        "sed -n '0~4p' file",
+        "sed -n '5{p;q}' file",
+        "sed -n '/x/!p' file",
+        "sed -n 's/foo/bar/gp' file",
+        "sed -n 's|a/b|c|2p' file",
+        "sed -n '/^[[:space:]]*#/p' file",
+        "sed -n -e 1p -e '$p' file",
+        "sed -n --expression=1p file",
+        "sed -n -E 's/(a|b)/x/p' file",
+        "sed -n l file",
+        "cat log | sed -n '/ERROR/p'",
+    ],
+)
+def test_list_and_print_forms_stay_direct(command):
+    assert _is_read_only_command(command) is True
+
+
+@pytest.mark.skipif(
+    platform.system() != "Darwin" or shutil.which("sandbox-exec") is None,
+    reason="needs macOS sandbox-exec",
+)
+def test_a_command_that_skips_approval_runs_without_write_access(tmp_path, monkeypatch):
+    # A classifier fooled into passing a writer must not be the last line: the
+    # direct path runs under the read-only sandbox, approved commands do not.
+    monkeypatch.setattr(executors, "get_workspace_path", lambda: str(tmp_path))
+    monkeypatch.setattr(executors, "_is_read_only_command", lambda command: True)
+
+    out = executors._exec_ws_run_command({"command": "echo seen; touch made"}, [], [])
+    assert "seen" in out
+    assert not (tmp_path / "made").exists()
+
+    executors.run_workspace_command("touch made", str(tmp_path))
+    assert (tmp_path / "made").exists()
+
+
+def test_the_bwrap_read_only_sandbox_binds_nothing_writable(tmp_path):
+    argv = sandbox._bwrap_argv("ls", str(tmp_path), None, "readonly")
+    binds = [argv[i + 1] for i, a in enumerate(argv) if a == "--bind"]
+    assert binds == []
+    assert argv[argv.index("--tmpfs") + 1] == "/tmp"
+    assert str(tmp_path) in sandbox._bwrap_argv("ls", str(tmp_path), None, "open")
