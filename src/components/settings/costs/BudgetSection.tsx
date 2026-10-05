@@ -187,8 +187,8 @@ export const BudgetSection: React.FC<BudgetSectionProps> = ({ today }) => {
             onChange={(e) => setTimeLimit(e.target.value)}
           />
           <div className="settings-hint usage-budget-note" id="budgetTimeLimitHint">
-            For runs nobody is watching: agents (a coordinator gets twice this), scheduled and
-            background runs. Chat and voice have no time limit.
+            For runs nobody is watching: agents, scheduled and background runs. Time an agent waits
+            on agents it started does not count. Chat and voice have no time limit.
           </div>
         </div>
       </div>

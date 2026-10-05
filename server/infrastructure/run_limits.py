@@ -6,13 +6,13 @@ Settings > Costs > Budget, config keys ``round_limit`` and
 Every run reads the round limit: chat turns, voice, every agent type, cron and
 headless runs. The time limit applies where nobody is watching: agents, cron
 and unattended headless runs. Both are read when a run starts, so a change in
-Settings applies to the next run.
+Settings applies to the next run. An agent's time limit covers its own work:
+time spent waiting on agents it starts does not count, since each of those has
+its own limits (server/agents/tool_access.py WAITS_ON_AGENTS).
 
 The exceptions, chosen on 2026-10-04:
 
 - chat and voice have no time limit: the user is there, and Stop is the brake;
-- a coordinator gets twice the time limit, since it waits on the agents it
-  starts (AgentConfig.time_limit_factor);
 - the background memory jobs (extraction, dream, session summary) keep their
   own small round caps (AgentConfig.internal), and two single steps inside a
   turn keep theirs: the learning review (server/memory/review_fork.py) and the

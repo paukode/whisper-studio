@@ -17,6 +17,7 @@ import asyncio
 import copy
 import json
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -322,24 +323,32 @@ async def execute_tool_batch(
         # An agent this call starts inherits the turn's plan mode (run_agent
         # makes it read-only); a read-only scope already on stays on. Reset
         # after, so the flag never outlives the call.
-        from server.agents.tool_access import read_only_scope
+        from server.agents.tool_access import WAITS_ON_AGENTS, read_only_scope
 
         _ro_token = read_only_scope.set(plan_mode or read_only_scope.get())
+        # An agent waiting on agents it started is not using its own time:
+        # each of them has its own limits (ToolScope.waited).
+        _waits = tool_scope is not None and tool_name in WAITS_ON_AGENTS
+        _wait_started = time.monotonic()
         try:
-            output, side_effects = await route_tool(
-                tool_name,
-                call_input,
-                loop=loop,
-                executor=executor,
-                transcript=transcript,
-                attachments=attachments,
-                session_id=session_id,
-                model_id=model_id,
-                tool_use_id=state.tool_id,
-                effort_label=effort_label,
-                event_channel=event_channel,
-                tool_scope=tool_scope,
-            )
+            try:
+                output, side_effects = await route_tool(
+                    tool_name,
+                    call_input,
+                    loop=loop,
+                    executor=executor,
+                    transcript=transcript,
+                    attachments=attachments,
+                    session_id=session_id,
+                    model_id=model_id,
+                    tool_use_id=state.tool_id,
+                    effort_label=effort_label,
+                    event_channel=event_channel,
+                    tool_scope=tool_scope,
+                )
+            finally:
+                if _waits:
+                    tool_scope.waited(time.monotonic() - _wait_started)
             output = _explain_lost_workspace(output)
             if isinstance(output, str) and output.startswith("[WS_APPROVAL]"):
                 from server.workspace.state import load_workspace_config

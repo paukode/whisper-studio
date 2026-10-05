@@ -68,6 +68,13 @@ def activation_key(agent_id: str) -> str:
     return f"agent:{agent_id}"
 
 
+# Tools that run other agents and return once they finish: spawn_agent (inline;
+# a detached spawn returns at once), team_create and skill_invoke. Each agent
+# they start runs on its own round and time limits, so the time the caller
+# spends waiting on them does not use the caller's own time (ToolScope.waited).
+WAITS_ON_AGENTS = frozenset({"spawn_agent", "team_create", "skill_invoke"})
+
+
 @dataclass
 class ToolScope:
     """What one agent run may execute. The tool executor refuses any name
@@ -75,7 +82,8 @@ class ToolScope:
     under ``activation_key``. ``permitted`` is refreshed each round
     (AgentToolAccess.offered). ``budget`` is the run's live budget
     (server.agents.extensions): REFUSAL_STREAK_LIMIT refused calls in a row
-    set its "finish" flag, which the runner reads at the next round start."""
+    set its "finish" flag, which the runner reads at the next round start, and
+    the time spent waiting on child agents adds up in its "waited" total."""
 
     permitted: frozenset[str]
     activation_key: str
@@ -89,6 +97,10 @@ class ToolScope:
 
     def ran(self) -> None:
         self.refused_in_a_row = 0
+
+    def waited(self, seconds: float) -> None:
+        if self.budget is not None:
+            self.budget["waited"] = float(self.budget.get("waited") or 0.0) + max(0.0, seconds)
 
 
 def _first_of_each_name(tools: list[dict]) -> list[dict]:

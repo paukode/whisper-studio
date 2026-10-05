@@ -411,8 +411,11 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
         cap = round_cap(_ext, max_rounds, round_num)
         if round_num >= cap:
             break
+        # Granted seconds, plus time spent waiting on child agents ("waited").
         _deadline_now = (
-            deadline + float(_ext.get("seconds") or 0.0) if deadline is not None else None
+            deadline + float(_ext.get("seconds") or 0.0) + float(_ext.get("waited") or 0.0)
+            if deadline is not None
+            else None
         )
         # The final round starts at the soft limit (SOFT_LIMIT_FRACTION of the
         # time budget), so the report is written inside the budget instead of

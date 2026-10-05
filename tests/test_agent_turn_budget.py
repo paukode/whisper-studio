@@ -4,8 +4,9 @@ Two behaviours guarded here:
 
 1. Every agent type runs on the one round limit and time limit in Settings
    (server/infrastructure/run_limits.py, resolved by get_agent_config): no
-   preset carries numbers of its own, the coordinator gets twice the time,
-   and the internal memory agents keep their own small round caps.
+   preset carries numbers of its own, and the internal memory agents keep
+   their own small round caps. Time spent waiting on child agents does not
+   count against the limit (tests/test_agent_child_wait.py).
 
 2. When an agent exhausts its turn budget the loop must still yield a usable
    result: for a schema caller it distills structured output (previously the
@@ -50,15 +51,7 @@ def test_every_spawnable_type_takes_the_settings_limits(monkeypatch):
             continue
         cfg = get_agent_config(name)
         assert cfg.max_turns == 33, name
-        assert cfg.deadline_seconds == 4 * 60 * preset.time_limit_factor, name
-
-
-def test_the_coordinator_gets_twice_the_time_limit(monkeypatch):
-    _settings(monkeypatch, round_limit=33, time_limit_minutes=4)
-    coordinator = get_agent_config("coordinator")
-    general = get_agent_config("general")
-    assert coordinator.deadline_seconds == 2 * general.deadline_seconds
-    assert coordinator.max_turns == general.max_turns
+        assert cfg.deadline_seconds == 4 * 60, name
 
 
 def test_internal_presets_keep_their_rounds_and_take_the_settings_time(monkeypatch):

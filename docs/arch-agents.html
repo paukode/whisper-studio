@@ -215,8 +215,11 @@
       limit of its own: <code>get_agent_config</code> fills both from the one round limit and time
       limit in Settings &gt; Costs &gt; Budget (<code>round_limit</code>, default 120, and
       <code>time_limit_minutes</code>, default 15; <code class="path">server/infrastructure/run_limits.py</code>),
-      the way every model call takes its region from Settings. The coordinator gets twice the time
-      limit (<code>time_limit_factor</code>), since it waits on the agents it starts. The types the
+      the way every model call takes its region from Settings. The time limit covers the agent's own
+      work: a call that waits on agents it started (<code>spawn_agent</code>, <code>team_create</code>,
+      <code>skill_invoke</code>) adds its duration to the run's <code>waited</code> total, the runner
+      moves the deadline by it, and the card's time bar shows only the agent's own time. Each of
+      those agents runs on its own limits, so a coordinator needs no larger one. The types the
       assistant can spawn:</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Type</th><th>Tools</th><th>Purpose</th></tr></thead>

@@ -168,10 +168,11 @@ def test_extend_endpoint_grants_only_to_running_agents():
     try:
         r = client.post("/api/agents/live-1/extend", json={"rounds": 20})
         assert r.status_code == 200
-        assert r.json()["extension"] == {"rounds": 20, "seconds": 0.0}
+        # A grant never touches the time spent waiting on child agents.
+        assert r.json()["extension"] == {"rounds": 20, "seconds": 0.0, "waited": 0.0}
         assert ext["rounds"] == 20
         r = client.post("/api/agents/live-1/extend", json={"seconds": 300})
-        assert r.json()["extension"] == {"rounds": 20, "seconds": 300.0}
+        assert r.json()["extension"] == {"rounds": 20, "seconds": 300.0, "waited": 0.0}
         assert client.post("/api/agents/live-1/extend", json={}).status_code == 400
         assert client.post("/api/agents/gone/extend", json={"rounds": 5}).status_code == 404
     finally:

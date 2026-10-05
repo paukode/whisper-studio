@@ -180,11 +180,10 @@ class AgentConfig:
         max_turns: Model rounds before the run is stopped. None takes the round
             limit from Settings (server/infrastructure/run_limits.py), which is
             what every type does except an internal preset with its own cap.
-        deadline_seconds: Wall-clock budget for the whole run. None takes the
-            time limit from Settings times ``time_limit_factor``; no preset
-            sets it.
-        time_limit_factor: How many Settings time limits the run gets: 2 for
-            the coordinator, which waits on the agents it starts, else 1.
+        deadline_seconds: Time budget for the run's own work. None takes the
+            time limit from Settings; no preset sets it. Time spent waiting on
+            agents it starts does not count (server/agents/tool_access.py
+            WAITS_ON_AGENTS): each of those has its own limits.
         max_tokens: Max tokens per Bedrock response.
         read_only: If True, write tools are excluded from the tool pool.
         allowed_tools: If set, ONLY these tools are available (whitelist).
@@ -216,7 +215,6 @@ class AgentConfig:
     system_prompt: str | None = None
     model: str | None = None
     internal: bool = False
-    time_limit_factor: int = 1
 
 
 AGENT_TYPES: dict[str, AgentConfig] = {
@@ -304,9 +302,6 @@ AGENT_TYPES: dict[str, AgentConfig] = {
     ),
     "coordinator": AgentConfig(
         agent_type="coordinator",
-        # It waits on the agents it starts, each with a whole time limit of
-        # its own, so one limit would end it after about one wave of them.
-        time_limit_factor=2,
         max_tokens=16384,
         allowed_tools=COORDINATOR_TOOLS,
         system_prompt=(
@@ -365,10 +360,11 @@ def with_run_limits(config: AgentConfig) -> AgentConfig:
     """``config`` with the limits it leaves unset taken from Settings.
 
     Every type runs on the one round limit and time limit in Settings > Costs
-    > Budget (server/infrastructure/run_limits.py). An internal preset keeps
-    its own round cap; the coordinator gets twice the time limit
-    (time_limit_factor). An explicit value on a config built in code (a test,
-    a caller's own AgentConfig) is kept.
+    > Budget (server/infrastructure/run_limits.py); an internal preset keeps
+    its own round cap. The time limit covers the run's own work: waiting on
+    agents it starts does not count, so a coordinator needs no larger one. An
+    explicit value on a config built in code (a test, a caller's own
+    AgentConfig) is kept.
     """
     from server.infrastructure import run_limits
 
@@ -376,7 +372,7 @@ def with_run_limits(config: AgentConfig) -> AgentConfig:
     seconds = (
         config.deadline_seconds
         if config.deadline_seconds is not None
-        else run_limits.time_limit_seconds() * config.time_limit_factor
+        else run_limits.time_limit_seconds()
     )
     return replace(config, max_turns=rounds, deadline_seconds=seconds)
 

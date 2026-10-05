@@ -1082,7 +1082,9 @@ async def _run_agent_loop(
         if config.deadline_seconds is not None
         else None
     )
-    _time_up = _deadline_total is not None and elapsed >= SOFT_LIMIT_FRACTION * _deadline_total
+    # Its own time: waiting on agents it started does not count (ToolScope.waited).
+    _own_elapsed = elapsed - float(_ext.get("waited") or 0.0)
+    _time_up = _deadline_total is not None and _own_elapsed >= SOFT_LIMIT_FRACTION * _deadline_total
     # Repeated refused calls ended the run (ToolScope.refused, round_cap).
     _refused_stop = bool(_ext.get("finish"))
     stopped_early = cost_capped or rounds_used >= _cap or _time_up or _refused_stop

@@ -362,6 +362,8 @@ def budget_readout(
     from server.chat.engine.runner import SOFT_LIMIT_FRACTION
 
     ext = extension or {}
+    # The run's own time: waiting on agents it started does not count.
+    elapsed = elapsed - float(ext.get("waited") or 0.0)
     cap = config.max_turns + int(ext.get("rounds") or 0)
     deadline_s = (
         float(config.deadline_seconds) + float(ext.get("seconds") or 0.0)

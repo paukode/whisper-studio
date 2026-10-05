@@ -112,9 +112,10 @@
       </tbody>
     </table></div>
     <p>Every type runs on the same two limits, set once in <b>Settings &gt; Costs &gt; Budget</b>: a
-      round limit (120 by default) and a time limit (15 minutes by default). A coordinator gets twice
-      the time, since it waits on the agents it starts. The round limit is a runaway backstop and the
-      time limit a wall-clock budget; whichever trips first ends the run, and your session cost cap
+      round limit (120 by default) and a time limit (15 minutes by default). The time limit counts an
+      agent's own work: while it waits on agents it started (a coordinator's workers, a team, a
+      skill), the clock stops, because each of those runs on its own limits. The round limit is a
+      runaway backstop and the time limit a budget; whichever trips first ends the run, and your session cost cap
       can end it too. Whichever it is, the agent gets a last round to write a report rather than
       being cut off mid-sentence, and <b>Extend</b> on its card grants more rounds while it runs.</p>
     <p>The read-only guarantee is enforced, not just requested: the runtime strips every write tool
