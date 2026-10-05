@@ -90,7 +90,7 @@ _select_venv_python() {
     echo "Building the venv from a Homebrew Python so vector search can use sqlite-vec (your default python3 is untouched)..."
     local v cand
     for v in 3.13 3.12; do
-        cand="$(brew --prefix)/opt/python@$v/bin/python3.$v"
+        cand="$(brew --prefix)/opt/python@$v/bin/python$v"
         if [ -x "$cand" ]; then VENV_PYTHON="$cand"; break; fi
     done
     if [ -z "$VENV_PYTHON" ]; then
