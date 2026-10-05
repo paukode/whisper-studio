@@ -302,10 +302,9 @@ def bootstrap_home() -> None:
     # NOT seed config.json from the example any more — that copy is exactly what
     # shadowed shipped model/pricing updates after first run.
     try:
-        from server.infrastructure.config import migrate_user_config, retire_user_config_keys
+        from server.infrastructure.config import migrate_user_config
 
         migrate_user_config()
-        retire_user_config_keys()
     except Exception as e:  # never block boot on the config split
         log.warning("Config migration/seed skipped: %s", e)
     # pricing.json is NOT seeded: it holds only the user's own per-key rate

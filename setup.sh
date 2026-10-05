@@ -90,7 +90,7 @@ _select_venv_python() {
     echo "Building the venv from a Homebrew Python so vector search can use sqlite-vec (your default python3 is untouched)..."
     local v cand
     for v in 3.13 3.12; do
-        cand="$(brew --prefix)/opt/python@$v/bin/python3.$v"
+        cand="$(brew --prefix)/opt/python@$v/bin/python$v"
         if [ -x "$cand" ]; then VENV_PYTHON="$cand"; break; fi
     done
     if [ -z "$VENV_PYTHON" ]; then
@@ -577,8 +577,13 @@ LLAMA_MIN_BUILD=10090
 
 llama_server_build() {
     command -v llama-server >/dev/null 2>&1 || return 1
-    # Prints e.g. "version: 10090 (7347430f4)" on stderr.
-    llama-server --version 2>&1 | sed -n 's/^[[:space:]]*version:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' | head -1
+    # The build number, from stderr: "version: 0.5.0 (build 10350, commit
+    # 7fe450e)" since llama.cpp took semantic versions, "version: 10090
+    # (7347430f4)" before. A semantic version's major is never the build
+    # (server/local/llama_server.py::installed_build reads it the same way).
+    llama-server --version 2>&1 | sed -n \
+        -e 's/.*(build[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' \
+        -e 's/^[[:space:]]*version:[[:space:]]*\([0-9]\{1,\}\)[[:space:]]*(.*/\1/p' | head -1
 }
 
 LLAMA_BUILD="$(llama_server_build || true)"
