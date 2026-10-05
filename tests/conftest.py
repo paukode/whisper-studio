@@ -71,6 +71,26 @@ def _isolate_user_root(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_user_config(tmp_path_factory, monkeypatch):
+    """Give every test its own config user layer.
+
+    config.USER_CONFIG_PATH and CONFIG_PATH are computed at import, during
+    collection, before _isolate_user_root pins WHISPER_USER_DIR, so in a dev
+    checkout they name the developer's live config.user.json and config.json
+    at the repo root. A test that saves the user layer (a Settings write, the
+    retired-key sweep, a model install) would rewrite that file. A test that
+    patches the same names itself still wins."""
+    import server.infrastructure.config as config
+
+    user = tmp_path_factory.mktemp("user-config")
+    monkeypatch.setattr(config, "USER_CONFIG_PATH", str(user / "config.user.json"))
+    monkeypatch.setattr(config, "CONFIG_PATH", str(user / "config.json"))
+    config._invalidate_cache()
+    yield
+    config._invalidate_cache()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_app_databases(tmp_path_factory, monkeypatch, _db_template):
     """Give every test its own sessions.db.
 
