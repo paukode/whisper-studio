@@ -327,6 +327,20 @@ def _seed_bundled_models() -> None:
             shutil.rmtree(dst, ignore_errors=True)  # never leave a half copy
 
 
+def _retire_config_keys() -> None:
+    """Drop the config keys the app no longer reads (RETIRED_USER_KEYS) from
+    the user layer, at startup in a packaged install and a source checkout
+    alike. Not at import: bootstrap_home() runs only for a packaged install,
+    and an import-time write would reach a checkout's live config whenever a
+    test collects this module."""
+    try:
+        from server.infrastructure.config import retire_user_config_keys
+
+        retire_user_config_keys()
+    except Exception as e:  # never block boot on a config tidy-up
+        log.warning("Retiring old config keys skipped: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app):
     # Installed here (not at import) so it survives uvicorn's own logging
@@ -358,6 +372,7 @@ async def lifespan(app):
         disable_tools_on_small_models()
     except Exception as e:
         logging.getLogger("whisper-studio").warning("Small-model tool sweep skipped: %s", e)
+    _retire_config_keys()
     init_skills()
     init_plugins(app)
     init_memory()
