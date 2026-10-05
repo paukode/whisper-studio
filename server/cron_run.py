@@ -33,9 +33,9 @@ What changed from the old hand-rolled ``boto3.invoke_model`` loop:
     (llama_server.ensure_serving) + capability probing is a separate piece
     of work this migration doesn't do.
   - The old per-tool 180-second watchdog is gone (chat/agents never had one
-    either — the shared tool-execution path has no per-call deadline). No
-    whole-run wall-clock deadline exists today to wire into
-    TurnPolicy.deadline_seconds, so it stays None, matching CHAT_POLICY.
+    either — the shared tool-execution path has no per-call deadline). The
+    whole run, verify continuations included, gets the round limit and the
+    time limit from Settings (server/infrastructure/run_limits.py).
   - Cost recording per round and the near-cap wind-down reminder are now
     handled generically by run_turn itself; the old manual duplicates of
     both are gone.
@@ -44,7 +44,7 @@ What did NOT change: ``_assemble_cron_tools`` (still drops
 ``ask_user_question`` — an unattended run can never answer it),
 ``_merge_notifications``, the per-job model override rule (still
 Anthropic-only; broadening that is a separate decision, not part of this
-migration), ``cron_max_rounds`` config/default, the WS-E verify-and-continue
+migration), the WS-E verify-and-continue
 call shape (server.goals.cron_verify.verify, same MAX_CONTINUATIONS=2
 semantics, judged on every natural finish including the last allowed round),
 and how results land in cron_runs / the cron-inbox session / the
@@ -55,16 +55,13 @@ import asyncio
 import functools
 import json
 import logging
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace as _dc_replace
 from datetime import datetime, timezone
 
 log = logging.getLogger("whisper-studio")
-
-# Default tool-round cap for an unattended run; overridable via the
-# `cron_max_rounds` config key (was a bare magic 15 before).
-CRON_MAX_ROUNDS_DEFAULT = 30
 
 # The feature name every Local-mode refusal of a scheduled run shows the user.
 SCHEDULED_RUNS = "Scheduled runs"
@@ -223,11 +220,19 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 "wiring (see run_headless_turn's identical restriction)"
             )
 
-        max_rounds = CRON_MAX_ROUNDS_DEFAULT
-        try:
-            max_rounds = max(1, min(int(config.get("cron_max_rounds", max_rounds)), 200))
-        except (TypeError, ValueError):
-            pass
+        # The round limit and time limit from Settings cover the whole run:
+        # each verify continuation gets what is left of them, not a fresh set.
+        from server.chat.engine.runner import SOFT_LIMIT_FRACTION
+        from server.infrastructure.run_limits import round_limit, time_limit_seconds
+
+        max_rounds = round_limit()
+        time_limit = time_limit_seconds()
+        run_started = time.monotonic()
+
+        def _time_up() -> bool:
+            # The engine forces the last round at the soft limit; past it a
+            # continuation would get a sliver of time and end at once.
+            return time.monotonic() - run_started >= SOFT_LIMIT_FRACTION * time_limit
 
         # The turn's only user message, built here (rather than down by
         # ctx = TurnContext(...)) so it's already in scope for
@@ -356,9 +361,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
             adapter=adapter,
             policy=TurnPolicy(
                 max_rounds=max_rounds,
-                # No whole-run wall-clock deadline concept exists today (only
-                # the round cap did) — leave None, matching CHAT_POLICY.
-                deadline_seconds=None,
+                deadline_seconds=time_limit,
                 # Cron keeps its OWN verify-and-continue below, called as an
                 # explicit step after each run_turn call — never the engine's
                 # automatic completion_gate (Stop hooks + goal evaluator).
@@ -412,14 +415,15 @@ async def _execute_cron_prompt(job_id: str) -> None:
 
         while True:
             remaining = max_rounds - turn_no
-            if remaining <= 0:
+            if remaining <= 0 or _time_up():
                 break
-            if ctx.policy.max_rounds != remaining:
-                # Each continuation gets what's LEFT of the original budget,
-                # not a fresh one — the total round budget across every
-                # verify-driven continuation stays cron_max_rounds, exactly
-                # like the old single hand-rolled loop.
-                ctx.policy = _dc_replace(ctx.policy, max_rounds=remaining)
+            # Each continuation gets what is LEFT of the run's rounds and time,
+            # not a fresh budget.
+            ctx.policy = _dc_replace(
+                ctx.policy,
+                max_rounds=remaining,
+                deadline_seconds=time_limit - (time.monotonic() - run_started),
+            )
 
             final_reply = ""
             async for chunk in run_turn(ctx):
@@ -521,6 +525,7 @@ async def _execute_cron_prompt(job_id: str) -> None:
                 or verdict.is_not_checked
                 or verify_continuations >= MAX_CONTINUATIONS
                 or turn_no >= max_rounds
+                or _time_up()
             ):
                 break
             verify_continuations += 1

@@ -8,7 +8,10 @@ reads the extension dict at every round start (TurnContext.budget_extension),
 so a grant applies to the very next round. The same dict can also end a run
 early: a true "finish" makes the next round the last one, tools off, so the
 agent answers with what it has (set by ToolScope.refused after repeated
-refused calls, server/agents/tool_access.py).
+refused calls, server/agents/tool_access.py). "waited" is the time the run
+spent waiting on agents it started (ToolScope.waited): each of those runs on
+its own limits, so the runner moves the deadline by it and the card's time
+bar shows only the run's own time.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ _live: dict[str, dict] = {}
 
 
 def new_extension() -> dict:
-    return {"rounds": 0, "seconds": 0.0}
+    return {"rounds": 0, "seconds": 0.0, "waited": 0.0}
 
 
 def register(agent_id: str, extension: dict) -> None:

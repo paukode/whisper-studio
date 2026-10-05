@@ -12,6 +12,8 @@ const CONFIG = {
   max_session_cost_usd: 3.5,
   max_daily_cost_usd: 12,
   model_fallback_enabled: true,
+  round_limit: 90,
+  time_limit_minutes: 20,
 };
 
 // Today's UTC day in these tests, and the report the daily-cap hint reads.
@@ -65,6 +67,43 @@ describe('CostsPanel: budget save wiring', () => {
     await waitFor(() => expect(session().value).toBe('3.5'));
     expect(daily().value).toBe('12');
     expect(fallback().checked).toBe(true);
+    expect(container.querySelector<HTMLInputElement>('#budgetRoundLimit')!.value).toBe('90');
+    expect(container.querySelector<HTMLInputElement>('#budgetTimeLimit')!.value).toBe('20');
+  });
+
+  it('saves the round and time limits with the caps', async () => {
+    const { put } = await import('@/api/client');
+    const { container } = renderPanel();
+    const rounds = () => container.querySelector<HTMLInputElement>('#budgetRoundLimit')!;
+    const minutes = () => container.querySelector<HTMLInputElement>('#budgetTimeLimit')!;
+    await waitFor(() => expect(rounds().value).toBe('90'));
+
+    fireEvent.change(rounds(), { target: { value: '150' } });
+    fireEvent.change(minutes(), { target: { value: '30' } });
+    fireEvent.click(screen.getByRole('button', { name: /save budget/i }));
+
+    await waitFor(() => expect(put).toHaveBeenCalledWith('/api/config', expect.anything()));
+    const body = (put as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => c[0] === '/api/config',
+    )![1] as Record<string, unknown>;
+    expect(body).toMatchObject({ round_limit: 150, time_limit_minutes: 30 });
+  });
+
+  it.each(['', '0', '2.5'])('refuses to save a round limit of %j', async (value) => {
+    const { put } = await import('@/api/client');
+    const { container } = renderPanel();
+    const rounds = () => container.querySelector<HTMLInputElement>('#budgetRoundLimit')!;
+    await waitFor(() => expect(rounds().value).toBe('90'));
+
+    fireEvent.change(rounds(), { target: { value } });
+    fireEvent.click(screen.getByRole('button', { name: /save budget/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Round and time limits must be whole numbers, 1 or more'),
+      ).toBeTruthy(),
+    );
+    expect(put).not.toHaveBeenCalled();
   });
 
   it('PUTs the real backend config keys (not the old names) on save', async () => {

@@ -109,8 +109,7 @@ async def _run_detached(
         # No human is present to approve writes and agents auto-approve the
         # [WS_APPROVAL] gate, so detached runs get the read-only tool filter.
         # Resolve through get_agent_config (NOT the raw AGENT_TYPES table) so
-        # config.json agent_limits overrides apply to detached runs too —
-        # run_agent only applies them itself when config is None.
+        # a custom or ephemeral type resolves here exactly as run_agent would.
         import dataclasses
 
         from server.agents.config import get_agent_config

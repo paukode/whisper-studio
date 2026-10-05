@@ -111,10 +111,10 @@
         rejected at create time and an unavailable one logs a warning and falls back.
         The system prompt tells the model it is running an unattended scheduled task with no user to
         prompt and should act autonomously, and passes the
-        global prompt rules through <code>append_rules()</code>. Tool rounds are capped by the
-        <code>cron_max_rounds</code> config key (default <code>CRON_MAX_ROUNDS_DEFAULT</code>, 30,
-        clamped 1..200), and <code>ask_user_question</code> is dropped from the tool list - an
-        unattended run could never answer it.</p></li>
+        global prompt rules through <code>append_rules()</code>. The run takes the round limit and
+        the time limit from Settings &gt; Costs &gt; Budget, shared by every verify continuation
+        below (each gets what is left, never a fresh budget), and <code>ask_user_question</code> is
+        dropped from the tool list - an unattended run could never answer it.</p></li>
       <li><h4>Verifies the finish</h4><p>Every natural finish is judged by the completion verifier
         (<code>server/goals/cron_verify.py</code>), which reads the transcript with the run's final reply
         appended: if the job's goal looks unmet, the run is continued with that reply and the feedback,

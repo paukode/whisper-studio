@@ -98,9 +98,10 @@
         system prompt. Its <code>tool_search</code> finds only tools it may run and loads them into the
         agent's own set, so they are offered from its next round and the parent chat's tools do not
         change.</p></li>
-      <li><h4>Runs the loop</h4><p>Up to <code>config.max_turns</code> rounds, bounded also by the
-        type's <code>deadline_seconds</code> wall-clock budget (the primary "don't loop forever"
-        brake) and by the session cost cap. The mailbox is drained once at run start into the initial
+      <li><h4>Runs the loop</h4><p>Up to the round limit from Settings
+        (<code>config.max_turns</code> once resolved), bounded also by the time limit from Settings
+        (<code>deadline_seconds</code>, the primary "don't loop forever" brake) and by the session cost
+        cap. The mailbox is drained once at run start into the initial
         user message; each round invokes the model, executes any <code>tool_use</code> blocks,
         checkpoints the message list into the journal, and emits progress events. It ends on any stop
         reason other than <code>tool_use</code>, at the round cap, at the deadline, or at the cost cap -
@@ -136,8 +137,9 @@
         combined spend of agents 1 through N has already cleared the cap. Without it each sibling found
         out only after starting, having already paid for its system prompt and tool catalog.</li>
     </ul>
-    <p>Per-type turn and time budgets are user-overridable through <code>agent_limits</code> in
-      <code class="path">config.json</code>, per type or under a <code>"default"</code> key.</p>
+    <p>Every agent runs on the one round limit and time limit in Settings &gt; Costs &gt; Budget
+      (<code>round_limit</code>, <code>time_limit_minutes</code>); see <a href="#agent-types">Agent
+      types</a>.</p>
 
     <div class="callout">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
@@ -208,28 +210,35 @@
 
     <h2 id="agent-types">Agent types</h2>
     <p>Every type is a frozen <code>AgentConfig</code> in <code class="path">server/agents/config.py</code>.
-      A config sets the turn limit, a wall-clock deadline, the token budget per response, and how the
-      shared tool pool is filtered (a whitelist and a read-only flag that strips the write tools).
-      Every type carries a <code>deadline_seconds</code> budget - the code documents it as the
-      primary "don't loop forever" brake - and both limits are user-overridable per type via
-      <code>agent_limits</code> in <code>config.json</code>. The types the assistant can spawn:</p>
+      A config sets the token budget per response and how the shared tool pool is filtered (a
+      whitelist and a read-only flag that strips the write tools). No type carries a round or time
+      limit of its own: <code>get_agent_config</code> fills both from the one round limit and time
+      limit in Settings &gt; Costs &gt; Budget (<code>round_limit</code>, default 120, and
+      <code>time_limit_minutes</code>, default 15; <code class="path">server/infrastructure/run_limits.py</code>),
+      the way every model call takes its region from Settings. The time limit covers the agent's own
+      work: a call that waits on agents it started (<code>spawn_agent</code>, <code>team_create</code>,
+      <code>skill_invoke</code>) adds its duration to the run's <code>waited</code> total, the runner
+      moves the deadline by it, and the card's time bar shows only the agent's own time. Each of
+      those agents runs on its own limits, so a coordinator needs no larger one. The types the
+      assistant can spawn:</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Type</th><th>Tools</th><th>Max turns</th><th>Deadline</th><th>Purpose</th></tr></thead>
+      <thead><tr><th>Type</th><th>Tools</th><th>Purpose</th></tr></thead>
       <tbody>
-        <tr><td><code>general</code></td><td>Full pool</td><td>120</td><td>900s</td><td>The default worker. Reads, writes, runs, and can itself spawn children.</td></tr>
-        <tr><td><code>explore</code></td><td>Read-only</td><td>30</td><td>600s</td><td>Fast search-and-read to answer questions. Write tools are removed.</td></tr>
-        <tr><td><code>plan</code></td><td>Read-only</td><td>40</td><td>600s</td><td>Analyzes the codebase and returns a structured, step-by-step implementation plan.</td></tr>
-        <tr><td><code>verify</code></td><td>Full pool</td><td>30</td><td>600s</td><td>Runs tests and validates behavior, ending with a <code>VERDICT: PASS / FAIL / PARTIAL</code> line.</td></tr>
-        <tr><td><code>coordinator</code></td><td>Orchestration only</td><td>100</td><td>1800s</td><td>Spawns and messages other agents; has <b>no file access</b> at all.</td></tr>
+        <tr><td><code>general</code></td><td>Full pool</td><td>The default worker. Reads, writes, runs, and can itself spawn children.</td></tr>
+        <tr><td><code>explore</code></td><td>Read-only</td><td>Fast search-and-read to answer questions. Write tools are removed.</td></tr>
+        <tr><td><code>plan</code></td><td>Read-only</td><td>Analyzes the codebase and returns a structured, step-by-step implementation plan.</td></tr>
+        <tr><td><code>verify</code></td><td>Full pool</td><td>Runs tests and validates behavior, ending with a <code>VERDICT: PASS / FAIL / PARTIAL</code> line.</td></tr>
+        <tr><td><code>coordinator</code></td><td>Orchestration only</td><td>Spawns and messages other agents; has <b>no file access</b> at all.</td></tr>
       </tbody>
     </table></div>
     <p>The coordinator's whitelist is exactly <code>spawn_agent</code>, <code>send_message</code>,
       <code>list_agents</code>, and <code>complete_coordination</code>. It cannot touch files by design.
       Three further types back the memory subsystem - <code>memory_extractor</code>,
       <code>memory_consolidator</code>, and <code>session_summarizer</code> - and are not ones
-      you spawn directly. They are marked <code>internal</code>, so the <code>"default"</code>
-      block of <code>agent_limits</code> never raises their small round caps; only an entry under
-      their own name retunes one. See <a href="arch-memory.html">Memory system</a>.</p>
+      you spawn directly. They are marked <code>internal</code>: each keeps its own small round cap
+      (5, 8 and 5 rounds) instead of the Settings round limit, since a background job that finishes
+      in a few rounds must not get the budget of the agents you spawn, and each takes the Settings
+      time limit. See <a href="arch-memory.html">Memory system</a>.</p>
     <p>Each user-facing type shares a common working method appended to its system prompt: restate the
       task, list steps, gather evidence per claim, then run a short self-check before the final answer.
       That self-check is emitted as a <code>text</code> event, so it shows up in the live log.</p>
@@ -275,8 +284,9 @@
         <code>.whisper/agents/</code> in a source install) - with project winning name collisions,
         and they resolve before the built-in <code>AGENT_TYPES</code>, so a custom type can shadow a
         built-in name. The frontmatter keys that are read are <code>name</code>, <code>tools</code>,
-        <code>read_only</code>, <code>model</code> and <code>max_turns</code>; the markdown body is the
-        system prompt.</li>
+        <code>read_only</code> and <code>model</code>; the markdown body is the system prompt. The
+        round and time limits come from Settings, so a <code>max_turns</code> line in an older file
+        sets nothing.</li>
       <li><b>Ephemeral types</b> are built in-memory at spawn time from an inline
         <code>agent_definition</code> object passed to <code>spawn_agent</code> instead of a
         registered type name; they are never written to disk.</li>
@@ -428,7 +438,7 @@
       <dt><code class="path">server/agents/runtime.py</code></dt><dd><code>run_agent</code>: policy setup, model resolution, the <code>run_turn</code> drain loop, and progress events.</dd>
       <dt><code class="path">server/agents/runtime_support.py</code></dt><dd>Worktree entry and harvest, the structured-output distillation, model resolution, and <code>budget_readout</code>.</dd>
       <dt><code class="path">server/agents/journal.py</code></dt><dd>The on-disk record of every run, its report template, and the relay note. See <a href="arch-agent-recorder.html">Agent flight recorder</a>.</dd>
-      <dt><code class="path">server/agents/config.py</code></dt><dd>Agent type presets (turn limits + deadlines), the write-tool set, and <code>filter_tools_for_agent</code>.</dd>
+      <dt><code class="path">server/agents/config.py</code></dt><dd>Agent type presets, <code>with_run_limits</code> (each run's limits from Settings), the write-tool set, and <code>filter_tools_for_agent</code>.</dd>
       <dt><code class="path">server/agents/custom_config.py</code></dt><dd>Custom <code>.whisper/agents/*.md</code> types and ephemeral <code>agent_definition</code> configs.</dd>
       <dt><code class="path">server/agents/messaging.py</code></dt><dd>The inter-agent mailbox (<code>MessageBus</code>).</dd>
       <dt><code class="path">server/agents/event_bus.py</code></dt><dd>The per-session, thread-safe progress queue (<code>AgentEventBus</code>).</dd>

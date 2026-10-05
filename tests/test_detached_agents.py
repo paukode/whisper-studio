@@ -102,17 +102,16 @@ def test_terminal_paragraph_truncation():
     assert completion_inject._terminal_paragraph("") == "(no output)"
 
 
-def test_run_detached_honors_agent_limits(monkeypatch, tmp_path):
-    """The read-only detached path must resolve its config through
-    get_agent_config so config.json agent_limits overrides apply — building it
-    from the raw AGENT_TYPES table silently ignored the knob."""
+def test_run_detached_takes_the_settings_limits(monkeypatch, tmp_path):
+    """A detached run resolves its config through get_agent_config, so it
+    runs on the round and time limits in Settings like every other agent."""
     from types import SimpleNamespace
 
     from server.tasks import agents as tagents
 
     monkeypatch.setattr(
         "server.infrastructure.config.load_config",
-        lambda: {"agent_limits": {"general": {"max_turns": 7, "deadline_seconds": 42}}},
+        lambda: {"round_limit": 7, "time_limit_minutes": 2},
     )
     captured = {}
 
@@ -129,7 +128,7 @@ def test_run_detached_honors_agent_limits(monkeypatch, tmp_path):
     cfg = captured["config"]
     assert cfg.read_only is True
     assert cfg.max_turns == 7
-    assert cfg.deadline_seconds == 42
+    assert cfg.deadline_seconds == 2 * 60
 
 
 def test_run_detached_drains_final_events_into_output_file(monkeypatch, tmp_path):

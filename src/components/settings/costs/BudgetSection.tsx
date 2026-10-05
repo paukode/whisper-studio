@@ -7,6 +7,14 @@ interface BudgetConfig {
   max_session_cost_usd?: number;
   max_daily_cost_usd?: number;
   model_fallback_enabled?: boolean;
+  round_limit?: number;
+  time_limit_minutes?: number;
+}
+
+/** A whole number of 1 or more, or null for anything else (blank, 0, 2.5). */
+function positiveWhole(text: string): number | null {
+  const value = Number(text);
+  return Number.isInteger(value) && value >= 1 ? value : null;
 }
 
 /** Spend so far on today's UTC day, or why it is unknown. */
@@ -23,14 +31,18 @@ interface BudgetSectionProps {
 }
 
 /**
- * The spend caps. The daily cap counts the UTC day (the same day Cost
- * Explorer uses) and resets on its own at 00:00 UTC, so there is no reset
- * control: the cost rows are the history, and nothing here deletes them.
+ * The spend caps, and the round and time limits every run takes (the one
+ * budget the backend reads everywhere, like the region:
+ * server/infrastructure/run_limits.py). The daily cap counts the UTC day (the
+ * same day Cost Explorer uses) and resets on its own at 00:00 UTC, so there is
+ * no reset control: the cost rows are the history, and nothing here deletes them.
  */
 export const BudgetSection: React.FC<BudgetSectionProps> = ({ today }) => {
   const [maxSessionCost, setMaxSessionCost] = useState('');
   const [maxDailyCost, setMaxDailyCost] = useState('');
   const [modelFallback, setModelFallback] = useState(false);
+  const [roundLimit, setRoundLimit] = useState('');
+  const [timeLimit, setTimeLimit] = useState('');
   const [budgetHint, setBudgetHint] = useState('');
 
   // Seed the fields from the live config so an existing cap is visible and a
@@ -55,10 +67,21 @@ export const BudgetSection: React.FC<BudgetSectionProps> = ({ today }) => {
     setMaxSessionCost(typeof session === 'number' && session > 0 ? String(session) : '');
     setMaxDailyCost(typeof daily === 'number' && daily > 0 ? String(daily) : '');
     setModelFallback(!!cfg.model_fallback_enabled);
+    // Always set (the backend DEFAULTS supply 120 and 15).
+    setRoundLimit(typeof cfg.round_limit === 'number' ? String(cfg.round_limit) : '');
+    setTimeLimit(typeof cfg.time_limit_minutes === 'number' ? String(cfg.time_limit_minutes) : '');
   }
 
   const handleSaveBudget = useCallback(async () => {
     setBudgetHint('');
+    // Every run reads these two, so a blank or a fraction is refused here
+    // rather than saved as a limit that means nothing.
+    const rounds = positiveWhole(roundLimit);
+    const minutes = positiveWhole(timeLimit);
+    if (rounds === null || minutes === null) {
+      setBudgetHint('Round and time limits must be whole numbers, 1 or more');
+      return;
+    }
     try {
       // Always send both cost keys, even when blank: update_config only
       // overwrites keys present in the body, so omitting a cleared field left
@@ -67,6 +90,8 @@ export const BudgetSection: React.FC<BudgetSectionProps> = ({ today }) => {
         max_session_cost_usd: maxSessionCost ? parseFloat(maxSessionCost) : 0,
         max_daily_cost_usd: maxDailyCost ? parseFloat(maxDailyCost) : 0,
         model_fallback_enabled: modelFallback,
+        round_limit: rounds,
+        time_limit_minutes: minutes,
       };
       await put('/api/config', body);
       setBudgetHint('Saved!');
@@ -74,7 +99,7 @@ export const BudgetSection: React.FC<BudgetSectionProps> = ({ today }) => {
     } catch {
       setBudgetHint('Save failed');
     }
-  }, [maxSessionCost, maxDailyCost, modelFallback]);
+  }, [maxSessionCost, maxDailyCost, modelFallback, roundLimit, timeLimit]);
 
   const todayText =
     today.error !== null
@@ -131,6 +156,42 @@ export const BudgetSection: React.FC<BudgetSectionProps> = ({ today }) => {
           </div>
         </div>
       </div>
+      <div className="usage-budget-fields usage-budget-limits">
+        <div className="usage-budget-field">
+          <label htmlFor="budgetRoundLimit">Round limit</label>
+          <input
+            type="number"
+            step="1"
+            min="1"
+            className="settings-input"
+            id="budgetRoundLimit"
+            placeholder="120"
+            value={roundLimit}
+            onChange={(e) => setRoundLimit(e.target.value)}
+          />
+          <div className="settings-hint usage-budget-note" id="budgetRoundLimitHint">
+            The most model rounds any run takes: chat, voice, agents, scheduled runs. The memory
+            jobs keep their own small caps.
+          </div>
+        </div>
+        <div className="usage-budget-field">
+          <label htmlFor="budgetTimeLimit">Time limit (minutes)</label>
+          <input
+            type="number"
+            step="1"
+            min="1"
+            className="settings-input"
+            id="budgetTimeLimit"
+            placeholder="15"
+            value={timeLimit}
+            onChange={(e) => setTimeLimit(e.target.value)}
+          />
+          <div className="settings-hint usage-budget-note" id="budgetTimeLimitHint">
+            For runs nobody is watching: agents, scheduled and background runs. Time an agent waits
+            on agents it started does not count. Chat and voice have no time limit.
+          </div>
+        </div>
+      </div>
       <label className="usage-check">
         <input
           type="checkbox"
@@ -141,7 +202,12 @@ export const BudgetSection: React.FC<BudgetSectionProps> = ({ today }) => {
         Enable model fallback (downgrade model when approaching budget)
       </label>
       <div className="usage-budget-actions">
-        <button className="btn btn-primary btn-sm" id="budgetSaveBtn" type="button" onClick={() => void handleSaveBudget()}>
+        <button
+          className="btn btn-primary btn-sm"
+          id="budgetSaveBtn"
+          type="button"
+          onClick={() => void handleSaveBudget()}
+        >
           Save Budget
         </button>
         <span className="settings-hint" id="budgetSaveHint">

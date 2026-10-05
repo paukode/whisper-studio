@@ -418,7 +418,6 @@ SPAWN_AGENT_TOOL = {
                             "the top-level model parameter is absent."
                         ),
                     },
-                    "max_turns": {"type": "integer"},
                 },
                 "required": ["name", "description"],
             },

@@ -163,20 +163,8 @@
   "max_session_cost_usd": 0.0,
   "max_daily_cost_usd": 0.0,
   "model_fallback_enabled": false,
-  "agent_limits": {
-    "default": {
-      "max_turns": 120,
-      "deadline_seconds": 900
-    },
-    "general": {
-      "max_turns": 120,
-      "deadline_seconds": 900
-    },
-    "coordinator": {
-      "max_turns": 100,
-      "deadline_seconds": 1800
-    }
-  },
+  "round_limit": 120,
+  "time_limit_minutes": 15,
   "map_reduce_summary": {
     "enabled": true,
     "threshold_chars": 600000,

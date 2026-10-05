@@ -108,6 +108,7 @@ equivalent of).
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
@@ -120,10 +121,6 @@ log = logging.getLogger("whisper-studio")
 # headless run's blocking provider calls never head-of-line-block the chat
 # route's or the agent runtime's own executors.
 _HEADLESS_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="headless-exec")
-
-# Matches CHAT_POLICY's own default (server/chat/engine/policy.py) — a
-# reasonable ceiling when the caller doesn't specify one.
-DEFAULT_MAX_ROUNDS = 50
 
 
 def _utc_now_iso() -> str:
@@ -217,8 +214,10 @@ async def run_headless_turn(
             Note this is a real sessions.db key when ephemeral=False, so a
             caller-supplied id must not collide with a live chat session it
             doesn't intend to append into.
-        max_rounds: Caps model rounds this turn gets. None uses
-            DEFAULT_MAX_ROUNDS.
+        max_rounds: Caps model rounds this turn gets. None takes the round
+            limit from Settings (server/infrastructure/run_limits.py). An
+            unattended run also gets the Settings time limit; an attended one
+            (voice) has none, as in chat.
         attended: A human IS present (voice mode) but not at a chat UI.
             Approval-gated tools follow the user's configured permission mode
             exactly as interactive chat does (auto mode classifier included);
@@ -450,7 +449,11 @@ async def run_headless_turn(
 
         from server.chat.engine.policy import TurnPolicy
         from server.chat.engine.runner import TurnContext, run_turn
+        from server.infrastructure.run_limits import round_limit, time_limit_seconds
 
+        rounds = max_rounds or round_limit()
+        deadline = None if attended else time_limit_seconds()
+        run_started = time.monotonic()
         ctx = TurnContext(
             session_id=session_id,
             event_channel=event_channel,
@@ -459,7 +462,8 @@ async def run_headless_turn(
             messages=messages,
             adapter=adapter,
             policy=TurnPolicy(
-                max_rounds=max_rounds or DEFAULT_MAX_ROUNDS,
+                max_rounds=rounds,
+                deadline_seconds=deadline,
                 completion_gate=False,
                 salvage_round=True,
             ),
@@ -598,8 +602,15 @@ async def run_headless_turn(
             if flushed:
                 yield {"type": "text", "text": flushed}
 
-        _effective_max_rounds = max_rounds or DEFAULT_MAX_ROUNDS
-        stopped_early = rounds_used >= _effective_max_rounds
+        from server.chat.engine.runner import SOFT_LIMIT_FRACTION
+
+        # Ended by a limit, not by the model: the round limit, or the soft time
+        # limit at which the engine forced the last round.
+        time_up = (
+            deadline is not None
+            and time.monotonic() - run_started >= SOFT_LIMIT_FRACTION * deadline
+        )
+        stopped_early = rounds_used >= rounds or time_up
         collected_text = "\n\n".join(all_text_parts)
 
         if attended and turn_scope_id in paused_sessions:

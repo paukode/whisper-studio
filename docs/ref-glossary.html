@@ -136,7 +136,7 @@
           <td>One request/response cycle: your message plus everything the assistant does to answer it
             (streamed text, thinking, tool calls, approvals) up to <code>[DONE]</code>. A single turn is
             one <code>POST /api/chat</code> that streams back over SSE and may run an agentic tool loop
-            of up to 50 rounds. See <a href="arch-chat-turn.html">Anatomy of a chat turn</a>.</td>
+            of up to the round limit in Settings (120 by default). See <a href="arch-chat-turn.html">Anatomy of a chat turn</a>.</td>
         </tr>
         <tr>
           <td><code>cron_event</code></td>

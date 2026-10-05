@@ -100,11 +100,11 @@ def test_a_gpt_model_with_no_cache_write_price_bills_a_write_as_input():
 def test_the_agent_budget_bar_shows_the_engines_cost():
     # The engine prices every round at its own tier (call_cost); the card's
     # budget bar shows that running total and never prices summed counts.
-    from server.agents.config import AgentConfig
+    from server.agents.config import AgentConfig, with_run_limits
     from server.agents.runtime_support import budget_readout
 
     readout = budget_readout(
-        AgentConfig(),
+        with_run_limits(AgentConfig()),
         None,
         next_turn=1,
         elapsed=0.0,

@@ -336,7 +336,10 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
     # store, the loop-hints context tracker) keys on this instead of the bare
     # session_id whenever the caller set one — see TurnContext.turn_scope_id.
     _scope_id = ctx.turn_scope_id or session_id
-    max_rounds = ctx.policy.max_rounds
+    from server.infrastructure.run_limits import round_limit
+
+    # None: the round limit from Settings, read once for the whole turn.
+    max_rounds = ctx.policy.max_rounds or round_limit()
     deadline = (
         (time.monotonic() + ctx.policy.deadline_seconds) if ctx.policy.deadline_seconds else None
     )
@@ -408,8 +411,11 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
         cap = round_cap(_ext, max_rounds, round_num)
         if round_num >= cap:
             break
+        # Granted seconds, plus time spent waiting on child agents ("waited").
         _deadline_now = (
-            deadline + float(_ext.get("seconds") or 0.0) if deadline is not None else None
+            deadline + float(_ext.get("seconds") or 0.0) + float(_ext.get("waited") or 0.0)
+            if deadline is not None
+            else None
         )
         # The final round starts at the soft limit (SOFT_LIMIT_FRACTION of the
         # time budget), so the report is written inside the budget instead of

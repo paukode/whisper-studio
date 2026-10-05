@@ -133,10 +133,12 @@
     <p>See <a href="arch-backends.html">Model backends &amp; modes</a> for the full picture.</p>
 
     <h2 id="the-streaming-loop">The streaming loop</h2>
-    <p>The engine enters a loop of up to <b>50 rounds</b> (the CHAT policy; the same loop serves
-      every provider, and other consumers bring their own <code>TurnPolicy</code>). A policy can also
-      carry a <code>deadline_seconds</code> wall-clock brake - agents set per-type deadlines (for
-      example 900s for <code>general</code>) - and at the deadline the engine forces one final
+    <p>The engine enters a loop of up to the <b>round limit</b> in Settings &gt; Costs &gt; Budget
+      (120 by default; the CHAT policy leaves <code>max_rounds</code> unset, so the turn reads the
+      setting when it starts, and the same loop serves every provider). A policy can also carry a
+      <code>deadline_seconds</code> wall-clock brake: runs nobody is watching (agents, scheduled and
+      unattended headless runs) take the time limit from the same Settings section, while chat and
+      voice have none, since you are there to press Stop. At the deadline the engine forces one final
       no-tools best-effort round instead of truncating. The cap and the deadline are re-read at
       the top of every round, so an <b>Extend</b> granted to a running agent
       (<code class="path">server/agents/extensions.py</code>) applies from the next round on. Each

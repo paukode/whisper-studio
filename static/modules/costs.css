@@ -251,6 +251,9 @@
 }
 .usage-budget-field { min-width: 0; }
 .usage-panel .usage-budget-today { margin: 6px 0 0; }
+/* The run limits sit in their own row under the caps. */
+.usage-budget-limits { margin-top: 14px; }
+.usage-panel .usage-budget-note { margin: 6px 0 0; }
 .usage-panel .usage-check {
     display: flex; align-items: center; gap: 8px; margin: 14px 0 0; cursor: pointer;
     font-size: var(--fs-small); font-weight: 400; color: var(--text-secondary);

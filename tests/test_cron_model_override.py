@@ -1,11 +1,10 @@
-"""Per-job model override validation and the configurable round cap."""
+"""Per-job model override validation."""
 
 import json
 
 import pytest
 
 import server.cron_scheduler as cs
-from server.cron_run import CRON_MAX_ROUNDS_DEFAULT
 
 
 @pytest.fixture(autouse=True)
@@ -80,7 +79,3 @@ def test_cron_create_tool_rejects_bad_model(fake_models):
     )
     assert "error" in out
     assert "Anthropic" in out["error"]
-
-
-def test_round_cap_default_named_constant():
-    assert CRON_MAX_ROUNDS_DEFAULT == 30

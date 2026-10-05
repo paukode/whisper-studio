@@ -97,26 +97,27 @@
     </div>
 
     <h2 id="agent-types">Agent types</h2>
-    <p>Every agent has a <b>type</b> that shapes its tools, its turn budget, and its instructions.
+    <p>Every agent has a <b>type</b> that shapes its tools and its instructions.
       The assistant picks a type when it spawns an agent (or you can name one in a team brief). The
       read-only types can search and read but never write or run commands, which makes them fast and
       safe to parallelize.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Type</th><th>Tools</th><th>Turn limit</th><th>Time limit</th><th>Best for</th></tr></thead>
+      <thead><tr><th>Type</th><th>Tools</th><th>Best for</th></tr></thead>
       <tbody>
-        <tr><td><code>general</code></td><td>Full tool set</td><td>120</td><td>15 min</td><td>Do-anything worker: read, edit, run, commit (subject to the session's permission mode).</td></tr>
-        <tr><td><code>explore</code></td><td>Read-only</td><td>30</td><td>10 min</td><td>Fast search-and-read to answer a question. Concise findings, no side effects.</td></tr>
-        <tr><td><code>plan</code></td><td>Read-only</td><td>40</td><td>10 min</td><td>Study the codebase and return a step-by-step implementation plan with files to change.</td></tr>
-        <tr><td><code>verify</code></td><td>Full tool set</td><td>30</td><td>10 min</td><td>Check work by reading and running tests. Ends with <code>VERDICT: PASS</code>, <code>FAIL</code>, or <code>PARTIAL</code>.</td></tr>
-        <tr><td><code>coordinator</code></td><td>Orchestration only</td><td>100</td><td>30 min</td><td>Manages other agents. No file access at all - it can only spawn, message, list, and finish.</td></tr>
+        <tr><td><code>general</code></td><td>Full tool set</td><td>Do-anything worker: read, edit, run, commit (subject to the session's permission mode).</td></tr>
+        <tr><td><code>explore</code></td><td>Read-only</td><td>Fast search-and-read to answer a question. Concise findings, no side effects.</td></tr>
+        <tr><td><code>plan</code></td><td>Read-only</td><td>Study the codebase and return a step-by-step implementation plan with files to change.</td></tr>
+        <tr><td><code>verify</code></td><td>Full tool set</td><td>Check work by reading and running tests. Ends with <code>VERDICT: PASS</code>, <code>FAIL</code>, or <code>PARTIAL</code>.</td></tr>
+        <tr><td><code>coordinator</code></td><td>Orchestration only</td><td>Manages other agents. No file access at all - it can only spawn, message, list, and finish.</td></tr>
       </tbody>
     </table></div>
-    <p>The turn limit is a runaway backstop and the time limit a wall-clock budget; whichever trips
-      first ends the run, and your session cost cap can end it too. Whichever it is, the agent gets a
-      last round to write a report rather than being cut off mid-sentence. Both limits are overridable
-      through an <code>agent_limits</code> block in <code class="path">config.json</code>, per type or
-      under a <code>"default"</code> key (a <code>null</code> deadline disables the time limit for that
-      type).</p>
+    <p>Every type runs on the same two limits, set once in <b>Settings &gt; Costs &gt; Budget</b>: a
+      round limit (120 by default) and a time limit (15 minutes by default). The time limit counts an
+      agent's own work: while it waits on agents it started (a coordinator's workers, a team, a
+      skill), the clock stops, because each of those runs on its own limits. The round limit is a
+      runaway backstop and the time limit a budget; whichever trips first ends the run, and your session cost cap
+      can end it too. Whichever it is, the agent gets a last round to write a report rather than
+      being cut off mid-sentence, and <b>Extend</b> on its card grants more rounds while it runs.</p>
     <p>The read-only guarantee is enforced, not just requested: the runtime strips every write tool
       (file writes, <code>ws_run_command</code>, git commits, <code>config_set</code>, memory writes,
       and so on) from an <code>explore</code> or <code>plan</code> agent's tool pool, and refuses any
@@ -139,7 +140,8 @@
     <ul>
       <li><b>Persistent custom types</b> are Markdown files: YAML frontmatter followed by the agent's
         system prompt as the body. The frontmatter keys that are read are <code>name</code>,
-        <code>tools</code>, <code>read_only</code>, <code>model</code> and <code>max_turns</code>. They
+        <code>tools</code>, <code>read_only</code> and <code>model</code> (limits come from Settings,
+        so a <code>max_turns</code> line in an older file sets nothing). They
         live in your user directory (<code class="path">~/.whisper/agents/&lt;name&gt;.md</code>) or in
         the project (<code class="path">&lt;workspace&gt;/.whisper/agents/&lt;name&gt;.md</code>); on a
         name collision the project file wins, and either can shadow a built-in name. Once the file

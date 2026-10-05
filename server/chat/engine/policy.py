@@ -1,8 +1,8 @@
 """TurnPolicy — the single knob set for how long and how hard a turn runs.
 
 Every engine consumer (interactive chat, subagents, cron) is a policy preset
-over the same loop, so "how many rounds does an agent get" is decided here
-and nowhere else.
+over the same loop. How many rounds and how much time a run gets comes from
+the one setting every run reads (server/infrastructure/run_limits.py).
 """
 
 from dataclasses import dataclass
@@ -10,12 +10,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class TurnPolicy:
-    # Hard cap on model rounds within one turn.
-    max_rounds: int = 50
-    # Wall-clock brake; None = no deadline (interactive chat, where the
-    # user's Stop button is the brake). No in-tree preset sets this yet —
-    # it is reserved for the planned cron/agents port onto this engine
-    # (both currently run their own loops with their own deadlines).
+    # Hard cap on model rounds within one turn. None takes the round limit
+    # from Settings when the turn starts; a run with its own budget passes it
+    # (an agent's resolved config, a scheduled run's remaining rounds).
+    max_rounds: int | None = None
+    # Wall-clock brake; None = no deadline (chat and voice, where the user's
+    # Stop button is the brake). Runs nobody is watching pass the Settings
+    # time limit: agents, scheduled runs and unattended headless runs.
     deadline_seconds: float | None = None
     # Whether an unrescuable turn gets one final no-tools round on a hard-
     # trimmed context (synthesize from what remains) instead of a bare error.
