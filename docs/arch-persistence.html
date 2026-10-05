@@ -345,7 +345,7 @@
       <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
       <tbody>
         <tr><td><code>GET /api/sessions/{id}/export</code></td><td>Streams one session as a <code>.jsonl</code> download (<code>session-export-&lt;slug&gt;.jsonl</code>).</td></tr>
-        <tr><td><code>POST /api/sessions/import-transcript</code></td><td>Creates a brand-new session from an uploaded export: either a raw JSONL body or a multipart upload (field <code>file</code>). Unknown line types are ignored rather than rejected, so a future export field cannot break older imports.</td></tr>
+        <tr><td><code>POST /api/sessions/import-transcript</code></td><td>Creates a brand-new session from an uploaded export or Claude Code transcript: either a raw JSONL body or a multipart upload (field <code>file</code>). Unknown line types are ignored rather than rejected, so a future export field cannot break older imports.</td></tr>
         <tr><td><code>POST /api/sessions/bulk-export</code></td><td>The sidebar multi-select "Export": zips many sessions' portable exports into one download (<code>sessions-export-&lt;date&gt;.zip</code>). Body is a JSON id list, capped at 500, de-duplicated, unknown ids skipped rather than failing the batch.</td></tr>
         <tr><td><code>POST /api/sessions/bulk-import</code></td><td>The sidebar "Import": accepts multiple uploaded files, each either a plain <code>.jsonl</code> export or a <code>.zip</code> bundle (detected by content, not filename, so a renamed file still works) whose <code>.jsonl</code> entries are imported individually, capped at 200 total. Returns per-file <code>imported</code> / <code>failed</code> lists so one bad file does not sink the batch.</td></tr>
       </tbody>
@@ -357,6 +357,18 @@
       source session are not part of the portable file and do not travel with it. The backend-owned
       rows inside <code>chat_history</code> do travel, since they are just entries in that array, so a
       re-imported session still renders its cron cards and agent reports.</p>
+    <p>Both routes also take a Claude Code transcript, recognised by content:
+      <code>_parse_session_export()</code> reads up to the first line that tells the formats apart
+      (an <code>export_meta</code> line means an export; a <code>sessionId</code>, or a message with
+      a <code>uuid</code>, means a transcript) and hands a transcript to <code class="path">server/infrastructure/claude_code_import.py</code>, which
+      returns a title and a <code>chat_history</code> with no segments. A transcript is a tree, not a
+      list: each entry names its parent by uuid, a rewind starts a sibling branch, and
+      <code>/compact</code> restarts the chain at a boundary whose <code>logicalParentUuid</code>
+      points back across it. The importer keeps the path from the newest message back to the root,
+      so the conversation the user last saw, and matches tool results by <code>tool_use</code> id
+      across the whole file, since parallel calls' results hang off sibling branches. Harness traffic
+      (system reminders, hook feedback, local command output, task notifications, compaction
+      summaries) is dropped, and tool results take the 2,000-character cap a live turn persists.</p>
 
     <h2 id="the-cron-inbox">The Scheduled Reports inbox</h2>
     <p>A scheduled task can outlive the session that created it. If that session is deleted or

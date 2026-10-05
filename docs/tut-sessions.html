@@ -74,6 +74,22 @@
         transfer.</p></div>
     </div>
 
+    <h2 id="claude-code">Import a Claude Code transcript</h2>
+    <p>Import also takes a Claude Code session. Claude Code keeps one transcript per session under
+      <code class="path">~/.claude/projects/</code>, a <code class="path">.jsonl</code> file named by
+      the session id. Pick it with <b>Import</b> as you would a backup: alone, with other files, or
+      inside a <code class="path">.zip</code>. The file is recognised by its content, so it needs no
+      renaming, and it becomes a chat session with no recording transcript.</p>
+    <p>What comes across is what you read in Claude Code: your prompts (including ones you queued
+      while a turn ran), the replies and their thinking, each tool call with its result, stopped
+      turns, and any API error or usage limit notice you were shown. Claude Code's own traffic stays
+      out: system reminders, hook feedback, slash commands that ran locally, task notifications and
+      compaction summaries. If you rewound and asked again, only the branch you carried on with is
+      imported, and a session you compacted comes through from its first prompt. The session takes
+      the name you gave it in Claude Code, else Claude Code's generated title, else your first
+      prompt. Tool results are cut to 2,000 characters, as Whisper keeps them for its own turns, and
+      images become <code>[Image]</code> placeholders.</p>
+
     <h2 id="bulk">Select several: bulk export and import</h2>
     <p>The same two operations work on many sessions at once, from a dedicated selection mode rather than
       the per-session menu.</p>
@@ -189,11 +205,12 @@
     <div class="spec">
       <dt><code class="path">GET /api/sessions/&lt;id&gt;/export</code></dt><dd>Streams one session as portable JSONL.</dd>
       <dt><code class="path">POST /api/sessions/bulk-export</code></dt><dd>Zips many sessions' JSONL exports into one download (id list, capped at 500).</dd>
-      <dt><code class="path">POST /api/sessions/import-transcript</code></dt><dd>Creates one new session from an uploaded JSONL export.</dd>
+      <dt><code class="path">POST /api/sessions/import-transcript</code></dt><dd>Creates one new session from an uploaded JSONL export or Claude Code transcript.</dd>
       <dt><code class="path">POST /api/sessions/bulk-import</code></dt><dd>Creates a new session per file from multiple uploads or a bulk-export zip (capped at 200 files).</dd>
       <dt><code class="path">POST /api/sessions/&lt;id&gt;/branch</code></dt><dd>Copies a session's persisted content into a new session row.</dd>
       <dt><code class="path">GET /api/sessions/search?q=</code></dt><dd>Which sessions match by message or transcript text, newest first, each with a snippet. Backs the "Search message content" checkbox.</dd>
       <dt><code class="path">server/infrastructure/sessions_routes.py</code></dt><dd>All six routes above, plus the shared JSONL line-building helper both export paths use.</dd>
+      <dt><code class="path">server/infrastructure/claude_code_import.py</code></dt><dd>Reads a Claude Code transcript into a chat history for both import routes.</dd>
       <dt><code class="path">server/infrastructure/session_search.py</code></dt><dd>The full-text index behind both the sidebar search and the <code>session_search</code> tool.</dd>
       <dt><code class="path">src/components/layout/Sidebar.tsx</code></dt><dd>The row menu (Pin, Rename, Branch, Export, Archive, Delete), the search box, select mode, and the Import / Select toolbar.</dd>
     </div>

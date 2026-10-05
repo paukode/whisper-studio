@@ -637,7 +637,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
                 <button
                   type="button"
                   className="btn btn-sm"
-                  title="Import sessions from portable backups (.jsonl or .zip)"
+                  title="Import sessions from portable backups or Claude Code transcripts (.jsonl or .zip)"
                   onClick={() => importInputRef.current?.click()}
                 >
                   Import
@@ -683,7 +683,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ collapsed }) => {
               <button
                 type="button"
                 className="session-select-toggle"
-                title="Import sessions from portable backups (.jsonl or .zip) — pick one or several"
+                title="Import sessions from portable backups or Claude Code transcripts (.jsonl or .zip), one or several"
                 onClick={() => importInputRef.current?.click()}
               >
                 Import

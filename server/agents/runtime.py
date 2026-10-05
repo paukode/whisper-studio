@@ -154,13 +154,15 @@ async def run_agent(
     config = get_agent_config(agent_type) if config is None else with_run_limits(config)
     # Agents approve their own writes, so an agent may only read when it is
     # started from a plan-mode turn or by a read-only agent (a resume through
-    # send_message included; server.agents.tool_access.read_only_scope), or
-    # while the app is in plan mode (a workflow approved from its card,
-    # /subagent). The app's own memory agents keep their tools.
+    # send_message included; server.agents.tool_access.read_only_scope), the
+    # app's own memory agents too: send_message resumes any agent by id. While
+    # the app is in plan mode (a workflow approved from its card, /subagent)
+    # every other agent starts read-only; the memory agents keep their tools
+    # for their post-turn runs, which never start under the scope.
     from server.agents.tool_access import read_only_scope, started_read_only
     from server.workspace.state import is_plan_mode
 
-    if not config.read_only and not config.internal and (started_read_only() or is_plan_mode()):
+    if not config.read_only and (started_read_only() or (is_plan_mode() and not config.internal)):
         from dataclasses import replace as _dc_replace
 
         config = _dc_replace(config, read_only=True)
