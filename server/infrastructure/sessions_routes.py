@@ -611,11 +611,18 @@ async def bulk_export_sessions(request: Request):
 def _parse_session_export(raw: str) -> tuple[str, list, list, dict]:
     """Parse an exported JSONL body back into (title, segments, chat_history,
     speaker_names). Raises ValueError with a user-facing message if ``raw``
-    doesn't look like a session export.
+    is neither a session export nor a Claude Code transcript (read by
+    claude_code_import, which yields a chat history and no segments).
 
     Unknown line types are ignored rather than rejected, so a future export
     field can be added without breaking older exports on import.
     """
+    from server.infrastructure import claude_code_import
+
+    if claude_code_import.is_transcript(raw):
+        title, chat_history = claude_code_import.parse(raw)
+        return title, [], chat_history, {}
+
     title = "Imported Session"
     segments: list = []
     chat_history: list = []
@@ -642,7 +649,9 @@ def _parse_session_export(raw: str) -> tuple[str, list, list, dict]:
         elif kind == "message":
             chat_history.append({k: v for k, v in obj.items() if k != "type"})
     if not saw_meta:
-        raise ValueError("missing export_meta line — not a session export")
+        raise ValueError(
+            "missing export_meta line: not a session export or a Claude Code transcript"
+        )
     return title, segments, chat_history, speaker_names
 
 
