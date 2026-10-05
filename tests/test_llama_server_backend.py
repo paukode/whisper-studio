@@ -3,7 +3,8 @@
 These cover the parts that must hold for "drop a model in config and it works":
 the registry merge + validation, the required-binary version guard,
 and the streaming normalization (content / reasoning_content / tool_calls →
-the app's existing SSE contract). No real model or subprocess is started.
+the app's existing SSE contract). No real model or server is started; the
+version guard runs a stand-in llama-server script.
 """
 
 from __future__ import annotations
@@ -11,6 +12,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -189,6 +193,50 @@ def test_ensure_available_accepts_unknown_build(monkeypatch):
     monkeypatch.setattr(LS, "binary_path", lambda: "/usr/bin/llama-server")
     monkeypatch.setattr(LS, "installed_build", lambda: None)
     assert LS.ensure_available() == "/usr/bin/llama-server"
+
+
+# What `llama-server --version` prints on stderr, and the build in it. The Mac
+# app bundles a numbered build (b10289); setup.sh installs Homebrew's, which
+# since llama.cpp took semantic versions (0.5.0) prints a version and a build.
+_VERSION_OUTPUTS = [
+    ("version: 0.5.0 (build 10350, commit 7fe450e)\nbuilt with AppleClang 17.0.0", 10350),
+    ("version: 10289 (f9e832c10)\nbuilt with Apple clang version 17.0.0", 10289),
+    ("version: 0.6.0 (commit 1a2b3c4)\nbuilt with AppleClang 17.0.0", None),
+]
+
+
+def _stand_in_llama_server(directory: Path, output: str) -> str:
+    exe = directory / "llama-server"
+    exe.write_text(f"#!/bin/sh\ncat >&2 <<'EOF'\n{output}\nEOF\n")
+    exe.chmod(0o755)
+    return str(exe)
+
+
+@pytest.mark.parametrize("output, build", _VERSION_OUTPUTS)
+def test_the_gate_reads_the_build_never_a_semantic_version(tmp_path, monkeypatch, output, build):
+    """A semantic version's major (the 0 of 0.5.0) read as the build would
+    refuse every model as too old; with no build printed, it is unknown."""
+    exe = _stand_in_llama_server(tmp_path, output)
+    monkeypatch.setenv("WHISPER_LLAMA_SERVER_PATH", exe)
+    assert LS.installed_build() == build
+    assert LS.ensure_available() == exe
+
+
+@pytest.mark.parametrize("output, build", _VERSION_OUTPUTS)
+def test_setup_sh_reads_the_build_the_server_reads(tmp_path, output, build):
+    """setup.sh decides from this build whether to upgrade llama.cpp, so it
+    reads the same number as the server's gate (empty when unknown)."""
+    setup = (Path(__file__).resolve().parents[1] / "setup.sh").read_text()
+    func = re.search(r"^llama_server_build\(\) \{\n.*?^\}\n", setup, re.S | re.M).group(0)
+    _stand_in_llama_server(tmp_path, output)
+    out = subprocess.run(
+        ["/bin/bash", "-c", func + "llama_server_build"],
+        capture_output=True,
+        text=True,
+        env={"PATH": f"{tmp_path}:/usr/bin:/bin"},
+        check=True,
+    )
+    assert out.stdout.strip() == ("" if build is None else str(build))
 
 
 # ── streamed tool-call reassembly ────────────────────────────────────────────

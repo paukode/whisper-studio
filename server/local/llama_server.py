@@ -91,10 +91,13 @@ def installed_build() -> int | None:
         return None
     import re
 
-    # Current builds print "version: 10090 (7347430f4)"; older/other builds have
-    # used "build: 3901" and a bare "b3901" tag. Try all three.
+    # MIN_BUILD compares the build number. Since llama.cpp took semantic
+    # versions it prints "version: 0.5.0 (build 10350, commit 7fe450e)", before
+    # that "version: 10090 (7347430f4)", and older builds "build: 3901" or a bare
+    # "b3901" tag. A semantic version's major is never the build, so "version:"
+    # only counts when the "(" of the commit follows the number.
     m = (
-        re.search(r"^\s*version:\s*(\d+)", blob, re.I | re.M)
+        re.search(r"^\s*version:\s*(\d+)\s*\(", blob, re.I | re.M)
         or re.search(r"build[:\s]+(\d+)", blob, re.I)
         or re.search(r"\bb(\d{4,})\b", blob)
     )

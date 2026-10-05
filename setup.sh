@@ -577,8 +577,13 @@ LLAMA_MIN_BUILD=10090
 
 llama_server_build() {
     command -v llama-server >/dev/null 2>&1 || return 1
-    # Prints e.g. "version: 10090 (7347430f4)" on stderr.
-    llama-server --version 2>&1 | sed -n 's/^[[:space:]]*version:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' | head -1
+    # The build number, from stderr: "version: 0.5.0 (build 10350, commit
+    # 7fe450e)" since llama.cpp took semantic versions, "version: 10090
+    # (7347430f4)" before. A semantic version's major is never the build
+    # (server/local/llama_server.py::installed_build reads it the same way).
+    llama-server --version 2>&1 | sed -n \
+        -e 's/.*(build[[:space:]]\{1,\}\([0-9]\{1,\}\).*/\1/p' \
+        -e 's/^[[:space:]]*version:[[:space:]]*\([0-9]\{1,\}\)[[:space:]]*(.*/\1/p' | head -1
 }
 
 LLAMA_BUILD="$(llama_server_build || true)"
