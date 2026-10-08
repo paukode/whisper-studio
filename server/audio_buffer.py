@@ -157,6 +157,9 @@ class UtteranceBuffer:
         self._silence_ms = 0
         # Whether the current utterance has ever contained speech.
         self._in_speech = False
+        # The last utterance dropped for too little voiced audio, until a
+        # backend takes it (see take_discard).
+        self._discard: dict | None = None
 
     def feed(self, chunk: bytes) -> list[bytes]:
         """Add raw PCM16 bytes; return any utterances completed by this chunk."""
@@ -188,6 +191,8 @@ class UtteranceBuffer:
                 if self._silence_ms >= self._trailing_silence_ms:
                     if self._voiced_ms >= MIN_UTTERANCE_MS:
                         flushed.append(bytes(self._utterance))
+                    else:
+                        self._note_discard("pause")
                     self._reset_utterance()
             # else: dead silence between utterances — drop the frame so
             # we don't waste downstream model time on it.
@@ -196,6 +201,8 @@ class UtteranceBuffer:
             if self._utterance_ms() >= MAX_UTTERANCE_MS:
                 if self._voiced_ms >= MIN_UTTERANCE_MS:
                     flushed.append(bytes(self._utterance))
+                else:
+                    self._note_discard("length cap")
                 self._reset_utterance()
 
         return flushed
@@ -217,11 +224,24 @@ class UtteranceBuffer:
         data: bytes | None = None
         if self._voiced_ms >= MIN_UTTERANCE_MS:
             data = bytes(self._utterance)
+        elif self._in_speech:
+            self._note_discard("stop")
         self._reset_utterance()
         self._partial.clear()
         return data
 
+    def take_discard(self) -> dict | None:
+        """The last utterance dropped for too little voiced audio since the
+        previous call, then forget it: ``{"voiced_ms", "length_ms", "at"}``
+        where ``at`` is "pause", "length cap" or "stop". A backend reads it to
+        say why a draft on screen ended without a final."""
+        discard, self._discard = self._discard, None
+        return discard
+
     # ── internals ──
+    def _note_discard(self, at: str) -> None:
+        self._discard = {"voiced_ms": self._voiced_ms, "length_ms": self._utterance_ms(), "at": at}
+
     def _reset_utterance(self) -> None:
         self._utterance = bytearray()
         self._voiced_ms = 0

@@ -33,6 +33,7 @@ from pathlib import Path
 import numpy as np
 
 from server.asr import languages
+from server.asr.base import withdrawal
 from server.audio_buffer import UtteranceBuffer
 from server.infrastructure.paths import models_root
 
@@ -319,15 +320,20 @@ class CanarySession:
     def process(self, raw_pcm: bytes) -> list[dict]:
         events: list[dict] = []
         completed = self._buf.feed(raw_pcm)
+        # Only a drop inside this feed can explain a draft that ends now.
+        discard = self._buf.take_discard()
         if completed:
+            wordless: list[str] = []
             for utterance_pcm in completed:
                 text, audio, language = self._decode(utterance_pcm)
                 if text:
                     events.append(
                         {"kind": "final", "text": text, "audio": audio, "language": language}
                     )
+                else:
+                    wordless.append(text)
             # An utterance just closed; the next interim starts a fresh window.
-            return self._close_draft(events)
+            return self._close_draft(events, withdrawal(self._last_interim, discard, wordless))
 
         # No boundary this chunk: re-decode the growing in-flight utterance
         # as a volatile draft (mirrors the Parakeet backend). The draft only
@@ -340,7 +346,7 @@ class CanarySession:
         if self._last_interim and not pending:
             # The VAD discarded the utterance the draft belonged to (too
             # little voiced audio): it closed without a final.
-            return self._close_draft(events)
+            return self._close_draft(events, withdrawal(self._last_interim, discard))
         if len(pending) >= _MIN_INTERIM_BYTES and self._draft_due(len(pending)):
             audio = np.frombuffer(pending, dtype=np.int16).astype(np.float32) / 32768.0
             try:
@@ -379,17 +385,20 @@ class CanarySession:
         )
         return (time.monotonic() - self._last_interim_at) >= interval
 
-    def _close_draft(self, events: list[dict]) -> list[dict]:
+    def _close_draft(self, events: list[dict], why: dict) -> list[dict]:
         """End the in-flight utterance's draft. When the utterance produced
         no final (junk-filtered, empty decode, or too little voiced audio for
-        the VAD), an empty interim withdraws the draft still on screen."""
+        the VAD), an empty interim withdraws the draft still on screen and
+        says ``why``."""
         if self._last_interim and not events:
-            events.append({"kind": "interim", "text": ""})
+            events.append({"kind": "interim", "text": "", "withdrawn": why})
         self._last_interim = ""
         return events
 
     def finish(self) -> list[dict]:
         events: list[dict] = []
+        wordless: list[str] = []
+        error = None
         try:
             tail = self._buf.flush()
             if tail is not None:
@@ -398,9 +407,13 @@ class CanarySession:
                     events.append(
                         {"kind": "final", "text": text, "audio": audio, "language": language}
                     )
+                else:
+                    wordless.append(text)
         except Exception as e:
             log.debug("Canary finish flush failed: %s", e)
-        return self._close_draft(events)
+            error = str(e) or type(e).__name__
+        why = withdrawal(self._last_interim, self._buf.take_discard(), wordless, error)
+        return self._close_draft(events, why)
 
     def close(self) -> None:
         pass

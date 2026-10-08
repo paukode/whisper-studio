@@ -9,6 +9,9 @@ backend now emits an empty interim for it, and only then.
 The VAD case runs through the real UtteranceBuffer: a sub-minimum utterance
 is discarded mid-stream without any flush, so only its effect on pending()
 shows that the draft's utterance is gone.
+
+Every withdrawal also says why (``withdrawn``), for the recording log: the
+words that left the screen and the reason the backend had no final.
 """
 
 import numpy as np
@@ -17,19 +20,26 @@ from server.asr import canary_backend, parakeet_backend
 from server.audio_buffer import FRAME_BYTES, FRAME_MS, MIN_UTTERANCE_MS, UtteranceBuffer
 from server.infrastructure import config as config_mod
 
-_WITHDRAW = {"kind": "interim", "text": ""}
 _DRAFT = "no no no"
+_NO_WORDS = {"draft": _DRAFT, "reason": "no words in the final decode", "decoded": [""]}
+_VAD_AT_STOP = {"voiced_ms": 300, "length_ms": 900, "at": "stop"}
 _IN_FLIGHT = b"\x01\x00" * 16000  # 1 s in flight: long enough for a draft
 _CLOSED = b"\x00\x00" * 32000  # 2 s utterance that just closed
 
 
 class _Buffer:
     """UtteranceBuffer stand-in: ``closes`` complete on the next feed,
-    ``tail`` is what a stop flushes (None when the VAD drops it)."""
+    ``tail`` is what a stop flushes (None when the VAD drops it), and
+    ``discard`` is the VAD's record of a drop."""
 
     def __init__(self) -> None:
         self.closes: list[bytes] = []
         self.tail: bytes | None = None
+        self.discard: dict | None = None
+
+    def take_discard(self) -> dict | None:
+        discard, self.discard = self.discard, None
+        return discard
 
     def feed(self, chunk: bytes) -> list[bytes]:
         out, self.closes = self.closes, []
@@ -79,11 +89,17 @@ def _show_draft(session) -> None:
     assert session.process(b"\x00" * 960) == [{"kind": "interim", "text": _DRAFT}]
 
 
+def _why_withdrawn(events: list[dict]) -> dict:
+    """The events are exactly one withdrawal (an empty interim); its reason."""
+    assert [(e["kind"], e["text"]) for e in events] == [("interim", "")]
+    return events[0]["withdrawn"]
+
+
 def test_canary_withdraws_a_draft_whose_utterance_had_no_final(monkeypatch):
     session = _canary(monkeypatch, final_text="")
     _show_draft(session)
     session._buf.closes = [_CLOSED]
-    assert session.process(b"\x00" * 960) == [_WITHDRAW]
+    assert _why_withdrawn(session.process(b"\x00" * 960)) == _NO_WORDS
     # Nothing is on screen any more, so the next empty close says nothing.
     session._buf.closes = [_CLOSED]
     assert session.process(b"\x00" * 960) == []
@@ -101,7 +117,12 @@ def test_canary_stop_withdraws_a_draft_the_tail_cannot_finalize(monkeypatch):
     session = _canary(monkeypatch, final_text="")
     _show_draft(session)
     # Stop with the tail below the VAD minimum: flush() returns None.
-    assert session.finish() == [_WITHDRAW]
+    session._buf.discard = dict(_VAD_AT_STOP)
+    assert _why_withdrawn(session.finish()) == {
+        "draft": _DRAFT,
+        "reason": "too little speech for the VAD",
+        **_VAD_AT_STOP,
+    }
     assert session.finish() == []
 
 
@@ -109,7 +130,7 @@ def test_parakeet_withdraws_a_draft_whose_utterance_had_no_final():
     session = _parakeet(final_text="")
     _show_draft(session)
     session._buf.closes = [_CLOSED]
-    assert session.process(b"\x00" * 960) == [_WITHDRAW]
+    assert _why_withdrawn(session.process(b"\x00" * 960)) == _NO_WORDS
 
 
 def test_parakeet_stop_keeps_a_real_tail_and_withdraws_a_lost_one():
@@ -120,7 +141,8 @@ def test_parakeet_stop_keeps_a_real_tail_and_withdraws_a_lost_one():
 
     session = _parakeet(final_text="")
     _show_draft(session)
-    assert session.finish() == [_WITHDRAW]
+    session._buf.discard = dict(_VAD_AT_STOP)
+    assert _why_withdrawn(session.finish())["reason"] == "too little speech for the VAD"
 
 
 # ── the VAD discards an utterance that was already showing a draft ───────
@@ -155,7 +177,11 @@ def test_canary_withdraws_a_draft_the_vad_discards(monkeypatch):
     # Voicing plus the start of the pause: long enough for a draft.
     assert session.process(_frames(510)) == [{"kind": "interim", "text": "Tak."}]
     # The pause closes the utterance and the VAD discards it: no final.
-    assert session.process(_frames(390)) == [_WITHDRAW]
+    why = _why_withdrawn(session.process(_frames(390)))
+    assert why["draft"] == "Tak."
+    assert why["reason"] == "too little speech for the VAD"
+    assert why["voiced_ms"] < MIN_UTTERANCE_MS
+    assert why["at"] == "pause"
     assert session._last_interim == ""
 
 
@@ -165,5 +191,19 @@ def test_parakeet_withdraws_a_draft_the_vad_discards():
     session._buf = UtteranceBuffer(trailing_silence_ms=parakeet_backend._TRAILING_SILENCE_MS)
     _short_utterance(session._buf)
     assert session.process(_frames(330)) == [{"kind": "interim", "text": "Tak"}]
-    assert session.process(_frames(570)) == [_WITHDRAW]
+    why = _why_withdrawn(session.process(_frames(570)))
+    assert why["draft"] == "Tak"
+    assert why["reason"] == "too little speech for the VAD"
+    assert why["voiced_ms"] < MIN_UTTERANCE_MS
+    assert why["at"] == "pause"
     assert session._last_interim == ""
+
+
+def test_the_vad_reports_each_drop_once_with_where_it_happened():
+    buf = UtteranceBuffer()
+    buf._vad = _ScriptedVad([True] * 5)
+    assert buf.feed(_frames(150)) == []
+    assert buf.take_discard() is None  # nothing dropped yet: still in flight
+    assert buf.flush() is None  # stop with too little voiced audio
+    assert buf.take_discard() == {"voiced_ms": 150, "length_ms": 150, "at": "stop"}
+    assert buf.take_discard() is None

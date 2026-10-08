@@ -42,6 +42,9 @@ class _StubBuffer:
         tail, self._tail = self._tail, None
         return tail
 
+    def take_discard(self) -> dict | None:
+        return None
+
 
 def test_whisper_session_emits_final_events(monkeypatch):
     monkeypatch.setattr(

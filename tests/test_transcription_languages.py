@@ -92,6 +92,9 @@ class _Utterances:
     def flush(self):
         return None
 
+    def take_discard(self):
+        return None
+
 
 def _scripted_lid(monkeypatch, script):
     """lid.detect answers ``script(seconds)`` and records every candidate set."""

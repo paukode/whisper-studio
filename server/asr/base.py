@@ -24,7 +24,9 @@ Sessions are duck-typed to the protocol below. Events are plain dicts:
         Backends without live drafts simply never emit it. A backend that
         showed a draft emits ``text: ""`` when that utterance closes (in
         ``process`` or ``finish``) without a final, so the draft is
-        withdrawn instead of lingering until the client saves it.
+        withdrawn instead of lingering until the client saves it. That
+        withdrawal also carries ``withdrawn`` (see :func:`withdrawal`): the
+        words that left the screen and why, for the recording log only.
 
     {"kind": "final", "text": str, "audio": np.ndarray, "words": list[dict]}
         A settled utterance at a natural silence boundary. ``audio`` is
@@ -47,7 +49,28 @@ registry line — nothing else imports backend internals.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Protocol
+
+
+def withdrawal(
+    draft: str,
+    discard: dict | None,
+    decoded: Iterable[str] = (),
+    error: str | None = None,
+) -> dict:
+    """Why a draft on screen ended without a final, for the recording log.
+
+    ``discard`` is the VAD's record of an utterance it dropped for too little
+    voiced audio (UtteranceBuffer.take_discard). Without one, the utterance
+    did close but its final decode produced no words (``decoded`` holds what
+    it produced), or that decode failed (``error``).
+    """
+    if discard is not None:
+        return {"draft": draft, "reason": "too little speech for the VAD", **discard}
+    if error is not None:
+        return {"draft": draft, "reason": "final decode failed", "error": error}
+    return {"draft": draft, "reason": "no words in the final decode", "decoded": list(decoded)}
 
 
 class AsrSession(Protocol):
