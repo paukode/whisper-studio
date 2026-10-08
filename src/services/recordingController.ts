@@ -61,6 +61,42 @@ let speakerCount = 0;
 let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 
+// ── Start-up marks for the backend log ──────────────────────────────────
+// The server logs each recording's start (server/recording_timeline.py), but
+// only the client knows when Record was pressed, when the mic was ready and
+// when its first frame arrived. Each mark is the time since the press,
+// queued until a socket is open and sent as a `client_mark` message (a
+// server without the timeline ignores it). Reset per take.
+let markOrigin = 0;
+let pendingMarks: Record<string, unknown>[] = [];
+let micFrameMarked = false;
+let nativeAudioMarked = false;
+let audioSendMarked = false;
+
+function mark(name: string, extra: Record<string, unknown> = {}): void {
+  pendingMarks.push({
+    type: 'client_mark',
+    mark: name,
+    ms: Math.round(performance.now() - markOrigin),
+    ...extra,
+  });
+  sendMarks();
+}
+
+function sendMarks(): void {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  for (const m of pendingMarks) ws.send(JSON.stringify(m));
+  pendingMarks = [];
+}
+
+/** A frame's level in dBFS, rounded; 'silent' when it is digital zero. */
+function frameDbfs(samples: Float32Array): number | 'silent' {
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+  if (sum === 0 || samples.length === 0) return 'silent';
+  return Math.round(10 * Math.log10(sum / samples.length));
+}
+
 /** One recording take, bound at start(). Every socket the take opens (a
  *  watchdog reconnect included) writes into this store, and a result that
  *  lands late (an Apple translation) still reaches it: nothing is routed by
@@ -194,6 +230,10 @@ function flushPcmBuffer(): void {
   }
   pcmBuffer = [];
   pcmBufferLen = 0;
+  if (!audioSendMarked) {
+    audioSendMarked = true;
+    mark('first_audio_sent', { seconds: Math.round((combined.length / SAMPLE_RATE) * 100) / 100 });
+  }
   const pcm16 = new Int16Array(combined.length);
   for (let i = 0; i < combined.length; i++) {
     const s = Math.max(-1, Math.min(1, combined[i]));
@@ -278,6 +318,10 @@ let mixerFailureLogged = false;
  *  clock, so the chunks drive the chunker/websocket directly. */
 function handleNativeAudio(samples: Float32Array, rms?: number): void {
   if (!useRecordingStore.getState().isRecording) return;
+  if (!nativeAudioMarked) {
+    nativeAudioMarked = true;
+    mark('first_native_audio', { dbfs: frameDbfs(samples) });
+  }
   useRecordingStore.getState().setNativeLevel(rms ?? computeRms(samples));
   if (nativeMixer) {
     // Fail-open: a mixer fault must never take the MIC down with it. Drop
@@ -387,6 +431,7 @@ function connectWS(t: Take): void {
   newWs.onopen = () => {
     useRecordingStore.getState().setConnected(true);
     startPing();
+    mark('socket_open');
     // Tell the server the Translate dropdown state and whether this client
     // can run Apple's on-device translator — the server resolves who
     // translates each utterance from these.
@@ -555,6 +600,7 @@ function startWatchdog(): void {
 }
 
 async function start(sessionId: string): Promise<void> {
+  const pressedAt = performance.now();
   // A stopped take keeps the slot until the server has sent its last final
   // (normally well under a second): start right after it, not never.
   if (stopSettled) await stopSettled;
@@ -590,6 +636,14 @@ async function start(sessionId: string): Promise<void> {
   }
   // The wait can be minutes long — make sure nothing else grabbed the mic.
   if (useRecordingStore.getState().recordingSessionId) return;
+
+  // This start goes ahead: its marks count from the press of Record.
+  markOrigin = pressedAt;
+  pendingMarks = [];
+  micFrameMarked = false;
+  nativeAudioMarked = false;
+  audioSendMarked = false;
+  mark('models_ready');
 
   const transcript = getTranscriptionStore(sessionId);
   const prev = finishedTakes.get(sessionId);
@@ -657,8 +711,10 @@ async function start(sessionId: string): Promise<void> {
         );
         nativeCaptureRunning = true;
         nativeName = nativeSel.name;
+        mark('native_started', { source: nativeSel.name });
       } catch (err) {
         nativeMixer = null;
+        mark('native_failed', { error: err instanceof Error ? err.message : String(err) });
         // Native-only: no other source can carry the recording.
         if (!micWanted) throw err;
         // Mixed: degrade to mic-only and say so — the message from the
@@ -679,6 +735,7 @@ async function start(sessionId: string): Promise<void> {
       // this returns the same MediaStream + AudioContext so both pipelines
       // tap one device instead of fighting for it.
       const { stream: micStream, context } = await rec.acquireMic('header-recorder');
+      mark('mic_ready', { device: micStream.getAudioTracks()[0]?.label ?? '' });
 
       // Vite BASE_URL so the worklet resolves in dev ('/') and prod
       // ('/static/dist/') — hardcoding '/pcm-processor.js' hits the SPA
@@ -695,6 +752,10 @@ async function start(sessionId: string): Promise<void> {
 
       workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
         if (!useRecordingStore.getState().isRecording) return;
+        if (!micFrameMarked) {
+          micFrameMarked = true;
+          mark('first_mic_frame', { dbfs: frameDbfs(e.data) });
+        }
         // Mic is the clock master: each frame pulls the same number of
         // buffered native samples (summed + clamped); underruns mix
         // silence, >500 ms backlogs drop their oldest samples.
@@ -750,6 +811,7 @@ async function start(sessionId: string): Promise<void> {
       }
 
       workletNode.connect(context.destination);
+      mark('worklet_ready');
     }
     // Native-only mode: no getUserMedia, no AudioContext, no worklet — the
     // shell's chunks feed the chunker directly (see handleNativeAudio), so
@@ -766,6 +828,7 @@ async function start(sessionId: string): Promise<void> {
     // click starts clean, and tell the user what actually happened.
     const detail = err instanceof Error ? err.message : String(err);
     console.error('[record] audio setup failed:', err);
+    mark('start_failed', { error: detail });
     const errName = err instanceof DOMException ? err.name : '';
     const message =
       errName === 'NotAllowedError'
