@@ -34,6 +34,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from server import diarization
 from server.asr import get_backend, languages, resolve_name
 from server.infrastructure.config import get as config_get
+from server.recording_timeline import RecordingTimeline
 
 log = logging.getLogger("whisper-studio")
 
@@ -425,6 +426,10 @@ async def websocket_endpoint(
                 # An empty draft is relayed too: it withdraws the one on
                 # screen when its utterance closed without a final.
                 await send_json({"type": "interim", "text": text})
+                if text:
+                    timeline.draft(text)
+                else:
+                    timeline.withdrawn(ev.get("withdrawn"))
                 continue
             if not text:
                 continue
@@ -433,6 +438,7 @@ async def websocket_endpoint(
             # each turn is emitted as its own chunk, which is exactly what
             # the client already handles (consecutive same-speaker chunks
             # merge into one segment, differing ones do not).
+            labelling_since = time.monotonic()
             spans = await _spans_for(ev)
             split_budget.record(len(spans) > 1)
             if len(spans) > 1:
@@ -444,13 +450,14 @@ async def websocket_endpoint(
                 span_audio = span.audio if span is not None else ev.get("audio")
                 if not span_text:
                     continue
-                await emit_final(
+                chunk_id, speaker = await emit_final(
                     span_text,
                     span_audio,
                     ev.get("language"),
                     span.embedding if span is not None else None,
                     span.overlap if span is not None else False,
                 )
+                timeline.final(span_text, chunk_id, speaker, time.monotonic() - labelling_since)
             if speakers is not None:
                 # Periodic self-heal: re-cluster everything seen so far and
                 # retro-fix the few utterances whose label changed.
@@ -481,8 +488,9 @@ async def websocket_endpoint(
         language: str | None,
         embedding=None,
         overlap: bool = False,
-    ) -> None:
-        """Label one settled turn and send it to the client."""
+    ) -> tuple[int, str]:
+        """Label one settled turn and send it to the client. Returns the
+        turn's chunk id and speaker label."""
         nonlocal chunk_counter
         chunk_id = chunk_counter
         chunk_counter += 1
@@ -539,6 +547,7 @@ async def websocket_endpoint(
             )
             pending_translations.add(task)
             task.add_done_callback(pending_translations.discard)
+        return chunk_id, speaker
 
     async def _run_translation(chunk_id: int, audio, language: str | None, target: str) -> None:
         """Decode the utterance's translation via Canary and deliver it.
@@ -624,8 +633,11 @@ async def websocket_endpoint(
             # Commit the model to memory first, with a banner, in EVERY mode —
             # a silent multi-second stall on the first sentence reads as
             # "nothing transcribes" (large-v3 and Canary load for seconds).
+            load_s = None
             if hasattr(backend_mod, "is_loaded") and not backend_mod.is_loaded():
+                loading_since = time.monotonic()
                 await load_model_into_memory()
+                load_s = time.monotonic() - loading_since
             # Construct on the backend's own executor so model load and
             # warmup happen on the thread that will run every decode
             # (MLX streams are thread-local).
@@ -639,7 +651,9 @@ async def websocket_endpoint(
                 factory = functools.partial(
                     backend_mod.create_session, None if skip_speaker else session_id, take_id
                 )
+            building_since = time.monotonic()
             asr_session = await loop.run_in_executor(backend_mod.executor, factory)
+            timeline.session_ready(load_s, time.monotonic() - building_since)
         return asr_session
 
     async def finish_session() -> None:
@@ -662,10 +676,11 @@ async def websocket_endpoint(
             return
         inherited_relayed = True
         for earlier in _claim_earlier(session_id, slot):
+            waiting_since = time.monotonic()
             try:
                 events = await asyncio.wait_for(asyncio.wrap_future(earlier), _CARRYOVER_WAIT_S)
             except Exception as e:
-                log.warning("Lost the utterance a dropped connection left in flight: %s", e)
+                timeline.carryover_lost(e, time.monotonic() - waiting_since)
                 continue
             # That connection may have closed chunks after this one opened
             # and read the counter: resume past them.
@@ -719,6 +734,10 @@ async def websocket_endpoint(
     # released in the finally below on every exit. Dictation text belongs to
     # a composer, never to a take.
     take_id = (take or "").strip()
+    # This connection's lines in the backend log (start-up, lost drafts).
+    timeline = RecordingTimeline(
+        take_id=take_id, session_id=session_id, backend=backend_name, dictation=is_dictation
+    )
     slot = _open_slot(session_id, take_id) if session_id and take_id and not is_dictation else None
     # Whether the earlier connections' slots were claimed and relayed.
     inherited_relayed = slot is None
@@ -745,6 +764,11 @@ async def websocket_endpoint(
 
                 if msg.get("type") == "ping":
                     await send_json({"type": "pong"})
+                    continue
+
+                if msg.get("type") == "client_mark":
+                    # The client's own start-up timing, for the backend log.
+                    timeline.client_mark(msg)
                     continue
 
                 if msg.get("type") == "set_model":
@@ -835,11 +859,14 @@ async def websocket_endpoint(
             # ordering trivial without dropping frames.
             if "bytes" in message and message["bytes"]:
                 raw_audio = message["bytes"]
+                timeline.audio(raw_audio)
                 await replay_carryover()
                 session = await ensure_session()
+                decoding_since = time.monotonic()
                 events = await loop.run_in_executor(
                     backend_mod.executor, session.process, raw_audio
                 )
+                timeline.decoded(time.monotonic() - decoding_since)
                 await emit_events(events)
 
     except WebSocketDisconnect:
@@ -862,6 +889,7 @@ async def websocket_endpoint(
         # translations have no socket to land on: cancel them rather than
         # burn decode time on a dead client. Nothing here awaits before the
         # hand-off, so it happens even when the handler is being cancelled.
+        timeline.closed(ended_by_stop)
         for task in tuple(pending_translations):
             task.cancel()
         if slot is not None and not ended_by_stop:
