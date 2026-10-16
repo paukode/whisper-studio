@@ -140,3 +140,35 @@ def test_old_orphan_shape_would_have_been_stripped():
     sanitized = sanitize_tool_pairs(orphan)
 
     assert ANSWER["content"] not in str(sanitized[-1]["content"])
+
+
+def test_a_question_left_unanswered_gets_a_plain_note_not_the_pause_marker():
+    """Two questions paused the round; the continuation answered one. The other
+    must not go back to the model as a marker that promises an answer."""
+    from server.tool_executor import ASK_PAUSE_MARKER, ASK_UNANSWERED
+
+    paused = _paused()
+    paused["messages"][1]["content"] = [
+        {
+            "type": "tool_use",
+            "id": "tu_1",
+            "name": "ask_user_question",
+            "input": {"question": "One?"},
+        },
+        {
+            "type": "tool_use",
+            "id": "tu_2",
+            "name": "ask_user_question",
+            "input": {"question": "Two?"},
+        },
+    ]
+    paused["pending_tool_results"] = [
+        {"type": "tool_result", "tool_use_id": "tu_1", "content": ASK_PAUSE_MARKER},
+        {"type": "tool_result", "tool_use_id": "tu_2", "content": ASK_PAUSE_MARKER},
+    ]
+
+    out = _resume_messages([], [{"tool_use_id": "tu_1", "content": "capacity-planner"}], paused)
+
+    blocks = {b["tool_use_id"]: b["content"] for b in out[-1]["content"]}
+    assert blocks == {"tu_1": "capacity-planner", "tu_2": ASK_UNANSWERED}
+    assert sanitize_tool_pairs(out) == out

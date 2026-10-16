@@ -30,6 +30,14 @@ from server.security.permissions import MODE_BYPASS, approval_floor, resolve_sta
 from server.tool_router import SIDE_EFFECT_PAUSE, route_tool
 from server.utils import ndjson_dumps
 
+# What a paused ask_user_question's tool_result says until the answer arrives,
+# and what the continuation puts there when it brought no answer for it
+# (server/chat/routes._resume_messages).
+ASK_PAUSE_MARKER = "[ASK_USER_PAUSE] Awaiting answer; will be replaced on continuation."
+ASK_UNANSWERED = (
+    "[No answer] The user did not answer this question. Ask it again if you still need the answer."
+)
+
 log = logging.getLogger("whisper-studio")
 
 # Tools whose errors cascade to subsequent writes
@@ -1039,7 +1047,6 @@ async def _process_tool_results(
         # actual answer yet. Replace each ask_user_question placeholder with
         # an explicit "awaiting answer" marker that the resume path will
         # rewrite when the user submits.
-        ASK_PAUSE_MARKER = "[ASK_USER_PAUSE] Awaiting answer; will be replaced on continuation."
         # The runner logs nothing for a paused round, so this is the one line
         # that tells a log reader where a question stopped the turn.
         log.info("Paused on a user question: %d tool result(s) await the answer", len(states))
