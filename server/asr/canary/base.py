@@ -22,6 +22,10 @@ class STTOutput:
     prompt_tps: float = 0.0
     generation_tps: float = 0.0
     total_time: float = 0.0
+    # Mean log-probability of the generated tokens (end of text included):
+    # how sure the decoder was of what it wrote. Used to compare decodes of
+    # one clip in different languages (see Canary.generate_best).
+    avg_logprob: float | None = None
 
 
 def load_audio(path, sample_rate: int = 16000):

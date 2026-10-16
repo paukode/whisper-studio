@@ -243,15 +243,25 @@ def summary() -> dict:
 
 
 # ── Per-take language tracker ────────────────────────────────────────────
-# VoxLingua on short, noisy or accented clips is often confidently wrong, so
-# a detection only settles the take's language on a long enough clip with a
-# clear share of the candidate mass, and moving AWAY from a settled language
-# needs much stronger evidence than settling did. Everything weaker inherits
-# the settled language, or (before anything settles) decodes that one
-# utterance with its own pick and leaves the take unsettled.
+# VoxLingua on short, noisy or accented clips is often confidently wrong, so a
+# take's language rests on evidence that adds up across sentences instead of
+# on any single clip: each detection adds the clip's length times its share
+# of the candidate mass, and older evidence fades with a half-life of
+# EVIDENCE_HALF_LIFE_S seconds of speech. The take settles once enough speech
+# leans one way and switches only when the recent evidence clearly favours
+# another language, so one confident short clip can no longer flip it. Field
+# log 2026-09-29: a 1.8 s clip read as Polish at 100% switched an English
+# take, and the next 8 s of English, read as English at 56%, was decoded as
+# Polish (Canary then writes a translation, not a transcript).
 LID_MIN_SECONDS = 1.5
+SETTLE_SECONDS = 1.5
 SETTLE_SHARE = 0.6
-SWITCH_SHARE = 0.9
+SWITCH_SHARE = 0.7
+EVIDENCE_HALF_LIFE_S = 10.0
+# A clip whose own detection is weaker than this (or disagrees with the
+# take, or is too short to judge) is decoded in its rival languages too,
+# and the decoder's own confidence picks the transcript (canary_backend).
+UNSURE_SHARE = 0.9
 
 # Outcomes a Choice can carry. The first five are trusted languages; the
 # last two are one-utterance guesses that never settle anything.
@@ -268,6 +278,9 @@ class Choice:
     outcome: str  # pinned | settled | switched | kept | inherited | unsettled | lid-failed
     detected: str | None = None
     share: float = 0.0
+    # How far the take's evidence leans to ``language`` (0..1), this clip
+    # included. 1.0 when pinned.
+    lean: float = 1.0
 
     @property
     def trusted(self) -> bool:
@@ -283,10 +296,26 @@ class Choice:
         the final may not share."""
         return self.trusted or self.outcome == "lid-failed"
 
+    @property
+    def rivals(self) -> tuple[str, ...]:
+        """Languages worth decoding against ``language`` because this clip's
+        language is in doubt: the detected one when it disagrees, or, with
+        two candidates, the other one when the detection is weak or the clip
+        short. Empty when the language is not in doubt."""
+        if self.outcome == "pinned" or len(self.candidates) < 2:
+            return ()
+        if self.detected is not None and self.detected != self.language:
+            return (self.detected,)
+        unsure = self.share < UNSURE_SHARE or self.duration < LID_MIN_SECONDS
+        if unsure and len(self.candidates) == 2:
+            return tuple(c for c in self.candidates if c != self.language)
+        return ()
+
     def describe(self) -> str:
         lid = "lid skipped"
         if self.outcome != "pinned":
             lid = f"lid {self.detected} {self.share:.2f}" if self.detected else "lid failed"
+            lid += f", take leans {self.lean:.2f}"
         return (
             f"{self.duration:.2f} s, candidates {','.join(self.candidates)}, {lid}, "
             f"{self.outcome}, decode {self.language}"
@@ -294,19 +323,21 @@ class Choice:
 
 
 class LanguageTracker:
-    """The settled language of one take (kept across a reconnect of the same
-    take, see ``tracker_for``).
+    """The settled language of one take and the evidence behind it (kept
+    across a reconnect of the same take, see ``tracker_for``).
 
-    ``draft`` only reads. ``final`` only notes a changed candidate list
-    (which unsettles the take); settling or switching happens in ``commit``,
-    called after a final produced text, so drafts, empty decodes and junk
-    never move the settled language. Used from one decode thread only
-    (Canary's single-worker executor).
+    ``draft`` and ``final`` only read: they decide with the evidence as it
+    would be with the current clip added. ``commit``, called after a final
+    produced text, adds that clip's evidence and settles or switches, so
+    drafts, empty decodes and junk never move the take. ``final`` notes a
+    changed candidate list, which starts the evidence over. Used from one
+    decode thread only (Canary's single-worker executor).
     """
 
     def __init__(self) -> None:
         self._settled: str | None = None
         self._candidates: tuple[str, ...] = ()
+        self._evidence: dict[str, float] = {}
 
     @property
     def settled(self) -> str | None:
@@ -328,26 +359,48 @@ class LanguageTracker:
             log.info("Canary languages for this take: %s", ",".join(candidates))
         self._candidates = candidates
         self._settled = None
+        self._evidence = {}
+
+    def _with_clip(
+        self, candidates: tuple[str, ...], duration: float, detected: str | None, share: float
+    ) -> dict[str, float]:
+        """The take's evidence with one more clip added (nothing is stored).
+        Evidence from another candidate list never carries over."""
+        fade = 0.5 ** (duration / EVIDENCE_HALF_LIFE_S)
+        known = self._evidence if candidates == self._candidates else {}
+        evidence = {c: known.get(c, 0.0) * fade for c in candidates}
+        if detected in evidence:
+            others = max(len(candidates) - 1, 1)
+            for c in candidates:
+                evidence[c] += duration * (share if c == detected else (1.0 - share) / others)
+        return evidence
 
     def _decide(
         self, candidates: tuple[str, ...], duration: float, detected: str | None, share: float
     ) -> Choice:
         settled = self._settled_within(candidates)
 
-        def choice(language: str, outcome: str) -> Choice:
-            return Choice(language, candidates, duration, outcome, detected, share)
-
         if detected not in candidates:  # the classifier failed (lid logs why)
-            return choice(settled, "inherited") if settled else choice(candidates[0], "lid-failed")
-        long_enough = duration >= LID_MIN_SECONDS
+            language, outcome = (settled, "inherited") if settled else (candidates[0], "lid-failed")
+            return Choice(language, candidates, duration, outcome, detected, share, 0.0)
+        evidence = self._with_clip(candidates, duration, detected, share)
+        total = sum(evidence.values())
+        # Ties go to the earlier candidate (English first in the automatic set).
+        leader = max(candidates, key=lambda c: evidence[c])
+
+        def choice(language: str, outcome: str) -> Choice:
+            lean = evidence[language] / total if total > 0 else 0.0
+            return Choice(language, candidates, duration, outcome, detected, share, lean)
+
+        lead = evidence[leader] / total if total > 0 else 0.0
         if settled is None:
-            if long_enough and share >= SETTLE_SHARE:
-                return choice(detected, "settled")
-            return choice(detected, "unsettled")
-        if detected == settled:
+            if total >= SETTLE_SECONDS and lead >= SETTLE_SHARE:
+                return choice(leader, "settled")
+            return choice(leader, "unsettled")
+        if leader == settled:
             return choice(settled, "kept")
-        if long_enough and share >= SWITCH_SHARE:
-            return choice(detected, "switched")
+        if lead >= SWITCH_SHARE:
+            return choice(leader, "switched")
         return choice(settled, "inherited")
 
     def final(
@@ -372,9 +425,9 @@ class LanguageTracker:
     ) -> Choice | None:
         """Language for a live draft of the in-flight window, never moving the
         tracker. None (and no detection run) while the window is too short to
-        settle or switch anything and nothing is settled; the caller shows a
-        draft only when the choice ``drafts``, so a guessed language is never
-        rendered as a live translation.
+        judge and nothing is settled; the caller shows a draft only when the
+        choice ``drafts``, so a guessed language is never rendered as a live
+        translation.
 
         A settled take still runs detection on a long enough window: when the
         speaker has switched language, the draft follows what the final would
@@ -390,9 +443,15 @@ class LanguageTracker:
         return self._decide(candidates, duration, detected, share)
 
     def commit(self, choice: Choice) -> None:
-        """Record a final that produced text: settle or switch when its choice
-        says so."""
-        if choice.candidates == self._candidates and choice.outcome in ("settled", "switched"):
+        """Record a final that produced text: add its clip's evidence, then
+        settle or switch when its choice says so."""
+        if choice.candidates != self._candidates or choice.outcome == "pinned":
+            return
+        if choice.detected in choice.candidates:
+            self._evidence = self._with_clip(
+                choice.candidates, choice.duration, choice.detected, choice.share
+            )
+        if choice.outcome in ("settled", "switched"):
             self._settled = choice.language
 
 

@@ -108,15 +108,37 @@ def _scripted_lid(monkeypatch, script):
     return offered
 
 
-def _recording_generate(monkeypatch, text=lambda lang, seconds: f"<{lang}>"):
-    """_generate returns text(lang, seconds) and records (src, tgt) pairs."""
-    calls = []
+class _Calls(list):
+    """(source, target) of every decode that produced the output, plus
+    ``tie_breaks``: the languages each unsure clip was decoded in."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tie_breaks: list[tuple[str, ...]] = []
+
+
+def _recording_generate(monkeypatch, text=lambda lang, seconds: f"<{lang}>", prefer=None):
+    """_generate returns text(lang, seconds) and records (src, tgt) pairs.
+
+    The tie-break (_generate_best, for clips language ID is unsure about)
+    keeps the language ``prefer(languages)`` names, by default the
+    tracker's own pick (the first): the decoder agrees unless a test says
+    which language the audio really is."""
+    calls = _Calls()
 
     def fake_generate(audio, source_lang, target_lang):
         calls.append((source_lang, target_lang))
         return text(source_lang, len(audio) / SR)
 
+    def fake_best(audio, languages_to_try):
+        calls.tie_breaks.append(tuple(languages_to_try))
+        lang = prefer(languages_to_try) if prefer else languages_to_try[0]
+        calls.append((lang, lang))
+        scores = {code: (-0.1 if code == lang else -2.0) for code in languages_to_try}
+        return lang, text(lang, len(audio) / SR), scores
+
     monkeypatch.setattr(canary_backend, "_generate", fake_generate)
+    monkeypatch.setattr(canary_backend, "_generate_best", fake_best)
     return calls
 
 
@@ -221,10 +243,11 @@ def test_mac_language_change_applies_without_a_restart(mac, setting):
 EN_PL = ("en", "pl")
 LONG = languages.LID_MIN_SECONDS + 0.5
 SHORT = languages.LID_MIN_SECONDS - 0.5
-# A share strong enough to settle a fresh take but not to switch a settled one.
-MIDDLING = (languages.SETTLE_SHARE + languages.SWITCH_SHARE) / 2
-STRONG = (languages.SWITCH_SHARE + 1.0) / 2
-WEAK = languages.SETTLE_SHARE / 2
+STRONG = 0.95
+# Language ID torn between the two: the share it gives its pick barely beats
+# the other candidate. (A low share for one of two languages is not "weak",
+# it is the other language: "pl at 0.3" means 70% English.)
+NEAR_EVEN = 0.55
 
 
 def _said(code, share):
@@ -235,33 +258,65 @@ def _never():
     raise AssertionError("language ID must not run here")
 
 
-def test_weak_first_detections_decode_with_their_pick_but_never_settle():
+def _settle(t, code, clips=6, seconds=3.0):
+    """A take that has heard ``clips`` clear sentences in ``code``."""
+    for _ in range(clips):
+        t.commit(t.final(EN_PL, seconds, _said(code, 1.0)))
+    assert t.settled == code
+
+
+def test_a_take_settles_once_enough_speech_leans_one_way():
     t = languages.LanguageTracker()
-    for duration, share in ((SHORT, STRONG), (LONG, WEAK)):
-        choice = t.final(EN_PL, duration, _said("pl", share))
-        assert choice.language == "pl" and not choice.trusted
-        t.commit(choice)
-        assert t.settled is None
-    choice = t.final(EN_PL, LONG, _said("pl", MIDDLING))
+    # One short clip is not enough speech to settle on, however sure.
+    choice = t.final(EN_PL, SHORT, _said("pl", 1.0))
+    assert (choice.language, choice.outcome) == ("pl", "unsettled")
+    t.commit(choice)
+    assert t.settled is None
+    # More Polish adds up and settles it.
+    choice = t.final(EN_PL, LONG, _said("pl", 0.8))
+    assert choice.outcome == "settled"
     t.commit(choice)
     assert t.settled == "pl"
 
 
-def test_settled_language_needs_stronger_evidence_to_switch():
+def test_an_even_split_never_settles():
     t = languages.LanguageTracker()
-    t.commit(t.final(EN_PL, LONG, _said("pl", MIDDLING)))
-    assert t.settled == "pl"
-    # What settled a fresh take cannot move a settled one, nor can a short
-    # clip however sure it claims to be.
-    for duration, share in ((LONG, MIDDLING), (SHORT, 1.0), (LONG, WEAK)):
-        choice = t.final(EN_PL, duration, _said("en", share))
-        assert choice.language == "pl" and choice.outcome == "inherited"
+    for _ in range(3):
+        choice = t.final(EN_PL, LONG, _said("pl", NEAR_EVEN))
+        assert not choice.trusted
         t.commit(choice)
-    assert t.settled == "pl"
-    choice = t.final(EN_PL, LONG, _said("en", STRONG))
-    assert (choice.language, choice.outcome) == ("en", "switched")
-    t.commit(choice)
+    assert t.settled is None
+
+
+def test_one_confident_short_clip_cannot_flip_a_settled_take():
+    """The field case (2026-09-29): a 1.8 s clip read as Polish at 100%
+    switched an English take, and the next 8 s of English, read as English
+    at 56%, was decoded as Polish."""
+    t = languages.LanguageTracker()
+    _settle(t, "en")
+    blip = t.final(EN_PL, 1.83, _said("pl", 1.0))
+    assert (blip.language, blip.outcome) == ("en", "kept")
+    t.commit(blip)
+    after = t.final(EN_PL, 8.0, _said("en", 0.56))
+    assert (after.language, after.outcome) == ("en", "kept")
+    t.commit(after)
     assert t.settled == "en"
+
+
+def test_sustained_evidence_switches_the_take():
+    t = languages.LanguageTracker()
+    _settle(t, "en")
+    outcomes = []
+    for _ in range(12):
+        choice = t.final(EN_PL, 3.0, _said("pl", STRONG))
+        outcomes.append(choice.outcome)
+        t.commit(choice)
+        if t.settled == "pl":
+            break
+    assert t.settled == "pl"
+    # Not on the first Polish sentence, and not after half a minute either.
+    assert 2 <= len(outcomes) <= 8, outcomes
+    assert outcomes[-1] == "switched"
 
 
 def test_a_final_that_produced_no_text_never_moves_the_tracker():
@@ -269,13 +324,17 @@ def test_a_final_that_produced_no_text_never_moves_the_tracker():
     choice = t.final(EN_PL, LONG, _said("pl", STRONG))
     assert choice.outcome == "settled"  # would settle, but nothing committed
     assert t.settled is None
+    # Nor does its evidence count: the next weak clip starts from nothing.
+    assert t.final(EN_PL, SHORT, _said("en", 1.0)).language == "en"
 
 
 def test_a_new_candidate_list_unsettles_the_take():
     t = languages.LanguageTracker()
     t.commit(t.final(EN_PL, LONG, _said("pl", STRONG)))
-    choice = t.final(("en", "pl", "de"), SHORT, _said("de", WEAK))
+    assert t.settled == "pl"
+    choice = t.final(("en", "pl", "de"), SHORT, _said("de", 0.9))
     assert t.settled is None
+    # Evidence from the old list does not carry over.
     assert choice.language == "de" and not choice.trusted
 
 
@@ -292,19 +351,30 @@ def test_language_id_failure_stays_inside_the_candidates():
 
 def test_drafts_never_move_the_tracker():
     t = languages.LanguageTracker()
-    # Too short to settle anything: no draft language, and no detection run.
+    # Too short to judge: no draft language, and no detection run.
     assert t.draft(EN_PL, SHORT, _never) is None
     strong = t.draft(EN_PL, LONG, _said("pl", STRONG))
     assert strong.language == "pl" and strong.trusted
-    weak = t.draft(EN_PL, LONG, _said("pl", WEAK))
-    assert not weak.trusted
+    assert not t.draft(EN_PL, LONG, _said("pl", NEAR_EVEN)).trusted
     assert t.settled is None
     t.commit(t.final(EN_PL, LONG, _said("pl", STRONG)))
     assert t.draft(EN_PL, SHORT, _never).language == "pl"
-    # A window that a final would switch drafts in the new language, but the
-    # take stays where it is until that final lands.
-    assert t.draft(EN_PL, LONG, _said("en", STRONG)).language == "en"
+    # A draft renders in whatever the final would decode, and moves nothing.
+    for detected in (_said("en", STRONG), _said("pl", STRONG)):
+        assert t.draft(EN_PL, LONG, detected).language == t.final(EN_PL, LONG, detected).language
     assert t.settled == "pl"
+
+
+def test_unsure_clips_name_their_rivals_and_sure_ones_none():
+    t = languages.LanguageTracker()
+    _settle(t, "en")
+    assert t.final(EN_PL, LONG, _said("en", 0.99)).rivals == ()
+    # Weak, short or disagreeing clips are decoded in the other language too.
+    assert t.final(EN_PL, LONG, _said("en", NEAR_EVEN)).rivals == ("pl",)
+    assert t.final(EN_PL, SHORT, _said("en", 0.99)).rivals == ("pl",)
+    assert t.final(EN_PL, 1.83, _said("pl", 1.0)).rivals == ("pl",)
+    # A pinned language is never in doubt.
+    assert t.final(("pl",), LONG, _never).rivals == ()
 
 
 def test_a_single_candidate_pins_without_language_id():
@@ -331,40 +401,41 @@ def test_blank_setting_never_offers_ru_or_uk_to_language_id(monkeypatch, mac, se
 
 
 def test_a_short_misdetection_at_the_start_does_not_poison_the_take(monkeypatch, mac, setting):
-    """The reported cascade: a take opened with a short clip LID got wrong
-    ("Tak." heard as English, confidently) used to make that language
-    sticky, so every later short Polish sentence came out translated."""
+    """The reported cascade: a take opened with a short clip language ID got
+    wrong ("Tak." heard as English, confidently) used to make that language
+    sticky, so later Polish sentences came out as translations. Now an unsure
+    clip is decoded in both languages and Canary's own confidence keeps the
+    real one, and the take settles only once Polish evidence adds up."""
     mac(["en-US", "pl-PL"])
     setting("")
     answers = iter(
         [
             ("en", 0.99),  # 0.9 s "Tak.", misheard
-            ("pl", languages.SETTLE_SHARE / 2),  # short Polish, weakly tagged
-            ("pl", languages.SETTLE_SHARE / 2),
+            ("pl", 0.75),  # short Polish
+            ("pl", 0.75),
             ("pl", 0.97),  # a long, clear Polish sentence
             ("en", 0.99),  # short Polish misheard again
         ]
     )
     _scripted_lid(monkeypatch, lambda s: next(answers))
-    calls = _recording_generate(monkeypatch)
+    # The audio is Polish: Canary is more confident decoding it as Polish.
+    calls = _recording_generate(monkeypatch, prefer=lambda langs: "pl")
     session = canary_backend.create_session("S")
     events = _finals(session, 0.9, 1.2, 0.8)
     assert all(src == tgt for src, tgt in calls)  # transcription, never translation
-    # The misheard opener decodes only itself; each later short clip gets its
-    # own pick instead of inheriting it, and nothing settles on weak evidence.
-    assert [src for src, _ in calls] == ["en", "pl", "pl"]
-    assert [e["language"] for e in events] == ["en", "pl", "pl"]
-    assert languages.tracker_for("S").settled is None
-    # Strong evidence settles Polish, and a short misheard clip then keeps it.
-    _finals(session, 2.4, 0.9)
-    assert [src for src, _ in calls[3:]] == ["pl", "pl"]
+    assert [e["language"] for e in events] == ["pl", "pl", "pl"]
+    assert calls.tie_breaks[0] == ("en", "pl")  # the misheard opener was in doubt
+    assert languages.tracker_for("S").settled is None  # three short clips: not yet
+    # A long clear sentence settles Polish, and a short misheard clip keeps it.
+    events = _finals(session, 2.4, 0.9)
+    assert [e["language"] for e in events] == ["pl", "pl"]
     assert languages.tracker_for("S").settled == "pl"
 
 
 def test_an_empty_or_junk_final_never_settles_the_take(monkeypatch, mac, setting):
     mac(["en-US", "pl-PL"])
     setting("")
-    _scripted_lid(monkeypatch, lambda s: ("pl", 0.99) if s >= 2 else ("en", 0.4))
+    _scripted_lid(monkeypatch, lambda s: ("pl", 0.99) if s >= 2 else ("en", 0.8))
     # The long clip is noise that decodes to nothing.
     calls = _recording_generate(monkeypatch, lambda lang, s: "" if s >= 2 else "ok")
     session = canary_backend.create_session("S")
@@ -392,7 +463,7 @@ def test_a_settings_edit_applies_to_the_next_utterance(monkeypatch, mac, setting
     _finals(session, 2.0)
     assert languages.tracker_for("S").settled == "pl"
     setting("de,fr")
-    offered = _scripted_lid(monkeypatch, lambda s: ("de", 0.3))
+    offered = _scripted_lid(monkeypatch, lambda s: ("de", 0.8))
     events = _finals(session, 0.9)
     assert offered == [("de", "fr")]
     assert events[0]["language"] == "de"
@@ -471,7 +542,7 @@ def test_an_unsettled_take_never_drafts_in_a_guessed_language(monkeypatch, mac, 
     language is a translation, which the final then replaces."""
     mac(["en-US", "pl-PL"])
     setting("")
-    offered = _scripted_lid(monkeypatch, lambda s: ("en", WEAK))
+    offered = _scripted_lid(monkeypatch, lambda s: ("en", NEAR_EVEN))
     calls = _recording_generate(monkeypatch)
     session = canary_backend.create_session("S")
     # Long enough to detect, but the detection is weak: no draft, no decode.
