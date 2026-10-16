@@ -62,8 +62,11 @@
         <code>loadDataRetention()</code> and <code>loadSkills()</code> populate the settings store, which
         is also where the skill catalogue behind the composer's autocomplete lives.
         <code>openEventChannel()</code> opens the app-wide <code>/api/sessions/events</code> stream;
-        each time it opens it loads the MCP server list into <code>mcpStore</code>, and its
-        <code>mcp_changed</code> frames keep that list live.</li>
+        each time it opens it loads the MCP server list into <code>mcpStore</code>, its
+        <code>mcp_changed</code> frames keep that list live, and its <code>workspace_changed</code>
+        frames (the backend's watcher on the connected folder, <code>server/workspace/watcher.py</code>)
+        become the <code>whisper-workspace-refresh</code> event that re-lists the loaded folders they
+        name and re-reads the open tabs they name.</li>
       <li><b>Restore sessions.</b> <code>loadSessions()</code> lists saved sessions, then the persisted
         <code>currentSessionId</code> is restored and rehydrated through
         <code>switchSession()</code>. A stale persisted id is dropped so the next session prompt starts
