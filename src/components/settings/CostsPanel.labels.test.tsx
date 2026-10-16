@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { CostsPanel } from './CostsPanel';
@@ -19,6 +19,18 @@ vi.mock('@/api/client', () => ({
 }));
 
 const LOCAL = 'local_lmstudio_community_deepseek_r1_0528_qwen3_8b_mlx_4bit__4bit';
+
+// The panel opens on the last 30 UTC days of the real clock, and the fixture's
+// spend is dated September 2026 (the on-device calls on the 13th), so the clock
+// is pinned to the fixture's last day, as the sibling Costs tests do.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-09-23T12:00:00Z'));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 it('shows server labels, picker names for keys the server cannot name, raw keys on hover', async () => {
   useSettingsStore.setState({
