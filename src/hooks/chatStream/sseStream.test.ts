@@ -578,11 +578,42 @@ describe('readSSEStream question grouping', () => {
     expect(msgs[0].userQuestions?.map((q) => q.toolUseId)).toEqual(['tu_1', 'tu_2']);
   });
 
-  // The field case: a question arrived on an approval continuation, whose leg
-  // ends with setStreaming(false) rather than finishStream. The user answered
-  // it (the card submitted at once, as a single question does), the answer
-  // resumed the turn, and the model asked the next question. That question
-  // used to be appended into the answered card, which was already locked.
+  // The frames of one round can reach the client in separate reads. A card
+  // built from the first one alone would submit on its first pick (that is
+  // what a single question does) while the second question is still on the
+  // wire. The card exists only once the stream has paused.
+  it('the card appears once the stream has paused, with every question of the round', async () => {
+    const enc = new TextEncoder();
+    let push!: (chunk: string) => void;
+    let close!: () => void;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        push = (chunk) => controller.enqueue(enc.encode(chunk));
+        close = () => controller.close();
+      },
+    });
+    const res = new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    const store = getChatStore('sess-q-split');
+    const reading = readSSEStream(res, 'sess-q-split', signal(), SETTINGS);
+
+    push(`data: ${JSON.stringify(question('tu_1', 'One?'))}\n\n`);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(store.getState().messages).toHaveLength(0);
+
+    push(`data: ${JSON.stringify(question('tu_2', 'Two?'))}\n\ndata: [DONE]\n\n`);
+    close();
+    const result = await reading;
+
+    expect(result.hasUserQuestion).toBe(true);
+    const msgs = store.getState().messages;
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].userQuestions?.map((q) => q.toolUseId)).toEqual(['tu_1', 'tu_2']);
+  });
+
+  // The field case: a question arrived on an approval continuation, the user
+  // answered it (the card submitted at once, as a single question does), the
+  // answer resumed the turn, and the model asked the next question. That
+  // question used to be appended into the answered card, which was locked.
   it('a question asked in a later stream opens its own card', async () => {
     const store = getChatStore('sess-q-later');
     await readSSEStream(sseResponse([question('tu_1', 'One?')]), 'sess-q-later', signal(), SETTINGS);

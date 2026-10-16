@@ -17,7 +17,6 @@ import { TOAST_PRIORITY, useUIStore } from '@/stores/uiStore';
 import { useTaskStore, normalizeTasks } from '@/stores/taskStore';
 import { useDockStore } from '@/stores/dockStore';
 import type {
-  ChatMessage,
   SkillTrace,
   SSEEventData,
   TeamProgressEvent,
@@ -123,9 +122,9 @@ export async function readSSEStream(
   let pendingPlan: { id: string; title: string; summary: string } | null = null;
   let flushedSegments = 0;
   let refusal: string | null = null;
-  // The message this stream opened for its ask_user_question calls (an
-  // index into the store's messages), -1 until the first one arrives.
-  let questionGroupIdx = -1;
+  // The ask_user_question calls of this round, one card once the stream has
+  // paused on them (see commitQuestions).
+  const roundQuestions: Array<{ question: string; options: string[]; toolUseId: string }> = [];
   // Not const: each flushed segment restarts the thinking clock, so a "Thinking
   // 42s" after a card measures the wait since that card rather than replaying
   // the whole turn's elapsed time under every segment.
@@ -186,6 +185,45 @@ export async function readSSEStream(
     thinkingBlockStart = performance.now();
     firstTextReceived = false;
     flushedSegments += 1;
+  };
+
+  // One card for the round's questions, added once the stream has paused on
+  // them. Prose the model streamed before asking and the traces of the other
+  // tools it ran move onto this message, so they render above the card in
+  // order and are not committed a second time at stream end.
+  const commitQuestions = () => {
+    if (roundQuestions.length === 0) return;
+    const st = store();
+    // The steps already stand for every ask_user_question call of the round,
+    // so their own traces would only be duplicate chips.
+    const toolUseEntries: ToolUseEvent[] = skillTraces
+      .filter((t) => t.name !== 'ask_user_question')
+      .map((t) => ({
+        toolId: t.name,
+        toolName: t.name,
+        input: t.input ?? {},
+        result: t.output || undefined,
+        status: 'complete' as const,
+        previewImage: t.previewImage,
+      }));
+    st.addMessage({
+      role: 'assistant',
+      content: fullResponse,
+      timestamp: new Date().toISOString(),
+      userQuestions: [...roundQuestions],
+      toolUse: toolUseEntries.length > 0 ? toolUseEntries : undefined,
+      // Team activity from before the questions stays with its traces on
+      // this message, and the deliveries with the prose.
+      teamReports: st.takeTeamReports(),
+      deliveries: st.takeDeliveries(),
+      _thinkingMs: thinkingMs > 0 ? Math.round(thinkingMs) : undefined,
+      _thinkingText: thinkingText || undefined,
+      // The answer resumes this turn on the settings it ran on.
+      turnSettings,
+    });
+    roundQuestions.length = 0;
+    fullResponse = '';
+    skillTraces.length = 0;
   };
 
   try {
@@ -419,80 +457,21 @@ export async function readSSEStream(
           }
 
           // ── user_question (ask_user tool) ──
-          // Parallel ask_user_question calls in one round arrive as
-          // consecutive frames. They join the message this stream opened for
-          // them, so the card shows them as one stepper with a single submit
-          // that answers every tool_use at once. The group index is local to
-          // this stream on purpose: a question the model asks in a LATER
-          // stream (after an approval or an answer resumed the turn) opens
-          // its own card and never joins one the user has already answered.
-          // (The singular `userQuestion` field is read-only tolerance for old
-          // persisted rows; nothing writes it anymore.)
+          // The round's ask_user_question calls arrive as consecutive frames
+          // and the server pauses the turn right after them. They are kept
+          // until the stream ends and then become ONE card (commitQuestions),
+          // so a pick can never answer a round whose other questions are
+          // still on the wire. A question in a later stream is a new round
+          // and gets its own card. (The singular `userQuestion` field is
+          // read-only tolerance for old persisted rows; nothing writes it.)
           if (parsed.user_question) {
             hasUserQuestion = true;
             const uq = parsed.user_question as { question?: string; options?: string[]; tool_use_id?: string };
-            const entry = {
+            roundQuestions.push({
               question: uq.question ?? '',
               options: uq.options ?? [],
               toolUseId: uq.tool_use_id ?? '',
-            };
-
-            const st = store();
-            const msgs = st.messages;
-            const group = questionGroupIdx >= 0 ? msgs[questionGroupIdx] : undefined;
-            if (group?.userQuestions) {
-              const updated: ChatMessage = {
-                ...group,
-                userQuestions: [...group.userQuestions, entry],
-              };
-              st.setMessages(msgs.map((m, i) => (i === questionGroupIdx ? updated : m)));
-            } else {
-              // Surface only NON-ask_user_question traces above the card. The
-              // steps themselves already represent every ask_user_question
-              // call in this round, so duplicate "ask_user_question" chips
-              // next to them would only be noise. Other prior tools (a
-              // web_fetch the model ran before asking, for example) still
-              // render normally.
-              const toolUseEntries: ToolUseEvent[] = skillTraces
-                .filter((t) => t.name !== 'ask_user_question')
-                .map((t) => ({
-                  toolId: t.name,
-                  toolName: t.name,
-                  input: t.input ?? {},
-                  result: t.output || undefined,
-                  status: 'complete' as const,
-                  previewImage: t.previewImage,
-                }));
-              st.addMessage({
-                role: 'assistant',
-                // Fold any prose the model streamed before asking (e.g.
-                // "Great question! Let me ask what fits you best.") into THIS
-                // message so it renders above the question card, in order.
-                // Without this the prose was committed as a separate message
-                // at stream-end and landed *below* the card.
-                content: fullResponse,
-                timestamp: new Date().toISOString(),
-                userQuestions: [entry],
-                toolUse: toolUseEntries.length > 0 ? toolUseEntries : undefined,
-                // Team activity from before the question stays with its
-                // traces on this message, and the deliveries with the prose.
-                teamReports: st.takeTeamReports(),
-                deliveries: st.takeDeliveries(),
-                _thinkingMs: thinkingMs > 0 ? Math.round(thinkingMs) : undefined,
-                _thinkingText: thinkingText || undefined,
-                // The answer resumes this turn on the settings it ran on.
-                turnSettings,
-              });
-              questionGroupIdx = store().messages.length - 1;
-              // Prose is now owned by the question message — clear the
-              // accumulator so finishStream doesn't re-commit it as a second,
-              // out-of-order assistant message.
-              fullResponse = '';
-              // Drain — these traces are now visible on the question card.
-              // Without this, finishStream would attach them to a second
-              // assistant message and render the same tool chips twice.
-              skillTraces.length = 0;
-            }
+            });
           }
 
           // ── program_artifact (create_artifact tool) ──
@@ -879,6 +858,9 @@ export async function readSSEStream(
       }
     }
   } finally {
+    // The card is what the server sent before it paused, so it is kept even
+    // when the connection then failed; only a Stop (aborted signal) drops it.
+    if (!signal.aborted) commitQuestions();
     // The whole reply is on screen before the caller commits it.
     thinkingPacer.flush();
     textPacer.flush();

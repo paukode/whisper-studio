@@ -266,6 +266,8 @@ def _resume_messages(messages: list, answers: list[dict], paused: dict | None) -
     in ``messages`` gives it the conversation it belongs to.
     """
     if paused:
+        from server.tool_executor import ASK_PAUSE_MARKER, ASK_UNANSWERED
+
         blocks = list(paused["pending_tool_results"])
         for ans in answers:
             tool_use_id = ans.get("tool_use_id", "")
@@ -283,6 +285,11 @@ def _resume_messages(messages: list, answers: list[dict], paused: dict | None) -
                         "content": ans.get("content", ""),
                     }
                 )
+        # A question the continuation brought no answer for must not keep a
+        # marker that promises one. The model is told plainly and may ask again.
+        for block in blocks:
+            if block.get("content") == ASK_PAUSE_MARKER:
+                block["content"] = ASK_UNANSWERED
         return [*paused["messages"], {"role": "user", "content": blocks}]
 
     outcomes = "\n\n".join(str(a.get("content", "")) for a in answers if a.get("content"))
