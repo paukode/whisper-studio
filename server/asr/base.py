@@ -58,27 +58,19 @@ def withdrawal(
     discard: dict | None,
     decoded: Iterable[str] = (),
     error: str | None = None,
-    pcm: bytes = b"",
 ) -> dict:
     """Why a draft on screen ended without a final, for the recording log.
 
     ``discard`` is the VAD's record of an utterance it dropped for too little
     voiced audio (UtteranceBuffer.take_discard). Without one, the utterance
     did close but its final decode produced no words (``decoded`` holds what
-    it produced), or that decode failed (``error``). ``pcm`` is that closed
-    utterance's audio (PCM16), kept so it can be saved for diagnosis
-    (server/lost_audio.py); a VAD drop has none.
+    it produced), or that decode failed (``error``).
     """
     if discard is not None:
         return {"draft": draft, "reason": "too little speech for the VAD", **discard}
-    why = (
-        {"draft": draft, "reason": "final decode failed", "error": error}
-        if error is not None
-        else {"draft": draft, "reason": "no words in the final decode", "decoded": list(decoded)}
-    )
-    if pcm:
-        why["pcm"] = pcm
-    return why
+    if error is not None:
+        return {"draft": draft, "reason": "final decode failed", "error": error}
+    return {"draft": draft, "reason": "no words in the final decode", "decoded": list(decoded)}
 
 
 class AsrSession(Protocol):

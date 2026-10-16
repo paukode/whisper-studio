@@ -263,16 +263,14 @@ class ParakeetSession:
         discard = self._buf.take_discard()
         if completed:
             wordless: list[str] = []
-            lost_pcm = b""
             for utterance_pcm in completed:
                 text, audio, words = self._decode(utterance_pcm)
                 if self._has_words(text):
                     events.append({"kind": "final", "text": text, "audio": audio, "words": words})
                 else:
                     wordless.append(text)
-                    lost_pcm = utterance_pcm
             # An utterance just closed; the next interim starts a fresh window.
-            why = withdrawal(self._last_interim, discard, wordless, pcm=lost_pcm)
+            why = withdrawal(self._last_interim, discard, wordless)
             return self._close_draft(events, why)
 
         # No boundary this chunk — re-decode the growing in-flight utterance.
@@ -301,7 +299,6 @@ class ParakeetSession:
         events: list[dict] = []
         wordless: list[str] = []
         error = None
-        tail = None
         try:
             tail = self._buf.flush()
             if tail is not None:
@@ -313,9 +310,7 @@ class ParakeetSession:
         except Exception as e:
             log.debug("Parakeet finish flush failed: %s", e)
             error = str(e) or type(e).__name__
-        why = withdrawal(
-            self._last_interim, self._buf.take_discard(), wordless, error, pcm=tail or b""
-        )
+        why = withdrawal(self._last_interim, self._buf.take_discard(), wordless, error)
         return self._close_draft(events, why)
 
     def close(self) -> None:

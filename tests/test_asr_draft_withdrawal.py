@@ -99,10 +99,7 @@ def test_canary_withdraws_a_draft_whose_utterance_had_no_final(monkeypatch):
     session = _canary(monkeypatch, final_text="")
     _show_draft(session)
     session._buf.closes = [_CLOSED]
-    why = _why_withdrawn(session.process(b"\x00" * 960))
-    # The lost sentence's own audio rides along, for the opt-in diagnosis.
-    assert why.pop("pcm") == _CLOSED
-    assert why == _NO_WORDS
+    assert _why_withdrawn(session.process(b"\x00" * 960)) == _NO_WORDS
     # Nothing is on screen any more, so the next empty close says nothing.
     session._buf.closes = [_CLOSED]
     assert session.process(b"\x00" * 960) == []
@@ -133,9 +130,7 @@ def test_parakeet_withdraws_a_draft_whose_utterance_had_no_final():
     session = _parakeet(final_text="")
     _show_draft(session)
     session._buf.closes = [_CLOSED]
-    why = _why_withdrawn(session.process(b"\x00" * 960))
-    assert why.pop("pcm") == _CLOSED
-    assert why == _NO_WORDS
+    assert _why_withdrawn(session.process(b"\x00" * 960)) == _NO_WORDS
 
 
 def test_parakeet_stop_keeps_a_real_tail_and_withdraws_a_lost_one():

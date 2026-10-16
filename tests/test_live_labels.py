@@ -22,7 +22,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import server.websocket as ws_mod
-from server import diarization, lost_audio
+from server import diarization
 
 _PCM = b"\x00\x00" * 1600
 
@@ -205,51 +205,3 @@ def test_the_engine_is_warmed_when_a_recording_connects(harness):
         ws.send_json({"type": "ping"})
         _until(ws, "pong")
     assert backend.warmed.wait(2)
-
-
-@pytest.mark.parametrize("keep", [False, True])
-def test_lost_sentence_audio_is_kept_only_when_asked(harness, monkeypatch, tmp_path, keep):
-    client, backend, _, _, conf = harness
-    monkeypatch.setattr(lost_audio, "directory", lambda: str(tmp_path / "lost"))
-    monkeypatch.setattr(lost_audio, "enabled", lambda: keep)
-    pcm = (np.ones(4000, dtype=np.int16) * 500).tobytes()
-    why = {
-        "draft": "to be done by November",
-        "reason": "no words in the final decode",
-        "decoded": [""],
-        "pcm": pcm,
-    }
-    backend.script = [
-        [{"kind": "interim", "text": "to be done by November"}],
-        [{"kind": "interim", "text": "", "withdrawn": why}],
-    ]
-    with client.websocket_connect("/ws?session_id=labels-5&take=t5") as ws:
-        ws.send_bytes(_PCM)
-        ws.send_bytes(_PCM)
-        frames = _until(ws, "interim") + _until(ws, "interim")
-        assert frames[-1] == {"type": "interim", "text": ""}  # the wire never carries audio
-        ws.send_json({"type": "ping"})
-        _until(ws, "pong")
-    folder = tmp_path / "lost"
-    deadline = time.monotonic() + 2
-    while keep and time.monotonic() < deadline and not (folder.exists() and any(folder.iterdir())):
-        time.sleep(0.02)
-    wavs = sorted(folder.glob("*.wav")) if folder.exists() else []
-    if not keep:
-        assert wavs == []
-        return
-    assert len(wavs) == 1
-    with wave.open(str(wavs[0])) as w:
-        assert (w.getframerate(), w.getnchannels(), w.readframes(w.getnframes())) == (16000, 1, pcm)
-    assert open(os.path.splitext(wavs[0])[0] + ".txt").read().strip() == "to be done by November"
-
-
-def test_lost_audio_keeps_only_the_newest_files(monkeypatch, tmp_path):
-    monkeypatch.setattr(lost_audio, "directory", lambda: str(tmp_path))
-    monkeypatch.setattr(lost_audio, "KEEP_FILES", 3)
-    paths = []
-    for i in range(5):
-        paths.append(lost_audio.save(b"\x00\x00" * 160, f"take{i}", f"draft {i}"))
-        time.sleep(0.002)
-    left = sorted(p.name for p in tmp_path.glob("*.wav"))
-    assert len(left) == 3 and all(os.path.basename(p) in left for p in paths[-3:])

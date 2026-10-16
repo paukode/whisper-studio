@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from server import diarization, lost_audio
+from server import diarization
 from server.asr import get_backend, languages, resolve_name
 from server.diarization.live import LiveLabeller, Pending
 from server.infrastructure.config import get as config_get
@@ -439,10 +439,7 @@ async def websocket_endpoint(
                 if text:
                     timeline.draft(text)
                 else:
-                    why = ev.get("withdrawn")
-                    timeline.withdrawn(why)
-                    if why and why.get("pcm") and lost_audio.enabled():
-                        await keep_lost_audio(why)
+                    timeline.withdrawn(ev.get("withdrawn"))
                 continue
             if not text:
                 continue
@@ -468,17 +465,6 @@ async def websocket_endpoint(
         found = speakers.known_names() if force else speakers.take_new_names()
         if found:
             await send_json({"type": "speaker_named", "names": found})
-
-    async def keep_lost_audio(why: dict) -> None:
-        """Opt-in diagnosis: save the audio of a sentence whose draft showed
-        words but whose final came back empty (server/lost_audio.py)."""
-        try:
-            path = await asyncio.to_thread(
-                lost_audio.save, why["pcm"], take_id[:8] or "dictation", why.get("draft", "")
-            )
-            log.info("%s kept the lost sentence's audio: %s", timeline.tag, path)
-        except Exception as e:
-            log.warning("%s could not keep the lost sentence's audio: %s", timeline.tag, e)
 
     def allocate_chunk_id() -> int:
         """The next chunk id. Persisted at once so a reconnect resumes past
