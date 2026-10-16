@@ -77,7 +77,7 @@ def get_workspace_tools() -> list[dict]:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative path within the workspace (e.g. 'src/main.py')",
+                        "description": "Relative path within the workspace (e.g. 'src/main.py'), or the absolute path of a file in the scratch folder",
                     },
                     "offset": {
                         "type": "integer",
@@ -283,7 +283,7 @@ def get_workspace_write_tools() -> list[dict]:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative path of the file to modify",
+                        "description": "Relative path of the file to modify, or the absolute path of a scratch file",
                     },
                     "content": {"type": "string", "description": "The complete new file content"},
                 },
@@ -296,7 +296,9 @@ def get_workspace_write_tools() -> list[dict]:
                 "[Workspace] Create a new file. Requires user approval. "
                 "Parent directories are created automatically, so never create them "
                 "as a separate step. Do not read the file first; it does not exist yet. "
-                "If a workspace is connected, `path` is workspace-relative. If none is "
+                "If a workspace is connected, `path` is workspace-relative; the scratch folder is "
+                "reachable by its absolute path, and any other absolute path is saved there once "
+                "the user confirms it on the approval card. If none is "
                 "connected, use it only for a file the user asked for (otherwise the "
                 "content belongs in your reply), and never ask where to save: pass "
                 "destination_path resolved from the user's own words ('in Downloads' -> "
@@ -309,12 +311,12 @@ def get_workspace_write_tools() -> list[dict]:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Relative path for the new file. Used as the default filename when no workspace is connected.",
+                        "description": "Relative path for the new file, or the absolute path of a scratch file. Used as the default filename when no workspace is connected.",
                     },
                     "content": {"type": "string", "description": "File content"},
                     "destination_path": {
                         "type": "string",
-                        "description": "Only when no workspace is connected: full destination path resolved from the user's words, e.g. '~/Downloads/notes.txt' (~ allowed). Omit when the user named no location — defaults to their Documents folder.",
+                        "description": "Full destination path resolved from the user's words, e.g. '~/Downloads/notes.txt' (~ allowed), for a file that belongs outside the connected workspace. Omit it for workspace files and when the user named no location (without a workspace the file goes to their Documents folder).",
                     },
                 },
                 "required": ["path", "content"],
@@ -377,7 +379,10 @@ def get_workspace_write_tools() -> list[dict]:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Relative path of the file to edit"},
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path of the file to edit, or the absolute path of a scratch file",
+                    },
                     "old_string": {
                         "type": "string",
                         "description": "The exact text to find and replace. Must be unique in the file unless replace_all is true.",
@@ -403,7 +408,10 @@ def get_workspace_write_tools() -> list[dict]:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Relative path of the file to delete"}
+                    "path": {
+                        "type": "string",
+                        "description": "Relative path of the file to delete, or the absolute path of a scratch file",
+                    }
                 },
                 "required": ["path"],
             },
