@@ -53,6 +53,27 @@ _STREAM_ERROR_KEYS = {
     "serviceUnavailableException": "ServiceUnavailableException",
 }
 
+# Bedrock sends a ping event every 30 s on an open stream, whatever the model
+# is doing (measured on Opus 5.5 at max effort, 2026-10-16). Once the first
+# event is in, a socket quiet for this long is a dead connection.
+_STREAM_STALL_TIMEOUT_S = 90.0
+
+
+def tighten_read_timeout(stream) -> None:
+    """Cut the socket timeout of an open stream to the stall limit.
+
+    The client's read_timeout must stay long: Bedrock holds the response
+    headers until prefill is done (11.7 s for a 293k-token prompt), and the
+    same client serves non-streaming calls. A timeout set here lasts for this
+    response only, because urllib3 sets it again for the next request on the
+    connection. botocore's EventStream keeps the urllib3 response private;
+    tests/test_bedrock_stream_stall.py pins the path over a real socket.
+    """
+    raw = getattr(stream, "_raw_stream", None)
+    sock = getattr(getattr(raw, "connection", None), "sock", None)
+    if sock is not None:
+        sock.settimeout(_STREAM_STALL_TIMEOUT_S)
+
 
 class AnthropicAdapter:
     provider = "anthropic"
@@ -248,9 +269,11 @@ class AnthropicAdapter:
         def _read_stream():
             try:
                 stream = response.get("body")
-                for event in stream:
+                for n, event in enumerate(stream):
                     if stop_reading.is_set():
                         return
+                    if n == 0:
+                        tighten_read_timeout(stream)
                     chunk = event.get("chunk")
                     if not chunk:
                         for ekey, canonical in _STREAM_ERROR_KEYS.items():
