@@ -2791,6 +2791,10 @@ input.segment-speaker {
    Apple translation selected outside the Mac app). Caution orange, not the
    gold --warning accent, so it reads as a problem rather than as branding. */
 .settings-hint--warn { color: var(--risk-warn, #d97706); margin-bottom: 8px; }
+.settings-check {
+    display: flex; align-items: center; gap: 8px; margin: 4px 0 0; cursor: pointer;
+    font-weight: 400; text-transform: none; letter-spacing: 0;
+}
 /* A button placed directly under an input/select needs breathing room so it
    doesn't collide with the field's border (e.g. Permissions "Save Mode"). */
 .settings-form .settings-input + .btn { margin-top: 12px; }

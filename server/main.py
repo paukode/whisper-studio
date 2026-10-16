@@ -226,19 +226,20 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 
 
 def _warm_transcription_models() -> None:
-    """Warm ONLY Parakeet at startup — nothing else.
+    """Warm Parakeet and the speaker encoder at startup, nothing else.
 
     Parakeet is the streaming/record engine (config alias ``"streaming"``); loading
-    it here makes the first mic/record click instant. Every other model stays lazy
-    and loads on first real use: Whisper (only used for file transcription, and not
-    the default engine) downloads/loads on demand, the speaker/diarization encoder
-    loads on the first diarized utterance, and the chat/index models load when a
-    turn or a build needs them. Keeping startup to a single resident model also
-    avoids the MPS memory contention that could OOM an index build.
+    it here makes the first mic/record click instant, and the speaker encoder
+    labels every recorded sentence. Every other model stays lazy and loads on
+    first real use: Whisper (only used for file transcription, and not the default
+    engine) downloads/loads on demand, and the chat/index models load when a turn
+    or a build needs them. Keeping startup to one GPU model also avoids the MPS
+    memory contention that could OOM an index build (the speaker encoder runs
+    on the CPU).
 
-    Parakeet is warmed only when it is actually the active record engine; if the
+    Both are warmed only when Parakeet is the active record engine; if the
     user has switched the engine to Whisper, nothing is eager-loaded at startup
-    (Whisper still loads lazily on first record), honoring the Parakeet-only rule.
+    (Whisper still loads lazily on first record).
     """
     from server.asr import get_backend, resolve_name
     from server.infrastructure.config import get as config_get
@@ -257,6 +258,22 @@ def _warm_transcription_models() -> None:
         get_backend("parakeet").preload()
     except Exception as e:
         log.warning("Parakeet warmup failed: %s", e)
+    # The speaker encoder too: it labels every recorded sentence, and left
+    # lazy it loaded on the first sentence of each launch (3 to 4 s in field
+    # logs). Small (tens of MB, CPU), and only when already on disk.
+    from server import diarization
+    from server.diarization import embedder
+
+    key = (
+        "ecapa_speaker" if embedder.configured_name() == embedder.NAME_ECAPA else "redimnet_speaker"
+    )
+    speaker_entry = catalog.get_entry(key)
+    if speaker_entry is None or not catalog.is_installed(speaker_entry):
+        return
+    try:
+        diarization.preload()
+    except Exception as e:
+        log.warning("Speaker model warmup failed: %s", e)
 
 
 def _start_parent_watchdog() -> None:

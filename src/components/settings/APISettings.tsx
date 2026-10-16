@@ -35,6 +35,7 @@ interface ConfigData {
   transcription_backend?: string;
   translate_mode?: string;
   translate_target?: string;
+  keep_lost_sentence_audio?: boolean;
   _transcription_languages?: TranscriptionLanguages;
 }
 
@@ -112,6 +113,7 @@ export const APISettings: React.FC = () => {
   // never flip while the settings tab is open.
   const [appleAvailable] = useState(() => isNativeTranslationAvailable());
   const [translateTarget, setTranslateTarget] = useState('en');
+  const [keepLostAudio, setKeepLostAudio] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
   const queryClient = useQueryClient();
 
@@ -133,6 +135,7 @@ export const APISettings: React.FC = () => {
     setModelValue(configData.transcription_backend ?? 'streaming');
     setTranslateMode(configData.translate_mode ?? 'off');
     setTranslateTarget(configData.translate_target ?? 'en');
+    setKeepLostAudio(configData.keep_lost_sentence_audio === true);
     if (configData.tavily_api_key_masked) setTavilyHint(configData.tavily_api_key_masked);
   }
 
@@ -150,12 +153,13 @@ export const APISettings: React.FC = () => {
     setRegionError('');
     try {
       const option = MODEL_OPTIONS.find((o) => o.value === modelValue) ?? MODEL_OPTIONS[0];
-      const body: Record<string, string> = {
+      const body: Record<string, string | boolean> = {
         whisper_language: whisperLang,
         bedrock_region: region,
         transcription_backend: option.backend,
         translate_mode: translateMode,
         translate_target: translateTarget,
+        keep_lost_sentence_audio: keepLostAudio,
       };
       // Only send tavily key if user typed something new
       if (tavilyKey) {
@@ -194,7 +198,7 @@ export const APISettings: React.FC = () => {
     } catch {
       setSaveStatus('Save failed');
     }
-  }, [tavilyKey, whisperLang, bedrockRegion, modelValue, translateMode, translateTarget, queryClient]);
+  }, [tavilyKey, whisperLang, bedrockRegion, modelValue, translateMode, translateTarget, keepLostAudio, queryClient]);
 
   const languageInfo = configData?._transcription_languages;
 
@@ -254,6 +258,21 @@ export const APISettings: React.FC = () => {
         25 European languages, detects the language per sentence among the
         Transcription Languages above. Parakeet: words appear live as you
         speak, lowest latency.
+      </span>
+
+      <label className="settings-check">
+        <input
+          type="checkbox"
+          id="cfgKeepLostAudio"
+          checked={keepLostAudio}
+          onChange={(e) => setKeepLostAudio(e.target.checked)}
+        />
+        Keep the audio of lost sentences
+      </label>
+      <span className="settings-hint">
+        For diagnosis. When a live draft showed words but the final transcript
+        of that sentence came back empty, save its audio (lost_sentences in the
+        app data folder, newest 200 kept) so it can be replayed.
       </span>
 
       <label htmlFor="cfgTranslateMode">Translation Model</label>

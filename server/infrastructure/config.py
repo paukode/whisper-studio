@@ -154,6 +154,10 @@ DEFAULTS = {
     # a name on somebody by default, so speakers start as "Speaker 1/2" every
     # recording unless this is turned on explicitly.
     "speaker_voiceprints": False,
+    # Diagnosis aid, opt-in: when a live draft showed words but the final
+    # decode of that sentence came back empty, keep the sentence's audio as a
+    # WAV under the data root (lost_sentences/) so it can be replayed.
+    "keep_lost_sentence_audio": False,
     "bedrock_region": "us-east-1",
     # Hands-free voice mode (Amazon Nova 2 Sonic over Bedrock). region "" follows
     # bedrock_region; Sonic is only in us-east-1, us-west-2, eu-north-1 and

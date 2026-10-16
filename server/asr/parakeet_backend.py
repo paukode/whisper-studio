@@ -133,6 +133,20 @@ def is_loaded() -> bool:
     return _model is not None
 
 
+def warm() -> None:
+    """One tiny decode of silence, so a resident model that macOS compressed
+    or swapped out while the app sat idle is paged back in before the first
+    real sentence (measured: a cold first decode took 11 s on a swapping Mac,
+    a warm one under 1 s). Run on ``executor``; a no-op when not loaded."""
+    model = _model
+    if model is None:
+        return
+    import mlx.core as mx
+
+    silence = np.zeros(SAMPLE_RATE // 2, dtype=np.float32)
+    model.generate(_get_logmel(mx.array(silence), model.preprocessor_config))
+
+
 def load() -> None:
     """Force the model into memory now (used by local mode's lazy loader).
 
@@ -249,14 +263,17 @@ class ParakeetSession:
         discard = self._buf.take_discard()
         if completed:
             wordless: list[str] = []
+            lost_pcm = b""
             for utterance_pcm in completed:
                 text, audio, words = self._decode(utterance_pcm)
                 if self._has_words(text):
                     events.append({"kind": "final", "text": text, "audio": audio, "words": words})
                 else:
                     wordless.append(text)
+                    lost_pcm = utterance_pcm
             # An utterance just closed; the next interim starts a fresh window.
-            return self._close_draft(events, withdrawal(self._last_interim, discard, wordless))
+            why = withdrawal(self._last_interim, discard, wordless, pcm=lost_pcm)
+            return self._close_draft(events, why)
 
         # No boundary this chunk — re-decode the growing in-flight utterance.
         pending = self._buf.pending()
@@ -284,6 +301,7 @@ class ParakeetSession:
         events: list[dict] = []
         wordless: list[str] = []
         error = None
+        tail = None
         try:
             tail = self._buf.flush()
             if tail is not None:
@@ -295,7 +313,9 @@ class ParakeetSession:
         except Exception as e:
             log.debug("Parakeet finish flush failed: %s", e)
             error = str(e) or type(e).__name__
-        why = withdrawal(self._last_interim, self._buf.take_discard(), wordless, error)
+        why = withdrawal(
+            self._last_interim, self._buf.take_discard(), wordless, error, pcm=tail or b""
+        )
         return self._close_draft(events, why)
 
     def close(self) -> None:

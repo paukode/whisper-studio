@@ -94,10 +94,13 @@ def test_the_lag_line_says_how_far_the_server_is_behind_live_audio(caplog):
         clock.now += 10.0
         timeline.audio(_tone(0.32))
         timeline.decoded(9.5)
-        timeline.final("Good morning everyone.", 0, "Speaker 1", 9.6)
-    final = next(m for m in _lines(caplog) if "final #0" in m)
+        timeline.final("Good morning everyone.", 0)
+        clock.now += 0.4
+        timeline.labelled(0, ["Speaker 1"], 0.4)
+    final = next(m for m in _lines(caplog) if "final #0 at" in m)
     assert "0.6 s of audio in, 9.4 s behind live" in final
-    assert "speaker label took 9.6 s" in final
+    labelled = next(m for m in _lines(caplog) if "final #0 labelled" in m)
+    assert "Speaker 1, 0.4 s after it was sent" in labelled
     assert any("decoding one chunk took 9.5 s" in m for m in _lines(caplog))
     assert any("no audio read for 10.0 s" in m for m in _lines(caplog))
 
@@ -161,10 +164,10 @@ def test_after_the_first_minute_only_lost_drafts_are_logged(caplog):
         timeline = _timeline(clock)
         timeline.audio(_tone(1.0))
         for i in range(3):  # the first finals are always logged
-            timeline.final(f"early {i}", i, "Speaker 1", 0.1)
+            timeline.final(f"early {i}", i)
         clock.now += 61.0
         timeline.draft("late draft")
-        timeline.final("late final", 3, "Speaker 1", 0.1)
+        timeline.final("late final", 3)
         timeline.draft("lost late")
         timeline.withdrawn(
             {"draft": "lost late", "reason": "no words in the final decode", "decoded": ["."]}

@@ -589,6 +589,26 @@ function connectWS(t: Take): void {
         for (const [label, name] of Object.entries(names)) {
           if (label && name) t.store.getState().renameSpeaker(label, name);
         }
+      } else if (msg.type === 'transcript_split') {
+        // The server labels each sentence after sending it; this one held
+        // a speaker handover, so it is replaced by one chunk per turn.
+        const parts = (Array.isArray(msg.parts) ? msg.parts : []) as {
+          chunk_id: number;
+          text: string;
+          speaker: string;
+        }[];
+        if (typeof msg.chunk_id === 'number') {
+          t.store.getState().splitChunk(
+            storeChunkId(t, msg.chunk_id),
+            parts
+              .filter((p) => typeof p?.chunk_id === 'number' && typeof p.text === 'string')
+              .map((p) => ({
+                chunk_id: storeChunkId(t, p.chunk_id),
+                text: p.text,
+                speaker: String(p.speaker ?? 'Speaker 1'),
+              })),
+          );
+        }
       } else if (msg.type === 'interim') {
         // Parakeet's growing word-by-word draft of the utterance in progress.
         t.store.getState().setInterimText(String(msg.text ?? ''));
