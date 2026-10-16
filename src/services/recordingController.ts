@@ -26,6 +26,7 @@ import {
   stopNativeCapture,
 } from '@/services/nativeAudioSource';
 import { NativeAudioMixer } from '@/services/nativeAudioMixer';
+import { isNativeMicAvailable, startNativeMic, stopNativeMic } from '@/services/nativeMicSource';
 import { isNativeTranslationAvailable, translateNative } from '@/services/nativeTranslation';
 import { countActiveSessions, getTranscriptionStore } from '@/stores/sessionRuntimes';
 import { nextChunkId, type TranscriptionState } from '@/stores/transcriptionStore';
@@ -218,6 +219,8 @@ const engineOf = (backend: string): 'whisper' | 'parakeet' | 'canary' =>
 let nativeMixer: NativeAudioMixer | null = null;
 /** True while the shell's process-tap capture is live. */
 let nativeCaptureRunning = false;
+/** The shell's native microphone is open for this recording (Mac app). */
+let nativeMicRunning = false;
 
 function flushPcmBuffer(): void {
   if (pcmBufferLen === 0) return;
@@ -380,6 +383,61 @@ function handleNativeError(message: string): void {
   } else {
     stop();
   }
+}
+
+/** The shell's microphone failed mid-recording (it has already closed).
+ *  With a system audio source still running, that source carries the rest
+ *  of the recording on its own clock; without one there is nothing left to
+ *  record, so the recording stops (and saves) cleanly. */
+function handleNativeMicError(message: string): void {
+  nativeMicRunning = false;
+  useUIStore.getState().addToast({
+    type: 'error',
+    message: `Microphone stopped: ${message}`,
+    duration: 8000,
+    source: 'recording',
+  });
+  if (!useRecordingStore.getState().isRecording) return;
+  if (nativeCaptureRunning) {
+    // The mixer was clocked by the mic: native chunks now feed the chunker.
+    nativeMixer = null;
+    useRecordingStore.getState().setActiveSourceLabel('System audio');
+  } else {
+    stop();
+  }
+}
+
+/** One microphone frame, from the shell's native mic or the browser's
+ *  worklet. The mic is the clock master: each frame pulls the same number
+ *  of buffered native samples (summed + clamped); underruns mix silence,
+ *  >500 ms backlogs drop their oldest samples.
+ *
+ *  FAIL-OPEN INVARIANT: the mic frame reaches the chunker on every path. If
+ *  the mixer throws, mixing is disabled for the rest of the recording and
+ *  the raw mic frame is forwarded: a broken/silent native source must never
+ *  take the microphone down with it. */
+function handleMicFrame(input: Float32Array): void {
+  if (!useRecordingStore.getState().isRecording) return;
+  if (!micFrameMarked) {
+    micFrameMarked = true;
+    mark('first_mic_frame', { dbfs: frameDbfs(input) });
+  }
+  let frame = input;
+  if (nativeCaptureRunning && nativeMixer) {
+    try {
+      frame = nativeMixer.mixInto(input);
+    } catch (err) {
+      nativeMixer = null;
+      frame = input;
+      if (!mixerFailureLogged) {
+        mixerFailureLogged = true;
+        console.error('[record] native mixer failed, continuing with the microphone only:', err);
+      }
+    }
+  }
+  pcmBuffer.push(frame);
+  pcmBufferLen += frame.length;
+  if (pcmBufferLen >= chunkSamples) flushPcmBuffer();
 }
 
 function buildSourceLabel(mic: boolean, nativeName: string | null, tab: boolean): string {
@@ -685,9 +743,27 @@ async function start(sessionId: string): Promise<void> {
     const nativeWanted = !!nativeSel && isNativeAudioAvailable();
     const micWanted = armed.micEnabled || !nativeWanted;
 
-    // Native capture first: its failure modes (TCC denial, app quit) are
-    // cheap to surface before the mic is opened. In mixed mode the samples
-    // buffer in the mixer until the mic worklet starts pulling them.
+    // Inside the Mac app the shell opens the microphone directly (voice
+    // processing off), in well under a second and at full level from the
+    // first buffer; see nativeMicSource.ts. It opens FIRST so that in mixed
+    // mode the mic clock is running before system audio arrives, and the
+    // mixer never builds a start-up backlog it would have to drop.
+    if (micWanted && isNativeMicAvailable()) {
+      const device = await startNativeMic({
+        onAudio: (samples) => handleMicFrame(samples),
+        onError: handleNativeMicError,
+        onStopped: () => {
+          nativeMicRunning = false;
+        },
+      });
+      nativeMicRunning = true;
+      mark('mic_ready', { device, source: 'native mic' });
+    }
+
+    // System or app audio next: its failure modes (TCC denial, app quit)
+    // degrade a mixed recording to the mic. A browser opens its mic after
+    // this, so there the samples buffer in the mixer until the worklet
+    // starts pulling them.
     let nativeName: string | null = null;
     if (nativeWanted && nativeSel) {
       try {
@@ -730,12 +806,12 @@ async function start(sessionId: string): Promise<void> {
     }
 
     let tabMixed = false;
-    if (micWanted) {
+    if (micWanted && !nativeMicRunning) {
       // Refcounted acquisition — if the chat-input mic is already running,
       // this returns the same MediaStream + AudioContext so both pipelines
       // tap one device instead of fighting for it.
       const { stream: micStream, context } = await rec.acquireMic('header-recorder');
-      mark('mic_ready', { device: micStream.getAudioTracks()[0]?.label ?? '' });
+      mark('mic_ready', { device: micStream.getAudioTracks()[0]?.label ?? '', source: 'webkit mic' });
 
       // Vite BASE_URL so the worklet resolves in dev ('/') and prod
       // ('/static/dist/') — hardcoding '/pcm-processor.js' hits the SPA
@@ -750,40 +826,7 @@ async function start(sessionId: string): Promise<void> {
         channelInterpretation: 'speakers',
       });
 
-      workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
-        if (!useRecordingStore.getState().isRecording) return;
-        if (!micFrameMarked) {
-          micFrameMarked = true;
-          mark('first_mic_frame', { dbfs: frameDbfs(e.data) });
-        }
-        // Mic is the clock master: each frame pulls the same number of
-        // buffered native samples (summed + clamped); underruns mix
-        // silence, >500 ms backlogs drop their oldest samples.
-        //
-        // FAIL-OPEN INVARIANT: the mic frame reaches the chunker on every
-        // path. If the mixer throws, mixing is disabled for the rest of the
-        // recording and the raw mic frame is forwarded — a broken/silent
-        // native source must never take the microphone down with it.
-        let frame = e.data;
-        if (nativeCaptureRunning && nativeMixer) {
-          try {
-            frame = nativeMixer.mixInto(e.data);
-          } catch (err) {
-            nativeMixer = null;
-            frame = e.data;
-            if (!mixerFailureLogged) {
-              mixerFailureLogged = true;
-              console.error(
-                '[record] native mixer failed — continuing with the microphone only:',
-                err,
-              );
-            }
-          }
-        }
-        pcmBuffer.push(frame);
-        pcmBufferLen += frame.length;
-        if (pcmBufferLen >= chunkSamples) flushPcmBuffer();
-      };
+      workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => handleMicFrame(e.data);
 
       // Mic source — if the user set up an OS-level aggregate device
       // (BlackHole + mic), this stream already mixes system audio in.
@@ -854,6 +897,10 @@ async function start(sessionId: string): Promise<void> {
       nativeCaptureRunning = false;
       void stopNativeCapture();
     }
+    if (nativeMicRunning) {
+      nativeMicRunning = false;
+      void stopNativeMic();
+    }
     nativeMixer = null;
     const store = useRecordingStore.getState();
     store.setNativeLevel(0);
@@ -895,6 +942,12 @@ function stop(): void {
   if (nativeCaptureRunning) {
     nativeCaptureRunning = false;
     void stopNativeCapture();
+  }
+  // The shell's mic: its last partial chunk races the stop like the
+  // native chunks above and is dropped the same way.
+  if (nativeMicRunning) {
+    nativeMicRunning = false;
+    void stopNativeMic();
   }
   nativeMixer = null;
   rec.setNativeLevel(0);
