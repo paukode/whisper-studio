@@ -20,6 +20,7 @@ from tests.golden_harness import (
     msg_start,
     run_chat_turn,
     text_block,
+    thinking_block,
 )
 
 
@@ -96,6 +97,60 @@ def test_non_retryable_error_is_terminal(monkeypatch):
     assert '"error"' in joined
     assert lines[-1] == "[DONE]"
     assert len(client.requests) == 1
+
+
+def _live_read_timeout():
+    # The exact fault seen live: Opus thought, the socket then stayed silent
+    # past read_timeout, and urllib3 raised out of the stream iterator.
+    from botocore.awsrequest import AWSHTTPSConnectionPool
+    from urllib3.exceptions import ReadTimeoutError
+
+    pool = AWSHTTPSConnectionPool("bedrock-runtime.us-east-1.amazonaws.com", 443)
+    return ReadTimeoutError(pool, None, "Read timed out.")
+
+
+def test_read_timeout_midstream_retries_the_round(monkeypatch):
+    # Round 1 streams a thinking block, then the connection times out. Thinking
+    # is not answer text, so the round re-runs instead of ending the turn.
+    client = FakeBedrockClient(
+        [
+            [msg_start(), *thinking_block("planning the next step"), _live_read_timeout()],
+            [msg_start(), *text_block("Recovered answer."), *msg_end(stop_reason="end_turn")],
+        ]
+    )
+    lines = run_chat_turn(monkeypatch, client, {"question": "go"})
+    joined = "\n".join(lines)
+
+    assert "Recovered answer." in joined
+    assert lines.count("[DONE]") == 1
+    assert '"error"' not in joined
+    assert "Model stream failed; retrying..." in joined
+    assert len(client.requests) == 2
+
+
+def test_connection_faults_classify_as_retryable():
+    """A stream that times out or breaks mid-body is a transient fault. Its
+    text has no AWS error code, so it used to fall into the default
+    non-retryable branch and end the turn with "API error: ... Read timed
+    out." and zero retries."""
+    from botocore.exceptions import ResponseStreamingError
+    from urllib3.exceptions import ProtocolError
+
+    live = _live_read_timeout()
+    assert str(live) == (
+        "AWSHTTPSConnectionPool(host='bedrock-runtime.us-east-1.amazonaws.com', "
+        "port=443): Read timed out."
+    )
+    faults = [
+        live,
+        ProtocolError("Connection broken: IncompleteRead(0 bytes read, 2 more expected)"),
+        ResponseStreamingError(error="Connection reset by peer"),
+    ]
+    for fault in faults:
+        err = classify_bedrock_error(fault)
+        assert err.is_retryable, type(fault).__name__
+        assert err.error_code == "CONNECTION_LOST", type(fault).__name__
+        assert err.user_message.startswith("The connection to the model was lost")
 
 
 def test_request_time_connection_faults_classify_without_crashing():

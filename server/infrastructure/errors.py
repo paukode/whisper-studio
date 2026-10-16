@@ -127,13 +127,31 @@ class DataRetentionRequiredError(WhisperAPIError):
 
 def classify_bedrock_error(error: Exception) -> WhisperAPIError:
     """Classify a raw Bedrock/botocore exception into a typed WhisperAPIError."""
-    from botocore.exceptions import NoCredentialsError, PartialCredentialsError
+    from botocore.exceptions import (
+        NoCredentialsError,
+        PartialCredentialsError,
+        ResponseStreamingError,
+    )
+    from urllib3.exceptions import ProtocolError, ReadTimeoutError
 
     error_str = str(error)
     # Matched by type: botocore raises these before any request is sent, and
     # their text ("Unable to locate credentials") gives the user no next step.
     if isinstance(error, (NoCredentialsError, PartialCredentialsError)):
         return NoCredentialsFoundError(error_str)
+    # Matched by type: the connection failed while the response streamed (no
+    # bytes for read_timeout, or the socket broke mid-body). botocore retries
+    # only the request, so these reach the stream reader raw, and their text
+    # ("...: Read timed out.") has no error code to match. Request-time faults
+    # arrive as botocore's own types after botocore retried them, and miss here.
+    if isinstance(error, (ReadTimeoutError, ProtocolError, ResponseStreamingError)):
+        return WhisperAPIError(
+            error_str,
+            error_code="CONNECTION_LOST",
+            user_message=f"The connection to the model was lost: {error_str[:200]}",
+            is_retryable=True,
+            original_error=error,
+        )
     # botocore's HTTPClientError family sets response=None, not a dict.
     error_code = (getattr(error, "response", None) or {}).get("Error", {}).get("Code", "")
 
