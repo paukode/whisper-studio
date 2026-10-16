@@ -4204,7 +4204,27 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
 .uq-custom-send:disabled { opacity: 0.4; cursor: default; }
-.uq-submit-row { display: flex; justify-content: flex-end; }
+.uq-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.uq-tab {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--bg-inset);
+    color: var(--text-muted); font-size: var(--fs-caption); font-weight: 600; font-family: inherit;
+    cursor: pointer; transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.uq-tab:hover { border-color: var(--accent); color: var(--text-primary); }
+.uq-tab.done { color: var(--text-primary); }
+.uq-tab.active { border-color: var(--accent); background: var(--accent-dim); color: var(--text-primary); }
+.uq-tab-check { flex-shrink: 0; color: var(--accent); }
+.uq-nav { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.uq-nav-btn {
+    padding: 7px 15px; border-radius: 8px; font-size: var(--fs-body); font-family: inherit; cursor: pointer;
+    border: 1px solid var(--border); background: var(--bg-inset); color: var(--text-primary);
+}
+.uq-nav-btn:hover:not(:disabled) { border-color: var(--accent); background: var(--bg-hover); }
+.uq-nav-btn:disabled { opacity: 0.4; cursor: default; }
+.uq-nav-btn.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+.uq-nav-btn.primary:hover:not(:disabled) { border-color: var(--accent-hover); background: var(--accent-hover); }
 .uq-submit-btn {
     padding: 7px 15px; border-radius: 8px; font-size: var(--fs-body); cursor: pointer;
     border: 1px solid var(--accent); background: var(--accent); color: #fff;
