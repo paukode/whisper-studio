@@ -98,10 +98,12 @@
     </ol>
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>Refreshing is automatic. When a tool writes a file (or you approve
-        a change), the panel fires a workspace-refresh so the tree and open tabs pick up the new
-        content. Non-dirty tabs reload in place; tabs with unsaved edits are left alone. The
-        <b>refresh</b> button in the header is a manual override for changes made outside the app.</p></div>
+      <div class="callout__body"><p>Refreshing is automatic. The backend watches the connected folder
+        and tells the panel which folders and files changed, whether a tool wrote them, a build
+        created them, or you saved them in another editor, so the tree and the open tabs follow the
+        disk. Non-dirty tabs reload in place; tabs with unsaved edits are left alone. The
+        <b>refresh</b> button in the header re-lists everything the tree has loaded, for the rare
+        change the watcher missed.</p></div>
     </div>
 
     <h2 id="reference-files">Point Claude at exact files</h2>

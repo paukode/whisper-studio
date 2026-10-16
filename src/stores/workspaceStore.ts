@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { FileTreeEntry, EditorTab } from '@/types/workspace';
 import { dialogConfirm, useUIStore } from './uiStore';
+import { listDir } from '@/api/workspace';
 
 /** The connected root a new tab belongs to (undefined with none). */
 export const currentRoot = (): string | undefined => useUIStore.getState().wsPath || undefined;
@@ -24,6 +25,15 @@ export interface WorkspaceState {
    * expanded folders (which would then render open-but-empty). See `mergeTree`.
    */
   mergeFileTree: (entries: FileTreeEntry[]) => void;
+  /**
+   * Re-list the root and every folder whose children are loaded, or only
+   * those among them that `changed` names (workspace-relative, '' for the
+   * root; the backend's workspace_changed event). Fresh listings merge in,
+   * so deeper loaded subtrees survive and a folder that vanished disappears
+   * with its subtree. Each folder keeps only its newest listing when calls
+   * overlap.
+   */
+  reloadDirs: (changed: string[] | null) => Promise<void>;
   openTab: (path: string, content: string, language: string, viewerType?: EditorTab['viewerType']) => void;
   openDiffTab: (leftPath: string, leftContent: string, rightPath: string, rightContent: string, language: string) => void;
   closeTab: (path: string) => void;
@@ -53,6 +63,12 @@ export interface WorkspaceState {
   toggleDiffMode: (path: string) => void;
 }
 
+/** The listing path of the workspace root. */
+const ROOT_DIR = '.';
+/** The newest reload request per folder, so a slower earlier listing of the
+ *  same folder cannot overwrite a later one. */
+const reloadSeq = new Map<string, number>();
+
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   fileTree: [],
   editorTabs: [],
@@ -64,6 +80,33 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
   mergeFileTree: (entries: FileTreeEntry[]) => {
     set((state) => ({ fileTree: sortFileTree(mergeTree(state.fileTree, entries)) }));
+  },
+
+  reloadDirs: async (changed: string[] | null) => {
+    const named = changed === null ? null : new Set(changed);
+    const targets = [ROOT_DIR, ...loadedDirs(get().fileTree)].filter(
+      (dir) => named === null || named.has(dir === ROOT_DIR ? '' : dir),
+    );
+    await Promise.all(
+      targets.map(async (dir) => {
+        const seq = (reloadSeq.get(dir) ?? 0) + 1;
+        reloadSeq.set(dir, seq);
+        let entries: FileTreeEntry[];
+        try {
+          entries = await listDir(dir);
+        } catch {
+          return; // the folder is gone, or the API is away; its parent's listing tells
+        }
+        if (reloadSeq.get(dir) !== seq) return; // a newer listing of this folder won
+        set((state) => ({
+          fileTree: sortFileTree(
+            dir === ROOT_DIR
+              ? mergeTree(state.fileTree, entries)
+              : mergeAt(state.fileTree, dir, entries),
+          ),
+        }));
+      }),
+    );
   },
 
   openTab: (path: string, content: string, language: string, viewerType?: EditorTab['viewerType']) => {
@@ -306,6 +349,40 @@ export function mergeTree(
     // Directory with no fresh children (one-level listing) or unchanged file:
     // keep the previous node so its subtree and identity are preserved.
     return prev;
+  });
+}
+
+/** The folders whose children are loaded (expanded at some point), by path,
+ *  parents before their children. The root is not a node and is not listed. */
+export function loadedDirs(tree: FileTreeEntry[]): string[] {
+  const out: string[] = [];
+  const walk = (nodes: FileTreeEntry[]) => {
+    for (const node of nodes) {
+      if (node.type === 'directory' && node.children) {
+        out.push(node.path);
+        walk(node.children);
+      }
+    }
+  };
+  walk(tree);
+  return out;
+}
+
+/** The tree with the folder at `dirPath` given the fresh listing `entries`,
+ *  merged (see `mergeTree`) so loaded subtrees under it survive. Unchanged
+ *  when no such folder is in the tree any more. */
+export function mergeAt(
+  tree: FileTreeEntry[],
+  dirPath: string,
+  entries: FileTreeEntry[],
+): FileTreeEntry[] {
+  return tree.map((node) => {
+    if (node.type !== 'directory') return node;
+    if (node.path === dirPath) return { ...node, children: mergeTree(node.children ?? [], entries) };
+    if (node.children && dirPath.startsWith(node.path + '/')) {
+      return { ...node, children: mergeAt(node.children, dirPath, entries) };
+    }
+    return node;
   });
 }
 

@@ -290,6 +290,7 @@ let sharedEvents: EventSource | null = null;
 interface SessionEventFrame {
   session_id?: string;
   mcp_changed?: { revision: number };
+  workspace_changed?: { root: string; dirs: string[] | null; files: string[] | null };
   cron_event?: CronEventPayload;
   memory_event?: MemoryEventPayload;
   task_event?: TaskEventPayload;
@@ -318,6 +319,15 @@ export function openEventChannel(): void {
       parsed = JSON.parse(event.data) as SessionEventFrame;
     } catch {
       return; // heartbeats / malformed frames
+    }
+    if (parsed?.workspace_changed) {
+      // The connected folder changed on disk (server/workspace/watcher.py).
+      // Delivered as the event the AI-write flows and the header button
+      // already dispatch, with the folders and files it names in the detail
+      // so the tree, the open tabs and the git panel narrow their work.
+      const { dirs, files } = parsed.workspace_changed;
+      window.dispatchEvent(new CustomEvent('whisper-workspace-refresh', { detail: { dirs, files } }));
+      return;
     }
     if (parsed?.mcp_changed) {
       const { revision } = parsed.mcp_changed;

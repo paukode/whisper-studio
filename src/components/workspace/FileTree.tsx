@@ -28,6 +28,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
   const fileTree = useWorkspaceStore((s) => s.fileTree);
   const setFileTree = useWorkspaceStore((s) => s.setFileTree);
   const mergeFileTree = useWorkspaceStore((s) => s.mergeFileTree);
+  const reloadDirs = useWorkspaceStore((s) => s.reloadDirs);
   const activeTabPath = useWorkspaceStore((s) => s.activeTabPath);
   const wsPath = useUIStore((s) => s.wsPath);
 
@@ -63,44 +64,26 @@ export const FileTree: React.FC<FileTreeProps> = ({
     else if (rootError) setFileTree([]);
   }, [rootEntries, rootError, setFileTree]);
 
-  // Listen for workspace-refresh events from SSE handler (file writes,
-  // approvals, manual refresh button, etc.).
-  //
-  // Refreshes are debounced (~120 ms trailing) so the burst of events that
-  // happens when the AI writes several files in quick succession collapses
-  // into ONE listDir, and we tag each fetch with a monotonic sequence number
-  // so an older in-flight response can never overwrite a newer one. Without
-  // this, three rapid SSE events fired three concurrent listDir calls whose
-  // resolution order was undefined — the slowest "winner" sometimes
-  // contained only the first file, leaving the tree stale.
-  //
-  // The fresh listing is MERGED (not replaced) into the current tree via
-  // `mergeFileTree`: `listDir` returns only the root's immediate children, so a
-  // plain replace would drop every subtree the user had expanded — leaving
-  // those folders rendered open-but-empty (expansion state lives locally in
-  // FileTreeNode, not in the tree). Merging preserves loaded children of dirs
-  // that still exist while adding new entries and dropping removed ones.
+  // Refresh requests. The backend's workspace_changed frame arrives through
+  // sessionRuntimes as this same event with the folders it names in
+  // `detail.dirs`; the AI-write flows and the header button dispatch it with
+  // no detail, which means everything loaded. Requests are debounced
+  // (~120 ms trailing) so a burst becomes one pass, the folders named in a
+  // burst are unioned, and one request naming none widens the pass to all.
+  // The store keeps only the newest listing per folder when passes overlap.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
-    let seq = 0;
-    let latestApplied = 0;
-
-    const fetchNow = () => {
-      const mySeq = ++seq;
-      listDir(ROOT_PATH)
-        .then((entries) => {
-          if (mySeq < latestApplied) return; // a newer fetch already won
-          latestApplied = mySeq;
-          mergeFileTree(entries);
-        })
-        .catch(() => { /* ignore */ });
-    };
-
-    const handler = () => {
+    let named: Set<string> | null = new Set();
+    const handler = (e: Event) => {
+      const dirs = ((e as CustomEvent).detail as { dirs?: string[] | null } | null)?.dirs;
+      if (dirs == null) named = null;
+      else if (named) for (const dir of dirs) named.add(dir);
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         timer = null;
-        fetchNow();
+        const pass = named ? [...named] : null;
+        named = new Set();
+        void reloadDirs(pass);
       }, 120);
     };
     window.addEventListener('whisper-workspace-refresh', handler);
@@ -108,7 +91,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
       window.removeEventListener('whisper-workspace-refresh', handler);
       if (timer) clearTimeout(timer);
     };
-  }, [mergeFileTree]);
+  }, [reloadDirs]);
 
   // Listen for rename events from context menu — show inline rename input in the tree
   useEffect(() => {

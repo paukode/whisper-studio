@@ -217,6 +217,18 @@ def _session_event_frame(ev: dict) -> dict | None:
         # App-wide, published with no session id: the MCP server list
         # changed (server/mcp.py::_bump), so every window refetches it.
         return {"mcp_changed": {"revision": ev.get("revision", 0)}}
+    if kind == "workspace_changed":
+        # App-wide: the connected folder changed on disk
+        # (server/workspace/watcher.py). Names the folders whose listing may
+        # differ and the files whose content changed; None means too many to
+        # name, and the UI reloads everything it has loaded.
+        return {
+            "workspace_changed": {
+                "root": ev.get("root", ""),
+                "dirs": ev.get("dirs"),
+                "files": ev.get("files"),
+            }
+        }
     return None
 
 

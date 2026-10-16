@@ -71,9 +71,14 @@ export const WorkspacePanel: React.FC<WorkspacePanelProps> = ({ onCollapse }) =>
 
   // Reload non-dirty open tabs when workspace files change (AI writes, approvals, etc.)
   useEffect(() => {
-    const handler = () => {
+    const handler = (e: Event) => {
+      // The watcher names the files whose content changed; a request naming
+      // none (the header button, an AI write) re-reads every open tab.
+      const files = ((e as CustomEvent).detail as { files?: string[] | null } | null)?.files;
+      const named = files == null ? null : new Set(files);
       const ws = useWorkspaceStore.getState();
       for (const tab of ws.editorTabs) {
+        if (named && !named.has(tab.path)) continue;
         if (tab.isDirty) continue; // Don't overwrite user edits
         // A tab kept from another root is not this workspace's file of that path.
         if (!inConnectedRoot(tab)) continue;
