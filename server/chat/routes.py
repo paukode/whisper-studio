@@ -1206,6 +1206,7 @@ async def btw_endpoint(request: Request):
     btw_session = str(body.get("session_id") or "")
 
     async def _btw_stream():
+        from server.chat.engine.anthropic import tighten_read_timeout
         from server.costs.calls import ClaudeStreamRecorder
 
         bedrock = _get_bedrock_client()
@@ -1243,7 +1244,9 @@ async def btw_endpoint(request: Request):
         def _read_stream(response=response, q=q):
             try:
                 stream = response.get("body")
-                for event in stream:
+                for n, event in enumerate(stream):
+                    if n == 0:
+                        tighten_read_timeout(stream)
                     chunk = event.get("chunk")
                     if not chunk:
                         continue

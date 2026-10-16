@@ -39,7 +39,7 @@ class FakeBedrockClient:
     loudly instead of hanging.
     """
 
-    def __init__(self, rounds: list[list[dict]]):
+    def __init__(self, rounds: list[list[dict | BaseException]]):
         self._rounds = list(rounds)
         self.requests: list[dict] = []  # parsed request bodies, for assertions
 
@@ -47,16 +47,21 @@ class FakeBedrockClient:
         self.requests.append(json.loads(body))
         if not self._rounds:
             raise RuntimeError("FakeBedrockClient: no scripted rounds left")
-        events = self._rounds.pop(0)
-        chunks = []
+        return {"body": self._stream(self._rounds.pop(0))}
+
+    @staticmethod
+    def _stream(events):
         for ev in events:
+            if isinstance(ev, BaseException):
+                # Connection fault while reading the body (a read timeout, a
+                # dropped socket): it raises out of the stream iterator.
+                raise ev
             if "type" in ev:
-                chunks.append({"chunk": {"bytes": json.dumps(ev).encode()}})
+                yield {"chunk": {"bytes": json.dumps(ev).encode()}}
             else:
                 # Transport-level event (mid-stream error), delivered outside
                 # the chunk envelope exactly as Bedrock does.
-                chunks.append(ev)
-        return {"body": iter(chunks)}
+                yield ev
 
     def invoke_model(self, modelId, contentType, accept, body):
         # Compaction summarizer path; deterministic canned summary.
