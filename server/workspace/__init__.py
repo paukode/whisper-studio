@@ -58,9 +58,11 @@ from .paths import (  # noqa: E402,F401
     _atomic_write_bytes,
     _atomic_write_text,
     _normalize_lf,
+    _ws_path_allowed,
     _ws_validate_path,
     get_scratch_dir,
     is_staged_path,
+    scratch_root,
     stage_file_bytes,
 )
 

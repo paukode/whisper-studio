@@ -331,20 +331,13 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
               // Workspace prompt — render interactive folder picker card
               if (tool.toolName === 'ws_workspace_prompt') {
                 const input = tool.input as {
-                  reason?: string; suggested?: string; recent?: string[];
-                  workspace?: string | null; attempted?: string | null; tool_name?: string;
+                  suggested?: string; recent?: string[]; tool_name?: string;
                 };
                 return (
                   <WorkspacePromptCard
                     key={`ws-prompt-${idx}`}
-                    reason={input.reason ?? ''}
                     suggested={input.suggested ?? ''}
                     recent={input.recent ?? []}
-                    // The root the containment check used and the path it
-                    // rejected — without them the card can only show the raw
-                    // reason slug and the user cannot tell why it fired.
-                    workspace={input.workspace ?? null}
-                    attempted={input.attempted ?? null}
                     toolName={input.tool_name}
                     // tool.toolId now carries the REAL tool_use_id the backend
                     // stashed this pause under (see sseStream.ts) — resuming

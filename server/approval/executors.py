@@ -35,7 +35,7 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
     path = payload.get("path", "")
     content = workspace._normalize_lf(payload.get("content", ""))
     full = os.path.join(ws, path)
-    if not workspace._ws_validate_path(full, ws):
+    if not workspace._ws_path_allowed(full, ws):
         return ApprovalOutcome(ok=False, error="Invalid path")
     if os.path.isfile(full):
         try:
@@ -58,13 +58,18 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
     # lands here on every approval path (inline, the card's Yes, a spoken yes,
     # an unattended agent); one saved to an absolute path lands in
     # _do_save_to_path, which runs the same check. The note rides in the tool
-    # result the gate budgets. Bounded, and off the event loop.
+    # result the gate budgets. Bounded, and off the event loop. A file in the
+    # scratch folder is outside the workspace, so it is only checked, the way
+    # a save to an absolute path is.
     from server.code_tools.commands import PYTHON_EXTENSIONS
 
     if os.path.splitext(path)[1].lower() in PYTHON_EXTENSIONS:
         from server.code_tools import ruff
 
-        note = await asyncio.to_thread(ruff.after_write, ws, full, path)
+        if workspace._ws_validate_path(full, ws):
+            note = await asyncio.to_thread(ruff.after_write, ws, full, path)
+        else:
+            note = await asyncio.to_thread(ruff.after_save, full, ws)
         output = f"{output}\n\n{note}"
     return ApprovalOutcome(ok=True, output=output)
 
@@ -135,7 +140,7 @@ async def _do_delete(payload: dict) -> ApprovalOutcome:
         return ApprovalOutcome(ok=False, error="No workspace connected")
     path = payload.get("path", "")
     full = os.path.join(ws, path)
-    if not workspace._ws_validate_path(full, ws) or not os.path.exists(full):
+    if not workspace._ws_path_allowed(full, ws) or not os.path.exists(full):
         return ApprovalOutcome(ok=False, error="Path not found")
     try:
         # A large tree (node_modules) takes seconds to remove.
@@ -247,7 +252,7 @@ async def _do_create_document(payload: dict) -> ApprovalOutcome:
         return ApprovalOutcome(ok=False, error="No workspace connected")
     path = payload.get("path", "")
     full = os.path.join(ws, path)
-    if not workspace._ws_validate_path(full, ws):
+    if not workspace._ws_path_allowed(full, ws):
         return ApprovalOutcome(ok=False, error="Invalid path")
     try:
         data = base64.b64decode(payload.get("content_b64", ""))

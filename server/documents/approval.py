@@ -45,7 +45,7 @@ def _resolve_destination(payload: dict) -> tuple[str, str]:
         if not ws:
             return "", "No workspace connected"
         full = os.path.join(ws, path)
-        if not workspace._ws_validate_path(full, ws):
+        if not workspace._ws_path_allowed(full, ws):
             return "", "Invalid path"
         return full, ""
 

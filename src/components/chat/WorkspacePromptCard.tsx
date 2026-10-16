@@ -3,15 +3,8 @@ import { useUIStore } from '@/stores/uiStore';
 import { settleWorkspaceOps, syncWorkspaceStatus } from '@/services/workspaceConnection';
 
 export interface WorkspacePromptCardProps {
-  reason: string;
   suggested: string;
   recent: string[];
-  /** The root the containment check actually used, or null when nothing was
-   *  connected. Shown verbatim: when it disagrees with the folder the panel is
-   *  rendering, that disagreement IS the answer to "why am I being asked?". */
-  workspace?: string | null;
-  /** Absolute path the check rejected (outside_workspace only). */
-  attempted?: string | null;
   /** Tool that paused, for a sentence that names what actually happened. */
   toolName?: string;
   /** Real tool_use_id of the paused tool call (server/tool_executor.py
@@ -36,35 +29,29 @@ function dispatchResume(toolUseId: string, content: string): void {
 }
 
 /**
- * Interactive card shown when a workspace-write tool pauses mid-turn because
- * it targets a connected workspace that doesn't exist or a path outside it
- * ('no_workspace' / 'outside_workspace'): a folder picker that CONNECTS the
- * chosen folder as the persistent workspace, then resumes so the LLM
- * re-issues the original write.
+ * Interactive card shown when a tool that modifies or deletes an existing
+ * file pauses mid-turn because no workspace is connected: a folder picker
+ * that CONNECTS the chosen folder as the persistent workspace, then resumes
+ * so the LLM re-issues the original call.
  *
- * One-off "save this file somewhere" requests never reach this card: the
- * file-saving tools resolve the destination themselves (the user's own
- * words, or a Documents default) and go straight to the approval card.
- *
- * The card used to render the bare `reason` slug ("outside_workspace") as its
- * whole explanation, which reads as a bug report rather than a question — and
- * offered no way out except connecting SOMETHING, even in the common case
- * where the workspace was right and only the path was wrong.
+ * This is the only situation that reaches the card. A path outside a
+ * connected workspace never does: the workspace was fine and the path was
+ * not, so the backend answers with a plain refusal (or, for a new file at an
+ * absolute path, the ordinary save approval card) instead of offering to
+ * switch roots. One-off "save this file somewhere" requests never reach it
+ * either: the file-saving tools resolve the destination themselves (the
+ * user's own words, or a Documents default) and go straight to the approval
+ * card.
  */
 export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
-  reason,
   suggested,
   recent,
-  workspace,
-  attempted,
   toolName,
   toolUseId,
 }) => {
   const [isBusy, setIsBusy] = useState(false);
   const [resolved, setResolved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const outside = reason === 'outside_workspace';
 
   // Re-read the authoritative workspace the moment this card appears. The
   // panel only reconciles on mount and on window focus, so a root that moved
@@ -135,9 +122,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
         toolUseId,
         `Workspace connected to ${path}. ` +
           `IMPORTANT: the original tool call did NOT execute: ` +
-          (outside
-            ? `its path was outside the workspace connected at the time. `
-            : `no workspace was connected at the time. `) +
+          `no workspace was connected at the time. ` +
           `Re-issue the same tool call now (with the workspace-relative path) to actually perform the action.`,
       );
     } catch (err) {
@@ -145,7 +130,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
       setError('Could not reach the backend.');
       setIsBusy(false);
     }
-  }, [toolUseId, outside]);
+  }, [toolUseId]);
 
   const handleBrowse = useCallback(async () => {
     setIsBusy(true);
@@ -165,24 +150,17 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
     }
   }, [connectAndResume]);
 
-  /** Resolve the pause WITHOUT touching the workspace. For outside_workspace
-   *  this is usually the right answer: the workspace was fine and the model
-   *  simply aimed at the wrong path, so switching roots to satisfy one bad
-   *  path is the more destructive option. Without this the turn could only be
-   *  unstuck by connecting some folder. */
-  const handleKeep = useCallback(() => {
+  /** Resolve the pause WITHOUT connecting anything. Without this the turn
+   *  could only be unstuck by connecting some folder. */
+  const handleDecline = useCallback(() => {
     setIsBusy(true);
-    setResolved(workspace || '');
+    setResolved('');
     dispatchResume(
       toolUseId,
-      workspace
-        ? `The user declined to change the workspace. It is still ${workspace}. ` +
-            `The original tool call did NOT execute because its path fell outside that workspace. ` +
-            `Retry with a path inside ${workspace}, or explain why the write has to happen elsewhere.`
-        : `The user declined to connect a workspace. The original tool call did NOT execute. ` +
-            `Do not retry it as-is. Say what you needed and let the user decide.`,
+      `The user declined to connect a workspace. The original tool call did NOT execute. ` +
+        `Do not retry it as-is. Say what you needed and let the user decide.`,
     );
-  }, [toolUseId, workspace]);
+  }, [toolUseId]);
 
   const recentPaths = recent.filter(p => p !== suggested);
 
@@ -196,9 +174,7 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>
-        <span style={{ fontSize: '0.85em', fontWeight: 600 }}>
-          {outside ? 'Path outside the workspace' : 'Workspace needed'}
-        </span>
+        <span style={{ fontSize: '0.85em', fontWeight: 600 }}>Workspace needed</span>
       </div>
 
       <div style={{
@@ -207,31 +183,8 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
         marginBottom: 12,
         lineHeight: 1.5,
       }}>
-        {outside ? (
-          <>
-            <div>
-              {toolName ? <code>{toolName}</code> : 'A tool'} tried to reach a path outside the
-              connected workspace, so nothing was written.
-            </div>
-            {workspace && (
-              <div style={{ marginTop: 6 }}>
-                Connected workspace:{' '}
-                <code style={{ fontFamily: 'var(--font-mono)' }}>{workspace}</code>
-              </div>
-            )}
-            {attempted && (
-              <div>
-                Attempted path:{' '}
-                <code style={{ fontFamily: 'var(--font-mono)' }}>{attempted}</code>
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            No workspace is connected, so {toolName ? <code>{toolName}</code> : 'the tool'} has
-            nowhere to write. Pick a folder to connect.
-          </>
-        )}
+        No workspace is connected, so {toolName ? <code>{toolName}</code> : 'the tool'} has
+        nowhere to write. Pick a folder to connect.
       </div>
 
       {resolved !== null ? (
@@ -248,24 +201,10 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {/* Resolve without switching roots — the likely answer whenever a
-              workspace is already connected. */}
-          {outside && (
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={handleKeep}
-              disabled={isBusy}
-              type="button"
-              style={{ textAlign: 'left' }}
-            >
-              Keep this workspace and retry inside it
-            </button>
-          )}
-
           {/* Suggested path */}
           {suggested && (
             <button
-              className={outside ? 'btn btn-sm' : 'btn btn-primary btn-sm'}
+              className="btn btn-primary btn-sm"
               onClick={() => void connectAndResume(suggested)}
               disabled={isBusy}
               type="button"
@@ -299,16 +238,14 @@ export const WorkspacePromptCard: React.FC<WorkspacePromptCardProps> = ({
             {isBusy ? 'Connecting…' : 'Browse…'}
           </button>
 
-          {!outside && (
-            <button
-              className="btn btn-sm"
-              onClick={handleKeep}
-              disabled={isBusy}
-              type="button"
-            >
-              Not now
-            </button>
-          )}
+          <button
+            className="btn btn-sm"
+            onClick={handleDecline}
+            disabled={isBusy}
+            type="button"
+          >
+            Not now
+          </button>
 
           {error && (
             <div style={{ fontSize: '0.8em', color: 'var(--accent-record)' }}>{error}</div>

@@ -37,7 +37,8 @@ from .paths import (
     _WS_BINARY_EXTS,
     WORKSPACE_BACKUPS,
     _normalize_lf,
-    _ws_validate_path,
+    _ws_path_allowed,
+    scratch_root,
     stage_file_bytes,
 )
 from .read_only import _is_read_only_command
@@ -53,6 +54,20 @@ from .state import (
 )
 
 log = logging.getLogger("whisper-studio")
+
+
+def outside_roots_error(path: str, ws: str) -> str:
+    """The refusal for a ws_* file tool aimed outside both places it can reach.
+
+    A plain tool result, never the folder picker: the workspace the user
+    connected is not in question, only the path is, and the model can act on
+    this on its own (a path inside the workspace, the scratch folder, or
+    ws_run_command for anything else) without pausing the turn."""
+    return (
+        f"Error: {path} is outside the connected workspace ({ws}) and outside the "
+        f"scratch folder ({scratch_root()}). The ws_* file tools reach only those two "
+        "places. Use a path inside one of them, or ws_run_command for other locations."
+    )
 
 
 def open_folder_now(path: str) -> str:
@@ -210,8 +225,8 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
     session_id = tool_input.pop("__session_id__", "")
     path = tool_input.get("path", "")
     full = os.path.join(ws, path)
-    if not _ws_validate_path(full, ws):
-        return "Error: path outside workspace."
+    if not _ws_path_allowed(full, ws):
+        return outside_roots_error(path, ws)
     if not os.path.isfile(full):
         return f"File not found: {path}"
     ext = os.path.splitext(path)[1].lower()
@@ -284,8 +299,8 @@ def _exec_ws_list_dir(tool_input, transcript, current_attachments):
         return "No workspace connected."
     path = tool_input.get("path", "").strip() or "."
     full = os.path.join(ws, path) if path != "." else ws
-    if not _ws_validate_path(full, ws):
-        return "Error: path outside workspace."
+    if not _ws_path_allowed(full, ws):
+        return outside_roots_error(path, ws)
     if not os.path.isdir(full):
         return f"Not a directory: {path}"
     entries = []
@@ -314,13 +329,13 @@ def _exec_ws_list_dir(tool_input, transcript, current_attachments):
 def _exec_ws_write_file(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
     if not ws:
-        return _workspace_prompt_payload("ws_write_file", tool_input, "no_workspace")
+        return _workspace_prompt_payload("ws_write_file", tool_input)
     session_id = tool_input.pop("__session_id__", "")
     path = tool_input.get("path", "")
     content = _normalize_lf(tool_input.get("content", ""))
     full = os.path.join(ws, path)
-    if not _ws_validate_path(full, ws):
-        return _workspace_prompt_payload("ws_write_file", tool_input, "outside_workspace")
+    if not _ws_path_allowed(full, ws):
+        return outside_roots_error(path, ws)
     if not os.path.isfile(full):
         return f"File not found: {path}. Use ws_create_file for new files."
     # Write gate: must have a full prior read, file must not have changed
@@ -367,7 +382,7 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
     """Edit a file by exact string replacement with quote normalization."""
     ws = get_workspace_path()
     if not ws:
-        return _workspace_prompt_payload("ws_edit_file", tool_input, "no_workspace")
+        return _workspace_prompt_payload("ws_edit_file", tool_input)
     session_id = tool_input.pop("__session_id__", "")
     path = tool_input.get("path", "")
     old_string = tool_input.get("old_string", "")
@@ -380,8 +395,8 @@ def _exec_ws_edit_file(tool_input, transcript, current_attachments):
         return "Error: old_string and new_string are identical."
 
     full = os.path.join(ws, path)
-    if not _ws_validate_path(full, ws):
-        return _workspace_prompt_payload("ws_edit_file", tool_input, "outside_workspace")
+    if not _ws_path_allowed(full, ws):
+        return outside_roots_error(path, ws)
     if not os.path.isfile(full):
         return f"File not found: {path}"
 
@@ -583,11 +598,11 @@ def _exec_save_file(tool_input, transcript, current_attachments):
 def _exec_ws_delete_file(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
     if not ws:
-        return _workspace_prompt_payload("ws_delete_file", tool_input, "no_workspace")
+        return _workspace_prompt_payload("ws_delete_file", tool_input)
     path = tool_input.get("path", "")
     full = os.path.join(ws, path)
-    if not _ws_validate_path(full, ws):
-        return _workspace_prompt_payload("ws_delete_file", tool_input, "outside_workspace")
+    if not _ws_path_allowed(full, ws):
+        return outside_roots_error(path, ws)
     if not os.path.exists(full):
         return f"File not found: {path}"
     try:

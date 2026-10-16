@@ -41,11 +41,6 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _parse_prompt(output: str) -> dict:
-    assert output.startswith("[WS_WORKSPACE_PROMPT]"), output
-    return json.loads(output[len("[WS_WORKSPACE_PROMPT]") :])
-
-
 def _parse_approval(output: str, expected_action: str = "create_document") -> dict:
     assert output.startswith("[WS_APPROVAL]"), output
     payload = json.loads(output[len("[WS_APPROVAL]") :])
@@ -152,17 +147,17 @@ def test_do_save_to_path_moves_staged_document_on_approval(tmp_path):
     assert (tmp_path / "notes.docx").read_bytes() == data
 
 
-def test_create_docx_path_outside_workspace_emits_sentinel(tmp_path, monkeypatch):
+def test_create_docx_path_outside_workspace_saves_there_after_approval(tmp_path, monkeypatch):
+    """A path escaping the connected workspace is a destination like
+    destination_path: the document is built, staged, and the save approval
+    card names the full path. The folder picker never fires for it."""
     ws = tmp_path / "ws"
     ws.mkdir()
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(ws))
-    # The destination is resolved BEFORE any rendering work: an unusable path
-    # must come back as the folder-picker sentinel without building anything.
-    with patch("server.documents.executors.render_html") as mock_render:
-        out = _exec_create_docx({"path": "../outside.docx", "html_content": "<p>hi</p>"}, "", {})
-    mock_render.assert_not_called()
-    payload = _parse_prompt(out)
-    assert payload["reason"] == "outside_workspace"
+    out = _exec_create_docx({"path": "../outside.docx", "html_content": "<p>hi</p>"}, "", {})
+    payload = _parse_approval(out, expected_action="save_to_path")
+    assert payload["path"] == os.path.realpath(str(tmp_path / "outside.docx"))
+    assert is_staged_path(payload["staged_path"])
 
 
 # ── Real conversions: build succeeds, pauses for approval, never touches disk ──

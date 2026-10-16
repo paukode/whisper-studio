@@ -321,12 +321,47 @@ def _normalize_lf(content: str) -> str:
 _BLOCKED_PATH_PREFIXES = ("/dev/", "/proc/", "/sys/")
 
 
-def _ws_validate_path(filepath: str, ws_root: str) -> bool:
-    # Block UNC paths to prevent NTLM credential leaks
+def _is_system_path(filepath: str) -> bool:
+    """UNC paths (NTLM credential leaks) and the kernel pseudo-filesystems:
+    never a valid file destination, whatever root is in play."""
     if filepath.startswith("\\\\") or filepath.startswith("//"):
+        return True
+    real = os.path.realpath(filepath)
+    return any(real.startswith(p) or real == p.rstrip("/") for p in _BLOCKED_PATH_PREFIXES)
+
+
+def _ws_validate_path(filepath: str, ws_root: str) -> bool:
+    if _is_system_path(filepath):
         return False
     real = os.path.realpath(filepath)
-    if any(real.startswith(p) or real == p.rstrip("/") for p in _BLOCKED_PATH_PREFIXES):
-        return False
     root = os.path.realpath(ws_root)
     return real == root or real.startswith(root + os.sep)
+
+
+def scratch_root() -> str:
+    """Parent of every per-session scratch directory (see get_scratch_dir)."""
+    return os.path.join(DATA_DIR, "scratch")
+
+
+def _ws_path_allowed(filepath: str, ws_root: str) -> bool:
+    """Containment for the assistant's ws_* file tools and their approvals.
+
+    Two roots are reachable: the connected workspace, and the scratch area the
+    system prompt sends throwaway files to (app-owned storage under the data
+    root, one folder per session). The model is told to put probe scripts and
+    intermediates there by absolute path, so the tools that create, read, edit
+    and delete files must accept that path, or every probe stalls the turn.
+
+    The staging area inside the scratch root stays out of reach: approvals
+    move finished files out of it, and nothing else may touch it (see
+    is_staged_path)."""
+    if _ws_validate_path(filepath, ws_root):
+        return True
+    if _is_system_path(filepath):
+        return False
+    real = os.path.realpath(filepath)
+    staging = os.path.realpath(_staging_root())
+    if real == staging or real.startswith(staging + os.sep):
+        return False
+    root = os.path.realpath(scratch_root())
+    return real.startswith(root + os.sep)
