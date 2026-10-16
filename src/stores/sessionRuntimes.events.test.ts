@@ -83,3 +83,22 @@ describe('app event channel', () => {
     expect(FakeEventSource.instances[0].closed).toBe(false);
   });
 });
+
+describe('workspace changes on the event channel', () => {
+  it('turns a workspace_changed frame into the workspace-refresh event, naming its folders and files', async () => {
+    const { runtimes } = await load();
+    runtimes.openEventChannel();
+    const seen: unknown[] = [];
+    const onRefresh = (e: Event) => seen.push((e as CustomEvent).detail);
+    window.addEventListener('whisper-workspace-refresh', onRefresh);
+    try {
+      FakeEventSource.instances[0].emit({
+        session_id: '',
+        workspace_changed: { root: '/w', dirs: ['', 'app'], files: ['app/main.py'] },
+      });
+    } finally {
+      window.removeEventListener('whisper-workspace-refresh', onRefresh);
+    }
+    expect(seen).toEqual([{ dirs: ['', 'app'], files: ['app/main.py'] }]);
+  });
+});
