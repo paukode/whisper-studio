@@ -134,7 +134,8 @@ def classify_bedrock_error(error: Exception) -> WhisperAPIError:
     # their text ("Unable to locate credentials") gives the user no next step.
     if isinstance(error, (NoCredentialsError, PartialCredentialsError)):
         return NoCredentialsFoundError(error_str)
-    error_code = getattr(error, "response", {}).get("Error", {}).get("Code", "")
+    # botocore's HTTPClientError family sets response=None, not a dict.
+    error_code = (getattr(error, "response", None) or {}).get("Error", {}).get("Code", "")
 
     if error_code == "ThrottlingException" or "ThrottlingException" in error_str:
         return ThrottlingError(error_str)

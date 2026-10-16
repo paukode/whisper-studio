@@ -98,6 +98,28 @@ def test_non_retryable_error_is_terminal(monkeypatch):
     assert len(client.requests) == 1
 
 
+def test_request_time_connection_faults_classify_without_crashing():
+    """botocore raises these at request time, after its own retries ran out.
+    They carry ``response=None``, which crashed the classifier with
+    "'NoneType' object has no attribute 'get'" in place of the real error.
+    botocore already retried them, so they surface at once."""
+    from botocore.exceptions import (
+        ConnectionClosedError,
+        EndpointConnectionError,
+        ReadTimeoutError,
+    )
+
+    url = "https://bedrock-runtime.us-east-1.amazonaws.com"
+    for fault in (
+        ReadTimeoutError(endpoint_url=url),
+        ConnectionClosedError(endpoint_url=url),
+        EndpointConnectionError(endpoint_url=url),
+    ):
+        err = classify_bedrock_error(fault)
+        assert not err.is_retryable, type(fault).__name__
+        assert url in err.user_message, type(fault).__name__
+
+
 def test_bedrock_stream_faults_classify_as_retryable():
     # AWS documents both as retryable; they used to fall into the default
     # non-retryable branch.
