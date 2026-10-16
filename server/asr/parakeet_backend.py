@@ -133,6 +133,20 @@ def is_loaded() -> bool:
     return _model is not None
 
 
+def warm() -> None:
+    """One tiny decode of silence, so a resident model that macOS compressed
+    or swapped out while the app sat idle is paged back in before the first
+    real sentence (measured: a cold first decode took 11 s on a swapping Mac,
+    a warm one under 1 s). Run on ``executor``; a no-op when not loaded."""
+    model = _model
+    if model is None:
+        return
+    import mlx.core as mx
+
+    silence = np.zeros(SAMPLE_RATE // 2, dtype=np.float32)
+    model.generate(_get_logmel(mx.array(silence), model.preprocessor_config))
+
+
 def load() -> None:
     """Force the model into memory now (used by local mode's lazy loader).
 
@@ -256,7 +270,8 @@ class ParakeetSession:
                 else:
                     wordless.append(text)
             # An utterance just closed; the next interim starts a fresh window.
-            return self._close_draft(events, withdrawal(self._last_interim, discard, wordless))
+            why = withdrawal(self._last_interim, discard, wordless)
+            return self._close_draft(events, why)
 
         # No boundary this chunk — re-decode the growing in-flight utterance.
         pending = self._buf.pending()

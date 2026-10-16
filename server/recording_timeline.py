@@ -16,9 +16,10 @@ out of backend.log. It logs:
 - the level of each of the first seconds of audio ("silent" is digital
   zero, the sign of a capture that has not started producing sound);
 - when the ASR session was ready and how long its model load took;
-- for the first minute: each utterance's first draft, every final, slow
-  decodes and gaps in the audio, each with how far the server runs behind
-  the live audio;
+- for the first minute: each utterance's first draft, every final, when
+  its speaker label landed (labels follow the sentence, see
+  diarization/live.py), slow decodes and gaps in the audio, each with how
+  far the server runs behind the live audio;
 - at any time: a draft withdrawn without a final, with its words and the
   backend's reason; and a summary when the connection ends.
 
@@ -114,6 +115,8 @@ class RecordingTimeline:
         self._finals = 0
         self._withdrawn = 0
         self._first_final_at: float | None = None
+        self._labelled = 0
+        self._slowest_label = 0.0
         self._slow_decodes = 0
         self._slowest_decode = 0.0
         log.info(
@@ -263,22 +266,36 @@ class RecordingTimeline:
                 "%s draft shown at %s (%s): %s", self.tag, self._at(), self._lag(), _quote(text)
             )
 
-    def final(self, text: str, chunk_id: int, speaker: str, label_s: float) -> None:
-        """A final was sent to the client (it replaces any open draft)."""
+    def final(self, text: str, chunk_id: int) -> None:
+        """A final was sent to the client (it replaces any open draft). Its
+        speaker label follows separately, see ``labelled``."""
         self._draft_open = False
         self._finals += 1
         if self._first_final_at is None:
             self._first_final_at = self._elapsed()
         if self._in_start() or self._finals <= ALWAYS_LOGGED_FINALS:
             log.info(
-                "%s final #%d at %s (%s; %s, speaker label took %.1f s): %s",
+                "%s final #%d at %s (%s): %s",
                 self.tag,
                 chunk_id,
                 self._at(),
                 self._lag(),
-                speaker,
-                label_s,
                 _quote(text),
+            )
+
+    def labelled(self, chunk_id: int, labels: list[str], seconds: float) -> None:
+        """A sent final got its speaker label(s), ``seconds`` after sending.
+        More than one label means a handover was found inside it."""
+        self._labelled += 1
+        self._slowest_label = max(self._slowest_label, seconds)
+        if self._in_start() or self._labelled <= ALWAYS_LOGGED_FINALS:
+            log.info(
+                "%s final #%d labelled %s, %.1f s after it was sent%s",
+                self.tag,
+                chunk_id,
+                ", ".join(labels) or "(none)",
+                seconds,
+                f" (split into {len(labels)} turns)" if len(labels) > 1 else "",
             )
 
     def withdrawn(self, why: dict | None) -> None:
@@ -321,7 +338,8 @@ class RecordingTimeline:
         first_final = "none" if self._first_final_at is None else f"+{self._first_final_at:.2f}s"
         log.info(
             "%s closed after %.1f s (%s): %.1f s of audio, %d drafts, %d finals, "
-            "%d drafts discarded, first final at %s, slowest decode %.1f s (%d over %.0f s)",
+            "%d drafts discarded, first final at %s, slowest decode %.1f s (%d over %.0f s), "
+            "slowest speaker label %.1f s",
             self.tag,
             self._elapsed(),
             "stop" if by_stop else "dropped without stop",
@@ -333,4 +351,5 @@ class RecordingTimeline:
             self._slowest_decode,
             self._slow_decodes,
             SLOW_DECODE_S,
+            self._slowest_label,
         )

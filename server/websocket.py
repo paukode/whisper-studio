@@ -29,10 +29,12 @@ import time
 from concurrent.futures import Future, InvalidStateError
 from dataclasses import dataclass, field
 
+import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from server import diarization
 from server.asr import get_backend, languages, resolve_name
+from server.diarization.live import LiveLabeller, Pending
 from server.infrastructure.config import get as config_get
 from server.recording_timeline import RecordingTimeline
 
@@ -283,6 +285,36 @@ def _end_take(session_id: str, slot: Future) -> None:
             del _carryover[session_id]
 
 
+def _quietly(fn, what: str) -> None:
+    try:
+        fn()
+    except Exception as e:
+        log.debug("Warming the %s failed: %s", what, e)
+
+
+def _warm_speaker_model(embed) -> None:
+    # Loads the encoder when needed, then one forward pass pages it in.
+    embed(np.zeros(24000, dtype=np.float32))
+
+
+def _warm_models(backend_mod, with_speakers: bool) -> None:
+    """Page the models back in the moment a connection opens.
+
+    The client opens its microphone in parallel, so by the first sentence
+    the engine and the speaker model are resident instead of loading on the
+    critical path (field logs: a speaker model load of 3 to 4 s on the first
+    sentence, a cold first decode of 11 s on a swapping Mac). Fire and
+    forget, each on its own model's executor, ahead of any real audio."""
+    warm = getattr(backend_mod, "warm", None)
+    is_loaded = getattr(backend_mod, "is_loaded", None)
+    if warm is not None and is_loaded is not None and is_loaded():
+        backend_mod.executor.submit(_quietly, warm, "transcription model")
+    if with_speakers:
+        # Bound now, not when the job runs: the connection's own embed.
+        embed = diarization.embed
+        diarization.executor.submit(_quietly, lambda: _warm_speaker_model(embed), "speaker model")
+
+
 def _flush_then_close(session) -> list[dict]:
     """Executor job for a connection that dropped: flush the in-flight
     utterance, then release the session (in that order on any pool size)."""
@@ -363,11 +395,6 @@ async def websocket_endpoint(
     # of the stream the client is already rendering.
     split_setting = config_get("speaker_split_turns")
     split_turns = True if split_setting is None else bool(split_setting)
-    # Safety net for the case the detector misreads a recording: if most
-    # utterances come back "containing a handover", that is one person
-    # being fragmented, not a conversation, and splitting latches off for
-    # the rest of this recording.
-    split_budget = diarization.turns.SplitBudget()
     # Chunk ids must stay monotonic across reconnects within a session (see
     # the _chunk_counters note above): resume from the highest id already
     # used for this session so a reconnect never reuses an id that keys an
@@ -400,23 +427,6 @@ async def websocket_endpoint(
             except Exception:
                 pass  # client closed mid-send — benign disconnect race
 
-    async def _spans_for(ev: dict) -> list:
-        """One final event -> the speaker turns inside it.
-
-        A VAD utterance ends on silence, not on a speaker change, so a
-        handover with no real pause ("...my point." / "Right, but—") lands
-        inside one utterance. Splitting it here, before anything is
-        labelled, is what stops the second speaker's words being filed
-        under the first. Returns a single whole-utterance span whenever
-        splitting is off, unavailable, or unwarranted.
-        """
-        audio = ev.get("audio")
-        if speakers is None or audio is None or not split_turns or not split_budget.open:
-            return []
-        return await loop.run_in_executor(
-            diarization.executor, diarization.turns.split_utterance, audio, ev.get("words")
-        )
-
     async def emit_events(events: list[dict]) -> None:
         """Relay ordered backend events; label finals via diarization."""
         nonlocal chunk_counter
@@ -434,45 +444,19 @@ async def websocket_endpoint(
             if not text:
                 continue
 
-            # final. One utterance can carry more than one speaker turn;
-            # each turn is emitted as its own chunk, which is exactly what
-            # the client already handles (consecutive same-speaker chunks
-            # merge into one segment, differing ones do not).
-            labelling_since = time.monotonic()
-            spans = await _spans_for(ev)
-            split_budget.record(len(spans) > 1)
-            if len(spans) > 1:
-                log.info("Speaker handover split one utterance into %d turns", len(spans))
-            else:
-                spans = []
-            for span in spans or [None]:
-                span_text = span.text if span is not None else text
-                span_audio = span.audio if span is not None else ev.get("audio")
-                if not span_text:
-                    continue
-                chunk_id, speaker = await emit_final(
-                    span_text,
-                    span_audio,
-                    ev.get("language"),
-                    span.embedding if span is not None else None,
-                    span.overlap if span is not None else False,
+            # final: sent at once under a provisional label (the speaker of
+            # the last labelled sentence). The labeller works out the real
+            # speaker, and any handover inside the sentence, on its own task
+            # and corrects the client afterwards, so labelling never holds
+            # up the transcript or the reading of audio (diarization/live.py).
+            chunk_id = allocate_chunk_id()
+            provisional = labeller.provisional_label() if labeller else "Speaker 1"
+            await send_final(chunk_id, text, provisional, ev.get("audio"), ev.get("language"))
+            timeline.final(text, chunk_id)
+            if labeller is not None:
+                labeller.submit(
+                    Pending(chunk_id, text, ev.get("audio"), ev.get("words"), provisional)
                 )
-                timeline.final(span_text, chunk_id, speaker, time.monotonic() - labelling_since)
-            if speakers is not None:
-                # Periodic self-heal: re-cluster everything seen so far and
-                # retro-fix the few utterances whose label changed.
-                updates = await loop.run_in_executor(diarization.executor, speakers.maybe_recluster)
-                if updates:
-                    await send_json(
-                        {
-                            "type": "speaker_update",
-                            "updates": [
-                                {"chunk_id": cid, "speaker": label}
-                                for cid, label in updates.items()
-                            ],
-                        }
-                    )
-                await push_names()
 
     async def push_names(force: bool = False) -> None:
         """Tell the client about identities recovered from the voiceprint gallery."""
@@ -482,37 +466,21 @@ async def websocket_endpoint(
         if found:
             await send_json({"type": "speaker_named", "names": found})
 
-    async def emit_final(
-        text: str,
-        audio,
-        language: str | None,
-        embedding=None,
-        overlap: bool = False,
-    ) -> tuple[int, str]:
-        """Label one settled turn and send it to the client. Returns the
-        turn's chunk id and speaker label."""
+    def allocate_chunk_id() -> int:
+        """The next chunk id. Persisted at once so a reconnect resumes past
+        it even if its speaker label never lands. Dictation ids don't feed
+        speaker memory and are not persisted."""
         nonlocal chunk_counter
         chunk_id = chunk_counter
         chunk_counter += 1
-        # Persist the next unused id immediately (before the embed) so a
-        # reconnect resumes past this chunk even if the embed fails and
-        # no speaker-memory entry is written. Skipped for dictation,
-        # whose ids don't feed speaker memory.
         if not skip_speaker:
             _record_chunk_counter(session_id, chunk_counter)
-        speaker = "Speaker 1"
-        if speakers is not None:
-            if embedding is None:
-                embedding = await loop.run_in_executor(
-                    diarization.executor, diarization.embed, audio
-                )
-            if embedding is None:
-                # Too short / failed embed: speaker continuity is the
-                # best guess and never pollutes the cluster space.
-                speaker = speakers.fallback_label()
-            else:
-                duration = len(audio) / 16000.0 if audio is not None else None
-                speaker = speakers.assign(chunk_id, embedding, duration, text)
+        return chunk_id
+
+    async def send_final(
+        chunk_id: int, text: str, speaker: str, audio, language: str | None
+    ) -> None:
+        """Send one settled sentence to the client."""
         # The engine's per-utterance language ID rides on the final
         # event. resolve_translator picks who produces the translation
         # line for the configured target — this server (engine decode,
@@ -529,10 +497,6 @@ async def websocket_endpoint(
             "chunk_id": chunk_id,
             "language": language,
         }
-        if overlap:
-            # The turns abut or overlap: this boundary is a best estimate,
-            # and the client marks it rather than implying exact timing.
-            payload["overlap"] = True
         if translator is not None:
             # Tells the client to render a "Translating…" slot under the
             # segment until the translation for this chunk arrives.
@@ -547,7 +511,6 @@ async def websocket_endpoint(
             )
             pending_translations.add(task)
             task.add_done_callback(pending_translations.discard)
-        return chunk_id, speaker
 
     async def _run_translation(chunk_id: int, audio, language: str | None, target: str) -> None:
         """Decode the utterance's translation via Canary and deliver it.
@@ -733,11 +696,27 @@ async def websocket_endpoint(
     # first await so a reconnect can never overtake it (see _carryover), and
     # released in the finally below on every exit. Dictation text belongs to
     # a composer, never to a take.
+    # Speaker labels for this connection, decided after each final is sent.
+    labeller = (
+        None
+        if speakers is None
+        else LiveLabeller(
+            speakers,
+            split_turns=split_turns,
+            send=send_json,
+            new_chunk_id=allocate_chunk_id,
+            on_labelled=lambda pending, labels, seconds: timeline.labelled(
+                pending.chunk_id, labels, seconds
+            ),
+        )
+    )
+
     take_id = (take or "").strip()
     # This connection's lines in the backend log (start-up, lost drafts).
     timeline = RecordingTimeline(
         take_id=take_id, session_id=session_id, backend=backend_name, dictation=is_dictation
     )
+    _warm_models(backend_mod, speakers is not None)
     slot = _open_slot(session_id, take_id) if session_id and take_id and not is_dictation else None
     # Whether the earlier connections' slots were claimed and relayed.
     inherited_relayed = slot is None
@@ -818,6 +797,10 @@ async def websocket_endpoint(
                         # a take that already opened keeps its own tracker.
                         languages.forget_tracker(session_id, take_id)
                     await finish_session()
+                    # Every sent sentence gets its final speaker label before
+                    # the client saves the take.
+                    if labeller is not None:
+                        await labeller.drain()
                     # Drain in-flight translations before ending the session:
                     # the client closes the socket after `session_ended`, and
                     # the last utterance's translation is usually still
@@ -890,6 +873,8 @@ async def websocket_endpoint(
         # burn decode time on a dead client. Nothing here awaits before the
         # hand-off, so it happens even when the handler is being cancelled.
         timeline.closed(ended_by_stop)
+        if labeller is not None:
+            labeller.cancel()
         for task in tuple(pending_translations):
             task.cancel()
         if slot is not None and not ended_by_stop:

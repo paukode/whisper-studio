@@ -22,6 +22,7 @@ Model load is lazy (first session); importing this module is cheap.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -120,6 +121,15 @@ def is_loaded() -> bool:
     return _model is not None
 
 
+def warm() -> None:
+    """One tiny decode of silence, so a resident model that macOS compressed
+    or swapped out while the app sat idle is paged back in before the first
+    real sentence. Run on ``executor``; a no-op when not loaded."""
+    if _model is None:
+        return
+    _generate(np.zeros(SAMPLE_RATE // 2, dtype=np.float32), source_lang="en", target_lang="en")
+
+
 def load() -> None:
     """Load the model into memory (mirrors mlx-audio's base_load_model steps,
     minus its quantization/remapping branches the fp16 repo never hits). Run
@@ -208,6 +218,16 @@ def _generate(audio: np.ndarray, source_lang: str, target_lang: str) -> str:
     return (result.text or "").strip()
 
 
+def _generate_best(
+    audio: np.ndarray, languages_to_try: list[str]
+) -> tuple[str, str, dict[str, float]]:
+    """(language, text, scores) for the language Canary transcribes this
+    clip most confidently in; see Canary.generate_best."""
+    load()
+    language, text, scores = _model.generate_best(audio, languages_to_try)
+    return language, (text or "").strip(), scores
+
+
 def translate_utterance(
     audio_data: np.ndarray, language: str | None = None, target: str = "en"
 ) -> str:
@@ -286,18 +306,42 @@ def _decode_utterance(
         log.info("Canary utterance: %.2f s, not decoded: %s", duration, e)
         return "", audio, None
     choice = tracker.final(candidates, duration, lambda: _lid(audio, candidates))
+    language = choice.language
+    tie_break = ""
     text = ""
     try:
-        text = _generate(audio, source_lang=choice.language, target_lang=choice.language)
-        if text and _is_junk(text, choice.language):
+        if choice.rivals:
+            # Language ID is unsure about this clip: transcribe it in each
+            # rival language too (one encoder pass) and keep the decode
+            # Canary itself is most confident in.
+            language, text, scores = _generate_best(audio, [choice.language, *choice.rivals])
+            tie_break = ", tie-break " + " ".join(
+                f"{lang} {score:.2f}" for lang, score in scores.items()
+            )
+        else:
+            text = _generate(audio, source_lang=language, target_lang=language)
+        if text and _is_junk(text, language):
             log.debug("Canary: hallucination filter dropped %r", text[:80])
             text = ""
     except Exception as e:
         log.warning("Canary transcription error: %s", e)
     if text:
+        if language != choice.language:
+            # The decoder overruled language ID for this clip: its evidence
+            # still counts, but it settles or switches nothing on its own.
+            choice = dataclasses.replace(
+                choice, outcome="inherited" if tracker.settled else "unsettled"
+            )
         tracker.commit(choice)
-    log.info("Canary utterance: %s%s", choice.describe(), "" if text else ", no text")
-    return text, audio, choice.language
+    picked = "" if language == choice.language else f" -> {language}"
+    log.info(
+        "Canary utterance: %s%s%s%s",
+        choice.describe(),
+        tie_break,
+        picked,
+        "" if text else ", no text",
+    )
+    return text, audio, language
 
 
 class CanarySession:
@@ -333,7 +377,8 @@ class CanarySession:
                 else:
                     wordless.append(text)
             # An utterance just closed; the next interim starts a fresh window.
-            return self._close_draft(events, withdrawal(self._last_interim, discard, wordless))
+            why = withdrawal(self._last_interim, discard, wordless)
+            return self._close_draft(events, why)
 
         # No boundary this chunk: re-decode the growing in-flight utterance
         # as a volatile draft (mirrors the Parakeet backend). The draft only

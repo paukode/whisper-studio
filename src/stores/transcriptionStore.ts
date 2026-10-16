@@ -37,6 +37,10 @@ export interface TranscriptionState {
   beginSegmentRetranslation: (segmentId: string) => void;
   completeSegmentRetranslation: (segmentId: string, text: string, target?: string) => void;
   applySpeakerUpdates: (updates: { chunk_id: number; speaker: string }[]) => void;
+  /** A sentence already on screen held a speaker handover: replace its
+   *  chunk with one chunk per turn (the first keeps the chunk's id), then
+   *  label each turn, splitting the segment where the speaker changes. */
+  splitChunk: (chunkId: number, parts: { chunk_id: number; text: string; speaker: string }[]) => void;
   editSegmentText: (segmentId: string, newText: string) => void;
   renameSpeaker: (originalKey: string, newName: string) => void;
   clearSegments: () => void;
@@ -97,7 +101,7 @@ function supersede(state: TranscriptionState, segmentId: string): number[] {
   return ids.length > 0 ? [...state.supersededChunks, ...ids] : state.supersededChunks;
 }
 
-export const createTranscriptionStore = () => createStore<TranscriptionState>()((set) => ({
+export const createTranscriptionStore = () => createStore<TranscriptionState>()((set, get) => ({
   segments: [],
   speakerNames: {},
   interimText: '',
@@ -234,6 +238,39 @@ export const createTranscriptionStore = () => createStore<TranscriptionState>()(
         }).filter((s) => s.text.length > 0);
       }),
     }));
+  },
+
+  splitChunk: (chunkId, parts) => {
+    const turns = parts.filter((p) => p.text.length > 0);
+    if (turns.length === 0) return;
+    set((state) => ({
+      segments: state.segments.map((seg) => {
+        const at = seg.chunks?.findIndex((c) => c.id === chunkId) ?? -1;
+        if (!seg.chunks || at < 0) return seg;
+        // A chunk spans from its start to the space before the next chunk.
+        const start = seg.chunks[at].start;
+        const next = seg.chunks[at + 1];
+        const end = next ? next.start - 1 : seg.text.length;
+        const replacement = turns.map((p) => p.text).join(' ');
+        const delta = replacement.length - (end - start);
+        let offset = start;
+        const turnChunks = turns.map((p) => {
+          const chunk = { id: p.chunk_id, start: offset };
+          offset += p.text.length + 1;
+          return chunk;
+        });
+        return {
+          ...seg,
+          text: seg.text.slice(0, start) + replacement + seg.text.slice(end),
+          chunks: [
+            ...seg.chunks.slice(0, at),
+            ...turnChunks,
+            ...seg.chunks.slice(at + 1).map((c) => ({ ...c, start: c.start + delta })),
+          ],
+        };
+      }),
+    }));
+    get().applySpeakerUpdates(turns.map((p) => ({ chunk_id: p.chunk_id, speaker: p.speaker })));
   },
 
   beginSegmentRetranslation: (segmentId: string) => {

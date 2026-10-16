@@ -115,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     // Native system/app audio capture bridge (Core Audio process taps).
     private let nativeAudioBridge = NativeAudioBridge()
+    private let nativeMicBridge = NativeMicBridge()
     private let nativeTranslationBridge = NativeTranslationBridge()
 
     // Saves WKDownloads (exports, blob anchors with `download`) into
@@ -210,6 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
 
     func applicationWillTerminate(_ notification: Notification) {
         nativeAudioBridge.shutdown()
+        nativeMicBridge.shutdown()
         shutdownBackend()
     }
 
@@ -399,12 +401,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         // Native audio bridge: availability marker (documentStart user script)
         // plus the "nativeAudio" message handler.
         nativeAudioBridge.install(into: config)
+        nativeMicBridge.install(into: config)
         nativeTranslationBridge.install(into: config)
         externalHTMLBridge.install(into: config)
 
         let view = WKWebView(
             frame: NSRect(x: 0, y: 0, width: 1440, height: 900), configuration: config)
         nativeAudioBridge.webView = view
+        nativeMicBridge.webView = view
         nativeTranslationBridge.webView = view
         downloadHandler.webView = view
         pageZoom.webView = view

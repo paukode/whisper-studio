@@ -160,7 +160,7 @@ def test_repetition_filter_needs_back_to_back_repeats():
 # ── startup warmup policy: ONLY Parakeet is warmed at startup ──────────────────
 
 
-def _warm_calls(monkeypatch, backend_name):
+def _warm_calls(monkeypatch, backend_name, installed=lambda entry: True):
     """Run _warm_transcription_models with all preloads stubbed; return the list of
     models that were (would have been) loaded, in order."""
     import server.asr.parakeet_backend as pk
@@ -184,17 +184,23 @@ def _warm_calls(monkeypatch, backend_name):
     # under a throwaway WHISPER_HOME / on CI).
     from server.models_manager import catalog as _catalog
 
-    monkeypatch.setattr(_catalog, "is_installed", lambda entry: True)
+    monkeypatch.setattr(_catalog, "is_installed", installed)
     conf = {"transcription_backend": backend_name, "local_mode": False}
     monkeypatch.setattr(cfg, "get", lambda k, default=None: conf.get(k, default))
     main._warm_transcription_models()
     return calls
 
 
-def test_startup_warms_only_parakeet(monkeypatch):
-    """Default (streaming -> parakeet): only Parakeet is warmed; Whisper is never
-    loaded or downloaded, and the speaker/diarization encoder is not preloaded."""
-    assert _warm_calls(monkeypatch, "streaming") == ["parakeet"]
+def test_startup_warms_parakeet_and_the_speaker_encoder(monkeypatch):
+    """Default (streaming -> parakeet): Parakeet and the speaker encoder are
+    warmed, so the first recorded sentence waits on neither; Whisper is never
+    loaded or downloaded."""
+    assert _warm_calls(monkeypatch, "streaming") == ["parakeet", "diarization"]
+
+
+def test_startup_never_downloads_a_missing_speaker_encoder(monkeypatch):
+    calls = _warm_calls(monkeypatch, "streaming", installed=lambda e: e.key == "parakeet")
+    assert calls == ["parakeet"]
 
 
 def test_startup_warms_nothing_when_engine_is_whisper(monkeypatch):
