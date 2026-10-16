@@ -389,14 +389,6 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
 
   finishStream: (message?: ChatMessage) => {
     set((state) => {
-      // Clear the _inFlight marker on any prior question-group message. It's
-      // set by useChatStream while collecting parallel ask_user_question
-      // events in a single round so the same message can be appended to;
-      // once the round is done, the marker must go so the next round (if
-      // any) starts a fresh group instead of mutating the prior one.
-      const cleaned = state.messages.map((m) =>
-        m._inFlight ? { ...m, _inFlight: undefined } : m,
-      );
       const live = state.liveDeliveries;
       return {
         isStreaming: false,
@@ -407,8 +399,8 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         thinkingStartTime: null,
         liveDeliveries: [],
         messages: message
-          ? [...cleaned, withDeliveries(message, live)]
-          : settleDeliveries(cleaned, live),
+          ? [...state.messages, withDeliveries(message, live)]
+          : settleDeliveries(state.messages, live),
       };
     });
   },

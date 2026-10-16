@@ -1040,6 +1040,9 @@ async def _process_tool_results(
         # an explicit "awaiting answer" marker that the resume path will
         # rewrite when the user submits.
         ASK_PAUSE_MARKER = "[ASK_USER_PAUSE] Awaiting answer; will be replaced on continuation."
+        # The runner logs nothing for a paused round, so this is the one line
+        # that tells a log reader where a question stopped the turn.
+        log.info("Paused on a user question: %d tool result(s) await the answer", len(states))
         emitted_ids = {r["tool_use_id"] for r in tool_results}
         for r in tool_results:
             content = r.get("content", "")

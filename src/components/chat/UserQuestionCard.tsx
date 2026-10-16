@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useId, useMemo, useRef } from 'react';
 import type { ChatMessage as ChatMessageType } from '@/types/chat';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
 
@@ -216,13 +216,17 @@ export const UserQuestionCard: React.FC<{
 /** Multi-question card.
  *
  * Renders every ask_user_question call from the same streaming round. A single
- * question shows clean answer chips and submits the moment one is picked; 2+
- * questions stack vertically (labelled "Question N of M") with one submit
- * button enabled once all are answered. On submit, all answers batch into a
- * single continuation so Bedrock receives a tool_result for every tool_use it
- * emitted, and each question is marked answered in the store so a re-render or
- * session restore keeps the card disabled.
+ * question shows answer chips and submits the moment one is picked. Two or
+ * more questions become a stepper: a tab per question, one question on screen
+ * at a time, Back and Next to move between them (a tab jumps straight to its
+ * question), and a single Submit on the last step that unlocks once every
+ * question has an answer. On submit, all answers batch into one continuation
+ * so Bedrock receives a tool_result for every tool_use it emitted, and each
+ * question is marked answered in the store so a re-render or session restore
+ * keeps the card disabled.
  */
+type UserQuestion = NonNullable<ChatMessageType['userQuestions']>[number];
+
 export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ message }) => {
   // Memoize so the `?? []` fallback doesn't make a new array every render.
   const questions = useMemo(() => message.userQuestions ?? [], [message.userQuestions]);
@@ -233,15 +237,20 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
   // Always-visible "type your own" text, keyed by toolUseId.
   const [customText, setCustomText] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(alreadyAnswered);
+  // The question on screen when there are two or more.
+  const [step, setStep] = useState(0);
   // Hard idempotency guard: a ref (not the `submitted` state) so an async
   // Browse-picker resolution can't fire a second submit through a stale closure.
   const submittedRef = useRef(alreadyAnswered);
+  const uid = useId();
 
   const total = questions.length;
   // A single question submits the moment it's answered (no submit button); 2+
-  // stack into one form submitted together.
+  // step through one form submitted together.
   const single = total === 1;
   const allAnswered = total > 0 && questions.every((q) => answers[q.toolUseId] !== undefined);
+  const active = Math.min(step, Math.max(total - 1, 0));
+  const onLast = active === total - 1;
 
   // Batch every answer into ONE continuation so Bedrock receives a tool_result
   // for each ask_user_question tool_use it emitted. Idempotent.
@@ -282,6 +291,95 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
 
   if (total === 0) return null;
 
+  const renderQuestion = (q: UserQuestion, qi: number) => {
+    // The always-visible "Or type your own" input replaces the explicit
+    // "Other" option, so drop any "other…" choice the model offered.
+    const allOpts = withBrowseOption(q.question, q.options);
+    const filteredOpts = allOpts.filter((o) => !isOtherChoice(o));
+    // The always-on input replaces the "Other" sentinel — but never empty
+    // the model's choices, so fall back to the full set if every option matched.
+    const opts = filteredOpts.length ? filteredOpts : allOpts;
+    const answered = answers[q.toolUseId];
+    const custom = customText[q.toolUseId] ?? '';
+    // Confirm in text only for answers that aren't a visible option row
+    // (a typed answer or a Browse… folder path).
+    const showAnsweredNote = answered !== undefined && !opts.includes(answered);
+    return (
+      <div key={q.toolUseId || qi} className="user-question-block">
+        <div className="user-question-text">{q.question}</div>
+        <div className="user-question-opts">
+          {opts.map((opt) => {
+            const isBrowse = opt.toLowerCase().includes('browse');
+            const isSelected = answered === opt;
+            return (
+              <button
+                key={opt}
+                type="button"
+                className={`uq-opt${isSelected ? ' selected' : ''}`}
+                disabled={submitted}
+                onClick={() => {
+                  if (submitted) return;
+                  if (isBrowse) {
+                    void (async () => {
+                      try {
+                        const resp = await fetch('/api/workspace/pick-folder');
+                        const data = (await resp.json()) as { path?: string | null; cancelled?: boolean };
+                        if (data.path) setAnswer(q.toolUseId, data.path);
+                      } catch (err) {
+                        console.error('Folder picker failed:', err);
+                      }
+                    })();
+                    return;
+                  }
+                  setAnswer(q.toolUseId, opt);
+                }}
+              >
+                <span className="uq-opt-mark" aria-hidden="true" />
+                <span className="uq-opt-label">{opt}</span>
+                {isSelected && (
+                  <svg className="uq-opt-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        {/* Always-visible custom answer — type and hit Enter (or the arrow)
+         *  to answer freely without picking an option. */}
+        <div className="uq-custom">
+          <input
+            type="text"
+            className="uq-custom-input"
+            placeholder="Or type your own answer…"
+            aria-label="Type your own answer"
+            value={custom}
+            disabled={submitted}
+            onChange={(e) => setCustomText((p) => ({ ...p, [q.toolUseId]: e.target.value }))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                const v = custom.trim();
+                if (v) setAnswer(q.toolUseId, v);
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="uq-custom-send"
+            disabled={submitted || !custom.trim()}
+            onClick={() => { const v = custom.trim(); if (v) setAnswer(q.toolUseId, v); }}
+            aria-label="Submit your answer"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+            </svg>
+          </button>
+        </div>
+        {showAnsweredNote && <span className="uq-answered">Answered: {answered}</span>}
+      </div>
+    );
+  };
+
   return (
     <div className={`user-question-card${submitted ? ' submitted' : ''}`}>
       <div className="user-question-card-head">
@@ -290,108 +388,71 @@ export const UserQuestionGroupCard: React.FC<{ message: ChatMessageType }> = ({ 
         </svg>
         {single ? 'A quick question' : `${total} quick questions`}
       </div>
-      {questions.map((q, qi) => {
-        // The always-visible "Or type your own" input replaces the explicit
-        // "Other" option, so drop any "other…" choice the model offered.
-        const allOpts = withBrowseOption(q.question, q.options);
-        const filteredOpts = allOpts.filter((o) => !isOtherChoice(o));
-        // The always-on input replaces the "Other" sentinel — but never empty
-        // the model's choices, so fall back to the full set if every option matched.
-        const opts = filteredOpts.length ? filteredOpts : allOpts;
-        const answered = answers[q.toolUseId];
-        const custom = customText[q.toolUseId] ?? '';
-        // Confirm in text only for answers that aren't a visible option row
-        // (a typed answer or a Browse… folder path).
-        const showAnsweredNote = answered !== undefined && !opts.includes(answered);
-        return (
-          <div key={q.toolUseId || qi} className="user-question-block">
-            {!single && <div className="user-question-num">Question {qi + 1} of {total}</div>}
-            <div className="user-question-text">{q.question}</div>
-            <div className="user-question-opts">
-              {opts.map((opt) => {
-                const isBrowse = opt.toLowerCase().includes('browse');
-                const isSelected = answered === opt;
-                return (
-                  <button
-                    key={opt}
-                    type="button"
-                    className={`uq-opt${isSelected ? ' selected' : ''}`}
-                    disabled={submitted}
-                    onClick={() => {
-                      if (submitted) return;
-                      if (isBrowse) {
-                        void (async () => {
-                          try {
-                            const resp = await fetch('/api/workspace/pick-folder');
-                            const data = (await resp.json()) as { path?: string | null; cancelled?: boolean };
-                            if (data.path) setAnswer(q.toolUseId, data.path);
-                          } catch (err) {
-                            console.error('Folder picker failed:', err);
-                          }
-                        })();
-                        return;
-                      }
-                      setAnswer(q.toolUseId, opt);
-                    }}
-                  >
-                    <span className="uq-opt-mark" aria-hidden="true" />
-                    <span className="uq-opt-label">{opt}</span>
-                    {isSelected && (
-                      <svg className="uq-opt-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-            {/* Always-visible custom answer — type and hit Enter (or the arrow)
-             *  to answer freely without picking an option. */}
-            <div className="uq-custom">
-              <input
-                type="text"
-                className="uq-custom-input"
-                placeholder="Or type your own answer…"
-                aria-label="Type your own answer"
-                value={custom}
-                disabled={submitted}
-                onChange={(e) => setCustomText((p) => ({ ...p, [q.toolUseId]: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    const v = custom.trim();
-                    if (v) setAnswer(q.toolUseId, v);
-                  }
-                }}
-              />
+
+      {single ? renderQuestion(questions[0], 0) : (
+        <>
+          {/* One tab per question. A check marks the answered ones; a click
+           *  jumps straight to that question, in either direction. */}
+          <div className="uq-tabs" role="tablist" aria-label="Questions">
+            {questions.map((q, qi) => {
+              const done = answers[q.toolUseId] !== undefined;
+              const current = qi === active;
+              return (
+                <button
+                  key={q.toolUseId || qi}
+                  type="button"
+                  role="tab"
+                  id={`${uid}-tab-${qi}`}
+                  aria-selected={current}
+                  aria-controls={`${uid}-panel-${qi}`}
+                  className={`uq-tab${current ? ' active' : ''}${done ? ' done' : ''}`}
+                  onClick={() => setStep(qi)}
+                >
+                  {done && (
+                    <svg className="uq-tab-check" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  )}
+                  Question {qi + 1}
+                </button>
+              );
+            })}
+          </div>
+          <div role="tabpanel" id={`${uid}-panel-${active}`} aria-labelledby={`${uid}-tab-${active}`}>
+            {renderQuestion(questions[active], active)}
+          </div>
+
+          {/* Back and Next walk the steps; the last step carries the one
+           *  Submit, enabled once every question has an answer. */}
+          <div className="uq-nav">
+            <button
+              type="button"
+              className="uq-nav-btn"
+              disabled={active === 0}
+              onClick={() => setStep(active - 1)}
+            >
+              Back
+            </button>
+            {onLast ? (
               <button
                 type="button"
-                className="uq-custom-send"
-                disabled={submitted || !custom.trim()}
-                onClick={() => { const v = custom.trim(); if (v) setAnswer(q.toolUseId, v); }}
-                aria-label="Submit your answer"
+                className="uq-submit-btn"
+                disabled={!allAnswered || submitted}
+                onClick={submitAll}
               >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
-                </svg>
+                {submitted ? 'Submitted' : allAnswered ? `Submit ${total} answers` : `Answer all ${total} to submit`}
               </button>
-            </div>
-            {showAnsweredNote && <span className="uq-answered">Answered: {answered}</span>}
+            ) : (
+              <button
+                type="button"
+                className="uq-nav-btn primary"
+                onClick={() => setStep(active + 1)}
+              >
+                Next
+              </button>
+            )}
           </div>
-        );
-      })}
-
-      {/* Multi-question rounds submit once, when every question is answered. */}
-      {!single && (
-        <div className="uq-submit-row">
-          <button
-            type="button"
-            className="uq-submit-btn"
-            disabled={!allAnswered || submitted}
-            onClick={submitAll}
-          >
-            {submitted ? 'Submitted' : allAnswered ? `Submit ${total} answers` : `Answer all ${total} to submit`}
-          </button>
-        </div>
+        </>
       )}
     </div>
   );
