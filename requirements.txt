@@ -1,5 +1,8 @@
 fastapi==0.136.3
 uvicorn[standard]==0.49.0
+# The workspace watcher behind the live file tree (server/workspace/watcher.py).
+# uvicorn[standard] brings it in already; pinned because the app imports it.
+watchfiles==1.2.0
 websockets==16.0
 boto3==1.43.25
 # Voice mode (Nova 2 Sonic) speaks Bedrock's bidirectional stream, which boto3

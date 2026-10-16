@@ -141,3 +141,14 @@ def test_multiplexed_route_is_declared_before_the_session_id_route():
     paths = [getattr(r, "path", "") for r in sessions_router.routes]
     assert "/api/sessions/events" in paths, "multiplexed events route is missing"
     assert paths.index("/api/sessions/events") < paths.index("/api/sessions/{session_id}")
+
+
+def test_workspace_changed_frame_names_folders_and_files():
+    """The watcher's app-wide event reaches the UI with what it named; None
+    (too many to name) rides through unchanged."""
+    assert _session_event_frame(
+        {"type": "workspace_changed", "root": "/w", "dirs": ["", "a"], "files": ["a/x.py"]}
+    ) == {"workspace_changed": {"root": "/w", "dirs": ["", "a"], "files": ["a/x.py"]}}
+    assert _session_event_frame(
+        {"type": "workspace_changed", "root": "/w", "dirs": None, "files": []}
+    ) == {"workspace_changed": {"root": "/w", "dirs": None, "files": []}}

@@ -385,6 +385,12 @@ async def lifespan(app):
 
     git_watcher.start()
     git_watcher.set_workspace(get_workspace_path())
+    # The file tree's own watcher: workspace_changed frames for every visible
+    # change under the connected folder, so the tree and the open tabs follow
+    # the disk without a refresh (server/workspace/watcher.py).
+    from server.workspace.watcher import workspace_watcher
+
+    workspace_watcher.set_workspace(get_workspace_path())
     # A previous run killed with SIGKILL (force quit / OOM) never ran the
     # shutdown hook below, leaving its on-device model server alive and holding
     # gigabytes. Reap those before anything else needs the memory.
@@ -439,6 +445,7 @@ async def lifespan(app):
     yield
     index_agent.mark_app_stopped()
     git_watcher.stop()
+    workspace_watcher.stop()
     # Stop the on-device model server before the loop tears down; an orphaned
     # one would keep holding its port and gigabytes of weights.
     try:

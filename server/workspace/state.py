@@ -436,6 +436,14 @@ def _point_git_watcher_at(path: str | None) -> None:
     git_watcher.set_workspace(path)
 
 
+def _point_workspace_watcher_at(path: str | None) -> None:
+    # The file tree follows the connected folder on its own: the watcher
+    # publishes workspace_changed for every visible change under it.
+    from server.workspace.watcher import workspace_watcher
+
+    workspace_watcher.set_workspace(path)
+
+
 def disconnect_workspace() -> list[str]:
     """Disconnect the workspace. Returns one warning per teardown step that
     failed (each is logged too).
@@ -459,6 +467,7 @@ def disconnect_workspace() -> list[str]:
         ("undo backups", WORKSPACE_BACKUPS.clear),
         ("session shell state", clear_workspace_scoped_state),
         ("git watcher", lambda: _point_git_watcher_at(None)),
+        ("workspace watcher", lambda: _point_workspace_watcher_at(None)),
     ):
         try:
             step()
@@ -507,6 +516,7 @@ def connect_workspace(path: str, *, by_user: bool = False) -> str:
     if switched:
         clear_workspace_scoped_state()
     _point_git_watcher_at(real)
+    _point_workspace_watcher_at(real)
     return real
 
 
