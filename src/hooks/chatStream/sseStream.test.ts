@@ -558,3 +558,47 @@ describe('readSSEStream skill_progress', () => {
     expect(progress.every((s) => s.name === 'create_artifact')).toBe(true);
   });
 });
+
+/** Where the ask_user_question frames of a stream land. */
+describe('readSSEStream question grouping', () => {
+  const question = (id: string, text: string) => ({
+    user_question: { question: text, options: ['a', 'b'], tool_use_id: id },
+  });
+  const signal = () => new AbortController().signal;
+
+  afterEach(() => {
+    for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
+  });
+
+  it('parallel questions of one round share a single card', async () => {
+    await readSSEStream(sseResponse([question('tu_1', 'One?'), question('tu_2', 'Two?')]), 'sess-q-group', signal(), SETTINGS);
+
+    const msgs = getChatStore('sess-q-group').getState().messages;
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].userQuestions?.map((q) => q.toolUseId)).toEqual(['tu_1', 'tu_2']);
+  });
+
+  // The field case: a question arrived on an approval continuation, whose leg
+  // ends with setStreaming(false) rather than finishStream. The user answered
+  // it (the card submitted at once, as a single question does), the answer
+  // resumed the turn, and the model asked the next question. That question
+  // used to be appended into the answered card, which was already locked.
+  it('a question asked in a later stream opens its own card', async () => {
+    const store = getChatStore('sess-q-later');
+    await readSSEStream(sseResponse([question('tu_1', 'One?')]), 'sess-q-later', signal(), SETTINGS);
+    store.getState().setMessages(store.getState().messages.map((m) => ({
+      ...m,
+      userQuestions: m.userQuestions?.map((q) => ({ ...q, answered: true })),
+    })));
+    store.getState().setStreaming(false);
+
+    await readSSEStream(sseResponse([question('tu_2', 'Two?')]), 'sess-q-later', signal(), SETTINGS);
+
+    const msgs = store.getState().messages;
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].userQuestions?.map((q) => q.toolUseId)).toEqual(['tu_1']);
+    expect(msgs[0].userQuestions?.[0].answered).toBe(true);
+    expect(msgs[1].userQuestions?.map((q) => q.toolUseId)).toEqual(['tu_2']);
+    expect(msgs[1].userQuestions?.[0].answered).toBeUndefined();
+  });
+});

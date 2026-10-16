@@ -123,6 +123,9 @@ export async function readSSEStream(
   let pendingPlan: { id: string; title: string; summary: string } | null = null;
   let flushedSegments = 0;
   let refusal: string | null = null;
+  // The message this stream opened for its ask_user_question calls (an
+  // index into the store's messages), -1 until the first one arrives.
+  let questionGroupIdx = -1;
   // Not const: each flushed segment restarts the thinking clock, so a "Thinking
   // 42s" after a card measures the wait since that card rather than replaying
   // the whole turn's elapsed time under every segment.
@@ -416,12 +419,15 @@ export async function readSSEStream(
           }
 
           // ── user_question (ask_user tool) ──
-          // The assistant can fire multiple ask_user_question tool calls in
-          // one streaming round (parallel tool_use). Collapse them into a
-          // single assistant message carrying a `userQuestions` list so the
-          // renderer can show a tabbed multi-question card with one batched
-          // submit at the end. (The singular `userQuestion` field is read-only
-          // tolerance for old persisted rows; nothing writes it anymore.)
+          // Parallel ask_user_question calls in one round arrive as
+          // consecutive frames. They join the message this stream opened for
+          // them, so the card shows them as one stepper with a single submit
+          // that answers every tool_use at once. The group index is local to
+          // this stream on purpose: a question the model asks in a LATER
+          // stream (after an approval or an answer resumed the turn) opens
+          // its own card and never joins one the user has already answered.
+          // (The singular `userQuestion` field is read-only tolerance for old
+          // persisted rows; nothing writes it anymore.)
           if (parsed.user_question) {
             hasUserQuestion = true;
             const uq = parsed.user_question as { question?: string; options?: string[]; tool_use_id?: string };
@@ -433,30 +439,20 @@ export async function readSSEStream(
 
             const st = store();
             const msgs = st.messages;
-            const lastIdx = msgs.length - 1;
-            const last = lastIdx >= 0 ? msgs[lastIdx] : null;
-            // If the previous message in this same streaming round already
-            // carries a question group, append to it instead of adding a
-            // new message. We detect "same round" by `_inFlight` — set when
-            // we add the first question of the round and cleared when the
-            // stream ends.
-            if (last && last._inFlight && (last.userQuestions || last.userQuestion)) {
-              const existing = last.userQuestions ?? (last.userQuestion ? [last.userQuestion] : []);
+            const group = questionGroupIdx >= 0 ? msgs[questionGroupIdx] : undefined;
+            if (group?.userQuestions) {
               const updated: ChatMessage = {
-                ...last,
-                userQuestion: undefined,
-                userQuestions: [...existing, entry],
+                ...group,
+                userQuestions: [...group.userQuestions, entry],
               };
-              const next = msgs.slice(0, lastIdx).concat(updated);
-              st.setMessages(next);
+              st.setMessages(msgs.map((m, i) => (i === questionGroupIdx ? updated : m)));
             } else {
-              // Surface only NON-ask_user_question traces above the tabbed
-              // card. The tabs themselves already represent every
-              // ask_user_question call in this round (Q 1/N, Q 2/N, …),
-              // so showing duplicate "🔧 ask_user_question" chips next to
-              // them is noisy and unprofessional. Other prior tools — a
-              // web_fetch that the model ran before asking, for example —
-              // still render normally.
+              // Surface only NON-ask_user_question traces above the card. The
+              // steps themselves already represent every ask_user_question
+              // call in this round, so duplicate "ask_user_question" chips
+              // next to them would only be noise. Other prior tools (a
+              // web_fetch the model ran before asking, for example) still
+              // render normally.
               const toolUseEntries: ToolUseEvent[] = skillTraces
                 .filter((t) => t.name !== 'ask_user_question')
                 .map((t) => ({
@@ -484,10 +480,10 @@ export async function readSSEStream(
                 deliveries: st.takeDeliveries(),
                 _thinkingMs: thinkingMs > 0 ? Math.round(thinkingMs) : undefined,
                 _thinkingText: thinkingText || undefined,
-                _inFlight: true,
                 // The answer resumes this turn on the settings it ran on.
                 turnSettings,
               });
+              questionGroupIdx = store().messages.length - 1;
               // Prose is now owned by the question message — clear the
               // accumulator so finishStream doesn't re-commit it as a second,
               // out-of-order assistant message.

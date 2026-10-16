@@ -161,11 +161,6 @@ export interface ChatMessage {
    *  (GET /api/sessions/{sid}/grounding/{id}) — when present, the chip is a
    *  button that opens them. */
   grounding?: { searched: number; passages: number; id?: string };
-  /** Marker used by useChatStream to know "this message is the question
-   *  group for the current streaming round, append to it." Cleared when
-   *  the stream finishes (either via [DONE] or finishStream). Never sent
-   *  to the backend or persisted. */
-  _inFlight?: boolean;
   /** Voice mode: this turn was spoken (user speech transcribed by the voice
    *  model, or the assistant's spoken reply). Renders a small mic glyph. */
   spoken?: boolean;
