@@ -17,6 +17,8 @@ from .paths import (
     SAVE_LOCATIONS_PATH,
     WORKSPACE_BACKUPS,
     WORKSPACE_CONFIG_PATH,
+    _is_system_path,
+    _ws_path_allowed,
     _ws_validate_path,
 )
 
@@ -254,28 +256,28 @@ def save_recent_workspace(path: str):
     _write_json_atomically(RECENT_WORKSPACES_PATH, recent)
 
 
-def _workspace_prompt_payload(tool_name: str, tool_input: dict, reason: str) -> str:
+def _workspace_prompt_payload(tool_name: str, tool_input: dict) -> str:
     """Emit a WS_WORKSPACE_PROMPT marker so the frontend shows a folder picker.
 
-    The picker lets the user choose where the pending write should happen.
-    After they pick (or create) a folder and it's connected as the workspace,
-    the frontend replays the original intent via a continuation turn so the
-    LLM re-issues the tool call against the now-connected workspace.
+    Only a tool that modifies or deletes an EXISTING file with no workspace
+    connected gets here: there is no folder to resolve its relative path
+    against, so the user picks one. After they pick (or create) a folder and
+    it's connected as the workspace, the frontend replays the original intent
+    via a continuation turn so the LLM re-issues the tool call against the
+    now-connected workspace.
 
-    The payload carries the two facts the card needs to explain ITSELF:
-    ``workspace`` (the root the containment check actually used) and
-    ``attempted`` (the absolute path it rejected). Without them the card can
-    only show the bare ``reason`` slug, which is unreadable and, worse,
-    unfalsifiable: a user looking at a workspace panel that still renders the
-    folder they connected has no way to see that the server's root moved
-    underneath them (another process writing the shared workspace_config.json
-    is the usual culprit).
+    A path that falls outside a CONNECTED workspace never raises the picker.
+    The workspace was fine, the path was not, and a folder picker cannot fix a
+    path: a new file at an absolute path goes through the save approval
+    instead (resolve_write_destination), and a modify or delete outside both
+    the workspace and the scratch folder is a plain refusal the model can act
+    on (server/workspace/executors.py's outside_roots_error).
 
-    ``recent`` is pruned to directories that still exist and never includes the
-    currently connected root. Dead entries linger in the recents file for a
-    long time — a pytest temp workspace that leaked into it outlives the test
-    run by weeks — and the first entry is what the card promotes as its primary
-    button, so an unpruned list hands the user a button that can only fail.
+    ``recent`` is pruned to directories that still exist. Dead entries linger
+    in the recents file for a long time (a pytest temp workspace that leaked
+    into it outlives the test run by weeks) and the first entry is what the
+    card promotes as its primary button, so an unpruned list hands the user a
+    button that can only fail.
 
     A turn whose workspace the user disconnected mid-turn gets a plain refusal
     instead: the picker would pause the running turn and ask for a folder the
@@ -284,34 +286,14 @@ def _workspace_prompt_payload(tool_name: str, tool_input: dict, reason: str) -> 
     lost = workspace_lost_message()
     if lost:
         return lost
-    ws = get_workspace_path()
-    ws_real = os.path.realpath(ws) if ws else None
-
-    def _offerable(path: str) -> bool:
-        if not os.path.isdir(path):
-            return False
-        return os.path.realpath(path) != ws_real
-
-    recent = [p for p in load_recent_workspaces() if _offerable(p)][:5]
+    recent = [p for p in load_recent_workspaces() if os.path.isdir(p)][:5]
     suggested = recent[0] if recent else os.path.expanduser("~/Documents")
-
-    # The path the check rejected. Only meaningful when a workspace WAS
-    # connected: with no workspace there is nothing to have been outside of,
-    # and the tool's relative path has no absolute form yet.
-    attempted = None
-    raw_path = tool_input.get("path")
-    if ws and raw_path:
-        attempted = os.path.realpath(os.path.join(ws, str(raw_path)))
-
     payload = json.dumps(
         {
-            "reason": reason,
             "tool_name": tool_name,
             "tool_input": {k: v for k, v in tool_input.items() if not k.startswith("__")},
             "suggested": suggested,
             "recent": recent,
-            "workspace": ws,
-            "attempted": attempted,
         }
     )
     return f"[WS_WORKSPACE_PROMPT]{payload}"
@@ -341,15 +323,20 @@ def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, st
     - destination_path present (the model resolved it from the user's own
       words, e.g. "in Downloads" -> ~/Downloads/report.docx): use it.
     - No destination but a workspace is connected: `path` is resolved
-      workspace-relative, validated against escaping the workspace root.
+      workspace-relative. An absolute `path` inside the workspace is folded
+      back to its relative form; one inside the session scratch folder (the
+      place the system prompt sends probe files) is a workspace-style write
+      by absolute path. Any other path that lands outside the workspace is a
+      destination like destination_path: the save approval card shows the
+      full path and the user decides there. It never raises the folder
+      picker; the workspace was fine, and switching roots cannot fix a path.
     - Neither: default to ~/Documents/<filename> — the approval card shows
       the full path and is the single human gate; the model's reply tells
       the user where the file went.
 
     Returns ("workspace", full_path) or ("absolute", destination_path) on
     success. On failure returns the string to return directly from the
-    executor: a [WS_WORKSPACE_PROMPT] sentinel (path escaping a connected
-    workspace), a plain "Error: ..." string, or the refusal for a turn whose
+    executor: a plain "Error: ..." string, or the refusal for a turn whose
     workspace was disconnected mid-turn. That turn's workspace-relative path
     was meant for the folder it lost, so it is not quietly redirected into
     ~/Documents; an explicit destination_path still works.
@@ -366,10 +353,19 @@ def resolve_write_destination(tool_name: str, tool_input: dict) -> tuple[str, st
         path = tool_input.get("path", "")
         if not path:
             return "Error: path is required."
-        full = os.path.join(ws, path)
-        if not _ws_validate_path(full, ws):
-            return _workspace_prompt_payload(tool_name, tool_input, "outside_workspace")
-        return "workspace", full
+        raw = os.path.expanduser(str(path))
+        full = os.path.join(ws, raw)
+        if _ws_validate_path(full, ws):
+            if os.path.isabs(raw):
+                # Keep approval payloads, links and the file tree on the
+                # relative spelling every other workspace write uses.
+                tool_input["path"] = os.path.relpath(os.path.realpath(full), os.path.realpath(ws))
+            return "workspace", full
+        if _ws_path_allowed(full, ws):
+            return "workspace", full
+        if _is_system_path(full):
+            return f"Error: {path} is not a location files can be written to."
+        return "absolute", os.path.realpath(full)
 
     lost = workspace_lost_message()
     if lost:

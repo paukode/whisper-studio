@@ -143,11 +143,6 @@ def test_edit_file_exact_match_omits_normalization_flag(tmp_path, monkeypatch):
 # path) is the single human gate.
 
 
-def _parse_ws_prompt(output: str) -> dict:
-    assert output.startswith("[WS_WORKSPACE_PROMPT]"), output
-    return json.loads(output[len("[WS_WORKSPACE_PROMPT]") :])
-
-
 def test_create_file_no_workspace_defaults_to_documents_and_stages(monkeypatch):
     import os
 
@@ -190,10 +185,16 @@ def test_create_file_with_workspace_connected_behaves_as_before(tmp_path, monkey
     assert payload["content"] == "hello"
 
 
-def test_create_file_outside_workspace_still_emits_full_prompt(tmp_path, monkeypatch):
+def test_create_file_outside_workspace_saves_there_after_approval(tmp_path, monkeypatch):
+    """A path that escapes the connected workspace is a destination, not a
+    reason to switch workspaces: the save approval card shows the full path
+    and the user decides there. The folder picker never fires for it."""
+    import os
+
     ws = tmp_path / "ws"
     ws.mkdir()
     monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(ws))
     out = _exec_ws_create_file({"path": "../outside.txt", "content": "x"}, [], [])
-    payload = _parse_ws_prompt(out)
-    assert payload["reason"] == "outside_workspace"
+    payload = _parse_ws_approval(out)
+    assert payload["action"] == "save_to_path"
+    assert payload["path"] == os.path.realpath(str(tmp_path / "outside.txt"))

@@ -644,8 +644,8 @@ async def _process_tool_results(
             )
 
         # Workspace-prompt detection: a write-type tool fired without a
-        # workspace (or against a path outside the current one). Show a
-        # folder picker to the user; stream resumes on continuation turn.
+        # workspace to resolve its relative path against. Show a folder
+        # picker to the user; stream resumes on continuation turn.
         if isinstance(tool_output, str) and tool_output.startswith("[WS_WORKSPACE_PROMPT]"):
             if unattended:
                 # No human to show a folder picker to — refuse and keep going.

@@ -1,15 +1,15 @@
-"""The [WS_WORKSPACE_PROMPT] payload has to explain itself.
+"""The [WS_WORKSPACE_PROMPT] payload behind the folder picker.
 
-The card built from this payload is the one users see when a write pauses, and
-for a long time it could only render the bare `reason` slug. A user staring at
-a workspace panel that still showed the folder they connected had no way to
-tell that the server's root had moved underneath them — the payload simply did
-not carry the root it checked against or the path it rejected.
+The picker fires for one reason only: a tool that modifies or deletes an
+existing file ran with no workspace connected, so its relative path has no
+root. A path outside a CONNECTED workspace never raises it (see
+tests/test_scratch_folder_access.py): the workspace was fine, the path was
+not, and offering to switch roots cannot fix a path.
 
-The recents pruning matters for the same reason: dead entries (a pytest temp
-workspace that leaked into the recents file outlives the run that made it) were
-offered as buttons, and the FIRST one is promoted as the card's primary
-suggestion, so an unpruned list hands the user a button that can only fail.
+The recents pruning matters because dead entries (a pytest temp workspace that
+leaked into the recents file outlives the run that made it) were offered as
+buttons, and the FIRST one is promoted as the card's primary suggestion, so an
+unpruned list hands the user a button that can only fail.
 """
 
 import json
@@ -18,8 +18,8 @@ import os
 from server.workspace import state
 
 
-def _payload(tool_input: dict, reason: str) -> dict:
-    out = state._workspace_prompt_payload("ws_write_file", tool_input, reason)
+def _payload(tool_input: dict) -> dict:
+    out = state._workspace_prompt_payload("ws_write_file", tool_input)
     assert out.startswith("[WS_WORKSPACE_PROMPT]")
     return json.loads(out[len("[WS_WORKSPACE_PROMPT]") :])
 
@@ -30,26 +30,13 @@ def _write_recents(paths: list[str]) -> None:
         json.dump(paths, f)
 
 
-def test_outside_workspace_payload_names_the_root_and_the_rejected_path(tmp_path, monkeypatch):
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    monkeypatch.setattr(state, "get_workspace_path", lambda: str(ws))
-
-    payload = _payload({"path": "../escape.txt", "content": "x"}, "outside_workspace")
-
-    assert payload["workspace"] == str(ws)
-    assert payload["attempted"] == os.path.realpath(str(tmp_path / "escape.txt"))
-
-
-def test_no_workspace_payload_has_no_attempted_path(tmp_path, monkeypatch):
-    """With nothing connected there is no root to have been outside of, and the
-    tool's relative path has no absolute form to show."""
+def test_payload_names_the_tool_and_carries_its_input(monkeypatch):
     monkeypatch.setattr(state, "get_workspace_path", lambda: None)
 
-    payload = _payload({"path": "notes.txt", "content": "x"}, "no_workspace")
+    payload = _payload({"path": "notes.txt", "content": "x", "__session_id__": "s"})
 
-    assert payload["workspace"] is None
-    assert payload["attempted"] is None
+    assert payload["tool_name"] == "ws_write_file"
+    assert payload["tool_input"] == {"path": "notes.txt", "content": "x"}
 
 
 def test_recents_drop_folders_that_no_longer_exist(tmp_path, monkeypatch):
@@ -59,34 +46,18 @@ def test_recents_drop_folders_that_no_longer_exist(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "get_workspace_path", lambda: None)
     _write_recents([str(dead), str(live)])
 
-    payload = _payload({"path": "notes.txt"}, "no_workspace")
+    payload = _payload({"path": "notes.txt"})
 
     assert payload["recent"] == [str(live)]
     # The primary button is recents[0]; it must not be the dead folder.
     assert payload["suggested"] == str(live)
 
 
-def test_recents_exclude_the_currently_connected_workspace(tmp_path, monkeypatch):
-    """Offering the root that is already connected is a no-op button: it
-    reconnects the same folder and changes nothing about why the write failed.
-    Keeping it out leaves the picker to genuine alternatives."""
-    ws = tmp_path / "ws"
-    ws.mkdir()
-    other = tmp_path / "other"
-    other.mkdir()
-    monkeypatch.setattr(state, "get_workspace_path", lambda: str(ws))
-    _write_recents([str(ws), str(other)])
-
-    payload = _payload({"path": "../escape.txt"}, "outside_workspace")
-
-    assert payload["recent"] == [str(other)]
-
-
 def test_suggested_falls_back_to_documents_when_nothing_is_offerable(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "get_workspace_path", lambda: None)
     _write_recents([str(tmp_path / "gone")])
 
-    payload = _payload({"path": "notes.txt"}, "no_workspace")
+    payload = _payload({"path": "notes.txt"})
 
     assert payload["recent"] == []
     assert payload["suggested"] == os.path.expanduser("~/Documents")

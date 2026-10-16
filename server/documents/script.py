@@ -74,7 +74,7 @@ def resolve_source_path(source_path: str) -> tuple[bool, str]:
     a connected workspace, and with no workspace a relative path is an error
     rather than a guess. Returns (ok, path_or_error_message)."""
     from server.security.sensitive_paths import is_sensitive_path
-    from server.workspace.state import _ws_validate_path, get_workspace_path
+    from server.workspace.state import _ws_path_allowed, get_workspace_path
 
     raw = os.path.expanduser(str(source_path).strip())
     if not raw:
@@ -89,7 +89,7 @@ def resolve_source_path(source_path: str) -> tuple[bool, str]:
                 "path (~ is allowed), e.g. '~/Documents/report.docx'."
             )
         full = os.path.join(ws, raw)
-        if not _ws_validate_path(full, ws):
+        if not _ws_path_allowed(full, ws):
             return False, f"Error: source_path escapes the workspace: {source_path}"
         full = os.path.realpath(full)
     if is_sensitive_path(full):
