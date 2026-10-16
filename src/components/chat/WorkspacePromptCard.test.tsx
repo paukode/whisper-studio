@@ -7,9 +7,11 @@
  * stashed paused-turn state. A bare string is treated as a brand new chat
  * message and never resumes anything (see sseStream.ts / tool_executor.py).
  *
- * This card only handles the workspace-connect flow now: one-off file saves
- * resolve their destination in the tool executor (user's words or a
- * Documents default) and go straight to the approval card, never here.
+ * This card only handles the workspace-connect flow for a modify or delete
+ * with no workspace connected. One-off file saves resolve their destination
+ * in the tool executor (user's words or a Documents default) and go straight
+ * to the approval card, and a path outside a connected workspace is answered
+ * by the backend (a save approval or a plain refusal), never here.
  */
 import { render, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
@@ -45,7 +47,6 @@ describe('WorkspacePromptCard', () => {
 
     const { getByText } = render(
       <WorkspacePromptCard
-        reason="no_workspace"
         suggested="/Users/me/Projects/site"
         recent={[]}
         toolUseId="tu_real_123"
@@ -66,66 +67,13 @@ describe('WorkspacePromptCard', () => {
     ]);
   });
 
-  /**
-   * The card used to render the raw `reason` slug as its entire explanation,
-   * so a user whose workspace root had moved underneath them saw the word
-   * "outside_workspace" and nothing else — not the root that was checked, not
-   * the path that was rejected, i.e. nothing that could explain why a card
-   * asking for a workspace appeared while a workspace was plainly open.
-   */
-  it('outside_workspace: names the connected root and the rejected path instead of the slug', () => {
-    const { getByText, queryByText } = render(
-      <WorkspacePromptCard
-        reason="outside_workspace"
-        suggested="/Users/me/Projects/other"
-        recent={[]}
-        workspace="/private/var/folders/xx/pytest-of-me/ws"
-        attempted="/Users/me/Documents/whisper-studio/server/main.py"
-        toolName="ws_write_file"
-        toolUseId="tu_1"
-      />,
-    );
-
-    expect(queryByText('outside_workspace')).toBeNull();
-    expect(getByText('/private/var/folders/xx/pytest-of-me/ws')).toBeTruthy();
-    expect(getByText('/Users/me/Documents/whisper-studio/server/main.py')).toBeTruthy();
-  });
-
-  it('outside_workspace: keeping the workspace resumes the turn without connecting anything', async () => {
-    const captured = captureResumeEvents();
-
-    const { getByText } = render(
-      <WorkspacePromptCard
-        reason="outside_workspace"
-        suggested="/Users/me/Projects/other"
-        recent={[]}
-        workspace="/Users/me/Projects/site"
-        attempted="/tmp/scratch.txt"
-        toolName="ws_write_file"
-        toolUseId="tu_keep"
-      />,
-    );
-
-    fireEvent.click(getByText('Keep this workspace and retry inside it'));
-
-    await waitFor(() => expect(captured.length).toBe(1));
-    expect(captured[0].answers![0].tool_use_id).toBe('tu_keep');
-    expect(captured[0].answers![0].content).toContain('/Users/me/Projects/site');
-    expect(captured[0].answers![0].content).toContain('did NOT execute');
-    // No workspace switch: /api/workspace/connect must never be called.
-    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-    expect(calls.some((c) => String(c[0]).includes('/api/workspace/connect'))).toBe(false);
-  });
-
   it('no_workspace: "Not now" resolves the pause instead of stranding the turn', async () => {
     const captured = captureResumeEvents();
 
     const { getByText } = render(
       <WorkspacePromptCard
-        reason="no_workspace"
         suggested="/Users/me/Documents"
         recent={[]}
-        workspace={null}
         toolUseId="tu_decline"
       />,
     );
@@ -145,7 +93,6 @@ describe('WorkspacePromptCard', () => {
 
     const { getByText, findByText } = render(
       <WorkspacePromptCard
-        reason="no_workspace"
         suggested="/gone"
         recent={[]}
         toolUseId="tu_err"
