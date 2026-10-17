@@ -223,6 +223,12 @@ def assemble_full_catalog(
 
         builtin_tools += MEMORY_TOOLS
 
+    # The user's rules and instructions (server/rules_tools.py): always in
+    # the catalog, so "remember this" works in every mode and session.
+    from server.rules_tools import RULES_TOOLS
+
+    builtin_tools += RULES_TOOLS
+
     # Live preview tools — flag AND capability probe must both pass, so the
     # tools are genuinely absent from the catalog (not just disabled) until
     # the user has both opted in AND completed the Playwright/Chromium

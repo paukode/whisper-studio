@@ -59,6 +59,7 @@ WRITE_TOOLS = frozenset(
         "cron_create",
         "cron_delete",
         "notebook_edit",
+        "rules_write",
         # Writes a persistent .whisper/agents/<name>.md custom agent-type file
         # (server/agent_tools/promote.py) — dispatched directly in
         # server/tool_router.py like config_set, so the registry never sees it.
