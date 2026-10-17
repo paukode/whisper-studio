@@ -320,6 +320,35 @@ def approval_floor(tool_name: str, tool_input: dict, category: str) -> str | Non
     return None
 
 
+def targets_app_storage(tool_input: dict) -> bool:
+    """Whether the call's file target lies in a folder the app owns for the
+    user (server.infrastructure.paths.app_storage_roots): ``~/.whisper`` with
+    its rules, profile, scratch, memory and data. Writing there is the point
+    of those folders, so the user asked for no approval in any mode; a delete
+    there is silent only in bypassPermissions. A relative path resolves
+    against the connected workspace, so while a workspace is connected only an
+    absolute (or escaping) path can land here."""
+    raw = tool_input.get("destination_path") or tool_input.get("path")
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    raw = os.path.expanduser(raw.strip())
+    if not os.path.isabs(raw):
+        from server.workspace.state import get_workspace_path
+
+        ws = get_workspace_path()
+        if not ws:
+            return False
+        raw = os.path.join(ws, raw)
+    real = os.path.realpath(raw)
+    from server.infrastructure.paths import app_storage_roots
+
+    for root in app_storage_roots():
+        r = os.path.realpath(root)
+        if real == r or real.startswith(r + os.sep):
+            return True
+    return False
+
+
 def resolve_static_decision(
     tool_name: str,
     tool_input: dict,
@@ -336,6 +365,8 @@ def resolve_static_decision(
 
     Evaluation order: hard floors (github-destructive, rm-class command,
     sandbox escalation, MCP server marked approve; see approval_floor) →
+    app storage (a write under ~/.whisper is allowed in every mode, a delete
+    there only in bypassPermissions; see targets_app_storage) →
     category mode override → bypassPermissions (absolute) → trusted skill
     script → session approvals ("yes/no for all this session") → explicit
     custom rules → a preview_start naming an approved launch.json config
@@ -343,6 +374,14 @@ def resolve_static_decision(
     """
     if approval_floor(tool_name, tool_input, category) is not None:
         return "ask"
+
+    # The app's own folders (~/.whisper: rules, profile, scratch, memory,
+    # data) are where these writes belong, so no mode asks for them. Checked
+    # before the category override and the mode: "in any permission mode" is
+    # the user's rule. A delete there is silent only in bypassPermissions;
+    # every other mode applies its normal delete rule.
+    if targets_app_storage(tool_input) and (category != "delete" or mode == MODE_BYPASS):
+        return "allow"
 
     # Per-category default overrides the global mode for everything that
     # follows (including the bypassPermissions check right below) — that's
