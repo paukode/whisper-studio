@@ -10,8 +10,9 @@ interface MemoryEditorModalProps {
 }
 
 /**
- * Memory (WHISPER.md) editor modal matching the vanilla HTML structure.
- * Auto-loaded as system context for every chat in the workspace.
+ * Project instructions (WHISPER.md) editor. The file lives in the user's own
+ * folder, ~/.whisper/rules/<project>/WHISPER.md, next to the project's rules,
+ * never inside the workspace. Loaded as system context on every turn in it.
  */
 export const MemoryEditorModal: React.FC<MemoryEditorModalProps> = ({ isOpen, onClose }) => {
   const [content, setContent] = useState('');
@@ -61,7 +62,7 @@ export const MemoryEditorModal: React.FC<MemoryEditorModalProps> = ({ isOpen, on
   }, [content]);
 
   const handleDelete = useCallback(async () => {
-    if (!confirm('Delete WHISPER.md? This removes all project memory.')) return;
+    if (!confirm('Delete this project\'s WHISPER.md from ~/.whisper/rules? The assistant loses its project instructions.')) return;
     try {
       await apiDel('/api/whisper-md');
       setContent('');
@@ -93,13 +94,14 @@ export const MemoryEditorModal: React.FC<MemoryEditorModalProps> = ({ isOpen, on
     <div className="settings-overlay" id="memoryOverlay" {...backdrop}>
       <div className="settings-container" style={{ maxWidth: 640 }} onClick={(e) => e.stopPropagation()}>
         <div className="settings-header">
-          <h2>Project Memory (WHISPER.md)</h2>
+          <h2>Project instructions (WHISPER.md)</h2>
           <button className="btn-icon settings-close" id="memoryClose" onClick={onClose} type="button">×</button>
         </div>
         <div className="settings-body" style={{ padding: 16 }}>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85em', marginBottom: 12 }}>
-            Auto-loaded as system context for every chat in this workspace.
-            Give Claude persistent project-specific instructions.
+            Stored in ~/.whisper/rules/&lt;project&gt;/WHISPER.md, next to this project's rules.md,
+            and loaded on every turn in this workspace. Describe the project here: what it is, its layout,
+            how to build and test it. Rules the assistant must follow go to rules.md (say "remember this").
           </p>
           {loading ? (
             <div aria-busy="true">
@@ -122,7 +124,7 @@ export const MemoryEditorModal: React.FC<MemoryEditorModalProps> = ({ isOpen, on
                 padding: 12,
                 resize: 'vertical',
               }}
-              placeholder={'# Project Memory\n\n## Tech Stack\n- Python + FastAPI\n\n## Conventions\n- Always use type hints'}
+              placeholder={'# Project\n\n## Tech Stack\n- Python + FastAPI\n\n## Layout\n- server/ backend, src/ frontend\n\n## Build and test\n- pytest tests/'}
               value={content}
               onChange={(e) => setContent(e.target.value)}
             />

@@ -119,7 +119,7 @@
         <code>agent_report</code> both become user turns, and an <code>agent_answer</code> becomes
         the assistant's own previous message.</li>
       <li><b>Assemble the system prompt.</b> <code>resolve_system_prompt()</code> composes base
-        rules, the workspace <code>WHISPER.md</code>, selected
+        rules, the user's instructions and rules from <code class="path">~/.whisper</code>, selected
         <a href="arch-memory.html">memories</a>, and per-session memory, split into cache-aligned
         static and dynamic parts when prompt caching is on.</li>
       <li><b>Resolve <code>@file</code> mentions and attachments</b> inline into the user message, and

@@ -329,7 +329,8 @@
           <td>import project</td>
           <td>A one-shot migration from a Claude Code or Codex CLI project into Whisper Studio: its
             instructions file (<code class="path">CLAUDE.md</code> or <code class="path">AGENTS.md</code>)
-            copies to <code class="path">WHISPER.md</code>, its skills copy across, and its
+            copies to the project's <code class="path">WHISPER.md</code> under
+            <code class="path">~/.whisper/rules/</code>, its skills copy across, and its
             <code class="path">.mcp.json</code> translates into MCP server config. Never overwrites
             existing files, and nothing imported runs as part of the import. Run it from Settings &gt;
             Tools and automation &gt; Import project. See
@@ -782,9 +783,11 @@
         </tr>
         <tr>
           <td><code class="path">WHISPER.md</code></td>
-          <td>A project-context file you drop in your workspace root. Its contents load into the system
-            prompt on every chat turn, the way <code>CLAUDE.md</code> works for the Claude Code CLI.
-            Edit it through the in-app Project Memory dialog or any editor. See
+          <td>An instructions file you own, the way <code>CLAUDE.md</code> works for the Claude Code CLI.
+            <code class="path">~/.whisper/WHISPER.md</code> is your profile, loaded everywhere;
+            <code class="path">~/.whisper/rules/&lt;project&gt;/WHISPER.md</code> describes one project and
+            sits next to that project's <code>rules.md</code>. Never inside the workspace. Edit it through
+            the in-app Project instructions dialog or any editor. See
             <a href="tut-memory.html">Memory &amp; WHISPER.md</a>.</td>
         </tr>
         <tr>
@@ -807,8 +810,8 @@
         <tr>
           <td>workspace</td>
           <td>The folder you connect so the assistant can read, edit, run, and commit within it. Every
-            file operation is validated to stay inside the workspace root, and project files like
-            <code class="path">WHISPER.md</code> and <code class="path">.whisper/</code> live there. See
+            file operation is validated to stay inside the workspace root (or the app's own scratch
+            folder); the project's instructions live outside it, under <code class="path">~/.whisper/rules/</code>. See
             <a href="tut-workspace.html">The workspace IDE</a>.</td>
         </tr>
         <tr>

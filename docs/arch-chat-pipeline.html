@@ -83,7 +83,7 @@
     <ul>
       <li><b>Latch the session config.</b> On the first turn, the model, effort level, and related
         settings are snapshotted so mid-session Settings changes never disrupt an in-flight conversation.</li>
-      <li><b>Assemble the system prompt.</b> Base rules, the workspace <code>WHISPER.md</code>,
+      <li><b>Assemble the system prompt.</b> Base rules, the user's instructions and rules from <code class="path">~/.whisper</code>,
         selected <a href="arch-memory.html">memories</a>, and per-session memory are registered as
         named sections on a <code>PromptLayer</code>
         (<code class="path">server/prompts/__init__.py</code>): <code>IDENTITY</code>,

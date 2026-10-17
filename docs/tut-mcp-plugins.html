@@ -273,7 +273,7 @@ def register(app, executor_registry):
     <div class="table-wrap"><table>
       <thead><tr><th>What it reads</th><th>Where it lands</th></tr></thead>
       <tbody>
-        <tr><td><code class="path">CLAUDE.md</code> (Claude Code) or <code class="path">AGENTS.md</code> (Codex)</td><td><code class="path">WHISPER.md</code> in the workspace, the project instructions file.</td></tr>
+        <tr><td><code class="path">CLAUDE.md</code> (Claude Code) or <code class="path">AGENTS.md</code> (Codex)</td><td>The project's <code class="path">WHISPER.md</code> under <code class="path">~/.whisper/rules/&lt;project&gt;/</code>, the project instructions file.</td></tr>
         <tr><td><code class="path">.claude/skills/</code>, or <code class="path">.codex/skills/</code> and <code class="path">.codex/.agents/skills/</code></td><td>The app's skills directory. Both tools use the same <code>SKILL.md</code> frontmatter convention, so the folders are copied as they are.</td></tr>
         <tr><td><code class="path">.mcp.json</code> (Claude Code) or the <code>[mcp_servers.*]</code> tables in <code class="path">config.toml</code> (Codex)</td><td>The MCP server store, alongside anything you added by hand.</td></tr>
       </tbody>

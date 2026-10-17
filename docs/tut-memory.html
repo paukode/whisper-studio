@@ -148,115 +148,74 @@
         <em>within</em> one thread. You do not have to choose, both run at once when memory is on.</p></div>
     </div>
 
-    <h2 id="whisper-md">WHISPER.md: project context you write</h2>
-    <p>Everything above is automatic. <code>WHISPER.md</code> is the opposite: it is a file you author,
-      dropped in your workspace root, for the standing facts about a project that you want Claude to
-      have on <em>every</em> turn. If you have used the Claude Code CLI, it is the same idea as
-      <code>CLAUDE.md</code>. Unlike recalled memory, which is selected per query, the root
-      <code>WHISPER.md</code> is loaded on every chat turn.</p>
+    <h2 id="whisper-md">WHISPER.md and rules: what you tell it to keep</h2>
+    <p>Everything above is automatic. The files in this section are the opposite: text you own, loaded
+      whole on <em>every</em> turn. They live in your own folder, <code class="path">~/.whisper</code>,
+      never inside a workspace, so nothing is committed into a repo and the assistant can update them
+      without an approval card (every write under <code class="path">~/.whisper</code> is silent in
+      every permission mode). If you have used the Claude Code CLI, <code>WHISPER.md</code> is the
+      same idea as <code>CLAUDE.md</code> and <code class="path">rules/</code> is the same idea as
+      <code class="path">.claude/rules/</code>.</p>
 
-    <p>It is a tree, not one file. The root file is the project overview and always loads. You can
-      also drop a <code>WHISPER.md</code> inside a subdirectory for rules that only matter there, and
-      it loads only on turns that actually concern that directory; the rest are announced by path so
-      Claude can open one when it turns out to be relevant. That way the gotcha about your auth
-      middleware costs nothing on the turns that never touch it.</p>
+    <div class="spec">
+      <dt><code class="path">~/.whisper/WHISPER.md</code></dt><dd>Your profile: who you are, your stack and tools, how you like answers written. Prose you curate; the assistant edits it only when you ask.</dd>
+      <dt><code class="path">~/.whisper/rules/global/rules.md</code></dt><dd>Rules that apply everywhere, one imperative line each. The shipped defaults (no emoji, no em dashes) start here. Any other <code>.md</code> file in the folder loads too.</dd>
+      <dt><code class="path">~/.whisper/rules/&lt;project&gt;/WHISPER.md</code></dt><dd>The project's overview: what it is, its layout, how to build and test it. One folder per workspace, named <code>&lt;folder name&gt;-&lt;8 character hash&gt;</code>, the same name the memory store uses for that project.</dd>
+      <dt><code class="path">~/.whisper/rules/&lt;project&gt;/rules.md</code></dt><dd>Rules that apply only in that workspace.</dd>
+    </div>
 
-    <p>Good things to put in it:</p>
+    <p>The split to keep in mind: a <b>fact</b> about you or the project goes in a
+      <code>WHISPER.md</code>, an <b>instruction</b> the assistant must obey goes in a rules file. Keeping
+      the rules apart from the profile keeps <code>WHISPER.md</code> readable and makes it easy to see
+      what the assistant added.</p>
+
+    <h3 id="remember-this">"Remember this"</h3>
+    <p>You do not have to open the files to add a rule. Say <b>remember this</b>, <b>my rule is</b>,
+      <b>from now on</b> or <b>do not do that again</b>, and the assistant condenses your words into one
+      line and appends it to the connected project's <code>rules.md</code>, creating the folder on first
+      use. Add <b>always</b>, <b>everywhere</b>, <b>all the time</b> or <b>in every project</b> and the
+      line goes to the global <code>rules.md</code> instead (so does any rule given with no workspace
+      connected). A fact you ask it to note goes to the matching <code>WHISPER.md</code>. It tells you
+      in one line which file it wrote to, and the rule applies from the next turn. Things the assistant
+      notices on its own still go to memory, never to your rules.</p>
+
+    <p>Good things to put in a project <code>WHISPER.md</code>:</p>
     <ul>
       <li>How to run, build, and test the project (the commands you always forget to mention).</li>
-      <li>Conventions you care about: style rules, naming, directories that are off limits.</li>
       <li>Domain vocabulary and the shape of the codebase, so Claude does not have to re-derive it.</li>
-      <li>Standing instructions: "always branch before committing", "never touch the generated files".</li>
+      <li>Directories that are off limits, generated files, the branch workflow.</li>
     </ul>
 
-    <p>You can edit it two ways:</p>
+    <p>You can edit any of these files two ways:</p>
     <ol class="steps">
-      <li><h4>The in-app editor</h4><p>Open <b>Project memory</b> from the "+ More" menu in the chat
-        toolbar and edit <code>WHISPER.md</code> in place. This is the quickest path and keeps you in
-        the app.</p></li>
-      <li><h4>Any editor</h4><p>It is just a file in your workspace root, so the Monaco editor in the
-        <a href="tut-workspace.html">workspace IDE</a>, or any external editor, works fine. Save and the
-        next turn picks it up.</p></li>
+      <li><h4>The in-app editor</h4><p>Open <b>Project instructions</b> from the "+ More" menu in the
+        chat toolbar to edit the connected project's <code>WHISPER.md</code> in place.</p></li>
+      <li><h4>Any editor</h4><p>They are plain markdown files under <code class="path">~/.whisper</code>,
+        so any editor works. Save and the next turn picks it up; no restart is needed.</p></li>
     </ol>
 
     <h3 id="agents-md">If your repo already has an AGENTS.md</h3>
     <p>You do not have to convert it. An <code>AGENTS.md</code> at the workspace root is read live,
-      alongside <code>WHISPER.md</code>, and labelled in the prompt as instructions maintained for
-      other coding tools. Where the two disagree, <code>WHISPER.md</code> wins, and the app says so
-      in the prompt rather than leaving the model to guess from ordering. If there is no
-      <code>WHISPER.md</code>, the <code>AGENTS.md</code> simply takes its place. Deeper in the tree,
-      a directory's <code>WHISPER.md</code> shadows a sibling <code>AGENTS.md</code> outright: one
-      instructions file per directory.</p>
-    <p>Keeping both files in sync by hand is not required, and is usually the wrong move: put the
-      shared rules in <code>AGENTS.md</code> and only the Whisper Studio specifics in
-      <code>WHISPER.md</code>.</p>
+      alongside the project <code>WHISPER.md</code>, and labelled in the prompt as instructions
+      maintained for other coding tools. Where the two disagree, <code>WHISPER.md</code> wins, and
+      the app says so in the prompt rather than leaving the model to guess from ordering. If there is
+      no project <code>WHISPER.md</code>, the <code>AGENTS.md</code> simply takes its place. A
+      <code>WHISPER.md</code> inside the repo is not read: this app's instructions live in
+      <code class="path">~/.whisper</code> only.</p>
 
     <div class="callout callout--tip">
       <span class="callout__ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2Z"/></svg></span>
-      <div class="callout__body"><p>Keep <code>WHISPER.md</code> short and stable. It is read on every
-        turn, so it costs input tokens each time. Put durable, always-true facts here and let the
-        automatic memory system handle the things that change from session to session.</p></div>
+      <div class="callout__body"><p>Keep these files short and stable. They are read on every
+        turn, so they cost input tokens each time (each file is capped at 12,000 characters). Put
+        durable, always-true facts and rules here and let the automatic memory system handle the
+        things that change from session to session.</p></div>
     </div>
 
-    <h2 id="memory-tools">The memory tools</h2>
-    <p>Claude does not only read memory passively. During a turn it can operate on the store directly
-      through four tools, so it can look something up mid-task or record a fact the moment you state it:</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Tool</th><th>What it does</th></tr></thead>
-      <tbody>
-        <tr><td><code>memory_read</code></td><td>Read a memory file from the workspace store to recall stored information.</td></tr>
-        <tr><td><code>memory_write</code></td><td>Create or overwrite a memory file (with name, description, and type), and update the <code>MEMORY.md</code> index.</td></tr>
-        <tr><td><code>memory_list</code></td><td>List memory files with their type, description, and modification date.</td></tr>
-        <tr><td><code>memory_delete</code></td><td>Delete a memory file from the store.</td></tr>
-      </tbody>
-    </table></div>
-    <p>These are just tools, so they follow the same rules as any other. If you want to see the full
-      catalogue and how tool permissions work, see <a href="ref-tools.html">Agent tools</a> and
-      <a href="tut-permissions.html">Permissions &amp; approvals</a>.</p>
-
-    <h2 id="viewing">Viewing and curating memory</h2>
-    <p>You do not have to dig through files on disk to see what Claude has remembered. Open the
-      <b>Memory Viewer</b> from the "+ More" menu in the chat toolbar, under <b>Memory files</b>. It
-      lists both tiers side by side and lets you read and edit any file, delete ones that no longer
-      apply, and promote a project memory up to global when a fact turns out to matter everywhere. The
-      <code>MEMORY.md</code> index is read-only, since it is regenerated for you after every change.</p>
-    <p>The store also tidies itself. Roughly once a day, and only once a tier has seen a few sessions,
-      a consolidation pass merges duplicate files, fixes facts a later session contradicted, and
-      deletes entries that no longer earn their place. You do not trigger it and it never runs twice
-      at once. The <a href="arch-memory.html#consolidation">architecture page</a> has the thresholds.</p>
-    <p>Memory also announces itself as it works. When the review saves or removes something after a
-      turn, a small toast appears with the counts, for example <b>"Memory updated: 2 memories saved,
-      1 removed"</b>, or <b>"Skills updated: 1 skill updated"</b> when the change landed in a skill
-      instead. A turn that pulled memories into the prompt says so too, with a <b>"Recalled 3
-      memories"</b> toast. Toasts only appear for the session you are looking at, and they are not
-      kept in the notification bell.</p>
-
-    <h2 id="try-it">Try it</h2>
-    <p>The fastest way to see memory work is to tell Claude something durable, start a fresh chat, and
-      check that it remembers:</p>
-    <ol class="steps">
-      <li><h4>Check memory is on</h4><p>It is on by default; confirm the <b>Memory</b> row in the "+ More" menu shows On (or type <code>/memory status</code>).</p></li>
-      <li><h4>State a preference</h4><p>Tell Claude something worth keeping, for example how you like
-        commit messages written, or which package manager the project uses.</p></li>
-      <li><h4>Keep working, then start a new session</h4><p>Have a normal exchange so the review has
-        something to save, then open a fresh chat in the same workspace. The review runs about every
-        third turn, so give it a couple of exchanges.</p></li>
-      <li><h4>Check the recall</h4><p>Ask a question that touches that preference. Claude should apply
-        it without being reminded, because the fact was recalled from workspace memory.</p></li>
-    </ol>
-    <p>Peek at the project memory folder (see <a href="#where-it-lives">Where it all lives</a>) and you
-      will see the files it wrote, each with its frontmatter and body, plus the
-      <code>MEMORY.md</code> index.</p>
-
-    <h2 id="where-it-lives">Where it all lives</h2>
-    <p>These are plain Markdown files you can open, edit, and back up. They sit under the data
-      directory: <code class="path">~/.whisper/data/</code> in the Mac app, and
-      <code class="path">data/</code> at the repo root in a source checkout.</p>
     <div class="spec">
       <dt><code class="path">memory/&lt;workspace-slug&gt;/</code></dt><dd>Durable project (workspace-scoped) memory: topic files plus the <code>MEMORY.md</code> index.</dd>
       <dt><code class="path">global_memory/</code></dt><dd>Global (cross-workspace) memory: user and feedback facts that apply everywhere, including plain chat.</dd>
       <dt><code class="path">session_memory/&lt;session-id&gt;.md</code></dt><dd>The running summary of one conversation.</dd>
-      <dt><code class="path">&lt;workspace&gt;/WHISPER.md</code></dt><dd>Project context you write; the root file is loaded on every chat turn.</dd>
+      <dt><code class="path">~/.whisper/rules/&lt;project&gt;/</code></dt><dd>The project's <code>WHISPER.md</code> and <code>rules.md</code>, loaded on every chat turn; <code class="path">~/.whisper/WHISPER.md</code> and <code class="path">~/.whisper/rules/global/</code> hold the global ones.</dd>
       <dt><code class="path">server/memory/</code></dt><dd>The memory subsystem: the post-turn review, recall, session summaries, consolidation, and tools.</dd>
     </div>
 
@@ -265,9 +224,9 @@
       <div class="callout__body"><p><b>Related:</b> <a href="tut-first-chat.html">Your first chat</a>
         to get talking, the <a href="arch-memory.html">Memory system</a> architecture page for exact
         thresholds and the injection format, <a href="tut-skills.html">Skills</a> for the other half
-        of what the review writes, <a href="tut-workspace.html">The workspace IDE</a> for
-        editing <code>WHISPER.md</code>, and <a href="ref-tools.html">Agent tools</a> for the memory
-        tool reference.</p></div>
+        of what the review writes, <a href="tut-permissions.html#app-storage">Permissions</a> for
+        why writes under <code class="path">~/.whisper</code> never ask, and
+        <a href="ref-tools.html">Agent tools</a> for the memory and rules tool reference.</p></div>
     </div>
   </main>
 

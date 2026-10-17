@@ -275,6 +275,19 @@
         arbitrary JavaScript in the app origin.</p></div>
     </div>
 
+    <h2 id="rules">Rules and instructions</h2>
+    <p>The user's own rules and instructions live under <code class="path">~/.whisper</code> (see
+      <a href="tut-memory.html#whisper-md">Memory &amp; WHISPER.md</a>). One tool writes them; it is
+      always in the catalogue and core in chat, so "remember this" never waits behind
+      <code>tool_search</code>. Writes under <code class="path">~/.whisper</code> need no approval in
+      any mode.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tool</th><th>What it does</th><th>Approval</th></tr></thead>
+      <tbody>
+        <tr><td><code>rules_write</code> <span class="badge">★ Core</span></td><td>Append one or more rule lines, or rewrite a file, in one of four targets: <code>project_rules</code> (default while a workspace is connected), <code>global_rules</code> (always, everywhere, no workspace), <code>project_whisper_md</code> and <code>global_whisper_md</code> (facts, not rules). Lines already present are skipped.</td><td><span class="badge badge--muted">no prompt</span></td></tr>
+      </tbody>
+    </table></div>
+
     <h2 id="memory">Memory</h2>
     <p>Read and write the workspace memory store, which the assistant injects into the system prompt on
       later turns. These four are in the catalogue only while the <code>auto_memory</code> feature

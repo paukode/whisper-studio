@@ -153,7 +153,8 @@
           <td>Import project</td>
           <td>One-shot migration from a Claude Code or Codex CLI project: its instructions file
             (<code class="path">CLAUDE.md</code> or <code class="path">AGENTS.md</code>) copies to
-            <code class="path">WHISPER.md</code>, its skills copy into the skills folder, and its
+            the project's <code class="path">WHISPER.md</code> under <code class="path">~/.whisper/rules/</code>,
+            its skills copy into the skills folder, and its
             <code class="path">.mcp.json</code> translates into MCP server config. Never overwrites a
             file that already exists, and nothing it imports is executed as part of the import.</td>
         </tr>
