@@ -477,13 +477,15 @@ async def delete_skill(name: str):
 
 @whisper_md_router.get("")
 async def get_whisper_md():
-    """Get the WHISPER.md file from the connected workspace."""
+    """Get the connected project's WHISPER.md (under ~/.whisper/rules/<slug>/)."""
     from server.workspace import get_workspace_path
 
     ws = get_workspace_path()
     if not ws:
         return {"content": "", "exists": False}
-    path = os.path.join(ws, "WHISPER.md")
+    from server.prompts.rules import project_profile_path
+
+    path = project_profile_path(ws)
     if not os.path.isfile(path):
         return {"content": "", "exists": False, "path": path}
     try:
@@ -496,7 +498,7 @@ async def get_whisper_md():
 
 @whisper_md_router.put("")
 async def save_whisper_md(request: Request):
-    """Save WHISPER.md to the connected workspace."""
+    """Save the connected project's WHISPER.md (under ~/.whisper/rules/<slug>/)."""
     from server.workspace import get_workspace_path
 
     ws = get_workspace_path()
@@ -508,8 +510,11 @@ async def save_whisper_md(request: Request):
         )
     body = await request.json()
     content = body.get("content", "")
-    path = os.path.join(ws, "WHISPER.md")
+    from server.prompts.rules import project_profile_path
+
+    path = project_profile_path(ws)
     try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(content)
         return {"saved": True, "path": path}
@@ -521,7 +526,7 @@ async def save_whisper_md(request: Request):
 
 @whisper_md_router.delete("")
 async def delete_whisper_md():
-    """Delete WHISPER.md from the connected workspace."""
+    """Delete the connected project's WHISPER.md (under ~/.whisper/rules/<slug>/)."""
     from server.workspace import get_workspace_path
 
     ws = get_workspace_path()
@@ -531,7 +536,9 @@ async def delete_whisper_md():
             status_code=400,
             media_type="application/json",
         )
-    path = os.path.join(ws, "WHISPER.md")
+    from server.prompts.rules import project_profile_path
+
+    path = project_profile_path(ws)
     if os.path.isfile(path):
         os.remove(path)
     return {"deleted": True}

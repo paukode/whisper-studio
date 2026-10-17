@@ -126,7 +126,7 @@ def test_bootstrap_home_seeds_both_trees(monkeypatch, tmp_path):
     # pricing.json holds only the user's own overrides: a seeded full copy of
     # the template froze every rate at install time and shadowed corrections.
     assert not (user / "pricing.json").exists()
-    assert (user / "PROMPT_RULES.md").is_file()
+    assert (user / "rules" / "global" / "rules.md").is_file()
 
     # skills/ is a copy of the repo tree, at the USER root.
     repo_skills = sorted(os.listdir(os.path.join(root, "skills")))
@@ -138,14 +138,14 @@ def test_bootstrap_home_is_idempotent_and_never_overwrites(monkeypatch, tmp_path
     paths.bootstrap_home()
 
     (user / "config.user.json").write_text('{"mine": true}')
-    (user / "PROMPT_RULES.md").write_text("no emoji")
+    (user / "rules" / "global" / "rules.md").write_text("no emoji")
     marker = user / "skills" / "my-own-skill.md"
     marker.write_text("---\nname: mine\n---\n")
     seeded = sorted(os.listdir(user / "skills"))
 
     paths.bootstrap_home()
     assert json.loads((user / "config.user.json").read_text()) == {"mine": True}
-    assert (user / "PROMPT_RULES.md").read_text() == "no emoji"
+    assert (user / "rules" / "global" / "rules.md").read_text() == "no emoji"
     assert sorted(os.listdir(user / "skills")) == seeded
 
     # A skill the user deleted stays deleted (the tree is seeded once, whole).
@@ -206,7 +206,6 @@ def test_bootstrap_relocates_a_pre_split_tree(monkeypatch, tmp_path):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("precious")
     (home / "config.user.json").write_text('{"mine": true}')
-    (home / "PROMPT_RULES.md").write_text("rules")
     agents = home / ".whisper" / "agents"
     agents.mkdir(parents=True)
     (agents / "pdf_extractor.md").write_text("agent")
@@ -225,7 +224,6 @@ def test_bootstrap_relocates_a_pre_split_tree(monkeypatch, tmp_path):
         # migration 017 rewrites the absolute paths recorded in sessions.db.
         assert not (home / sub).exists()
     assert json.loads((user / "config.user.json").read_text()) == {"mine": True}
-    assert (user / "PROMPT_RULES.md").read_text() == "rules"
     assert (user / "agents" / "pdf_extractor.md").read_text() == "agent"
     assert not (home / ".whisper").exists()
     assert not (home / "config.user.json").exists()

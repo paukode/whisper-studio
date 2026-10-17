@@ -139,11 +139,11 @@ def test_session_memory_below_local_threshold_does_nothing(monkeypatch, tmp_path
 
 
 def test_local_system_prompt_is_lean_and_keeps_context(monkeypatch):
-    # Stub out PROMPT_RULES.md — it is user-editable, so asserting on the
-    # prompt tail or length with it injected would break whenever it changes.
+    # Stub out the user's global rules: they are user-editable, so asserting
+    # on the prompt tail or length with them injected would break on an edit.
     from server.prompts import rules
 
-    monkeypatch.setattr(rules, "load_prompt_rules", lambda: "")
+    monkeypatch.setattr(rules, "load_global_instructions", lambda: "")
     p = L.build_local_system_prompt("PROJECT MEMORY HERE", "recalled fact", "")
     assert "locally" in p.lower()
     assert "do not have access to tools" in p.lower()  # honest about no tools
@@ -156,9 +156,9 @@ def test_local_system_prompt_is_lean_and_keeps_context(monkeypatch):
 def test_local_system_prompt_appends_prompt_rules(monkeypatch):
     from server.prompts import rules
 
-    monkeypatch.setattr(rules, "load_prompt_rules", lambda: "No emoji.")
+    monkeypatch.setattr(rules, "load_global_instructions", lambda: "No emoji.")
     p = L.build_local_system_prompt("", "", "")
-    assert "## Output rules" in p
+    assert "## The user's instructions" in p
     assert p.endswith("No emoji.")
 
 
@@ -175,7 +175,7 @@ def test_local_system_prompt_tools_mode_tells_model_it_has_tools():
 def test_local_system_prompt_notes_connected_workspace_when_tools_on(monkeypatch):
     from server.prompts import rules
 
-    monkeypatch.setattr(rules, "load_prompt_rules", lambda: "")
+    monkeypatch.setattr(rules, "load_global_instructions", lambda: "")
     p = L.build_local_system_prompt(tools=True, ws_path="/Users/me/proj")
     # The model must be told a workspace is connected at the path so it reaches
     # it via ws_* tools instead of claiming no project was provided.
@@ -186,7 +186,7 @@ def test_local_system_prompt_notes_connected_workspace_when_tools_on(monkeypatch
 def test_local_system_prompt_skips_workspace_note_without_tools(monkeypatch):
     from server.prompts import rules
 
-    monkeypatch.setattr(rules, "load_prompt_rules", lambda: "")
+    monkeypatch.setattr(rules, "load_global_instructions", lambda: "")
     # No tools means no ws_* tools to call — the marker would over-promise, so
     # the honest no-tools identity stands even with a workspace connected.
     p = L.build_local_system_prompt(tools=False, ws_path="/Users/me/proj")

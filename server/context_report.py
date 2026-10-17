@@ -155,7 +155,7 @@ def build_context_report(
     from server.whisper_md import get_whisper_md_context
 
     registry = get_registry()
-    whisper_md = get_whisper_md_context(ws_path, question)
+    whisper_md = get_whisper_md_context(ws_path)
 
     kwargs = {"ws_path": ws_path, "session_id": session_id, "deferred_tool_index": ""}
     injected = {"whisper_md": whisper_md, "memory_context": "", "session_memory_context": ""}

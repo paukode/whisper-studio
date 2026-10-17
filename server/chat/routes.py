@@ -1602,9 +1602,8 @@ async def chat_endpoint(request: Request):
                 ),
             }
 
-        # Load WHISPER.md from workspace
-        # `question` selects which directory-scoped WHISPER.md files load this turn.
-        whisper_md_context = get_whisper_md_context(ws_path, question)
+        # The project's instructions and rules from ~/.whisper/rules/<slug>/.
+        whisper_md_context = get_whisper_md_context(ws_path)
 
         # Memory recall — select relevant memories for this query
         memory_context = ""

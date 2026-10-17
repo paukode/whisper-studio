@@ -8,7 +8,7 @@ Architecture (inspired by Claude Code's 6-layer system):
   1. Identity (base persona) — always included, highest priority
   2. Mode modifiers (brief, plan) — conditional on session config
   3. Workspace context (code rules, ws instructions) — conditional on workspace
-  4. Dynamic context (git status, WHISPER.md, transcript) — per-request
+  4. Dynamic context (git status, memory, transcript) — per-request
   5. Tool guidance (task tracking, MCP) — always included
   6. Extensions (custom injections) — lowest priority
 
@@ -249,8 +249,9 @@ _registry.register(
     )
 )
 
-# User-editable global output rules (root PROMPT_RULES.md). Empty file → no rule.
-# Sits at the identity layer so it's part of the stable, cached prefix.
+# The user's global instructions and rules (~/.whisper/WHISPER.md and
+# ~/.whisper/rules/global/, server/prompts/rules.py). Sits at the identity
+# layer so it's part of the stable, cached prefix.
 _registry.register(
     PromptSection(
         name="user_rules",
@@ -352,6 +353,26 @@ _registry.register(
 )
 
 
+# Where a rule the user states goes. The files themselves are loaded above
+# (user_rules for the global layer, whisper_md for the project layer); this
+# is the routing the model follows when the user asks it to remember one.
+RULES_CAPTURE = (
+    "\n\nRULES AND INSTRUCTIONS: The user's instructions above come from their own files under "
+    "~/.whisper, and rules_write is how you change them. A behaviour the user asks you to keep is "
+    "a rule for that tool, condensed to one line, not a memory; the tool's description says which "
+    "target fits. Name the file you wrote to in one line of your reply."
+)
+
+_registry.register(
+    PromptSection(
+        name="rules_capture",
+        layer=PromptLayer.WORKSPACE,
+        priority=35,
+        content=RULES_CAPTURE,
+    )
+)
+
+
 def _build_deferred_tool_index(deferred_tool_index: str | None = None, **_) -> str:
     """Progressive tool disclosure: the compact list of not-loaded tools.
 
@@ -408,12 +429,15 @@ _registry.register(
     )
 )
 
+# The connected project's instructions and rules (~/.whisper/rules/<slug>/,
+# server/whisper_md.py). Content-injected per request, but it only changes
+# when the user edits a file, so it belongs in the cached static block.
 _registry.register(
     PromptSection(
         name="whisper_md",
-        layer=PromptLayer.DYNAMIC,
+        layer=PromptLayer.WORKSPACE,
         priority=10,
-        content="",  # Set dynamically
+        content="",  # Set per request from the connected workspace
     )
 )
 

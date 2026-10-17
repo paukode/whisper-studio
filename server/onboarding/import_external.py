@@ -4,7 +4,8 @@ native formats.
 Whisper already has a native target for everything these tools bring:
 
   - a project instructions file, read by ``server/whisper_md.py`` as
-    ``<workspace>/WHISPER.md`` (Claude Code: ``CLAUDE.md``; Codex: ``AGENTS.md``)
+    ``~/.whisper/rules/<project-slug>/WHISPER.md`` (Claude Code: ``CLAUDE.md``;
+    Codex: ``AGENTS.md``)
   - a folder-based skills system (``server/folder_skills.py``) that parses the
     identical ``SKILL.md`` YAML-frontmatter convention both tools use. Skills
     are an app-wide directory (``server.infrastructure.paths.skills_root()``),
@@ -31,7 +32,7 @@ from datetime import datetime, timezone
 
 from server import folder_skills, skills_import
 from server.mcp import mcp_manager
-from server.whisper_md import FILENAME as WHISPER_MD_FILENAME
+from server.prompts.rules import project_profile_path
 
 log = logging.getLogger("whisper-studio")
 
@@ -129,7 +130,8 @@ def _import_instructions(
     note = f"<!-- Migrated from {tool_label} ({filename}) on {stamp} -->\n\n"
     block = note + content
 
-    dest = os.path.join(workspace_path, WHISPER_MD_FILENAME)
+    dest = project_profile_path(workspace_path)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
     if os.path.isfile(dest):
         try:
             with open(dest, errors="replace") as f:

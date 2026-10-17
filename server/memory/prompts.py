@@ -16,7 +16,7 @@ when the date itself is the fact.
 - The same lesson learned twice is ONE rule: search the existing files first and strengthen \
 or clarify the existing rule rather than adding a second copy.
 - Do not restate what the environment already teaches: the codebase, tool schemas, \
-WHISPER.md or AGENTS.md. Save the workflow and the pitfalls, not the code map.
+WHISPER.md, the rules files or AGENTS.md. Save the workflow and the pitfalls, not the code map.
 - Fix a wrong entry in place: edit the sentence that misled, never append "update: actually".
 """
 
