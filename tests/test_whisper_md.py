@@ -1,87 +1,80 @@
-"""WHISPER.md loads as a tree: root always, directory-scoped on demand."""
+"""Per-project instructions load from ~/.whisper/rules/<project-slug>/.
+
+The workspace carries no WHISPER.md for this app any more: the project's
+WHISPER.md (overview) and rules.md (rules) sit in the user's own folder,
+named with the memory store's slug, so they are never committed and the
+assistant can edit them without an approval. A repo's AGENTS.md is still
+honored live, read-only, as a supplement.
+"""
 
 import os
 
-from server.whisper_md import (
-    ROOT_MAX_CHARS,
-    SCOPED_MAX_CHARS,
-    find_scoped_files,
-    get_whisper_md_context,
-)
+from server.memory.memdir import get_workspace_slug
+from server.prompts.rules import MAX_FILE_CHARS, project_profile_path, project_rules_dir
+from server.whisper_md import get_whisper_md_context
 
 
-def _write(base, rel, text):
-    path = os.path.join(base, rel)
+def _write(path, text):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         f.write(text)
-    return path
 
 
-def test_no_workspace_and_no_file_yield_nothing(tmp_path):
+def test_no_workspace_and_no_files_yield_nothing(tmp_path):
     assert get_whisper_md_context(None) == ""
     assert get_whisper_md_context(str(tmp_path)) == ""
 
 
-def test_root_file_is_always_inlined(tmp_path):
-    _write(str(tmp_path), "WHISPER.md", "Root rules here.")
-    out = get_whisper_md_context(str(tmp_path), "anything at all")
-    assert "Root rules here." in out
+def test_project_folder_uses_the_memory_slug(tmp_path):
+    ws = str(tmp_path / "app")
+    os.makedirs(ws)
+    slug = get_workspace_slug(ws)
+    assert os.path.basename(project_rules_dir(ws)) == slug
+    assert project_profile_path(ws) == os.path.join(project_rules_dir(ws), "WHISPER.md")
+    # Two projects that share a basename never share a folder.
+    other = str(tmp_path / "elsewhere" / "app")
+    os.makedirs(other)
+    assert project_rules_dir(other) != project_rules_dir(ws)
 
 
-def test_scoped_file_loads_only_when_the_turn_concerns_its_directory(tmp_path):
+def test_a_whisper_md_inside_the_workspace_is_not_read(tmp_path):
     ws = str(tmp_path)
-    _write(ws, "WHISPER.md", "Root rules.")
-    _write(ws, "server/auth/WHISPER.md", "AUTH GOTCHA")
-    _write(ws, "src/components/WHISPER.md", "COMPONENT GOTCHA")
-
-    on_topic = get_whisper_md_context(ws, "fix the login in server/auth")
-    assert "AUTH GOTCHA" in on_topic
-    # The other one is announced by path, not inlined.
-    assert "COMPONENT GOTCHA" not in on_topic
-    assert "src/components/WHISPER.md" in on_topic
-
-    off_topic = get_whisper_md_context(ws, "what is the weather today")
-    assert "AUTH GOTCHA" not in off_topic
-    assert "COMPONENT GOTCHA" not in off_topic
-    assert "server/auth/WHISPER.md" in off_topic
-    assert "Root rules." in off_topic
+    _write(os.path.join(ws, "WHISPER.md"), "REPO COPY")
+    _write(os.path.join(ws, "server", "WHISPER.md"), "SCOPED COPY")
+    assert get_whisper_md_context(ws) == ""
 
 
-def test_a_bare_directory_name_is_enough_to_match(tmp_path):
+def test_project_profile_and_rules_load_with_labels(tmp_path):
     ws = str(tmp_path)
-    _write(ws, "server/diarization/WHISPER.md", "SPEAKER RULES")
-    assert "SPEAKER RULES" in get_whisper_md_context(ws, "improve diarization accuracy")
+    slug = get_workspace_slug(ws)
+    _write(project_profile_path(ws), "This project is a planner.")
+    _write(os.path.join(project_rules_dir(ws), "rules.md"), "- Use uv.")
+    _write(os.path.join(project_rules_dir(ws), "testing.md"), "- Run pytest first.")
+
+    out = get_whisper_md_context(ws)
+    assert f"[rules/{slug}/WHISPER.md, project instructions]" in out
+    assert "This project is a planner." in out
+    assert f"[rules/{slug}/rules.md, project rules]" in out
+    # rules.md leads, other rule files follow in name order.
+    assert out.index("Use uv.") < out.index("Run pytest first.")
+    assert out.startswith("\n\n")
 
 
-def test_discovery_skips_vendor_directories(tmp_path):
+def test_oversized_files_are_capped(tmp_path):
     ws = str(tmp_path)
-    _write(ws, "app/WHISPER.md", "real")
-    _write(ws, "node_modules/pkg/WHISPER.md", "vendored")
-    _write(ws, ".venv/lib/WHISPER.md", "vendored")
-
-    found = find_scoped_files(ws)
-    assert found == ["app/WHISPER.md"]
-
-
-def test_oversized_files_are_capped_with_a_pointer_to_the_rest(tmp_path):
-    """An oversized file is capped, never inlined verbatim on every request."""
-    ws = str(tmp_path)
-    _write(ws, "WHISPER.md", "x" * (ROOT_MAX_CHARS * 3))
-    _write(ws, "api/WHISPER.md", "y" * (SCOPED_MAX_CHARS * 3))
-
-    out = get_whisper_md_context(ws, "change the api")
-    assert len(out) < ROOT_MAX_CHARS + SCOPED_MAX_CHARS + 2000
+    _write(project_profile_path(ws), "x" * (MAX_FILE_CHARS * 3))
+    _write(os.path.join(project_rules_dir(ws), "rules.md"), "y" * (MAX_FILE_CHARS * 3))
+    out = get_whisper_md_context(ws)
+    assert len(out) < 2 * MAX_FILE_CHARS + 1000
     assert out.count("truncated at") == 2
-    assert "ws_read_file" in out
 
 
 def test_unreadable_file_is_skipped_not_fatal(tmp_path, monkeypatch):
     ws = str(tmp_path)
-    _write(ws, "WHISPER.md", "root")
+    _write(project_profile_path(ws), "profile")
 
     def boom(*_a, **_k):
         raise PermissionError("nope")
 
     monkeypatch.setattr("builtins.open", boom)
-    assert get_whisper_md_context(ws, "hi") == ""
+    assert get_whisper_md_context(ws) == ""

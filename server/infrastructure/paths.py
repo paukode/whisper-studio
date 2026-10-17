@@ -16,7 +16,7 @@ Two roots, split by who edits what:
 - User root (:func:`user_root`): ``~/.whisper`` in a packaged install —
   everything a person browses, edits, or deletes by hand: models/, skills/,
   plugins/, agents/, the config layer (config.user.json, pricing.json,
-  PROMPT_RULES.md), and data/ (memory, global_memory, session_memory,
+  WHISPER.md, rules/), and data/ (memory, global_memory, session_memory,
   workflows, attachments, …) — one visible, predictable place, the way
   ~/.claude works for Claude Code. In a dev checkout (WHISPER_HOME unset)
   it is the repo root, so dev layout is unchanged. ``WHISPER_USER_DIR``
@@ -97,8 +97,8 @@ def logs_root() -> str:
 
 
 def config_dir() -> str:
-    """Directory holding config.json / pricing.json / PROMPT_RULES.md — user
-    -editable files, so they live with the rest of the user data."""
+    """Directory holding config.json / pricing.json — user-editable files, so
+    they live with the rest of the user data."""
     return user_root()
 
 
@@ -124,12 +124,35 @@ def data_root() -> str:
     return os.path.join(user_root(), "data")
 
 
+def app_storage_roots() -> list[str]:
+    """The folders the app owns on the user's behalf, where its own writes
+    belong and need no approval (server/security/permissions.py): the user
+    root (``~/.whisper``: rules, the profile, skills, agents, models) and the
+    data root (scratch, memory, workflows). In a dev checkout the user root IS
+    the repo root, which is also the most likely connected workspace, so there
+    only its app-owned children count, never the whole tree."""
+    root = user_root()
+    data = data_root()
+    if root != repo_root():
+        return [root, data]
+    return [
+        data,
+        os.path.join(root, "rules"),
+        os.path.join(root, "WHISPER.md"),
+        models_root(),
+        skills_root(),
+        plugins_root(),
+        os.path.join(root, "agents"),
+    ]
+
+
 def _seed_file(src: str, dst: str) -> None:
     """Copy ``src`` to ``dst`` unless ``dst`` already exists. Best-effort: a
     missing template or an unwritable target logs instead of crashing boot."""
     if os.path.exists(dst) or not os.path.exists(src):
         return
     try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copyfile(src, dst)
         log.info("Seeded %s from %s", dst, src)
     except OSError as e:
@@ -201,7 +224,6 @@ _CONFIG_FILES = (
     "config.json",
     "config.json.pre-split",
     "pricing.json",
-    "PROMPT_RULES.md",
 )
 
 
@@ -309,11 +331,12 @@ def bootstrap_home() -> None:
         log.warning("Config migration/seed skipped: %s", e)
     # pricing.json is NOT seeded: it holds only the user's own per-key rate
     # overrides over the shipped pricing.example.json, and a full copy of the
-    # template froze every rate at install time. PROMPT_RULES.md is copied from
-    # repo_root() (read-only in a bundle) when missing.
+    # template froze every rate at install time. The shipped global rules file
+    # is copied from repo_root() (read-only in a bundle) when missing; after
+    # that the user owns rules/ entirely (server/prompts/rules.py).
     _seed_file(
-        os.path.join(repo_root(), "PROMPT_RULES.md"),
-        os.path.join(config_dir(), "PROMPT_RULES.md"),
+        os.path.join(repo_root(), "rules", "global", "rules.md"),
+        os.path.join(user_root(), "rules", "global", "rules.md"),
     )
     # Seed the whole skills/ tree once; after that the user owns it (imports,
     # edits, deletions must not be resurrected on the next boot).

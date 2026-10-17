@@ -78,3 +78,10 @@ WHISPER.md
 # macOS app packaging (macapp/build_app.sh) work dirs and output
 build-app/
 dist-app/
+
+# The user's own instructions in a dev checkout (user_root() is the repo root
+# there): the global profile and the per-project rule folders. The shipped
+# global rules file stays tracked.
+/WHISPER.md
+/rules/*
+!/rules/global/

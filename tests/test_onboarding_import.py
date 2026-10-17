@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -22,6 +23,7 @@ import server.mcp as mcp_module
 import server.skills as skills_mod
 import server.skills_import as si
 from server.onboarding import import_external as ie
+from server.prompts.rules import project_profile_path
 
 # --- fixtures --------------------------------------------------------------
 
@@ -113,7 +115,7 @@ def test_claude_import_writes_whisper_md(tmp_path, isolated_skills, isolated_mcp
     result = ie.import_claude_project(src, str(ws))
 
     assert result["instructions"]["status"] == "written"
-    dest = ws / "WHISPER.md"
+    dest = Path(project_profile_path(str(ws)))
     assert dest.is_file()
     content = dest.read_text()
     assert "Migrated from Claude Code" in content
@@ -124,12 +126,14 @@ def test_claude_import_appends_to_existing_whisper_md(tmp_path, isolated_skills,
     src = _make_claude_project(str(tmp_path / "src"))
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "WHISPER.md").write_text("Existing project rules.\n")
+    existing = Path(project_profile_path(str(ws)))
+    existing.parent.mkdir(parents=True)
+    existing.write_text("Existing project rules.\n")
 
     result = ie.import_claude_project(src, str(ws))
 
     assert result["instructions"]["status"] == "appended"
-    content = (ws / "WHISPER.md").read_text()
+    content = existing.read_text()
     assert "Existing project rules." in content
     assert "Always run tests before committing." in content
     assert "Imported from Claude Code" in content
@@ -145,7 +149,7 @@ def test_missing_instructions_file_is_skipped_not_fatal(tmp_path, isolated_skill
 
     assert result["instructions"]["status"] == "skipped"
     assert "CLAUDE.md" in result["instructions"]["reason"]
-    assert not (ws / "WHISPER.md").exists()
+    assert not os.path.exists(project_profile_path(str(ws)))
 
 
 # --- skills: copied and actually loadable by the real loader ---------------

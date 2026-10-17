@@ -51,7 +51,7 @@
       <tbody>
         <tr><td>Session memory</td><td>One conversation</td><td>Background summarizer</td><td><code>&lt;session-memory&gt;</code></td></tr>
         <tr><td>Persistent memory</td><td>Global (every chat) plus per-workspace</td><td>The post-turn learning review, or the model itself</td><td><code>&lt;memory-context&gt;</code></td></tr>
-        <tr><td>WHISPER.md</td><td>The workspace, hand-authored</td><td>You (via the app or an editor)</td><td>Inline project-instructions block</td></tr>
+        <tr><td>WHISPER.md and rules</td><td><code class="path">~/.whisper</code>, hand-authored or added on "remember this"</td><td>You (via the app, an editor, or the <code>rules_write</code> tool)</td><td>Inline instructions blocks</td></tr>
       </tbody>
     </table></div>
 
@@ -239,28 +239,32 @@
     </div>
 
     <h2 id="whisper-md">WHISPER.md</h2>
-    <p><code>WHISPER.md</code> is markdown you author by hand, loaded on every turn by
-      <code>get_whisper_md_context()</code> in <code class="path">server/whisper_md.py</code>. It is
-      the Whisper Studio analogue of <code>CLAUDE.md</code>: durable project context that you write
-      rather than have the system extract. It is injected inline as a
-      <code>[WHISPER.md - project-specific instructions]</code> block.</p>
-    <p>It is a <b>tree</b>, not a single file. The root <code>WHISPER.md</code> at the workspace top
-      always loads (capped at <code>ROOT_MAX_CHARS</code>, 12,000 characters). Directory-scoped
-      <code>WHISPER.md</code> files deeper in the tree (up to <code>MAX_DEPTH</code> 4, at most
-      <code>MAX_SCOPED_FILES</code> 25) load only when the turn's question concerns their directory,
-      each capped at <code>SCOPED_MAX_CHARS</code> (6,000 characters); the rest are announced by path
-      so the model can read them with <code>ws_read_file</code> when needed. Truncation is honest:
-      a capped file gets a note appended telling the model to read the rest with
-      <code>ws_read_file</code>.</p>
+    <p>The project's instructions are markdown you author by hand, loaded on every turn by
+      <code>get_whisper_md_context()</code> in <code class="path">server/whisper_md.py</code> from
+      <code class="path">~/.whisper/rules/&lt;project-slug&gt;/</code>: the project
+      <code>WHISPER.md</code> (overview and conventions) and every other <code>.md</code> file in the
+      folder as its rules, <code>rules.md</code> first. The slug is the memory store's
+      <code>&lt;basename&gt;-&lt;8 char hash&gt;</code>, so a project's instructions, rules and
+      memories share a folder name. Nothing inside the workspace is read as this app's instructions:
+      the files are the user's, never committed, and because they sit under
+      <code class="path">~/.whisper</code> the assistant edits them without an approval. Each file is
+      capped at <code>MAX_FILE_CHARS</code> (12,000 characters) with an honest truncation note.</p>
+    <p>The global layer, <code class="path">~/.whisper/WHISPER.md</code> (the user's profile) and
+      <code class="path">~/.whisper/rules/global/*.md</code>, is loaded by
+      <code class="path">server/prompts/rules.py</code> into the <code>user_rules</code> section of
+      the cached static prefix, and appended to the on-device and scheduled-run prompts through
+      <code>append_rules()</code>. Both loaders cache on the (path, mtime) set they read, so an edit
+      applies on the next request. The <code>rules_write</code> tool
+      (<code class="path">server/rules_tools.py</code>) appends or rewrites these files when the user
+      says "remember this"; the <code>rules_capture</code> prompt section carries the routing
+      (project by default, global on "always" or with no workspace, facts to the matching
+      <code>WHISPER.md</code>).</p>
     <p><code>AGENTS.md</code>, the instructions filename other coding tools maintain, is honored live
-      as a read-only supplement rather than imported once and left to go stale. At the root it is
-      loaded alongside <code>WHISPER.md</code> under an explicit precedence note
-      ("where this conflicts with <code>WHISPER.md</code> above, <code>WHISPER.md</code> wins") and
-      given the scoped budget; with no <code>WHISPER.md</code> present it takes the root budget
-      instead. It is skipped entirely when its text already appears verbatim inside
-      <code>WHISPER.md</code>, which is the post-import state, so the same text is never billed
-      twice. In a scoped directory a <code>WHISPER.md</code> shadows a sibling <code>AGENTS.md</code>
-      outright: one instructions file per directory.</p>
+      from the workspace root as a read-only supplement rather than imported once and left to go
+      stale. It is loaded alongside the project <code>WHISPER.md</code> under an explicit precedence
+      note ("where this conflicts with <code>WHISPER.md</code> above, <code>WHISPER.md</code> wins")
+      and skipped entirely when its text already appears verbatim inside the project file, which is
+      the post-import state, so the same text is never billed twice.</p>
     <p>Unlike the other two stores, it is fully under your control. The in-app Project Memory dialog is
       backed by a small CRUD API:</p>
     <div class="table-wrap"><table>
@@ -278,9 +282,10 @@
     <p>All three stores are resolved in the chat endpoint
       (<code class="path">server/chat/routes.py</code>) and handed to the prompt builder in
       <code class="path">server/prompts/__init__.py</code>, which owns section ordering. Session memory
-      is placed before workspace memory (it carries a higher-priority slot), and <code>WHISPER.md</code>
-      is its own project-instructions section. When prompt caching is on, these dynamic sections sit
-      after the cacheable static prefix so they do not invalidate the cache. See
+      is placed before workspace memory (it carries a higher-priority slot). The project instructions
+      are their own section on the cached WORKSPACE layer, since they only change when a file is edited;
+      when prompt caching is on, the memory sections sit after the cacheable static prefix so they do
+      not invalidate the cache. See
       <a href="arch-chat-pipeline.html">Chat &amp; tool orchestration</a> for where this fits in a turn,
       and <a href="ref-settings.html">Settings</a> for the caching flag.</p>
 
@@ -357,7 +362,8 @@
       <dt><code class="path">server/memory/dream.py</code></dt><dd>Cross-session consolidation: trigger thresholds, locking, and the four-phase agent.</dd>
       <dt><code class="path">server/memory/prompts.py</code></dt><dd>Prompts for recall, extraction, consolidation, session summarization, and the learning review, plus the shared <code>LESSON_RULES</code> and <code>DO_NOT_CAPTURE</code> writing rules.</dd>
       <dt><code class="path">server/memory/tools.py</code></dt><dd>The four memory tool schemas the model can call directly.</dd>
-      <dt><code class="path">server/whisper_md.py</code></dt><dd><code>WHISPER.md</code> tree loading: the always-loaded root, question-scoped directory files, and truncation notes. (The CRUD router is declared in <code class="path">server/skills.py</code>; its handlers live in <code class="path">server/skills_routes.py</code>.)</dd>
+      <dt><code class="path">server/whisper_md.py</code></dt><dd>Loads the connected project's <code>WHISPER.md</code> and rule files from <code class="path">~/.whisper/rules/&lt;slug&gt;/</code>, plus the repo's <code>AGENTS.md</code> supplement. (The CRUD router is declared in <code class="path">server/skills.py</code>; its handlers live in <code class="path">server/skills_routes.py</code>.)</dd>
+      <dt><code class="path">server/prompts/rules.py</code>, <code class="path">server/rules_tools.py</code></dt><dd>The global layer (profile and global rules) and the <code>rules_write</code> tool.</dd>
     </div>
 
     <div class="callout callout--tip">

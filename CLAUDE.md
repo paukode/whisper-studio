@@ -2,7 +2,8 @@
 
 Instructions for coding assistants and developers working on this repository.
 The user-facing product docs live in `docs/`; the assistant's own prompt rules
-live in `PROMPT_RULES.md`. This file is about how to change the code safely.
+live in `rules/global/rules.md`, seeded into `~/.whisper/rules/global/` on first run.
+This file is about how to change the code safely.
 
 ## What it is
 

@@ -67,7 +67,7 @@
       <thead><tr><th>Root</th><th>Packaged .app</th><th>Dev checkout</th><th>Holds</th></tr></thead>
       <tbody>
         <tr><td><code>app_home()</code></td><td><code>WHISPER_HOME</code>, that is <code class="path">~/Library/Application Support/WhisperStudio</code></td><td>The repo root</td><td>Exactly two things: <code class="path">storage/</code> (<code>sessions.db</code> and the workspace indexes) and <code class="path">logs/</code>.</td></tr>
-        <tr><td><code>user_root()</code></td><td><code class="path">~/.whisper</code></td><td>The repo root</td><td>Everything a person browses, edits, or deletes by hand: <code class="path">models/</code>, <code class="path">skills/</code>, <code class="path">plugins/</code>, <code class="path">agents/</code>, the config layer (<code>config.user.json</code>, <code>pricing.json</code>, <code>PROMPT_RULES.md</code>), and <code class="path">data/</code>.</td></tr>
+        <tr><td><code>user_root()</code></td><td><code class="path">~/.whisper</code></td><td>The repo root</td><td>Everything a person browses, edits, or deletes by hand: <code class="path">models/</code>, <code class="path">skills/</code>, <code class="path">plugins/</code>, <code class="path">agents/</code>, the config layer (<code>config.user.json</code>, <code>pricing.json</code>), the instructions (<code>WHISPER.md</code>, <code class="path">rules/</code>), and <code class="path">data/</code>.</td></tr>
       </tbody>
     </table></div>
     <p><code>storage_root()</code> sits under <code>app_home()</code> and not under the user root on

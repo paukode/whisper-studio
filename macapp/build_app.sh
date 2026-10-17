@@ -431,8 +431,11 @@ rsync -a --delete \
     "$RES_DIR/backend/"
 cp "$REPO_ROOT/config.example.json" \
    "$REPO_ROOT/pricing.example.json" \
-   "$REPO_ROOT/PROMPT_RULES.md" \
    "$RES_DIR/backend/"
+# The shipped global rules file only: in a dev checkout rules/ also holds the
+# developer's own project folders (gitignored), which must never ship.
+mkdir -p "$RES_DIR/backend/rules/global"
+cp "$REPO_ROOT/rules/global/rules.md" "$RES_DIR/backend/rules/global/"
 
 # Always-on speech models (language ID + speaker encoder, ~170MB): shipped
 # inside the bundle and seeded into the user's models dir on first launch

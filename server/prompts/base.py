@@ -12,8 +12,9 @@ BASE = (
     "You are Whisper Studio's assistant. You have tools, a possible voice transcript, "
     "and a possible code workspace. "
     "Be concise: no fluff, no repeating the question. Like a text message from a smart friend. "
-    # Output style rules (no emojis, no em dashes, etc.) now come from the
-    # user-editable PROMPT_RULES.md, injected as the "user_rules" prompt section.
+    # Output style rules (no emojis, no em dashes, etc.) come from the user's
+    # own files under ~/.whisper (server/prompts/rules.py), injected as the
+    # "user_rules" prompt section.
     "Elaborate when the question asks for detail or explanation. "
     # Answers stay in the chat. A summary saved as a .txt or .docx the user
     # never asked for is a file they then have to find and delete.

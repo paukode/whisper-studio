@@ -213,6 +213,7 @@ _EXECUTOR_MODULES = (
     "server.index",  # workspace_semantic_search
     "server.git.executor",
     "server.memory.executor",
+    "server.rules_tools",  # rules_write (the user's rules under ~/.whisper)
 )
 
 for _modname in _EXECUTOR_MODULES:

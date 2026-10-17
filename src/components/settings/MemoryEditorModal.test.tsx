@@ -47,7 +47,7 @@ describe('MemoryEditorModal — backdrop dismissal', () => {
     const onClose = vi.fn();
     const { container } = renderModal({ onClose });
     const overlay = container.querySelector('.settings-overlay') as HTMLElement;
-    const heading = screen.getByRole('heading', { name: /project memory/i });
+    const heading = screen.getByRole('heading', { name: /project instructions/i });
 
     // Press begins on the content; the resulting click (on release outside)
     // targets the overlay — the historical "select text, release outside" bug.

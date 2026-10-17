@@ -229,7 +229,7 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
          *  status + start/stop). The composer no longer carries a toggle; the
          *  model still gets every enabled server's tools via the backend. */}
 
-        {/* Project memory (WHISPER.md) — workspace-scoped editor. Distinct from
+        {/* Project instructions (WHISPER.md) — per-project editor. Distinct from
          *  the auto-memory toggle above (which covers the global + project
          *  memory stores); this edits the hand-written per-repo instructions. */}
         {wsConnected && (
@@ -239,7 +239,7 @@ export const MoreMenu: React.FC<MoreMenuProps> = ({
               type="button"
               className="more-row"
               onClick={() => { onClose(); openMemoryEditor(); }}
-              title={`Project memory: WHISPER.md in this workspace only.\nThe assistant reads this on every turn for project-specific context.`}
+              title={`Project instructions: this project's WHISPER.md under ~/.whisper/rules.\nThe assistant reads it on every turn in this workspace.`}
             >
               <span className="more-row-label">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">

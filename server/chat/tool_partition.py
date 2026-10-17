@@ -37,6 +37,8 @@ CORE_TOOLS: frozenset[str] = frozenset(
         "skill_invoke",
         # interaction
         "ask_user_question",
+        # the user's rules: "remember this" must never wait behind tool_search
+        "rules_write",
         # visuals — "draw me a diagram" must work on the first turn
         "create_visual",
         "create_chart",

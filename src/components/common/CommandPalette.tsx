@@ -72,7 +72,7 @@ export const CommandPalette: React.FC = () => {
         run: run(() => ui.toggleTranscript()) },
       { id: 'toggle-sidebar', group: 'View', title: 'Toggle sessions sidebar', keywords: 'conversations list',
         run: run(() => ui.toggleSidebar()) },
-      { id: 'edit-memory', group: 'Workspace', title: 'Edit project memory (WHISPER.md)', keywords: 'instructions notes',
+      { id: 'edit-memory', group: 'Workspace', title: 'Edit project instructions (WHISPER.md)', keywords: 'instructions notes',
         run: run(() => ui.openMemoryEditor()) },
     ];
 
