@@ -292,8 +292,13 @@ class AgentJournal:
         }
         j._save_meta()
         j.event("started" if not resumed else "resumed", task=(task or "")[:2000], model=model)
+        # The registry row is what the header's task list shows; announcing it
+        # here, and its end in finish(), is what puts every agent there live,
+        # however it was started (a chat turn, /subagent, detached, resumed,
+        # a workflow).
         try:
             from server.tasks import registry
+            from server.tasks.events import emit_task_event
 
             registry.ensure_running_task(
                 agent_id,
@@ -309,6 +314,9 @@ class AgentJournal:
                     "parent_agent_id": parent_agent_id or "",
                 },
             )
+            row = registry.get_task(agent_id)
+            if row:
+                emit_task_event(session_id, "task_started", row)
         except Exception as e:  # noqa: BLE001 - the registry is a mirror, never the record
             log.debug("agent journal: registry row for %s not written: %s", agent_id, e)
         return j
@@ -375,13 +383,20 @@ class AgentJournal:
         self.event("finished", status=status, stop_reason=stop_reason, turns_used=turns_used)
         try:
             from server.tasks import registry
+            from server.tasks.events import emit_task_event
 
-            registry.finish_task(
+            row_status = {"completed": "completed", "stopped": "stopped"}.get(status, "failed")
+            finished = registry.finish_task(
                 self.agent_id,
-                status={"completed": "completed", "stopped": "stopped"}.get(status, "failed"),
+                status=row_status,
                 exit_code=None,
                 result_text=(report or "")[:REPORT_CHARS],
             )
+            if finished:
+                event = {"completed": "task_completed", "stopped": "task_stopped"}.get(
+                    row_status, "task_failed"
+                )
+                emit_task_event(str(self._meta.get("session_id") or ""), event, finished)
         except Exception as e:  # noqa: BLE001 - mirror only
             log.debug("agent journal: registry finish for %s failed: %s", self.agent_id, e)
 

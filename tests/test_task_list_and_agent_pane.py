@@ -64,6 +64,29 @@ def test_resumed_record_continues_the_numbering():
     assert seq == len(lines) == lines[-1]["seq"]
 
 
+# ── the record announces its row to the header's task list ───────────────────
+
+
+def test_journal_announces_its_row_live(monkeypatch):
+    published: list = []
+    from server.agents import event_bus as bus_mod
+
+    monkeypatch.setattr(bus_mod.event_bus, "publish", lambda s, ev: published.append((s, ev)))
+    j = _open("a6", session_id="s7")
+    j.finish(status="stopped", stop_reason="cancelled", report="salvaged", turns_used=2)
+    frames = [(sid, ev["taskEvent"]) for sid, ev in published if ev.get("type") == "task_event"]
+    assert [(sid, f["event_type"], f["kind"]) for sid, f in frames] == [
+        ("s7", "task_started", "agent"),
+        ("s7", "task_stopped", "agent"),
+    ]
+    assert frames[0][1]["task_id"] == "a6"
+    assert frames[1][1]["result_tail"] == "salvaged"
+    # A second terminal write (the detached runner's own close) finds the
+    # row closed and announces nothing more.
+    assert registry.finish_task("a6", status="failed") is None
+    assert len(frames) == 2
+
+
 # ── the feed the pane loads ──────────────────────────────────────────────────
 
 

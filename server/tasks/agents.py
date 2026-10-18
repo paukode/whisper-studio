@@ -82,9 +82,6 @@ def start_detached_agent(
     )
     _running[task_id] = aio_task
     aio_task.add_done_callback(lambda _t: _running.pop(task_id, None))
-    started = registry.get_task(task_id)
-    if started:
-        emit_task_event(session_id, "task_started", started)
     return task_id
 
 
@@ -165,10 +162,11 @@ async def _run_detached(
             pump.cancel()
         event_bus.unsubscribe(channel, queue)
         # The runtime's journal normally closes the registry row first (with
-        # the report); this call is then a no-op and the row is re-read.
+        # the report) and announces that; this closes and announces it only
+        # when the run never got a journal (a failure before it opened).
         finished = registry.finish_task(
             task_id, status=status, exit_code=None, result_text=result_text
-        ) or registry.get_task(task_id)
+        )
         if finished:
             event_name = {
                 "completed": "task_completed",
@@ -269,9 +267,6 @@ def resume_agent(agent_id: str, message: str, *, session_id: str = "") -> str:
     )
     _running[agent_id] = aio_task
     aio_task.add_done_callback(lambda _t: _running.pop(agent_id, None))
-    started = registry.get_task(agent_id)
-    if started:
-        emit_task_event(sid, "task_started", started)
     return agent_id
 
 
