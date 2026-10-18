@@ -733,6 +733,55 @@ describe('readSSEStream tool frames', () => {
     expect(getChatStore(sid).getState().lastToolError).toBeNull();
   });
 
+  // The meta is what the server measured about the call (server/tool_meta.py):
+  // the row keeps it camelCased, live and once committed, so a chip never has
+  // to read a number out of a preview that may be cut short.
+  it('the meta of a result rides on the live row and on the committed row', async () => {
+    const frames = [
+      { skill: 'ws_write_file', tool_use_id: 'tu_m' },
+      {
+        skill_result: 'ws_write_file',
+        output: 'Wrote a.py (240 bytes).',
+        tool_use_id: 'tu_m',
+        is_error: false,
+        exit_code: null,
+        meta: {
+          duration_ms: 12,
+          output_chars: 23,
+          truncated: false,
+          lines: 12,
+          bytes: 240,
+          added: 3,
+          removed: 1,
+        },
+      },
+    ];
+    const meta = {
+      durationMs: 12,
+      outputChars: 23,
+      truncated: false,
+      lines: 12,
+      bytes: 240,
+      added: 3,
+      removed: 1,
+    };
+    await readSSEStream(sseResponse(frames), 'sess-meta-live', signal(), SETTINGS);
+    expect(live('sess-meta-live')[0].meta).toEqual(meta);
+
+    await readSSEStream(sseResponse([...frames, card]), 'sess-meta-commit', signal(), SETTINGS);
+    expect(committed('sess-meta-commit')[0].toolUse?.[0].meta).toEqual(meta);
+  });
+
+  it('a result without a meta (an older server) leaves the row without one', async () => {
+    const sid = 'sess-meta-none';
+    await readSSEStream(sseResponse([
+      { skill: 'ws_grep', tool_use_id: 'tu_n' },
+      { skill_result: 'ws_grep', output: 'a.ts:1: x', tool_use_id: 'tu_n', is_error: false, exit_code: null },
+      card,
+    ]), sid, signal(), SETTINGS);
+    expect(committed(sid)[0].toolUse?.[0]).not.toHaveProperty('meta');
+  });
+
   it('frames without a call id still pair by name order', async () => {
     // What an adapter that cannot tag its frames sends (and what older
     // transcripts replay): the input belongs to the call that started last,

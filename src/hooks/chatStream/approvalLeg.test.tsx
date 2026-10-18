@@ -371,6 +371,148 @@ describe('approval leg', () => {
     await act(async () => { finishAction!({ ok: true }); await tick(); await tick(); });
   });
 
+  // The paused turn committed its call's row as "Awaiting approval: ...". The
+  // card's Yes runs the action outside any stream, so no skill_result ever
+  // reaches that row: the leg writes the outcome onto it by tool_use_id.
+  describe("the paused call's row", () => {
+    const writeApproval = (): PendingApproval => ({
+      ...approval(),
+      action: 'ws_write_file',
+      category: 'write',
+      preview: 'diff',
+      summary: 'Write a.py',
+      payload: { path: 'a.py', content: 'x = 1\n' },
+    });
+    const pausedRow = {
+      toolId: 'tu_dev',
+      toolName: 'ws_write_file',
+      input: { path: 'a.py' },
+      result: 'Awaiting approval: Write a.py',
+      status: 'complete' as const,
+    };
+    const otherRow = {
+      toolId: 'tu_read',
+      toolName: 'ws_read_file',
+      input: { path: 'b.py' },
+      result: '    1\tb',
+      status: 'complete' as const,
+    };
+    const seed = () => getChatStore(SID).getState().setMessages([
+      { role: 'user', content: 'write a.py', timestamp: 't0' },
+      {
+        role: 'assistant',
+        content: '',
+        timestamp: 't1',
+        toolUse: [otherRow, pausedRow],
+        traces: [{ id: 'tu_dev', name: 'ws_write_file', input: {}, output: pausedRow.result, status: 'complete' }],
+      },
+    ]);
+    const rows = () => getChatStore(SID).getState().messages[1].toolUse ?? [];
+
+    it('sends the call id and writes the outcome and the stats onto the row, then saves', async () => {
+      seed();
+      // What the row said, and whether the turn had resumed, at each save.
+      const saves: Array<{ result?: string; resumed: number }> = [];
+      useSessionStore.setState({
+        debouncedSave: vi.fn(() => saves.push({ result: rows()[1]?.result, resumed: chatCalls().length })),
+      } as never);
+      let answered: Promise<boolean> = Promise.resolve(true);
+      await act(async () => {
+        answered = answerApproval(writeApproval(), true, false);
+        await tick();
+      });
+      expect(executeApproval).toHaveBeenCalledWith({
+        action: 'ws_write_file',
+        payload: { path: 'a.py', content: 'x = 1\n' },
+        tool_use_id: 'tu_dev',
+      });
+
+      await act(async () => {
+        finishAction!({
+          ok: true,
+          output: 'Wrote a.py (6 bytes).',
+          stats: { added: 3, removed: 1, lines: 12, bytes: 240, stored: true },
+        });
+        await answered;
+      });
+      const meta = {
+        durationMs: null,
+        outputChars: null,
+        truncated: null,
+        lines: null,
+        bytes: 240,
+        added: 3,
+        removed: 1,
+      };
+      expect(rows()[1]).toEqual({
+        ...pausedRow,
+        result: 'Wrote a.py (6 bytes).',
+        status: 'complete',
+        isError: false,
+        meta,
+      });
+      expect(rows()[0]).toEqual(otherRow);
+      expect(getChatStore(SID).getState().messages[1].traces?.[0]).toMatchObject({
+        output: 'Wrote a.py (6 bytes).',
+        status: 'complete',
+        meta,
+      });
+      // Saved with the outcome on the row, before the turn resumed.
+      expect(saves[0]).toEqual({ result: 'Wrote a.py (6 bytes).', resumed: 0 });
+      expect(chatCalls()).toHaveLength(1);
+    });
+
+    it('a failed action is an error row with the error the model reads, and no meta', async () => {
+      seed();
+      let answered: Promise<boolean> = Promise.resolve(true);
+      await act(async () => {
+        answered = answerApproval(writeApproval(), true, false);
+        await tick();
+      });
+      await act(async () => {
+        finishAction!({ ok: false, error: 'Write failed: disk full', output: '', stats: null });
+        await answered;
+      });
+      expect(rows()[1]).toEqual({
+        ...pausedRow,
+        result: 'Error: Write failed: disk full',
+        status: 'error',
+        isError: true,
+      });
+    });
+
+    it("keeps a preview of a long result, cut where the server cuts a live row's", async () => {
+      seed();
+      let answered: Promise<boolean> = Promise.resolve(true);
+      await act(async () => {
+        answered = answerApproval(writeApproval(), true, false);
+        await tick();
+      });
+      await act(async () => {
+        finishAction!({ ok: true, output: 'y'.repeat(5000) });
+        await answered;
+      });
+      expect(rows()[1].result).toBe(`${'y'.repeat(2000)}...`);
+      expect(rows()[1]).not.toHaveProperty('meta');
+    });
+
+    it('a Stop during the action still fills the row', async () => {
+      seed();
+      let answered: Promise<boolean> = Promise.resolve(true);
+      await act(async () => {
+        answered = answerApproval(writeApproval(), true, false);
+        await tick();
+      });
+      act(() => killSessionStream(SID));
+      await act(async () => {
+        finishAction!({ ok: true, output: 'Wrote a.py (6 bytes).', stats: { added: 1, removed: 0, lines: 1, bytes: 6 } });
+        await answered;
+      });
+      expect(rows()[1]).toMatchObject({ result: 'Wrote a.py (6 bytes).', status: 'complete', meta: { added: 1 } });
+      expect(chatCalls()).toHaveLength(0);
+    });
+  });
+
   it('refuses to resume into a session another stream owns, and keeps the card', async () => {
     registerStreamController(SID, new AbortController());
 

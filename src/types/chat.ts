@@ -204,6 +204,19 @@ export interface ChatMessage {
   };
 }
 
+/** What the server measured about one tool call's result. Every key may be
+ *  null: a tool that has no such number says so, and the row renders a
+ *  number-based chip only when the field is a number. */
+export interface ToolMeta {
+  durationMs: number | null;
+  outputChars: number | null;
+  truncated: boolean | null;
+  lines: number | null;
+  bytes: number | null;
+  added: number | null;
+  removed: number | null;
+}
+
 export interface ToolUseEvent {
   /** The provider's tool_use id when the frame carried one, else the tool
    *  name: a row from an older transcript, a slash command's synthetic card,
@@ -230,6 +243,9 @@ export interface ToolUseEvent {
   /** The command's exit code (skill_result.exit_code); null for a tool that
    *  has none. Absent until the result lands. */
   exitCode?: number | null;
+  /** Set by the server's skill_result frame; absent on rows from older
+   *  transcripts, slash commands and the voice path. */
+  meta?: ToolMeta;
 }
 
 export interface SkillTrace {
@@ -244,6 +260,8 @@ export interface SkillTrace {
   status: 'running' | 'complete' | 'error';
   /** See ToolUseEvent.exitCode. */
   exitCode?: number | null;
+  /** See ToolUseEvent.meta. */
+  meta?: ToolMeta;
   /** Set once this trace has received its skill_result. Lets repeated
    *  same-named tool calls (e.g. three task_create) each claim their own
    *  result instead of all matching the first trace by name. */
@@ -446,6 +464,18 @@ export interface SSEEventData {
   /** On skill_result frames: the command's exit code, null for a tool that
    *  has none. */
   exit_code?: number | null;
+  /** On skill_result frames: what the server measured about the call
+   *  (server/tool_meta.py). The server sends every key, null when unknown;
+   *  the client reads it as a ToolMeta (chatStream/toolMeta.ts). */
+  meta?: {
+    duration_ms?: number | null;
+    output_chars?: number | null;
+    truncated?: boolean | null;
+    lines?: number | null;
+    bytes?: number | null;
+    added?: number | null;
+    removed?: number | null;
+  };
   /** Present only alongside a preview_screenshot skill_result. */
   preview_image?: { media_type: string; data: string };
 

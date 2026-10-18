@@ -28,6 +28,7 @@ import { registerPendingTextFlusher } from './streamControl';
 import { createStreamPacer } from './streamPacer';
 import { renderEventCards } from './sseEventCards';
 import { syncAutoAppliedTab } from './autoApplied';
+import { toolMetaFromFrame } from './toolMeta';
 
 // Augment Window for SSE diagnostics access
 declare global {
@@ -52,7 +53,7 @@ const rowKey = (t: SkillTrace): string => t.id || t.name;
  * server flagged the result, else 'complete' (a trace still running at
  * commit time has no result to wait for; the kill switch stamps 'stopped'
  * on its own rows in streamControl). A resolved trace also carries the
- * verdict and exit code its result brought.
+ * verdict and exit code its result brought, and the meta when it had one.
  */
 export function committedToolUse(t: SkillTrace): ToolUseEvent {
   return {
@@ -63,6 +64,7 @@ export function committedToolUse(t: SkillTrace): ToolUseEvent {
     status: t.status === 'error' ? 'error' : 'complete',
     previewImage: t.previewImage,
     ...(t.resolved ? { isError: t.status === 'error', exitCode: t.exitCode ?? null } : {}),
+    ...(t.meta ? { meta: t.meta } : {}),
   };
 }
 
@@ -341,6 +343,8 @@ export async function readSSEStream(
             // its loop guard); the client never guesses from the text.
             const isError = parsed.is_error === true;
             const exitCode = parsed.exit_code ?? null;
+            // What the server measured (duration, size, a write's diff).
+            const meta = toolMetaFromFrame(parsed.meta);
             store().setLastTool(toolName, toolOutput, isError);
 
             const previewImage = parsed.preview_image;
@@ -358,6 +362,7 @@ export async function readSSEStream(
               trace.resolved = true;
               trace.status = isError ? 'error' : 'complete';
               trace.exitCode = exitCode;
+              if (meta) trace.meta = meta;
               if (previewImage) trace.previewImage = previewImage;
             }
 
@@ -367,6 +372,7 @@ export async function readSSEStream(
               result: toolOutput,
               isError,
               exitCode,
+              ...(meta ? { meta } : {}),
               ...(previewImage ? { previewImage } : {}),
             });
 

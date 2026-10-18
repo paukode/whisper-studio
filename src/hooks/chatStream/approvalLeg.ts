@@ -21,10 +21,11 @@ import { executeApproval, type ApprovalOutcome } from '@/api/approval';
 import { getChatStore, holdForApprovedAction } from '@/stores/sessionRuntimes';
 import type { ChatState, PendingApproval } from '@/stores/chatStore';
 import { useSessionStore } from '@/stores/sessionStore';
-import type { ChatMessage } from '@/types/chat';
+import type { ChatMessage, ToolUseEvent } from '@/types/chat';
 import { useUIStore } from '@/stores/uiStore';
 import { toError } from '@/utils/toError';
 import { approvalTarget, sendApprovalContinuation } from './approvalContinuation';
+import { toolMetaWithStats } from './toolMeta';
 import {
   hasLiveStream,
   registerStreamController,
@@ -98,6 +99,8 @@ export async function answerApproval(
     const outcome = await runApprovedAction(approval);
     // From here an abort belongs to the continuation, which records its own stop.
     leg.signal.removeEventListener('abort', onAbort);
+    // The paused call's row says what the action did, whatever comes next.
+    patchApprovedRow(chat, sessionId, approval, outcome);
     if (stop.row) {
       recordOutcome(chat, sessionId, stop.row, approval, outcome);
       return true;
@@ -142,6 +145,73 @@ function recordOutcome(
   useSessionStore.getState().debouncedSave(sessionId);
 }
 
+/** The row keeps a preview of the result, cut where the server cuts the
+ *  skill_result preview a live turn persists (server/tool_executor.py). */
+const RESULT_PREVIEW_CHARS = 2000;
+
+/** Write the approved action's outcome onto the row the paused turn
+ *  committed for its call, found by tool_use_id: the result replaces
+ *  "Awaiting approval: ...", the status says how it went, and a write's diff
+ *  stats become the row's meta (the inline path gets the same numbers from
+ *  its skill_result frame). The text is the one the inline path gives the
+ *  model (server/tool_approvals.py inline_result_text). Saved explicitly:
+ *  the row count does not change, which is what the runtime's own save
+ *  trigger keys on. A row that is gone (deleted, or an older transcript
+ *  shape) is left alone. */
+export function patchApprovedRow(
+  chat: StoreApi<ChatState>,
+  sessionId: string,
+  approval: PendingApproval,
+  outcome: ApprovalOutcome,
+): void {
+  const id = approval.toolUseId;
+  if (!id) return;
+  const messages = chat.getState().messages;
+  let idx = messages.length - 1;
+  while (idx >= 0 && !messages[idx].toolUse?.some((t) => t.toolId === id)) idx -= 1;
+  if (idx < 0) return;
+  let result: string;
+  if (outcome.ok) {
+    result = outcome.output || `[OK] ${approval.action}`;
+  } else {
+    // A command that ran and failed carries its output next to the exit code.
+    const error = `Error: ${outcome.error || 'unknown error'}`;
+    result = outcome.output ? `${error}\n\n${outcome.output}` : error;
+  }
+  if (result.length > RESULT_PREVIEW_CHARS) result = `${result.slice(0, RESULT_PREVIEW_CHARS)}...`;
+  const status: ToolUseEvent['status'] = outcome.ok ? 'complete' : outcome.stopped ? 'stopped' : 'error';
+  const stats = outcome.stats;
+  const msg = messages[idx];
+  const next = messages.slice();
+  next[idx] = {
+    ...msg,
+    toolUse: msg.toolUse?.map((t) => (t.toolId === id
+      ? {
+          ...t,
+          result,
+          status,
+          isError: !outcome.ok,
+          ...(stats ? { meta: toolMetaWithStats(t.meta, stats) } : {}),
+        }
+      : t)),
+    // The message's raw traces, when it kept them, say the same.
+    ...(msg.traces
+      ? {
+          traces: msg.traces.map((t) => (t.id === id
+            ? {
+                ...t,
+                output: result,
+                status: outcome.ok ? 'complete' as const : 'error' as const,
+                ...(stats ? { meta: toolMetaWithStats(t.meta, stats) } : {}),
+              }
+            : t)),
+        }
+      : {}),
+  };
+  chat.getState().setMessages(next);
+  useSessionStore.getState().debouncedSave(sessionId);
+}
+
 /** Run the approved action. Never throws: a failed request becomes a truthful
  *  FAILED outcome, so the model learns the action did not happen. */
 async function runApprovedAction(approval: PendingApproval): Promise<ApprovalOutcome> {
@@ -149,7 +219,12 @@ async function runApprovedAction(approval: PendingApproval): Promise<ApprovalOut
   try {
     // Single executor: the backend looks up the spec and runs its registered
     // function. No per-action switch on the frontend.
-    outcome = await executeApproval({ action: approval.action, payload: approval.payload });
+    // The call's id lets a write keep its edit for the diff dialog.
+    outcome = await executeApproval({
+      action: approval.action,
+      payload: approval.payload,
+      tool_use_id: approval.toolUseId,
+    });
   } catch (err) {
     console.error('Approval execution failed:', err);
     outcome = { ok: false, error: toError(err).message };

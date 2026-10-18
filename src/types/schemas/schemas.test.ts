@@ -344,6 +344,33 @@ describe('SSEEventDataSchema', () => {
     }
   });
 
+  // meta nests in a plain z.object too: every key the server sends is named,
+  // and a null (no such number for this tool) survives as a null.
+  it('keeps every key of a skill_result meta, nulls included', () => {
+    const meta = {
+      duration_ms: 7,
+      output_chars: 120,
+      truncated: true,
+      lines: null,
+      bytes: 240,
+      added: 3,
+      removed: 1,
+    };
+    const result = SSEEventDataSchema.safeParse({
+      skill_result: 'ws_write_file',
+      output: 'Wrote a.py',
+      tool_use_id: 'tu_w',
+      is_error: false,
+      exit_code: null,
+      meta,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.meta).toEqual(meta);
+
+    // A number of the wrong type fails the frame instead of passing as a chip.
+    expect(SSEEventDataSchema.safeParse({ skill_result: 'x', meta: { duration_ms: 'slow' } }).success).toBe(false);
+  });
+
   // skill_progress nests its id in a plain z.object, which drops every key it
   // does not name: the same trap as workflow_preview.model_id above.
   it('keeps skill_progress.tool_use_id so a streaming call is updated by id', () => {

@@ -87,6 +87,18 @@ export const SSEEventDataSchema = z.object({
    *  exit code (null for a tool that has none). */
   is_error: z.boolean().optional(),
   exit_code: z.number().nullable().optional(),
+  /** skill_result: what the server measured about the call
+   *  (server/tool_meta.py). The server sends every key, null when unknown;
+   *  a nested z.object drops the keys it does not name, so each is named. */
+  meta: z.object({
+    duration_ms: z.number().nullable().optional(),
+    output_chars: z.number().nullable().optional(),
+    truncated: z.boolean().nullable().optional(),
+    lines: z.number().nullable().optional(),
+    bytes: z.number().nullable().optional(),
+    added: z.number().nullable().optional(),
+    removed: z.number().nullable().optional(),
+  }).optional(),
   /** Tool-call arguments still streaming (a large artifact): size so far.
    *  A nested z.object drops undeclared keys, so the id is named here too. */
   skill_progress: z.object({
@@ -116,7 +128,7 @@ export const SSEEventDataSchema = z.object({
     path: z.string().optional(),
     original: z.string().optional(),
     content: z.string().optional(),
-    // The root the call was bound to (server/tool_executor.py stamps it), so
+    // The root the call was bound to (server/tool_approvals.py stamps it), so
     // the client syncs only a tab of that root. Null when none was connected.
     workspace_root: z.string().nullable().optional(),
   }).optional(),
