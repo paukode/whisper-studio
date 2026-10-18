@@ -120,7 +120,9 @@ export interface ChatState {
   appendStreamToken: (token: string) => void;
   appendThinkingToken: (token: string) => void;
   addStreamToolUse: (trace: ToolUseEvent) => void;
-  updateStreamToolUse: (toolName: string, updates: Partial<ToolUseEvent>) => void;
+  /** Update the first still-running live row whose toolId equals `key`: the
+   *  provider's tool_use id when the frame carried one, else the tool name. */
+  updateStreamToolUse: (key: string, updates: Partial<ToolUseEvent>) => void;
   /** Fold one live team_progress event into the turn-local report. */
   foldTeamEvent: (ev: TeamProgressEvent) => void;
   /** Fold the final team_results payload into the turn-local report. */
@@ -292,14 +294,16 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
     }));
   },
 
-  updateStreamToolUse: (toolName: string, updates: Partial<ToolUseEvent>) => {
-    // Update only the FIRST still-running trace with this name. Updating
-    // every same-named trace made repeated calls (three task_create) all
-    // share the last result; since tools complete in order, the first
-    // running one is the call this event belongs to.
+  updateStreamToolUse: (key: string, updates: Partial<ToolUseEvent>) => {
+    // Update only the FIRST still-running row whose toolId is the key. A row
+    // from a tagged frame carries the provider's tool_use id, so two parallel
+    // same-named calls each take their own input and result. A row from an
+    // untagged frame carries the tool name; those complete in order, so the
+    // first running one is the call the event belongs to (updating every
+    // same-named row made three task_create calls share the last result).
     set((state) => {
       const idx = state.currentStreamToolUse.findIndex(
-        (t) => t.toolName === toolName && t.status === 'running',
+        (t) => t.toolId === key && t.status === 'running',
       );
       if (idx === -1) return state;
       const next = state.currentStreamToolUse.slice();

@@ -388,6 +388,59 @@ describe('useChatStream', () => {
     expect(messages.some((m) => /No text response|without text/.test(m.content))).toBe(false);
   });
 
+  // A card flushed the text, the model then called a tool and ended on an
+  // artifact with no closing words. The tool-only row holds the trace; the
+  // artifact message used to carry the same toolUse again, so the chip
+  // rendered twice.
+  it('commits the traces once when the turn ends on an artifact after a card', async () => {
+    chatStreamOf([
+      { text: 'Building the page now.' },
+      { workflow_started: { run_id: 'wf_1', name: 'nightly' } },
+      { skill: 'create_artifact', tool_use_id: 'tu_art' },
+      { skill_result: 'create_artifact', output: 'Artifact created', tool_use_id: 'tu_art', is_error: false, exit_code: null },
+      { program_artifact: { title: 'Page', html: '<p>hi</p>', description: '' } },
+    ]);
+
+    const { result } = renderHook(() => useChatStream());
+    await act(async () => {
+      await result.current.send('build the page');
+    });
+
+    const messages = getActiveChatStore().getState().messages;
+    const withArtifact = messages.filter((m) => m.programArtifact);
+    expect(withArtifact).toHaveLength(1);
+    expect(withArtifact[0].toolUse).toBeUndefined();
+    expect(withArtifact[0].traces).toBeUndefined();
+    const chips = messages.flatMap((m) => m.toolUse ?? []).filter((t) => t.toolId === 'tu_art');
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toMatchObject({ toolName: 'create_artifact', status: 'complete', result: 'Artifact created' });
+  });
+
+  it('parallel same-named reads keep their own rows and verdicts in the final commit', async () => {
+    chatStreamOf([
+      { skill: 'ws_read_file', tool_use_id: 'tu_1' },
+      { skill: 'ws_read_file', tool_use_id: 'tu_2' },
+      { skill_input: 'ws_read_file', input: { path: 'b.ts' }, tool_use_id: 'tu_2' },
+      { skill_input: 'ws_read_file', input: { path: 'a.ts' }, tool_use_id: 'tu_1' },
+      { skill_result: 'ws_read_file', output: 'B', tool_use_id: 'tu_2', is_error: false, exit_code: null },
+      { skill_result: 'ws_read_file', output: 'No such file: a.ts', tool_use_id: 'tu_1', is_error: true, exit_code: null },
+      { text: 'Read what exists.' },
+    ]);
+
+    const { result } = renderHook(() => useChatStream());
+    await act(async () => {
+      await result.current.send('read both files');
+    });
+
+    const messages = getActiveChatStore().getState().messages;
+    const last = messages[messages.length - 1];
+    expect(last.content).toBe('Read what exists.');
+    expect(last.toolUse).toMatchObject([
+      { toolId: 'tu_1', input: { path: 'a.ts' }, result: 'No such file: a.ts', status: 'error', isError: true, exitCode: null },
+      { toolId: 'tu_2', input: { path: 'b.ts' }, result: 'B', status: 'complete', isError: false, exitCode: null },
+    ]);
+  });
+
   it('an approval card remembers the model and effort its turn was sent with', async () => {
     useSettingsStore.setState({ selectedModel: 'cloud-opus', effortLevel: 'high' });
     chatStreamOf([

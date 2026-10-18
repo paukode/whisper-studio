@@ -47,4 +47,27 @@ describe('ChatMessage renders a stopped tool step without a spinner', () => {
     expect(container.querySelector('.activity-badge.stopped')).not.toBeNull();
     expect(container.querySelector('.activity-row.activity-stopped')).not.toBeNull();
   });
+
+  // Rows keyed by the provider's call ids, with the verdict and exit code the
+  // result brought: the errored step keeps its glyph next to the stopped one.
+  it('steps keyed by call ids: the errored one and the stopped one each show their glyph, no spinner', () => {
+    const failedRun: ToolUseEvent = {
+      toolId: 'tu_run',
+      toolName: 'ws_run_command',
+      input: { command: 'npm test' },
+      result: '2 failed\n(exit code 1)',
+      status: 'error',
+      isError: true,
+      exitCode: 1,
+    };
+    const stoppedRead: ToolUseEvent = { ...stoppedGrep, toolId: 'tu_grep' };
+    const { container } = render(<ChatMessage message={message([failedRun, stoppedRead])} index={1} />);
+    expect(container.querySelector('.trace-spinner')).toBeNull();
+    expect(container.querySelector('.activity-spinner')).toBeNull();
+    expect(container.querySelector('.activity-badge.running')).toBeNull();
+    expect(container.querySelector('.activity-badge.error')).not.toBeNull();
+    expect(container.querySelector('.activity-badge.stopped')).not.toBeNull();
+    expect(container.querySelector('.activity-step.status-error')).not.toBeNull();
+    expect(container.querySelector('.activity-step.status-stopped')).not.toBeNull();
+  });
 });

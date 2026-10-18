@@ -79,8 +79,21 @@ export const SSEEventDataSchema = z.object({
   input: z.record(z.string(), z.unknown()).optional(),
   skill_result: z.string().optional(),
   output: z.string().optional(),
-  /** Tool-call arguments still streaming (a large artifact): size so far. */
-  skill_progress: z.object({ name: z.string(), chars: z.number() }).optional(),
+  /** The provider's tool_use id on skill, skill_input and skill_result
+   *  frames (empty when the provider could not tag the frame): what pairs a
+   *  result with its call when two same-named calls run in parallel. */
+  tool_use_id: z.string().optional(),
+  /** skill_result: the server's verdict on the output, and the command's
+   *  exit code (null for a tool that has none). */
+  is_error: z.boolean().optional(),
+  exit_code: z.number().nullable().optional(),
+  /** Tool-call arguments still streaming (a large artifact): size so far.
+   *  A nested z.object drops undeclared keys, so the id is named here too. */
+  skill_progress: z.object({
+    name: z.string(),
+    chars: z.number(),
+    tool_use_id: z.string().optional(),
+  }).optional(),
 
   // Approvals — generic shape; `preview` selects the renderer.
   approval_request: z.object({

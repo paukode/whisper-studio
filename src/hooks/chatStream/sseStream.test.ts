@@ -634,3 +634,194 @@ describe('readSSEStream question grouping', () => {
     expect(msgs[1].userQuestions?.[0].answered).toBeUndefined();
   });
 });
+
+/**
+ * The call id on the tool frames (tool_use_id) pairs a result with its call.
+ * Two same-named calls running in parallel used to be told apart by order
+ * alone, and the verdict on a result was guessed from its text; the server
+ * now says both (is_error, exit_code), and the client only reads them.
+ */
+describe('readSSEStream tool frames', () => {
+  const signal = () => new AbortController().signal;
+  const live = (sid: string) => getChatStore(sid).getState().currentStreamToolUse;
+  const committed = (sid: string) => getChatStore(sid).getState().messages;
+  // Any card commits the segment so far (flushSegment), which is where the
+  // live rows become transcript rows.
+  const card = { workflow_started: { run_id: 'wf_1', name: 'nightly' } };
+
+  afterEach(() => {
+    for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
+  });
+
+  it('two parallel same-named reads pair their inputs and results by id', async () => {
+    const sid = 'sess-pair-live';
+    // Both calls start before either returns, and the second returns first.
+    await readSSEStream(sseResponse([
+      { skill: 'ws_read_file', input: {}, tool_use_id: 'tu_1' },
+      { skill: 'ws_read_file', input: {}, tool_use_id: 'tu_2' },
+      { skill_input: 'ws_read_file', input: { path: 'b.ts' }, tool_use_id: 'tu_2' },
+      { skill_input: 'ws_read_file', input: { path: 'a.ts' }, tool_use_id: 'tu_1' },
+      { skill_result: 'ws_read_file', output: 'B', tool_use_id: 'tu_2', is_error: false, exit_code: null },
+      { skill_result: 'ws_read_file', output: 'A', tool_use_id: 'tu_1', is_error: false, exit_code: null },
+    ]), sid, signal(), SETTINGS);
+
+    expect(live(sid)).toMatchObject([
+      { toolId: 'tu_1', toolName: 'ws_read_file', input: { path: 'a.ts' }, result: 'A', status: 'complete' },
+      { toolId: 'tu_2', toolName: 'ws_read_file', input: { path: 'b.ts' }, result: 'B', status: 'complete' },
+    ]);
+  });
+
+  it('the committed rows keep that pairing, the ids and the verdicts', async () => {
+    const sid = 'sess-pair-commit';
+    await readSSEStream(sseResponse([
+      { skill: 'ws_read_file', tool_use_id: 'tu_1' },
+      { skill: 'ws_read_file', tool_use_id: 'tu_2' },
+      { skill_result: 'ws_read_file', output: 'B', tool_use_id: 'tu_2', is_error: false, exit_code: null },
+      { skill_result: 'ws_read_file', output: 'A', tool_use_id: 'tu_1', is_error: false, exit_code: null },
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[0].toolUse).toMatchObject([
+      { toolId: 'tu_1', toolName: 'ws_read_file', result: 'A', status: 'complete', isError: false, exitCode: null },
+      { toolId: 'tu_2', toolName: 'ws_read_file', result: 'B', status: 'complete', isError: false, exitCode: null },
+    ]);
+  });
+
+  it('a result the server flagged is an error row with its exit code, live and once committed', async () => {
+    const frames = [
+      { skill: 'ws_run_command', tool_use_id: 'tu_run' },
+      {
+        skill_result: 'ws_run_command',
+        output: 'npm test\n2 failed\n(exit code 1)',
+        tool_use_id: 'tu_run',
+        is_error: true,
+        exit_code: 1,
+      },
+    ];
+    await readSSEStream(sseResponse(frames), 'sess-err-live', signal(), SETTINGS);
+    expect(live('sess-err-live')[0]).toMatchObject({ toolId: 'tu_run', status: 'error', isError: true, exitCode: 1 });
+    expect(getChatStore('sess-err-live').getState().lastToolError).toContain('2 failed');
+
+    // The flush keeps the verdict: a committed row never reads 'complete'
+    // for a call that failed.
+    await readSSEStream(sseResponse([...frames, card]), 'sess-err-commit', signal(), SETTINGS);
+    expect(committed('sess-err-commit')[0].toolUse?.[0]).toMatchObject({
+      toolId: 'tu_run',
+      status: 'error',
+      isError: true,
+      exitCode: 1,
+      result: 'npm test\n2 failed\n(exit code 1)',
+    });
+  });
+
+  it("the verdict is the server's, not a guess from the output text", async () => {
+    // An output that opens with the word "Error" (a search for it) used to be
+    // read as a failure by a regex on this side. The server's is_error decides.
+    const sid = 'sess-verdict';
+    await readSSEStream(sseResponse([
+      { skill: 'ws_grep', tool_use_id: 'tu_g' },
+      {
+        skill_result: 'ws_grep',
+        output: 'Error handling notes:\nsrc/a.ts:12: throw new Error(...)',
+        tool_use_id: 'tu_g',
+        is_error: false,
+        exit_code: null,
+      },
+    ]), sid, signal(), SETTINGS);
+
+    expect(live(sid)[0]).toMatchObject({ status: 'complete', isError: false, exitCode: null });
+    expect(getChatStore(sid).getState().lastToolError).toBeNull();
+  });
+
+  it('frames without a call id still pair by name order', async () => {
+    // What an adapter that cannot tag its frames sends (and what older
+    // transcripts replay): the input belongs to the call that started last,
+    // each result to the first call of that name still waiting for one.
+    const sid = 'sess-pair-name';
+    await readSSEStream(sseResponse([
+      { skill: 'task_create' },
+      { skill_input: 'task_create', input: { title: 'first' } },
+      { skill: 'task_create' },
+      { skill_input: 'task_create', input: { title: 'second' } },
+      { skill_result: 'task_create', output: 'created 1' },
+      { skill_result: 'task_create', output: 'created 2' },
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[0].toolUse).toMatchObject([
+      { toolId: 'task_create', input: { title: 'first' }, result: 'created 1', status: 'complete' },
+      { toolId: 'task_create', input: { title: 'second' }, result: 'created 2', status: 'complete' },
+    ]);
+  });
+
+  it('skill_progress keys the live update by the call id when the frame carries one', async () => {
+    const sid = 'sess-progress-id';
+    const store = getChatStore(sid);
+    const keys: string[] = [];
+    const original = store.getState().updateStreamToolUse;
+    store.setState({
+      updateStreamToolUse: (key, updates) => {
+        if ('progressChars' in updates) keys.push(key);
+        original(key, updates);
+      },
+    });
+
+    await readSSEStream(sseResponse([
+      { skill: 'create_artifact', input: {}, tool_use_id: 'tu_art' },
+      { skill_progress: { name: 'create_artifact', chars: 8192, tool_use_id: 'tu_art' } },
+    ]), sid, signal(), SETTINGS);
+
+    expect(keys).toEqual(['tu_art']);
+    expect(live(sid)[0]).toMatchObject({ toolId: 'tu_art', progressChars: 8192 });
+  });
+
+  it('an approval pause marks the call the request names, not the last running row', async () => {
+    const sid = 'sess-pause-id';
+    await readSSEStream(sseResponse([
+      { skill: 'ws_write_file', tool_use_id: 'tu_a' },
+      { skill: 'ws_read_file', tool_use_id: 'tu_b' },
+      {
+        approval_request: {
+          tool_use_id: 'tu_a',
+          action: 'ws_write_file',
+          category: 'write',
+          preview: 'diff',
+          summary: 'Write a.ts',
+          payload: { path: 'a.ts' },
+        },
+      },
+    ]), sid, signal(), SETTINGS);
+
+    expect(live(sid)).toMatchObject([
+      { toolId: 'tu_a', status: 'complete', result: 'Awaiting approval: Write a.ts' },
+      { toolId: 'tu_b', status: 'running' },
+    ]);
+  });
+
+  it('an approval pause never overwrites the output of a finished same-named call', async () => {
+    // Untagged frames: the first write finished, the second one paused. The
+    // pause used to find the first trace by name and replace its output.
+    const sid = 'sess-pause-resolved';
+    await readSSEStream(sseResponse([
+      { skill: 'ws_write_file' },
+      { skill_result: 'ws_write_file', output: 'wrote a.ts' },
+      { skill: 'ws_write_file' },
+      {
+        approval_request: {
+          tool_use_id: 'tu_second',
+          action: 'ws_write_file',
+          category: 'write',
+          preview: 'diff',
+          summary: 'Write b.ts',
+          payload: { path: 'b.ts' },
+        },
+      },
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[0].toolUse).toMatchObject([
+      { toolName: 'ws_write_file', result: 'wrote a.ts', status: 'complete' },
+      { toolName: 'ws_write_file', result: 'Awaiting approval: Write b.ts', status: 'complete' },
+    ]);
+  });
+});

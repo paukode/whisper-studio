@@ -310,6 +310,52 @@ describe('SSEEventDataSchema', () => {
     if (result.success) expect(result.data.deliveries?.items).toEqual(items);
   });
 
+  // The call id, the verdict and the exit code ride at the top level of the
+  // tool frames, where the passthrough would keep them anyway; they are named
+  // so the type carries them.
+  it('keeps tool_use_id, is_error and exit_code on the tool frames', () => {
+    const start = SSEEventDataSchema.safeParse({ skill: 'ws_run_command', input: {}, tool_use_id: 'tu_1' });
+    expect(start.success).toBe(true);
+    if (start.success) expect(start.data.tool_use_id).toBe('tu_1');
+
+    const failed = SSEEventDataSchema.safeParse({
+      skill_result: 'ws_run_command',
+      output: 'boom\n(exit code 2)',
+      tool_use_id: 'tu_1',
+      is_error: true,
+      exit_code: 2,
+    });
+    expect(failed.success).toBe(true);
+    if (failed.success) expect(failed.data).toMatchObject({ tool_use_id: 'tu_1', is_error: true, exit_code: 2 });
+
+    // A tool with no exit code sends null; a frame a provider could not tag
+    // sends an empty id.
+    const read = SSEEventDataSchema.safeParse({
+      skill_result: 'ws_read_file',
+      output: 'const a = 1;',
+      tool_use_id: '',
+      is_error: false,
+      exit_code: null,
+    });
+    expect(read.success).toBe(true);
+    if (read.success) {
+      expect(read.data.tool_use_id).toBe('');
+      expect(read.data.exit_code).toBeNull();
+    }
+  });
+
+  // skill_progress nests its id in a plain z.object, which drops every key it
+  // does not name: the same trap as workflow_preview.model_id above.
+  it('keeps skill_progress.tool_use_id so a streaming call is updated by id', () => {
+    const result = SSEEventDataSchema.safeParse({
+      skill_progress: { name: 'create_artifact', chars: 4096, tool_use_id: 'tu_art' },
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.skill_progress).toEqual({ name: 'create_artifact', chars: 4096, tool_use_id: 'tu_art' });
+    }
+  });
+
   it('keeps stop_hook_block.source so a held-back delivery claim is labeled as one', () => {
     const result = SSEEventDataSchema.safeParse({
       stop_hook_block: {

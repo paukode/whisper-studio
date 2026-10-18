@@ -205,6 +205,10 @@ export interface ChatMessage {
 }
 
 export interface ToolUseEvent {
+  /** The provider's tool_use id when the frame carried one, else the tool
+   *  name: a row from an older transcript, a slash command's synthetic card,
+   *  or a frame a provider could not tag. Two parallel same-named calls
+   *  therefore have distinct ids and each takes its own input and result. */
   toolId: string;
   toolName: string;
   input: Record<string, unknown>;
@@ -220,12 +224,26 @@ export interface ToolUseEvent {
    *  also received as an image content block, so the human sees exactly
    *  what the model saw. */
   previewImage?: { media_type: string; data: string };
+  /** The server's verdict on the result (skill_result.is_error): what made
+   *  `status` 'error'. Absent until the result lands. */
+  isError?: boolean;
+  /** The command's exit code (skill_result.exit_code); null for a tool that
+   *  has none. Absent until the result lands. */
+  exitCode?: number | null;
 }
 
 export interface SkillTrace {
+  /** The provider's tool_use id, '' when the skill frame carried none. */
+  id: string;
   name: string;
   input: Record<string, unknown>;
   output: string;
+  /** 'running' until the skill_result lands, then the server's verdict
+   *  (is_error). A commit maps 'running' to 'complete' and the kill switch
+   *  stamps 'stopped' on the committed row instead. */
+  status: 'running' | 'complete' | 'error';
+  /** See ToolUseEvent.exitCode. */
+  exitCode?: number | null;
   /** Set once this trace has received its skill_result. Lets repeated
    *  same-named tool calls (e.g. three task_create) each claim their own
    *  result instead of all matching the first trace by name. */
@@ -420,6 +438,14 @@ export interface SSEEventData {
   input?: Record<string, unknown>;
   skill_result?: string;
   output?: string;
+  /** On skill, skill_input and skill_result frames: the provider's tool_use
+   *  id of the call, empty for a frame a provider could not tag. */
+  tool_use_id?: string;
+  /** On skill_result frames: the server judged the output an error. */
+  is_error?: boolean;
+  /** On skill_result frames: the command's exit code, null for a tool that
+   *  has none. */
+  exit_code?: number | null;
   /** Present only alongside a preview_screenshot skill_result. */
   preview_image?: { media_type: string; data: string };
 
@@ -460,7 +486,7 @@ export interface SSEEventData {
   ci_diagnosis?: { branch?: string; run_id?: number | null; url?: string | null; findings?: Array<Record<string, unknown>> };
   user_question?: Record<string, unknown>;
   program_artifact?: Record<string, unknown>;
-  skill_progress?: { name: string; chars: number };
+  skill_progress?: { name: string; chars: number; tool_use_id?: string };
   viz_artifact?: Record<string, unknown>;
   plan_generated?: Record<string, unknown>;
   notify_user?: Record<string, unknown>;

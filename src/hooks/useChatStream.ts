@@ -27,7 +27,7 @@ import { useIndexSearchStore } from '@/stores/indexSearchStore';
 import type { ChatMessage, ToolUseEvent } from '@/types/chat';
 import { toError } from '@/utils/toError';
 import { ensureRetentionEnabled } from '@/components/chat/dataRetentionConsent';
-import { _sseEventLog, readSSEStream } from './chatStream/sseStream';
+import { _sseEventLog, committedToolUse, readSSEStream } from './chatStream/sseStream';
 import { emptyResponseFallback } from './chatStream/emptyResponse';
 import { pausedTurnSettings, turnModelSettings } from './chatStream/turnSettings';
 import { buildHistoryPayload } from './chatStream/history';
@@ -386,14 +386,7 @@ export function useChatStream(): UseChatStreamReturn {
       }
 
       // Build tool trace entries from accumulated skill data.
-      const finalToolUse: ToolUseEvent[] = result.skillTraces.map(t => ({
-        toolId: t.name,
-        toolName: t.name,
-        input: t.input ?? {},
-        result: t.output || undefined,
-        status: 'complete' as const,
-        previewImage: t.previewImage,
-      }));
+      const finalToolUse: ToolUseEvent[] = result.skillTraces.map(committedToolUse);
 
       // When the turn has no text of its own but did work, add a message with
       // the accumulated tool traces so they don't vanish when finishStream
@@ -401,6 +394,7 @@ export function useChatStream(): UseChatStreamReturn {
       // paused the turn, or a card flushed the text above it and the model
       // called more tools before ending. Team reports folded so far ride along
       // — neither case may orphan a live team card.
+      let toolRowAdded = false;
       if (
         !fullResponse &&
         (result.hasPendingApprovals || result.flushedSegments > 0) &&
@@ -415,7 +409,12 @@ export function useChatStream(): UseChatStreamReturn {
           _thinkingMs: result.thinkingMs > 0 ? Math.round(result.thinkingMs) : undefined,
           _thinkingText: result.thinkingText || undefined,
         });
+        toolRowAdded = true;
       }
+      // That row holds the turn's traces now. A final message still built
+      // below (an artifact, a visual or a plan with no closing text) must not
+      // show the same chips a second time.
+      const toolUseForFinal = toolRowAdded ? [] : finalToolUse;
 
       // Atomically stop streaming AND add the final message in a single
       // store update so there's no render frame where neither the streaming
@@ -442,8 +441,8 @@ export function useChatStream(): UseChatStreamReturn {
             content: finalContent,
             timestamp: new Date().toISOString(),
             skills: result.skillsUsed.length > 0 ? result.skillsUsed : undefined,
-            traces: result.skillTraces.length > 0 ? result.skillTraces : undefined,
-            toolUse: finalToolUse.length > 0 ? finalToolUse : undefined,
+            traces: toolUseForFinal.length > 0 ? result.skillTraces : undefined,
+            toolUse: toolUseForFinal.length > 0 ? toolUseForFinal : undefined,
             teamReports: turnTeamReports,
             programArtifact: result.pendingArtifact ?? undefined,
             visuals: result.pendingVisuals.length > 0 ? result.pendingVisuals : undefined,

@@ -41,6 +41,31 @@ declare global {
 // that grabbed a reference earlier would be reading a stale array.
 export const _sseEventLog: SSEEventData[] = [];
 
+/** The key a trace's live row is updated under (see
+ *  chatStore.updateStreamToolUse): the provider's id, else the name. */
+const rowKey = (t: SkillTrace): string => t.id || t.name;
+
+/**
+ * The transcript row a trace commits as, shared by every commit site (the
+ * mid-turn segment, the question card, the approval continuation and the
+ * final message of useChatStream). The status is terminal: 'error' when the
+ * server flagged the result, else 'complete' (a trace still running at
+ * commit time has no result to wait for; the kill switch stamps 'stopped'
+ * on its own rows in streamControl). A resolved trace also carries the
+ * verdict and exit code its result brought.
+ */
+export function committedToolUse(t: SkillTrace): ToolUseEvent {
+  return {
+    toolId: rowKey(t),
+    toolName: t.name,
+    input: t.input ?? {},
+    result: t.output || undefined,
+    status: t.status === 'error' ? 'error' : 'complete',
+    previewImage: t.previewImage,
+    ...(t.resolved ? { isError: t.status === 'error', exitCode: t.exitCode ?? null } : {}),
+  };
+}
+
 /**
  * Parse an SSE stream from /api/chat and dispatch events to stores.
  *
@@ -147,14 +172,7 @@ export async function readSSEStream(
    * text or tool call), so it never adds an empty bubble.
    */
   const flushSegment = (): void => {
-    const toolUse: ToolUseEvent[] = skillTraces.map((t) => ({
-      toolId: t.name,
-      toolName: t.name,
-      input: t.input ?? {},
-      result: t.output || undefined,
-      status: 'complete' as const,
-      previewImage: t.previewImage,
-    }));
+    const toolUse: ToolUseEvent[] = skillTraces.map(committedToolUse);
     if (!fullResponse && !thinkingText && toolUse.length === 0) return;
     // The segment commits the full text below; drop what is still unpainted.
     textPacer.reset();
@@ -189,14 +207,7 @@ export async function readSSEStream(
     // so their own traces would only be duplicate chips.
     const toolUseEntries: ToolUseEvent[] = skillTraces
       .filter((t) => t.name !== 'ask_user_question')
-      .map((t) => ({
-        toolId: t.name,
-        toolName: t.name,
-        input: t.input ?? {},
-        result: t.output || undefined,
-        status: 'complete' as const,
-        previewImage: t.previewImage,
-      }));
+      .map(committedToolUse);
     st.addMessage({
       role: 'assistant',
       content: fullResponse,
@@ -276,11 +287,15 @@ export async function readSSEStream(
               store().appendThinkingToken(''); // signal no thinking
             }
             skillsUsed.push(parsed.skill);
-            const trace: SkillTrace = { name: parsed.skill, input: {}, output: '' };
+            // The provider's tool_use id pairs the call's later frames with
+            // this trace; '' when the provider could not tag the frame, in
+            // which case those frames pair by name order instead.
+            const id = parsed.tool_use_id || '';
+            const trace: SkillTrace = { id, name: parsed.skill, input: {}, output: '', status: 'running' };
             skillTraces.push(trace);
             // Show trace in real-time during streaming
             store().addStreamToolUse({
-              toolId: parsed.skill,
+              toolId: rowKey(trace),
               toolName: parsed.skill,
               input: {},
               status: 'running',
@@ -288,12 +303,16 @@ export async function readSSEStream(
           }
 
           // ── skill_input ──
+          // By id when the frame carries one; an untagged frame belongs to
+          // the call that started last.
           if (parsed.skill_input && parsed.input) {
-            const lastTrace = skillTraces[skillTraces.length - 1];
-            if (lastTrace) {
-              lastTrace.input = parsed.input;
+            const trace = parsed.tool_use_id
+              ? skillTraces.find((t) => t.id === parsed.tool_use_id)
+              : skillTraces[skillTraces.length - 1];
+            if (trace) {
+              trace.input = parsed.input;
               store().updateStreamToolUse(
-                lastTrace.name,
+                rowKey(trace),
                 { input: parsed.input as Record<string, unknown> },
               );
             }
@@ -302,37 +321,52 @@ export async function readSSEStream(
           // ── skill_progress (arguments still streaming) ──
           // A whole HTML app arrives as one tool call's arguments and can take
           // minutes; without this the running card looked hung the entire time.
+          // By id when the frame carries one, else the first running call of
+          // that name.
           if (parsed.skill_progress) {
-            store().updateStreamToolUse(parsed.skill_progress.name, {
-              progressChars: parsed.skill_progress.chars,
+            const sp = parsed.skill_progress;
+            const trace = sp.tool_use_id
+              ? skillTraces.find((t) => t.id === sp.tool_use_id)
+              : skillTraces.find((t) => t.name === sp.name && t.status === 'running');
+            store().updateStreamToolUse(trace ? rowKey(trace) : sp.name, {
+              progressChars: sp.chars,
             });
           }
 
           // ── skill_result (tool complete) ──
           if (parsed.skill_result) {
             const toolName = parsed.skill_result;
-            const toolOutput = (parsed.output as string) ?? '';
-            const isError = typeof toolOutput === 'string' && /^(Error|error)\b/.test(toolOutput);
+            const toolOutput = parsed.output ?? '';
+            // The server's verdict on the full output (one rule, shared with
+            // its loop guard); the client never guesses from the text.
+            const isError = parsed.is_error === true;
+            const exitCode = parsed.exit_code ?? null;
             store().setLastTool(toolName, toolOutput, isError);
 
-            // Match the FIRST not-yet-resolved trace with this name — tools
-            // complete in order, so this assigns each skill_result to its own
-            // call. Matching purely by name overwrote the first trace's output
-            // for every repeated same-named call (e.g. three task_create),
-            // leaving the rest empty.
             const previewImage = parsed.preview_image;
 
-            const trace = skillTraces.find(t => t.name === parsed.skill_result && !t.resolved);
+            // By id when the frame carries one. An untagged frame matches the
+            // FIRST not-yet-resolved trace with its name: such tools complete
+            // in order, so this assigns each skill_result to its own call
+            // (matching purely by name overwrote the first trace's output for
+            // every repeated same-named call, leaving the rest empty).
+            const trace = parsed.tool_use_id
+              ? skillTraces.find((t) => t.id === parsed.tool_use_id)
+              : skillTraces.find((t) => t.name === toolName && !t.resolved);
             if (trace) {
               trace.output = toolOutput;
               trace.resolved = true;
+              trace.status = isError ? 'error' : 'complete';
+              trace.exitCode = exitCode;
               if (previewImage) trace.previewImage = previewImage;
             }
 
             // Update real-time trace to complete
-            store().updateStreamToolUse(toolName, {
+            store().updateStreamToolUse(trace ? rowKey(trace) : parsed.tool_use_id || toolName, {
               status: isError ? 'error' : 'complete',
               result: toolOutput,
+              isError,
+              exitCode,
               ...(previewImage ? { previewImage } : {}),
             });
 
@@ -408,16 +442,25 @@ export async function readSSEStream(
             const req = parsed.approval_request;
 
             // Backend doesn't emit skill_result for tools that pause for
-            // approval; mark the last running trace complete so the UI
-            // doesn't show a spinning skill forever.
-            const runningTraces = store().currentStreamToolUse;
-            const lastRunning = [...runningTraces].reverse().find(t => t.status === 'running');
-            if (lastRunning) {
-              store().updateStreamToolUse(lastRunning.toolName, {
+            // approval; mark the paused call complete so the UI doesn't show
+            // a spinning skill forever. The request names the call by its
+            // tool_use_id; the last running row is the fallback for a row
+            // from an untagged frame. Only an unresolved trace can be the
+            // paused one: matching by name alone used to overwrite the
+            // output of an earlier, finished call of the same tool.
+            const reqId = req.tool_use_id;
+            const liveRows = store().currentStreamToolUse;
+            const paused =
+              (reqId ? liveRows.find((t) => t.toolId === reqId && t.status === 'running') : undefined)
+              ?? [...liveRows].reverse().find((t) => t.status === 'running');
+            if (paused) {
+              store().updateStreamToolUse(paused.toolId, {
                 status: 'complete',
                 result: `Awaiting approval: ${req.summary}`,
               });
-              const localTrace = skillTraces.find(t => t.name === lastRunning.toolName);
+              const localTrace =
+                (reqId ? skillTraces.find((t) => t.id === reqId && !t.resolved) : undefined)
+                ?? skillTraces.find((t) => t.name === paused.toolName && !t.resolved);
               if (localTrace) localTrace.output = `Awaiting approval: ${req.summary}`;
             }
 

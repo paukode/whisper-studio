@@ -21,7 +21,7 @@ import {
 } from './streamControl';
 import { emptyResponseFallback } from './emptyResponse';
 import { buildHistoryPayload } from './history';
-import { readSSEStream } from './sseStream';
+import { committedToolUse, readSSEStream } from './sseStream';
 
 /** What an approval acts on, for the text the model (and the transcript)
  *  reads: the path, else the command, else the card's summary. */
@@ -174,14 +174,7 @@ export async function sendApprovalContinuation(
     if (wasKillFinalized(ownController)) return { resumed: true };
 
     const contTeamReports = store().takeTeamReports();
-    const contToolUse: ToolUseEvent[] = result.skillTraces.map(t => ({
-      toolId: t.name,
-      toolName: t.name,
-      input: t.input ?? {},
-      result: t.output || undefined,
-      status: 'complete' as const,
-      previewImage: t.previewImage,
-    }));
+    const contToolUse: ToolUseEvent[] = result.skillTraces.map(committedToolUse);
 
     // Same empty-answer fallback the fresh-turn path applies (useChatStream's
     // send). Without it a continuation that ended with no text committed
