@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 
 log = logging.getLogger("whisper-studio")
 
@@ -299,7 +300,10 @@ class _CallAccumulator:
                 args = {}
             calls.append(
                 {
-                    "id": slot["id"] or f"call_{idx}",
+                    # A server that sends no id gets a unique one: ids key
+                    # the stored edits (server/workspace/edits.py), so a
+                    # per-round index would repeat across turns.
+                    "id": slot["id"] or f"call_{uuid.uuid4().hex[:24]}",
                     "name": slot["name"],
                     "input": args if isinstance(args, dict) else {},
                 }

@@ -44,7 +44,16 @@
     "output": "Memory file saved: golden_note.md [scope: global]",
     "tool_use_id": "tu_m",
     "is_error": false,
-    "exit_code": null
+    "exit_code": null,
+    "meta": {
+      "duration_ms": 0,
+      "output_chars": 49,
+      "truncated": false,
+      "lines": null,
+      "bytes": null,
+      "added": null,
+      "removed": null
+    }
   },
   {
     "text": "Saved that to your memory."

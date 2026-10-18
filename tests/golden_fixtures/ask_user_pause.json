@@ -53,7 +53,16 @@
     "output": "[PAUSE] Waiting for user to answer the question. The user's reply will arrive as their next message.",
     "tool_use_id": "tu_q",
     "is_error": false,
-    "exit_code": null
+    "exit_code": null,
+    "meta": {
+      "duration_ms": 0,
+      "output_chars": 100,
+      "truncated": false,
+      "lines": null,
+      "bytes": null,
+      "added": null,
+      "removed": null
+    }
   },
   "[DONE]"
 ]

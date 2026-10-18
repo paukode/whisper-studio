@@ -32,7 +32,7 @@ def _no_rules(monkeypatch):
         "server.security.permissions.load_permissions",
         lambda: {"mode": "default", "rules": []},
     )
-    monkeypatch.setattr("server.tool_executor.explain_permission", AsyncMock(return_value=None))
+    monkeypatch.setattr("server.tool_approvals.explain_permission", AsyncMock(return_value=None))
 
 
 class _State:

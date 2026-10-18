@@ -10,6 +10,7 @@ up. Nothing in this package is part of the public API — the package
     connection      — connect / disconnect / status
     browse          — browse / mkdir / list-dir / search-files / pick-folder
     file_ops        — read / source-file / write / delete / rename / duplicate / move / copy / undo
+    edits:            the stored edit behind one tool row (the diff dialog)
     search          — file-history / grep
     shell           — shell / shell task stop
     os_integration  — open-with / reveal
@@ -19,6 +20,7 @@ up. Nothing in this package is part of the public API — the package
 from . import (  # noqa: F401  (imported for @router side-effects)
     browse,
     connection,
+    edits,
     file_ops,
     os_integration,
     recent,

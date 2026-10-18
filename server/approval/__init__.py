@@ -2,8 +2,8 @@
 Declarative approval system.
 
 Tools register an `ApprovalSpec` (category, preview kind, summary fn,
-executor) by calling `register()` near their definition. `tool_executor`
-looks the spec up by tool name (or action name) at result time and emits
+executor) by calling `register()` near their definition. The gate in
+`tool_approvals` looks the spec up by action name at result time and emits
 a generic `approval_request` SSE event the frontend renders via one of
 four `preview` renderers.
 

@@ -223,6 +223,8 @@ _SCRUB_KEYS = {
     # Machine-dependent: pricing files and the live tool catalog vary between
     # the dev checkout and CI. Presence and position stay pinned; values don't.
     "estimated_cost_usd": 0,
+    # Wall-clock: how long a tool call took (skill_result meta.duration_ms).
+    "duration_ms": 0,
 }
 
 

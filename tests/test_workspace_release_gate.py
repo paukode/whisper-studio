@@ -21,6 +21,7 @@ import pytest
 
 import server.executors.terminal_run  # noqa: F401 - registers terminal_run / terminal_send
 import server.git.executor  # noqa: F401 - registers the git tool executors
+import server.tool_approvals as tool_approvals
 import server.tool_executor as te
 import server.workspace.executors  # noqa: F401 - registers the ws_* executors
 import server.workspace.state as state
@@ -195,7 +196,7 @@ def test_a_switch_while_the_auto_mode_classifier_runs_is_refused(ws_a, ws_b, mon
         connect_workspace(str(ws_b), by_user=True)
         return {"decision": "allow"}
 
-    monkeypatch.setattr(te, "classify_tool_call", classify_while_the_user_switches)
+    monkeypatch.setattr(tool_approvals, "classify_tool_call", classify_while_the_user_switches)
 
     _states, (results, _sse, pending, _q) = _run(
         [("ws_delete_file", {"path": "build/out.txt"})], latch, mode="auto", model_id="m"

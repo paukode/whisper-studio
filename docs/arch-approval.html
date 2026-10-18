@@ -343,6 +343,24 @@
       24 hours. The <code>save</code> category means a "Yes for all" on ordinary workspace writes
       never covers saves, and vice versa.</p>
 
+    <h2 id="write-stats">Diff stats and stored edits</h2>
+    <p>Each write, edit, or create of a workspace file runs in <code>_do_write</code>
+      (<code class="path">server/approval/executors.py</code>). After the write and the ruff pass, the
+      executor reads the file again and counts the added and removed lines. The executor returns
+      these counts in <code>ApprovalOutcome.stats</code>. The inline path puts them in the
+      <code>meta</code> of its <code>skill_result</code> frame. The
+      <code>POST /api/approval/execute</code> endpoint returns them as <code>stats</code>. A spoken
+      yes keeps the edit but does not return the counts.</p>
+    <p>The exact diff stops after 0.25 s, or when one pass must compare more than 500,000 line pairs.
+      Then the counts come from a fast estimate, and <code>stats.approximate</code> is true. A save to
+      an absolute path (<code>_do_save_to_path</code>) gives no counts and no stored edit.</p>
+    <p>When the call has a <code>tool_use_id</code>,
+      <code class="path">server/workspace/edits.py</code> keeps the file before and after the write
+      for the diff dialog. The dialog reads the record from
+      <code>GET /api/workspace/edits/{tool_use_id}</code>. The record does not keep the text of a
+      file over 2 MB, or of a dotenv or credential file. The app deletes records after 30 days. When
+      all records use more than 200 MB, the app deletes the oldest records first.</p>
+
     <h2 id="git-pull">A worked spec: git_pull</h2>
     <p><code>git_pull</code> is a good example of what a spec buys you, because a pull is the one git
       read that writes. It fetches from a remote and then moves your working tree, using your own git
@@ -431,7 +449,10 @@
     <h2 id="key-files">Key files</h2>
     <div class="spec">
       <dt><code class="path">server/security/permissions.py</code></dt><dd>Modes, <code>category_modes</code>, custom rules, the static decision resolver, and the auto-mode circuit breaker.</dd>
-      <dt><code class="path">server/tool_executor.py</code></dt><dd>Applies the decision per tool; holds <code>_PLAN_MODE_BLOCKED</code> and emits the <code>approval_request</code> pause.</dd>
+      <dt><code class="path">server/tool_executor.py</code></dt><dd>Runs each tool and holds <code>_PLAN_MODE_BLOCKED</code>.</dd>
+      <dt><code class="path">server/tool_approvals.py</code></dt><dd>Applies the decision per tool and emits the <code>approval_request</code> pause.</dd>
+      <dt><code class="path">server/tool_meta.py</code></dt><dd>The <code>meta</code> of each <code>skill_result</code> frame: the duration, the output size, the lines of a read, and the counts of a write.</dd>
+      <dt><code class="path">server/workspace/edits.py</code></dt><dd>The counts of a write, and the stored edits for the diff dialog.</dd>
       <dt><code class="path">server/chat/engine/pause.py</code></dt><dd>The process-wide <code>paused_sessions</code> store every provider path shares.</dd>
       <dt><code class="path">server/approval/spec.py</code></dt><dd>The <code>ApprovalSpec</code> and <code>ApprovalOutcome</code> dataclasses, including <code>refuse_if_agent</code>.</dd>
       <dt><code class="path">server/approval/bootstrap.py</code></dt><dd>Declares and registers specs for every built-in workspace tool, including <code>_do_save_to_path</code>.</dd>

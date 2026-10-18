@@ -150,17 +150,9 @@ async def route_tool(
             {"skill": "sleep", "input": {"seconds": secs}, "tool_use_id": tool_use_id}
         )
         await asyncio.sleep(secs)
-        output = f"Slept for {secs} seconds."
-        side_effects.append(
-            {
-                "skill_result": "sleep",
-                "output": output,
-                "tool_use_id": tool_use_id,
-                "is_error": False,
-                "exit_code": None,
-            }
-        )
-        return output, side_effects
+        # The gate emits the skill_result frame (with its meta), as for every
+        # other tool, so none is added here.
+        return f"Slept for {secs} seconds.", side_effects
 
     # --- Ask user question ---
     if tool_name == "ask_user_question":

@@ -63,6 +63,7 @@ server/chat/engine/      runner.py (the loop), tool_rounds.py (the tool phase of
 server/chat/             routes.py (turn assembly), compaction.py, tool_pool.py,
                          tool_partition.py (core set), loop_hints.py, loop_guard.py
 server/tool_executor.py  lifecycle: hooks, permissions, plan mode, loop guard
+server/tool_approvals.py the approval gate: inline runs, session rules, the card
 server/tool_router.py    name to handler dispatch
 server/goals/            completion gate: Stop hooks, deliverables, verification, gates, evaluator
 server/memory/           two-tier memory, extraction, dream consolidation, review fork

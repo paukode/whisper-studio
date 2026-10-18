@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from server.approval.bootstrap import register_defaults
+from server.approval.spec import ApprovalOutcome
 from server.security.permissions import (
     MODE_ACCEPT_EDITS,
     MODE_AUTO,
@@ -197,12 +198,12 @@ def _write_approval_state():
 def test_classifier_allow_skips_the_approval_banner(monkeypatch):
     _patch_rules(monkeypatch, [])
     monkeypatch.setattr(
-        "server.tool_executor.classify_tool_call",
+        "server.tool_approvals.classify_tool_call",
         AsyncMock(return_value={"decision": "allow", "reason": "safe"}),
     )
     monkeypatch.setattr(
-        "server.tool_executor._execute_ws_approval_inline",
-        AsyncMock(return_value="[OK] wrote foo.txt"),
+        "server.tool_approvals._execute_ws_approval_inline",
+        AsyncMock(return_value=ApprovalOutcome(ok=True, output="[OK] wrote foo.txt")),
     )
     tool_results, sse_events, has_pending_approval, has_user_question = asyncio.run(
         process_tool_results(
@@ -223,11 +224,11 @@ def test_classifier_allow_skips_the_approval_banner(monkeypatch):
 def test_classifier_confirm_still_shows_the_banner(monkeypatch):
     _patch_rules(monkeypatch, [])
     monkeypatch.setattr(
-        "server.tool_executor.classify_tool_call",
+        "server.tool_approvals.classify_tool_call",
         AsyncMock(return_value={"decision": "confirm", "reason": "needs a human"}),
     )
     monkeypatch.setattr(
-        "server.tool_executor.explain_permission",
+        "server.tool_approvals.explain_permission",
         AsyncMock(return_value=None),
     )
     tool_results, sse_events, has_pending_approval, has_user_question = asyncio.run(
@@ -258,8 +259,8 @@ def test_classifier_and_explainer_bill_the_chat_session_not_the_turn_scope(monke
         breaker_keys.append(key)
         return {"tripped": False}
 
-    monkeypatch.setattr("server.tool_executor.classify_tool_call", classify)
-    monkeypatch.setattr("server.tool_executor.explain_permission", explain)
+    monkeypatch.setattr("server.tool_approvals.classify_tool_call", classify)
+    monkeypatch.setattr("server.tool_approvals.explain_permission", explain)
     monkeypatch.setattr("server.security.permissions.record_classifier_verdict", record_verdict)
     asyncio.run(
         process_tool_results(
@@ -465,10 +466,10 @@ def test_process_tool_results_passes_recent_messages_to_classifier(monkeypatch):
     # catch a multi-step pattern (e.g. a credentials read before this POST).
     _patch_rules(monkeypatch, [])
     classify_mock = AsyncMock(return_value={"decision": "allow", "reason": "ok"})
-    monkeypatch.setattr("server.tool_executor.classify_tool_call", classify_mock)
+    monkeypatch.setattr("server.tool_approvals.classify_tool_call", classify_mock)
     monkeypatch.setattr(
-        "server.tool_executor._execute_ws_approval_inline",
-        AsyncMock(return_value="[OK]"),
+        "server.tool_approvals._execute_ws_approval_inline",
+        AsyncMock(return_value=ApprovalOutcome(ok=True, output="[OK]")),
     )
 
     recent = [
@@ -522,9 +523,9 @@ def test_breaker_trips_after_three_consecutive_denials(monkeypatch):
     _patch_rules(monkeypatch, [])
     session_id = "breaker-consecutive"
     reset_auto_mode_breaker(session_id)
-    monkeypatch.setattr("server.tool_executor.explain_permission", AsyncMock(return_value=None))
+    monkeypatch.setattr("server.tool_approvals.explain_permission", AsyncMock(return_value=None))
     classify_mock = AsyncMock(return_value={"decision": "confirm", "reason": "no"})
-    monkeypatch.setattr("server.tool_executor.classify_tool_call", classify_mock)
+    monkeypatch.setattr("server.tool_approvals.classify_tool_call", classify_mock)
 
     sse_events = []
     for _ in range(3):
@@ -547,10 +548,10 @@ def test_breaker_does_not_trip_on_occasional_denials(monkeypatch):
     _patch_rules(monkeypatch, [])
     session_id = "breaker-occasional"
     reset_auto_mode_breaker(session_id)
-    monkeypatch.setattr("server.tool_executor.explain_permission", AsyncMock(return_value=None))
+    monkeypatch.setattr("server.tool_approvals.explain_permission", AsyncMock(return_value=None))
     monkeypatch.setattr(
-        "server.tool_executor._execute_ws_approval_inline",
-        AsyncMock(return_value="[OK]"),
+        "server.tool_approvals._execute_ws_approval_inline",
+        AsyncMock(return_value=ApprovalOutcome(ok=True, output="[OK]")),
     )
 
     # 3 denials total, alternating with allows so consecutive never exceeds 1
@@ -558,7 +559,7 @@ def test_breaker_does_not_trip_on_occasional_denials(monkeypatch):
     # working normally the whole way through.
     decisions = ["allow", "confirm", "allow", "confirm", "allow", "confirm"]
     classify_mock = AsyncMock(side_effect=[{"decision": d, "reason": "x"} for d in decisions])
-    monkeypatch.setattr("server.tool_executor.classify_tool_call", classify_mock)
+    monkeypatch.setattr("server.tool_approvals.classify_tool_call", classify_mock)
 
     for expected in decisions:
         _, sse_events, has_pending_approval, _ = _run_write_approval(monkeypatch, session_id)
@@ -593,13 +594,13 @@ def test_resume_auto_mode_restores_classifier_for_rest_of_turn(monkeypatch):
     _patch_rules(monkeypatch, [])
     session_id = "breaker-resume"
     reset_auto_mode_breaker(session_id)
-    monkeypatch.setattr("server.tool_executor.explain_permission", AsyncMock(return_value=None))
+    monkeypatch.setattr("server.tool_approvals.explain_permission", AsyncMock(return_value=None))
     monkeypatch.setattr(
-        "server.tool_executor._execute_ws_approval_inline",
-        AsyncMock(return_value="[OK]"),
+        "server.tool_approvals._execute_ws_approval_inline",
+        AsyncMock(return_value=ApprovalOutcome(ok=True, output="[OK]")),
     )
     classify_mock = AsyncMock(return_value={"decision": "confirm", "reason": "no"})
-    monkeypatch.setattr("server.tool_executor.classify_tool_call", classify_mock)
+    monkeypatch.setattr("server.tool_approvals.classify_tool_call", classify_mock)
 
     for _ in range(3):
         _run_write_approval(monkeypatch, session_id)

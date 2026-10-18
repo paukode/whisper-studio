@@ -23,12 +23,13 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
-from server.approval.spec import WORKSPACE_ROOT_KEY, turn_workspace_refusal
-from server.auto_mode import classify_tool_call
 from server.hooks import run_hooks
 from server.preview.start_policy import never_prompts
-from server.security.explainer import explain_permission
-from server.security.permissions import MODE_BYPASS, approval_floor, resolve_static_decision
+from server.security.permissions import MODE_BYPASS
+from server.tool_approvals import PAUSE as APPROVAL_PAUSE
+from server.tool_approvals import REPLY as APPROVAL_REPLY
+from server.tool_approvals import gate_approval
+from server.tool_meta import result_meta
 from server.tool_router import SIDE_EFFECT_PAUSE, route_tool
 from server.utils import ndjson_dumps
 
@@ -110,10 +111,15 @@ def tool_outcome(tool_name: str, output) -> ToolOutcome:
     return ToolOutcome(prefixed or bool(exit_code), exit_code)
 
 
-def _result_frame(state: "ToolState", output: str, preview: str, **extra) -> str:
+def _result_frame(
+    state: "ToolState", output: str, preview: str, *, sent: str | None = None, **extra
+) -> str:
     """The skill_result frame: the preview the UI shows, the id that pairs it
-    with its skill frame, and the outcome read from the FULL output."""
+    with its skill frame, the outcome read from the FULL output, and the meta
+    (server/tool_meta.py). ``sent`` is the budgeted text the model receives
+    when the budget cut the output; None means it received ``output``."""
     outcome = tool_outcome(state.tool_name, output)
+    sent_output = output if sent is None else sent
     return ndjson_dumps(
         {
             "skill_result": state.tool_name,
@@ -121,6 +127,7 @@ def _result_frame(state: "ToolState", output: str, preview: str, **extra) -> str
             "tool_use_id": state.tool_id,
             "is_error": outcome.is_error,
             "exit_code": outcome.exit_code,
+            "meta": result_meta(state, output, sent_output, is_error=outcome.is_error),
             **extra,
         }
     )
@@ -161,6 +168,12 @@ class ToolState:
     # before the gate runs cannot pair the payload with the new root.
     ws_root: str | None = None
     ws_root_taken: bool = False
+    # How long route_tool took (skill_result meta.duration_ms); None for a
+    # call that never ran.
+    duration_ms: int | None = None
+    # The diff stats of a write this gate ran inline (ApprovalOutcome.stats),
+    # for the same meta; None for every other call.
+    stats: dict | None = None
 
     @property
     def tool_id(self) -> str:
@@ -406,7 +419,7 @@ async def execute_tool_batch(
         # An agent waiting on agents it started is not using its own time:
         # each of them has its own limits (ToolScope.waited).
         _waits = tool_scope is not None and tool_name in WAITS_ON_AGENTS
-        _wait_started = time.monotonic()
+        _started = time.monotonic()
         try:
             try:
                 output, side_effects = await route_tool(
@@ -424,8 +437,12 @@ async def execute_tool_batch(
                     tool_scope=tool_scope,
                 )
             finally:
+                # Measured around the dispatch alone: the hooks and the gate
+                # are not the tool's time. Kept on a failure too.
+                _elapsed = time.monotonic() - _started
+                state.duration_ms = int(_elapsed * 1000)
                 if _waits:
-                    tool_scope.waited(time.monotonic() - _wait_started)
+                    tool_scope.waited(_elapsed)
             output = _explain_lost_workspace(output)
             if isinstance(output, str) and output.startswith("[WS_APPROVAL]"):
                 from server.workspace.state import load_workspace_config
@@ -535,63 +552,6 @@ def _explain_lost_workspace(output):
 # ---------------------------------------------------------------------------
 # Result post-processing
 # ---------------------------------------------------------------------------
-
-
-async def _execute_ws_approval_inline(ws_parsed: dict, *, agent: bool = False) -> str:
-    """Run a pre-approved action through the same ApprovalSpec executor the
-    UI's Yes button uses. Single execution path — no duplicated write/delete/
-    command logic. Adding a new approval-required tool requires only a
-    `register()` call, not a branch here.
-
-    `agent=True` marks the call as originating from a subagent's UNCONDITIONAL
-    auto-approve path (server/agents/runtime.py) — no human, no category gate.
-    It stamps `__agent__` onto the payload so high-blast-radius executors (e.g.
-    GitHub mutations) can refuse to run unattended. The chat/auto-mode caller
-    leaves this False, because there a real user or the auto-mode classifier
-    authorised the action."""
-    from server.approval import registry as approval_registry
-
-    action = ws_parsed.get("action", "write")
-    spec = approval_registry.get(action)
-    if not spec:
-        return f"Error: unknown action '{action}' (no ApprovalSpec registered)"
-    payload = spec.build_payload(ws_parsed)
-    # Forward session_id if present in the original parsed payload so
-    # executors that need it (worktree enter/exit) can read it.
-    if "session_id" in ws_parsed and "session_id" not in payload:
-        payload["session_id"] = ws_parsed["session_id"]
-    # Stamp the subagent origin AFTER build_payload (which whitelists fields when
-    # payload_fields is set and would otherwise drop it).
-    if agent:
-        payload["__agent__"] = True
-    try:
-        outcome = await spec.executor(payload)
-    except Exception as e:  # noqa: BLE001
-        return f"Error executing {action}: {e}"
-    if outcome.ok:
-        return outcome.output or f"[OK] {action}"
-    # A command that ran and failed carries its output next to the exit code.
-    error = f"Error: {outcome.error or 'unknown error'}"
-    return f"{error}\n\n{outcome.output}" if outcome.output else error
-
-
-def _bind_to_workspace(spec, state: ToolState, ws_parsed: dict) -> str | None:
-    """Stamp a workspace-bound payload with the root it was resolved against,
-    then return why the turn may not run it now (or None).
-
-    The root is the one taken when the tool returned (ToolState.ws_root); a
-    state that never ran through execute_tool_batch falls back to the root
-    connected now."""
-    if not spec.binds_workspace(ws_parsed):
-        return None
-    if getattr(state, "ws_root_taken", False):
-        root = state.ws_root
-    else:
-        from server.workspace.state import load_workspace_config
-
-        root = load_workspace_config().get("path")
-    ws_parsed[WORKSPACE_ROOT_KEY] = root
-    return turn_workspace_refusal(spec, ws_parsed)
 
 
 async def process_tool_results(
@@ -750,231 +710,33 @@ async def _process_tool_results(
             break
 
         # Workspace approval detection. Tools signal "needs approval" by
-        # returning a string with the [WS_APPROVAL] prefix containing JSON.
-        # The prefix is purely internal — the frontend only sees the new
-        # generic `approval_request` event we emit below, shaped from the
-        # ApprovalSpec registered for the action.
+        # returning a string with the [WS_APPROVAL] prefix containing JSON;
+        # server/tool_approvals.py refuses it, runs it inline, denies it, or
+        # emits the approval card the turn pauses on.
         if isinstance(tool_output, str) and tool_output.startswith("[WS_APPROVAL]"):
-            from server.approval import registry as approval_registry
-
-            ws_data = tool_output[len("[WS_APPROVAL]") :]
-            try:
-                ws_parsed = json.loads(ws_data)
-            except json.JSONDecodeError as e:
-                log.error("Malformed [WS_APPROVAL] payload: %s", e)
+            step = await gate_approval(
+                state,
+                tool_output,
+                sse_events,
+                session_approvals=session_approvals,
+                config=config,
+                model_id=model_id,
+                recent_messages=recent_messages,
+                mode=mode,
+                session_id=session_id,
+                cost_session_id=cost_session_id,
+                unattended=unattended,
+            )
+            if step.kind == APPROVAL_PAUSE:
+                has_pending_approval = True
+                break  # Do not execute sibling tools in this batch.
+            if step.kind == APPROVAL_REPLY:
                 tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": state.tool_id,
-                        "content": f"[Error] Malformed approval payload: {e}",
-                    }
+                    {"type": "tool_result", "tool_use_id": state.tool_id, "content": step.text}
                 )
                 continue
-            action = ws_parsed.get("action", "")
-            spec = approval_registry.get(action)
-            if not spec:
-                log.error("approval: no ApprovalSpec registered for action=%r — refusing", action)
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": state.tool_id,
-                        "content": (
-                            f"[Error] No approval registered for action {action!r}. "
-                            f"Refusing to run. Register an ApprovalSpec in server/approval/bootstrap.py."
-                        ),
-                    }
-                )
-                continue
-            # A workspace-bound payload is stamped with the root it was
-            # resolved against, and refused if, since the tool ran, the user
-            # let go of the turn's workspace or that root stopped being the
-            # connected one: no card for it, and no pre-approved or unattended
-            # run in the folder connected now. A card's Yes is checked against
-            # the same stamp (approval.spec.stale_workspace_refusal).
-            refusal = _bind_to_workspace(spec, state, ws_parsed)
-            if refusal:
-                tool_output = refusal
-                # Fall through to normal result processing below
-            elif unattended:
-                # Unattended (agent) turns auto-approve unconditionally — no
-                # human, no classifier, no category gate. Mirrors the
-                # pre-migration server/agents/runtime.py inline handling
-                # exactly (agent=True stamps the payload so high-blast-radius
-                # executors can still refuse to run unattended).
-                result = await _execute_ws_approval_inline(ws_parsed, agent=True)
-                sse_events.append(ndjson_dumps({"ws_auto_applied": ws_parsed}))
-                tool_output = result
-                # Fall through to normal result processing below
-            else:
-                category = spec.category
-
-                log.info(
-                    "approval: action=%s category=%s session_approvals=%s",
-                    action,
-                    category,
-                    session_approvals,
-                )
-
-                # Trusted folder skill: auto-approve running its OWN bundled scripts
-                # (command path resolves inside a trusted skill's directory). Scoped
-                # to the skill's own files; validate_command still applied upstream.
-                auto_allow_trusted = False
-                if action == "terminal_run":
-                    from server.skills import command_runs_trusted_skill
-
-                    if command_runs_trusted_skill(ws_parsed.get("command", "")):
-                        auto_allow_trusted = True
-
-                # Precedence: rm guardrail → github-destructive/MCP-approve →
-                # category mode override → bypassPermissions → trusted skill →
-                # session approvals → custom rules → approved launch.json
-                # preview (allow) → dontAsk → acceptEdits → auto (classifier) →
-                # ask. See server.security.permissions.resolve_static_decision
-                # (the rm guardrail lives there, alongside github-destructive,
-                # since both are "no bypass mode may cover this" absolutes).
-                decision = resolve_static_decision(
-                    state.tool_name,
-                    ws_parsed,
-                    category,
-                    session_approvals,
-                    mode,
-                    auto_allow_trusted,
-                )
-                if decision is None:
-                    # mode == "auto" and nothing else resolved it — selecting the
-                    # Auto permission mode IS the opt-in, so the classifier runs
-                    # here with no separate enable flag. Only actions that actually
-                    # need approval reach this point (read-only tools resolve
-                    # earlier). model_id is empty for the offline local-model path,
-                    # which must stay Bedrock-free and falls back to asking.
-                    cfg = config or {}
-                    if model_id:
-                        from server.security.permissions import (
-                            is_auto_mode_tripped,
-                            record_classifier_verdict,
-                        )
-
-                        if session_id and is_auto_mode_tripped(session_id):
-                            # Circuit breaker already tripped this turn (see
-                            # record_classifier_verdict below) — stop consulting
-                            # the classifier and ask for every remaining
-                            # approval-gated call until the user resumes auto
-                            # mode (POST /api/permissions/auto-mode/resume) or a
-                            # new turn starts.
-                            decision = "ask"
-                        else:
-                            verdict = await classify_tool_call(
-                                state.tool_name,
-                                ws_parsed,
-                                cfg,
-                                recent_messages=recent_messages or [],
-                                session_id=cost_session_id,
-                            )
-                            decision = "allow" if verdict.get("decision") == "allow" else "ask"
-                            if session_id:
-                                breaker = record_classifier_verdict(
-                                    session_id, allowed=(decision == "allow")
-                                )
-                                if breaker["tripped"]:
-                                    sse_events.append(
-                                        ndjson_dumps(
-                                            {"auto_mode_breaker": {"reason": breaker["reason"]}}
-                                        )
-                                    )
-                    else:
-                        decision = "ask"
-
-                if decision == "allow":
-                    # The auto-mode classifier may have awaited since the
-                    # check above. A disconnect or a switch in that window
-                    # refuses here, before a payload meant for the old root
-                    # runs in the folder connected now.
-                    late_refusal = turn_workspace_refusal(spec, ws_parsed)
-                    if late_refusal:
-                        tool_output = late_refusal
-                        # Fall through to normal result processing below
-                    else:
-                        # Pre-approved: execute inline and return result to LLM
-                        log.info("approval: executing inline (pre-approved)")
-                        from server.workspace import get_workspace_path
-
-                        ws_before = get_workspace_path()
-                        result = await _execute_ws_approval_inline(ws_parsed)
-                        # Auto-applied event keeps the file tree / editor in sync.
-                        sse_events.append(ndjson_dumps({"ws_auto_applied": ws_parsed}))
-                        # If the action switched the workspace (e.g. git_clone with
-                        # open=true), tell the frontend to open the panel. Detected by
-                        # diffing the connected path, the same generic signal the
-                        # manual approval route uses, so no per-action branch here.
-                        ws_after = get_workspace_path()
-                        if ws_after and ws_after != ws_before:
-                            sse_events.append(ndjson_dumps({"ws_folder_opened": ws_after}))
-                        tool_output = result
-                        # Fall through to normal result processing below
-                elif decision == "deny":
-                    path = ws_parsed.get("path", ws_parsed.get("command", ""))
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": state.tool_id,
-                            "content": f"[Denied by session rule] {action}: {path} — blocked by user.",
-                        }
-                    )
-                    continue
-                else:
-                    # Fetch risk explanation (3s timeout inside explain_permission)
-                    explanation = None
-                    if config and model_id:
-                        explanation = await explain_permission(
-                            tool_name=state.tool_name,
-                            tool_input=ws_parsed,
-                            recent_messages=recent_messages or [],
-                            config=config,
-                            model_id=model_id,
-                            session_id=cost_session_id,
-                        )
-
-                    # The explanation can take seconds. A disconnect or a
-                    # switch meanwhile refuses the call here, rather than
-                    # pausing the turn on a card whose Yes would be refused.
-                    late_refusal = turn_workspace_refusal(spec, ws_parsed)
-                    if late_refusal:
-                        tool_output = late_refusal
-                        # Fall through to normal result processing below
-                    else:
-                        # Build the generic approval_request event from the spec.
-                        # No more per-action shape: the frontend reads `preview`
-                        # and picks one of four renderers (diff/command/list/text).
-                        payload = spec.build_payload(ws_parsed)
-                        summary = spec.render_summary(ws_parsed)
-                        preview = spec.preview
-                        risk_hint = spec.risk_hint
-
-                        event = {
-                            "approval_request": {
-                                "tool_use_id": state.tool_id,
-                                "action": action,
-                                "category": category,
-                                "preview": preview,
-                                "summary": summary,
-                                "payload": payload,
-                                "risk_hint": risk_hint,
-                                "explanation": explanation,
-                                # A hard floor asks every time, whatever the
-                                # session remembers, so the card must not offer
-                                # "Yes, all" / "Block" for it.
-                                "always_asks": approval_floor(state.tool_name, ws_parsed, category)
-                                is not None,
-                            }
-                        }
-                        sse_events.append(ndjson_dumps(event))
-
-                        # Pause the stream. All approval actions (command, write,
-                        # create, delete) wait for the user. After approval, the
-                        # frontend sends a new /api/chat turn carrying the real
-                        # tool_result so the LLM resumes with truthful state.
-                        has_pending_approval = True
-                        break  # Do not execute sibling tools in this batch.
+            # An inline run's result or a refusal: processed like any output.
+            tool_output = step.text
 
         # Preview screenshot detection: preview_screenshot's executor returns
         # a sentinel carrying base64 JPEG bytes + a caption. Unlike every
@@ -1042,11 +804,11 @@ async def _process_tool_results(
                 tool_output = budget_fn(state.tool_name, tool_output)
 
         # Emit result preview as SSE; the outcome is read from the full
-        # output, before the budget cut it.
+        # output, before the budget cut it, and the meta sees both texts.
         if not isinstance(tool_output, str):
             tool_output = str(tool_output)
         preview = tool_output[:2000] + ("..." if len(tool_output) > 2000 else "")
-        sse_events.append(_result_frame(state, full_output, preview))
+        sse_events.append(_result_frame(state, full_output, preview, sent=tool_output))
 
         tool_results.append(
             {
@@ -1094,7 +856,7 @@ async def _process_tool_results(
                 if not produces_model_prompt(state.tool_name):
                     content = budget_fn(state.tool_name, content)
                 preview = content[:2000] + ("..." if len(content) > 2000 else "")
-                sse_events.append(_result_frame(state, out, preview))
+                sse_events.append(_result_frame(state, out, preview, sent=content))
                 tool_results.append(
                     {
                         "type": "tool_result",

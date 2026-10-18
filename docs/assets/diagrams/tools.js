@@ -8,12 +8,12 @@ WSDiagram.mount("tools-diagram", {
   },
   nodes: [
     { id: "model", group: "server", col: 0, row: 1, label: "Model tool_use", sub: "one or more calls", desc: "The model returns a batch of tool_use blocks in a single assistant message." },
-    { id: "batch", group: "tools", col: 1, row: 1, label: "execute_tool_batch", sub: "tool_executor.py", desc: "Owns the lifecycle: partitioning, permission checks, hooks, approvals, and result shaping." },
+    { id: "batch", group: "tools", col: 1, row: 1, label: "execute_tool_batch", sub: "tool_executor.py", desc: "Owns the lifecycle: partitioning, permission checks, hooks, and result shaping. The approval gate that process_tool_results calls lives in tool_approvals.py." },
     { id: "part", group: "tools", col: 2, row: 1, label: "Partition", sub: "reads parallel · writes serial", desc: "Consecutive concurrent-safe tools form one parallel batch; each unsafe tool runs on its own." },
     { id: "route", group: "tools", col: 3, row: 1, label: "route_tool", sub: "tool_router.py", desc: "Pure dispatch: maps a tool name to its handler and runs it once, unconditionally. A gated action's own executor returns the [WS_APPROVAL] sentinel here rather than acting yet." },
     { id: "reg", group: "tools", col: 4, row: 0, label: "Executor registry", sub: "executors/", desc: "@register_executor handlers with read_only / concurrent_safe / destructive metadata." },
     { id: "mcp", group: "external", kind: "external", col: 4, row: 2, label: "MCP tool", sub: "stdio / HTTP", desc: "execute_mcp_tool forwards the call to a connected MCP server, over stdio for a local process or streamable HTTP for a remote server." },
-    { id: "perm", group: "security", col: 5, row: 0, label: "Permission check", sub: "mode + rules", desc: "In process_tool_results, any [WS_APPROVAL] output is resolved against the current mode and per-tool rules: allow, ask, or deny." },
+    { id: "perm", group: "security", col: 5, row: 0, label: "Permission check", sub: "mode + rules", desc: "In process_tool_results, the gate in tool_approvals.py resolves any [WS_APPROVAL] output against the current mode and per-tool rules: allow, ask, or deny." },
     { id: "appr", group: "security", col: 5, row: 2, label: "Approval", sub: "pause + resume", desc: "A tool that needs consent pauses the turn in the server-held pause store; the client's decision resumes it." },
     { id: "specexec", group: "security", col: 6, row: 1, label: "ApprovalSpec executor", sub: "approval/registry.py", desc: "The action's own executor, re-validating everything at execute time - reached on an immediate allow or after the user approves, never by calling route_tool again." },
     { id: "result", group: "transport", col: 7, row: 1, label: "Result + SSE", sub: "tool_result · events", desc: "Output becomes a tool_result for the next round; side effects stream to the SPA as SSE events." }

@@ -157,23 +157,43 @@ def _frames(sse_events, key):
 def test_skill_result_frame_carries_id_and_outcome():
     states = [
         _State("tu_a", "ws_run_command", "boom\n(exit code 3)"),
-        _State("tu_b", "ws_read_file", "print(1)"),
+        _State("tu_b", "ws_read_file", "    1\tprint(1)"),
     ]
     _results, sse_events, _pending, _question = _run(states)
     by_id = {f["tool_use_id"]: f for f in _frames(sse_events, "skill_result")}
+    # The meta (tests/test_tool_result_meta.py) always carries every key; a
+    # state that never went through execute_tool_batch has no duration.
     assert by_id["tu_a"] == {
         "skill_result": "ws_run_command",
         "output": "boom\n(exit code 3)",
         "tool_use_id": "tu_a",
         "is_error": True,
         "exit_code": 3,
+        "meta": {
+            "duration_ms": None,
+            "output_chars": len("boom\n(exit code 3)"),
+            "truncated": False,
+            "lines": None,
+            "bytes": None,
+            "added": None,
+            "removed": None,
+        },
     }
     assert by_id["tu_b"] == {
         "skill_result": "ws_read_file",
-        "output": "print(1)",
+        "output": "    1\tprint(1)",
         "tool_use_id": "tu_b",
         "is_error": False,
         "exit_code": None,
+        "meta": {
+            "duration_ms": None,
+            "output_chars": len("    1\tprint(1)"),
+            "truncated": False,
+            "lines": 1,
+            "bytes": None,
+            "added": None,
+            "removed": None,
+        },
     }
 
 
@@ -223,13 +243,10 @@ def test_sleep_side_effect_frames_carry_the_id():
         "input": {"seconds": 0.0},
         "tool_use_id": "tu_sleep",
     }
-    assert side_effects[1] == {
-        "skill_result": "sleep",
-        "output": "Slept for 0.0 seconds.",
-        "tool_use_id": "tu_sleep",
-        "is_error": False,
-        "exit_code": None,
-    }
+    # The gate emits the one skill_result frame (with its meta); the router
+    # adds none of its own.
+    assert len(side_effects) == 1
+    assert _output == "Slept for 0.0 seconds."
 
 
 # ── The adapters forward the provider's id ──────────────────────────────────

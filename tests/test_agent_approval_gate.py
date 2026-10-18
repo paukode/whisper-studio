@@ -12,7 +12,7 @@ import asyncio
 import server.sandbox as sandbox
 from server.approval import registry
 from server.approval.spec import ApprovalOutcome, ApprovalSpec, refuse_if_agent
-from server.tool_executor import _execute_ws_approval_inline
+from server.tool_approvals import _execute_ws_approval_inline
 
 
 def test_refuse_if_agent():

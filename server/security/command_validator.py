@@ -89,7 +89,7 @@ def check_dangerous_patterns(command: str) -> str | None:
 # guardrail. Deliberately separate from _DANGEROUS_PATTERNS: those BLOCK a
 # command outright (validate_command's callers reject it, full stop); this
 # one only marks a command for the stronger approval rule in
-# server/tool_executor.py and server/approval/bootstrap.py (always ask a real
+# server/tool_approvals.py and server/approval/bootstrap.py (always ask a real
 # human, never satisfied by a session-wide "allow all commands", the
 # auto-mode classifier, bypassPermissions, or an unattended agent's
 # unconditional auto-approve). A command an agent or a blanket approval would

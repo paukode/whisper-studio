@@ -40,7 +40,16 @@
     "output": "No documents attached.",
     "tool_use_id": "tu_1",
     "is_error": false,
-    "exit_code": null
+    "exit_code": null,
+    "meta": {
+      "duration_ms": 0,
+      "output_chars": 22,
+      "truncated": false,
+      "lines": null,
+      "bytes": null,
+      "added": null,
+      "removed": null
+    }
   },
   {
     "text": "Nothing attached."

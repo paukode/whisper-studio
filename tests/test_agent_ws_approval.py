@@ -20,6 +20,7 @@ import json
 from unittest.mock import AsyncMock
 
 from server.agents.runtime import run_agent
+from server.approval.spec import ApprovalOutcome
 from tests.golden_harness import FakeBedrockClient, msg_end, msg_start, text_block, tool_use_block
 
 
@@ -55,8 +56,8 @@ def test_ws_approval_sentinel_is_executed_not_left_as_coroutine(monkeypatch):
     route_tool = AsyncMock(return_value=(sentinel, []))
     monkeypatch.setattr("server.tool_executor.route_tool", route_tool)
     # ...and the inline executor is the async function the loop must await.
-    execute_inline = AsyncMock(return_value="[OK] wrote foo.txt")
-    monkeypatch.setattr("server.tool_executor._execute_ws_approval_inline", execute_inline)
+    execute_inline = AsyncMock(return_value=ApprovalOutcome(ok=True, output="[OK] wrote foo.txt"))
+    monkeypatch.setattr("server.tool_approvals._execute_ws_approval_inline", execute_inline)
 
     result = asyncio.run(
         run_agent(
@@ -70,8 +71,11 @@ def test_ws_approval_sentinel_is_executed_not_left_as_coroutine(monkeypatch):
     # The executor ran, with the parsed sentinel payload plus the workspace
     # root the gate stamps on a workspace-bound one (none is connected here).
     # agent=True marks the subagent origin so high-blast-radius executors can
-    # refuse unattended runs.
-    execute_inline.assert_awaited_once_with({**ws_payload, "workspace_root": None}, agent=True)
+    # refuse unattended runs; the call's id keeps a write's edit for the diff
+    # dialog.
+    execute_inline.assert_awaited_once_with(
+        {**ws_payload, "workspace_root": None}, agent=True, tool_use_id="tu_ws1"
+    )
 
     # Turn 2's request replays the tool_result the model saw: it must be the
     # executed string, never a coroutine repr.

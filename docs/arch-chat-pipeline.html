@@ -370,7 +370,8 @@
       <dt><code class="path">server/prompts/__init__.py</code></dt><dd><code>PromptLayer</code> and the static/dynamic split that keeps the cached prefix stable.</dd>
       <dt><code class="path">server/chat/compaction.py</code></dt><dd>History compaction when the prompt is too long, with <code class="path">compaction_anchors.py</code> for the verbatim user messages and the anchor index.</dd>
       <dt><code class="path">server/tool_router.py</code></dt><dd>Pure tool dispatch.</dd>
-      <dt><code class="path">server/tool_executor.py</code></dt><dd>Batching, permissions, approvals, hooks, result shaping.</dd>
+      <dt><code class="path">server/tool_executor.py</code></dt><dd>Batching, permissions, hooks, result shaping.</dd>
+      <dt><code class="path">server/tool_approvals.py</code></dt><dd>The approval gate: inline runs, session rules, and the approval card.</dd>
     </div>
 
     <div class="callout callout--tip">

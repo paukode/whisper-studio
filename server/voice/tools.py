@@ -674,17 +674,25 @@ def _classify_decision(decision: str) -> str | None:
     return None
 
 
-async def _execute_approval(action: str, payload: dict[str, Any]) -> tuple[bool, str]:
+async def _execute_approval(
+    action: str, payload: dict[str, Any], *, tool_use_id: str = ""
+) -> tuple[bool, str]:
     """Run the approval's registered executor (what POST /api/approval/execute
-    does when the user clicks Yes). Returns (ok, detail)."""
+    does when the user clicks Yes). Returns (ok, detail). ``tool_use_id`` is
+    the paused call's id when the request carried one: a write keeps its edit
+    under it for the diff dialog, the way the card's Yes does. A write's diff
+    stats (outcome.stats) are not returned: voice rows carry no meta."""
     from server.approval import registry
     from server.approval.spec import execute_approved_by_human
 
     spec = registry.get(action)
     if spec is None:
         return False, f"No approval registered for action {action!r}."
+    payload = dict(payload or {})
+    if tool_use_id:
+        payload["__tool_use_id__"] = tool_use_id
     try:
-        outcome = await execute_approved_by_human(spec, payload or {})
+        outcome = await execute_approved_by_human(spec, payload)
     except Exception as exc:  # noqa: BLE001 - executor is user-registered
         log.exception("voice resolve_request: executor %s crashed", action)
         return False, f"Executor crashed: {exc}"
@@ -739,7 +747,9 @@ async def _resolve_request(decision: str, ctx: ToolContext) -> str:
             )
         else:
             ws_before = _workspace_path()
-            ok, detail = await _execute_approval(action, payload)
+            ok, detail = await _execute_approval(
+                action, payload, tool_use_id=str(req.get("tool_use_id", ""))
+            )
             if ok:
                 extra = f"\n\n{detail}" if detail else ""
                 content = f"[User approved] {action}: {target}. The action succeeded.{extra}"
