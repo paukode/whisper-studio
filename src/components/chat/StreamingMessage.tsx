@@ -244,7 +244,7 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
     return <div className="turn-live" aria-live="polite">{body}</div>;
   }
   return (
-    <div className="chat-msg-wrap assistant-wrap">
+    <div className="chat-msg-wrap assistant-wrap turn">
       <div className="chat-msg assistant" role="article" aria-live="polite">{body}</div>
     </div>
   );

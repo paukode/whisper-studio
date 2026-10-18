@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useResizableDialog } from '@/hooks/useResizableDialog';
 import { useLocalStorage } from '@/hooks/useLocalStorage';
 import { STORAGE_KEYS } from '@/utils/storageKeys';
 import { ICON } from '@/components/chat/activityIcons';
-import type { DiffRow } from '@/utils/diffRows';
+import type { DiffRow, DiffSide } from '@/utils/diffRows';
 
 export type DiffStatus = 'modified' | 'added' | 'deleted';
 export type DiffLayout = 'split' | 'unified';
@@ -29,6 +29,9 @@ export interface DiffDialogProps {
   body: DiffBody;
   onClose: () => void;
 }
+
+/** What Tab moves through inside the dialog. */
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 const STATUS_WORDS: Record<DiffStatus, string> = {
   modified: 'Modified',
@@ -59,19 +62,43 @@ export const DiffDialog: React.FC<DiffDialogProps> = ({
     { defaultW: 900, minW: 420, minH: 300 },
   );
   const [layout, setLayout] = useLocalStorage<DiffLayout>(STORAGE_KEYS.GIT_DIFF_LAYOUT, 'split');
+  const closeRef = useRef<HTMLButtonElement>(null);
 
-  // Esc closes. document, not window, so this stays ahead of the global
-  // ESC stream kill switch regardless of registration order.
+  // A modal takes the focus while it is open (its close button first) and
+  // gives it back on close to what had it: the Git panel's row, or the
+  // activity row's diff pill.
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeRef.current?.focus();
+    return () => previous?.focus();
+  }, []);
+
+  // Esc closes, and Tab stays inside the dialog. document, not window, so
+  // this stays ahead of the global ESC stream kill switch regardless of
+  // registration order.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
         onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const root = dialogRef.current;
+      if (!root) return;
+      const focusable = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!root.contains(active) || (e.shiftKey ? active === first : active === last)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, dialogRef]);
 
   const fileName = path.split('/').pop() || path;
   const showStats = (added ?? 0) > 0 || (removed ?? 0) > 0;
@@ -128,7 +155,7 @@ export const DiffDialog: React.FC<DiffDialogProps> = ({
             <button type="button" className="git-diff-toggle" onClick={reset} title="Reset size and position">
               Reset
             </button>
-            <button type="button" className="git-diff-close" onClick={onClose} aria-label="Close" title="Close">
+            <button ref={closeRef} type="button" className="git-diff-close" onClick={onClose} aria-label="Close" title="Close">
               {ICON.x}
             </button>
           </div>
@@ -248,6 +275,13 @@ export const DiffGrid: React.FC<{ rows: DiffRow[]; layout: DiffLayout }> = ({ ro
   );
 };
 
+/** What a line whose ending alone changed says after its text
+ *  (DiffSide.eol): that it has no final newline, or that it ends in CRLF. */
+const EolNote: React.FC<{ side: DiffSide | null }> = ({ side }) => {
+  if (!side?.eol) return null;
+  return <span className="git-diff-eol">{side.eol === 'none' ? 'No newline at end of file' : 'CRLF'}</span>;
+};
+
 /** One grid row: old line left, new line right. */
 const SplitRow: React.FC<{ row: Extract<DiffRow, { kind: 'unchanged' | 'change' }> }> = ({ row }) => {
   const removed = row.kind === 'change' && row.left !== null;
@@ -258,11 +292,13 @@ const SplitRow: React.FC<{ row: Extract<DiffRow, { kind: 'unchanged' | 'change' 
       <div className={`git-diff-code${removed ? ' removed' : ''}`}>
         <span className="git-diff-sign" aria-hidden="true">{removed ? '-' : ' '}</span>
         {row.left?.text ?? ''}
+        <EolNote side={row.left} />
       </div>
       <div className="git-diff-num right">{row.right?.no ?? ''}</div>
       <div className={`git-diff-code${added ? ' added' : ''}`}>
         <span className="git-diff-sign" aria-hidden="true">{added ? '+' : ' '}</span>
         {row.right?.text ?? ''}
+        <EolNote side={row.right} />
       </div>
     </>
   );
@@ -291,6 +327,7 @@ const UnifiedRows: React.FC<{ row: Extract<DiffRow, { kind: 'unchanged' | 'chang
           <div className="git-diff-code removed">
             <span className="git-diff-sign" aria-hidden="true">-</span>
             {row.left.text}
+            <EolNote side={row.left} />
           </div>
         </>
       )}
@@ -301,6 +338,7 @@ const UnifiedRows: React.FC<{ row: Extract<DiffRow, { kind: 'unchanged' | 'chang
           <div className="git-diff-code added">
             <span className="git-diff-sign" aria-hidden="true">+</span>
             {row.right.text}
+            <EolNote side={row.right} />
           </div>
         </>
       )}

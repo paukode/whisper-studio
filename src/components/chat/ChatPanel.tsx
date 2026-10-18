@@ -7,7 +7,7 @@ import { getActiveTranscriptionStore } from '@/stores/sessionRuntimes';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { ChatMessage } from './ChatMessage';
 import { TurnBubble } from './TurnBubble';
-import { turnEntries, turnKey, spokenTurn } from './turnEntries';
+import { isLiveTurn, turnEntries, turnKey, spokenTurn } from './turnEntries';
 import { resolveTaskCheckpoints } from './TaskCard';
 import { StreamingMessage } from './StreamingMessage';
 import { ICON } from './activityIcons';
@@ -86,8 +86,9 @@ export const ChatPanel: React.FC = () => {
   const lastEntry = displayEntries[displayEntries.length - 1];
   // The turn being written: a stream whose turn already committed a row
   // draws its live tail inside that turn's bubble. A stream that starts a new
-  // turn (no assistant row after the last other row yet) has its own bubble.
-  const liveTurn = isStreaming && lastEntry?.kind === 'turn' ? lastEntry : null;
+  // turn (no assistant row after the last other row yet), or whose last row
+  // is a slash command's (standalone), has its own bubble.
+  const liveTurn = isStreaming && isLiveTurn(lastEntry) ? lastEntry : null;
 
   // Tasks rows are deduped at the conversation level: a row appears only at a
   // turn where the cumulative task state changed (computeTaskCheckpoints), so

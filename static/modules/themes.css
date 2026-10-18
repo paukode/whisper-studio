@@ -307,10 +307,27 @@
 
 /* Risk-warn caution orange: the :root default is dark-tuned; light surfaces
    need a deeper stop to clear AA at caption size (also avoids colliding with
-   light-daltonized --accent-live, which is exactly #d97706). */
-[data-theme^="light"] {
+   light-daltonized --accent-live, which is exactly #d97706). Written with
+   :root so it outranks the :root default below, which comes later. */
+:root[data-theme^="light"] {
     --risk-warn: #92400e;
     --risk-warn-dim: rgba(146, 64, 14, 0.12);
+}
+/* The dark themes' --success fills are bright (light green, amber): white
+   on them fell under 2.2:1, so their text is dark. */
+:root[data-theme^="dark"] {
+    --on-success: #0a0a0c;
+}
+/* The daltonized themes draw done (--success, their --accent-live) in amber
+   and failed in blue, so a caution or still-running mark in any orange reads
+   as done: violet keeps the three apart. */
+:root[data-theme="dark-daltonized"] {
+    --risk-warn: #a78bfa;
+    --risk-warn-dim: rgba(167, 139, 250, 0.14);
+}
+:root[data-theme="light-daltonized"] {
+    --risk-warn: #6d28d9;
+    --risk-warn-dim: rgba(109, 40, 217, 0.1);
 }
 
 /* ---- Theme picker dropdown ---- */
@@ -428,6 +445,10 @@
        (goal verdicts, CI and workflow run state) use these: --success for
        done, --risk-warn for still running, --danger for failed. */
     --success: var(--accent-live);
+    /* Text on a --success fill (the approval card's Yes): white on the
+       deep greens of the light themes; the dark themes' bright fills take
+       dark text, set above. */
+    --on-success: #fff;
     --warning: var(--accent);
     --danger: var(--accent-record);
     --error: var(--accent-record);
@@ -436,9 +457,10 @@
     /* Risk tints for permission modes and the caution of a status mark.
        A true orange, deliberately NOT --warning: that aliases to the gold
        brand accent and would not read as caution next to it. Light themes
-       override below (this default is tuned for dark surfaces); danger
-       reuses --danger/--accent-record-dim so the daltonized red-to-blue
-       remap carries through. */
+       and the daltonized ones override it above with :root[data-theme]
+       (this default is tuned for dark surfaces); danger reuses
+       --danger/--accent-record-dim so the daltonized red-to-blue remap
+       carries through. */
     --risk-warn: #d97706;
     --risk-warn-dim: rgba(217, 119, 6, 0.12);
 

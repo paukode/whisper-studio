@@ -143,8 +143,8 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     snapshotCodeBlockScroll(container);
 
     // Close any unclosed fence for safe mid-stream parsing, then link the
-    // path mentions outside code.
-    const safeContent = linkifyPaths(closeOpenFences(content), wsPath);
+    // path mentions outside code (a code span still open counts as code).
+    const safeContent = linkifyPaths(closeOpenFences(content), wsPath, { streaming: true });
     beginCodeBlockParse(instanceId);
     const html = safeContent
       ? renderMarkdownSafe(safeContent, { parser: streamingParser, markedOptions: { renderer } })

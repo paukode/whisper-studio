@@ -42,29 +42,24 @@ export function DiffPreview({ original, content, path }: DiffPreviewProps) {
   // with no counts, so say so in words above it.
   const noChanges = diff !== null && diff.rows.length > 0 && added === 0 && removed === 0;
 
+  // The path line, the note and the fallback text use the grid's own face
+  // and caption size (style.css .git-diff-preview-*), and the counts the
+  // diff dialog's colours.
   return (
     <div>
       {path && (
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, fontFamily: 'Menlo, monospace' }}>
+        <div className="git-diff-preview-path">
           {path}
           {(added > 0 || removed > 0) && (
-            <span style={{ marginLeft: 8 }}>
-              <span style={{ color: 'var(--accent-live, #34c77b)' }}>+{added}</span>
-              {' '}
-              <span style={{ color: 'var(--accent-record, #e5453a)' }}>-{removed}</span>
+            <span className="git-diff-stats">
+              <span className="added">+{added}</span> <span className="removed">-{removed}</span>
             </span>
           )}
         </div>
       )}
-      {noChanges && (
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>No changes</div>
-      )}
+      {noChanges && <div className="git-diff-preview-note">No changes</div>}
       {!diff || diff.rows.length === 0 ? (
-        <pre style={{
-          fontSize: 12, fontFamily: 'Menlo, monospace',
-          background: 'var(--bg-inset)', padding: 8, borderRadius: 4,
-          maxHeight: 240, overflow: 'auto', whiteSpace: 'pre-wrap',
-        }}>{content ?? ''}</pre>
+        <pre className="git-diff-preview-text">{content ?? ''}</pre>
       ) : (
         <div className="git-diff-preview">
           <DiffGrid rows={diff.rows} layout="unified" />

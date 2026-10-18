@@ -93,22 +93,41 @@ function stateMark(state: GroupState, tools: ToolUseEvent[]): React.ReactNode {
   return iconFor(tools[0]?.toolName ?? '');
 }
 
-/** Seconds since the group started running, counted on the client clock;
- *  null once it is not running. The epoch is bumped each time the group
- *  starts running again, so a later run counts from zero. */
-function useElapsedSeconds(running: boolean): number | null {
+/** When the group's running calls arrived: the earliest skill frame of them
+ *  (ToolUseEvent.startedAt, on live rows), or null when none carries one (a
+ *  voice step). */
+function runningSince(tools: ToolUseEvent[]): number | null {
+  let since: number | null = null;
+  for (const t of tools) {
+    if (isRunning(t) && typeof t.startedAt === 'number' && (since === null || t.startedAt < since)) since = t.startedAt;
+  }
+  return since;
+}
+
+/** Seconds the group has been running, on the client clock: since `since`,
+ *  the arrival its live rows keep, so a remount of the row (the live tail
+ *  moving to a bubble of its own, a session switch) does not restart the
+ *  count; since the group started running here when no call carries one.
+ *  Null once it is not running. The epoch is bumped each time the group
+ *  starts running again, so a later run counts from its own start. */
+function useElapsedSeconds(running: boolean, since: number | null): number | null {
   const [run, setRun] = useState({ running, epoch: 0 });
   if (run.running !== running) setRun({ running, epoch: running ? run.epoch + 1 : run.epoch });
   const [tick, setTick] = useState({ epoch: -1, seconds: 0 });
   const { epoch } = run;
   useEffect(() => {
     if (!running) return;
-    const start = Date.now();
-    const id = setInterval(() => {
-      setTick({ epoch, seconds: Math.floor((Date.now() - start) / 1000) });
-    }, 1000);
-    return () => clearInterval(id);
-  }, [running, epoch]);
+    const start = since ?? Date.now();
+    const update = () => setTick({ epoch, seconds: Math.max(0, Math.floor((Date.now() - start) / 1000)) });
+    // At once, then every second: a remounted row shows its count without
+    // a second at zero first.
+    const first = setTimeout(update, 0);
+    const id = setInterval(update, 1000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
+  }, [running, epoch, since]);
   if (!running) return null;
   return tick.epoch === epoch ? tick.seconds : 0;
 }
@@ -261,7 +280,8 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({ tools, writtenLabel, m
   const desc = useMemo(() => describeGroup(tools, writtenLabel), [tools, writtenLabel]);
   const chips = useMemo(() => groupChips(tools), [tools]);
   const { state } = desc;
-  const elapsed = useElapsedSeconds(state === 'running');
+  const since = useMemo(() => runningSince(tools), [tools]);
+  const elapsed = useElapsedSeconds(state === 'running', since);
 
   // An error or an unchecked goal opens the group, also when it lands while
   // the row is already on screen; the user's own toggle wins after that. A

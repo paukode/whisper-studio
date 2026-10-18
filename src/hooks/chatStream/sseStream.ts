@@ -31,6 +31,7 @@ import { renderEventCards } from './sseEventCards';
 import { syncAutoAppliedTab } from './autoApplied';
 import { toolMetaFromFrame } from './toolMeta';
 import { labelCommit, patchCommittedLabel, writtenLabelFromFrame, type WrittenLabel } from './activityLabels';
+import { patchCommittedRows } from './committedRows';
 
 // Augment Window for SSE diagnostics access
 declare global {
@@ -48,23 +49,32 @@ export const _sseEventLog: SSEEventData[] = [];
  *  chatStore.updateStreamToolUse): the provider's id, else the name. */
 const rowKey = (t: SkillTrace): string => t.id || t.name;
 
+/** What the committed row of a call with no result says. */
+export const NOT_RUN_RESULT = 'Not run';
+
 /**
  * The transcript row a trace commits as, shared by every commit site (the
  * mid-turn segment, the question card, the approval continuation and the
  * final message of useChatStream). The status is terminal: 'error' when the
- * server flagged the result, else 'complete' (a trace still running at
- * commit time has no result to wait for; the kill switch stamps 'stopped'
- * on its own rows in streamControl). A resolved trace also carries the
- * verdict and exit code its result brought, and the meta when it had one.
- * Every trace keeps its round, when its skill frame named one.
+ * server flagged the result, 'complete' for any other result, and
+ * 'stopped' with NOT_RUN_RESULT for a trace with none: the server answers
+ * every call it ran, so one with no result never ran, or its result comes
+ * after a card frame committed its row and patches it there (the
+ * skill_result handler). The call an approval card waits on keeps the
+ * "Awaiting approval" it was given until the card's answer patches it
+ * (approvalLeg). The kill switch stamps 'stopped' on its own rows in
+ * streamControl. A resolved trace also carries the verdict and exit code
+ * its result brought, and the meta when it had one. Every trace keeps its
+ * round, when its skill frame named one.
  */
 export function committedToolUse(t: SkillTrace): ToolUseEvent {
+  const notRun = !t.resolved && !t.paused;
   return {
     toolId: rowKey(t),
     toolName: t.name,
     input: t.input ?? {},
-    result: t.output || undefined,
-    status: t.status === 'error' ? 'error' : 'complete',
+    result: t.output || (notRun ? NOT_RUN_RESULT : undefined),
+    status: t.status === 'error' ? 'error' : notRun ? 'stopped' : 'complete',
     previewImage: t.previewImage,
     ...(t.resolved ? { isError: t.status === 'error', exitCode: t.exitCode ?? null } : {}),
     ...(t.meta ? { meta: t.meta } : {}),
@@ -339,12 +349,15 @@ export async function readSSEStream(
             const round = typeof parsed.round === 'number' ? { round: roundBase + parsed.round } : {};
             const trace: SkillTrace = { id, name: parsed.skill, input: {}, output: '', status: 'running', ...round };
             skillTraces.push(trace);
-            // Show trace in real-time during streaming
+            // Show trace in real-time during streaming. The arrival time
+            // is the running group's clock, kept on the live row so a
+            // remount of the row does not restart it.
             store().addStreamToolUse({
               toolId: rowKey(trace),
               toolName: parsed.skill,
               input: {},
               status: 'running',
+              startedAt: Date.now(),
               ...round,
             });
           }
@@ -409,6 +422,18 @@ export async function readSSEStream(
               trace.exitCode = exitCode;
               if (meta) trace.meta = meta;
               if (previewImage) trace.previewImage = previewImage;
+            } else if (parsed.tool_use_id) {
+              // A card frame the call raised (a hook's refusal, a cron row,
+              // a workflow preview) arrives before its result and commits
+              // the rows above it: the result lands on the committed row.
+              patchCommittedRows(getChatStore(sessionId), sessionId, parsed.tool_use_id, {
+                result: toolOutput,
+                status: isError ? 'error' : 'complete',
+                isError,
+                exitCode,
+                ...(meta ? { meta: () => meta } : {}),
+                ...(previewImage ? { previewImage } : {}),
+              });
             }
 
             // Update real-time trace to complete
@@ -526,7 +551,10 @@ export async function readSSEStream(
               const localTrace =
                 (reqId ? skillTraces.find((t) => t.id === reqId && !t.resolved) : undefined)
                 ?? skillTraces.find((t) => t.name === paused.toolName && !t.resolved);
-              if (localTrace) localTrace.output = `Awaiting approval: ${req.summary}`;
+              if (localTrace) {
+                localTrace.output = `Awaiting approval: ${req.summary}`;
+                localTrace.paused = true;
+              }
             }
 
             const approval: PendingApproval = {

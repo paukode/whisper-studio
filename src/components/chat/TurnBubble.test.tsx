@@ -120,7 +120,9 @@ describe('TurnBubble', () => {
     }
     expect(regenerate).toHaveBeenCalledTimes(1);
     const detail = (regenerate.mock.calls[0][0] as CustomEvent).detail;
-    expect(detail).toMatchObject({ index: 1, content: question.content });
+    // The question's own index: the history is cut at it and the send adds
+    // it again.
+    expect(detail).toMatchObject({ index: 0, content: question.content });
   });
 
   it('draws the live tail inside the same bubble, with the committed chips, and no timestamp or actions yet', () => {

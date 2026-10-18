@@ -45,7 +45,7 @@ export function isAgentGroupTool(name: string): boolean {
 
 /** Partition a flat tool list into either single tools or consecutive
  *  agent-tool groups, preserving original order. Used by both
- *  ChatMessage (completed messages) and StreamingMessage (in-flight). */
+ *  TurnSegment (committed rows) and StreamingMessage (in-flight). */
 export type GroupedTool = ToolUseEvent | ToolUseEvent[];
 
 export function groupAgentTools(tools: ToolUseEvent[]): GroupedTool[] {

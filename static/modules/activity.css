@@ -91,9 +91,11 @@
 }
 .activity-row.open > .activity-head .activity-chevron { transform: rotate(90deg); }
 
+/* The label keeps a floor before the chips take its room: in a narrow bubble
+   the chips give way (clipped) rather than the label going to nothing. */
 .activity-label {
     flex: 0 1 auto;
-    min-width: 0;
+    min-width: min(14ch, 40%);
     margin-left: 2px;
     font-weight: 500;
     white-space: nowrap;
@@ -118,7 +120,9 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    flex: 0 0 auto;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
 }
 .activity-row.activity-error > .activity-head .activity-slot,
 .activity-row.activity-error > .activity-head .activity-label { color: var(--accent-record); }
@@ -150,23 +154,36 @@
 button.activity-pill { cursor: pointer; }
 button.activity-pill:hover { border-color: var(--accent); }
 
-/* Detail lines: one grid per call. */
+/* Detail lines: one grid for the group, which every call's line shares
+   (subgrid), so the verb column fits the group's longest verb ("Remembered",
+   "Checked out"; 62px at least) and the subjects start in one column. In a
+   narrow bubble the subject keeps a floor and the verb gives way first. The
+   right padding is the room the line's hover extends into, as on the left. */
 .chat-msg.assistant ul.activity-calls,
 .activity-calls {
     list-style: none;
     margin: 2px 0 0 29px;
-    padding: 0 0 0 11px;
+    padding: 0 6px 0 11px;
     border-left: 1px solid var(--border-strong);
+    display: grid;
+    grid-template-columns: 18px minmax(min(62px, 20%), max-content) minmax(min(10ch, 25%), 1fr) max-content 18px;
+    column-gap: 8px;
 }
 .chat-msg.assistant .activity-calls li,
-.activity-call { margin: 0; padding: 0; }
+.activity-call {
+    margin: 0;
+    padding: 0;
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: subgrid;
+}
+.activity-call > * { grid-column: 1 / -1; }
 .activity-call-line {
     display: grid;
-    grid-template-columns: 18px 62px minmax(0, 1fr) max-content 18px;
-    column-gap: 8px;
+    grid-template-columns: subgrid;
     align-items: center;
     min-height: 28px;
-    margin: 0 0 0 -6px;
+    margin: 0 -6px;
     padding: 2px 6px;
     border-radius: 4px;
     line-height: 1.5;
@@ -267,7 +284,7 @@ button.activity-pill:hover { border-color: var(--accent); }
 }
 .activity-call-shot { margin: 2px 0 6px 26px; }
 
-/* ─── Thinking block (ChatMessage.tsx, StreamingMessage.tsx) ─── */
+/* ─── Thinking block (TurnSegment.tsx, StreamingMessage.tsx) ─── */
 .thinking-block { margin-bottom: 4px; }
 .thinking-summary {
     display: flex;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '@/types/chat';
-import { spokenTurn, traceRuns, turnEntries, turnKey, type DisplayEntry, type TurnEntry } from './turnEntries';
+import { isLiveTurn, spokenTurn, traceRuns, turnEntries, turnKey, type DisplayEntry, type TurnEntry } from './turnEntries';
 
 const tool = (name: string) => ({ toolId: `tu_${name}`, toolName: name, input: {}, status: 'complete' as const });
 
@@ -114,6 +114,55 @@ describe('turnEntries', () => {
       toolOnly(['workflow_started']),
     ]);
     expect(shape(later)).toEqual([{ message: 0 }, { turn: [1, 2, 3] }, { turn: [4] }]);
+  });
+
+  it('keeps a workflow card in its turn when a refusal card of the same round landed between', () => {
+    // One round read .env (refused by a hook) and ran workflow_run: the
+    // hook's card committed the calls as a row, then landed as one, and the
+    // preview card came after it.
+    const out = turnEntries([
+      user('run the release workflow'),
+      text('Starting it.', ['ws_read_file', 'workflow_run']),
+      toolOnly(['hook_blocked']),
+      toolOnly(['workflow_preview']),
+      text('Approve the preview to run it.'),
+    ]);
+    expect(shape(out)).toEqual([{ message: 0 }, { turn: [1, 2, 3, 4] }]);
+  });
+
+  describe('a row appended outside the stream', () => {
+    const standalone = (m: ChatMessage): ChatMessage => ({ ...m, standalone: true });
+
+    it("is a bubble of its own, and the running turn's next row starts another", () => {
+      // A turn streams; the user runs /ci and /workflow meanwhile; the turn
+      // then commits its next row.
+      const out = turnEntries([
+        user('fix the parser'),
+        text('Reading the parser first.'),
+        standalone(toolOnly(['ci_diagnosis'])),
+        standalone(toolOnly(['workflow_preview'])),
+        text('The parser drops the last token.', ['ws_read_file']),
+      ]);
+      expect(shape(out)).toEqual([{ message: 0 }, { turn: [1] }, { turn: [2] }, { turn: [3] }, { turn: [4] }]);
+      expect(isLiveTurn(out[out.length - 1])).toBe(true);
+    });
+
+    it('keeps a /subagent intro apart from the turn that streams on below it', () => {
+      const out = turnEntries([
+        user('fix the parser'),
+        text('Reading the parser first.'),
+        user('audit the docs'),
+        standalone(text('Subagent started: working on this in the background.')),
+        text('The parser drops the last token.'),
+      ]);
+      expect(shape(out)).toEqual([{ message: 0 }, { turn: [1] }, { message: 2 }, { turn: [3] }, { turn: [4] }]);
+    });
+
+    it('never takes the live reply of a turn that is still streaming', () => {
+      const out = turnEntries([user('q'), text('Reading the parser first.'), standalone(toolOnly(['ci_started']))]);
+      expect(isLiveTurn(out[out.length - 1])).toBe(false);
+      expect(isLiveTurn(out[1])).toBe(true);
+    });
   });
 
   it('a row with a slash card and other tools is part of the turn', () => {

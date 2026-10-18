@@ -18,18 +18,23 @@
  * example.com/a.html stays text.
  *
  * Never touched: fenced code blocks, inline code spans, raw HTML code (pre,
- * code, kbd and samp elements), markdown links and images (their labels
- * too), reference definitions, autolinks, HTML tags and web addresses. A
- * write result's link (#wsfile=...&open=os) is a link already, so it keeps
- * opening with the OS app. An indented code block (four spaces, no fence)
- * cannot be told from a list item's text without parsing the list, so it
- * reads as prose.
+ * code, kbd and samp elements), HTML blocks (a line that opens with a block
+ * tag such as <details>, <summary> or <table>, to the next blank line:
+ * marked reads no markdown there, so a link would show as its source),
+ * markdown links and images (their labels too), reference definitions,
+ * autolinks, HTML tags and web addresses. While a reply streams, a code
+ * span whose closing backticks have not arrived yet runs to the end of the
+ * text (the `streaming` option). A write result's link (#wsfile=...&open=os)
+ * is a link already, so it keeps opening with the OS app. An indented code
+ * block (four spaces, no fence) cannot be told from a list item's text
+ * without parsing the list, so it reads as prose.
  *
  * One regex pass, because the streaming view re-parses on every token: the
  * alternatives ahead of the path match what must stay as it is, and since
  * the leftmost match wins, a path inside one of them is never seen. Each
  * scan that may not find its end stops at a bound (a newline, the next "<",
- * 32 characters of a scheme), so no input makes the pass quadratic. A
+ * 32 characters of a scheme) or reads its run once (a lookahead the match
+ * then takes whole), so no input makes the pass quadratic. A
  * backtick is written \x60: in a raw string an escaped backtick keeps its
  * backslash, which the u flag (for \p{L}) rejects.
  */
@@ -50,6 +55,9 @@ const SKIP = [
   String.raw`!?\[(?:[^\[\]\n]|\[[^\[\]\n]*\])*\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^\]\n]*\])`,
   // A reference definition: [id]: target
   String.raw`^[ \t]{0,3}\[[^\]\n]+\]:[^\n]*`,
+  // An HTML block (CommonMark's kind 6): a line that opens with a block
+  // tag, to the next blank line.
+  String.raw`^[ \t]{0,3}<\/?(?:address|article|aside|blockquote|details|dialog|div|dl|figure|footer|form|h[1-6]|header|li|nav|ol|p|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)(?![${W}-])[^\n]*(?:\n(?![ \t]*$)[^\n]*)*`,
   // Raw HTML code, to its closing tag or, like a fence, to the end of the
   // text while it is still streaming: a link written inside would show as
   // its markdown.
@@ -70,7 +78,15 @@ const PATH =
   String.raw`\.(?=[A-Za-z0-9]{0,7}[A-Za-z])[A-Za-z0-9]{1,8})(?![${W}@+\/-]|\.[${W}])` +
   String.raw`(?::(?<start>\d+)(?:-(?<end>\d+))?)?`;
 
+// While a reply streams: a code span whose closing run has not arrived yet,
+// from its backticks to the end of the text within one paragraph. After the
+// closed span above, so a span that is closed is read as one. Its run is
+// read once (the lookahead), so a stray backtick earlier costs one scan.
+const OPEN_CODE_SPAN =
+  String.raw`(?<!\x60)\x60+(?!\x60)(?=(?<open>(?:[^\n]|\n(?![ \t]*\n))*))\k<open>(?![\s\S])`;
+
 const TOKEN_RE = new RegExp([...SKIP, PATH].join('|'), 'gmu');
+const STREAMING_TOKEN_RE = new RegExp([...SKIP, OPEN_CODE_SPAN, PATH].join('|'), 'gmu');
 
 /** The path url-quoted as Python's quote() does it (server/index/citations.py):
  *  every character but letters, digits, _.-~ and / is escaped, so a "&" or
@@ -89,11 +105,12 @@ interface MentionGroups {
 
 /** Turn the plain path mentions in ``md`` into editor links against the
  *  workspace root ``wsRoot``; ``md`` unchanged when no workspace is
- *  connected or it names no path. */
-export function linkifyPaths(md: string, wsRoot: string): string {
+ *  connected or it names no path. ``streaming``: ``md`` is a reply still
+ *  arriving, whose last code span may not be closed yet. */
+export function linkifyPaths(md: string, wsRoot: string, { streaming = false } = {}): string {
   const root = (wsRoot || '').replace(/\/+$/, '');
   if (!md || !root || !md.includes('/')) return md;
-  return md.replace(TOKEN_RE, (...args: unknown[]) => {
+  return md.replace(streaming ? STREAMING_TOKEN_RE : TOKEN_RE, (...args: unknown[]) => {
     const match = args[0] as string;
     const groups = args[args.length - 1] as MentionGroups;
     if (!groups.path) return match;

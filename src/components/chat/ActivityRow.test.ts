@@ -4,7 +4,7 @@ import { labelCommit } from '@/hooks/chatStream/activityLabels';
 import { readSSEStream } from '@/hooks/chatStream/sseStream';
 import { dropRuntime, getChatStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
 import { iconFor } from './activityIcons';
-import { describeGroup } from './activityLabel';
+import { callVerb, describeGroup } from './activityLabel';
 import { groupChips } from './activityChips';
 import type { ToolMeta, ToolUseEvent, TurnModelSettings } from '@/types/chat';
 
@@ -281,7 +281,7 @@ describe('tool icon coverage', () => {
     'terminal_run', 'terminal_send', 'terminal_close',
     'git_add_commit', 'git_diff', 'git_push', 'git_stash', 'git_branch_list',
     'github_api', 'github_actions', 'ci_status', 'verify_change',
-    'memory_write', 'memory_delete',
+    'memory_write', 'memory_delete', 'rules_write',
     'preview_navigate', 'preview_click', 'preview_logs', 'preview_screenshot',
     'cron_run', 'cron_update',
     'task_get', 'task_status', 'task_output', 'task_cancel',
@@ -554,6 +554,18 @@ describe('group label', () => {
       tool('memory_delete', { input: { filename: 'old_note.md' } }),
     ]);
     expect(memory.label).toBe('Recalled user_role.md, forgot old_note.md');
+  });
+
+  it('says a rules_write saved a rule, in the file its target names', () => {
+    const one = tool('rules_write', { input: { target: 'global_rules', content: 'Never use em dashes.' } });
+    expect(describeGroup([one]).label).toBe('Saved global rules');
+    expect(callVerb(one)).toBe('Saved');
+    const two = describeGroup([
+      one,
+      tool('rules_write', { input: { target: 'project_whisper_md', content: 'Build with npm.' } }),
+    ]);
+    expect(two.label).toBe('Saved 2 rules');
+    expect(iconFor('rules_write')).toBe(iconFor('skill_list'));
   });
 
   it('never writes an em dash', () => {

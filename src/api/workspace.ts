@@ -67,6 +67,9 @@ export interface EditRecord {
   added: number | null;
   removed: number | null;
   approximate: boolean;
+  /** The write made the file. An existing empty file that was written has
+   *  an empty original too, and was modified. */
+  created: boolean;
   at: string;
   stored: boolean;
 }

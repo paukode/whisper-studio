@@ -26,6 +26,7 @@ const record = (r: Partial<EditRecord>): EditRecord => ({
   added: 2,
   removed: 1,
   approximate: false,
+  created: false,
   at: '2026-10-18T10:00:00+00:00',
   stored: true,
   ...r,
@@ -68,7 +69,7 @@ describe('EditDiffViewer', () => {
   });
 
   it('opens a created file against an empty original: every row an addition, status Added', async () => {
-    getEdit.mockResolvedValue(record({ path: 'src/new.ts', original: '', modified: 'a\nb\nc\n', added: 3, removed: 0 }));
+    getEdit.mockResolvedValue(record({ path: 'src/new.ts', original: '', modified: 'a\nb\nc\n', added: 3, removed: 0, created: true }));
 
     const { container } = openViewer();
 
@@ -79,6 +80,16 @@ describe('EditDiffViewer', () => {
     expect(container.querySelector('.git-diff-title')?.textContent).toBe('new.tsAdded');
     expect(container.querySelector('.git-diff-path')?.textContent).toBe('src/new.ts');
     expect(container.querySelector('.git-diff-stats')?.textContent).toBe('+3 -0');
+  });
+
+  it('calls an existing empty file the write filled Modified, not Added', async () => {
+    getEdit.mockResolvedValue(record({ path: 'pkg/__init__.py', original: '', modified: 'X = 1\n', added: 1, removed: 0 }));
+
+    const { container } = openViewer();
+
+    expect(await screen.findByText('Modified')).toBeTruthy();
+    expect(screen.queryByText('Added')).toBeNull();
+    expect(codeCells(container, 'added')).toEqual(['X = 1']);
   });
 
   it('shows a modified file with its counts and both panes', async () => {

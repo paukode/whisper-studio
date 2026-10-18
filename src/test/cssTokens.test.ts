@@ -54,3 +54,31 @@ describe('CSS custom properties', () => {
     expect(missing).toEqual([]);
   });
 });
+
+describe('theme overrides of the foundation tokens', () => {
+  const themes = Object.entries(sheets).find(([file]) => file.endsWith('themes.css'))?.[1] ?? '';
+  const rules = [...themes.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+    selector: m[1].replace(/\/\*[\s\S]*?\*\//g, '').trim(),
+    props: new Map([...m[2].matchAll(/(--[a-zA-Z0-9_-]+)\s*:\s*([^;]+);/g)].map((d) => [d[1], d[2].trim()])),
+  }));
+  const foundation = new Set(rules.filter((r) => r.selector === ':root').flatMap((r) => [...r.props.keys()]));
+
+  it('outrank the :root block, which comes after the theme blocks', () => {
+    // [data-theme^="light"] and :root are equally specific, so the later
+    // :root value won: the light themes' deeper caution orange never applied.
+    const losing = rules
+      .filter((r) => r.selector.includes('[data-theme') && !r.selector.startsWith(':root['))
+      .flatMap((r) => [...r.props.keys()].filter((p) => foundation.has(p)).map((p) => `${r.selector} ${p}`));
+    expect(losing).toEqual([]);
+  });
+
+  it('keep caution apart from done in the daltonized themes', () => {
+    for (const theme of ['dark-daltonized', 'light-daltonized']) {
+      const accentLive = rules.find((r) => r.selector === `[data-theme="${theme}"]`)?.props.get('--accent-live');
+      const riskWarn = rules.find((r) => r.selector === `:root[data-theme="${theme}"]`)?.props.get('--risk-warn');
+      expect(accentLive, theme).toBeTruthy();
+      expect(riskWarn, theme).toBeTruthy();
+      expect(riskWarn).not.toBe(accentLive);
+    }
+  });
+});

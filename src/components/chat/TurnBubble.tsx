@@ -55,7 +55,7 @@ const ICON_PROPS = {
  * Delete removes every row of the turn.
  *
  * Structure:
- *   div.chat-msg-wrap.assistant-wrap
+ *   div.chat-msg-wrap.assistant-wrap.turn (one fixed width: style.css)
  *     div.chat-msg.assistant
  *       (segments) (live tail) (chips) (timestamp) (actions)
  */
@@ -69,14 +69,16 @@ const TurnBubbleView: React.FC<TurnBubbleProps> = ({
 
   const handleRegenerate = useCallback(() => {
     // Re-send the user message this turn answers, with its attachments, so
-    // the regenerate sees the same files.
+    // the regenerate sees the same files. The history is cut AT that message
+    // (useComposerChatEvents), since the send adds it again: cut after it,
+    // the question stood in the transcript twice and reached the model twice.
     const messages = getActiveChatStore().getState().messages;
     const prevUserMsg = messages.slice(0, first).reverse().find((m) => m.role === 'user');
     if (!prevUserMsg) return;
     const prevIndex = messages.indexOf(prevUserMsg);
     window.dispatchEvent(new CustomEvent('whisper-regenerate', {
       detail: {
-        index: prevIndex + 1,
+        index: prevIndex,
         content: prevUserMsg.content,
         attachmentIds: prevUserMsg.attachmentIds,
         attachmentNames: prevUserMsg.attachmentNames,
@@ -89,7 +91,7 @@ const TurnBubbleView: React.FC<TurnBubbleProps> = ({
   }, [indices]);
 
   return (
-    <div className="chat-msg-wrap assistant-wrap">
+    <div className="chat-msg-wrap assistant-wrap turn">
       <div className={`chat-msg assistant${noEnter ? ' no-enter' : ''}`}>
         {runs.map((run) => (
           // Keyed by the run's first row, so a row that joins the last run

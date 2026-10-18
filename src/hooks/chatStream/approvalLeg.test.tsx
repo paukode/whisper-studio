@@ -451,6 +451,7 @@ describe('approval leg', () => {
         result: 'Wrote a.py (6 bytes).',
         status: 'complete',
         isError: false,
+        exitCode: null,
         meta,
       });
       expect(rows()[0]).toEqual(otherRow);
@@ -480,7 +481,53 @@ describe('approval leg', () => {
         result: 'Error: Write failed: disk full',
         status: 'error',
         isError: true,
+        exitCode: null,
       });
+    });
+
+    it("a refused card's row says the user refused it, and saves before the turn resumes", async () => {
+      seed();
+      const saves: Array<{ result?: string; resumed: number }> = [];
+      useSessionStore.setState({
+        debouncedSave: vi.fn(() => saves.push({ result: rows()[1]?.result, resumed: chatCalls().length })),
+      } as never);
+      await act(async () => {
+        await answerApproval(writeApproval(), false, false);
+      });
+      expect(executeApproval).not.toHaveBeenCalled();
+      expect(rows()[1]).toEqual({
+        ...pausedRow,
+        result: '[Denied by user] ws_write_file: a.py',
+        status: 'error',
+        isError: true,
+        exitCode: null,
+      });
+      expect(getChatStore(SID).getState().messages[1].traces?.[0]).toMatchObject({
+        output: '[Denied by user] ws_write_file: a.py',
+        status: 'error',
+      });
+      expect(saves[0]).toEqual({ result: '[Denied by user] ws_write_file: a.py', resumed: 0 });
+      expect(chatCalls()).toHaveLength(1);
+    });
+
+    it("an approved command's row carries the exit code it finished with", async () => {
+      getChatStore(SID).getState().setMessages([
+        { role: 'user', content: 'build it', timestamp: 't0' },
+        {
+          role: 'assistant', content: '', timestamp: 't1',
+          toolUse: [{ toolId: 'tu_dev', toolName: 'ws_run_command', input: { command: 'grep x a.txt' }, result: 'Awaiting approval: grep', status: 'complete' }],
+        },
+      ]);
+      let answered: Promise<boolean> = Promise.resolve(true);
+      await act(async () => {
+        answered = answerApproval(approval(), true, false);
+        await tick();
+      });
+      await act(async () => {
+        finishAction!({ ok: false, error: 'exit code 1', output: '(no output)\n(exit code 1: no matches found)', exit_code: 1 });
+        await answered;
+      });
+      expect(rows()[0]).toMatchObject({ status: 'error', isError: true, exitCode: 1 });
     });
 
     it("keeps a preview of a long result, cut where the server cuts a live row's", async () => {

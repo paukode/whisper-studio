@@ -48,10 +48,12 @@ function text(t: string, tone: 'neutral' | 'err' | 'live' | 'muted' = 'neutral')
   return { kind: 'text', text: t, tone };
 }
 
-/** The exit code of a command: the server's field when it sent one, else
- *  the trailing "(exit code N)" line older transcripts carry. */
+/** The exit code of a command: the server's field when it sent one (null
+ *  when the command never finished: still running in the background, or
+ *  never started), else the trailing "(exit code N)" line older transcripts
+ *  carry. */
 export function exitCodeOf(tool: ToolUseEvent): number | null {
-  if (typeof tool.exitCode === 'number') return tool.exitCode;
+  if (tool.exitCode !== undefined) return tool.exitCode;
   const m = /\(?exit(?: code)?[ :]+(\d+)\)?\s*$/i.exec((tool.result ?? '').trimEnd());
   return m ? Number(m[1]) : null;
 }

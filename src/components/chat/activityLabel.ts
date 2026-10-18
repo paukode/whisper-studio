@@ -127,8 +127,17 @@ const MEMORY_VERBS: Record<string, [verb: string, base: string]> = {
   memory_delete: ['forgot', 'forget'],
 };
 
+/** rules_write records a rule the user gave in one of four files under
+ *  ~/.whisper (server/rules_tools.py), named by its target. */
+const RULE_TARGETS: Record<string, string> = {
+  project_rules: 'project rules',
+  global_rules: 'global rules',
+  project_whisper_md: 'project WHISPER.md',
+  global_whisper_md: 'global WHISPER.md',
+};
+
 /** The synthetic cards sseEventCards.ts drops into the transcript. */
-const CARD_TOOLS = new Set([
+export const CARD_TOOLS: ReadonlySet<string> = new Set([
   'hook_blocked', 'stop_hook_feedback', 'stop_hook_block', 'security_blocked',
   'goal_eval', 'goal_cap_reached', 'plan_blocked',
 ]);
@@ -530,7 +539,12 @@ export function describeCall(tool: ToolUseEvent): CallDesc {
     // memory_read and memory_delete name their memory by its file alone.
     const filename = str(input.filename);
     const subject = str(input.name ?? input.key ?? input.query) ?? (filename ? basename(filename) : null);
-    return make({ kind: 'memory', verb, base, subject, line: subject ?? '' });
+    return make({ kind: 'memory', verb, base, subject, line: subject ?? '', noun: 'memory', nounPlural: 'memories' });
+  }
+  if (name === 'rules_write') {
+    const target = str(input.target);
+    const subject = target ? RULE_TARGETS[target] ?? target.replace(/_/g, ' ') : null;
+    return make({ kind: 'memory', verb: 'saved', base: 'save', subject, line: subject ?? '', noun: 'rule', nounPlural: 'rules' });
   }
   const friendly = friendlyToolName(name).replace(/_/g, ' ');
   return make({ kind: 'other', verb: 'ran', base: 'run', subject: friendly, line: summariseTool(tool) || friendly });
@@ -598,7 +612,7 @@ function phrase(calls: CallDesc[]): Phrase {
       return one(`fetched ${plural(n, 'page')}`, null);
     case 'memory':
       if (n === 1) return first.subject ? one(`${first.verb} ${first.subject}`, callKey(first)) : one(first.verb, null);
-      return one(`${first.verb} ${plural(n, 'memory', 'memories')}`, null);
+      return one(`${first.verb} ${plural(n, first.noun, first.nounPlural)}`, null);
     case 'other':
       if (n === 1) return one(`ran ${first.subject}`, null);
       return one(`ran ${first.subject} ${n} times`, null);

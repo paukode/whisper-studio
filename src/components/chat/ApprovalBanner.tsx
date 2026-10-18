@@ -152,7 +152,7 @@ export function ApprovalBanner() {
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => void handleAnswer(currentApproval, true, false)} disabled={isProcessing} type="button"
-            style={btnStyle('var(--success)', 'var(--success)', '#fff', isProcessing)}>
+            style={btnStyle('var(--success)', 'var(--success)', 'var(--on-success)', isProcessing)}>
             {isProcessing ? 'Running…' : <>{ICON.check}Yes</>}
           </button>
           {offerSessionChoice && (

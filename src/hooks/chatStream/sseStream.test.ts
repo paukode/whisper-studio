@@ -15,8 +15,9 @@
  * is auto-created per session id by the runtime registry.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { nextRoundBase, readSSEStream } from './sseStream';
+import { NOT_RUN_RESULT, nextRoundBase, readSSEStream } from './sseStream';
 import { sendApprovalContinuation } from './approvalContinuation';
+import { killSessionStream } from './streamControl';
 import { useUIStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { PendingApproval } from '@/stores/chatStore';
@@ -306,6 +307,40 @@ describe('sendApprovalContinuation', () => {
   afterEach(() => {
     for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
     vi.restoreAllMocks();
+  });
+
+  it('a continuation that pauses on another card keeps nothing in the live tail, so a Stop adds no copy', async () => {
+    const sid = 'sess-pause-again';
+    vi.spyOn(useSessionStore.getState(), 'debouncedSave').mockImplementation(() => {});
+    getChatStore(sid).getState().setMessages([
+      { role: 'user', content: 'go', timestamp: 't0' },
+      { role: 'assistant', content: '', timestamp: 't1', toolUse: [{ toolId: 'tu_1', toolName: 'ws_write_file', input: { path: 'a.py' }, result: 'Wrote a.py', status: 'complete', round: 0 }] },
+    ]);
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(sseResponse([
+      { text: 'Now b.py.' },
+      { skill: 'ws_write_file', input: {}, tool_use_id: 'tu_2', round: 0 },
+      { skill_input: 'ws_write_file', input: { path: 'b.py' }, tool_use_id: 'tu_2' },
+      {
+        approval_request: {
+          tool_use_id: 'tu_2', action: 'ws_write_file', category: 'write', preview: 'diff',
+          summary: 'Write b.py', payload: { path: 'b.py', content: 'y' },
+        },
+      },
+    ]));
+
+    await sendApprovalContinuation({ ...approval, sessionId: sid }, sid, true, undefined, { ok: true, output: 'Wrote a.py' });
+
+    const state = getChatStore(sid).getState();
+    // The second card waits, so the session is still streaming...
+    expect(state.isStreaming).toBe(true);
+    expect(state.currentApproval?.toolUseId).toBe('tu_2');
+    // ...with the leg's rows committed once and nothing left in the tail.
+    expect(state.currentStreamToolUse).toEqual([]);
+    expect(state.currentStreamContent).toBe('');
+    const ids = () => getChatStore(sid).getState().messages.flatMap((m) => (m.toolUse ?? []).map((t) => t.toolId));
+    expect(ids()).toEqual(['tu_1', 'tu_2']);
+    killSessionStream(sid);
+    expect(ids()).toEqual(['tu_1', 'tu_2']);
   });
 
   it('commits a visible message when the continuation returns no text', async () => {
@@ -920,6 +955,51 @@ describe('readSSEStream tool frames', () => {
       { toolName: 'ws_write_file', result: 'wrote a.ts', status: 'complete' },
       { toolName: 'ws_write_file', result: 'Awaiting approval: Write b.ts', status: 'complete' },
     ]);
+  });
+
+  it('a call with no result commits as not run, never as done; the call a card waits on keeps its wait', async () => {
+    // Before, every unresolved trace committed 'complete', so the group read
+    // "Wrote a.py" with a check for a write that never ran.
+    const sid = 'sess-not-run';
+    await readSSEStream(sseResponse([
+      { skill: 'ws_write_file', tool_use_id: 'tu_a', round: 0 },
+      { skill: 'ws_write_file', tool_use_id: 'tu_b', round: 0 },
+      {
+        approval_request: {
+          tool_use_id: 'tu_a', action: 'ws_write_file', category: 'write', preview: 'diff',
+          summary: 'Write a.py', payload: { path: 'a.py' },
+        },
+      },
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    const [paused, never] = committed(sid)[0].toolUse ?? [];
+    expect(paused).toMatchObject({ toolId: 'tu_a', status: 'complete', result: 'Awaiting approval: Write a.py' });
+    expect(never).toMatchObject({ toolId: 'tu_b', status: 'stopped', result: NOT_RUN_RESULT });
+  });
+
+  it("a result that lands after a card committed its row patches that row, and saves", async () => {
+    // A hook refuses the call: its card frame comes before the call's own
+    // result and commits the row above it, still without a result.
+    const sid = 'sess-late-result';
+    const save = vi.spyOn(useSessionStore.getState(), 'debouncedSave').mockImplementation(() => {});
+    await readSSEStream(sseResponse([
+      { skill: 'ws_run_command', tool_use_id: 'tu_rm', round: 0 },
+      { skill_input: 'ws_run_command', input: { command: 'rm -rf build' }, tool_use_id: 'tu_rm' },
+      { hook_blocked: { tool_name: 'ws_run_command', reason: 'no rm' } },
+      {
+        skill_result: 'ws_run_command', output: '[Hook denied] no rm', tool_use_id: 'tu_rm',
+        is_error: true, exit_code: null,
+      },
+    ]), sid, signal(), SETTINGS);
+
+    const rows = committed(sid);
+    expect(rows[0].toolUse).toMatchObject([
+      { toolId: 'tu_rm', status: 'error', result: '[Hook denied] no rm', isError: true, exitCode: null },
+    ]);
+    expect(rows[1].toolUse?.[0].toolName).toBe('hook_blocked');
+    expect(save).toHaveBeenCalledWith(sid);
+    save.mockRestore();
   });
 });
 

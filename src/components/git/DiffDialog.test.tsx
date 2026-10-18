@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
-import { DiffGrid } from './DiffDialog';
+import { DiffDialog, DiffGrid } from './DiffDialog';
 import { collapseUnchanged, rowsFromHunks, rowsFromTexts } from '@/utils/diffRows';
 
 /**
@@ -71,5 +71,30 @@ describe('DiffGrid', () => {
 
     expect(gapButtons(container)).toHaveLength(0);
     expect(container.querySelector('.git-diff-gap-label')?.textContent).toBe('... 18 unchanged lines');
+  });
+});
+
+describe('DiffDialog focus', () => {
+  it('takes the focus when it opens, keeps Tab inside, and gives the focus back on close', () => {
+    const opener = document.createElement('button');
+    opener.textContent = '+3 -1';
+    document.body.appendChild(opener);
+    opener.focus();
+    try {
+      const rows = rowsFromTexts('a\n', 'b\n');
+      const view = render(
+        <DiffDialog path="src/a.ts" status="modified" body={{ kind: 'rows', rows, empty: '' }} onClose={() => {}} />,
+      );
+      const close = view.getByRole('button', { name: 'Close' });
+      expect(document.activeElement).toBe(close);
+      // Tab from the last control comes round to the first, not the page.
+      fireEvent.keyDown(document, { key: 'Tab' });
+      const dialog = view.getByRole('dialog');
+      expect(dialog.contains(document.activeElement)).toBe(true);
+      view.unmount();
+      expect(document.activeElement).toBe(opener);
+    } finally {
+      opener.remove();
+    }
   });
 });

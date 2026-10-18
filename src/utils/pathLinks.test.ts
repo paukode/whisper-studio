@@ -147,6 +147,56 @@ describe('linkifyPaths: what stays text', () => {
   });
 });
 
+describe('linkifyPaths: HTML blocks', () => {
+  // marked reads no markdown inside an HTML block (to the next blank line),
+  // so a link written there would show as its source, absolute path and all.
+  it('leaves the text of a details summary alone, and links the body after the blank line', () => {
+    const text = '<details>\n<summary>Changed src/a.ts</summary>\n\nThe body names src/b.ts.\n</details>';
+    expect(linkifyPaths(text, WS)).toBe(
+      '<details>\n<summary>Changed src/a.ts</summary>\n\nThe body names ' +
+        '[src/b.ts](#wsfile=/Users/me/repo/src/b.ts).\n</details>',
+    );
+  });
+
+  it('leaves the cells of an HTML table alone', () => {
+    const text = '<table><tr><td>src/a.ts</td></tr>\n<tr><td>src/b.ts</td></tr></table>';
+    expect(linkifyPaths(text, WS)).toBe(text);
+  });
+
+  it('still links a path in inline HTML inside a paragraph, where marked reads markdown', () => {
+    expect(linkifyPaths('See <sub>src/a.ts</sub> for it.', WS)).toBe(
+      'See <sub>[src/a.ts](#wsfile=/Users/me/repo/src/a.ts)</sub> for it.',
+    );
+    // A tag name that only starts like a block tag is no block.
+    expect(linkifyPaths('<para>src/a.ts', WS)).toBe('<para>[src/a.ts](#wsfile=/Users/me/repo/src/a.ts)');
+  });
+});
+
+describe('linkifyPaths: a reply still streaming', () => {
+  it('leaves a path in a code span whose closing backticks have not arrived alone', () => {
+    const prefix = 'Run `pytest tests/test_x.py ';
+    expect(linkifyPaths(prefix, WS, { streaming: true })).toBe(prefix);
+    // Once closed, it is a code span either way.
+    const done = 'Run `pytest tests/test_x.py -q` to check.';
+    expect(linkifyPaths(done, WS, { streaming: true })).toBe(done);
+    expect(linkifyPaths(done, WS)).toBe(done);
+  });
+
+  it('links the paragraphs before an open code span, and the text before it', () => {
+    expect(linkifyPaths('See src/a.ts.\n\nThen src/b.ts and `cat src/c.ts', WS, { streaming: true })).toBe(
+      'See [src/a.ts](#wsfile=/Users/me/repo/src/a.ts).\n\n' +
+        'Then [src/b.ts](#wsfile=/Users/me/repo/src/b.ts) and `cat src/c.ts',
+    );
+  });
+
+  it('reads many stray backticks quickly', () => {
+    const input = `${'a ` b\n\n'.repeat(8_000)}src/x.ts`;
+    const t0 = performance.now();
+    expect(linkifyPaths(input, WS, { streaming: true })).toContain('[src/x.ts]');
+    expect(performance.now() - t0).toBeLessThan(100);
+  });
+});
+
 describe('linkifyPaths: one pass in time linear to the text', () => {
   // The streaming view re-parses on every token. Unbounded, each of these
   // took 0.4 to 2.6 s at this size; bounded, each takes a few ms.

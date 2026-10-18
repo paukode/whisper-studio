@@ -149,6 +149,12 @@ export interface ChatMessage {
    *  content ends in "(Stopped)" and any toolUse entry that was still
    *  running carries status 'stopped'. */
   stopped?: true;
+  /** An assistant row appended outside the chat stream, while a turn may be
+   *  streaming: a slash command's card or intro (/workflow, /ci, /subagent)
+   *  and the CI card's Autofix rows. It draws as a bubble of its own and no
+   *  later row joins it (turnEntries), so a running turn's rows and live
+   *  reply never land in it. */
+  standalone?: true;
   /** Interactive user question from ask_user tool.
    *
    * Single-question rounds populate `userQuestion`. When the assistant emits
@@ -256,6 +262,11 @@ export interface ToolUseEvent {
    *  slash-command rows and the voice path. The activity groups split where
    *  it changes (AgentCard.groupForActivity). */
   round?: number;
+  /** When the call's skill frame arrived (Date.now()), on a live row only:
+   *  the running group's elapsed chip counts from it, so the count survives
+   *  a remount of the row. Never committed (sseStream.committedToolUse,
+   *  streamControl.stoppedToolUse). */
+  startedAt?: number;
 }
 
 export interface SkillTrace {
@@ -265,8 +276,9 @@ export interface SkillTrace {
   input: Record<string, unknown>;
   output: string;
   /** 'running' until the skill_result lands, then the server's verdict
-   *  (is_error). A commit maps 'running' to 'complete' and the kill switch
-   *  stamps 'stopped' on the committed row instead. */
+   *  (is_error). A commit maps a trace with no result to 'stopped' (it never
+   *  ran, or its result is still to come and patches the row), except the
+   *  call an approval card waits on. */
   status: 'running' | 'complete' | 'error';
   /** See ToolUseEvent.exitCode. */
   exitCode?: number | null;
@@ -280,6 +292,10 @@ export interface SkillTrace {
   previewImage?: { media_type: string; data: string };
   /** See ToolUseEvent.round. */
   round?: number;
+  /** The call the stream paused on for an approval card: the server sends
+   *  no result for it, and the card's answer patches its committed row
+   *  (approvalLeg). */
+  paused?: boolean;
 }
 
 /** One progress event emitted by an agent runtime turn. Shaped to mirror

@@ -1,9 +1,11 @@
 import type { ChatMessage } from '@/types/chat';
+import { CARD_TOOLS } from './activityLabel';
 
 /**
  * The cards that can land with no user row before them, each with the model
  * tools that also produce it. A slash command (useSlashCommands.tsx: /workflow,
- * /ci, /ci autofix) or the CI card's Autofix button appends them on their own,
+ * /ci, /ci autofix) or the CI card's Autofix button appends them on their own
+ * and marks them standalone; rows saved before that mark existed carry none,
  * and without a boundary they would join the bubble of whatever turn came
  * last. The model's own workflow_run, ci_watch and ci_autofix calls return
  * the same cards as side effects in the middle of its turn (sseEventCards
@@ -45,6 +47,14 @@ function isCardRow(m: ChatMessage): boolean {
   return tools.length > 0 && tools.every((t) => CARD_PRODUCERS.has(t.toolName));
 }
 
+/** A row of the gate's own cards only (a hook's or the security check's
+ *  refusal, plan mode, a goal check): none of them returns a workflow or CI
+ *  card, so a card after it comes from the calls of the row before it. */
+function isGateCardRow(m: ChatMessage): boolean {
+  const tools = m.toolUse ?? [];
+  return tools.length > 0 && tools.every((t) => CARD_TOOLS.has(t.toolName));
+}
+
 /** True when `caller` holds a call that returns every card in `card`: the
  *  model ran it in this turn, so the card is that call's side effect. */
 function producedBy(card: ChatMessage, caller: ChatMessage | null): boolean {
@@ -64,17 +74,21 @@ function producedBy(card: ChatMessage, caller: ChatMessage | null): boolean {
  * regenerate, the task checkpoints and the deliveries that settle on the last
  * assistant row. Only the display joins them.
  *
- * A workflow or CI card row joins the turn only when the row before it (past
- * any cards that joined the same way) holds the model call that returns that
- * card. Any other card row (a slash command, the Autofix button) starts a new
- * entry instead of joining the turn above it. Pure: rows are never copied or
- * changed.
+ * A standalone row (a slash command's card or intro, the Autofix button's
+ * rows; ChatMessage.standalone) is an entry of its own, and the next
+ * assistant row starts a new one: a turn streaming while a slash command ran
+ * goes on in a bubble below it. An unmarked workflow or CI card row joins
+ * the turn only when the row before it (past any cards that joined the same
+ * way, and past the gate's refusal cards that the same round committed
+ * between them) holds the model call that returns that card; any other (a
+ * slash command's card saved before the mark) starts a new entry instead of
+ * joining the turn above it. Pure: rows are never copied or changed.
  */
 export function turnEntries(messages: ChatMessage[]): DisplayEntry[] {
   const out: DisplayEntry[] = [];
   let turn: TurnEntry | null = null;
-  // The turn's latest row that is not a card: the one whose calls a card
-  // that follows can come from.
+  // The turn's latest row of model calls: the one whose calls a card that
+  // follows can come from.
   let caller: ChatMessage | null = null;
   for (let i = 0; i < messages.length; i += 1) {
     const m = messages[i];
@@ -84,17 +98,29 @@ export function turnEntries(messages: ChatMessage[]): DisplayEntry[] {
       out.push({ kind: 'message', message: m, index: i });
       continue;
     }
+    if (m.standalone) {
+      out.push({ kind: 'turn', rows: [m], indices: [i], index: i });
+      turn = null;
+      caller = null;
+      continue;
+    }
     const card = isCardRow(m);
     if (!turn || (card && !producedBy(m, caller))) {
       turn = { kind: 'turn', rows: [], indices: [], index: i };
       out.push(turn);
       caller = null;
     }
-    if (!card) caller = m;
+    if (!card && !isGateCardRow(m)) caller = m;
     turn.rows.push(m);
     turn.indices.push(i);
   }
   return out;
+}
+
+/** Whether a stream's live reply draws inside `entry`'s bubble: the last
+ *  entry, when it is a turn and not a row appended outside the stream. */
+export function isLiveTurn(entry: DisplayEntry | undefined): entry is TurnEntry {
+  return entry?.kind === 'turn' && !entry.rows[entry.rows.length - 1].standalone;
 }
 
 /** The key a turn's bubble is known by: its first row. Stable while the turn

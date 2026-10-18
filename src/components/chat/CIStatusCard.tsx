@@ -106,6 +106,8 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
           input: { branch: plan.branch, run_id: plan.run_id, url: plan.url, findings: plan.findings },
           status: 'complete',
         }],
+        // Appended outside the stream: a bubble of its own (turnEntries).
+        standalone: true,
       });
     }
     if (plan.script) {
@@ -133,6 +135,7 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
           },
           status: 'complete',
         }],
+        standalone: true,
       });
     }
   };

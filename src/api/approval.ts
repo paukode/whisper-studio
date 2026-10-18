@@ -25,6 +25,10 @@ export interface ApprovalOutcome {
    *  same numbers the inline path puts in its skill_result meta; null for
    *  every other action. */
   stats?: ApprovalStats | null;
+  /** A finished command's exit status (ws_run_command, aws_cli), the one
+   *  the inline path's skill_result frame carries; null for every other
+   *  action, and for a command that went to the background or was stopped. */
+  exit_code?: number | null;
 }
 
 /** What a write changed: lines added and removed against the file before it

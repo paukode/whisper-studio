@@ -415,6 +415,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               content: '',
               timestamp: new Date().toISOString(),
               toolUse: [{ toolId: 'workflow_started', toolName: 'workflow_started', input: { run_id: r.run_id, name: wfName }, status: 'complete' }],
+              standalone: true,
             });
           } catch (e) {
             // 403 = saved but not trusted; the server refuses to run it without
@@ -449,6 +450,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
                 chat.addMessage({
                   role: 'assistant', content: '', timestamp: new Date().toISOString(),
                   toolUse: [{ toolId: 'ci_diagnosis', toolName: 'ci_diagnosis', input: { branch: plan.branch, run_id: plan.run_id, url: plan.url, findings: plan.findings }, status: 'complete' }],
+                  standalone: true,
                 });
               }
               if (plan.script) {
@@ -460,6 +462,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
                   // the time the user clicks Approve instead of the repo the
                   // plan was actually diagnosed against.
                   toolUse: [{ toolId: 'workflow_preview', toolName: 'workflow_preview', input: { script: plan.script, name: 'ci-autofix', description: plan.summary, phases: [{ title: 'Fix' }, { title: 'Verify' }], budget_tokens: plan.budget_tokens ?? null, model_id: modelId, effort_label: s.effortLevel, workspace_path: plan.cwd }, status: 'complete' }],
+                  standalone: true,
                 });
               } else {
                 addToast({ type: 'info', message: plan.summary, duration: 4000 });
@@ -469,6 +472,7 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
               getChatStore(sessionId).getState().addMessage({
                 role: 'assistant', content: '', timestamp: new Date().toISOString(),
                 toolUse: [{ toolId: 'ci_started', toolName: 'ci_started', input: { task_id: r.task_id, branch: r.branch }, status: 'complete' }],
+                standalone: true,
               });
             }
           } catch {
@@ -654,7 +658,8 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         const baseTs = Date.now();
         chat().addMessage({ role: 'user', content: task, timestamp: new Date(baseTs).toISOString() });
         const subTs = new Date(baseTs + 1).toISOString();
-        chat().addMessage({ role: 'assistant', content: INTRO, timestamp: subTs });
+        // Its own bubble: a turn streaming meanwhile goes on below it.
+        chat().addMessage({ role: 'assistant', content: INTRO, timestamp: subTs, standalone: true });
 
         // Stable id so the backend stream and the card's Stop button refer to
         // the same run.

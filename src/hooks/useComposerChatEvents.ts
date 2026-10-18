@@ -12,9 +12,11 @@ type ChatStream = ReturnType<typeof useChatStream>;
  *    `approvedToolResult` so Bedrock sees proper tool_results for the
  *    ask_user_question tool_use blocks. `detail.answer` (single string) is a
  *    plain chat send — the live path for WorkspacePromptCard's resume flow.
- *  - `whisper-regenerate` — from ChatMessage action buttons. Truncates history
- *    at the message index and resends its content, re-attaching the original
- *    files by id so regenerate/edit-resend doesn't drop them.
+ *  - `whisper-regenerate`: from the Regenerate button of a user bubble
+ *    (ChatMessage) or an assistant turn (TurnBubble), both naming the user
+ *    message to send again. Truncates history at that index and resends its
+ *    content, re-attaching the original files by id so regenerate/edit-resend
+ *    doesn't drop them.
  */
 export function useComposerChatEvents(chatStream: ChatStream): void {
   useEffect(() => {

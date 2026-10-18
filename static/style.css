@@ -1035,6 +1035,12 @@ input.segment-speaker {
 }
 .chat-msg-wrap.user-wrap { align-self: flex-end; align-items: flex-end; }
 .chat-msg-wrap.assistant-wrap { align-self: flex-start; max-width: 66.67%; }
+/* An assistant turn that holds activity rows (TurnBubble, and the live reply
+ * that starts one) keeps one width while it streams, as the approved mockup
+ * draws it: shrink-wrapped, the bubble widened with each paragraph and moved
+ * the chip column of every row above it. A plain reply stays shrink-wrapped. */
+.chat-msg-wrap.assistant-wrap.turn:has(.activity-row) { width: 66.67%; }
+.chat-msg-wrap.assistant-wrap.turn:has(.activity-row) > .chat-msg.assistant { align-self: stretch; }
 .msg-actions {
     display: flex; gap: 2px;
 }
@@ -4295,6 +4301,14 @@ button.ws-git-status-badge:hover {
 .git-diff-code.removed {
     background: color-mix(in srgb, var(--error, #f44) 16%, transparent);
 }
+/* A line whose ending alone changed: no final newline, or CRLF. */
+.git-diff-eol {
+    margin-left: 8px;
+    font-family: var(--font-sans);
+    font-size: var(--fs-caption);
+    color: var(--text-muted);
+    user-select: none;
+}
 .git-diff-sign {
     display: inline-block;
     width: 1ch;
@@ -4335,6 +4349,33 @@ button.ws-git-status-badge:hover {
 }
 .git-diff-preview .git-diff-grid {
     font-size: var(--fs-caption);
+}
+/* The card's path line with its +added -removed counts, and the text it
+ * shows when no diff can be drawn: the grid's face and size. */
+.git-diff-preview-path,
+.git-diff-preview-text {
+    font-family: var(--font-mono);
+    font-size: var(--fs-caption);
+}
+.git-diff-preview-path {
+    color: var(--text-muted);
+    margin-bottom: 6px;
+    overflow-wrap: anywhere;
+}
+.git-diff-preview-path .git-diff-stats { margin-left: 8px; }
+.git-diff-preview-note {
+    font-size: var(--fs-caption);
+    color: var(--text-muted);
+    margin-bottom: 6px;
+}
+.git-diff-preview-text {
+    background: var(--bg-inset);
+    padding: 8px;
+    border-radius: 6px;
+    max-height: 240px;
+    overflow: auto;
+    white-space: pre-wrap;
+    margin: 0;
 }
 
 /* ─── Streaming "working" footer (motion during quiet streaming phases) ─── */

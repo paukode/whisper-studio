@@ -41,7 +41,8 @@ const EditDiff: React.FC<{ toolUseId: string; path: string }> = ({ toolUseId, pa
       // workspace, so the line keeps one form.
       path={resolvePath(data?.path || path, wsPath).shown}
       // A created file opens against an empty original: every line added.
-      status={kept ? (data.original === '' ? 'added' : 'modified') : undefined}
+      // An existing empty file the write filled has one too, and was modified.
+      status={kept ? (data.created ? 'added' : 'modified') : undefined}
       added={data?.added}
       removed={data?.removed}
       approximate={data?.approximate}

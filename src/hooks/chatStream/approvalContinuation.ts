@@ -195,9 +195,12 @@ export async function sendApprovalContinuation(
 
     // Tool traces are committed even with no text (mirroring the fresh path's
     // approval-pause commit) so the work the continuation did survives the
-    // streaming state being cleared.
+    // streaming state being cleared. The live rows clear in the same update:
+    // a continuation that paused on another card stays streaming until that
+    // card is answered, and its committed rows must not draw a second time
+    // in the live tail (nor be committed again by a Stop meanwhile).
     if (contText || result.pendingArtifact || result.pendingVisuals.length > 0 || result.pendingPlan || contTeamReports || contToolUse.length > 0) {
-      store().addMessage(labelCommit({
+      store().flushStreamSegment(labelCommit({
         role: 'assistant',
         content: contText,
         timestamp: new Date().toISOString(),

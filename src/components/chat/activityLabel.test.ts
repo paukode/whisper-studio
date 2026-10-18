@@ -266,6 +266,11 @@ describe('exit codes and test summaries', () => {
     expect(exitCodeOf(tool('ws_run_command', { result: 'boom\n(exit code 2)\n' }))).toBe(2);
     expect(exitCodeOf(tool('ws_run_command', { result: 'Found 1 error.\nexit 1' }))).toBe(1);
     expect(exitCodeOf(tool('ws_run_command', { result: 'fine' }))).toBeNull();
+    // The server said the command has no exit status (it went to the
+    // background, or never started): no chip, whatever the text says.
+    const handedOff = tool('ws_run_command', { exitCode: null, result: '[Background Task Started] task_id=t1\n(exit code 0)' });
+    expect(exitCodeOf(handedOff)).toBeNull();
+    expect(callOutcome(handedOff)).toBeNull();
   });
 
   it('reads the last passed and failed counts a runner printed', () => {

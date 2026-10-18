@@ -108,10 +108,12 @@ export function abortSessionStream(sessionId: string): void {
 export const STOPPED_TOOL_RESULT = '[Stopped by user]';
 
 /** Freeze a live tool trace for the transcript: a step still running (or
- *  never started) becomes 'stopped' so no committed row spins forever. */
+ *  never started) becomes 'stopped' so no committed row spins forever. The
+ *  live row's arrival time is not kept. */
 function stopToolEntry(t: ToolUseEvent): ToolUseEvent {
-  if (t.status !== 'running' && t.status !== 'pending') return t;
-  return { ...t, status: 'stopped', result: t.result || STOPPED_TOOL_RESULT };
+  const { startedAt, ...row } = t;
+  if (row.status !== 'running' && row.status !== 'pending') return row;
+  return { ...row, status: 'stopped', result: row.result || STOPPED_TOOL_RESULT };
 }
 
 /** Close every live team report in place: each agent still running (or
