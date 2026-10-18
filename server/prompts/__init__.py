@@ -26,6 +26,7 @@ from enum import IntEnum
 from server.git.prompts import build_git_instructions_prompt, build_git_status_prompt
 from server.prompts.base import BASE
 from server.prompts.modes import BRIEF_PREFIX, PLAN_MODE
+from server.prompts.narration import WORK_NARRATION
 from server.prompts.rules import rules_block as _user_rules_block
 from server.prompts.workspace import (
     CODE_OUTPUT_RULE_GENERIC,
@@ -369,6 +370,20 @@ _registry.register(
         layer=PromptLayer.WORKSPACE,
         priority=35,
         content=RULES_CAPTURE,
+    )
+)
+
+# How a chat turn shows its work: a line before each group of tool calls, what
+# a read found, and a recap with a table of the files written
+# (server/prompts/narration.py). Fixed text on the cached layer. It names brief
+# and plan mode itself instead of being switched off by them, so it adds no
+# rewrite of the static block when a mode flips.
+_registry.register(
+    PromptSection(
+        name="work_narration",
+        layer=PromptLayer.WORKSPACE,
+        priority=36,
+        content=WORK_NARRATION,
     )
 )
 

@@ -13,6 +13,7 @@ import pytest
 
 from server.git.prompts import build_git_instructions_prompt
 from server.prompts import build_system_prompt, build_system_prompt_split
+from server.prompts.narration import WORK_NARRATION
 from server.prompts.workspace import (
     CODE_OUTPUT_RULE_GENERIC,
     CODE_OUTPUT_RULE_WORKSPACE,
@@ -117,7 +118,7 @@ def test_prompt_prose_only_references_real_tools(tmp_path, monkeypatch):
     (repo / ".git").mkdir(parents=True)
     available = _catalog_tool_names(monkeypatch, str(repo))
 
-    prose = build_git_instructions_prompt() + workspace_prompt(str(repo))
+    prose = build_git_instructions_prompt() + workspace_prompt(str(repo)) + WORK_NARRATION
     referenced = set(re.findall(r"\b(?:git|ws)_[a-z_]+\b", prose))
 
     missing = sorted(referenced - available)
