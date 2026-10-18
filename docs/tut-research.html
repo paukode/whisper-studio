@@ -73,9 +73,10 @@ conference? Cite sources.</code></pre></div>
           fresh facts, it calls <code>web_search</code> on its own. You do not pick the tool.</p>
       </li>
       <li>
-        <h4>Watch the Activity row</h4>
-        <p>Each tool call shows up in the turn's <b>Activity</b> row, the collapsed strip that counts the
-          steps Claude took. Web search and web fetch are read-only, so no approval card interrupts you.</p>
+        <h4>Watch the activity row</h4>
+        <p>Each tool call shows in the activity row of the turn. The row is one line that shows what
+          Claude did, for example <b>Searched 2 times, fetched example.com</b>. Web search and web fetch
+          are read-only. No approval card stops you.</p>
       </li>
       <li>
         <h4>Read the answer with its links</h4>
@@ -138,8 +139,8 @@ out the three main claims.</code></pre></div>
       an airtight boundary: see <a href="arch-sandbox.html">Sandbox &amp; security</a> for its limits.</p>
 
     <h2 id="related-skills">What else fires alongside</h2>
-    <p>Research often pulls in other capabilities without you asking for them by name. Each one shows up
-      as its own step in the turn's Activity row:</p>
+    <p>Research often pulls in other capabilities without you asking for them by name. Each one shows
+      as a call in the activity row of the turn:</p>
     <div class="card-grid">
       <div class="card">
         <h3><code>analyze_document</code></h3>
@@ -162,12 +163,12 @@ out the three main claims.</code></pre></div>
       <a href="ref-tools.html#builtin-tools">Agent tools</a> and <a href="tut-skills.html">Skills</a>.</p>
 
     <h2 id="reading-the-trace">Check what was searched</h2>
-    <p>You are never asked to trust a claim blindly. Consecutive tool calls in a turn collapse into one
-      <b>Activity</b> row rather than a card per call, and it expands into a one-line summary per step,
-      each of which opens to show that step's raw output. That is your audit trail for a claim.</p>
+    <p>You can examine the source of each claim. A sequence of tool calls in a turn goes into one
+      activity row, not one card for each call. When you expand the row, it shows one line for each
+      call. Each line opens to show the raw output of the call. That is your audit trail for a claim.</p>
     <ul>
-      <li>Expand the Activity row to see the exact <code>web_search</code> query and the results Claude got.</li>
-      <li>Open a <code>web_fetch</code> step to see which page was read and the text that came back.</li>
+      <li>Expand the activity row to see the <code>web_search</code> query and the results that the tool returned.</li>
+      <li>Open the output of a <code>web_fetch</code> call to see the page that the tool read and the text that it returned.</li>
       <li>Follow the links in the answer to read each source directly.</li>
     </ul>
     <p>A step that errored opens the row by default, so a failed search is never hidden behind a
