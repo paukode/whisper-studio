@@ -965,8 +965,9 @@ async def stop_team_endpoint(team_id: str):
 async def subagent_stream_endpoint(request: Request):
     """Run a `/subagent` task through the full agent runtime (tool loop + all
     enabled tools, including MCP browser tools) in the background, streaming
-    live progress as ``team_progress`` SSE frames that the frontend renders in
-    a TeamReportCard. Non-blocking: the composer stays open while it runs.
+    live progress as ``team_progress`` SSE frames that the frontend folds into
+    the agent row (its full feed opens in the dock's agent pane).
+    Non-blocking: the composer stays open while it runs.
 
     Progress is published on a PRIVATE event channel so a concurrent /api/chat
     turn (which drains the session channel) never absorbs these events.

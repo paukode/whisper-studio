@@ -4,8 +4,7 @@
 (phase started/turn_start/tool_call/tool_result/completed/failed/
 stopped) on the agents event bus under ``type: "cron_progress"``; the
 long-lived session SSE forwards them as ``team_progress``, so the existing
-TeamReportCard/AgentCard fold renders a live per-tool log with zero new
-frontend card code.
+agent-row fold shows a running cron job with zero new frontend code.
 
 Stop: `request_stop` sets the per-job threading.Event (kept for observability
 and for any caller that only wants the plain flag — e.g. `stop_requested`

@@ -413,9 +413,10 @@
         <tr><td><code>budget_state</code></td><td><code>finishing</code> once the coming round is the last one (the cap, 90 percent of the time budget, or a cost cap already tripped), else <code>working</code>.</td></tr>
       </tbody>
     </table></div>
-    <p>The SPA reads exactly these fields for an agent row's budget bars and its state pill
-      (<code class="path">src/hooks/chatStream/agentBudget.ts</code>); nothing there is computed from the
-      browser's own clock.</p>
+    <p>The SPA reads exactly these fields for the agent pane's status line (rounds against the cap,
+      estimated cost, whether the run is finishing up) in
+      <code class="path">src/stores/agentFeedStore.ts</code>; only the elapsed time ticks on the
+      browser's clock.</p>
 
     <h2 id="to-the-client">Getting to the client</h2>
     <p>The event bus does not talk to the browser directly. While the chat turn runs the tool batch, the

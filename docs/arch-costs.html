@@ -297,8 +297,8 @@
       <code>cost_usd</code> (the engine's running total: each round priced with
       <code>call_cost</code> at its own tier, never the summed counts priced again; a workflow's
       ledger adds the same figure per agent), and whether the coming round is the final one.
-      <code class="path">src/hooks/chatStream/agentBudget.ts</code> folds them into three bars and a
-      state pill; see <a href="arch-agent-recorder.html">The agent flight recorder</a>.</p>
+      <code class="path">src/stores/agentFeedStore.ts</code> reads them into the agent pane's status
+      line; see <a href="arch-agent-recorder.html">The agent flight recorder</a>.</p>
 
     <h2 id="settings-panel">Settings and the Costs tab</h2>
     <p>The two caps are set in the Settings UI (and persisted to <code>config.json</code>); see

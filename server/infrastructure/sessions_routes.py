@@ -200,8 +200,8 @@ def _session_event_frame(ev: dict) -> dict | None:
         return {"task_event": ev.get("taskEvent") or {}}
     if kind == "cron_progress":
         # Live cron-run turn/tool frames. Forwarded in the team_progress
-        # envelope so the existing TeamReportCard fold renders a running cron
-        # job with zero card changes.
+        # envelope so the existing agent-row fold shows a running cron job
+        # with zero frontend changes.
         return {"team_progress": ev.get("event") or {}}
     if kind == "ci_progress":
         # Live CI-watch ticks (WS-J), delivered detached so the CI card
