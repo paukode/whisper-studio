@@ -46,6 +46,16 @@ describe('chatStore — messages', () => {
     expect(s.currentStreamContent).toBe('');
     expect(s.currentThinkingContent).toBe('');
   });
+
+  it('deleteMessages removes exactly the given rows, in any order, in one update', () => {
+    for (const text of ['q', 'a1', 'a2', 'a3', 'next']) store.getState().addMessage(userMessage(text));
+    let updates = 0;
+    const off = store.subscribe(() => { updates += 1; });
+    store.getState().deleteMessages([1, 3, 2, 3, 99]);
+    off();
+    expect(updates).toBe(1);
+    expect(store.getState().messages.map((m) => m.content)).toEqual(['q', 'next']);
+  });
 });
 
 describe('chatStore — finishStream atomicity', () => {

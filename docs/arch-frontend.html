@@ -326,13 +326,21 @@
         a row with an error is open at the start. Because the streaming view and the saved
         transcript use the same constant, <code>ACTIVITY_MIN_RUN</code>, the row does not move when
         the turn ends.</dd>
-      <dt>Prose before a tool call gets its own bubble</dt><dd>Text the model writes <em>before</em>
-        it acts is a finished thought, so the stream commits it as a standalone message and starts a
-        new one for whatever comes after the tool work. Concatenating both produced replies like
-        "No. ... Yes, it's saved now." in a single bubble. Tool-only stretches are left to
-        accumulate, and runs of bare tool-only rows are re-folded into one entry at the display layer
-        (<code class="path">src/components/chat/groupToolOnlyRuns.ts</code>) while keeping the real
-        store indices, so edit, delete and regenerate still address the right message.</dd>
+      <dt>One bubble for each assistant turn</dt><dd>Text that the model writes <em>before</em> a
+        tool call is a complete thought, so the stream commits it as a row of its own. The store keeps
+        these rows separate, because their indices control edit, delete, regenerate, the task
+        checkpoints, and the deliveries. <code class="path">src/components/chat/turnEntries.ts</code>
+        puts each run of consecutive assistant rows into one turn, and <code>TurnBubble</code>
+        (<code class="path">src/components/chat/TurnBubble.tsx</code>) shows the turn in one bubble.
+        Each row shows as a <code>TurnSegment</code>. When a row has no text after its tool calls,
+        the rows of only tool calls that come directly after it show in the same segment
+        (<code>traceRuns</code>), and the tool calls of these rows show as one list. Thus a call and
+        the refusal card that comes after it show as one group. Then the "Verified" chips, the
+        timestamp, and the actions show one time. A workflow or CI card stays in the turn when the row
+        before it has the model call that made the card (<code>workflow_run</code>,
+        <code>ci_watch</code>, or <code>ci_autofix</code>). A card that a slash command or the
+        <b>Autofix</b> button adds starts a new turn. While the turn streams, the live reply shows at
+        the end of the same bubble.</dd>
       <dt>Agent work gets a row, not a transcript</dt><dd>Consecutive agent-orchestration calls
         become an <code>AgentCard</code>, or one agent row each (<code>AgentRows.tsx</code>) when
         matching team results arrived: name, state, and <b>Open</b>. Open puts the agent in the dock's
@@ -344,8 +352,8 @@
         without losing its loaded context. See <a href="arch-agent-recorder.html">the agent flight
         recorder</a>.</dd>
     </div>
-    <p>Beyond the two chat roles, <code class="path">src/components/chat/ChatMessage.tsx</code>
-      renders four card roles that short-circuit the normal bubble: <code>cron_event</code>,
+    <p><code class="path">src/components/chat/ChatMessage.tsx</code> shows the user bubble and
+      four card roles that do not use the normal bubble: <code>cron_event</code>,
       <code>session_message</code>, <code>agent_report</code>, and
       <code>agent_answer</code> (an assistant bubble labelled "Answered from the agents' reports",
       with the team name appended when there is one).</p>
@@ -428,7 +436,10 @@
       <dt><code class="path">src/utils/sanitizeHtml.ts</code></dt><dd>Safe Markdown rendering (marked + DOMPurify).</dd>
       <dt><code class="path">src/utils/wsFileLinks.ts</code></dt><dd>Delegated click handling for citation, created-file, and localhost links in rendered messages.</dd>
       <dt><code class="path">src/components/chat/WorkspacePromptCard.tsx</code></dt><dd>The workspace-connect-only prompt card and its answers-array resume.</dd>
-      <dt><code class="path">src/components/chat/ChatMessage.tsx</code></dt><dd>The seven message roles and the two grouping passes that produce the readable transcript.</dd>
+      <dt><code class="path">src/components/chat/ChatMessage.tsx</code></dt><dd>The user bubble and the card roles.</dd>
+      <dt><code class="path">src/components/chat/turnEntries.ts</code></dt><dd>The display fold: each run of consecutive assistant rows becomes one turn, and <code>traceRuns</code> finds the rows whose tool calls show as one list.</dd>
+      <dt><code class="path">src/components/chat/TurnBubble.tsx</code></dt><dd>One bubble for each assistant turn: the rows of the turn, then the Verified chips, the timestamp, and the actions.</dd>
+      <dt><code class="path">src/components/chat/TurnSegment.tsx</code></dt><dd>One set of rows in the bubble of their turn: the thinking, the tool groups of all the rows as one list, the prose, and the cards.</dd>
       <dt><code class="path">src/components/chat/ActivityRow.tsx</code></dt><dd>The activity row: the group label, the chips, one line for each call, and the output of each call.</dd>
       <dt><code class="path">src/components/chat/AgentRows.tsx</code></dt><dd>One row per agent in the chat, with Open for the dock's agent pane.</dd>
       <dt><code class="path">src/components/preview/AgentPanel.tsx</code></dt><dd>The agent pane: status line, Extend, Stop, and the live feed of everything the agent does.</dd>

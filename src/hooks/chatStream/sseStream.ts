@@ -169,7 +169,7 @@ export async function readSSEStream(
    * Everything folded in here is drained: leaving it would re-commit the same
    * prose below the card at stream end and render every tool chip twice.
    * A no-op when there is nothing to commit (a card that arrives before any
-   * text or tool call), so it never adds an empty bubble.
+   * text or tool call), so it never adds an empty row.
    */
   const flushSegment = (): void => {
     const toolUse: ToolUseEvent[] = skillTraces.map(committedToolUse);
@@ -276,8 +276,9 @@ export async function readSSEStream(
               store().setStreamStatus(null);
             }
             // Prose that was streamed BEFORE this tool call is a finished
-            // thought; commit it as its own bubble so the text the model
-            // writes after the tool work lands as a separate, later bubble.
+            // thought; commit it as its own row so the text the model writes
+            // after the tool work lands as a separate, later row (the turn's
+            // bubble, TurnBubble, still shows the rows together, in order).
             // Concatenating both into one reply produced "No. ... Yes, it's
             // saved now." in a single message. Tool-only segments are left
             // to accumulate (no text = nothing to separate).

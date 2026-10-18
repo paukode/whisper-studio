@@ -1,60 +1,29 @@
 import React, { useState, useCallback, useRef, useLayoutEffect } from 'react';
-import type { ChatMessage as ChatMessageType, ToolUseEvent } from '@/types/chat';
+import type { ChatMessage as ChatMessageType } from '@/types/chat';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
-import { ProgramArtifactCard } from '@/components/chat/ProgramArtifactCard';
-import { VizCard } from '@/components/chat/VizCard';
-import { WorkspacePromptCard } from '@/components/chat/WorkspacePromptCard';
-import { AgentCard, groupAgentTools, groupForActivity, isActivityEntry, isTasksEntry, ACTIVITY_MIN_RUN } from '@/components/chat/AgentCard';
-import { TaskCard } from '@/components/chat/TaskCard';
-import { PlanCard } from '@/components/chat/PlanCard';
-import type { SessionTask } from '@/stores/taskStore';
-import { ActivityRow } from '@/components/chat/ActivityRow';
-import { ICON } from '@/components/chat/activityIcons';
-import { TeamAgentRows } from '@/components/chat/AgentRows';
 import { AgentReportCard } from './AgentReportCard';
 import { CronEventCard } from '@/components/chat/CronEventCard';
 import { SessionMessageCard } from '@/components/chat/SessionMessageCard';
-import { WorkflowPreviewCard } from '@/components/chat/WorkflowPreviewCard';
-import { WorkflowRunCard } from '@/components/chat/WorkflowRunCard';
-import { CIStatusCard } from '@/components/chat/CIStatusCard';
-import { CIDiagnosisCard } from '@/components/chat/CIDiagnosisCard';
-import { saveMediaSize } from '@/components/chat/MediaResize';
-import { findMatchingTeamReports } from '@/hooks/chatStream/teamProgress';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
 import { formatMessageTimestamp } from '@/utils/formatTimestamp';
-import { UserQuestionCard, UserQuestionGroupCard } from '@/components/chat/UserQuestionCard';
-import { AnswerSources } from '@/components/chat/AnswerSources';
-import { DeliveryChips } from '@/components/chat/DeliveryChips';
-import { extractFlatCronPayload, exportSingleMessage, copyRichText } from '@/components/chat/messageActions';
+import { extractFlatCronPayload } from '@/components/chat/messageActions';
 
 export interface ChatMessageProps {
   message: ChatMessageType;
   index: number;
-  /** Cumulative task checkpoint for this message's Tasks row, or null when the
-   *  row should be suppressed (state unchanged since the previous task turn).
-   *  Computed once at the conversation level by `computeTaskCheckpoints`. */
-  taskCheckpoint?: SessionTask[] | null;
-  /** True when this message's Tasks row is the current/live one (the most-recent
-   *  checkpoint, bound to the task store). All other checkpoints are historical
-   *  snapshots that must not show a live "in progress" spinner. */
-  taskCheckpointLive?: boolean;
-  /** When true, suppress the msgIn entrance animation on this message's bubble.
-   *  ChatPanel sets it for the message that was just streaming so the committed
-   *  bubble doesn't replay the entrance the StreamingMessage already showed. */
-  noEnter?: boolean;
 }
 
 /**
- * Renders a chat message matching the vanilla HTML structure.
+ * Renders every row that is not part of an assistant turn: the user bubble
+ * and the card roles. Assistant rows render as one bubble per turn
+ * (TurnBubble).
  *
  * Structure:
- *   div.chat-msg-wrap.user-wrap | div.chat-msg-wrap.assistant-wrap
- *     div.chat-msg.user | div.chat-msg.assistant
+ *   div.chat-msg-wrap.user-wrap
+ *     div.chat-msg.user
  *       (content)
  */
-const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheckpoint, taskCheckpointLive, noEnter }) => {
-  const isCronEvent = message.role === 'cron_event';
-  const isUser = message.role === 'user';
+const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -109,59 +78,44 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
   }, []);
 
   const handleRegenerate = useCallback(() => {
-    if (isUser) {
-      window.dispatchEvent(new CustomEvent('whisper-regenerate', {
-        detail: {
-          index,
-          content: message.content,
-          attachmentIds: message.attachmentIds,
-          attachmentNames: message.attachmentNames,
-        },
-      }));
-    } else {
-      // For assistant messages, re-send the preceding user message — carry
-      // its attachments through so the regenerate sees the same files.
-      const messages = getActiveChatStore().getState().messages;
-      const prevUserMsg = messages.slice(0, index).reverse().find(m => m.role === 'user');
-      if (prevUserMsg) {
-        const prevIndex = messages.indexOf(prevUserMsg);
-        window.dispatchEvent(new CustomEvent('whisper-regenerate', {
-          detail: {
-            index: prevIndex + 1,
-            content: prevUserMsg.content,
-            attachmentIds: prevUserMsg.attachmentIds,
-            attachmentNames: prevUserMsg.attachmentNames,
-          },
-        }));
-      }
-    }
-  }, [isUser, index, message.content, message.attachmentIds, message.attachmentNames]);
+    window.dispatchEvent(new CustomEvent('whisper-regenerate', {
+      detail: {
+        index,
+        content: message.content,
+        attachmentIds: message.attachmentIds,
+        attachmentNames: message.attachmentNames,
+      },
+    }));
+  }, [index, message.content, message.attachmentIds, message.attachmentNames]);
 
+  // A user message deletes from here: the turn it started goes with it.
   const handleDelete = useCallback(() => {
-    if (isUser) {
-      getActiveChatStore().getState().deleteMessagesFrom(index);
-    } else {
-      getActiveChatStore().getState().deleteMessage(index);
-    }
-  }, [isUser, index]);
+    getActiveChatStore().getState().deleteMessagesFrom(index);
+  }, [index]);
 
-  // cron_event rows render as a standalone card — none of the
-  // user/assistant chrome (edit, regenerate, copy, tool traces,
-  // attachments, etc.) applies. Hooks above are still called on every
-  // render so React's rules-of-hooks stay satisfied. The payload was
-  // delivered either live via SSE (useChatStream → addMessage) or by
-  // session resume (chat_history JSON).
+  // cron_event rows render as a standalone card: none of the user bubble's
+  // chrome (edit, regenerate, copy, attachments) applies. Hooks above are
+  // still called on every render so React's rules-of-hooks stay satisfied.
+  // The payload was delivered either live via SSE (useChatStream ->
+  // addMessage) or by session resume (chat_history JSON).
   //
   // Tolerate two shapes for back-compat with already-persisted rows:
   //   - nested:  { role: 'cron_event', cronEvent: {event_type, ...} }
   //   - flat:    { role: 'cron_event', event_type, cron_id, cron_name, ... }
   // Newly-emitted events use the nested shape; the flat fallback rescues
-  // rows written before that fix landed.
-  if (isCronEvent) {
+  // rows written before that fix landed. A row with neither still shows
+  // its text.
+  if (message.role === 'cron_event') {
     const payload = message.cronEvent ?? extractFlatCronPayload(message);
-    if (payload) {
-      return <CronEventCard event={payload} />;
-    }
+    if (payload) return <CronEventCard event={payload} />;
+    if (!message.content) return null;
+    return (
+      <div className="chat-msg-wrap assistant-wrap">
+        <div className="chat-msg assistant">
+          <MarkdownRenderer content={message.content} />
+        </div>
+      </div>
+    );
   }
 
   // The wake turn's answer to agent reports that landed with no live turn:
@@ -191,7 +145,7 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
     return null;
   }
 
-  // Cross-session message rows — a text message another session sent this
+  // Cross-session message rows: a text message another session sent this
   // one via send_session_message. Same UI-only-in-storage contract as
   // cron events (the backend relabels it as a user turn before the
   // model sees it, see visible_chat_history).
@@ -202,281 +156,68 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
     return null;
   }
 
-  // A group's written caption is keyed by its first call's id.
-  const writtenLabelOf = (tools: ToolUseEvent[]) => message.activityLabels?.[tools[0]?.toolId ?? ''];
-  // A screenshot's dragged size is keyed by the call's place in toolUse,
-  // which never changes once the message is committed.
-  const mediaFor = (tool: ToolUseEvent) => {
-    const key = `shot-${message.toolUse?.indexOf(tool) ?? -1}`;
-    return {
-      size: message.mediaSizes?.[key],
-      onResize: (size: Parameters<typeof saveMediaSize>[2]) => saveMediaSize(message, key, size),
-    };
-  };
+  if (message.role !== 'user') return null;
 
   return (
-    <div className={`chat-msg-wrap ${isUser ? 'user-wrap' : 'assistant-wrap'}`}>
-      <div className={`chat-msg ${message.role}${isEditing ? ' editing' : ''}${noEnter ? ' no-enter' : ''}`}>
-        {/* Thinking block for completed messages */}
-        {!isUser && message._thinkingText && (
-          <details className="thinking-block">
-            <summary className="thinking-summary">
-              <span className="activity-slot">{ICON.thought}</span>
-              Thought process
-              {message._thinkingMs != null && message._thinkingMs > 0 && (
-                <span className="thinking-elapsed">{(message._thinkingMs / 1000).toFixed(1)}s</span>
-              )}
-            </summary>
-            <div className="thinking-body">{message._thinkingText}</div>
-          </details>
-        )}
-
-        {/* Index-grounding summary: makes it visible whether this turn was
-         *  answered from the workspace index (and how much), so a silent
-         *  no-grounding can't be mistaken for "the model couldn't find it".
-         *  Only present when at least one index was searched (the backend
-         *  omits it otherwise), so users without indexes never see a chip.
-         *  When the turn persisted its sources (grounding.id), the chip is a
-         *  button that opens the passages behind the answer. */}
-        {!isUser && message.grounding && message.grounding.searched > 0 && (
-          <AnswerSources grounding={message.grounding} />
-        )}
-
-        {/* Render tool/skill traces for assistant messages. Two-pass grouping:
-         *  1. ``groupAgentTools`` bundles consecutive agent-orchestration calls
-         *     (spawn_agent / send_message / team_*) into a single AgentCard.
-         *  2. ``groupForActivity`` then bundles consecutive *individual* tool
-         *     calls (read / grep / bash / edit) into a single <ActivityRow>,
-         *     one line that names what the group did ("Read 3 files") and
-         *     expands inline on click.
-         *  Special tools (workspace picker, ask-user) pass through both passes;
-         *  the ones with their own card keep it, the rest draw as a row of one.
-         *
-         *  ACTIVITY_MIN_RUN MUST match StreamingMessage (it does, by
-         *  construction: both import the shared constant). Tool grouping is a
-         *  pure transform of message.toolUse (which is persisted verbatim in
-         *  the session's chat_history), so using the same threshold here means
-         *  the Activity row that appeared while streaming stays put once the
-         *  turn completes AND when an old session is restored. With the
-         *  default (2), a 1-tool turn would collapse during streaming then pop
-         *  back to a bare chip on commit/reload: the disappearing-row bug. */}
-        {!isUser && message.toolUse && message.toolUse.length > 0 && (
-          <div className="skill-traces">
-            {groupForActivity(groupAgentTools(message.toolUse), { minRun: ACTIVITY_MIN_RUN }).map((entry, idx) => {
-              if (Array.isArray(entry)) {
-                // A group can anchor SEVERAL reports (team_create plus each
-                // inline spawn_agent's one-member team) — render the agent
-                // rows of them all, and the generic AgentCard only when none
-                // matched. Rendering both for the same group double-carded
-                // every inline spawn.
-                const matchedReports = findMatchingTeamReports(entry, message.teamReports);
-                if (matchedReports.length > 0) {
-                  return matchedReports.map((r) => (
-                    <TeamAgentRows key={`team-${r.team_id}-${idx}`} report={r} />
-                  ));
-                }
-                return <AgentCard key={`agent-group-${idx}`} tools={entry} />;
-              }
-              // Task-management run — render the compact Tasks row only at a
-              // checkpoint where the cumulative state changed (taskCheckpoint
-              // non-null); otherwise suppress it so the same "N/M done" row
-              // doesn't repeat on every turn. The full list is in the drawer.
-              if (isTasksEntry(entry)) {
-                return taskCheckpoint && taskCheckpoint.length > 0
-                  ? <TaskCard key={`tasks-${idx}`} tasks={taskCheckpoint} historical={!taskCheckpointLive} />
-                  : null;
-              }
-              // Activity bundle: a run of consecutive non-special tools.
-              if (isActivityEntry(entry)) {
-                return (
-                  <ActivityRow
-                    key={`activity-${idx}`}
-                    tools={entry.tools}
-                    writtenLabel={writtenLabelOf(entry.tools)}
-                    mediaFor={mediaFor}
-                  />
-                );
-              }
-              const tool = entry;
-              // Workflow runtime cards (WS-D)
-              if (tool.toolName === 'workflow_preview') {
-                return <WorkflowPreviewCard key={`wf-preview-${idx}`} preview={tool.input as never} />;
-              }
-              if (tool.toolName === 'workflow_started') {
-                const wi = tool.input as { run_id?: string; name?: string };
-                return wi.run_id ? <WorkflowRunCard key={`wf-run-${idx}`} runId={wi.run_id} name={wi.name} /> : null;
-              }
-              // CI watch + autofix cards (WS-J)
-              if (tool.toolName === 'ci_started') {
-                const ci = tool.input as { task_id?: string; branch?: string };
-                return ci.task_id ? <CIStatusCard key={`ci-${idx}`} taskId={ci.task_id} branch={ci.branch} /> : null;
-              }
-              if (tool.toolName === 'ci_diagnosis') {
-                return <CIDiagnosisCard key={`ci-dx-${idx}`} data={tool.input as never} />;
-              }
-              // Workspace prompt — render interactive folder picker card
-              if (tool.toolName === 'ws_workspace_prompt') {
-                const input = tool.input as {
-                  suggested?: string; recent?: string[]; tool_name?: string;
-                };
-                return (
-                  <WorkspacePromptCard
-                    key={`ws-prompt-${idx}`}
-                    suggested={input.suggested ?? ''}
-                    recent={input.recent ?? []}
-                    toolName={input.tool_name}
-                    // tool.toolId now carries the REAL tool_use_id the backend
-                    // stashed this pause under (see sseStream.ts) — resuming
-                    // must answer that exact id, not a hardcoded placeholder.
-                    toolUseId={tool.toolId}
-                  />
-                );
-              }
-
-              // Default: the same row, for a group of one.
-              return (
-                <ActivityRow
-                  key={`${tool.toolName}-${idx}`}
-                  tools={[tool]}
-                  writtenLabel={writtenLabelOf([tool])}
-                  mediaFor={mediaFor}
-                />
-              );
-            })}
-          </div>
-        )}
-
-        {/* Standalone agent rows: any report NOT anchored to a team_create or
-         *  spawn_agent tool-use row above renders directly here. That covers
-         *  background /subagent messages (no toolUse at all), question-round
-         *  commits where the team trace landed on an earlier message, and
-         *  stopped turns that carry only the partial report. */}
-        {!isUser && message.teamReports &&
-          Object.values(message.teamReports)
-            .filter((r) => findMatchingTeamReports(
-              (message.toolUse ?? []).filter(
-                (t) => t.toolName === 'team_create' || t.toolName === 'spawn_agent',
-              ),
-              { [r.team_id]: r },
-            ).length === 0)
-            .map((r) => (
-              <div className="skill-traces" key={`standalone-team-${r.team_id}`}>
-                <TeamAgentRows report={r} />
-              </div>
-            ))}
-
-        {/* User question interactive card. The group component is adaptive: a
-         *  single question renders as clean answer chips (answering submits
-         *  immediately), 2+ stack into one form with a single submit. The
-         *  legacy `userQuestion` path still renders old persisted messages. */}
-        {!isUser && message.userQuestions && message.userQuestions.length > 0 ? (
+    <div className="chat-msg-wrap user-wrap">
+      <div className={`chat-msg user${isEditing ? ' editing' : ''}`}>
+        {isEditing ? (
           <>
-            {/* Prose the model streamed before asking renders above the card. */}
-            {message.content && <MarkdownRenderer content={message.content} />}
-            <UserQuestionGroupCard message={message} />
-          </>
-        ) : !isUser && message.userQuestion ? (
-          <>
-            {message.content && <MarkdownRenderer content={message.content} />}
-            <UserQuestionCard
-              question={message.userQuestion.question}
-              options={message.userQuestion.options}
-              answered={message.userQuestion.answered}
-              message={message}
+            <textarea
+              ref={textareaRef}
+              className="user-msg-edit-textarea"
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEditConfirm(); }
+                if (e.key === 'Escape') { e.preventDefault(); handleEditCancel(); }
+              }}
+              // rows={1} as the seed; the layout effect grows it from there.
+              rows={1}
             />
+            <div className="user-msg-edit-hint">
+              <kbd>Enter</kbd> to save &middot;{' '}
+              <kbd>Shift</kbd>+<kbd>Enter</kbd> for newline &middot;{' '}
+              <kbd>Esc</kbd> to cancel
+            </div>
+            <div className="user-msg-edit-actions">
+              <button className="edit-confirm" onClick={handleEditConfirm} title="Save & resend (Enter)" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </button>
+              <button onClick={handleEditCancel} title="Cancel (Esc)" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+              </button>
+            </div>
           </>
-        ) : !isUser && message.plan ? (
+        ) : (
           <>
-            {message.content && <MarkdownRenderer content={message.content} />}
-            <PlanCard plan={message.plan} />
-          </>
-        ) : !isUser && message.visuals && message.visuals.length > 0 ? (
-          <>
-            {/* The sentence that introduces the picture renders above it. */}
-            {message.content && <MarkdownRenderer content={message.content} />}
-            {message.visuals.map((viz, i) => (
-              <VizCard
-                key={`viz-${i}`}
-                viz={viz}
-                size={message.mediaSizes?.[`viz-${i}`]}
-                onResize={(size) => saveMediaSize(message, `viz-${i}`, size)}
-              />
-            ))}
-          </>
-        ) : !isUser && message.programArtifact ? (
-          <ProgramArtifactCard
-            title={message.programArtifact.title}
-            html={message.programArtifact.html}
-            description={message.programArtifact.description}
-          />
-        ) : isUser ? (
-          isEditing ? (
-            <>
-              <textarea
-                ref={textareaRef}
-                className="user-msg-edit-textarea"
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEditConfirm(); }
-                  if (e.key === 'Escape') { e.preventDefault(); handleEditCancel(); }
-                }}
-                // rows={1} as the seed; the layout effect grows it from there.
-                rows={1}
-              />
-              <div className="user-msg-edit-hint">
-                <kbd>Enter</kbd> to save &middot;{' '}
-                <kbd>Shift</kbd>+<kbd>Enter</kbd> for newline &middot;{' '}
-                <kbd>Esc</kbd> to cancel
+            {/* Attached files, rendered inside the user bubble above the
+             * text, matching the affordance you get in ChatGPT /
+             * Claude.ai. Read from `attachmentNames` which useChatStream
+             * stamps onto the message at send time. Each chip is read-
+             * only (already sent) and reveals the full filename on
+             * hover so very long names stay readable. */}
+            {message.attachmentNames && message.attachmentNames.length > 0 && (
+              <div className="msg-attachments">
+                {message.attachmentNames.map((name, i) => (
+                  <div key={`${name}-${i}`} className="msg-attachment-chip" title={name}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                      <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    <span className="msg-attachment-name">{name}</span>
+                  </div>
+                ))}
               </div>
-              <div className="user-msg-edit-actions">
-                <button className="edit-confirm" onClick={handleEditConfirm} title="Save & resend (Enter)" type="button">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <polyline points="20 6 9 17 4 12"/>
-                  </svg>
-                </button>
-                <button onClick={handleEditCancel} title="Cancel (Esc)" type="button">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                  </svg>
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              {/* Attached files — rendered inside the user bubble, above
-               * the text, matching the affordance you get in ChatGPT /
-               * Claude.ai. Read from `attachmentNames` which useChatStream
-               * stamps onto the message at send time. Each chip is read-
-               * only (already sent) and reveals the full filename on
-               * hover so very long names stay readable. */}
-              {message.attachmentNames && message.attachmentNames.length > 0 && (
-                <div className="msg-attachments">
-                  {message.attachmentNames.map((name, i) => (
-                    <div key={`${name}-${i}`} className="msg-attachment-chip" title={name}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                        <polyline points="14 2 14 8 20 8"/>
-                      </svg>
-                      <span className="msg-attachment-name">{name}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div style={{ whiteSpace: 'pre-wrap' }}>{message.content}</div>
-            </>
-          )
-        ) : message.content ? (
-          <MarkdownRenderer content={message.content} />
-        ) : null}
-
-        {/* What the server verified this reply delivered, under the text that
-         *  claimed it (the streaming bubble showed the same chips live). */}
-        {!isUser && message.deliveries && message.deliveries.length > 0 && (
-          <DeliveryChips deliveries={message.deliveries} />
+            )}
+            <div style={{ whiteSpace: 'pre-wrap' }}>{message.content}</div>
+          </>
         )}
 
-        {/* Timestamp */}
         {message.timestamp && (
           <span className="msg-timestamp">
             {message.spoken && (
@@ -489,61 +230,29 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
           </span>
         )}
 
-        {/* Message actions — different for user vs assistant */}
-        {isUser ? (
-          <div className="msg-actions">
-            <button className="msg-action-btn" onClick={() => void navigator.clipboard.writeText(message.content)} title="Copy">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-              </svg>
-            </button>
-            <button className="msg-action-btn" onClick={handleEdit} title="Edit">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-              </svg>
-            </button>
-            <button className="msg-action-btn" onClick={handleRegenerate} title="Regenerate">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-              </svg>
-            </button>
-            <button className="msg-action-btn" onClick={handleDelete} title="Delete">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-              </svg>
-            </button>
-          </div>
-        ) : (
-          <div className="msg-actions">
-            <button className="msg-action-btn" onClick={() => void navigator.clipboard.writeText(message.content)} title="Copy">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-              </svg>
-            </button>
-            <button className="msg-action-btn" onClick={() => void copyRichText(message.content)} title="Copy Rich Text">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-                <polyline points="15 14 17 16 21 12"/>
-              </svg>
-            </button>
-            <button className="msg-action-btn" onClick={handleRegenerate} title="Regenerate">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-              </svg>
-            </button>
-            <button className="msg-action-btn" onClick={handleDelete} title="Delete">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-              </svg>
-            </button>
-            <button className="msg-action-btn" onClick={() => exportSingleMessage(message)} title="Export">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-              </svg>
-            </button>
-          </div>
-        )}
+        <div className="msg-actions">
+          <button className="msg-action-btn" onClick={() => void navigator.clipboard.writeText(message.content)} title="Copy">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </button>
+          <button className="msg-action-btn" onClick={handleEdit} title="Edit">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
+          <button className="msg-action-btn" onClick={handleRegenerate} title="Regenerate">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+          </button>
+          <button className="msg-action-btn" onClick={handleDelete} title="Delete">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );

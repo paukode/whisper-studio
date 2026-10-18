@@ -1020,12 +1020,14 @@ input.segment-speaker {
  * the message column on every frame, and without this that walked every
  * message of a long session (about 16 ms a frame at 300 messages). `auto`
  * keeps each message's last rendered height, so scrolling back up does not
- * jump. The newest children always render: opening a session scrolls to the
- * bottom, and that must land on real heights, not on estimates that grow as
- * the last messages render. */
+ * jump; the estimate only stands in until a message has rendered once, and
+ * an assistant turn (prose, activity rows and the recap in one bubble) is
+ * taller than a single reply was. The newest children always render: opening
+ * a session scrolls to the bottom, and that must land on real heights, not
+ * on estimates that grow as the last messages render. */
 .chat-messages > .chat-msg-wrap:nth-last-child(n+9) {
     content-visibility: auto;
-    contain-intrinsic-size: auto 120px;
+    contain-intrinsic-size: auto 240px;
     /* The column is a flex container: a skipped message has no content
      * height to defend, so without this it shrinks to nothing and the
      * whole history collapses into the viewport. */
@@ -1195,9 +1197,10 @@ input.segment-speaker {
 .chat-msg.assistant h1, .chat-msg.assistant h2, .chat-msg.assistant h3 {
     margin: 10px 0 4px; color: var(--text-primary); font-weight: 600;
 }
-/* Heading hierarchy inside an assistant bubble. Body inherits 15px
- * from .chat-msg, so every heading must be >= 15px to read as a
- * heading rather than as smaller-than-body de-emphasis. */
+/* Heading hierarchy inside an assistant bubble. Body inherits
+ * --fs-content (16px) from .chat-msg, so every heading must be at least
+ * that size to read as a heading rather than as smaller-than-body
+ * de-emphasis. */
 .chat-msg.assistant h1 { font-size: var(--fs-title); }
 .chat-msg.assistant h2 { font-size: var(--fs-title); }
 .chat-msg.assistant h3 { font-size: var(--fs-content); }
@@ -1287,11 +1290,12 @@ input.segment-speaker {
 
 /* Workflow cards (WS-D ultracode runtime) — inline preview + run. */
 .workflow-card {
-    border: 1px solid var(--border); border-radius: 10px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
     padding: 12px 14px; margin: 8px 0; background: var(--bg-surface);
     font-size: 13px; max-width: 640px;
 }
 .workflow-card-head { display: flex; align-items: center; gap: 8px; }
+.workflow-card-icon { display: inline-flex; flex-shrink: 0; color: var(--text-muted); }
 .workflow-card-title { font-weight: 600; }
 .workflow-card-badge {
     margin-left: auto; font-size: 11px; padding: 1px 8px; border-radius: 10px;
@@ -1308,6 +1312,7 @@ input.segment-speaker {
 }
 .workflow-step::before { content: counter(wf) ". "; opacity: 0.6; }
 .workflow-script-toggle {
+    display: inline-flex; align-items: center; gap: 4px;
     background: none; border: none; color: var(--accent, inherit); cursor: pointer;
     padding: 2px 0; font-size: 12px;
 }
@@ -1323,7 +1328,7 @@ input.segment-speaker {
     border-top: 1px solid var(--border);
 }
 .workflow-card-actions { display: flex; gap: 8px; margin-top: 10px; }
-.workflow-ok { color: var(--accent-ok, #2e7d32); }
+.workflow-ok { color: var(--success); }
 .workflow-err { color: var(--accent-record); }
 
 /* CI watch + autofix cards (WS-J) reuse .workflow-card for the frame. */
@@ -1340,7 +1345,8 @@ input.segment-speaker {
     letter-spacing: 0.03em; padding: 1px 6px; border-radius: 8px;
     background: var(--bg-inset); color: var(--text-secondary, inherit);
 }
-.ci-finding-fix { color: var(--text-secondary, inherit); margin-top: 2px; }
+.ci-finding-fix { display: flex; align-items: baseline; gap: 6px; color: var(--text-secondary, inherit); margin-top: 2px; }
+.ci-finding-fix-mark { display: inline-flex; align-self: center; flex-shrink: 0; color: var(--text-muted); }
 
 /* Goal banner (WS-E completion gate) — sits just above the composer. */
 .goal-banner {
@@ -1350,7 +1356,7 @@ input.segment-speaker {
     border-bottom: none; border-radius: 8px 8px 0 0;
     font-size: 12px; color: var(--text-secondary, inherit);
 }
-.goal-banner-icon { flex-shrink: 0; }
+.goal-banner-icon { flex-shrink: 0; display: inline-flex; color: var(--text-muted); }
 .goal-banner-text {
     flex: 1 1 auto; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1363,7 +1369,8 @@ input.segment-speaker {
     flex-shrink: 0; font-variant-numeric: tabular-nums; opacity: 0.8;
 }
 .goal-banner-clear {
-    flex-shrink: 0; background: none; border: none; cursor: pointer;
+    flex-shrink: 0; display: inline-flex; align-items: center;
+    background: none; border: none; cursor: pointer;
     color: var(--text-secondary, inherit); font-size: 13px; line-height: 1;
     padding: 2px 4px; border-radius: 4px;
 }
@@ -1504,9 +1511,26 @@ input.segment-speaker {
 
 /* Skill indicators */
 
-/* The column the tool traces of a message stack in: activity rows, agent
-   cards, task cards (each row's own rules live in modules/activity.css). */
-.skill-traces { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+/* The column the tool traces of a turn's row stack in: activity rows, agent
+   rows and cards, task rows (each row's own rules live in
+   modules/activity.css). One spacing rule between rows: no gap here, so
+   activity rows stack edge to edge as in the approved design, and a card
+   with a border keeps its own vertical margin (6px, .agent-card and
+   .task-row alike). 8px from the prose on each side (the paragraph margins
+   collapse into it). */
+.skill-traces { display: flex; flex-direction: column; margin: 8px 0; }
+.chat-msg > .skill-traces:first-child { margin-top: 0; }
+/* Two lists of traces with nothing between them (the agent rows of a report
+   no call anchors, after the run's traces) stack edge to edge too. */
+.chat-msg.assistant > .skill-traces + .skill-traces { margin-top: 0; }
+.chat-msg.assistant > .skill-traces:has(+ .skill-traces) { margin-bottom: 0; }
+/* Two rows of one turn meet without a trace between them (the prose of one
+   row, then the next row's prose or thinking): keep the paragraph gap. */
+.chat-msg.assistant > .markdown-content + .markdown-content,
+.chat-msg.assistant > .markdown-content + .thinking-block { margin-top: 8px; }
+/* The live tail of a turn that already committed rows (StreamingMessage,
+   embedded): the same 8px from whatever row it follows. */
+.turn-live { margin-top: 8px; }
 /* The running ring of the agent card and the agent pane. */
 .trace-spinner {
     width: 12px; height: 12px;
@@ -1532,7 +1556,8 @@ input.segment-speaker {
  * represents a unit of delegated work, not just one call. */
 .agent-card {
     border: 1px solid var(--accent);
-    border-radius: 10px;
+    border-radius: var(--radius-sm);
+    margin: 6px 0;
     overflow: hidden;
     transition: border-color 0.3s, box-shadow 0.3s;
     background: var(--bg-elevated);
@@ -1545,7 +1570,7 @@ input.segment-speaker {
     box-shadow: none;
 }
 .agent-card.errored {
-    border-color: #ef4444;
+    border-color: var(--danger);
 }
 .agent-card-header {
     display: flex; align-items: center; gap: 8px;
@@ -1741,7 +1766,7 @@ input.segment-speaker {
     font-size: var(--fs-caption);
     line-height: 1.5;
 }
-.cron-event-pill .cron-event-icon { font-size: var(--fs-body); }
+.cron-event-icon { display: inline-flex; align-items: center; flex-shrink: 0; }
 .cron-event-pill strong {
     color: var(--text-primary);
     font-family: 'IBM Plex Mono', monospace;
@@ -1765,19 +1790,19 @@ input.segment-speaker {
     font-style: italic;
 }
 
-/* Card variant — cron_fired */
+/* Card variant: cron_fired */
 .cron-event-fired {
     display: block;
     border: 1px solid var(--accent);
-    border-radius: 10px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
     background: var(--bg-elevated);
     transition: border-color 0.2s, box-shadow 0.2s;
 }
 .cron-event-fired-failed {
-    border-color: #ef4444;
-    background: rgba(239, 68, 68, 0.05);
-    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.18);
+    border-color: var(--danger);
+    background: color-mix(in srgb, var(--danger) 5%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 18%, transparent);
 }
 .cron-event-fired .cron-event-summary {
     /* Informational header strip — not interactive. The full markdown
@@ -1795,7 +1820,8 @@ input.segment-speaker {
     user-select: none;
     flex-wrap: wrap;
 }
-.cron-event-fired .cron-event-icon { font-size: var(--fs-content); flex-shrink: 0; }
+.cron-event-fired .cron-event-icon { color: var(--text-muted); }
+.cron-event-fired-failed .cron-event-icon { color: var(--danger); }
 .cron-event-fired .cron-event-title {
     flex-shrink: 0;
 }
@@ -1803,13 +1829,16 @@ input.segment-speaker {
     font-family: 'IBM Plex Mono', monospace;
     color: var(--accent);
 }
-.cron-event-fired-failed .cron-event-title strong { color: #ef4444; }
+.cron-event-fired-failed .cron-event-title strong { color: var(--danger); }
 .cron-event-fired .cron-event-interval {
     font-weight: 400;
     color: var(--text-muted);
     font-size: var(--fs-caption);
 }
 .cron-event-fired .cron-event-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: var(--fs-caption);
     font-weight: 600;
     padding: 1px 7px;
@@ -1820,8 +1849,8 @@ input.segment-speaker {
     letter-spacing: 0.04em;
 }
 .cron-event-fired-failed .cron-event-status {
-    background: rgba(239, 68, 68, 0.12);
-    color: #ef4444;
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    color: var(--danger);
 }
 .cron-event-fired .cron-event-meta {
     margin-left: auto;
@@ -1880,7 +1909,7 @@ input.segment-speaker {
     margin: 6px 0;
     display: block;
     border: 1px solid var(--accent);
-    border-radius: 10px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
     background: var(--bg-elevated);
     font-size: var(--fs-small);
@@ -1899,7 +1928,7 @@ input.segment-speaker {
     user-select: none;
     flex-wrap: wrap;
 }
-.session-message-icon { font-size: var(--fs-content); flex-shrink: 0; }
+.session-message-icon { display: inline-flex; align-items: center; color: var(--text-muted); flex-shrink: 0; }
 .session-message-title strong {
     font-family: 'IBM Plex Mono', monospace;
     color: var(--accent);
@@ -3224,7 +3253,7 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 .ws-approval-card {
     background: var(--bg-elevated);
     border: 1px solid var(--border);
-    border-radius: 8px; margin-top: 8px; overflow: hidden;
+    border-radius: var(--radius-sm); margin-top: 8px; overflow: hidden;
     font-family: 'IBM Plex Mono', monospace;
     color: var(--text-primary);
 }
@@ -3589,7 +3618,7 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 .grounding-glyph,
 .grounding-caret { display: inline-flex; align-items: center; flex-shrink: 0; }
 .grounding-panel {
-    border: 1px solid var(--border); border-radius: 8px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
     background: var(--bg-secondary); padding: 8px 12px; margin: 0 0 8px;
 }
 .grounding-status { font-size: var(--fs-caption); color: var(--text-muted); padding: 2px 0; }
@@ -3793,7 +3822,7 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     padding: 12px 14px;
     background: var(--bg-elevated);
     border: 1px solid var(--accent);
-    border-radius: 10px;
+    border-radius: var(--radius-sm);
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -3840,7 +3869,7 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
     background: var(--bg-elevated);
     border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
-    border-radius: 10px;
+    border-radius: var(--radius-sm);
     display: flex;
     flex-direction: column;
     gap: 11px;
@@ -4367,14 +4396,15 @@ button.ws-git-status-badge:hover {
 .chat-msg {
     animation: msgIn 0.22s ease both;
 }
-/* A message that was just streaming has ALREADY animated its entrance in the
-   StreamingMessage bubble. When that bubble is swapped for the committed
-   ChatMessage, a fresh .chat-msg node would otherwise replay msgIn — the
-   visible blink at the end of every stream. `no-enter` (set by ChatPanel only
-   on that just-committed message) suppresses the replay. The flag is sticky
-   for the session, so the animation is never later un-suppressed (which would
-   itself restart it). User messages and freshly-loaded history never get the
-   class, so they keep their normal entrance. */
+/* A turn that was just streaming has ALREADY animated its entrance in the
+   StreamingMessage bubble. When its first row commits (mid-turn, or at the
+   end of the stream) the turn's TurnBubble takes over, and a fresh .chat-msg
+   node would otherwise replay msgIn: the visible blink mid-turn and at the
+   end of every stream. `no-enter` (set by ChatPanel on that turn at every
+   commit) suppresses the replay. The flag is sticky for the session, so the animation is never later
+   un-suppressed (which would itself restart it). User messages and
+   freshly-loaded history never get the class, so they keep their normal
+   entrance. */
 .chat-msg.no-enter {
     animation: none;
 }
@@ -5180,7 +5210,7 @@ button.ws-git-status-badge:hover {
     padding: 7px var(--space-3);
     background: var(--bg-surface);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
     color: var(--text-secondary);
     font: inherit;
     text-align: left;
@@ -6058,7 +6088,7 @@ button.ws-git-status-badge:hover {
   margin: 8px 0;
   padding: 10px 12px;
   border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: var(--bg-inset, rgba(127, 127, 127, 0.06));
   font-size: 0.92em;
 }

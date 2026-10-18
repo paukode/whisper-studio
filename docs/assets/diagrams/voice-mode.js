@@ -14,7 +14,7 @@ WSDiagram.mount("voice-mode-diagram", {
     { id: "ask", group: "work", col: 3, row: 0.5, label: "ask_assistant", sub: "hands it over", desc: "Anything concrete goes straight to the assistant as one written request that keeps your exact words for names, paths and commands." },
     { id: "claude", group: "work", col: 4, row: 0, label: "Your chat model", sub: "same tools", desc: "The model selected in the toolbar runs a normal turn with the full tool set, the connected workspace, your permission mode and this session's approvals. An on-device model falls back to the default cloud model." },
     { id: "card", group: "browser", col: 4, row: 1, label: "Request card", sub: "say it or click", desc: "An approval, a question or a folder choice pauses that turn. Sonic asks you out loud and the usual card appears; answering either way resumes the very same turn." },
-    { id: "chat", group: "browser", col: 5, row: 0.5, label: "Chat transcript", sub: "spoken + written", desc: "One bubble per spoken utterance, marked spoken, plus the assistant's full written answer with its tool activity as its own bubble." }
+    { id: "chat", group: "browser", col: 5, row: 0.5, label: "Chat transcript", sub: "spoken + written", desc: "Your speech shows as one bubble for each turn. All that the assistant says and writes in a turn shows in one bubble: the spoken parts, and the full written answer with its tool activity. The bubble has the mark spoken when a part of it was spoken." }
   ],
   edges: [
     { from: "you", to: "ws", label: "PCM16" },

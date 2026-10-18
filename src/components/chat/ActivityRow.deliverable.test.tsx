@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { render } from '@testing-library/react';
-import { ChatMessage } from './ChatMessage';
+import { TurnBubble } from './TurnBubble';
 import { renderEventCards } from '@/hooks/chatStream/sseEventCards';
 import { dropRuntime, getChatStore } from '@/stores/sessionRuntimes';
 import { SSEEventDataSchema } from '@/types/schemas';
@@ -14,7 +14,7 @@ import type { SSEEventData } from '@/types/chat';
  * gives that name and the server's reason, the way every card's line does
  * (a card can share a group with the calls it judged). Each card is
  * built along the path a live frame takes: the schema, then the event-card
- * renderer, then the message view.
+ * renderer, then the turn's bubble.
  */
 describe('a stop_hook_block card', () => {
   const sid = 'sess-claim-check';
@@ -26,7 +26,7 @@ describe('a stop_hook_block card', () => {
     renderEventCards(parsed, store, sid, () => {});
     const { messages } = store();
     const card = messages[messages.length - 1];
-    return render(<ChatMessage message={card} index={messages.length - 1} />).container;
+    return render(<TurnBubble rows={[card]} indices={[messages.length - 1]} />).container;
   }
 
   it('names a held-back delivery claim and shows the reason as its detail', () => {
