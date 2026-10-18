@@ -36,10 +36,14 @@ async function load() {
   vi.resetModules();
   const runtimes = await import('./sessionRuntimes');
   const { useMcpStore } = await import('./mcpStore');
+  const { useBackgroundTaskStore } = await import('./backgroundTaskStore');
   const refresh = vi.fn().mockResolvedValue(undefined);
   const applyChange = vi.fn();
+  const hydrate = vi.fn().mockResolvedValue(undefined);
+  const applyEvent = vi.fn();
   useMcpStore.setState({ refresh, applyChange });
-  return { runtimes, refresh, applyChange };
+  useBackgroundTaskStore.setState({ hydrate, applyEvent });
+  return { runtimes, refresh, applyChange, hydrate, applyEvent };
 }
 
 beforeEach(() => {
@@ -73,6 +77,20 @@ describe('app event channel', () => {
     runtimes.openEventChannel();
     FakeEventSource.instances[0].emit({ session_id: '', mcp_changed: { revision: 7 } });
     await vi.waitFor(() => expect(applyChange).toHaveBeenCalledWith(7));
+  });
+
+  it('reloads the task list on every open and routes task events to it without a session runtime', async () => {
+    const { runtimes, hydrate, applyEvent } = await load();
+    runtimes.openEventChannel();
+    FakeEventSource.instances[0].open();
+    await vi.waitFor(() => expect(hydrate).toHaveBeenCalledTimes(1));
+    const payload = {
+      event_type: 'task_started', task_id: 't1', kind: 'shell', title: 'sleep 9', status: 'running',
+      timestamp: '2026-10-18T10:00:00Z',
+    };
+    // No runtime exists for this session: the list is global and still updates.
+    FakeEventSource.instances[0].emit({ session_id: 'never-opened', task_event: payload });
+    await vi.waitFor(() => expect(applyEvent).toHaveBeenCalledWith('never-opened', payload));
   });
 
   it('stays open when the last session runtime is dropped', async () => {

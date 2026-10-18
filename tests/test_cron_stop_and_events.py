@@ -178,13 +178,17 @@ def test_session_events_yields_session_message():
         event_bus.unsubscribe = lambda sid, q: None
         try:
             response = await SR.session_events("s1", _FakeRequest())
+            # The stream opens with a comment so the browser reports it open
+            # at once; the first event follows.
+            greeting = await response.body_iterator.__anext__()
             chunk = await response.body_iterator.__anext__()
         finally:
             event_bus.subscribe = orig_subscribe
             event_bus.unsubscribe = orig_unsubscribe
-        return chunk
+        return greeting, chunk
 
-    chunk = asyncio.run(_run_with_patched_bus())
+    greeting, chunk = asyncio.run(_run_with_patched_bus())
+    assert greeting.startswith(":")
     assert "session_message" in chunk
     assert "the news is done" in chunk
 

@@ -261,6 +261,12 @@ async def all_session_events(request: Request):
     queue = event_bus.subscribe_all()
 
     async def stream():
+        # A first byte at once: the browser announces the connection open
+        # only when the body starts, and the client reloads the MCP and task
+        # lists on every open, so without this a proxy that holds the headers
+        # until the first chunk (the Vite dev proxy) delays both by a
+        # heartbeat.
+        yield ": connected\n\n"
         try:
             while True:
                 if await request.is_disconnected():
@@ -822,6 +828,7 @@ async def session_events(session_id: str, request: Request):
     queue = event_bus.subscribe(session_id)
 
     async def stream():
+        yield ": connected\n\n"
         try:
             while True:
                 if await request.is_disconnected():

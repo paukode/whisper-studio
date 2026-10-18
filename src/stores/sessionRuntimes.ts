@@ -309,10 +309,15 @@ interface SessionEventFrame {
 export function openEventChannel(): void {
   if (sharedEvents || typeof EventSource === 'undefined') return; // vitest/jsdom
   const es = new EventSource('/api/sessions/events');
-  // Every (re)connect reloads the MCP list: a change made while the channel
-  // was down, or before it first opened, has no event left to deliver.
+  // Every (re)connect reloads the MCP list and the header's task list: a
+  // change made while the channel was down, or before it first opened, has
+  // no event left to deliver, and a task that started before this window
+  // did only exists as a registry row.
   es.onopen = () => {
     void import('./mcpStore').then(({ useMcpStore }) => useMcpStore.getState().refresh());
+    void import('./backgroundTaskStore').then(({ useBackgroundTaskStore }) =>
+      useBackgroundTaskStore.getState().hydrate(),
+    );
   };
   es.onmessage = (event) => {
     if (!event.data) return;
