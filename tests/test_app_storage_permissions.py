@@ -1,20 +1,28 @@
-"""Writes under ~/.whisper never ask, in any permission mode.
+"""Writes under ~/.whisper never ask, in any permission mode but plan.
 
 The user's rule: the app's own folders (rules, the profile, scratch, memory,
 data) are where these writes belong, so no mode, category override or
 session answer may raise a card for them. A delete there is silent only in
 bypassPermissions; every other mode keeps its normal delete rule. Workspace
-paths are untouched by this.
+paths are untouched by this. Plan mode blocks the workspace writers, but
+memory still updates there with no card, and a rules_write is dispatched so
+it can raise its own card (tests/test_rules_tool.py).
 """
 
+import asyncio
 import os
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import AsyncMock
 
+from server import tool_executor as te
+from server.hooks.schema import HookOutcome
 from server.infrastructure import paths
 from server.security.permissions import (
     MODE_ACCEPT_EDITS,
     MODE_BYPASS,
     MODE_DEFAULT,
     MODE_DONT_ASK,
+    MODE_PLAN,
     resolve_static_decision,
     targets_app_storage,
 )
@@ -91,3 +99,44 @@ def test_dev_checkout_counts_only_the_app_owned_children(monkeypatch):
     assert targets_app_storage({"path": os.path.join(root, "rules", "x", "rules.md")})
     assert targets_app_storage({"path": os.path.join(root, "WHISPER.md")})
     assert not targets_app_storage({"path": os.path.join(root, "server", "main.py")})
+
+
+def _run(monkeypatch, tool: str, *, plan_mode: bool):
+    async def route(name, call_input, **kw):
+        return (f"routed {name}", [])
+
+    monkeypatch.setattr(te, "route_tool", route)
+    monkeypatch.setattr(te, "run_hooks", AsyncMock(return_value=HookOutcome()))
+    executor = ThreadPoolExecutor(max_workers=1)
+
+    async def _go():
+        return await te.execute_tool_batch(
+            [{"id": "t1", "name": tool, "input": {"content": "x"}}],
+            is_concurrent_safe=lambda n: False,
+            loop=asyncio.get_running_loop(),
+            executor=executor,
+            transcript="",
+            attachments=None,
+            session_id="chat-app-storage",
+            session_denials={},
+            model_id="claude",
+            plan_mode=plan_mode,
+            mode=MODE_PLAN if plan_mode else MODE_DEFAULT,
+        )
+
+    try:
+        return asyncio.run(_go())[0]
+    finally:
+        executor.shutdown(wait=False)
+
+
+def test_plan_mode_dispatches_the_writers_of_the_apps_own_folder(monkeypatch):
+    # Memory updates with no card in plan mode (the user's rule); rules_write
+    # reaches its executor, which raises the card itself in plan mode.
+    for tool in ("memory_write", "memory_delete", "rules_write"):
+        for plan_mode in (True, False):
+            state = _run(monkeypatch, tool, plan_mode=plan_mode)
+            assert state.status == "completed", (tool, plan_mode)
+            assert state.output == f"routed {tool}"
+    state = _run(monkeypatch, "ws_write_file", plan_mode=True)
+    assert state.status == "skipped" and state.output.startswith("[Plan Mode]")

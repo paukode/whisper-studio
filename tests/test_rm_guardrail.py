@@ -1,23 +1,30 @@
-"""User directive: rm (and its close cousins) must never run without a real
-human clicking Approve — no permission mode, category override, blanket
-session approval, custom rule, trusted-skill exemption, or unattended-agent
-auto-approve may cover it. Two independent layers:
+"""User directive: rm (and its close cousins) never deletes anything outside
+the connected workspace without a real human clicking Approve — no permission
+mode, category override, blanket session approval, custom rule or
+trusted-skill exemption may cover it. Inside the workspace (and the app's own
+folders) a delete is an ordinary command: bypass means bypass there, and the
+other modes apply their usual command rule. Two independent layers:
 
 1. server.security.permissions.resolve_static_decision forces "ask" for any
-   command-shaped tool input containing rm, an absolute floor exactly like
-   the existing github-destructive category.
-2. server.approval.spec.refuse_if_agent_rm hard-refuses it inside the
+   command-shaped tool input that deletes beyond the workspace, an absolute
+   floor exactly like the existing github-destructive category.
+2. server.approval.spec.refuse_if_agent_rm hard-refuses every rm inside the
    executors themselves (_do_command, _do_terminal_run) for the unattended
-   path, which skips resolve_static_decision entirely.
+   path, which skips resolve_static_decision entirely and has no human at all.
 """
 
 import asyncio
+import os
 
-from server.security.command_validator import is_rm_command
+import pytest
+
+from server.security.command_validator import delete_sites, is_rm_command
 from server.security.permissions import (
+    MODE_ACCEPT_EDITS,
     MODE_BYPASS,
     MODE_DEFAULT,
     MODE_DONT_ASK,
+    approval_floor,
     resolve_static_decision,
 )
 
@@ -83,10 +90,45 @@ def test_unparseable_segment_is_treated_as_rm_like():
     # unmatched quote character as an implicit break, so by the time
     # is_rm_command's segments reach the tokenizer they are individually
     # well-formed; this failure mode only reaches a caller that hands
-    # _segment_deletes a raw, unsplit segment.
-    from server.security.command_validator import _segment_deletes
+    # _segment_delete_sites a raw, unsplit segment. The delete's reach is
+    # unknown, which the floor reads as outside.
+    from server.security.command_validator import _segment_delete_sites
 
-    assert _segment_deletes("echo 'unterminated", 0) is True
+    sites = _segment_delete_sites("echo 'unterminated", 0)
+    assert len(sites) == 1 and sites[0].operands is None
+
+
+def test_a_statement_that_runs_nothing_is_not_a_delete():
+    # The regression: a shell script's bare assignment (`backend_port=8000;`)
+    # named no command, and "names no command" was read as a delete, so a
+    # launch config that never deleted anything hit the rm floor in bypass.
+    assert not is_rm_command("backend_port=8000")
+    assert not is_rm_command("x=1; echo hi")
+    assert not is_rm_command("npm run dev & pid=$!; wait $pid")
+    assert not is_rm_command("while true; do\n  npm test\ndone")
+    assert not is_rm_command("FOO=bar npm run dev")
+    assert not is_rm_command("bash -c 'set -eu; port=8000; npm run dev -- --port $port'")
+
+
+def test_delete_sites_report_what_each_delete_names():
+    assert [(s.verb, s.operands) for s in delete_sites("rm -rf build dist/*")] == [
+        ("rm", ["build", "dist/*"])
+    ]
+    assert delete_sites("rm -- -dashed")[0].operands == ["-dashed"]
+    assert delete_sites("sudo -u root rm -rf /var/x")[0].operands == ["/var/x"]
+    assert delete_sites("find . -name '*.pyc' -delete")[0].operands == ["."]
+    assert delete_sites("find -L /etc /var -type f -exec rm {} \\;")[0].operands == [
+        "/etc",
+        "/var",
+    ]
+    assert delete_sites("find -delete")[0].operands == ["."]
+    assert delete_sites("sh -c 'npm run build && rm -rf dist'")[0].operands == ["dist"]
+    assert delete_sites("echo a | xargs rm")[0].operands is None
+    assert delete_sites("echo a | xargs -I {} rm {}")[0].operands is None
+    assert delete_sites("npm run build; rm -rf dist; rm old.log") == [
+        delete_sites("rm -rf dist")[0],
+        delete_sites("rm old.log")[0],
+    ]
 
 
 def test_detects_rm_inside_a_shell_script_argument():
@@ -138,13 +180,13 @@ def test_shells_and_wrappers_that_do_not_delete_pass():
     assert not is_rm_command("timeout 30 curl -s http://localhost:3000")
 
 
-# ── resolve_static_decision: the absolute-ask floor ─────────────────────────
+# ── resolve_static_decision: the floor for a delete beyond the workspace ────
 
 
-def _decide(command, mode=MODE_DEFAULT, approvals=None, auto_allow_trusted=False):
+def _decide(command, mode=MODE_DEFAULT, approvals=None, auto_allow_trusted=False, **extra):
     return resolve_static_decision(
         "ws_run_command",
-        {"command": command},
+        {"command": command, **extra},
         "cli",
         approvals or {},
         mode,
@@ -152,21 +194,119 @@ def _decide(command, mode=MODE_DEFAULT, approvals=None, auto_allow_trusted=False
     )
 
 
-def test_rm_always_asks_regardless_of_mode_or_approval():
+ALL_MODES = (MODE_DEFAULT, MODE_ACCEPT_EDITS, MODE_DONT_ASK, MODE_BYPASS)
+
+
+@pytest.fixture
+def workspace(tmp_path, monkeypatch):
+    ws = tmp_path / "project"
+    (ws / "dist").mkdir(parents=True)
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(ws))
+    monkeypatch.setattr(
+        "server.security.permissions.load_permissions",
+        lambda: {"mode": MODE_DEFAULT, "rules": [], "category_modes": {}},
+    )
+    return ws
+
+
+def test_a_delete_inside_the_workspace_is_an_ordinary_command(workspace):
+    # Bypass means bypass inside the workspace, and the other modes apply
+    # their usual command rule: a session "Yes, all commands" covers it.
+    for command in (
+        "rm -rf ./build",
+        "rm -rf dist/*",
+        "rm old.log",
+        "find . -name '*.pyc' -delete",
+    ):
+        assert approval_floor("ws_run_command", {"command": command}, "cli") is None
+        assert _decide(command, mode=MODE_BYPASS) == "allow"
+        assert _decide(command, mode=MODE_DEFAULT) == "ask"
+        assert _decide(command, approvals={"cli": "allow"}) == "allow"
+        assert _decide(command, mode=MODE_DONT_ASK) == "deny"
+        assert _decide(command, auto_allow_trusted=True) == "allow"
+
+
+def test_a_delete_outside_the_workspace_always_asks(workspace, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    outside = (
+        f"rm -rf {elsewhere}",
+        "rm -rf ../elsewhere",
+        "rm -rf dist/../../elsewhere",
+        "rm -rf ~/Downloads/build",
+        "rm -rf /",
+        "rm -rf /*",
+        "rm -rf $BUILD_DIR",
+        "echo build | xargs rm -rf",
+        "find / -name '*.tmp' -delete",
+        "npm run build && rm -rf ~/old",
+    )
+    for command in outside:
+        assert approval_floor("ws_run_command", {"command": command}, "cli") == "rm", command
+        for mode in ALL_MODES:
+            assert _decide(command, mode=mode) == "ask", (command, mode)
+        assert _decide(command, approvals={"cli": "allow"}) == "ask", command
+        assert _decide(command, mode=MODE_BYPASS, approvals={"cli": "allow"}) == "ask"
+        assert _decide(command, auto_allow_trusted=True) == "ask"
+
+
+def test_a_symlink_out_of_the_workspace_reads_as_outside(workspace, tmp_path):
+    target = tmp_path / "shared"
+    target.mkdir()
+    os.symlink(target, workspace / "link")
+    assert approval_floor("ws_run_command", {"command": "rm -rf link/"}, "cli") == "rm"
+    assert approval_floor("ws_run_command", {"command": "rm -rf link/*"}, "cli") == "rm"
+
+
+def test_the_working_directory_decides_where_a_relative_delete_lands(workspace, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    assert (
+        approval_floor("ws_run_command", {"command": "rm -rf build", "cwd": str(elsewhere)}, "cli")
+        == "rm"
+    )
+    assert (
+        approval_floor("ws_run_command", {"command": "rm -rf build", "cwd": "web"}, "cli") is None
+    )
+    assert approval_floor("terminal_run", {"command": "rm -rf build", "cwd": "~"}, "cli") == "rm"
+
+
+def test_the_card_the_gate_stamped_decides_its_own_workspace(workspace, tmp_path):
+    # A workspace-bound card carries the root it was raised in; the floor
+    # reads that root, not whatever is connected when the decision is made.
+    other = tmp_path / "other"
+    other.mkdir()
+    payload = {"command": "rm -rf build", "workspace_root": str(other)}
+    assert approval_floor("ws_run_command", payload, "cli") is None
+    payload = {"command": f"rm -rf {workspace / 'dist'}", "workspace_root": str(other)}
+    assert approval_floor("ws_run_command", payload, "cli") == "rm"
+
+
+def test_with_no_workspace_every_delete_asks(monkeypatch):
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
     assert _decide("rm -rf ./build") == "ask"
     assert _decide("rm -rf ./build", mode=MODE_BYPASS) == "ask"
     assert _decide("rm -rf ./build", approvals={"cli": "allow"}) == "ask"
     assert _decide("rm -rf ./build", mode=MODE_BYPASS, approvals={"cli": "allow"}) == "ask"
     assert _decide("rm -rf ./build", auto_allow_trusted=True) == "ask"
-
-
-def test_rm_asks_even_under_dontask(monkeypatch):
-    # dontAsk normally auto-DENIES write-class tools silently; rm must still
-    # surface a real prompt rather than a silent, unexplained refusal.
+    # dontAsk normally auto-DENIES write-class tools silently; a delete the
+    # floor catches must still surface a real prompt rather than a silent,
+    # unexplained refusal.
     assert _decide("rm -rf ./build", mode=MODE_DONT_ASK) == "ask"
 
 
-def test_non_rm_commands_are_unaffected_by_the_guardrail():
+def test_the_apps_own_folders_count_as_inside(workspace):
+    # The user's rule: bypass may delete under ~/.whisper too; the other
+    # modes keep their delete rule, which for a command is the cli rule.
+    from server.infrastructure.paths import data_root
+
+    scratch = os.path.join(data_root(), "scratch", "sess", "probe.py")
+    assert approval_floor("ws_run_command", {"command": f"rm {scratch}"}, "cli") is None
+    assert _decide(f"rm {scratch}", mode=MODE_BYPASS) == "allow"
+    assert _decide(f"rm {scratch}", mode=MODE_DEFAULT) == "ask"
+
+
+def test_non_rm_commands_are_unaffected_by_the_guardrail(workspace):
     # bypassPermissions still works normally for anything that isn't rm.
     assert _decide("npm run build", mode=MODE_BYPASS) == "allow"
     assert _decide("npm run build", approvals={"cli": "allow"}) == "allow"

@@ -141,3 +141,125 @@ def test_workspace_mode_blocks_writes_outside_the_tree_for_real():
     finally:
         shutil.rmtree(home_probe, ignore_errors=True)
         shutil.rmtree(ws, ignore_errors=True)
+
+
+# ── ws_run_command: consent and confinement are separate knobs ──────────────
+# A command a person approved on its card runs with open writes; one a mode,
+# a session answer, a rule, the classifier or an agent let through runs
+# workspace-write confined, so nothing changes outside the workspace without
+# a person seeing it (the user's rule). The confinement root is the workspace
+# itself, not the tracked cwd, so a session that cd'd out of the workspace
+# cannot write where it went.
+
+
+def _capture_run(monkeypatch):
+    from server.workspace import executors
+
+    seen = {}
+
+    def fake_run(command, ws, *, session_id="", run_in_background=False, write_mode="open"):
+        seen["write_mode"] = write_mode
+        return executors.CommandRun(text="ok", returncode=0)
+
+    monkeypatch.setattr("server.workspace.executors.run_workspace_command", fake_run)
+    monkeypatch.setattr("server.workspace.get_workspace_path", lambda: "/tmp")
+    monkeypatch.setattr("server.workspace._validate_command", lambda c: None)
+    return seen
+
+
+def test_a_human_approved_command_runs_open(monkeypatch):
+    from server.approval.executors import _do_command
+
+    seen = _capture_run(monkeypatch)
+    assert asyncio.run(_do_command({"command": "echo hi"})).ok
+    assert seen["write_mode"] == "open"
+
+
+def test_an_unreviewed_or_agent_command_runs_workspace_confined(monkeypatch):
+    from server.approval.executors import _do_command
+    from server.approval.spec import UNREVIEWED_KEY
+
+    seen = _capture_run(monkeypatch)
+    assert asyncio.run(_do_command({"command": "echo hi", UNREVIEWED_KEY: True})).ok
+    assert seen["write_mode"] == "workspace"
+    assert asyncio.run(_do_command({"command": "echo hi", "__agent__": True})).ok
+    assert seen["write_mode"] == "workspace"
+
+
+def test_the_inline_path_stamps_every_payload_unreviewed(monkeypatch):
+    from server.approval import registry
+    from server.approval.bootstrap import register_defaults
+    from server.approval.spec import UNREVIEWED_KEY, ApprovalOutcome
+    from server.tool_executor import _execute_ws_approval_inline
+
+    register_defaults()
+    seen = {}
+
+    async def spy(payload):
+        seen.update(payload)
+        return ApprovalOutcome(ok=True, output="ran")
+
+    monkeypatch.setattr(registry.get("command"), "executor", spy)
+    assert asyncio.run(_execute_ws_approval_inline({"action": "command", "command": "ls"})) == "ran"
+    assert seen[UNREVIEWED_KEY] is True and "__agent__" not in seen
+    asyncio.run(_execute_ws_approval_inline({"action": "command", "command": "ls"}, agent=True))
+    assert seen["__agent__"] is True
+
+
+def test_a_cards_yes_drops_any_origin_stamp():
+    from server.approval.spec import (
+        UNREVIEWED_KEY,
+        ApprovalOutcome,
+        ApprovalSpec,
+        execute_approved_by_human,
+        reviewed_by_human,
+    )
+
+    seen = {}
+
+    async def spy(payload):
+        seen.update(payload)
+        return ApprovalOutcome(ok=True)
+
+    spec = ApprovalSpec(category="cli", preview="command", summary="x", executor=spy)
+    payload = {"command": "ls", UNREVIEWED_KEY: True, "__agent__": True}
+    assert asyncio.run(execute_approved_by_human(spec, payload)).ok
+    assert reviewed_by_human(seen)
+    assert UNREVIEWED_KEY not in seen and "__agent__" not in seen
+
+
+def test_a_confined_ws_run_command_is_confined_to_the_workspace_not_the_cwd(monkeypatch, tmp_path):
+    from server.tasks import handoff
+    from server.workspace import executors
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    seen = {}
+
+    def fake_handoff(
+        command, exec_command, *, cwd, session_id="", timeout=0, write_mode="open", write_root=None
+    ):
+        seen.update(cwd=cwd, write_mode=write_mode, write_root=write_root)
+        return handoff.HandoffResult(background=False, output="", returncode=0)
+
+    monkeypatch.setattr("server.tasks.handoff.run_with_handoff", fake_handoff)
+    monkeypatch.setattr("server.cwd_tracker.get_cwd", lambda session_id, default: str(elsewhere))
+    executors.run_workspace_command("touch x", str(ws), session_id="s1", write_mode="workspace")
+    assert seen["cwd"] == str(elsewhere)
+    assert seen["write_root"] == str(ws)
+    assert seen["write_mode"] == "workspace"
+
+
+def test_popen_profile_confines_to_the_write_root(tmp_path):
+    ws = os.path.realpath(str(tmp_path / "ws"))
+    elsewhere = os.path.realpath(str(tmp_path / "elsewhere"))
+    os.makedirs(ws)
+    os.makedirs(elsewhere)
+    profile = sandbox._generate_macos_profile(ws, write_mode="workspace")
+    assert f'(allow file-write* (subpath "{ws}"))' in profile
+    assert elsewhere not in profile
+    argv = sandbox._bwrap_argv("ls", elsewhere, None, "workspace", write_root=ws)
+    assert argv[argv.index("--bind") + 1] == ws
+    assert elsewhere not in argv[: argv.index("--chdir")]

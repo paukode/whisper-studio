@@ -43,7 +43,10 @@ log = logging.getLogger("whisper-studio")
 # Tools whose errors cascade to subsequent writes
 _COMMAND_TOOLS = {"ws_run_command", "run_python"}
 
-# Write tools blocked in plan mode
+# Write tools blocked in plan mode. The app's own folder is not the
+# workspace: memory_write and memory_delete keep running in plan mode with no
+# card (the user's rule), and rules_write runs there behind an approval card
+# it raises itself (server/rules_tools.py), so neither is listed.
 _PLAN_MODE_BLOCKED = {
     "ws_write_file",
     "ws_create_file",
@@ -477,9 +480,14 @@ async def _execute_ws_approval_inline(ws_parsed: dict, *, agent: bool = False) -
     auto-approve path (server/agents/runtime.py) — no human, no category gate.
     It stamps `__agent__` onto the payload so high-blast-radius executors (e.g.
     GitHub mutations) can refuse to run unattended. The chat/auto-mode caller
-    leaves this False, because there a real user or the auto-mode classifier
-    authorised the action."""
+    leaves this False, because there a mode, a session answer, a rule or the
+    auto-mode classifier authorised the action; every payload through here is
+    stamped `__unreviewed__` (server.approval.spec.UNREVIEWED_KEY), since no
+    person saw this exact action on a card, and an executor that confines
+    what it runs reads that stamp (a command runs workspace-write confined
+    unless a person approved it)."""
     from server.approval import registry as approval_registry
+    from server.approval.spec import UNREVIEWED_KEY
 
     action = ws_parsed.get("action", "write")
     spec = approval_registry.get(action)
@@ -490,8 +498,9 @@ async def _execute_ws_approval_inline(ws_parsed: dict, *, agent: bool = False) -
     # executors that need it (worktree enter/exit) can read it.
     if "session_id" in ws_parsed and "session_id" not in payload:
         payload["session_id"] = ws_parsed["session_id"]
-    # Stamp the subagent origin AFTER build_payload (which whitelists fields when
+    # Stamp the origin AFTER build_payload (which whitelists fields when
     # payload_fields is set and would otherwise drop it).
+    payload[UNREVIEWED_KEY] = True
     if agent:
         payload["__agent__"] = True
     try:
@@ -755,13 +764,14 @@ async def _process_tool_results(
                     if command_runs_trusted_skill(ws_parsed.get("command", "")):
                         auto_allow_trusted = True
 
-                # Precedence: rm guardrail → github-destructive/MCP-approve →
-                # category mode override → bypassPermissions → trusted skill →
-                # session approvals → custom rules → approved launch.json
-                # preview (allow) → dontAsk → acceptEdits → auto (classifier) →
-                # ask. See server.security.permissions.resolve_static_decision
-                # (the rm guardrail lives there, alongside github-destructive,
-                # since both are "no bypass mode may cover this" absolutes).
+                # Precedence: the hard floors (github-destructive, a delete
+                # outside the workspace, sandbox escalation, MCP-approve) →
+                # app storage → category mode override → bypassPermissions
+                # (not for a save or folder reach outside the workspace) →
+                # trusted skill → session approvals → custom rules →
+                # approved launch.json preview (allow) → dontAsk →
+                # acceptEdits → auto (classifier) → ask. See
+                # server.security.permissions.resolve_static_decision.
                 decision = resolve_static_decision(
                     state.tool_name,
                     ws_parsed,

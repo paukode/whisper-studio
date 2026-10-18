@@ -117,8 +117,11 @@
       <li><h4>github-destructive</h4><p>A destructive GitHub mutation (repo or ref delete, PR merge,
         archive or rename, API DELETE) always returns ask. No mode, session approval, trusted skill,
         or category override can cover it, given the irreversibility and remote blast radius.</p></li>
-      <li><h4>An rm-class command</h4><p>A command that deletes always returns ask, whatever the mode.
-        <code>is_rm_command</code> (<code class="path">server/security/command_validator.py</code>)
+      <li><h4>An rm-class command reaching outside the workspace</h4><p>A command that deletes
+        anything beyond the connected workspace and the app's own folder always returns ask,
+        whatever the mode; a delete that stays inside them is an ordinary command and follows the
+        mode (the user's rule: inside the workspace, bypass means bypass).
+        <code>delete_sites</code> (<code class="path">server/security/command_validator.py</code>)
         parses the command with <code>shlex</code> rather than matching a substring, so it sees
         through wrappers (<code>sudo</code>, <code>env</code>, <code>command</code>,
         <code>nice</code>, <code>exec</code>, <code>doas</code>, <code>xargs</code>,
@@ -127,8 +130,14 @@
         so an option's value cannot hide the verb), reads a shell's <code>-c</code> script (<code>sh -c "rm -rf build"</code>,
         <code>bash -lc '...'</code>) and an <code>eval</code> as commands of their own, and catches
         <code>rm</code>, <code>rmdir</code>, <code>unlink</code>, <code>shred</code>,
-        <code>srm</code>, and <code>find ... -delete</code> / <code>find ... -exec rm</code>. A
-        command it cannot parse is treated as rm-like, so it fails toward asking. Note that this
+        <code>srm</code>, and <code>find ... -delete</code> / <code>find ... -exec rm</code>, and
+        reports what each delete names. <code>deletes_beyond</code>
+        (<code class="path">server/security/delete_scope.py</code>) then resolves those operands
+        the way the shell starts to, against the command's working directory (<code>~</code>
+        expanded, a glob cut at its wildcard, symlinks followed), and the floor fires when one lands
+        outside the roots or cannot be resolved at all (a variable, paths fed by
+        <code>xargs</code>, a segment that does not parse), so it fails toward asking. A statement
+        that runs nothing (a bare <code>x=1</code>) is not a delete. Note that this
         check does not <em>block</em> anything: it forces the card. A <code>preview_start</code>
         that names a launch config carries no command of its own, so the check also reads the
         command <code class="path">.whisper/launch.json</code> resolves it to and the one pinned into
@@ -145,7 +154,12 @@
         <code>permissions.json</code> replaces the global mode for everything that follows,
         including the <code>bypassPermissions</code> check right below. That is the point: "always
         confirm deletes" can hold even when the global mode is more permissive.</p></li>
-      <li><h4>bypassPermissions</h4><p>If the effective mode is <code>bypassPermissions</code>, allow.</p></li>
+      <li><h4>bypassPermissions</h4><p>If the effective mode is <code>bypassPermissions</code>, allow,
+        except for the two categories whose action lands outside the workspace: a save to a path
+        the user named (<code>save</code>) and reach into a folder they have not granted
+        (<code>folder-access</code>) fall through to the session approvals, the rules and finally
+        ask, unless that category's own row says bypass. A write under
+        <code class="path">~/.whisper</code> was already allowed above.</p></li>
       <li><h4>Trusted skill script</h4><p>If the call comes from a trusted skill script
         (<code>auto_allow_trusted</code>), allow.</p></li>
       <li><h4>Session approvals</h4><p>If you clicked "Yes for all writes" (or "No for all") earlier

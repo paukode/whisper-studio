@@ -60,11 +60,23 @@
         user-visible folder.</li>
       <li><b>Three things always ask, whatever the mode says.</b> Destructive GitHub actions (repo or
         ref deletion, a PR merge, an archive or rename, a raw API DELETE, carried under the
-        <code>github-destructive</code> category); any command that is <code>rm</code> or a close
-        cousin; and any tool call asking to escape the sandbox with
+        <code>github-destructive</code> category); any <code>rm</code>-class command that deletes
+        outside the connected workspace and the app's own folder, or whose operands the command
+        line cannot resolve (<code class="path">server/security/delete_scope.py</code>); and any
+        tool call asking to escape the sandbox with
         <code>sandbox_permissions: "danger-full-access"</code>. Each is a hard floor: no permission
         mode, category override, bypass mode, trusted skill, or blanket session approval can skip it
-        (<code class="path">server/security/permissions.py</code>).</li>
+        (<code class="path">server/security/permissions.py</code>). A delete that stays inside the
+        workspace follows the mode like any other command.</li>
+      <li><b>Bypass stops at the workspace boundary.</b> Inside the connected workspace
+        <code>bypassPermissions</code> runs everything with no card. A save to a path outside it and
+        the first reach into a folder outside it (the <code>save</code> and
+        <code>folder-access</code> categories) still ask in bypass, unless that category's own row
+        says bypass, a session "yes to all" or a rule of yours covers it, or the path is under
+        <code class="path">~/.whisper</code>. Reading never asks anywhere, apart from the
+        credential stores below. A command that ran without a card (bypass, a session approval, a
+        rule, the Auto classifier) is workspace-write confined by the OS like an agent's; only a
+        command approved on its card runs with open writes.</li>
       <li><b>Unattended agents write only inside their own tree.</b> A shell command or Python script
         run by an agent, with no human reading each call, gets a sandbox profile that denies all
         writes and allows them back only under the command's working tree, the git directories a
@@ -222,7 +234,8 @@
         <tr>
           <td>The three unconditional floors</td>
           <td><code>github-destructive</code> (repo/ref deletion, PR merge, archive/rename, raw API
-            DELETE), any <code>rm</code>-class command, and any
+            DELETE), any <code>rm</code>-class command reaching outside the workspace and the
+            app's own folder, and any
             <code>sandbox_permissions: "danger-full-access"</code> request.</td>
           <td><b>Boundary</b> - unconditional; no mode, override, bypass setting, trusted skill or
             session approval can skip any of the three.</td>

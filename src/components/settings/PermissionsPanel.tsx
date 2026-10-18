@@ -370,8 +370,8 @@ export const PermissionsPanel: React.FC = () => {
                     command is new or changed; once you approve it on a card, it starts without
                     asking in every mode, including this row&apos;s. Outside Bypass, a rule that
                     denies preview_start, or Block preview on an approval card, still refuses it,
-                    and a launch config that deletes files always asks. An ad-hoc preview command
-                    follows the mode.
+                    and a launch config that deletes files outside the workspace always asks. An
+                    ad-hoc preview command follows the mode.
                   </p>
                 )}
               </React.Fragment>

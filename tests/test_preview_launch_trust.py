@@ -180,7 +180,8 @@ def test_its_first_card_shows_the_command_and_says_approving_trusts_it(workspace
 
 
 def test_a_card_that_would_keep_asking_makes_no_such_promise(workspace, previews):
-    _write_configs(workspace, ["rm", "-rf", "build"])
+    # A delete outside the workspace is a floor; one inside it is ordinary.
+    _write_configs(workspace, ["rm", "-rf", "~/Downloads/build"])
     _content, request = _process(_parsed(session_name="dev"), MODE_DEFAULT)
     assert request["always_asks"] is True
     assert "approving lets it start" not in request["summary"]
@@ -322,7 +323,7 @@ def test_a_call_made_before_its_config_existed_follows_the_mode(workspace):
 
 
 def test_the_floor_sees_the_pinned_command_as_well_as_the_file(workspace):
-    _write_configs(workspace, ["rm", "-rf", "build"])
+    _write_configs(workspace, ["rm", "-rf", "~/Downloads/build"])
     parsed = _parsed(session_name="dev")
     _write_configs(workspace, DEV)
 
