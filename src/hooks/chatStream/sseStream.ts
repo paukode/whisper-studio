@@ -29,6 +29,7 @@ import { createStreamPacer } from './streamPacer';
 import { renderEventCards } from './sseEventCards';
 import { syncAutoAppliedTab } from './autoApplied';
 import { toolMetaFromFrame } from './toolMeta';
+import { labelCommit, patchCommittedLabel, writtenLabelFromFrame, type WrittenLabel } from './activityLabels';
 
 // Augment Window for SSE diagnostics access
 declare global {
@@ -114,6 +115,10 @@ export async function readSSEStream(
    *  resolution, a failed setup or model load: an error frame that carries
    *  an `error_code`): its reason. Null when the turn ran. */
   refusal: string | null;
+  /** Captions (activity_label frames) for calls this stream had not
+   *  committed when it ended: the caller's commit takes them with
+   *  labelCommit. */
+  activityLabels: WrittenLabel[];
 }> {
   // Parallel sessions: bind the OWNING session's store from the sessionId
   // this stream was started with. Never resolve the active session here —
@@ -143,6 +148,9 @@ export async function readSSEStream(
   // The ask_user_question calls of this round, one card once the stream has
   // paused on them (see commitQuestions).
   const roundQuestions: Array<{ question: string; options: string[]; toolUseId: string }> = [];
+  // Captions for calls still streaming: each rides on the message that
+  // commits its calls (labelCommit at every commit site).
+  const pendingLabels: WrittenLabel[] = [];
   // Not const: each flushed segment restarts the thinking clock, so a "Thinking
   // 42s" after a card measures the wait since that card rather than replaying
   // the whole turn's elapsed time under every segment.
@@ -179,14 +187,14 @@ export async function readSSEStream(
     // The segment commits the full text below; drop what is still unpainted.
     textPacer.reset();
     thinkingPacer.reset();
-    store().flushStreamSegment({
+    store().flushStreamSegment(labelCommit({
       role: 'assistant',
       content: fullResponse,
       timestamp: new Date().toISOString(),
       toolUse: toolUse.length > 0 ? toolUse : undefined,
       _thinkingMs: thinkingMs > 0 ? Math.round(thinkingMs) : undefined,
       _thinkingText: thinkingText || undefined,
-    });
+    }, store().messages, pendingLabels));
     fullResponse = '';
     thinkingText = '';
     thinkingMs = 0;
@@ -210,7 +218,7 @@ export async function readSSEStream(
     const toolUseEntries: ToolUseEvent[] = skillTraces
       .filter((t) => t.name !== 'ask_user_question')
       .map(committedToolUse);
-    st.addMessage({
+    st.addMessage(labelCommit({
       role: 'assistant',
       content: fullResponse,
       timestamp: new Date().toISOString(),
@@ -224,7 +232,7 @@ export async function readSSEStream(
       _thinkingText: thinkingText || undefined,
       // The answer resumes this turn on the settings it ran on.
       turnSettings,
-    });
+    }, st.messages, pendingLabels));
     roundQuestions.length = 0;
     fullResponse = '';
     skillTraces.length = 0;
@@ -391,6 +399,18 @@ export async function readSSEStream(
             // a no-op for read-only tools because the listener is debounced.
             if (!isError && (toolName === 'ws_create_file' || toolName === 'ws_write_file')) {
               window.dispatchEvent(new CustomEvent('whisper-workspace-refresh'));
+            }
+          }
+
+          // ── activity_label (a model-written caption for a group of calls) ──
+          // Calls still streaming keep it until their message commits; calls
+          // already committed get it on their row now, saved.
+          if (parsed.activity_label) {
+            const written = writtenLabelFromFrame(parsed.activity_label);
+            if (written && skillTraces.some((t) => t.id && written.ids.includes(t.id))) {
+              pendingLabels.push(written);
+            } else if (written) {
+              patchCommittedLabel(sessionId, written);
             }
           }
 
@@ -924,5 +944,6 @@ export async function readSSEStream(
     pendingVisuals,
     pendingPlan,
     refusal,
+    activityLabels: pendingLabels,
   };
 }

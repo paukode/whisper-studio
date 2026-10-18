@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { groupAgentTools, groupForActivity, isActivityEntry } from './AgentCard';
+import { labelCommit } from '@/hooks/chatStream/activityLabels';
 import { iconFor } from './activityIcons';
 import { describeGroup } from './activityLabel';
 import { groupChips } from './activityChips';
@@ -397,6 +398,28 @@ describe('group label', () => {
     expect(g.label).toBe('Named each activity group; tests green');
     expect(g.tail).toBe('Edited ActivityRow.tsx, ran npx tsc --noEmit');
     expect(g.title).toBe(g.tail);
+  });
+
+  it('a streamed caption is the written label of the group that holds its calls, with the deterministic tail', () => {
+    // The caption names the round's second call; the committed view reads it
+    // under the group's first call, the way ChatMessage looks it up.
+    const edit = tool('ws_edit_file', { toolId: 'tu_edit', input: { path: 'ActivityRow.tsx' } });
+    const check = run('npx tsc --noEmit', { toolId: 'tu_tsc' });
+    const pending = [{ ids: ['tu_tsc'], label: 'Named each activity group; tests green' }];
+    const message = labelCommit({ role: 'assistant', content: '', timestamp: 't', toolUse: [edit, check] }, [], pending);
+    const [group] = groupForActivity(groupAgentTools(message.toolUse ?? []), { minRun: ACTIVITY_MIN_RUN })
+      .filter(isActivityEntry);
+    const g = describeGroup(group.tools, message.activityLabels?.[group.tools[0].toolId]);
+    expect(g.label).toBe('Named each activity group; tests green');
+    expect(g.tail).toBe('Edited ActivityRow.tsx, ran npx tsc --noEmit');
+    expect(pending).toEqual([]);
+  });
+
+  it('without a caption the deterministic sentence stays the label', () => {
+    const edit = tool('ws_edit_file', { toolId: 'tu_edit', input: { path: 'ActivityRow.tsx' } });
+    const message = labelCommit({ role: 'assistant', content: '', timestamp: 't', toolUse: [edit] }, [], []);
+    expect(message.activityLabels).toBeUndefined();
+    expect(describeGroup([edit], message.activityLabels?.tu_edit).label).toBe('Edited ActivityRow.tsx');
   });
 
   it('a synthetic goal card keeps its verdict label', () => {

@@ -22,6 +22,7 @@ import {
 import { emptyResponseFallback } from './emptyResponse';
 import { buildHistoryPayload } from './history';
 import { committedToolUse, readSSEStream } from './sseStream';
+import { labelCommit } from './activityLabels';
 
 /** What an approval acts on, for the text the model (and the transcript)
  *  reads: the path, else the command, else the card's summary. */
@@ -196,7 +197,7 @@ export async function sendApprovalContinuation(
     // approval-pause commit) so the work the continuation did survives the
     // streaming state being cleared.
     if (contText || result.pendingArtifact || result.pendingVisuals.length > 0 || result.pendingPlan || contTeamReports || contToolUse.length > 0) {
-      store().addMessage({
+      store().addMessage(labelCommit({
         role: 'assistant',
         content: contText,
         timestamp: new Date().toISOString(),
@@ -219,7 +220,7 @@ export async function sendApprovalContinuation(
         // Taken here, not left for setStreaming(false): that waits while
         // another approval is pending.
         deliveries: store().takeDeliveries(),
-      });
+      }, store().messages, result.activityLabels));
     }
 
     // Refresh workspace tree after approval

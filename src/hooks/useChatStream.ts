@@ -28,6 +28,7 @@ import type { ChatMessage, ToolUseEvent } from '@/types/chat';
 import { toError } from '@/utils/toError';
 import { ensureRetentionEnabled } from '@/components/chat/dataRetentionConsent';
 import { _sseEventLog, committedToolUse, readSSEStream } from './chatStream/sseStream';
+import { labelCommit } from './chatStream/activityLabels';
 import { emptyResponseFallback } from './chatStream/emptyResponse';
 import { pausedTurnSettings, turnModelSettings } from './chatStream/turnSettings';
 import { buildHistoryPayload } from './chatStream/history';
@@ -400,7 +401,7 @@ export function useChatStream(): UseChatStreamReturn {
         (result.hasPendingApprovals || result.flushedSegments > 0) &&
         finalToolUse.length > 0
       ) {
-        store().addMessage({
+        store().addMessage(labelCommit({
           role: 'assistant',
           content: '',
           timestamp: new Date().toISOString(),
@@ -408,7 +409,7 @@ export function useChatStream(): UseChatStreamReturn {
           teamReports: store().takeTeamReports(),
           _thinkingMs: result.thinkingMs > 0 ? Math.round(result.thinkingMs) : undefined,
           _thinkingText: result.thinkingText || undefined,
-        });
+        }, store().messages, result.activityLabels));
         toolRowAdded = true;
       }
       // That row holds the turn's traces now. A final message still built
@@ -455,7 +456,10 @@ export function useChatStream(): UseChatStreamReturn {
             grounding: result.grounding,
           }
         : undefined;
-      store().finishStream(assistantMsg);
+      // The captions that landed for the traces it commits ride along.
+      store().finishStream(
+        assistantMsg && labelCommit(assistantMsg, store().messages, result.activityLabels),
+      );
 
       // Auto-generate the title ONCE, after the first exchange (fire-and-forget,
       // don't block UI). Reads the OWNING session's metadata, not the viewed one.
@@ -578,10 +582,13 @@ export function useChatStream(): UseChatStreamReturn {
     try {
       // Deliberately a minimal body: the backend only needs `question` +
       // `session_id` to queue it into the turn that's actually running.
-      // `midturn` tells it this body may ONLY be queued: if the turn already
-      // finished in the tiny window before the request arrived, the backend
+      // `midturn` tells it this body may ONLY be queued: if the turn took its
+      // last look at the inbox before the request arrived, the backend
       // answers 409 instead of starting a fresh turn from an incomplete
-      // body, and that outcome is reported as NOT delivered.
+      // body, and that outcome is reported as NOT delivered. That window
+      // opens at the last look and lasts until [DONE]: usually a moment, up
+      // to 3 s when the turn waits for its activity captions
+      // (server/chat/engine/activity_labels.py).
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -394,4 +394,14 @@ describe('SSEEventDataSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) expect(result.data.stop_hook_block?.source).toBe('deliverable');
   });
+
+  it('keeps every key of an activity_label frame, the calls of the round included', () => {
+    const frame = { tool_use_id: 'tu_1', tool_use_ids: ['tu_1', 'tu_2'], label: 'Read the plan' };
+    const result = SSEEventDataSchema.safeParse({ activity_label: frame });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.activity_label).toEqual(frame);
+    // tool_use_ids is optional; a frame without a label is malformed.
+    expect(SSEEventDataSchema.safeParse({ activity_label: { tool_use_id: 'tu_1', label: 'x' } }).success).toBe(true);
+    expect(SSEEventDataSchema.safeParse({ activity_label: { tool_use_id: 'tu_1' } }).success).toBe(false);
+  });
 });
