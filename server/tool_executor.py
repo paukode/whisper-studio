@@ -43,10 +43,10 @@ log = logging.getLogger("whisper-studio")
 # Tools whose errors cascade to subsequent writes
 _COMMAND_TOOLS = {"ws_run_command", "run_python"}
 
-# Write tools blocked in plan mode. The app's own folder is written without
-# a card in every other mode (server.security.permissions.targets_app_storage),
-# so its writers are listed here too: plan is the one mode that writes
-# nothing, the user's rule.
+# Write tools blocked in plan mode. The app's own folder is not the
+# workspace: memory_write and memory_delete keep running in plan mode with no
+# card (the user's rule), and rules_write runs there behind an approval card
+# it raises itself (server/rules_tools.py), so neither is listed.
 _PLAN_MODE_BLOCKED = {
     "ws_write_file",
     "ws_create_file",
@@ -54,9 +54,6 @@ _PLAN_MODE_BLOCKED = {
     "ws_delete_file",
     "ws_run_command",
     "ws_merge_worktree",
-    "memory_write",
-    "memory_delete",
-    "rules_write",
 }
 
 # Max denials before auto-blocking

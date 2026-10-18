@@ -4,8 +4,9 @@ The user's rule: the app's own folders (rules, the profile, scratch, memory,
 data) are where these writes belong, so no mode, category override or
 session answer may raise a card for them. A delete there is silent only in
 bypassPermissions; every other mode keeps its normal delete rule. Workspace
-paths are untouched by this. Plan mode writes nothing anywhere, so the
-memory and rules writers are blocked there like every other write.
+paths are untouched by this. Plan mode blocks the workspace writers, but
+memory still updates there with no card, and a rules_write is dispatched so
+it can raise its own card (tests/test_rules_tool.py).
 """
 
 import asyncio
@@ -129,10 +130,13 @@ def _run(monkeypatch, tool: str, *, plan_mode: bool):
         executor.shutdown(wait=False)
 
 
-def test_plan_mode_blocks_the_writers_of_the_apps_own_folder(monkeypatch):
+def test_plan_mode_dispatches_the_writers_of_the_apps_own_folder(monkeypatch):
+    # Memory updates with no card in plan mode (the user's rule); rules_write
+    # reaches its executor, which raises the card itself in plan mode.
     for tool in ("memory_write", "memory_delete", "rules_write"):
-        state = _run(monkeypatch, tool, plan_mode=True)
-        assert state.status == "skipped", tool
-        assert state.output.startswith("[Plan Mode]"), tool
-        state = _run(monkeypatch, tool, plan_mode=False)
-        assert state.output == f"routed {tool}"
+        for plan_mode in (True, False):
+            state = _run(monkeypatch, tool, plan_mode=plan_mode)
+            assert state.status == "completed", (tool, plan_mode)
+            assert state.output == f"routed {tool}"
+    state = _run(monkeypatch, "ws_write_file", plan_mode=True)
+    assert state.status == "skipped" and state.output.startswith("[Plan Mode]")

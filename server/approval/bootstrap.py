@@ -143,6 +143,12 @@ def register_defaults() -> None:
 
     register_office_script_approval()
 
+    # rules_write — writes the user's rules under ~/.whisper with no card in
+    # every mode but plan, where it raises this card (server/rules_tools.py).
+    from server.rules_tools import register_rules_approval
+
+    register_rules_approval()
+
     # Folder access — its own category so it is never covered by "Yes for all
     # writes"/"all commands". Granting the app reach into a NEW folder outside
     # the connected workspace is a distinct, durable decision (it persists
