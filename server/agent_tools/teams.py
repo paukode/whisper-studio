@@ -27,6 +27,23 @@ SALVAGE_WAIT_S = 5.0
 _teams: dict[str, dict] = {}
 
 
+def stop_team(team_id: str) -> bool:
+    """Cancel a running team_create fan-out or a spawn_agent run. The
+    cancellation propagates into every member's run_agent, which publishes a
+    per-agent "stopped" event before re-raising; the tool then returns an
+    honest "stopped by user" summary to the model. False when nothing with
+    that id is running."""
+    team = _teams.get(team_id)
+    task = team.get("task") if team else None
+    if task is None or task.done():
+        return False
+    # Flag first, then cancel: the tools distinguish a user stop from an
+    # outer-turn cancellation by this flag, not by future state.
+    team["stop_requested"] = True
+    task.cancel()
+    return True
+
+
 def _terminal_paragraph(text: str, max_chars: int = 300) -> str:
     """Return the final non-empty paragraph of ``text``, capped at ``max_chars``.
 

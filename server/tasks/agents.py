@@ -339,9 +339,17 @@ def _event_line(ev: dict) -> str:
 
 
 def cancel_task(task_id: str) -> bool:
-    """Cancel a running detached agent/workflow coroutine."""
+    """Stop a running agent: a detached, resumed or /subagent run through its
+    coroutine; an agent spawned inside a chat turn through the team that owns
+    it (server/agent_tools/teams.py), the same cancel the chat's Stop sends."""
     aio_task = _running.get(task_id)
-    if aio_task is None or aio_task.done():
+    if aio_task is not None and not aio_task.done():
+        aio_task.cancel()
+        return True
+    task = registry.get_task(task_id)
+    team_id = str(((task or {}).get("meta") or {}).get("team_id") or "")
+    if not team_id:
         return False
-    aio_task.cancel()
-    return True
+    from server.agent_tools.teams import stop_team
+
+    return stop_team(team_id)
