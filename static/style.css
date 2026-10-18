@@ -1316,7 +1316,7 @@ input.segment-speaker {
     max-height: 260px; overflow: auto; font-size: 12px; margin: 6px 0;
 }
 .workflow-card-meta { color: var(--text-secondary, inherit); font-size: 12px; margin-top: 6px; }
-/* Per-agent live log list inside a workflow run card (reuses .team-agent-* rows). */
+/* The agent rows inside a workflow run card (one .agent-row each). */
 .workflow-card-agents {
     display: flex; flex-direction: column; gap: 6px;
     margin-top: 10px; padding-top: 10px;
@@ -1687,289 +1687,6 @@ input.segment-speaker {
     color: var(--text-primary);
 }
 
-/* ─── Team report card ────────────────────────────────────────────────────
- * Rich, expandable rendering for a team_create run. Replaces the generic
- * AgentCard when a TeamReportData payload exists on the message — driven
- * by live team_progress SSE events from server/agents/event_bus.py.
- * Outer card uses the same accent-bordered chrome as .agent-card so the
- * visual rhythm of "this is a delegated unit of work" is preserved. */
-.team-report {
-    border: 1px solid var(--accent);
-    border-radius: 10px;
-    overflow: hidden;
-    background: var(--bg-elevated);
-    transition: border-color 0.3s, box-shadow 0.3s;
-    /* See note on `.cron-event` — `overflow: hidden` on a flex child
-     * with default `flex-shrink: 1` lets the parent column compress
-     * the whole card to ~border height. Lock shrink so the card keeps
-     * its natural size and the chat scrollbar carries any overflow. */
-    flex-shrink: 0;
-}
-.team-report.running {
-    box-shadow: 0 0 0 1px var(--accent), 0 2px 12px color-mix(in srgb, var(--accent) 10%, transparent);
-}
-.team-report.done {
-    border-color: var(--border-strong);
-    box-shadow: none;
-}
-.team-report-summary {
-    display: flex; align-items: center; gap: 8px;
-    padding: 9px 12px;
-    cursor: pointer;
-    font-size: var(--fs-small); font-weight: 600;
-    color: var(--text-primary);
-    background: var(--bg-elevated);
-    user-select: none;
-    list-style: none;
-    transition: background 0.15s;
-}
-.team-report-summary::-webkit-details-marker { display: none; }
-.team-report-summary::marker { display: none; content: ""; }
-.team-report-summary:hover { background: var(--bg-hover); }
-.team-report-icon { font-size: var(--fs-content); flex-shrink: 0; }
-.team-report-title {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-}
-.team-report-count {
-    font-weight: 400;
-    color: var(--text-secondary);
-}
-.team-report-status {
-    display: flex; align-items: center; gap: 5px;
-    font-size: var(--fs-caption); font-weight: 500;
-    color: var(--text-muted);
-    flex-shrink: 0;
-}
-.team-report-body {
-    display: flex; flex-direction: column; gap: 6px;
-    padding: 10px;
-    background: var(--bg-secondary);
-    border-top: 1px solid var(--border);
-}
-.team-report-description {
-    font-size: var(--fs-small);
-    color: var(--text-secondary);
-    padding: 4px 4px 6px;
-    border-bottom: 1px dashed var(--border);
-    margin-bottom: 4px;
-}
-
-/* Per-agent row. Defaults to collapsed (closed); running and failed agents
- * pre-open via the `open` attribute set by the React component. */
-.team-agent-row {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
-    background: var(--bg-elevated);
-}
-.team-agent-row[open] { border-color: var(--accent); }
-.team-agent-row.team-agent-failed { border-color: rgba(239, 68, 68, 0.45); }
-.team-agent-row.team-agent-turn_limit { border-color: rgba(251, 191, 36, 0.55); }
-.team-agent-summary {
-    display: flex; align-items: center; gap: 8px;
-    padding: 7px 10px;
-    cursor: pointer;
-    font-size: var(--fs-small);
-    color: var(--text-secondary);
-    user-select: none;
-    list-style: none;
-    flex-wrap: wrap;
-}
-.team-agent-summary::-webkit-details-marker { display: none; }
-.team-agent-summary::marker { display: none; content: ""; }
-.team-agent-summary:hover { background: var(--bg-hover); }
-.team-agent-icon { font-size: var(--fs-content); flex-shrink: 0; }
-.team-agent-name {
-    font-weight: 700;
-    color: var(--text-primary);
-    flex-shrink: 0;
-}
-.team-agent-badge {
-    font-size: var(--fs-caption);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    padding: 2px 6px;
-    border-radius: 3px;
-    line-height: 1.4;
-    flex-shrink: 0;
-}
-.team-agent-badge-team {
-    background: var(--accent-dim);
-    color: var(--accent);
-}
-.team-agent-badge-orchestrator {
-    background: rgba(168, 85, 247, 0.18);
-    color: #a855f7;
-}
-.team-agent-badge-type {
-    background: var(--bg-secondary);
-    color: var(--text-muted);
-    border: 1px solid var(--border);
-}
-.team-agent-badge-model {
-    background: transparent;
-    color: var(--text-muted);
-    border: 1px solid var(--border);
-    text-transform: none;
-    letter-spacing: 0;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: var(--fs-caption);
-}
-.team-agent-status {
-    margin-left: auto;
-    display: flex; align-items: center; gap: 5px;
-    font-size: var(--fs-caption);
-    color: var(--text-muted);
-    flex-shrink: 0;
-}
-.team-agent-status-text { white-space: nowrap; }
-
-.team-agent-body {
-    padding: 8px 10px 10px;
-    background: var(--bg-primary);
-    border-top: 1px solid var(--border);
-    display: flex; flex-direction: column; gap: 8px;
-}
-.team-agent-task {
-    font-size: var(--fs-small);
-    color: var(--text-secondary);
-    line-height: 1.45;
-}
-.team-agent-task-label {
-    color: var(--text-muted);
-    font-weight: 600;
-    margin-right: 6px;
-}
-.team-agent-task-text {
-    color: var(--text-primary);
-}
-.team-agent-empty {
-    font-size: var(--fs-caption);
-    color: var(--text-muted);
-    font-style: italic;
-}
-
-/* Live event log — chronological scroll of turn_start/text/tool_call/
- * tool_result/completed events for this agent. */
-.team-agent-log {
-    display: flex; flex-direction: column; gap: 3px;
-    max-height: 280px;
-    overflow-y: auto;
-    padding: 6px 8px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-}
-.team-event {
-    display: flex; align-items: flex-start; gap: 6px;
-    font-size: var(--fs-caption);
-    line-height: 1.45;
-    color: var(--text-secondary);
-    padding: 2px 0;
-}
-.team-event-icon {
-    flex-shrink: 0;
-    width: 14px;
-    text-align: center;
-    color: var(--text-muted);
-    font-family: 'IBM Plex Mono', monospace;
-}
-.team-event-turn { color: var(--text-muted); font-size: var(--fs-caption); }
-.team-event-text .team-event-pre {
-    margin: 0;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-family: inherit;
-    color: var(--text-primary);
-    font-size: var(--fs-caption);
-    line-height: 1.45;
-}
-.team-event-tool-call .team-event-tool-name,
-.team-event-tool-result .team-event-tool-name {
-    font-family: 'IBM Plex Mono', monospace;
-    color: var(--accent);
-    font-weight: 600;
-}
-.team-event-tool-args {
-    font-family: 'IBM Plex Mono', monospace;
-    color: var(--text-muted);
-    font-size: var(--fs-caption);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-}
-.team-event-tool-result.errored .team-event-icon { color: #ef4444; }
-.team-event-tool-result.errored .team-event-tool-name { color: #ef4444; }
-
-/* Click-to-expand tool events: the collapsed summary keeps the one-line
- * ellipsis look; expanding reveals the full input/output pre. The base
- * .team-event flex layout must not apply to the <details> wrapper. */
-.team-event-expandable { display: block; }
-.team-event-expandable > summary::-webkit-details-marker { display: none; }
-.team-event-expandable > summary .team-event-tool-args::after {
-    content: ' ⌄';
-    color: var(--accent);
-    opacity: 0.7;
-}
-.team-event-expandable[open] > summary .team-event-tool-args::after { content: ' ⌃'; }
-.team-event-pre.team-event-full {
-    margin: 4px 0 4px 20px;
-    padding: 6px 8px;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: var(--fs-caption);
-    line-height: 1.5;
-    color: var(--text-primary);
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 260px;
-    overflow-y: auto;
-}
-.team-event-done { color: var(--accent); font-weight: 600; }
-.team-event-warn { color: #fbbf24; }
-.team-event-error { color: #ef4444; }
-.team-event-meta { color: var(--text-muted); font-size: var(--fs-caption); }
-
-/* Terminal agent output — full final findings, accent-tinted to draw the
- * eye. Shown below the live log once the agent reports back. */
-.team-agent-result {
-    border: 1px solid var(--accent);
-    border-radius: 5px;
-    background: var(--accent-dim);
-    overflow: hidden;
-}
-.team-agent-result-label {
-    padding: 5px 10px;
-    font-size: var(--fs-caption);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--accent);
-    background: var(--accent-dim);
-    border-bottom: 1px solid var(--accent);
-}
-.team-agent-result-pre {
-    margin: 0;
-    padding: 8px 10px;
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: var(--fs-caption);
-    line-height: 1.5;
-    color: var(--text-primary);
-    background: var(--bg-primary);
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 360px;
-    overflow-y: auto;
-}
-
 /* ─── "Jump to new messages" pill ────────────────────────────────────────
  * Floats at the bottom of the chat-messages scroll area when the user
  * has scrolled up and new live messages (typically cron firings)
@@ -2024,9 +1741,8 @@ input.segment-speaker {
  * markdown output inside. Failures pre-open and switch to red accent
  * so the user notices.
  *
- * Reuses the accent-bordered visual language from .team-report, so the
- * "background-delivered card" pattern stays consistent across cron
- * events and team-agent reports. */
+ * Accent-bordered like the other backend-delivered cards (agent reports),
+ * so they read as one family. */
 
 .cron-event {
     margin: 6px 0;
@@ -4239,25 +3955,6 @@ button.effort-badge { font: inherit; font-size: 0.7em; font-weight: 700;
 
 /* ── NotifyUser card ─────────────────────────────────────────────────────── */
 
-/* ── Team results ────────────────────────────────────────────────────────── */
-.team-agent-row {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--border);
-}
-.team-agent-row:last-child { border-bottom: none; }
-.team-agent-name {
-    font-weight: 600;
-    color: var(--accent);
-    font-size: var(--fs-caption);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-.team-agent-result { color: var(--text-secondary); line-height: 1.5; }
-.team-agent-error .team-agent-name { color: #ff6b6b; }
-
 /* ── AskUserQuestion "Other" text input ──────────────────────────────────── */
 .user-question-other-row {
     display: flex;
@@ -5915,69 +5612,136 @@ button.ws-git-status-badge:hover {
 }
 
 /* ============================================================
- * Background-task cards + panel (unified task registry)
- * Role 'task_event' rows in chat and the header's what's-running
- * panel. Follows the .cron-event visual language: pills for
- * lifecycle notices, accent-bordered card for completions.
+ * Background tasks: the header pill and the list under it
+ * (src/components/tasks/BackgroundTasksPanel.tsx). One row per task
+ * across every session; a chevron unfolds the details, Open puts an
+ * agent in the dock, Stop ends a running one, a finished row lingers
+ * with its exit code and a countdown line.
  * ============================================================ */
 
-.task-event {
-    margin: 6px 0;
-    font-size: var(--fs-small);
-    color: var(--text-secondary);
-    flex-shrink: 0; /* same flex-collapse guard as .cron-event */
-}
-
-.task-event-pill {
+.bg-tasks-pill {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
+    gap: 6px;
+    padding: 3px 10px;
     border-radius: 999px;
-    border: 1px solid var(--border);
-    background: var(--bg-elevated);
-    color: var(--text-secondary);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    background: var(--accent-dim);
+    color: var(--accent);
     font-size: var(--fs-caption);
+    font-weight: 500;
     line-height: 1.5;
+    cursor: pointer;
 }
-.task-event-pill .task-event-icon { font-size: var(--fs-body); }
-.task-event-title {
-    color: var(--text-primary);
-    font-family: 'IBM Plex Mono', monospace;
-    font-weight: 600;
-    font-size: var(--fs-caption);
-    max-width: 340px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    display: inline-block;
-    vertical-align: bottom;
+.bg-tasks-pill .pulse-dot { background: var(--accent-live); }
+.bg-tasks-pill svg { display: block; }
+.bg-tasks-pill-done {
+    border-color: var(--border);
+    background: var(--bg-surface);
+    color: var(--text-secondary);
 }
-.task-event-meta { opacity: 0.65; font-size: var(--fs-caption); }
 
-.task-event-done {
-    border: 1px solid var(--border);
-    border-left: 3px solid var(--success, #3fb27f);
-    border-radius: 8px;
+.bg-tasks-panel {
+    position: fixed;
+    top: 50px;
+    right: 12px;
+    width: 360px;
+    max-height: 60vh;
+    display: flex;
+    flex-direction: column;
     background: var(--bg-elevated);
-    padding: 8px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    box-shadow: var(--shadow-md);
     overflow: hidden;
+    z-index: var(--z-dropdown);
 }
-.task-event-done-failed { border-left-color: var(--danger, #d9534f); }
-.task-event-done-stopped { border-left-color: var(--text-secondary); }
-.task-event-summary {
+.bg-tasks-head {
+    padding: 8px 10px;
+    font-size: var(--fs-small);
+    font-weight: 500;
+    color: var(--text-primary);
+}
+.bg-tasks-body { overflow-y: auto; }
+.bg-tasks-empty { padding: 8px 10px 12px; color: var(--text-secondary); font-size: var(--fs-small); }
+.bg-tasks-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    flex-wrap: wrap;
-}
-.task-event-status { margin-left: auto; font-size: var(--fs-caption); opacity: 0.8; white-space: nowrap; }
-.task-event-tail {
-    margin: 8px 0 0;
     padding: 8px 10px;
+    border-top: 1px solid var(--border);
+    font-size: var(--fs-small);
+    color: var(--text-primary);
+}
+.bg-tasks-row-finished { color: var(--text-secondary); }
+.bg-tasks-chevron,
+.bg-tasks-dismiss {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 0;
+    display: flex;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.bg-tasks-dismiss { color: var(--text-muted); }
+.bg-tasks-chevron:hover,
+.bg-tasks-dismiss:hover { color: var(--text-primary); }
+.bg-tasks-kind {
+    font-size: var(--fs-caption);
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+.bg-tasks-row-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.bg-tasks-row-title.mono { font-family: var(--font-mono); font-size: var(--fs-caption); }
+.bg-tasks-status {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--fs-caption);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.bg-tasks-btn {
+    font-size: var(--fs-caption);
+    padding: 2px 8px;
+    border: 1px solid var(--border-strong);
     border-radius: 6px;
-    background: var(--bg-inset, rgba(0,0,0,0.15));
-    font-family: 'IBM Plex Mono', monospace;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.bg-tasks-btn:hover { background: var(--bg-hover); }
+.bg-tasks-stop {
+    color: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+.bg-tasks-detail {
+    padding: 4px 10px 10px 34px;
+    font-size: var(--fs-caption);
+    color: var(--text-secondary);
+}
+.bg-tasks-detail .mono { font-family: var(--font-mono); }
+.bg-tasks-detail-task { margin-top: 4px; color: var(--text-primary); white-space: pre-wrap; word-break: break-word; }
+.bg-tasks-tail {
+    margin: 6px 0 0;
+    padding: 8px;
+    border-radius: 6px;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
     font-size: var(--fs-caption);
     line-height: 1.5;
     white-space: pre-wrap;
@@ -5985,91 +5749,144 @@ button.ws-git-status-badge:hover {
     max-height: 220px;
     overflow-y: auto;
 }
-.task-event-stop {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: var(--fs-caption);
-    padding: 2px 8px;
-    cursor: pointer;
-}
-.task-event-stop:hover { color: var(--danger, #d9534f); border-color: var(--danger, #d9534f); }
+/* The countdown line under a finished row: full when it finishes, gone
+   when the row leaves. */
+.bg-tasks-linger { height: 2px; background: var(--bg-surface); }
+.bg-tasks-linger-fill { height: 2px; background: var(--border-strong); transition: width 1s linear; }
 
-/* Header pill */
-.bg-tasks-pill {
-    display: inline-flex;
+/* ============================================================
+ * Agent rows in the chat (src/components/chat/AgentRows.tsx): one
+ * line per agent, Open puts its full feed in the dock.
+ * ============================================================ */
+.agent-rows { display: flex; flex-direction: column; gap: 2px; }
+.agent-rows-team { font-size: var(--fs-caption); color: var(--text-muted); padding: 2px 0; }
+.agent-row {
+    display: flex;
     align-items: center;
     gap: 6px;
+    padding: 4px 0;
     font-size: var(--fs-caption);
-    padding: 4px 10px;
-    border-radius: 999px;
+    color: var(--text-muted);
 }
+.agent-row svg { flex-shrink: 0; }
+.agent-row-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-row-name { font-weight: 500; color: var(--text-secondary); }
+.agent-row-open {
+    border: none;
+    background: transparent;
+    padding: 0 2px;
+    font-size: var(--fs-caption);
+    color: var(--accent);
+    cursor: pointer;
+}
+.agent-row-open:hover { text-decoration: underline; }
 
-/* What's-running panel */
-.bg-tasks-panel {
-    position: fixed;
-    top: 52px;
-    right: 12px;
-    width: 380px;
-    max-height: 60vh;
+/* ============================================================
+ * Agent pane in the dock (src/components/preview/AgentPanel.tsx):
+ * the status line, then the feed with a label column.
+ * ============================================================ */
+.agent-pane {
     display: flex;
     flex-direction: column;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
-    z-index: 260;
-}
-.bg-tasks-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--border);
-}
-.bg-tasks-title { font-weight: 600; font-size: var(--fs-small); color: var(--text-primary); }
-.bg-tasks-close {
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
+    flex: 1 1 auto;
+    min-height: 0;
     font-size: var(--fs-small);
 }
-.bg-tasks-body { overflow-y: auto; padding: 6px 0; }
-.bg-tasks-empty { padding: 16px 14px; color: var(--text-secondary); font-size: var(--fs-small); }
-.bg-tasks-row {
+.agent-pane-note { padding: 12px; color: var(--text-muted); }
+.agent-pane-status {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 8px 14px;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 6px 12px;
     border-bottom: 1px solid var(--border);
-}
-.bg-tasks-row:last-child { border-bottom: none; }
-.bg-tasks-row-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.bg-tasks-kind {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: var(--fs-caption);
     color: var(--text-secondary);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1px 5px;
+}
+.agent-pane-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent-live);
+    margin-right: 5px;
+    vertical-align: middle;
+}
+.agent-pane-dot.done { background: var(--text-muted); }
+.agent-pane-stop,
+.agent-pane-extend {
+    font-size: var(--fs-caption);
+    padding: 2px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-primary);
+    cursor: pointer;
     flex-shrink: 0;
 }
-.bg-tasks-row-title {
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: var(--fs-caption);
-    color: var(--text-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+.agent-pane-stop {
+    color: var(--danger);
+    border-color: color-mix(in srgb, var(--danger) 60%, transparent);
 }
-.bg-tasks-row-side { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.bg-tasks-status { font-size: var(--fs-caption); color: var(--text-secondary); white-space: nowrap; }
-.bg-tasks-running .bg-tasks-status { color: var(--success, #3fb27f); }
-.bg-tasks-failed .bg-tasks-status { color: var(--danger, #d9534f); }
+.agent-pane-stop:disabled,
+.agent-pane-extend:disabled { opacity: 0.6; cursor: default; }
+.agent-pane-feed { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.agent-ev {
+    display: flex;
+    gap: 8px;
+    padding: 7px 12px;
+    border-top: 1px solid var(--border);
+}
+.agent-ev:first-child { border-top: none; }
+.agent-ev-label {
+    flex-shrink: 0;
+    min-width: 44px;
+    padding-top: 2px;
+    font-size: var(--fs-caption);
+    color: var(--text-muted);
+}
+.agent-ev-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    line-height: 1.5;
+    color: var(--text-primary);
+    word-break: break-word;
+}
+.agent-ev-body .mono { font-family: var(--font-mono); font-size: var(--fs-caption); }
+.agent-ev-arg { color: var(--text-secondary); }
+.agent-ev-task { color: var(--text-secondary); white-space: pre-wrap; }
+.agent-ev-wait .agent-ev-body { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.agent-ev-end .agent-ev-body { color: var(--text-secondary); }
+.agent-ev-tool.errored .mono:first-child { color: var(--danger); }
+.agent-ev-result > summary {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-top: 2px;
+    font-size: var(--fs-caption);
+    color: var(--text-muted);
+    cursor: pointer;
+    list-style: none;
+}
+.agent-ev-result > summary::-webkit-details-marker { display: none; }
+.agent-ev-result > summary svg { transition: transform 0.15s; }
+.agent-ev-result[open] > summary svg { transform: rotate(90deg); }
+.agent-ev-pre {
+    margin: 4px 0 0;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--bg-surface);
+    font-family: var(--font-mono);
+    font-size: var(--fs-caption);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 320px;
+    overflow-y: auto;
+}
+.agent-pane-report { padding: 8px 12px; border-top: 1px solid var(--border); }
+.agent-pane-report > summary { font-size: var(--fs-caption); color: var(--text-muted); cursor: pointer; margin-bottom: 6px; }
+.icon-spin { animation: traceSpin 0.9s linear infinite; }
 
 /* notify_user title header inside a toast */
 .whisper-toast__title {
@@ -6123,6 +5940,13 @@ button.ws-git-status-badge:hover {
 }
 .notif-title { font-weight: 600; font-size: var(--fs-small); color: var(--text-primary); }
 .notif-head-actions { display: flex; align-items: center; gap: 8px; }
+.notif-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: var(--fs-small);
+}
 .notif-tab {
     background: none;
     border: 1px solid var(--border);
@@ -6449,65 +6273,6 @@ button.ws-git-status-badge:hover {
 .agent-report-record { color: var(--text-muted); font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.8em; margin-top: 6px; }
 
 
-/* Agent budget bars, state pill and Extend (Phase 5 of the flight recorder). */
-.team-agent-budget {
-  display: grid;
-  gap: 4px;
-  margin: 4px 0 8px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: var(--bg-inset, rgba(127, 127, 127, 0.06));
-  font-size: 0.82em;
-}
-.budget-row { display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 8px; }
-.budget-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.85em; }
-.budget-bar {
-  position: relative;
-  display: block;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--border, rgba(127, 127, 127, 0.25));
-  overflow: hidden;
-}
-.budget-fill {
-  position: absolute; inset: 0 auto 0 0;
-  background: var(--accent, #3b82f6);
-  border-radius: 3px;
-  transition: width 0.4s ease;
-}
-.budget-finale {
-  position: absolute; inset: 0 0 0 auto;
-  background: repeating-linear-gradient(135deg, rgba(245, 158, 11, 0.55) 0 3px, transparent 3px 6px);
-}
-.budget-text { color: var(--text-muted); font-family: var(--font-mono, ui-monospace, monospace); font-variant-numeric: tabular-nums; }
-.budget-extend {
-  justify-self: start;
-  margin-top: 2px;
-  padding: 2px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 0.9em;
-  cursor: pointer;
-}
-.budget-extend:hover { border-color: var(--accent, #3b82f6); }
-.budget-extend:disabled { opacity: 0.6; cursor: default; }
-.team-agent-pill {
-  font-size: 0.72em;
-  letter-spacing: 0.04em;
-  padding: 1px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-.team-agent-pill-finishing { color: #b45309; border-color: rgba(245, 158, 11, 0.7); }
-.team-agent-pill-limit { color: #b45309; border-color: rgba(245, 158, 11, 0.7); }
-.team-agent-pill-salvaged { color: #4338ca; border-color: rgba(99, 102, 241, 0.6); }
-.team-agent-pill-failed { color: var(--error, #f87171); border-color: var(--error, #f87171); }
-.team-agent-pill-done { color: var(--success, #15803d); }
 
 
 /* The wake turn's answer to agent reports: an assistant bubble with a label. */

@@ -3,9 +3,9 @@ import { create } from 'zustand';
 /**
  * Registry of stop handlers for running background `/subagent` streams, keyed
  * by the subagent's team_id. The `/subagent` handler registers an abort
- * callback when it starts streaming and unregisters when the stream ends; the
- * TeamReportCard shows a Stop button only while a handler is registered (so
- * regular `team_create` cards never show one).
+ * callback when it starts streaming and unregisters when the stream ends;
+ * ESC and the session Stop run these handlers, and a registered run keeps
+ * its session counted as busy.
  *
  * Every run also records the chat session that started it (`owners`): Stop
  * and ESC in a session stop only that session's runs, and a session with a

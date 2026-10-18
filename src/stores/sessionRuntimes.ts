@@ -27,8 +27,9 @@ import type {
   ChatMessage,
   CronEventPayload,
   SessionMessagePayload,
-  TaskEventPayload,
   TeamProgressEvent, AgentReportPayload, AgentAnswerPayload } from '@/types/chat';
+import type { TaskEventPayload } from '@/types/backgroundTasks';
+import type { AgentProgressEvent } from './agentFeedStore';
 
 /** Backs `currentSessionId === null` (welcome screen, pre-first-session).
  *  Never saved, never evicted, never event-sourced. */
@@ -294,6 +295,7 @@ interface SessionEventFrame {
   cron_event?: CronEventPayload;
   memory_event?: MemoryEventPayload;
   task_event?: TaskEventPayload;
+  agent_progress?: AgentProgressEvent;
   agent_report?: AgentReportPayload;
   agent_answer?: AgentAnswerPayload;
   session_message?: SessionMessagePayload;
@@ -332,6 +334,27 @@ export function openEventChannel(): void {
     if (parsed?.mcp_changed) {
       const { revision } = parsed.mcp_changed;
       void import('./mcpStore').then(({ useMcpStore }) => useMcpStore.getState().applyChange(revision));
+      return;
+    }
+    if (parsed?.task_event) {
+      // The header's task list is global: a row starts or ends whether or
+      // not its session is open here, and a task with no session arrives
+      // on the app-wide channel.
+      const payload = parsed.task_event;
+      const owner = parsed.session_id ?? '';
+      void import('./backgroundTaskStore').then(({ useBackgroundTaskStore }) => {
+        useBackgroundTaskStore.getState().applyEvent(owner, payload);
+      });
+      return;
+    }
+    if (parsed?.agent_progress) {
+      // The agent pane follows the runs it has open, whichever channel they
+      // publish on; a run nobody opened is ignored there. The chat's own
+      // stream folds the same events into the turn's agent rows.
+      const ev = parsed.agent_progress;
+      void import('./agentFeedStore').then(({ useAgentFeedStore }) => {
+        useAgentFeedStore.getState().applyLive(ev);
+      });
       return;
     }
     const sid = parsed?.session_id ?? '';
@@ -385,30 +408,14 @@ export function openEventChannel(): void {
     }
     if (parsed?.agent_report) {
       // Reports that arrived with no live turn to carry them (a cancelled
-      // team, a background or resumed agent). Same UI-only row contract as
-      // task_event; the backend relabels it for the model.
+      // team, a background or resumed agent). A backend-owned row the
+      // backend relabels for the model.
       const payload = parsed.agent_report;
       entry.chat.getState().addMessage({
         role: 'agent_report',
         content: '',
         timestamp: payload.timestamp ?? new Date().toISOString(),
         agentReport: payload,
-      });
-      return;
-    }
-    if (parsed?.task_event) {
-      const payload = parsed.task_event;
-      const msg: ChatMessage = {
-        role: 'task_event',
-        content: '',
-        timestamp: payload.timestamp ?? new Date().toISOString(),
-        taskEvent: payload,
-      };
-      entry.chat.getState().addMessage(msg);
-      // Keep the global running-count pill live. Lazy import mirrors the
-      // uiStore pattern above (no cycle, but stay consistent).
-      void import('./backgroundTaskStore').then(({ useBackgroundTaskStore }) => {
-        useBackgroundTaskStore.getState().applyEvent(sid, payload);
       });
       return;
     }

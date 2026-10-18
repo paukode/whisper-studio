@@ -9,8 +9,7 @@ import { TaskCard } from '@/components/chat/TaskCard';
 import { PlanCard } from '@/components/chat/PlanCard';
 import type { SessionTask } from '@/stores/taskStore';
 import { ActivityRow } from '@/components/chat/ActivityRow';
-import { TeamReportCard } from '@/components/chat/TeamReportCard';
-import { BackgroundTaskCard } from '@/components/chat/BackgroundTaskCard';
+import { TeamAgentRows } from '@/components/chat/AgentRows';
 import { AgentReportCard } from './AgentReportCard';
 import { CronEventCard } from '@/components/chat/CronEventCard';
 import { SessionMessageCard } from '@/components/chat/SessionMessageCard';
@@ -165,15 +164,6 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
     }
   }
 
-  // Background-task lifecycle rows (shell/agent/workflow) — same UI-only
-  // contract as cron events, rendered as a compact card.
-  if (message.role === 'task_event') {
-    if (message.taskEvent) {
-      return <BackgroundTaskCard event={message.taskEvent} />;
-    }
-    return null;
-  }
-
   // The wake turn's answer to agent reports that landed with no live turn:
   // the assistant speaking, so it gets the assistant bubble, with a small
   // label saying why it appeared without a prompt.
@@ -203,7 +193,7 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
 
   // Cross-session message rows — a text message another session sent this
   // one via send_session_message. Same UI-only-in-storage contract as
-  // cron/task events (the backend relabels it as a user turn before the
+  // cron events (the backend relabels it as a user turn before the
   // model sees it, see visible_chat_history).
   if (message.role === 'session_message') {
     if (message.sessionMessage) {
@@ -287,13 +277,14 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
             {groupForActivity(groupAgentTools(message.toolUse), { minRun: ACTIVITY_MIN_RUN }).map((entry, idx) => {
               if (Array.isArray(entry)) {
                 // A group can anchor SEVERAL reports (team_create plus each
-                // inline spawn_agent's one-member team) — render them all, and
-                // the generic AgentCard only when none matched. Rendering both
-                // for the same group double-carded every inline spawn.
+                // inline spawn_agent's one-member team) — render the agent
+                // rows of them all, and the generic AgentCard only when none
+                // matched. Rendering both for the same group double-carded
+                // every inline spawn.
                 const matchedReports = findMatchingTeamReports(entry, message.teamReports);
                 if (matchedReports.length > 0) {
                   return matchedReports.map((r) => (
-                    <TeamReportCard key={`team-${r.team_id}-${idx}`} report={r} />
+                    <TeamAgentRows key={`team-${r.team_id}-${idx}`} report={r} />
                   ));
                 }
                 return <AgentCard key={`agent-group-${idx}`} tools={entry} />;
@@ -394,7 +385,7 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
           </div>
         )}
 
-        {/* Standalone team cards: any report NOT anchored to a team_create or
+        {/* Standalone agent rows: any report NOT anchored to a team_create or
          *  spawn_agent tool-use row above renders directly here. That covers
          *  background /subagent messages (no toolUse at all), question-round
          *  commits where the team trace landed on an earlier message, and
@@ -409,7 +400,7 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
             ).length === 0)
             .map((r) => (
               <div className="skill-traces" key={`standalone-team-${r.team_id}`}>
-                <TeamReportCard report={r} />
+                <TeamAgentRows report={r} />
               </div>
             ))}
 

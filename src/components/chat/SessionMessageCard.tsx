@@ -12,7 +12,7 @@ interface SessionMessageCardProps {
  * Inline rendering for a `role: 'session_message'` ChatMessage: a text
  * message another chat session sent this one via send_session_message.
  *
- * Same contract as CronEventCard/BackgroundTaskCard — the live SSE event and
+ * Same contract as CronEventCard — the live SSE event and
  * the persisted chat_history row carry the same payload, so live-render and
  * replay-on-resume converge here. UI-only in storage; the backend relabels
  * it as a user turn before it reaches the model (see

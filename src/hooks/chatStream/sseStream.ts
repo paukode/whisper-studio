@@ -684,7 +684,7 @@ export async function readSSEStream(
           // The final structured payload from execute_team_create. Fold it
           // into the same turn-local report; it reaches the conversation on
           // the committed assistant message alongside the team_create trace,
-          // where TeamReportCard renders it. (The old fallback that created a
+          // where the agent rows render it. (The old fallback that created a
           // standalone JSON message here is gone — that was the ghost
           // "Agent activity" card.)
           if (parsed.team_results) {

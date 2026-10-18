@@ -66,7 +66,7 @@ export interface VoiceState {
   /** Which utterance liveText belongs to (server-assigned). */
   liveUtteranceId: string | null;
   /** Live agent reports of delegated runs, keyed by team id, and which run
-   *  each team belongs to. Rendered with the chat's TeamReportCard. */
+   *  each team belongs to. Rendered as the chat's agent rows. */
   teamReports: Record<string, TeamReportData>;
   teamRuns: Record<string, string>;
   /** Sockets still delivering background runs after the user hung up. Which

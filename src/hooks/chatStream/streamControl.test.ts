@@ -246,6 +246,5 @@ describe('killSessionStream — keeps the tool activity shown so far', () => {
     expect(report?.completed_at).toBeDefined();
     expect(report?.agents.reader.status).toBe('completed');
     expect(report?.agents.writer.status).toBe('stopped');
-    expect(report?.agents.writer.events[report.agents.writer.events.length - 1]?.phase).toBe('stopped');
   });
 });

@@ -431,9 +431,9 @@ export function useChatStream(): UseChatStreamReturn {
         finalContent = '';
       }
       // Move the turn-local team reports onto the message being committed —
-      // this is what makes the rich TeamReportCard permanent (and persisted,
-      // since chat_history serializes messages verbatim). Returns undefined
-      // if an earlier commit site (approval pause) already took them.
+      // this is what makes the agent rows permanent (and persisted, since
+      // chat_history serializes messages verbatim). Returns undefined if an
+      // earlier commit site (approval pause) already took them.
       const turnTeamReports = store().takeTeamReports();
       const assistantMsg: ChatMessage | undefined = (finalContent || result.pendingArtifact || result.pendingVisuals.length > 0 || result.pendingPlan || turnTeamReports)
         ? {

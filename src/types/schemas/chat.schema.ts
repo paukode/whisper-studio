@@ -4,6 +4,7 @@ import { z } from 'zod';
  *  spawn.py team_started/team_completed). Shared by the chat SSE frame and the
  *  voice socket's team_progress event. */
 export const TeamProgressEventSchema = z.object({
+  seq: z.number().optional(),
   agent_id: z.string().optional(),
   agent_name: z.string().nullable().optional(),
   agent_type: z.string().optional(),
@@ -12,7 +13,7 @@ export const TeamProgressEventSchema = z.object({
   phase: z.enum([
     'team_started', 'team_completed', 'started', 'turn_start', 'text',
     'tool_call', 'tool_result', 'completed', 'turn_limit', 'failed',
-    'stopped',
+    'stopped', 'finished',
   ]),
   task: z.string().optional(),
   model: z.string().nullable().optional(),

@@ -73,26 +73,10 @@ export interface CronEventPayload {
   timestamp: string;
 }
 
-/** Inline background-task card payload. Persisted as a ChatMessage row with
- *  role='task_event' (UI-only, same contract as cron_event): announces a
- *  background shell command, detached agent, or workflow run starting or
- *  finishing. Emitted by server/tasks/events.py. */
-export interface TaskEventPayload {
-  event_type: 'task_started' | 'task_completed' | 'task_failed' | 'task_stopped';
-  task_id: string;
-  kind: 'shell' | 'agent' | 'workflow';
-  title: string;
-  status: string;
-  exit_code?: number | null;
-  duration_ms?: number | null;
-  result_tail?: string;
-  timestamp: string;
-}
-
 /** Inline cross-session message payload. Persisted as a ChatMessage row with
- *  role='session_message' (UI-only in storage, same contract as cron_event
- *  and task_event) so it shows up both live (via SSE) and on session resume.
- *  Unlike those two, this one IS meant to reach the model: the backend's
+ *  role='session_message' (UI-only in storage, same contract as cron_event)
+ *  so it shows up both live (via SSE) and on session resume.
+ *  Unlike cron_event, this one IS meant to reach the model: the backend's
  *  visible_chat_history() relabels it as a user turn instead of dropping it,
  *  naming the sender inline, rather than passing 'session_message' through
  *  as a literal (invalid) API role. Emitted by
@@ -114,14 +98,12 @@ export interface TurnModelSettings {
 }
 
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'cron_event' | 'task_event' | 'session_message' | 'agent_report' | 'agent_answer';
+  role: 'user' | 'assistant' | 'cron_event' | 'session_message' | 'agent_report' | 'agent_answer';
   content: string;
   timestamp: string;
   /** Populated when role === 'cron_event'. Renders as a CronEventCard
    *  instead of normal message bubble. */
   cronEvent?: CronEventPayload;
-  /** Populated when role === 'task_event'. Renders as a BackgroundTaskCard. */
-  taskEvent?: TaskEventPayload;
   /** role='agent_report' (UI-only in storage, relabeled as a user turn for the
    *  model): agent reports delivered outside a live turn, so the work of a
    *  cancelled team, a background agent or a resumed agent still reaches
@@ -146,9 +128,8 @@ export interface ChatMessage {
   skills?: string[];
   traces?: SkillTrace[];
   /** Live + final per-team progress, keyed by team_id. Populated by
-   *  team_progress SSE events; consumed by TeamReportCard which renders an
-   *  expandable per-agent live log alongside the team_create / team_results
-   *  tool_use row. */
+   *  team_progress SSE events; consumed by the agent rows (AgentRows.tsx)
+   *  rendered alongside the team_create / spawn_agent tool_use row. */
   teamReports?: Record<string, TeamReportData>;
   _thinkingMs?: number;
   _thinkingText?: string;
@@ -256,6 +237,9 @@ export interface SkillTrace {
 /** One progress event emitted by an agent runtime turn. Shaped to mirror
  *  the backend payload in server/agents/runtime.py (_emit). */
 export interface TeamProgressEvent {
+  /** The event's line number in the agent's journal; the agent pane merges
+   *  its live feed on it. Absent on scaffold events and runtime notices. */
+  seq?: number;
   agent_id?: string;
   agent_name?: string | null;
   agent_type?: string;
@@ -274,7 +258,8 @@ export interface TeamProgressEvent {
     | 'completed'
     | 'turn_limit'
     | 'failed'
-    | 'stopped';
+    | 'stopped'
+    | 'finished';
   // payload, phase-dependent
   task?: string;
   model?: string | null;
@@ -352,10 +337,8 @@ export interface TeamAgentReport {
   /** Set when this row is a spawn_agent child of another agent. */
   parent_agent_id?: string | null;
   turns_used?: number;
-  result?: string;
   /** Why the run ended, when the backend named it (turn_limit, deadline, cost_cap, refused_calls, cancelled). */
   stop_reason?: string;
-  events: TeamProgressEvent[];
 }
 
 export interface TeamReportData {
@@ -484,7 +467,7 @@ export interface SSEEventData {
   team_results?: Record<string, unknown>;
   /** Live per-agent progress emitted by server/agents/event_bus.py.
    *  Dispatched by useChatStream into the owning message's `teamReports`
-   *  map and rendered by TeamReportCard. */
+   *  map and rendered as agent rows (AgentRows.tsx). */
   team_progress?: TeamProgressEvent;
   /** Inline cron card emitted by server/cron_scheduler.py — both when a
    *  cron is created/deleted (via the chat-driven tool) and when a cron

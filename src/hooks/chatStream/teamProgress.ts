@@ -34,18 +34,14 @@ function _phaseToStatus(phase: TeamProgressEvent['phase']): TeamAgentReport['sta
   return 'pending';
 }
 
-/** Upper bound on retained events per agent. Protects the store (and the
- *  persisted chat_history blob) from unbounded growth on chatty agents;
- *  the newest events win because the tail is what the user is watching. */
-const MAX_EVENTS_PER_AGENT = 400;
-
 /** Merge the final team_results side-effect payload into the rolling
  *  teamReports map. The side-effect carries the structured shape produced
  *  by execute_team_create:
  *    { team_id, team_name, description, agents: [{name, agent_id, agent_type,
  *      task, result, status, turns_used}, ...] }
- *  We mark the team as completed and attach each agent's terminal `result`
- *  text so the card expands to show the full finding.
+ *  We mark the team as completed and settle each agent's terminal status.
+ *  The report text itself is not kept here: the agent's record (the dock's
+ *  agent pane) holds it, and the model relays what matters.
  */
 export function foldTeamResultsInto(
   prior: Record<string, TeamReportData> | undefined,
@@ -85,7 +81,6 @@ export function foldTeamResultsInto(
           agent_id: a.agent_id ?? existing.agent_id,
           agent_type: a.agent_type ?? existing.agent_type,
           turns_used: a.turns_used ?? existing.turns_used,
-          result: a.result ?? existing.result,
           stop_reason: a.stop_reason ?? existing.stop_reason,
           status:
             a.status === 'completed' ? 'completed'
@@ -103,9 +98,7 @@ export function foldTeamResultsInto(
             : 'completed',
           agent_id: a.agent_id,
           turns_used: a.turns_used,
-          result: a.result,
           stop_reason: a.stop_reason,
-          events: [],
         };
     agents[key] = merged;
     if (!agentOrder.includes(key)) agentOrder.push(key);
@@ -155,7 +148,6 @@ export function foldTeamProgressIntoMap(
         agent_type: a.agent_type,
         role: a.role ?? 'team',
         status: 'pending',
-        events: [],
       };
       agentOrder.push(key);
     }
@@ -207,13 +199,11 @@ export function foldTeamProgressIntoMap(
       agent_type: ev.agent_type ?? 'general',
       role: ev.agent_type === 'coordinator' ? 'orchestrator' : 'team',
       status: 'pending',
-      events: [],
     };
     agents[key] = agent;
     agentOrder.push(key);
   }
 
-  const events = [...agent.events, ev].slice(-MAX_EVENTS_PER_AGENT);
   const merged: TeamAgentReport = {
     ...agent,
     agent_id: ev.agent_id ?? agent.agent_id,
@@ -227,7 +217,7 @@ export function foldTeamProgressIntoMap(
     task: agent.task || (ev.task ?? ''),
     status: _phaseToStatus(ev.phase),
     turns_used: ev.turns_used ?? agent.turns_used,
-    events,
+    stop_reason: ev.stop_reason ?? agent.stop_reason,
   };
   agents[key] = merged;
   teamReports[teamId] = { ...tr, agents, agentOrder };
@@ -275,7 +265,7 @@ export function findMatchingTeamReports(
     const isTeam = t.toolName === 'team_create';
     const isSpawn = t.toolName === 'spawn_agent';
     if (!isTeam && !isSpawn) continue;
-    // Detached spawns have no scaffold — they render as background-task cards.
+    // Detached spawns have no scaffold; they show in the header's task list.
     if (isSpawn && (t.input?.detach as boolean | undefined)) continue;
     if (typeof t.result === 'string' && t.result.length > 0) {
       try {

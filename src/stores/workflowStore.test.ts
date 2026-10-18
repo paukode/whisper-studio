@@ -23,8 +23,7 @@ describe('workflowStore.applyEvent', () => {
     expect(agent.name).toBe('review:bugs');
     expect(agent.task).toBe('find bugs');
     expect(agent.status).toBe('running');
-    expect(agent.events).toHaveLength(3);
-    expect(agent.events.map((e) => e.phase)).toEqual(['started', 'tool_call', 'text']);
+    expect(agent.agent_id).toBe('a1');
   });
 
   it('tracks multiple agents independently', () => {

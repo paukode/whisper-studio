@@ -116,8 +116,8 @@ function stopToolEntry(t: ToolUseEvent): ToolUseEvent {
 /** Close every live team report in place: each agent still running (or
  *  never started) gets a synthetic `stopped` event and the team a synthetic
  *  `team_completed`, folded through the same reducer the SSE events use, so
- *  the card stops spinning and reads exactly like a server-side stop. Must
- *  run BEFORE takeTeamReports, which detaches the map from the store. */
+ *  the agent rows read exactly like a server-side stop. Must run BEFORE
+ *  takeTeamReports, which detaches the map from the store. */
 function closeLiveTeams(chat: ChatState): void {
   for (const report of Object.values(chat.liveTeamReports)) {
     if (report.status !== 'running') continue;

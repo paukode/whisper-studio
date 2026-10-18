@@ -5,7 +5,7 @@ import { StreamingMarkdown } from '@/components/markdown/StreamingMarkdown';
 import { AgentCard, groupAgentTools, groupForActivity, isActivityEntry, isTasksEntry, friendlyToolName, ACTIVITY_MIN_RUN } from '@/components/chat/AgentCard';
 import { TaskCard } from '@/components/chat/TaskCard';
 import { ActivityRow } from '@/components/chat/ActivityRow';
-import { TeamReportCard } from '@/components/chat/TeamReportCard';
+import { TeamAgentRows } from '@/components/chat/AgentRows';
 import { DeliveryChips } from '@/components/chat/DeliveryChips';
 import { findMatchingTeamReports } from '@/hooks/chatStream/teamProgress';
 
@@ -139,13 +139,13 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
             {groupForActivity(groupAgentTools(streamToolUse), { minRun: ACTIVITY_MIN_RUN }).map((entry, idx) => {
               if (Array.isArray(entry)) {
                 // A team_create or spawn_agent group with live reports renders
-                // the rich per-agent cards in place of the generic AgentCard,
-                // exactly like the committed view does — one card per report,
-                // never both card types for the same group.
+                // the agent rows in place of the generic AgentCard, exactly
+                // like the committed view does — one set of rows per report,
+                // never both for the same group.
                 const liveReports = findMatchingTeamReports(entry, liveTeamReports);
                 if (liveReports.length > 0) {
                   return liveReports.map((r) => (
-                    <TeamReportCard key={`team-${r.team_id}-${idx}`} report={r} />
+                    <TeamAgentRows key={`team-${r.team_id}-${idx}`} report={r} />
                   ));
                 }
                 return <AgentCard key={`agent-group-${idx}`} tools={entry} />;
@@ -203,7 +203,7 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
                 { [r.team_id]: r },
               ).length === 0)
               .map((r) => (
-                <TeamReportCard key={`live-team-${r.team_id}`} report={r} />
+                <TeamAgentRows key={`live-team-${r.team_id}`} report={r} />
               ))}
           </div>
         )}

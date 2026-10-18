@@ -631,8 +631,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
       case 'subagent': {
         // Run a background agent with the full tool loop (web fetch/search,
         // workspace, code, and all enabled MCP tools incl. the AgentCore
-        // browser). It streams live progress into a TeamReportCard and does
-        // NOT block the composer — the user can keep chatting while it works.
+        // browser). It streams live progress into the agent row (Open shows
+        // the full feed in the dock) and does NOT block the composer — the
+        // user can keep chatting while it works.
         const task = input.slice('/subagent '.length).trim();
         if (!task) {
           addToast({ type: 'info', message: 'Usage: /subagent <task>', duration: 3000, persist: false });
@@ -644,8 +645,8 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
         // assistant message opens with an intro so the user knows work is
         // happening in the background and that they can keep chatting.
         const INTRO = '🤖 **Subagent started**: working on this in the background. '
-          + 'Keep chatting; its live progress is in the card below, and it will post '
-          + 'the result here when done. Use **Stop** on the card to cancel it.';
+          + 'Keep chatting; **Open** on its row below shows everything it does, and it will post '
+          + 'the result here when done. Stop it from the tasks pill in the header.';
         // Distinct timestamps: two synchronous toISOString() calls land on the
         // same millisecond, and timestamps double as message ids — a collision
         // would make the progress locator match the user message and drop the

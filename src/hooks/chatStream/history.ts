@@ -11,8 +11,8 @@ import type { ChatMessage } from '@/types/chat';
 /** Backend-owned rows the model must read: agent reports that landed with no
  *  turn running, the wake turn's answer to them, and cross-session messages.
  *  The server relabels each as a user or assistant turn
- *  (visible_chat_history); every other UI-only row (cron_event, task_event)
- *  stays out of the prompt. */
+ *  (visible_chat_history); the one UI-only row (cron_event) stays out of
+ *  the prompt. */
 const MODEL_ROWS: ReadonlySet<ChatMessage['role']> = new Set([
   'agent_report',
   'agent_answer',
