@@ -127,7 +127,7 @@ export const NotebookViewer: React.FC<NotebookViewerProps> = ({ filePath, conten
           if (cell.cell_type === 'markdown') {
             return (
               <div key={i} className="notebook-cell notebook-cell-markdown">
-                <MarkdownRenderer content={source} />
+                <MarkdownRenderer content={source} linkPaths={false} />
               </div>
             );
           }

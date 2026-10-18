@@ -8,7 +8,9 @@ the model's word:
   that named that exact path; a folder must hold something, new this turn
   where the reply says it wrote there; a removed file must be gone, and
   removed by a call of the turn (one taken out of git only must be untracked
-  by one); a file the reply only says is somewhere must be there, and must
+  by one); a file a row of a table of changes says lost a part or went
+  (``Claim.or_removed``) must be either new or removed by a call of the
+  turn; a file the reply only says is somewhere must be there, and must
   be new when the turn tried to write it and failed; an artifact card must
   have been made this turn or be one the session holds;
 - every other act (a push, a commit, a pull request, a merge, an issue, an
@@ -710,6 +712,10 @@ def _check_path(claim: c.Claim, ev: Evidence) -> Verdict:
     try:
         st = os.stat(path)
     except OSError:
+        if claim.or_removed and not os.path.lexists(path):
+            # "| a.py | removed the dead module |": the file itself went.
+            if ev.removed(path) or (not tried and ev.recap(claim)):
+                return Verdict(True, receipt=_path_receipt(c.REMOVED, path, "removed"))
         return Verdict(False, note=f"{shown} does not exist")
     if stat.S_ISDIR(st.st_mode):
         return _check_folder(claim, ev, path, shown, tried)
@@ -839,5 +845,8 @@ _NOT_DONE = {
 def not_done(claim: c.Claim, verdict: Verdict) -> str:
     """One sentence for the user where a claim did not hold, such as "Not
     saved: `~/a.docx` does not exist." """
-    lead = "Not confirmed yet" if verdict.pending else _NOT_DONE[claim.kind]
+    if verdict.pending:
+        lead = "Not confirmed yet"
+    else:
+        lead = "Not changed" if claim.or_removed else _NOT_DONE[claim.kind]
     return f"{lead}: {verdict.note}."

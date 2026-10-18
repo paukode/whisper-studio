@@ -139,7 +139,7 @@ const TextContent: React.FC<{ path: string; mode: TextMode; reveal?: LineTarget 
   if (data.kind === 'markdown') {
     return (
       <div style={{ padding: 12 }}>
-        <MarkdownRenderer content={data.content} />
+        <MarkdownRenderer content={data.content} linkPaths={false} />
       </div>
     );
   }

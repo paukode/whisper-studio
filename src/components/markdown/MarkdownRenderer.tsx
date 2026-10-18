@@ -3,7 +3,9 @@ import { marked } from 'marked';
 import { renderCodeBlock, attachCodeBlockHandlers, beginCodeBlockParse } from '@/utils/codeBlockEnhancer';
 import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
 import { attachWsFileHandlers } from '@/utils/wsFileLinks';
+import { linkifyPaths } from '@/utils/pathLinks';
 import { useHtmlProp } from '@/hooks/useHtmlProp';
+import { useUIStore } from '@/stores/uiStore';
 
 // Configure marked with custom code block renderer
 const renderer = new marked.Renderer();
@@ -11,6 +13,11 @@ renderer.code = renderCodeBlock;
 
 export interface MarkdownRendererProps {
   content: string;
+  /** Link plain path mentions to the editor against the workspace root
+   *  (utils/pathLinks.ts). Off for a file's own markdown (a preview, a
+   *  notebook cell), whose relative paths read against that file's folder,
+   *  not the root. */
+  linkPaths?: boolean;
 }
 
 /**
@@ -25,17 +32,24 @@ export interface MarkdownRendererProps {
  * prompt-injected `<img onerror>` cannot fire inside the SPA's
  * same-origin context.
  */
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
+export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({
+  content,
+  linkPaths = true,
+}) => {
   const containerRef = useRef<HTMLDivElement>(null);
   // Unique per-instance prefix so code blocks in different message
   // bubbles never collide on the same ID inside the shared codeStore.
   const instanceId = useId();
+  // Plain path mentions link to the file against the connected workspace
+  // (utils/pathLinks.ts); with none connected the text is left alone.
+  const wsPath = useUIStore((s) => s.wsPath);
+  const linkRoot = linkPaths ? wsPath : '';
 
   const html = useMemo(() => {
     if (!content) return '';
     beginCodeBlockParse(instanceId);
-    return renderMarkdownSafe(content, { markedOptions: { renderer } });
-  }, [content, instanceId]);
+    return renderMarkdownSafe(linkifyPaths(content, linkRoot), { markedOptions: { renderer } });
+  }, [content, instanceId, linkRoot]);
   const innerHtml = useHtmlProp(html);
 
   // Attach code block action handlers via event delegation
@@ -44,14 +58,15 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) =
     return attachCodeBlockHandlers(containerRef.current);
   }, [html]);
 
-  // Make workspace_semantic_search "source" links (#wsfile=…) reveal in Finder.
+  // Route #wsfile= links (search sources, write results, path mentions) to
+  // the side panel or the OS app, and the localhost ones to the Live pane.
   useEffect(() => {
     if (!containerRef.current) return;
     return attachWsFileHandlers(containerRef.current);
   }, [html]);
 
-  // html is sanitized by DOMPurify inside renderMarkdownSafe above —
-  // safe to inject as raw HTML.
+  // html is sanitized by DOMPurify inside renderMarkdownSafe above, so it
+  // is safe to inject as raw HTML.
   return (
     <div
       ref={containerRef}

@@ -121,7 +121,12 @@
         earlier work ("did you push it?") rather than for new work. So "Pushed the retry fix to
         main" after an earlier push to main, when the user asked for a new fix and a push, is held.
         A row of a table of changes or what a log says can describe someone else's work, so such a
-        claim is checked only when the turn tried that act or wrote that file. In plan mode a path
+        claim is checked only when the turn tried that act or wrote that file. A row under a change
+        column ("What changed", "Added") says that the turn changed its file, so that file must be
+        written in this turn. A row whose verb of removing has an object ("removed the dead module")
+        can mean that the file lost a part or that the file went, so the check accepts either a file
+        written in this turn or a file that a call of this turn removed. A count of lines ("18 added,
+        6 removed") is not a verb of the row. In plan mode a path
         counts when a call this turn that writes outside the workspace named it, or the reply says it
         made the file.</p>
         <p>The user never reads a claim before it is checked. The stream guard

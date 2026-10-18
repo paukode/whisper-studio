@@ -134,11 +134,12 @@ def _paths_only(line: str) -> bool:
 
 
 def _clause_spans(text: str):
-    """(lead, start, end, file_row) for each clause of each line outside code
+    """(lead, start, end, head) for each clause of each line outside code
     blocks, quotes and drafts (claim_text.Lines), as offsets into ``text``.
     The lead is the line that introduces a list or a table, for its items
     (``_readable``), and stays across a blank line; a row of a table that
-    lists files is one clause of its own (``file_row``)."""
+    lists files is one clause of its own, with the table's header line as
+    ``head`` ("" for any other clause)."""
     work = _reading_copy(text)
     lines: list[tuple[int, str]] = []
     at = 0
@@ -148,10 +149,11 @@ def _clause_spans(text: str):
     table = _file_table_rows([line for _at, line in lines])
     lead = ""
     for i, (at, line) in enumerate(lines):
-        if not line.strip() or table.get(i) is False:
+        head = table.get(i)
+        if not line.strip() or head == "":
             continue
-        if table.get(i):
-            yield lead, at, at + len(line), True
+        if head:
+            yield lead, at, at + len(line), head
             continue
         # A list item, or a line of paths alone under a lead line ("Saved
         # the report to:" then the path on a line of its own).
@@ -162,7 +164,7 @@ def _clause_spans(text: str):
             lead = _readable(text[at : at + len(line)]) if line.rstrip().endswith(":") else ""
         for start, end in _clause_offsets(line):
             if line[start:end].strip():
-                yield (lead if item else ""), at + start, at + end, False
+                yield (lead if item else ""), at + start, at + end, ""
 
 
 def _clause_claims(
@@ -209,10 +211,10 @@ def read_claims(text: str) -> list[Claim]:
     out: list[Claim] = []
     prev = (False, False, False)
     breaks = [m.end() for m in _SENTENCE_BREAK_RE.finditer(_reading_copy(text))]
-    for lead, start, end, file_row in _clause_spans(text):
+    for lead, start, end, head in _clause_spans(text):
         clause = _readable(text[start:end])
-        if file_row:
-            found = _row_claims(lead, clause)
+        if head:
+            found = _row_claims(lead, clause, head)
             prev = (bool(found), any(x.made for x in found), any(x.firm for x in found))
         else:
             found, prev = _clause_claims(lead, clause, prev)

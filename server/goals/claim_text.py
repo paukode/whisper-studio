@@ -43,7 +43,10 @@ class Claim:
     offsets in the text read, and ``clause`` its words. ``firm`` is False
     where the reader cannot tell the claim from a description (a passive, a
     row of a table of changes): it is checked only where the turn tried what
-    it says (server/goals/evidence.py)."""
+    it says (server/goals/evidence.py). ``or_removed`` marks a file claim
+    that also holds where the turn removed the file: a row of a table of
+    files whose verb of removing takes an object ("| a.py | removed the dead
+    module |") may say the file lost a part or that it went."""
 
     kind: str
     target: str = ""
@@ -51,6 +54,7 @@ class Claim:
     earlier: bool = False
     deliverable: bool = False
     firm: bool = True
+    or_removed: bool = False
     start: int = 0
     end: int = 0
     clause: str = ""
