@@ -477,9 +477,14 @@ async def _execute_ws_approval_inline(ws_parsed: dict, *, agent: bool = False) -
     auto-approve path (server/agents/runtime.py) — no human, no category gate.
     It stamps `__agent__` onto the payload so high-blast-radius executors (e.g.
     GitHub mutations) can refuse to run unattended. The chat/auto-mode caller
-    leaves this False, because there a real user or the auto-mode classifier
-    authorised the action."""
+    leaves this False, because there a mode, a session answer, a rule or the
+    auto-mode classifier authorised the action; every payload through here is
+    stamped `__unreviewed__` (server.approval.spec.UNREVIEWED_KEY), since no
+    person saw this exact action on a card, and an executor that confines
+    what it runs reads that stamp (a command runs workspace-write confined
+    unless a person approved it)."""
     from server.approval import registry as approval_registry
+    from server.approval.spec import UNREVIEWED_KEY
 
     action = ws_parsed.get("action", "write")
     spec = approval_registry.get(action)
@@ -490,8 +495,9 @@ async def _execute_ws_approval_inline(ws_parsed: dict, *, agent: bool = False) -
     # executors that need it (worktree enter/exit) can read it.
     if "session_id" in ws_parsed and "session_id" not in payload:
         payload["session_id"] = ws_parsed["session_id"]
-    # Stamp the subagent origin AFTER build_payload (which whitelists fields when
+    # Stamp the origin AFTER build_payload (which whitelists fields when
     # payload_fields is set and would otherwise drop it).
+    payload[UNREVIEWED_KEY] = True
     if agent:
         payload["__agent__"] = True
     try:

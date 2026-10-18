@@ -687,7 +687,11 @@ def run_workspace_command(
     process to a background task (no restart, no kill) and returns its handle
     so the model polls instead of blocking. Blocking: call it off the event
     loop. ``write_mode`` is the sandbox's: "readonly" for a command that skipped
-    approval, "open" for an approved one.
+    approval, "workspace" for one a mode, a session answer, a rule, the
+    classifier or an agent let through, "open" for one a person approved on
+    its card (server.approval.executors._do_command). A confined run is
+    confined to the workspace itself, not to the tracked cwd, so a session
+    that cd'd out of the workspace still cannot write there.
     """
     from server.cwd_tracker import (
         extract_cwd_from_output,
@@ -707,7 +711,7 @@ def run_workspace_command(
 
     if run_in_background:
         text = _start_background_command(
-            command, exec_command, effective_cwd, session_id, write_mode
+            command, exec_command, effective_cwd, session_id, write_mode, write_root=ws
         )
         return CommandRun(text=text, background=True)
 
@@ -718,6 +722,7 @@ def run_workspace_command(
         session_id=session_id,
         timeout=_AUTO_BACKGROUND_SECONDS,
         write_mode=write_mode,
+        write_root=ws,
     )
     if result.background:
         text = _background_started_message(command, result.task_id, result.output_path)
@@ -739,6 +744,14 @@ def run_workspace_command(
         # Said for every failure, so neither the model nor the claim check
         # (server/goals/evidence.py) reads a failed command as done.
         output += f"\n(exit code {result.returncode})"
+    if write_mode != "open" and result.returncode not in (0, None):
+        # A confined run that failed on a write the OS refused: say which
+        # sandbox it was and how to ask for more, the way terminal_run does.
+        from server.sandbox import classify_sandbox_denial
+
+        hint = classify_sandbox_denial(output, write_mode)
+        if hint:
+            output += "\n" + hint
     if result.task_id:
         output += "\n" + _left_running_message(result.task_id, result.output_path)
     return CommandRun(text=output, returncode=result.returncode, stopped=result.stopped)
@@ -754,7 +767,13 @@ def _left_running_message(task_id: str, output_path: str | None) -> str:
 
 
 def _start_background_command(
-    command: str, exec_command: str, cwd: str, session_id: str = "", write_mode: str = "open"
+    command: str,
+    exec_command: str,
+    cwd: str,
+    session_id: str = "",
+    write_mode: str = "open",
+    *,
+    write_root: str | None = None,
 ) -> str:
     """Start a command in the background and return a status message."""
     from server.tasks.shell import start_shell_task
