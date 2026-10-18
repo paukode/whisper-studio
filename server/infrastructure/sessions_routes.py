@@ -163,14 +163,19 @@ def _load_session(session_id: str) -> dict | None:
 
 def _session_event_frame(ev: dict) -> dict | None:
     """Map an event-bus event to the SSE frame the UI renders, or None when it
-    is not background-flavoured.
+    is nothing the UI shows live.
 
     Shared by the per-session channel and the multiplexed one below so the two
-    can never drift. Agent runtime progress travels through the chat SSE while
-    a turn is in flight and is skipped here so we do not double-render
-    team_progress rows.
+    can never drift. Agent runtime progress (server/agents/runtime.py _emit)
+    is forwarded as ``agent_progress`` for the agent pane, which follows a run
+    through this channel whichever session or private channel the run
+    publishes on; the chat's own stream still folds the same events into the
+    agent rows of the turn, and the client routes the two frames to those two
+    consumers, so nothing renders twice.
     """
     kind = ev.get("type")
+    if kind is None and ev.get("agent_id") and ev.get("phase"):
+        return {"agent_progress": ev}
     if kind == "cron_event":
         return {"cron_event": ev.get("cronEvent") or {}}
     if kind == "memory_event":
@@ -189,9 +194,9 @@ def _session_event_frame(ev: dict) -> dict | None:
         # only live path to a session that is open but idle.
         return {"agent_answer": ev.get("agentAnswer") or {}}
     if kind == "task_event":
-        # Background-task lifecycle (shell/agent/workflow rows in the unified
-        # registry), delivered here so completion cards land without an
-        # in-flight chat turn.
+        # Background-task lifecycle (the unified registry), the only live
+        # feed of the header's task list: a row starts, finishes or stops here
+        # whether or not a chat turn is in flight.
         return {"task_event": ev.get("taskEvent") or {}}
     if kind == "cron_progress":
         # Live cron-run turn/tool frames. Forwarded in the team_progress
@@ -806,10 +811,8 @@ async def session_events(session_id: str, request: Request):
     chat *without* the user submitting a new turn or refreshing the
     page.
 
-    Only routes events that are explicitly background-flavoured (right
-    now: ``type == 'cron_event'``). Agent runtime progress events
-    travel through the chat SSE while a turn is in flight and are
-    skipped here to avoid double-rendering.
+    Routes exactly what the multiplexed channel routes (the frame helper
+    above is shared), so the two can never drift.
 
     Sends a comment heartbeat every 15s so proxies don't time out.
     """

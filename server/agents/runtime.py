@@ -773,9 +773,10 @@ async def _run_agent_loop(
 
     def _emit(phase: str, **extra) -> None:
         """Journal a progress event for this agent and publish it (the publish
-        is a no-op without a channel; the journal write always happens)."""
-        if journal is not None:
-            journal.event(phase, **extra)
+        is a no-op without a channel; the journal write always happens). The
+        journal's sequence number rides along so the pane merges live events
+        into the record it loaded without duplicates."""
+        seq = journal.event(phase, **extra) if journal is not None else None
         if not progress_channel:
             return
         ev = {
@@ -783,10 +784,9 @@ async def _run_agent_loop(
             "agent_name": agent_name,
             "agent_type": config.agent_type,
             "team_id": team_id,
-            # Present on spawn_agent children so the team card can badge the
-            # row as a spawned child and show who created it.
             "parent_agent_id": parent_agent_id,
             "phase": phase,
+            "seq": seq,
             **extra,
         }
         event_bus.publish(progress_channel, ev)
