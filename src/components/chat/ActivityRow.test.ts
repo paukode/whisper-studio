@@ -158,7 +158,7 @@ describe('task-card grouping', () => {
 });
 
 /* ── Streaming/committed grouping parity ─────────────────────────────
- * StreamingMessage (live view) and ChatMessage (committed/restored view)
+ * StreamingMessage (live view) and TurnSegment (committed/restored view)
  * render the same conversation moments. If their minRun values diverge,
  * Activity rows pop in or vanish the instant a stream commits: the
  * disappearing-row bug. Both must use the shared ACTIVITY_MIN_RUN; a raw
@@ -166,7 +166,7 @@ describe('task-card grouping', () => {
 import { ACTIVITY_MIN_RUN } from './AgentCard';
 
 const chatSources = import.meta.glob<string>(
-  ['./StreamingMessage.tsx', './ChatMessage.tsx'],
+  ['./StreamingMessage.tsx', './TurnSegment.tsx'],
   { query: '?raw', import: 'default', eager: true },
 );
 
@@ -257,12 +257,12 @@ describe('group label', () => {
     const tools = [
       read('src/hooks/chatStream/sseStream.ts', 1120),
       read('src/components/chat/ActivityRow.tsx', 566),
-      read('src/components/chat/groupToolOnlyRuns.ts', 55),
+      read('src/components/chat/turnEntries.ts', 55),
     ];
     const g = describeGroup(tools);
     expect(g.state).toBe('done');
     expect(g.label).toBe('Read 3 files');
-    expect(g.tail).toBe('sseStream.ts, ActivityRow.tsx, groupToolOnlyRuns.ts');
+    expect(g.tail).toBe('sseStream.ts, ActivityRow.tsx, turnEntries.ts');
     expect(groupChips(tools)).toEqual([{ kind: 'text', text: '1,741 lines', tone: 'neutral' }]);
   });
 
@@ -354,8 +354,9 @@ describe('group label', () => {
   });
 
   it('error: a refusal card names a group it shares with the calls it refused', () => {
-    // sseStream commits the tools, then the card lands as its own row;
-    // groupToolOnlyRuns and groupForActivity put them back in one group.
+    // sseStream commits the tools, then the card lands as its own row; the
+    // turn's bubble draws both rows' traces as one list (traceRuns), so the
+    // calls and the card make one group named by the refusal.
     const entries = groupForActivity(groupAgentTools([
       read('a.ts'),
       run('rm -rf build', { status: 'error', exitCode: undefined, result: 'Blocked by hook' }),

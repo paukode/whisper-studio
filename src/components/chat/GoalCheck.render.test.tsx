@@ -1,6 +1,6 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChatMessage } from './ChatMessage';
+import { TurnBubble } from './TurnBubble';
 import { GoalBanner } from './GoalBanner';
 import { StreamingMessage } from './StreamingMessage';
 import { summariseTool } from './activityLabel';
@@ -36,7 +36,7 @@ const message = (tool: ToolUseEvent): ChatMessageType => ({
 
 describe('goal card', () => {
   it('not_checked is neutral, labelled "not checked", and open on its reason', () => {
-    const { container } = render(<ChatMessage message={message(card('not_checked', 'complete'))} index={1} />);
+    const { container } = render(<TurnBubble rows={[message(card('not_checked', 'complete'))]} indices={[1]} />);
     const row = container.querySelector('.activity-row');
     expect(row?.classList.contains('activity-unchecked')).toBe(true);
     expect(row?.classList.contains('activity-error')).toBe(false);
@@ -52,7 +52,7 @@ describe('goal card', () => {
   });
 
   it('blocked still reads as an error', () => {
-    const { container } = render(<ChatMessage message={message(card('blocked', 'error'))} index={1} />);
+    const { container } = render(<TurnBubble rows={[message(card('blocked', 'error'))]} indices={[1]} />);
     expect(container.querySelector('.activity-row.activity-error')).not.toBeNull();
     expect(container.querySelector('.activity-row.activity-unchecked')).toBeNull();
     expect(container.querySelector('.activity-label')?.textContent).toBe('Goal check: blocked');

@@ -1,12 +1,15 @@
 import React from 'react';
 
 /**
- * The stroke icons of the chat's activity chrome: the glyph each tool is
- * drawn with in an activity row, the delivery chips and the agent card, plus
- * the state marks (chevrons, check, alert, stop) and the thinking block's
- * marks. Every icon is a 12px feather-style SVG drawn in currentColor, so
- * the surrounding slot sets its size and colour; no emoji and no text glyph
- * is used anywhere in chat chrome.
+ * The stroke icons of the chat's chrome: the glyph each tool is drawn with in
+ * an activity row, the delivery chips and the agent card, the state marks
+ * (chevrons, check, alert, stop), the thinking block's marks, and the marks of
+ * the chat's cards and banners (approval, cron, CI, workflow, goal, the
+ * cross-session message, the /btw popup). Every icon is a 12px feather-style
+ * SVG drawn in currentColor, so the surrounding slot sets its size and
+ * colour: the chrome of the transcript (bubbles, rows, cards, banners) draws
+ * no emoji and no text glyph. The composer's command menu keeps its own
+ * emoji icons (chatInputConstants.ts).
  */
 const icon = (children: React.ReactNode, mark?: string) => (
   <svg className={mark ? `activity-ic activity-mark-${mark}` : 'activity-ic'} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -35,6 +38,12 @@ export const ICON = {
   gitCommit: icon(<><circle cx="12" cy="12" r="4" /><line x1="2" y1="12" x2="8" y2="12" /><line x1="16" y1="12" x2="22" y2="12" /></>),
   arrowUp: icon(<><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></>),
   arrowDown: icon(<><line x1="12" y1="5" x2="12" y2="19" /><polyline points="19 12 12 19 5 12" /></>),
+  arrowRight: icon(<><line x1="5" y1="12" x2="19" y2="12" /><polyline points="12 5 19 12 12 19" /></>),
+  arrowLeftRight: icon(<><polyline points="17 8 21 12 17 16" /><polyline points="7 8 3 12 7 16" /><line x1="3" y1="12" x2="21" y2="12" /></>),
+  undo: icon(<><path d="M3 12a9 9 0 1 0 2.6-6.4" /><path d="M3 3v6h6" /></>),
+  trash: icon(<><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></>),
+  lock: icon(<><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></>),
+  ruler: icon(<><path d="M21.3 8.7 8.7 21.3a1 1 0 0 1-1.4 0l-4.6-4.6a1 1 0 0 1 0-1.4L15.3 2.7a1 1 0 0 1 1.4 0l4.6 4.6a1 1 0 0 1 0 1.4z" /><line x1="7.5" y1="10.5" x2="9.5" y2="12.5" /><line x1="10.5" y1="7.5" x2="12.5" y2="9.5" /><line x1="13.5" y1="4.5" x2="15.5" y2="6.5" /></>),
   diff: icon(<><path d="M12 3v14" /><path d="M5 10h14" /><path d="M5 21h14" /></>),
   history: icon(<><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l3.5 2" /></>),
   box: icon(<><rect x="3" y="4" width="18" height="5" rx="1" /><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9" /><line x1="10" y1="13" x2="14" y2="13" /></>),
@@ -43,6 +52,7 @@ export const ICON = {
   camera: icon(<><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3l2-3h6l2 3h3a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></>),
   pointer: icon(<path d="M4 3l7 18 2.4-7.6L21 11z" />),
   pulse: icon(<polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />),
+  mail: icon(<><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" /><polyline points="22 6 12 13 2 6" /></>),
   message: icon(<path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-4-.9L3 21l1.9-5a8.4 8.4 0 0 1-.9-3.8 8.4 8.4 0 0 1 8.4-8.4h.5a8.4 8.4 0 0 1 8.1 8.1z" />),
   users: icon(<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.9" /><path d="M16 3.1a4 4 0 0 1 0 7.8" /></>),
   chart: icon(<><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></>),

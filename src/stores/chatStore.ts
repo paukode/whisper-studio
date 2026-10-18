@@ -153,8 +153,9 @@ export interface ChatState {
   clearMessages: () => void;
 
   // Message editing
-  /** Delete a single message at index */
-  deleteMessage: (index: number) => void;
+  /** Delete the messages at these indices (an assistant turn's rows) in one
+   *  update. */
+  deleteMessages: (indices: readonly number[]) => void;
   /** Delete message at index and all messages after it */
   deleteMessagesFrom: (index: number) => void;
 
@@ -440,10 +441,17 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
 
   // ── Message editing ──
 
-  deleteMessage: (index: number) => {
-    set((state) => ({
-      messages: state.messages.filter((_, i) => i !== index),
-    }));
+  deleteMessages: (indices: readonly number[]) => {
+    // Highest index first, so each removal leaves the indices still to go
+    // pointing at the same rows.
+    const doomed = [...new Set(indices)].sort((a, b) => b - a);
+    set((state) => {
+      const messages = [...state.messages];
+      for (const i of doomed) {
+        if (i >= 0 && i < messages.length) messages.splice(i, 1);
+      }
+      return { messages };
+    });
   },
 
   deleteMessagesFrom: (index: number) => {

@@ -598,8 +598,8 @@ export const PermissionsPanel: React.FC = () => {
                         testResult.decision === 'deny'
                           ? 'var(--accent-record)'
                           : testResult.decision === 'allow'
-                            ? 'var(--accent-ok, #2e7d32)'
-                            : 'var(--accent-warn, #b8860b)',
+                            ? 'var(--success)'
+                            : 'var(--risk-warn)',
                     }}
                   >
                     {testResult.decision ?? 'no match'}

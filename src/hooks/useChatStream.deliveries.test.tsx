@@ -4,16 +4,19 @@
  * sentence, and the chips belong under the text that claimed them. So the
  * frames of one reply merge into that reply (by kind + target, first-seen
  * order), a card that splits the reply leaves each delivery with its own
- * text, and neither a Stop nor a pause loses one.
+ * text, and neither a Stop nor a pause loses one. On screen the turn is one
+ * bubble with one Verified row over every row's deliveries.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, renderHook } from '@testing-library/react';
+import { act, render, renderHook } from '@testing-library/react';
 import { useChatStream } from './useChatStream';
 import { sendApprovalContinuation } from './chatStream/approvalContinuation';
 import { dropRuntime, getActiveChatStore, getChatStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import type { PendingApproval } from '@/stores/chatStore';
 import type { Delivery } from '@/types/chat';
+import { TurnBubble } from '@/components/chat/TurnBubble';
+import { turnEntries } from '@/components/chat/turnEntries';
 
 const REPORT: Delivery = {
   kind: 'file',
@@ -109,6 +112,16 @@ describe('deliveries frames in a turn', () => {
     expect(messages[2].toolUse?.[0].toolName).toBe('stop_hook_block');
     expect(messages[2].deliveries).toBeUndefined();
     expect(messages[3].deliveries).toEqual([PUSH]);
+
+    // The turn's bubble shows them once, merged, under its last text.
+    const turns = turnEntries(messages).filter((e) => e.kind === 'turn');
+    expect(turns).toHaveLength(1);
+    const [turn] = turns;
+    if (turn.kind !== 'turn') throw new Error('expected a turn');
+    const { container } = render(<TurnBubble rows={turn.rows} indices={turn.indices} />);
+    const rows = container.querySelectorAll('.delivery-row');
+    expect(rows).toHaveLength(1);
+    expect([...rows[0].querySelectorAll('.delivery-label')].map((l) => l.textContent)).toEqual(['report.html', 'main']);
   });
 
   it('land with their sentence when the frame comes just before it', async () => {

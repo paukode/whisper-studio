@@ -7,10 +7,11 @@ import { DiffPreview } from './previews/DiffPreview';
 import { CommandPreview } from './previews/CommandPreview';
 import { FileListPreview } from './previews/FileListPreview';
 import { TextPreview } from './previews/TextPreview';
+import { ICON } from './activityIcons';
 
 /**
  * Generic approval banner. Renders one of four preview components based on
- * `currentApproval.preview` — no per-action conditionals. Adding a new
+ * `currentApproval.preview`, with no per-action conditionals. Adding a new
  * approval-required tool on the backend requires zero changes here.
  */
 export function ApprovalBanner() {
@@ -114,9 +115,11 @@ export function ApprovalBanner() {
 
   return (
     <div className="chat-msg-wrap assistant-wrap">
-      <div className="ws-approval-card" style={{ border: '1px solid var(--accent)', borderRadius: 8, padding: '12px 16px' }}>
+      <div className="ws-approval-card" style={{ border: '1px solid var(--accent)', padding: '12px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: '0.85em', color: 'var(--text-muted)' }}>🔒 Approval needed</span>
+          <span style={{ fontSize: '0.85em', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {ICON.lock}Approval needed
+          </span>
           {riskLabel && (
             <span className={`risk-badge risk-${riskLabel}`} style={{
               fontSize: '0.75em', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase',
@@ -149,25 +152,25 @@ export function ApprovalBanner() {
 
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <button onClick={() => void handleAnswer(currentApproval, true, false)} disabled={isProcessing} type="button"
-            style={btnStyle('#3fb950', '#3fb950', '#fff', isProcessing)}>
-            {isProcessing ? 'Running…' : '✓ Yes'}
+            style={btnStyle('var(--success)', 'var(--success)', '#fff', isProcessing)}>
+            {isProcessing ? 'Running…' : <>{ICON.check}Yes</>}
           </button>
           {offerSessionChoice && (
             <button onClick={() => void handleAnswer(currentApproval, true, true)} disabled={isProcessing} type="button"
               title={`Allow all ${currentApproval.category} this session`}
-              style={btnStyle('#3fb950', 'transparent', '#3fb950', isProcessing)}>
-              ✓ {allowAllLabel}
+              style={btnStyle('var(--success)', 'transparent', 'var(--success)', isProcessing)}>
+              {ICON.check}{allowAllLabel}
             </button>
           )}
           <button onClick={() => void handleAnswer(currentApproval, false, false)} disabled={isProcessing} type="button"
-            style={btnStyle('#f87171', 'transparent', '#f87171', isProcessing)}>
-            ✕ No
+            style={btnStyle('var(--danger)', 'transparent', 'var(--danger)', isProcessing)}>
+            {ICON.x}No
           </button>
           {offerSessionChoice ? (
             <button onClick={() => void handleAnswer(currentApproval, false, true)} disabled={isProcessing} type="button"
               title={`Block all ${currentApproval.category} this session`}
-              style={btnStyle('#f87171', '#f87171', '#fff', isProcessing)}>
-              ✕ {blockLabel}
+              style={btnStyle('var(--danger)', 'var(--danger)', '#fff', isProcessing)}>
+              {ICON.x}{blockLabel}
             </button>
           ) : (
             <span style={{ fontSize: '0.78em', color: 'var(--text-muted)' }}>
@@ -178,7 +181,7 @@ export function ApprovalBanner() {
             <button onClick={() => void handleUndo(currentApproval)} disabled={isProcessing} type="button"
               title="Undo this change"
               style={{ ...btnStyle('var(--border)', 'transparent', 'var(--text-muted)', isProcessing), marginLeft: 'auto' }}>
-              ↺ Undo
+              {ICON.undo}Undo
             </button>
           )}
         </div>
@@ -189,8 +192,8 @@ export function ApprovalBanner() {
 
 /**
  * Pull a human-readable string from the explanation field. The security
- * plugin emits a structured object {riskLevel, explanation, reasoning, risk}
- * — surface the readable fields rather than dumping the whole dict.
+ * plugin emits a structured object {riskLevel, explanation, reasoning, risk}:
+ * surface the readable fields rather than dumping the whole dict.
  */
 function extractExplanation(raw: PendingApproval['explanation']): string | null {
   if (raw == null) return null;
@@ -206,6 +209,9 @@ function extractExplanation(raw: PendingApproval['explanation']): string | null 
 
 function btnStyle(border: string, background: string, color: string, processing: boolean): React.CSSProperties {
   return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
     padding: '6px 14px',
     borderRadius: 6,
     border: `1px solid ${border}`,

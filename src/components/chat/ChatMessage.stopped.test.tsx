@@ -1,6 +1,6 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { ChatMessage } from './ChatMessage';
+import { TurnBubble } from './TurnBubble';
 import type { ChatMessage as ChatMessageType, ToolUseEvent } from '@/types/chat';
 
 /**
@@ -9,7 +9,7 @@ import type { ChatMessage as ChatMessageType, ToolUseEvent } from '@/types/chat'
  * mark for such a step and never a spinner: a committed message has no
  * stream left to wait for.
  */
-describe('ChatMessage renders a stopped tool step without a spinner', () => {
+describe('a stopped turn renders its stopped tool step without a spinner', () => {
   const stoppedGrep: ToolUseEvent = {
     toolId: 'ws_grep',
     toolName: 'ws_grep',
@@ -33,7 +33,7 @@ describe('ChatMessage renders a stopped tool step without a spinner', () => {
   });
 
   it('single step: the row shows the stop mark (ACTIVITY_MIN_RUN is 1, so it is an Activity row)', () => {
-    const { container } = render(<ChatMessage message={message([stoppedGrep])} index={1} />);
+    const { container } = render(<TurnBubble rows={[message([stoppedGrep])]} indices={[1]} />);
     expect(container.querySelector('.trace-spinner')).toBeNull();
     expect(container.querySelector('.activity-spinner')).toBeNull();
     const row = container.querySelector('.activity-row.activity-stopped');
@@ -44,7 +44,7 @@ describe('ChatMessage renders a stopped tool step without a spinner', () => {
   });
 
   it('activity bundle: no spinner, the stop mark, what landed and what did not', () => {
-    const { container } = render(<ChatMessage message={message([doneRead, stoppedGrep])} index={1} />);
+    const { container } = render(<TurnBubble rows={[message([doneRead, stoppedGrep])]} indices={[1]} />);
     expect(container.querySelector('.trace-spinner')).toBeNull();
     expect(container.querySelector('.activity-spinner')).toBeNull();
     expect(container.querySelector('.activity-chip.live')).toBeNull();
@@ -67,7 +67,7 @@ describe('ChatMessage renders a stopped tool step without a spinner', () => {
       exitCode: 1,
     };
     const stoppedRead: ToolUseEvent = { ...stoppedGrep, toolId: 'tu_grep' };
-    const { container } = render(<ChatMessage message={message([failedRun, stoppedRead])} index={1} />);
+    const { container } = render(<TurnBubble rows={[message([failedRun, stoppedRead])]} indices={[1]} />);
     expect(container.querySelector('.trace-spinner')).toBeNull();
     expect(container.querySelector('.activity-spinner')).toBeNull();
     expect(container.querySelector('.activity-chip.live')).toBeNull();

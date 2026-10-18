@@ -62,7 +62,8 @@ const DELEGATE_TOOLS = new Set(['ask_assistant', 'resolve_request']);
 /** Merge a spoken USER message into the previous bubble when it continues the
  *  same spoken turn (Sonic transcribes speech in several pieces); returns the
  *  new message list, or null when it must be appended. Assistant utterances
- *  are committed whole by the server, one bubble each, so they never merge. */
+ *  are committed whole by the server, one row each, so they never merge (the
+ *  chat shows a turn's assistant rows in one bubble, TurnBubble). */
 export function mergeSpoken(
   messages: ChatMessage[],
   incoming: ChatMessage,
@@ -144,10 +145,10 @@ export function applyVoiceEvent(ev: VoiceServerEvent, deps: VoiceEventDeps): voi
       return;
     case 'assistant_answer': {
       // The delegated assistant's written answer goes on screen as its own
-      // bubble, carrying the steps and agent reports of that run and only
+      // row, carrying the steps and agent reports of that run and only
       // those: other runs may still be going, and their steps stay on screen
       // until they answer. Sonic's spoken summary follows as a separate
-      // spoken bubble.
+      // spoken row, in the same turn's bubble.
       const inner = useVoiceStore.getState().steps.filter((st) => stepBelongsTo(st, ev.run_id));
       const reports = store.takeTeamReports(ev.run_id);
       if (ev.status === 'stopped') {

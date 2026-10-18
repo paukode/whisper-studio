@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render } from '@testing-library/react';
 import { draggedSize, MIN_H, MIN_W } from './MediaResize';
 import { VizCard } from './VizCard';
-import { ChatMessage } from './ChatMessage';
+import { TurnBubble } from './TurnBubble';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
 import type { ChatMessage as ChatMessageType, ToolUseEvent, VizArtifact } from '@/types/chat';
 
@@ -137,7 +137,7 @@ describe('VizCard resizing', () => {
   });
 });
 
-describe('ChatMessage saves picture sizes on the message', () => {
+describe('a turn saves picture sizes on the row that holds them', () => {
   const assistant = (over: Partial<ChatMessageType>): ChatMessageType => ({
     role: 'assistant',
     content: 'Here it is.',
@@ -148,7 +148,7 @@ describe('ChatMessage saves picture sizes on the message', () => {
   it('stores a dragged diagram size under its visual index, and a reset removes it', () => {
     const message = assistant({ visuals: [diagram, diagram] });
     getActiveChatStore().getState().setMessages([message]);
-    const { container } = render(<ChatMessage message={message} index={0} />);
+    const { container } = render(<TurnBubble rows={[message]} indices={[0]} />);
     const second = container.querySelectorAll('.viz-card')[1];
     stubBox(second, { left: 100, width: 400, height: 300 });
 
@@ -158,7 +158,7 @@ describe('ChatMessage saves picture sizes on the message', () => {
     // The rest of the message is untouched.
     expect(saved.visuals).toBe(message.visuals);
 
-    const { container: again } = render(<ChatMessage message={saved} index={0} />);
+    const { container: again } = render(<TurnBubble rows={[saved]} indices={[0]} />);
     fireEvent.doubleClick(again.querySelectorAll('.viz-card')[1].querySelector('.media-grip')!);
     expect(getActiveChatStore().getState().messages[0].mediaSizes).toBeUndefined();
   });
@@ -181,11 +181,40 @@ describe('ChatMessage saves picture sizes on the message', () => {
     };
     const message = assistant({ toolUse: [read, shot], mediaSizes: { 'shot-1': { w: 320 } } });
     getActiveChatStore().getState().setMessages([message]);
-    const { container } = render(<ChatMessage message={message} index={0} />);
+    const { container } = render(<TurnBubble rows={[message]} indices={[0]} />);
     const card = container.querySelector('.preview-screenshot-card')!;
     expect(card).toHaveClass('media-sized');
 
     fireEvent.doubleClick(card.querySelector('.media-grip')!);
     expect(getActiveChatStore().getState().messages[0].mediaSizes).toBeUndefined();
+  });
+
+  // A turn of several rows draws one bubble, but each picture still belongs
+  // to its own row: the old fold built a merged copy of tool-only rows, and
+  // a resize inside it found no row to save on.
+  it('saves a resize inside a turn of several tool-only rows on its own row', () => {
+    const shot = (id: string): ToolUseEvent => ({
+      toolId: id,
+      toolName: 'preview_screenshot',
+      input: {},
+      result: 'Screenshot of the preview',
+      status: 'complete',
+      previewImage: { media_type: 'image/png', data: 'iVBORw0KGgo=' },
+    });
+    const user: ChatMessageType = { role: 'user', content: 'Check the page', timestamp: '2026-09-25T09:59:00.000Z' };
+    const first = assistant({ content: '', toolUse: [shot('s1')] });
+    const second = assistant({ content: '', toolUse: [shot('s2')], timestamp: '2026-09-25T10:00:01.000Z' });
+    getActiveChatStore().getState().setMessages([user, first, second]);
+    const { container } = render(<TurnBubble rows={[first, second]} indices={[1, 2]} />);
+
+    const cards = container.querySelectorAll('.preview-screenshot-card');
+    expect(cards).toHaveLength(2);
+    stubBox(cards[1], { left: 100, width: 400, height: 300 });
+    drag(cards[1].querySelector('.media-grip')!, 100, 0);
+
+    const rows = getActiveChatStore().getState().messages;
+    expect(rows[2].mediaSizes).toEqual({ 'shot-0': { w: 500 } });
+    expect(rows[1].mediaSizes).toBeUndefined();
+    expect(rows[2].toolUse).toBe(second.toolUse);
   });
 });

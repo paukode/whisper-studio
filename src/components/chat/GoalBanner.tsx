@@ -6,6 +6,7 @@
 import React, { useCallback, useEffect } from 'react';
 import { useGoalStore } from '@/stores/goalStore';
 import type { GoalVerdict } from '@/types/chat';
+import { ICON } from './activityIcons';
 
 const VERDICT_LABEL: Record<GoalVerdict, string> = {
   achieved: 'achieved',
@@ -17,8 +18,8 @@ const VERDICT_LABEL: Record<GoalVerdict, string> = {
 };
 
 const VERDICT_COLOR: Record<GoalVerdict, string> = {
-  achieved: 'var(--accent-ok, #2e7d32)',
-  not_achieved: 'var(--accent-warn, #b8860b)',
+  achieved: 'var(--success)',
+  not_achieved: 'var(--risk-warn)',
   blocked: 'var(--accent-record)',
   not_checked: 'var(--text-muted)',
 };
@@ -60,7 +61,7 @@ export const GoalBanner: React.FC<{ sessionId: string | null }> = ({ sessionId }
 
   return (
     <div className="goal-banner" role="status">
-      <span className="goal-banner-icon" aria-hidden="true">🎯</span>
+      <span className="goal-banner-icon" aria-hidden="true">{ICON.flag}</span>
       <span className="goal-banner-text" title={goal}>{goal}</span>
       {verdict && (
         <span
@@ -77,7 +78,7 @@ export const GoalBanner: React.FC<{ sessionId: string | null }> = ({ sessionId }
         </span>
       )}
       <button type="button" className="goal-banner-clear" onClick={clear} aria-label="Clear goal">
-        ✕
+        {ICON.x}
       </button>
     </div>
   );

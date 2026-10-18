@@ -12,7 +12,7 @@
  * keeps full transparency (one click to expand) without each tool call
  * shouting for attention in the conversation flow.
  *
- * Pure-frontend grouping — no backend changes. We detect group boundaries
+ * Pure-frontend grouping, no backend changes. We detect group boundaries
  * by `toolName` in AGENT_GROUP_TOOLS. Non-agent tools fall through to the
  * activity row, so a turn that mixes file edits with agent calls still
  * reads naturally.
@@ -24,7 +24,7 @@ import { ICON, iconFor } from '@/components/chat/activityIcons';
 /**
  * Tool names whose consecutive runs collapse into one AgentCard. The full
  * AGENT_TOOLS set on the backend includes utility tools (config_get,
- * skill_invoke, etc.) that aren't agent-orchestration — keep those out
+ * skill_invoke, etc.) that aren't agent-orchestration: keep those out
  * of the grouping so they continue to render as standalone chips.
  *
  * `team_results` is the synthetic SSE event that lands the orchestrator's
@@ -110,7 +110,7 @@ export function friendlyToolName(name: string): string {
  */
 export type ActivityEntry = { kind: 'activity'; tools: ToolUseEvent[] };
 
-/** Task-management tool calls collapse into a TaskCard — the inline,
+/** Task-management tool calls collapse into a TaskCard: the inline,
  *  live-updating task list rendered in the conversation (the floating
  *  Tasks panel was retired in its favour). */
 export const TASK_CARD_TOOLS: ReadonlySet<string> = new Set([
@@ -134,8 +134,8 @@ export function isActivityEntry(e: unknown): e is ActivityEntry {
 }
 
 /** The minRun both the streaming view (StreamingMessage) and the committed
- *  view (ChatMessage) must pass to groupForActivity. They render the same
- *  conversation moments — if these ever diverge, Activity rows pop in or
+ *  view (TurnSegment) must pass to groupForActivity. They render the same
+ *  conversation moments: if these ever diverge, Activity rows pop in or
  *  vanish the instant a stream commits. Guarded by ActivityRow.test.ts. */
 export const ACTIVITY_MIN_RUN = 1;
 
@@ -152,8 +152,8 @@ export function groupForActivity(
   // fragmentation that duplicated the list and left an early card's task
   // spinning forever (its completion landed in a separate, later card).
   //
-  // An order-significant interruption — an agent group, or an exempt
-  // interactive card (ask_user_question / create_artifact / …) — is a phase
+  // An order-significant interruption (an agent group, or an exempt
+  // interactive card: ask_user_question / create_artifact / …) is a phase
   // boundary: we reset `taskRun` to null there so any task calls AFTER it start
   // a fresh card at their correct later position, rather than folding back up
   // above the interrupting card. Plain activity (reads/writes/greps) is NOT a
@@ -165,7 +165,7 @@ export function groupForActivity(
     if (pending.length >= minRun) {
       out.push({ kind: 'activity', tools: pending });
     } else {
-      // Below threshold — push each tool through as-is so its original
+      // Below threshold: push each tool through as-is so its original
       // render path applies (single <details> chip).
       for (const t of pending) out.push(t);
     }
@@ -174,7 +174,7 @@ export function groupForActivity(
 
   for (const entry of entries) {
     if (Array.isArray(entry)) {
-      // Agent group — pass through; flush any pending activity run first.
+      // Agent group: pass through; flush any pending activity run first.
       // It's a phase boundary, so later task calls start a fresh card below it.
       flushPending();
       taskRun = null;
@@ -194,7 +194,7 @@ export function groupForActivity(
       continue;
     }
     if (ACTIVITY_EXEMPT_TOOLS.has(entry.toolName)) {
-      // Exempt interactive card (question / artifact / picker) — a phase
+      // Exempt interactive card (question / artifact / picker): a phase
       // boundary too, so trailing task calls don't bury it.
       flushPending();
       taskRun = null;
@@ -219,7 +219,7 @@ function statusGlyph(status: ToolUseEvent['status']) {
   return <span className="trace-spinner" role="img" aria-label="Running" />;
 }
 
-/** Pull the human-readable subject from a group's most informative tool —
+/** Pull the human-readable subject from a group's most informative tool:
  *  prefer team_create.team_name, fall back to spawn_agent.task, then the
  *  first agent's task in a team, then the literal "Agent". */
 function deriveAgentTitle(tools: ToolUseEvent[]): string {
@@ -267,7 +267,7 @@ interface AgentStepProps {
 }
 
 function AgentStep({ tool }: AgentStepProps) {
-  // team_results is the high-value payload — render its body inline,
+  // team_results is the high-value payload: render its body inline,
   // not behind another `<details>`, so the user sees the agent's final
   // answer immediately when the card is expanded.
   if (tool.toolName === 'team_results') {
@@ -306,7 +306,7 @@ function AgentStep({ tool }: AgentStepProps) {
 
 function formatTeamResults(input: Record<string, unknown> | unknown): string {
   if (!input || typeof input !== 'object') return '';
-  // team_results payload shape varies — handle the common cases:
+  // team_results payload shape varies; handle the common cases:
   //   { results: [{ agent_id, name, output, ... }] }
   //   { output: string }
   //   <anything else>: pretty-print as JSON.
@@ -317,7 +317,7 @@ function formatTeamResults(input: Record<string, unknown> | unknown): string {
       const rr = (r ?? {}) as Record<string, unknown>;
       const name = (rr.name as string | undefined) ?? (rr.agent_id as string | undefined) ?? 'agent';
       const out = (rr.output as string | undefined) ?? '';
-      return `── ${name} ──\n${out}`;
+      return `${name}:\n${out}`;
     }).join('\n\n');
   }
   try {

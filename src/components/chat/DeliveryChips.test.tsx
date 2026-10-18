@@ -12,6 +12,7 @@ vi.mock('@/api/client', () => ({
 
 import { DeliveryChips } from './DeliveryChips';
 import { ChatMessage } from './ChatMessage';
+import { TurnBubble } from './TurnBubble';
 import { StreamingMessage } from './StreamingMessage';
 import { dropRuntime, getChatStore } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
@@ -135,7 +136,7 @@ describe('the Verified row in a conversation', () => {
   };
 
   it('sits under the reply text, above its timestamp', () => {
-    const { container } = render(<ChatMessage message={reply} index={1} />);
+    const { container } = render(<TurnBubble rows={[reply]} indices={[1]} />);
     const text = container.querySelector('.markdown-content');
     const row = container.querySelector('.delivery-row');
     const time = container.querySelector('.msg-timestamp');

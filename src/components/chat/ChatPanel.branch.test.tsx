@@ -63,8 +63,9 @@ vi.mock('@/api/tasks', () => ({
   fetchSessionTasks: vi.fn(() => Promise.reject(new Error('noop'))),
 }));
 
-// Child components are irrelevant to the Branch wiring — stub them out.
+// Child components are irrelevant to the Branch wiring: stub them out.
 vi.mock('./ChatMessage', () => ({ ChatMessage: () => null }));
+vi.mock('./TurnBubble', () => ({ TurnBubble: () => null }));
 vi.mock('./StreamingMessage', () => ({ StreamingMessage: () => null }));
 vi.mock('./ChatInput', () => ({ ChatInput: () => null }));
 vi.mock('./ApprovalBanner', () => ({ ApprovalBanner: () => null }));
@@ -72,7 +73,7 @@ vi.mock('./TaskCard', () => ({ resolveTaskCheckpoints: () => ({ checkpoints: new
 
 import { ChatPanel } from './ChatPanel';
 
-describe('ChatPanel — Branch button wiring', () => {
+describe('ChatPanel: Branch button wiring', () => {
   beforeEach(() => {
     branchSessionMock.mockClear();
   });

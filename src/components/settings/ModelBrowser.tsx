@@ -52,7 +52,7 @@ const FitWarning: React.FC<{
       style={{
         fontSize: 11,
         color:
-          fit === 'too_big' ? 'var(--accent-record, #e5484d)' : 'var(--accent-warn, #b8860b)',
+          fit === 'too_big' ? 'var(--accent-record, #e5484d)' : 'var(--risk-warn)',
         margin: '4px 0 0',
       }}
     >
@@ -92,7 +92,7 @@ const InstalledChip: React.FC = () => (
 const DownloadingChip: React.FC = () => (
   <span
     className="model-local-badge"
-    style={{ color: 'var(--accent-warn, #b8860b)' }}
+    style={{ color: 'var(--risk-warn)' }}
     title="Download in progress — track it under Models > Chat."
   >
     downloading…
@@ -379,7 +379,7 @@ const RecommendedRow: React.FC<{ model: RecommendedModel }> = ({ model }) => {
             </span>
           )}
           {model.fit === 'tight' && (
-            <span style={{ color: 'var(--accent-warn, #b8860b)' }}>
+            <span style={{ color: 'var(--risk-warn)' }}>
               {' '}
               · needs {humanSize(model.needed_bytes)} free · tight fit on this machine
             </span>
