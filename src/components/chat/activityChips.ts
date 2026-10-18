@@ -118,8 +118,10 @@ export function callOutcome(tool: ToolUseEvent, desc: CallDesc = describeCall(to
   }
   if (desc.kind === 'command') return commandOutcome(tool);
   if (desc.kind === 'fetch') {
-    const bytes = num(tool.meta?.bytes);
-    return bytes !== null ? text(formatBytes(bytes)) : null;
+    // The size of the page text the fetch returned (the server's full output
+    // length; meta.bytes is a write's size and is never set for a fetch).
+    const size = num(tool.meta?.outputChars);
+    return size !== null ? text(formatBytes(size)) : null;
   }
   return null;
 }

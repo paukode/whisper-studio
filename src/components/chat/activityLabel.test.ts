@@ -226,6 +226,14 @@ describe('call outcomes', () => {
     expect(callOutcome(tool('ws_read_file', { input: { path: 'a.ts' }, result: 'one\ntwo' }))).toBeNull();
   });
 
+  it('a fetch shows the size of the text it returned, from the measured output', () => {
+    expect(callOutcome(tool('web_fetch', { input: { url: 'https://example.com/a' }, meta: meta({ outputChars: 12800 }), result: 'x' })))
+      .toEqual({ kind: 'text', text: '13 KB', tone: 'neutral' });
+    expect(callOutcome(tool('web_fetch', { input: { url: 'https://example.com/a' }, meta: meta({ outputChars: 640 }), result: 'x' })))
+      .toEqual({ kind: 'text', text: '640 B', tone: 'neutral' });
+    expect(callOutcome(tool('web_fetch', { input: { url: 'https://example.com/a' }, result: 'x' }))).toBeNull();
+  });
+
   it('an edit shows its diff only when both numbers are known', () => {
     expect(callOutcome(tool('ws_edit_file', { input: { path: 'a.ts' }, meta: meta({ added: 3, removed: 1 }) })))
       .toEqual({ kind: 'diff', added: 3, removed: 1 });
