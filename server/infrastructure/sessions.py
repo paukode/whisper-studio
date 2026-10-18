@@ -573,6 +573,10 @@ def _delete_session_sync(session_id: str) -> None:
     from server.workflows.launch_policy import drop_session_grants
 
     with _get_conn() as conn:
+        # The transcript names the calls whose stored edits go with it.
+        history_row = conn.execute(
+            "SELECT chat_history FROM sessions WHERE id = ?", (session_id,)
+        ).fetchone()
         conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         from server.infrastructure.session_search import drop_session as _drop_fts
 
@@ -592,6 +596,15 @@ def _delete_session_sync(session_id: str) -> None:
             # grounding comes from migration 018 / grounding_store's
             # _ensure_table; a database that predates both has no rows.
             pass
+
+    # The texts the assistant's writes kept for the diff dialog
+    # (server/workspace/edits.py) are part of the session too.
+    try:
+        from server.workspace.edits import forget_session_edits
+
+        forget_session_edits(json.loads(history_row["chat_history"] or "[]") if history_row else [])
+    except Exception:
+        log.warning("session delete: edit records cleanup failed for %s", session_id, exc_info=True)
 
     # Cron jobs owned by this session must not silently die: disable + flag
     # them orphaned (re-homeable) and repoint their run history to the inbox

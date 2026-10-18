@@ -9,14 +9,17 @@ turn ended. The row's own numbers (added, removed) come from the same
 through GET /api/workspace/edits/{tool_use_id} (server/workspace/routes).
 
 Records live under ``<data root>/edits/<tool_use_id>.json`` and hold
-{path, original, modified, added, removed, approximate, at, stored}. The
-texts are not kept for a text over EDIT_TEXT_CAP bytes, or for a dotenv or
-credential file (a key, a .env, a credentials.json): the record is still
-written, with both texts null and ``stored`` false, so the dialog can say
-the diff was not kept. A prune removes records older than PRUNE_AFTER_DAYS
-and leftover temporary files, then the oldest records until all of them fit
-in EDITS_TOTAL_CAP. It runs the first time an edit is recorded in a process,
-again once a day after that, and whenever the records outgrow the cap.
+{path, original, modified, added, removed, approximate, created, at,
+stored}. The texts are not kept for a text over EDIT_TEXT_CAP bytes, or for
+a dotenv or credential file (a key, a .env, a credentials.json): the record
+is still written, with both texts null and ``stored`` false, so the dialog
+can say the diff was not kept. A prune removes records older than
+PRUNE_AFTER_DAYS and leftover temporary files, then the oldest records until
+all of them fit in EDITS_TOTAL_CAP. It runs the first time an edit is
+recorded in a process, again once a day after that, and whenever the records
+outgrow the cap. Deleting a session removes the records of the calls its
+transcript holds (forget_session_edits); a branch of that session then
+shows its copies of those rows as not kept, as it does its attachments.
 """
 
 from __future__ import annotations
@@ -59,8 +62,17 @@ EXACT_DEADLINE_SECONDS = 0.25
 
 # A tool_use id is a file name here, so only a plain token is accepted.
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-# A dotenv file: .env, .env.local, .env.production and the like.
-_DOTENV = re.compile(r"(?:^|/)\.env(?:\.[^/]*)?$")
+# A dotenv file: .env, .env.local, .env.production and the like, in any
+# case (APFS is case-insensitive, so .ENV is .env).
+_DOTENV = re.compile(r"(?:^|/)\.env(?:\.[^/]*)?$", re.IGNORECASE)
+# Secret files the command validator's names do not cover, by file name in
+# any case: a bare SSH private key (id_rsa, never id_rsa.pub), a direnv
+# file, any *.env file, Terraform variables and state, and secrets files.
+_SECRET_NAME = re.compile(
+    r"(?:^|/)(?:id_(?:rsa|ed25519|ecdsa|dsa)|\.envrc|[^/]+\.env|[^/]+\.tfvars(?:\.json)?"
+    r"|[^/]+\.tfstate(?:\.backup)?|\.?secrets?(?:\.(?:ya?ml|json|toml|env))?)$",
+    re.IGNORECASE,
+)
 
 # The prune's bookkeeping, shared by the worker threads that record edits:
 # when it last ran (None: not yet in this process) and the bytes the records
@@ -173,18 +185,29 @@ def _fits(text: str) -> bool:
 
 def holds_secrets(path: str) -> bool:
     """Whether ``path`` (workspace-relative) names a dotenv or credential
-    file, whose texts are not kept in plain JSON. The credential names and
-    extensions are the command validator's (server/security)."""
+    file, whose texts are not kept in plain JSON: a dotenv file, the names
+    in _SECRET_NAME, and the command validator's credential names and
+    extensions (server/security), all in any case."""
     from server.security.command_validator import check_sensitive_paths
 
     rel = path.replace(os.sep, "/")
-    if _DOTENV.search(rel):
+    if _DOTENV.search(rel) or _SECRET_NAME.search(rel):
         return True
-    return check_sensitive_paths("/" + rel.lstrip("/")) is not None
+    return check_sensitive_paths("/" + rel.lstrip("/").lower()) is not None
 
 
-def record_edit(tool_use_id: str, path: str, original: str, modified: str, stats: dict) -> bool:
+def record_edit(
+    tool_use_id: str,
+    path: str,
+    original: str,
+    modified: str,
+    stats: dict,
+    *,
+    created: bool = False,
+) -> bool:
     """Write the record for ``tool_use_id`` and set ``stats["stored"]``.
+    ``created`` says the write made the file, which an empty ``original``
+    alone cannot tell from an existing empty file.
 
     Returns False, with nothing written, for an id that is not a plain token
     or when the folder cannot be written; the write the record describes has
@@ -201,6 +224,7 @@ def record_edit(tool_use_id: str, path: str, original: str, modified: str, stats
         "added": stats.get("added"),
         "removed": stats.get("removed"),
         "approximate": bool(stats.get("approximate")),
+        "created": created,
         "at": datetime.now(UTC).isoformat(timespec="seconds"),
         "stored": keep_texts,
     }
@@ -252,6 +276,45 @@ def read_edit(tool_use_id: str) -> dict | None:
     except (OSError, ValueError) as e:
         log.warning("edits: could not read %s: %s", tool_use_id, e)
         return None
+
+
+def call_ids(history) -> set[str]:
+    """The provider ids of the tool calls a saved transcript holds (the
+    chat_history rows of server/infrastructure/sessions.py): each row's
+    toolUse entries, whose toolId is the id when the call had one and the
+    tool name otherwise, and its raw traces."""
+    ids: set[str] = set()
+    for row in history if isinstance(history, list) else []:
+        if not isinstance(row, dict):
+            continue
+        for call in row.get("toolUse") or []:
+            if isinstance(call, dict):
+                tool_id = call.get("toolId")
+                if isinstance(tool_id, str) and tool_id and tool_id != call.get("toolName"):
+                    ids.add(tool_id)
+        for trace in row.get("traces") or []:
+            if isinstance(trace, dict) and isinstance(trace.get("id"), str) and trace["id"]:
+                ids.add(trace["id"])
+    return ids
+
+
+def forget_session_edits(history) -> int:
+    """Remove the records of the calls in ``history``, a deleted session's
+    transcript; returns how many went. Best-effort: a record that cannot be
+    removed is left to the age prune."""
+    removed = 0
+    for tool_use_id in call_ids(history):
+        target = _record_path(tool_use_id)
+        if target is None:
+            continue
+        try:
+            os.remove(target)
+            removed += 1
+        except FileNotFoundError:
+            continue
+        except OSError as e:
+            log.warning("edits: could not remove %s: %s", tool_use_id, e)
+    return removed
 
 
 def prune_old(now: float | None = None) -> int:

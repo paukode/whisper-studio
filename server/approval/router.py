@@ -83,4 +83,7 @@ async def approval_execute(req: ExecuteRequest):
         # A write's diff stats (ApprovalOutcome.stats), the same dict the
         # inline path puts in its skill_result meta; null for other actions.
         "stats": getattr(outcome, "stats", None),
+        # A finished command's exit status, the one the inline path's
+        # skill_result frame carries; null for every other action.
+        "exit_code": getattr(outcome, "exit_code", None),
     }

@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import shlex
 import shutil
 
@@ -43,13 +44,17 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
     # The file before the write: the undo backup, and the old side of the
     # diff stats and the stored edit below. Empty for a created file; None
     # for a file that exists but could not be read, whose change is unknown
-    # (a read failure must not make an overwrite look like a create).
+    # (a read failure must not make an overwrite look like a create). Read
+    # with its line ends as they are on disk, so the write's own move to LF
+    # counts in the stats and shows in the diff, as git counts it; the undo
+    # backup keeps the text as an editor reads it.
     original: str | None = ""
-    if os.path.isfile(full):
+    created = not os.path.isfile(full)
+    if not created:
         try:
-            with open(full, errors="replace") as f:
+            with open(full, errors="replace", newline="") as f:
                 original = f.read()
-            workspace.WORKSPACE_BACKUPS[path] = original
+            workspace.WORKSPACE_BACKUPS[path] = original.replace("\r\n", "\n").replace("\r", "\n")
         except Exception:
             original = None
     try:
@@ -90,7 +95,7 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
     # happened, so a failure here costs the numbers, never the outcome.
     try:
         stats = await asyncio.to_thread(
-            _write_stats, original, full, payload.get("__tool_use_id__"), path
+            _write_stats, original, full, payload.get("__tool_use_id__"), path, created
         )
     except Exception as e:  # noqa: BLE001
         log.warning("write stats for %s failed: %s", path, e)
@@ -98,15 +103,19 @@ async def _do_write(payload: dict) -> ApprovalOutcome:
     return ApprovalOutcome(ok=True, output=output, stats=stats)
 
 
-def _write_stats(original: str | None, full: str, tool_use_id, path: str) -> dict | None:
+def _write_stats(
+    original: str | None, full: str, tool_use_id, path: str, created: bool = False
+) -> dict | None:
     """The diff stats of the write to ``full`` (server/workspace/edits.py),
     and its stored edit when the call has an id. None when the file cannot
     be read back. ``original`` None means the file before the write could
-    not be read: added and removed are unknown and no edit is stored."""
+    not be read: added and removed are unknown and no edit is stored.
+    ``created`` says the write made the file (an existing empty file has the
+    same empty original)."""
     from server.workspace import edits
 
     try:
-        with open(full, errors="replace") as f:
+        with open(full, errors="replace", newline="") as f:
             modified = f.read()
     except OSError:
         return None
@@ -116,7 +125,7 @@ def _write_stats(original: str | None, full: str, tool_use_id, path: str) -> dic
     except OSError:
         pass
     if tool_use_id and original is not None:
-        edits.record_edit(str(tool_use_id), path, original, modified, stats)
+        edits.record_edit(str(tool_use_id), path, original, modified, stats, created=created)
     return stats
 
 
@@ -559,11 +568,22 @@ async def _do_run_python(payload: dict) -> ApprovalOutcome:
     return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
 
 
+_AWS_EXIT_RE = re.compile(r"\(exit code (-?\d+)\)")
+
+
 async def _do_aws_cli(payload: dict) -> ApprovalOutcome:
     from server.executors.code import do_aws_cli
 
     ok, output = await asyncio.to_thread(do_aws_cli, payload)
-    return ApprovalOutcome(ok=ok, output=output if ok else None, error=None if ok else output)
+    # do_aws_cli opens a failed run with its exit status; a refusal before
+    # the run (no command, a validator warning, a timeout) has none.
+    ran = _AWS_EXIT_RE.match(output) if not ok else None
+    return ApprovalOutcome(
+        ok=ok,
+        output=output if ok else None,
+        error=None if ok else output,
+        exit_code=0 if ok else (int(ran.group(1)) if ran else None),
+    )
 
 
 async def _do_command(payload: dict) -> ApprovalOutcome:
@@ -615,6 +635,7 @@ async def _do_command(payload: dict) -> ApprovalOutcome:
         ok=ok,
         output=run.text,
         error=None if ok else f"exit code {run.returncode}",
+        exit_code=run.returncode,
     )
 
 

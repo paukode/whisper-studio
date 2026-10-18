@@ -95,6 +95,31 @@ def test_a_created_files_record_has_an_empty_original(ws):
     assert record["modified"] == "fresh\n"
 
 
+def test_a_line_ending_rewrite_counts_every_line_it_changed(ws):
+    # The write stores LF, so a CRLF file changes on every line, as git
+    # counts it; the stored original is the text that was on disk.
+    (ws / "notes.txt").write_bytes(b"one\r\ntwo\r\nthree\r\nfour\r\n")
+    outcome = _write(
+        {"path": "notes.txt", "content": "one\nTWO\nthree\nfour\n", "__tool_use_id__": "toolu_eol"}
+    )
+    assert (ws / "notes.txt").read_bytes() == b"one\nTWO\nthree\nfour\n"
+    assert (outcome.stats["added"], outcome.stats["removed"]) == (4, 4)
+    record = edits.read_edit("toolu_eol")
+    assert record["original"] == "one\r\ntwo\r\nthree\r\nfour\r\n"
+    assert record["modified"] == "one\nTWO\nthree\nfour\n"
+    # The undo backup keeps the text as an editor reads it.
+    assert workspace.WORKSPACE_BACKUPS["notes.txt"] == "one\ntwo\nthree\nfour\n"
+
+
+def test_the_record_tells_a_created_file_from_an_existing_empty_one(ws):
+    (ws / "pkg").mkdir()
+    (ws / "pkg" / "__init__.py").write_text("")
+    _write({"path": "pkg/__init__.py", "content": "X = 1\n", "__tool_use_id__": "toolu_init"})
+    _write({"path": "pkg/new.txt", "content": "X\n", "__tool_use_id__": "toolu_made"})
+    assert edits.read_edit("toolu_init")["created"] is False
+    assert edits.read_edit("toolu_made")["created"] is True
+
+
 def test_a_write_with_no_call_id_stores_nothing(ws):
     outcome = _write({"path": "a.txt", "content": "x\n"})
     assert outcome.stats["stored"] is False

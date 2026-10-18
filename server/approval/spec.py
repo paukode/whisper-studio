@@ -38,6 +38,13 @@ class ApprovalOutcome:
     # returns it; a spoken yes stores the edit but carries no stats, since
     # voice rows have no meta.
     stats: dict | None = None
+    # A command's own exit status, for the exit chip of its row: set by the
+    # command executors when the command finished (ws_run_command's run, an
+    # aws CLI call); None for every other action and for a command that went
+    # to the background or was stopped before it finished. The card's POST
+    # returns it; the inline path reads the same status from the result text
+    # (server/tool_executor.py tool_outcome).
+    exit_code: int | None = None
 
 
 def refuse_if_agent(payload: dict, what: str = "This action") -> ApprovalOutcome | None:

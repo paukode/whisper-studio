@@ -247,6 +247,77 @@ def test_a_dotenv_or_credential_file_keeps_its_counts_but_not_its_texts():
         assert not edits.holds_secrets(path), path
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "deploy/id_rsa",
+        "keys/id_ed25519",
+        ".envrc",
+        "prod.env",
+        "config/secrets.env",
+        "secrets.yaml",
+        "infra/terraform.tfvars",
+        "infra/prod.tfstate",
+        ".ENV",
+        "App/.Env.Local",
+        "certs/SERVER.PEM",
+    ],
+)
+def test_key_and_secret_files_the_validator_does_not_name_keep_no_texts(path):
+    # A pasted deploy key, a direnv file, *.env, Terraform variables and
+    # state, and any case of a dotenv or key name (APFS ignores case).
+    assert edits.holds_secrets(path)
+
+
+@pytest.mark.parametrize("path", ["keys/id_rsa.pub", "src/environment.ts", "docs/secrets-guide.md"])
+def test_a_public_key_or_a_file_about_secrets_keeps_its_texts(path):
+    assert not edits.holds_secrets(path)
+
+
+def test_a_created_file_is_marked_so_in_its_record():
+    edits.record_edit("toolu_new", "pkg/__init__.py", "", "x = 1\n", {}, created=True)
+    edits.record_edit("toolu_empty", "pkg/__init__.py", "", "x = 1\n", {})
+    assert edits.read_edit("toolu_new")["created"] is True
+    # An existing empty file has the same empty original, and was edited.
+    assert edits.read_edit("toolu_empty")["created"] is False
+
+
+def test_deleting_a_session_removes_the_records_of_its_calls():
+    import uuid
+
+    from server.infrastructure.sessions import _delete_session_sync, _ensure_db, _get_conn
+
+    _ensure_db()
+    for tool_use_id in ("toolu_mine", "toolu_trace", "toolu_other"):
+        edits.record_edit(tool_use_id, "a.py", "1\n", "2\n", {})
+    history = [
+        {"role": "user", "content": "edit a.py"},
+        {
+            "role": "assistant",
+            "content": "",
+            # A call without a provider id is keyed by its tool name.
+            "toolUse": [
+                {"toolId": "toolu_mine", "toolName": "ws_write_file"},
+                {"toolId": "ws_read_file", "toolName": "ws_read_file"},
+            ],
+            "traces": [{"id": "toolu_trace", "name": "ws_edit_file"}],
+        },
+    ]
+    sid = str(uuid.uuid4())
+    with _get_conn() as conn:
+        conn.execute(
+            "INSERT INTO sessions (id, title, created_at, updated_at, chat_history)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (sid, "t", "2026-10-18", "2026-10-18", json.dumps(history)),
+        )
+    assert edits.call_ids(history) == {"toolu_mine", "toolu_trace"}
+    _delete_session_sync(sid)
+    assert edits.read_edit("toolu_mine") is None
+    assert edits.read_edit("toolu_trace") is None
+    # Another session's record stays.
+    assert edits.read_edit("toolu_other") is not None
+
+
 def test_the_endpoint_serves_the_record_and_404s_without_one():
     edits.record_edit("toolu_http", "a.txt", "1\n", "2\n", {"added": 1, "removed": 1})
     client = _client()
