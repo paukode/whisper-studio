@@ -8,7 +8,8 @@
   {
     "skill": "ask_user_question",
     "input": {},
-    "tool_use_id": "tu_q"
+    "tool_use_id": "tu_q",
+    "round": 0
   },
   {
     "skill_input": "ask_user_question",

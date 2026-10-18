@@ -231,7 +231,7 @@
       <tbody>
         <tr><td><code>text</code></td><td>Appended to the streaming buffer via <code>appendStreamToken</code>.</td></tr>
         <tr><td><code>thinking</code> / <code>thinking_start</code> / <code>thinking_stop</code></td><td>Drives the adaptive thinking block and its elapsed timer.</td></tr>
-        <tr><td><code>skill</code> / <code>skill_input</code> / <code>skill_result</code></td><td>Starts, fills, and completes a live tool trace; also refreshes the Git panel and file tree after mutating tools.</td></tr>
+        <tr><td><code>skill</code> / <code>skill_input</code> / <code>skill_result</code></td><td>Starts, fills, and completes a live tool trace; also refreshes the Git panel and file tree after mutating tools. The trace keeps the <code>round</code> of the <code>skill</code> frame.</td></tr>
         <tr><td><code>approval_request</code></td><td>Enqueues a <a href="arch-approval.html">pending approval</a>, or auto-accepts/denies it from session memory.</td></tr>
         <tr><td><code>ws_workspace_prompt</code></td><td>Enqueues the <code>WorkspacePromptCard</code>: a workspace-connect-only prompt, shown when a workspace-write tool pauses because no workspace is connected (or the target is outside it). Save-anywhere requests never reach it; see the callout below.</td></tr>
         <tr><td><code>ws_auto_applied</code></td><td>Refreshes the workspace tree and marks the affected file dirty in an open editor tab for a pre-approved action the server already executed.</td></tr>
@@ -253,7 +253,7 @@
         <tr><td><code>error</code></td><td>Logs the backend's error text and appends it inline to the response instead of losing the partial answer.</td></tr>
         <tr><td><code>hook_blocked</code> / <code>stop_hook_block</code></td><td>Surfaces a <a href="arch-tools.html">blocking hook</a>'s veto and the completion gate's reason for continuing the turn.</td></tr>
         <tr><td><code>skill_progress</code></td><td>A tool call's arguments are still streaming; the running step shows how much has arrived (<code>7.3 KB</code>, then <code>143 KB</code>) next to its spinner.</td></tr>
-        <tr><td><code>activity_label</code></td><td>Puts the caption on the activity group that holds the calls of the round, under the first call of the group (<code class="path">src/hooks/chatStream/activityLabels.ts</code>). The caption replaces the label, and the deterministic sentence becomes the tail. A caption for a row that is in the transcript changes that row and saves the session. While the calls stream, the stream state keeps the caption, and the live row shows it immediately. When the stream commits the row, the committed row shows the same caption. This is also true when you stop the turn.</td></tr>
+        <tr><td><code>activity_label</code></td><td>Puts the caption on the activity group that holds the calls of the round, under the first call of the group (<code class="path">src/hooks/chatStream/activityLabels.ts</code>). The caption replaces the label, and the deterministic sentence becomes the tail. If the group failed, the failure stays the label, and the caption becomes the tail. A caption for a row that is in the transcript changes that row and saves the session. While the calls stream, the stream state keeps the caption, and the live row shows it immediately. When the stream commits the row, the committed row shows the same caption. This is also true when you stop the turn.</td></tr>
         <tr><td><code>budget_warning</code></td><td>The session or daily cost cap tripped. The first one announces the reserved final round; the second ends the turn.</td></tr>
         <tr><td><code>turn_downgrade</code></td><td>This turn is not running on what the composer shows, so the UI says so rather than letting the picker lie.</td></tr>
         <tr><td><code>viz_artifact</code></td><td>A rendered chart or diagram, attached to the settled message as its own card.</td></tr>
@@ -319,7 +319,17 @@
     <div class="spec">
       <dt>Tool steps collapse into one activity row</dt><dd><code>groupForActivity</code> puts a
         sequence of tool calls into one <code>ActivityRow</code>
-        (<code class="path">src/components/chat/ActivityRow.tsx</code>). The collapsed row is one
+        (<code class="path">src/components/chat/ActivityRow.tsx</code>). Each model round gets its
+        own row. A new row starts when the <code>round</code> of the next call is different from the
+        <code>round</code> of the row. The server counts the rounds of each request from 0. A request
+        that continues a turn after an approval or an answer also starts at 0. Thus the browser adds
+        a base to each <code>round</code> of a request. The base is 1 more than the highest
+        <code>round</code> of the turn, or 0 if no call in the turn has a <code>round</code>
+        (<code>nextRoundBase</code> in <code class="path">src/hooks/chatStream/sseStream.ts</code>).
+        A call without a <code>round</code> does not start a new row. Examples are a refusal card,
+        which stays with the call that it blocked, and a row from an older transcript. A card comes
+        after the call that it blocked. Thus, when a row holds only cards, the next call with a
+        <code>round</code> starts a new row. The collapsed row is one
         line with a label that shows what the group did, for example <b>Read 3 files</b> or
         <b>ruff check failed</b>. A monospace tail shows the file names or the command, and chips
         show the diff, line, match, and exit counts. An expanded row shows one line for each call
@@ -332,8 +342,9 @@
         transcript use the same constant, <code>ACTIVITY_MIN_RUN</code>, the row does not move when
         the turn ends. When the auxiliary model returns a caption for the group (the
         <code>activity_label</code> frame), the caption replaces the label and the sentence becomes
-        the tail. In Local mode, in a chat that uses an on-device model, or when the call fails,
-        the row keeps the sentence.</dd>
+        the tail. If the group failed, the failure stays the label, for example <b>ruff check
+        failed</b>, and the caption becomes the tail. In Local mode, in a chat that uses an
+        on-device model, or when the caption call fails, the row keeps the sentence.</dd>
       <dt>One bubble for each assistant turn</dt><dd>Text that the model writes <em>before</em> a
         tool call is a complete thought, so the stream commits it as a row of its own. The store keeps
         these rows separate, because their indices control edit, delete, regenerate, the task

@@ -335,9 +335,9 @@ register_flag(
     "activity_labels",
     description=(
         "Caption each round of tool calls with a short label written by a cloud model; "
-        "a group that spans rounds keeps the last round's caption. The deterministic "
-        "label stands in Local mode, in a chat on an on-device model, or when the model "
-        "is unavailable"
+        "a failed round keeps its failure as the label and shows the caption after it. "
+        "The deterministic label stands in Local mode, in a chat on an on-device model, "
+        "or when the model is unavailable"
     ),
     default=True,
     category="chat",

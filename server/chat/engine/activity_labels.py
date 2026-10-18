@@ -8,8 +8,12 @@ task (Haiku unless ``auxiliary_models`` names another) for a short caption of
 what the round achieved. The runner sends it as an ``activity_label`` frame
 keyed by the round's first labelled tool_use_id, and the browser puts it on
 the group that holds that call: the caption becomes the label and the
-deterministic sentence becomes its tail. Captions are made per round, so a
-group whose calls come from several rounds shows the last round's caption.
+deterministic sentence becomes its tail. Captions are made per round, and
+each call's skill frame names its round, so the browser draws one group per
+round and a caption names exactly its round's group. A group that still
+spans rounds (rows saved before the frames named a round) shows the last
+round's caption. A failed group keeps its failure as the label, and the
+caption becomes its tail.
 
 A caption is decoration and never costs the turn anything. The call runs on
 its own two worker threads (not the loop's default executor, which session

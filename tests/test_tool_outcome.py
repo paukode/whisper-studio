@@ -267,7 +267,7 @@ def test_anthropic_frames_carry_the_block_id(monkeypatch):
     lines = run_chat_turn(monkeypatch, client, {"question": "build it"})
     frames = [json.loads(ln) for ln in lines if ln.startswith("{")]
     (start,) = [f for f in frames if "skill" in f]
-    assert start == {"skill": "create_artifact", "input": {}, "tool_use_id": "t1"}
+    assert start == {"skill": "create_artifact", "input": {}, "tool_use_id": "t1", "round": 0}
     progress = [f["skill_progress"] for f in frames if "skill_progress" in f]
     assert progress and all(p["tool_use_id"] == "t1" for p in progress)
     (call,) = [f for f in frames if "skill_input" in f]
@@ -275,6 +275,37 @@ def test_anthropic_frames_carry_the_block_id(monkeypatch):
     (result,) = [f for f in frames if "skill_result" in f]
     assert result["tool_use_id"] == "t1"
     assert result["is_error"] is False and result["exit_code"] is None
+
+
+def test_each_skill_frame_names_the_round_that_issued_the_call(monkeypatch):
+    # The browser draws one activity group per model round, so the skill
+    # frame of every call names its round (counted from 0, as the request
+    # snapshots count them). The other frames of a call pair with it by id
+    # and carry no round of their own.
+    doc = {"filename": "x.md", "question": "?"}
+    client = FakeBedrockClient(
+        [
+            [
+                msg_start(),
+                *tool_use_block("tu_a", "analyze_document", doc, index=0),
+                *tool_use_block("tu_b", "analyze_document", doc, index=1),
+                *msg_end(stop_reason="tool_use"),
+            ],
+            [
+                msg_start(),
+                *tool_use_block("tu_c", "analyze_document", doc),
+                *msg_end(stop_reason="tool_use"),
+            ],
+            [msg_start(), *text_block("Nothing attached."), *msg_end(stop_reason="end_turn")],
+        ]
+    )
+    lines = run_chat_turn(monkeypatch, client, {"question": "read my files"})
+    frames = [json.loads(ln) for ln in lines if ln.startswith("{")]
+    starts = {f["tool_use_id"]: f["round"] for f in frames if "skill" in f}
+    assert starts == {"tu_a": 0, "tu_b": 0, "tu_c": 1}
+    others = [f for f in frames if "skill_input" in f or "skill_result" in f]
+    assert len(others) == 6
+    assert all("round" not in f for f in others)
 
 
 def test_openai_events_carry_the_call_id(monkeypatch):
@@ -306,6 +337,6 @@ def test_local_frames_carry_the_call_id(monkeypatch):
     )
     frames = [json.loads(ln[6:]) for ln in blob.splitlines() if ln.startswith("data: {")]
     (start,) = [f for f in frames if "skill" in f]
-    assert start == {"skill": "ws_read_file", "input": {}, "tool_use_id": "c1"}
+    assert start == {"skill": "ws_read_file", "input": {}, "tool_use_id": "c1", "round": 0}
     (call,) = [f for f in frames if "skill_input" in f]
     assert call["tool_use_id"] == "c1"

@@ -517,8 +517,19 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     elif isinstance(ev, ToolCallStart):
                         # tool_use_id pairs the frame with its skill_result;
                         # it is the provider's id, the same one the tool_result
-                        # block carries (server/chat/engine/events.py).
-                        _f = {"skill": ev.name, "input": {}, "tool_use_id": ev.id}
+                        # block carries (server/chat/engine/events.py). round
+                        # is the model round that issued the call, counted
+                        # from 0 as in the request snapshots (a continuation
+                        # counts from 0 again; the browser counts on across
+                        # legs, src/hooks/chatStream/sseStream.ts): it draws
+                        # each round's calls as an activity group of their
+                        # own (src/components/chat/AgentCard.tsx).
+                        _f = {
+                            "skill": ev.name,
+                            "input": {},
+                            "tool_use_id": ev.id,
+                            "round": round_num,
+                        }
                         yield f"data: {ndjson_dumps(_f)}\n\n"
                     elif isinstance(ev, ToolCallProgress):
                         _p = {"name": ev.name, "chars": ev.chars, "tool_use_id": ev.id}

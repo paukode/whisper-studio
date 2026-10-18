@@ -8,7 +8,8 @@
   {
     "skill": "memory_write",
     "input": {},
-    "tool_use_id": "tu_m"
+    "tool_use_id": "tu_m",
+    "round": 0
   },
   {
     "skill_input": "memory_write",

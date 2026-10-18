@@ -8,7 +8,8 @@
   {
     "skill": "analyze_document",
     "input": {},
-    "tool_use_id": "tu_1"
+    "tool_use_id": "tu_1",
+    "round": 0
   },
   {
     "skill_input": "analyze_document",
