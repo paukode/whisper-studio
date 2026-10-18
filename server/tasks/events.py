@@ -4,14 +4,18 @@ Generalizes the proven cron-event delivery path (previously inlined in
 server/cron_scheduler._emit_cron_event): a background-flavoured event is
 persisted into the owning session's chat_history (so it survives with no SSE
 subscriber and appears on the next hydrate) and simultaneously published on the
-agents event bus (so an open ``/api/sessions/{id}/events`` stream renders it
+agents event bus (so the open ``/api/sessions/events`` stream renders it
 immediately). Safe to call from any thread; no-ops the persist if the server
 loop hasn't been captured yet.
 
-Roles carried today: ``cron_event`` (via cron_scheduler's delegate) and
-``task_event`` (unified background-task lifecycle). Both are UI-only roles —
-``PROMPT_ROLES`` in server/infrastructure/sessions.py keeps them out of model
-context automatically.
+Rows carried this way: ``cron_event`` (via cron_scheduler's delegate),
+``agent_report`` and ``agent_answer`` (server/agents/wake.py) and
+``session_message`` (server/agent_tools/cross_session.py). ``PROMPT_ROLES`` in
+server/infrastructure/sessions.py decides which of them the model reads.
+
+Background-task lifecycle (``emit_task_event``) is the exception: it is
+published live only. The task registry row is its durable record, and the
+header's task list hydrates from that, so no chat row is written.
 """
 
 import asyncio
@@ -26,12 +30,12 @@ RESULT_TAIL_MAX = 2048
 
 
 def _result_excerpt(kind: str, text: str) -> str:
-    """The slice of a task's result the card shows, capped at RESULT_TAIL_MAX.
+    """The slice of a task's result the task list shows, capped at RESULT_TAIL_MAX.
 
     A shell task's output is a log: the END is what matters, so keep the
     tail. A workflow result is a report that LEADS with its headline (status,
     agents, cost) and the script's findings, so keep the head; taking the tail
-    there showed the card a mid-sentence fragment with the headline cut off.
+    there showed a mid-sentence fragment with the headline cut off.
     """
     if len(text) <= RESULT_TAIL_MAX:
         return text
@@ -125,10 +129,13 @@ def _duration_ms(task: dict) -> int | None:
 
 
 def emit_task_event(session_id: str, event_type: str, task: dict) -> None:
-    """Announce a background task's lifecycle into its owning session.
+    """Announce a background task's lifecycle on the app's event channel.
 
     ``event_type`` is one of task_started | task_completed | task_failed |
     task_stopped. ``task`` is a registry row dict (server.tasks.registry).
+    Published on the owning session's channel (the app-wide one when the task
+    has no session) and never persisted: the header's task list is global and
+    hydrates from the registry, the chat shows nothing for it.
     """
     if event_type not in ("task_started", "task_completed", "task_failed", "task_stopped"):
         raise ValueError(f"unknown task event type: {event_type!r}")
@@ -143,7 +150,12 @@ def emit_task_event(session_id: str, event_type: str, task: dict) -> None:
         "result_tail": _result_excerpt(task.get("kind", ""), task.get("result_text") or ""),
         "timestamp": _utc_now_iso(),
     }
-    emit_session_event(session_id, role="task_event", payload_key="taskEvent", payload=payload)
+    try:
+        from server.agents.event_bus import event_bus
+
+        event_bus.publish(session_id or "", {"type": "task_event", "taskEvent": payload})
+    except Exception as exc:
+        log.warning("task event (%s): failed to publish to event_bus: %s", event_type, exc)
 
 
 def emit_agent_report(session_id: str, payload: dict, *, wake: bool = True) -> None:
