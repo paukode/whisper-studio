@@ -5887,7 +5887,6 @@ button.ws-git-status-badge:hover {
 /* Reports are written line by line (FINDINGS, EVIDENCE, ...); keep the breaks. */
 .agent-pane-report { padding: 8px 12px; border-top: 1px solid var(--border); white-space: pre-wrap; }
 .agent-pane-report > summary { font-size: var(--fs-caption); color: var(--text-muted); cursor: pointer; margin-bottom: 6px; }
-.icon-spin { animation: traceSpin 0.9s linear infinite; }
 
 /* notify_user title header inside a toast */
 .whisper-toast__title {

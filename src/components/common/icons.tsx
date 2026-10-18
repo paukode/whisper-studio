@@ -47,10 +47,3 @@ export const RobotIcon: React.FC = () => (
     <line x1="20" y1="14" x2="22" y2="14" />
   </svg>
 );
-
-/** A spinning arc for a run still working. */
-export const LoaderIcon: React.FC = () => (
-  <svg {...base} className="icon-spin">
-    <path d="M12 3a9 9 0 1 0 9 9" />
-  </svg>
-);
