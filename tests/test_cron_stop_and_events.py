@@ -123,12 +123,13 @@ def test_session_events_forwards_cron_progress_as_team_progress():
 
 def test_chat_drainer_skips_cron_progress():
     """The in-turn drainer must skip cron_progress (double delivery). The
-    drainer lives in the unified turn engine since the P2/P3 cutover."""
+    drainer lives in the unified turn engine since the P2/P3 cutover, in
+    the tool phase of a round (server/chat/engine/tool_rounds.py)."""
     import inspect
 
-    import server.chat.engine.runner as runner
+    import server.chat.engine.tool_rounds as tool_rounds
 
-    src = inspect.getsource(runner)
+    src = inspect.getsource(tool_rounds)
     assert '"cron_progress",' in src
 
 
@@ -139,9 +140,9 @@ def test_chat_drainer_skips_session_message():
     as a bogus team_progress frame instead of rendering as a chat card."""
     import inspect
 
-    import server.chat.engine.runner as runner
+    import server.chat.engine.tool_rounds as tool_rounds
 
-    src = inspect.getsource(runner)
+    src = inspect.getsource(tool_rounds)
     assert '"session_message",' in src
 
 
