@@ -246,3 +246,91 @@ def test_counts_and_files_read_claim_nothing(tmp_path):
     prompt = {"role": "user", "content": "how big was the change?"}
     reply = "Changed 3 files, +120 -14 lines. " + READ_ONLY
     assert _gate([prompt, _say(reply)], tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "legacy fallback removed",
+        "removed now-unused imports",
+        "removed in-place mutation",
+        "dead code removed; retry added",
+        "removed and replaced the retry loop",
+        "removed as part of the cleanup: the old flag",
+    ],
+)
+def test_a_row_that_removed_a_part_of_a_written_file_passes(tmp_path, change):
+    # Read as the file going, each of these true recaps of an edit was held
+    # as "still exists": the verb of removing neither opens the cell nor
+    # follows the file, or its object follows a word read as "no object".
+    turn, link = _write_turn(tmp_path)
+    recap = _recap(f"| {link} | {change} | +3 -9 |")
+    (claim,) = read_claims(recap)
+    assert claim.kind == c.FILE and claim.or_removed
+    assert _gate([*turn, _say(recap)], tmp_path) is None
+
+
+@pytest.mark.parametrize("change", ["removed", "file removed", "the whole file deleted"])
+def test_a_row_whose_file_itself_went_still_claims_its_removal(tmp_path, change):
+    turn, link = _write_turn(tmp_path)
+    (claim,) = read_claims(_recap(f"| {link} | {change} | +0 -9 |"))
+    assert claim.kind == c.REMOVED
+
+
+def _listing_turn(ask: str, home) -> list:
+    command = f"ls -lt {home}"
+    call = {"type": "tool_use", "id": "l1", "name": "terminal_run", "input": {"command": command}}
+    return [
+        {"role": "user", "content": ask},
+        {"role": "assistant", "content": [{"type": "text", "text": "Listing the folder."}, call]},
+        {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "l1", "content": "q3.pdf"}],
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("ask", "table"),
+    [
+        (
+            "Show the files in my Reports folder, newest first",
+            "Here are the files, newest first:\n\n| File | Size | Modified |\n|---|---|---|\n"
+            "| `{doc}` | 5 B | 2026-10-15 |\n",
+        ),
+        (
+            "Find the PDFs in my Reports folder",
+            "Found one PDF:\n\n| File | Last modified |\n|---|---|\n| `{doc}` | Oct 15 |\n",
+        ),
+        (
+            "Review Sam's PR #42",
+            "Sam's PR changes these files:\n\n| File | Change |\n|---|---|\n"
+            "| `{doc}` | adds a VPN section |\n",
+        ),
+    ],
+)
+def test_a_change_column_over_a_plain_path_says_where_the_file_is(tmp_path, ask, table):
+    # A date column in a listing, or a review of someone else's change, is
+    # no claim that this turn wrote the file: only the write result's own
+    # link under a change column is (test_a_row_with_no_verb_needs_its_file_
+    # written_in_this_turn).
+    doc = _stale(tmp_path, "Reports/q3.pdf")
+    reply = table.format(doc=doc)
+    (claim,) = read_claims(reply)
+    assert claim.kind == c.FILE and not claim.made
+    assert _gate([*_listing_turn(ask, tmp_path), _say(reply)], tmp_path) is None
+
+
+def test_the_prescribed_header_is_a_change_column(tmp_path):
+    # The rule names the header, so the reader finds the change column in
+    # every recap the model writes to it, and a false row there is held.
+    from server.prompts.narration import WORK_NARRATION
+
+    header = "| File | What changed | Lines |"
+    assert header in WORK_NARRATION
+    stale = _stale(tmp_path, "src/old.ts")
+    row = f"| {created_file_link('src/old.ts', stale)} | new pre-pass for paths | +18 -6 |"
+    reply = f"Added the pre-pass.\n\n{header}\n|---|---|---|\n{row}\n"
+    asks = {"role": "user", "content": "add the pre-pass"}
+    feedback = _gate([asks, _say(reply)], tmp_path)
+    assert feedback is not None and "was not written in this turn" in feedback

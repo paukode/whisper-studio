@@ -90,9 +90,12 @@ _TWO_PATHS_RE = re.compile(rf"\s(?:~|/)|{_EXT}\s", re.IGNORECASE)
 # lead-in line, and every path in a row is claimed unless the row negates,
 # offers or asks, or says its file is gone ("| old.md | deleted |" in a table
 # of changes). Where the header also names a change column ("| File | What
-# changed | Lines |", the recap server/prompts/narration.py asks for), each
-# row says its file was changed in this turn, whether its cell has a verb or
-# not. The rows of any other table read as prose, as before.
+# changed | Lines |", the recap server/prompts/narration.py asks for), a row
+# that names its file by the write result's own link says the file was
+# changed in this turn, whether its cell has a verb or not; a plain path
+# under such a column ("Modified" in a file listing, "Change" in a review of
+# someone else's pull request) says where the file is, unless a verb says
+# more. The rows of any other table read as prose, as before.
 
 _TABLE_RULE_RE = re.compile(r"\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*")
 _FILE_COLUMN_RE = re.compile(
@@ -269,23 +272,29 @@ def _file_table_rows(lines: list[str]) -> dict[int, str]:
 
 
 # ── Reading, clause by clause ─────────────────────────────────────────────
-# Rows of a table that lists files: a row whose verb of removing takes no
-# object of its own ("| a.py | removed |", "| a.py | deleted in favour of
-# b.py |") claims its file is gone. With one, the row may say the file lost a
-# part ("| a.py | removed the legacy fallback |") or that it went ("| a.py |
+# Rows of a table that lists files: a row whose verb of removing opens its
+# cell, or follows the file itself ("| a.py | removed |", "| a.py | file
+# deleted in favour of b.py |"), and takes no object of its own claims its
+# file is gone. Otherwise the row may say the file lost a part ("| a.py |
+# removed the legacy fallback |", "| a.py | legacy fallback removed |",
+# "| a.py | removed now-unused imports |") or that it went ("| a.py |
 # removed the dead module |"), so the claim holds either way
 # (Claim.or_removed): read as gone, a true recap of an edit was held as
 # "still exists"; read as an edit, a true recap of a deletion as "does not
-# exist". A row that says its file moved or was renamed claims nothing (its
+# exist". A hyphen after a preposition makes it part of a word ("in-place"). A row that says its file moved or was renamed claims nothing (its
 # old and new names share the row). A count of lines ("18 added, 6 removed",
 # "removed 6 lines") is no verb of the row's, and "unchanged" in a table of
 # changes says the file was not changed.
 _ROW_NO_OBJECT = (
     r"(?=\s*(?:$|[|.,;:!?()\[\]]|(?:from|in|into|to|on|at|by|with|because|after|before|since"
-    r"|as|and|or|now|too|also|entirely|completely|permanently|outright|it|them)\b))"
+    r"|entirely|completely|permanently|outright|it|them)\b(?!-)))"
 )
 _ROW_REMOVING_RE = re.compile(r"\b(?:deleted|removed|trashed)\b", re.IGNORECASE)
 _ROW_GONE_RE = re.compile(rf"\b(?:deleted|removed|trashed){_ROW_NO_OBJECT}", re.IGNORECASE)
+# What may stand before that verb in its cell: nothing, or the file itself.
+_ROW_SELF_RE = re.compile(
+    r"(?:(?:the|this|whole|entire|old)\s+)*(?:file|module|page|script|test)?", re.IGNORECASE
+)
 _ROW_MOVED_RE = re.compile(r"\b(?:moved|renamed)\b", re.IGNORECASE)
 _ROW_COUNT_RE = re.compile(
     r"[+-]?\b\d[\d,]*\s+(?:lines?\s+)?(?:added|removed|deleted|insertions?|deletions?)\b"
@@ -477,6 +486,16 @@ def _path_claims(
     return claims
 
 
+def _row_gone(cell: str) -> bool:
+    """Whether a cell of a file table's row says its file went: a verb of
+    removing with no object, opening the cell or after the file itself."""
+    found = _ROW_GONE_RE.search(cell)
+    if not found:
+        return False
+    before = re.sub(r"[\W_]+", " ", cell[: found.start()]).strip()
+    return bool(_ROW_SELF_RE.fullmatch(before))
+
+
 def _row_claims(lead: str, row: str, head: str) -> list[Claim]:
     """The claims a row of a file table (whose header line is ``head``)
     makes: every path in it, unless the row (with the table's lead-in line)
@@ -503,12 +522,26 @@ def _row_claims(lead: str, row: str, head: str) -> list[Claim]:
     removing = bool(_ROW_REMOVING_RE.search(masked))
     if not removing and _ROW_MOVED_RE.search(masked):
         return []
-    gone = removing and bool(_ROW_GONE_RE.search(masked))
+    gone = removing and any(_row_gone(cell) for cell in masked.split("|"))
     either = removing and not gone
     changed = bool(_CHANGE_COLUMN_RE.search(head)) and not _ROW_UNCHANGED_RE.search(masked)
-    made = either or (not gone and (changed or _made_verb(said)) and not _STATE_RE.search(said))
+    verb = _made_verb(said)
+    acted = not gone and not _STATE_RE.search(said)
+    made = either or (acted and (changed or verb))
     kind = REMOVED if gone else FILE
-    claims = [Claim(kind, s.path, made=made, deliverable=True, or_removed=either) for s in docs]
+    # A document is made by a change column only where the row names it by
+    # the write result's own link: a plain path there may be a listing or a
+    # review of someone else's work, and a document claim is always firm.
+    claims = [
+        Claim(
+            kind,
+            s.path,
+            made=either or (acted and (verb or (changed and s.app_link))),
+            deliverable=True,
+            or_removed=either,
+        )
+        for s in docs
+    ]
     if gone or made:
         # Under a lead in which the assistant says it changed them ("I
         # updated these files:"), the rows are its own claims.
