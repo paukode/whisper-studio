@@ -24,6 +24,8 @@ import {
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useChatStream } from '@/hooks/useChatStream';
+import { ACTIVITY_MIN_RUN, groupAgentTools, groupForActivity, isActivityEntry } from '@/components/chat/AgentCard';
+import { captionIn, traceRuns, turnEntries } from '@/components/chat/turnEntries';
 import { APPROVED_ACTION_STATUS, answerApproval } from './approvalLeg';
 import { hasLiveStream, killSessionStream, registerStreamController } from './streamControl';
 
@@ -494,6 +496,64 @@ describe('approval leg', () => {
       });
       expect(rows()[1].result).toBe(`${'y'.repeat(2000)}...`);
       expect(rows()[1]).not.toHaveProperty('meta');
+    });
+
+    it("counts the continuation's rounds on from the paused leg's, so each round keeps its own group and caption", async () => {
+      // The paused leg paused in its round 0. The server counts the
+      // continuation's rounds from 0 again, and the continuation pauses
+      // again with no prose, so its row is tool-only and draws in one list
+      // with the paused row (traceRuns).
+      getChatStore(SID).getState().setMessages([
+        { role: 'user', content: 'write a.py', timestamp: 't0' },
+        { role: 'assistant', content: '', timestamp: 't1', toolUse: [{ ...otherRow, round: 0 }, { ...pausedRow, round: 0 }] },
+      ]);
+      const frames = [
+        { skill: 'ws_read_file', tool_use_id: 'tu_c', round: 0 },
+        { skill_input: 'ws_read_file', input: { path: 'c.py' }, tool_use_id: 'tu_c' },
+        { skill_result: 'ws_read_file', output: 'c', tool_use_id: 'tu_c', is_error: false, exit_code: null },
+        { activity_label: { tool_use_id: 'tu_c', tool_use_ids: ['tu_c'], label: 'Read the caller of a.py' } },
+        { skill: 'ws_write_file', tool_use_id: 'tu_w2', round: 1 },
+        { skill_input: 'ws_write_file', input: { path: 'c.py' }, tool_use_id: 'tu_w2' },
+        {
+          approval_request: {
+            tool_use_id: 'tu_w2', action: 'ws_write_file', category: 'write', preview: 'diff',
+            summary: 'Write c.py', payload: { path: 'c.py', content: 'y = 2\n' },
+          },
+        },
+      ];
+      vi.mocked(globalThis.fetch).mockImplementation(async (input) => {
+        if (!String(input).includes('/api/chat')) return new Response('{}', { status: 200 });
+        const body = [...frames.map((f) => `data: ${JSON.stringify(f)}\n\n`), 'data: [DONE]\n\n'].join('');
+        return new Response(new ReadableStream<Uint8Array>({
+          start(c) { c.enqueue(new TextEncoder().encode(body)); c.close(); },
+        }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      });
+
+      let answered: Promise<boolean> = Promise.resolve(true);
+      await act(async () => {
+        answered = answerApproval(writeApproval(), true, false);
+        await tick();
+      });
+      await act(async () => {
+        finishAction!({ ok: true, output: 'Wrote a.py (6 bytes).' });
+        await answered;
+      });
+
+      const messages = getChatStore(SID).getState().messages;
+      const leg = messages[2];
+      expect(leg.toolUse?.map((t) => [t.toolId, t.round])).toEqual([['tu_c', 1], ['tu_w2', 2]]);
+      const turn = turnEntries(messages).find((e) => e.kind === 'turn');
+      if (turn?.kind !== 'turn') throw new Error('no turn');
+      const runs = traceRuns(turn.rows);
+      expect(runs).toEqual([[0, 1]]);
+      const drawn = runs[0].flatMap((k) => turn.rows[k].toolUse ?? []);
+      const groups = groupForActivity(groupAgentTools(drawn), { minRun: ACTIVITY_MIN_RUN })
+        .map((e) => (isActivityEntry(e) ? e.tools.map((t) => t.toolId) : []));
+      expect(groups).toEqual([['tu_read', 'tu_dev'], ['tu_c'], ['tu_w2']]);
+      // The caption names the continuation's round alone, under its own
+      // first call, and the paused round keeps its deterministic label.
+      expect(leg.activityLabels).toEqual({ tu_c: 'Read the caller of a.py' });
+      expect(captionIn(turn.rows, 'tu_read')).toBeUndefined();
     });
 
     it('a Stop during the action still fills the row', async () => {

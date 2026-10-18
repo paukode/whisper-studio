@@ -83,6 +83,9 @@ export const SSEEventDataSchema = z.object({
    *  frames (empty when the provider could not tag the frame): what pairs a
    *  result with its call when two same-named calls run in parallel. */
   tool_use_id: z.string().optional(),
+  /** skill: the model round that issued the call, counted from 0. The
+   *  activity groups split where it changes. */
+  round: z.number().optional(),
   /** skill_result: the server's verdict on the output, and the command's
    *  exit code (null for a tool that has none). */
   is_error: z.boolean().optional(),

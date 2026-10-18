@@ -5,11 +5,15 @@
  * The server keys a caption by the first labelled tool_use_id of one model
  * round and lists every call of that round. The committed view reads a
  * group's caption from ChatMessage.activityLabels under the group's FIRST
- * toolId, and a group can span several rounds and, where a turn's rows draw
- * their traces as one list (turnEntries.traceRuns), several rows. So a caption is keyed here
- * by the first toolId of the group, as the committed view draws it, that
- * holds one of the round's calls. A group that gets captions from several
- * rounds keeps the last one.
+ * toolId, and a group can span several rows, where a turn's rows draw their
+ * traces as one list (turnEntries.traceRuns). So a caption is keyed here by
+ * the first toolId of the group, as the committed view draws it, that holds
+ * one of the round's calls. Each round's calls make a group of their own
+ * (groupForActivity splits at the round their skill frames named, counted
+ * on across the legs of a turn by sseStream.nextRoundBase), so a caption
+ * lands on exactly its round's group. A group that still spans
+ * rounds (rows saved before the frames named a round) keeps the last
+ * caption.
  *
  * A caption for calls still streaming shows on their live row at once (the
  * store's currentStreamLabels, read by StreamingMessage through liveCaption)

@@ -107,6 +107,16 @@ export function friendlyToolName(name: string): string {
  * how many consecutive calls make a bundle (2 when omitted). Both views pass
  * ACTIVITY_MIN_RUN (1), so the row appears from tool #1 and grows as more
  * arrive; a tool that passes through draws as an activity row of one.
+ *
+ * Each model round's calls make a bundle of their own: a call whose round
+ * (ToolUseEvent.round, from its skill frame) differs from the round of the
+ * last call in the bundle that names one starts the next bundle. A call
+ * without a round never splits: a refusal card (hook_blocked and the other
+ * synthetic cards) stays in the bundle of the call it refused, and rows
+ * from older transcripts bundle exactly as before. A card always follows
+ * the call it refused, so a bundle that holds only cards (a stop_hook_block
+ * or goal_eval card at the head of a run) closes when a call with a round
+ * arrives: the round is not the card's.
  */
 export type ActivityEntry = { kind: 'activity'; tools: ToolUseEvent[] };
 
@@ -146,6 +156,9 @@ export function groupForActivity(
   const minRun = opts.minRun ?? 2;
   const out: Array<GroupedTool | ActivityEntry | TasksEntry> = [];
   let pending: ToolUseEvent[] = [];
+  // The round of the last call in `pending` that names one; undefined while
+  // none does.
+  let pendingRound: number | undefined;
   // Task_* calls collapse into ONE tasks entry that updates in place: it is
   // created at the first task call and holds `taskRun` by reference, so later
   // task calls fold into the same card. This kills the per-file-write
@@ -170,6 +183,7 @@ export function groupForActivity(
       for (const t of pending) out.push(t);
     }
     pending = [];
+    pendingRound = undefined;
   };
 
   for (const entry of entries) {
@@ -200,6 +214,13 @@ export function groupForActivity(
       taskRun = null;
       out.push(entry);
       continue;
+    }
+    // A new model round closes the bundle of the round before it, or a
+    // bundle of cards only (pendingRound still undefined). Plain activity,
+    // so the task card is not reset here.
+    if (typeof entry.round === 'number') {
+      if (entry.round !== pendingRound) flushPending();
+      pendingRound = entry.round;
     }
     pending.push(entry);
   }

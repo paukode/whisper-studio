@@ -7,7 +7,8 @@ import { friendlyToolName } from '@/components/chat/AgentCard';
  * each call's detail line. Pure functions; ActivityRow.tsx lays the results
  * out and activityChips.ts adds the numbers. A written label
  * (ChatMessage.activityLabels) replaces the sentence on the row, and the
- * sentence then becomes the tail.
+ * sentence then becomes the tail, except on a failed group: the failure
+ * stays the label and the written label becomes the tail.
  */
 
 export type GroupState = 'running' | 'error' | 'stopped' | 'unchecked' | 'done';
@@ -45,8 +46,9 @@ export interface GroupDescription {
   tail: string;
   /** The deterministic sentence, whether or not a written label replaced it. */
   sentence: string;
-  /** The title attribute: the deterministic sentence under a written label,
-   *  else the sentence and the whole tail, which the row may ellipsise. */
+  /** The title attribute: the deterministic sentence and the whole tail,
+   *  which the row may ellipsise. Under a written label that took the
+   *  sentence's place, the sentence alone. */
   title?: string;
 }
 
@@ -735,8 +737,15 @@ export function describeGroup(tools: ToolUseEvent[], written?: string): GroupDes
     ? `${items.slice(0, MAX_TAIL_ITEMS).join(', ')} +${items.length - MAX_TAIL_ITEMS} more`
     : fullTail;
 
+  const title = [sentence, fullTail].filter(Boolean).join('\n');
+  // A failed group keeps its failure as the label ("ruff check failed", in
+  // red), so a caption never hides what went wrong; the caption is the tail,
+  // and the title keeps the deterministic tail (the command) in reach.
+  if (written && state === 'error') {
+    return { state, label: sentence, tail: written, sentence, title };
+  }
   if (written) {
     return { state, label: written, tail: sentence, sentence, title: sentence };
   }
-  return { state, label: sentence, tail, sentence, title: [sentence, fullTail].filter(Boolean).join('\n') };
+  return { state, label: sentence, tail, sentence, title };
 }

@@ -17,8 +17,8 @@ import type { ChatMessage, ToolUseEvent } from '@/types/chat';
  * through real frames.
  */
 
-const t = (toolId: string, toolName = 'ws_read_file'): ToolUseEvent => ({
-  toolId, toolName, input: {}, status: 'complete',
+const t = (toolId: string, toolName = 'ws_read_file', round?: number): ToolUseEvent => ({
+  toolId, toolName, input: {}, status: 'complete', ...(round === undefined ? {} : { round }),
 });
 const row = (toolUse: ToolUseEvent[], content = ''): ChatMessage => ({
   role: 'assistant', content, timestamp: 'now', toolUse,
@@ -43,6 +43,12 @@ describe('groupKeyFor', () => {
     // No activity group holds an agent call.
     expect(groupKeyFor(calls, ['s1'])).toBeNull();
     expect(groupKeyFor(calls, ['nope'])).toBeNull();
+  });
+
+  it('keys by the first call of the round when the calls name their rounds', () => {
+    const calls = [t('a1', 'ws_read_file', 0), t('a2', 'ws_grep', 0), t('hook_blocked', 'hook_blocked'), t('b1', 'ws_read_file', 1)];
+    expect(groupKeyFor(calls, ['a2'])).toBe('a1');
+    expect(groupKeyFor(calls, ['b1'])).toBe('b1');
   });
 });
 

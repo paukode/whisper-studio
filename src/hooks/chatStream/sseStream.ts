@@ -16,6 +16,7 @@ import { TOAST_PRIORITY, useUIStore } from '@/stores/uiStore';
 import { useTaskStore, normalizeTasks } from '@/stores/taskStore';
 import { useDockStore } from '@/stores/dockStore';
 import type {
+  ChatMessage,
   SkillTrace,
   SSEEventData,
   TeamProgressEvent,
@@ -55,6 +56,7 @@ const rowKey = (t: SkillTrace): string => t.id || t.name;
  * commit time has no result to wait for; the kill switch stamps 'stopped'
  * on its own rows in streamControl). A resolved trace also carries the
  * verdict and exit code its result brought, and the meta when it had one.
+ * Every trace keeps its round, when its skill frame named one.
  */
 export function committedToolUse(t: SkillTrace): ToolUseEvent {
   return {
@@ -66,7 +68,29 @@ export function committedToolUse(t: SkillTrace): ToolUseEvent {
     previewImage: t.previewImage,
     ...(t.resolved ? { isError: t.status === 'error', exitCode: t.exitCode ?? null } : {}),
     ...(t.meta ? { meta: t.meta } : {}),
+    ...(t.round !== undefined ? { round: t.round } : {}),
   };
+}
+
+/**
+ * The round a stream's first round is stored as: one past the highest round
+ * on the trailing assistant rows (the turn on screen), else 0. A stream
+ * that starts a turn follows the user's row and gets 0. A leg that resumes
+ * a turn (an approval continuation, an answer to a question or folder card)
+ * counts on from the leg that paused. The server counts each leg's rounds
+ * from 0 again, so without the base the leg's first round would take the
+ * paused leg's number, and a tool-only row it commits, drawn in one list
+ * with the paused row (turnEntries.traceRuns), would join that round's
+ * activity group and take its caption.
+ */
+export function nextRoundBase(messages: readonly ChatMessage[]): number {
+  let top = -1;
+  for (let k = messages.length - 1; k >= 0 && messages[k].role === 'assistant'; k -= 1) {
+    for (const t of messages[k].toolUse ?? []) {
+      if (typeof t.round === 'number' && t.round > top) top = t.round;
+    }
+  }
+  return top + 1;
 }
 
 /**
@@ -76,6 +100,9 @@ export function committedToolUse(t: SkillTrace): ToolUseEvent {
  * carried. An approval the stream pauses on keeps them, so its continuation
  * resumes the turn on the settings it ran on, not on whatever the picker
  * shows when the user answers.
+ *
+ * Each skill frame's round is stored plus nextRoundBase, so the rounds stay
+ * unique across the legs of one turn.
  */
 export async function readSSEStream(
   response: Response,
@@ -126,6 +153,8 @@ export async function readSSEStream(
   // matter what the user is viewing.
   const store = () => getChatStore(sessionId).getState();
   if (!response.body) throw new Error('Response body is null');
+  // Read before the stream commits anything of its own.
+  const roundBase = nextRoundBase(store().messages);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
@@ -303,7 +332,12 @@ export async function readSSEStream(
             // this trace; '' when the provider could not tag the frame, in
             // which case those frames pair by name order instead.
             const id = parsed.tool_use_id || '';
-            const trace: SkillTrace = { id, name: parsed.skill, input: {}, output: '', status: 'running' };
+            // The model round that issued the call: each round's calls draw
+            // as an activity group of their own, live and once committed.
+            // Rounds count from 0, so the check is on the type. The base keeps
+            // a resumed leg's rounds after the paused leg's.
+            const round = typeof parsed.round === 'number' ? { round: roundBase + parsed.round } : {};
+            const trace: SkillTrace = { id, name: parsed.skill, input: {}, output: '', status: 'running', ...round };
             skillTraces.push(trace);
             // Show trace in real-time during streaming
             store().addStreamToolUse({
@@ -311,6 +345,7 @@ export async function readSSEStream(
               toolName: parsed.skill,
               input: {},
               status: 'running',
+              ...round,
             });
           }
 

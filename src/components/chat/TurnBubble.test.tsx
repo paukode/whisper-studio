@@ -214,6 +214,45 @@ describe('TurnBubble', () => {
     expect(container.querySelectorAll('.skill-traces')).toHaveLength(1);
   });
 
+  it('draws each model round as a group of its own: the edit round, the failed check, the stopped reads', () => {
+    // Three rounds with no prose between them, stopped during the third: one
+    // row, as a Stop commits it. Each round's caption names its own group.
+    const run = (id: string, command: string, round: number, failed = false): ToolUseEvent => ({
+      toolId: id, toolName: 'ws_run_command', input: { command }, round,
+      status: failed ? 'error' : 'complete', isError: failed, exitCode: failed ? 1 : 0,
+      result: failed ? 'E501 Line too long\nFound 1 error.\n(exit code 1)' : 'ok',
+    });
+    const stopped: ChatMessage = {
+      role: 'assistant', content: '*(Stopped)*', timestamp: at(2), stopped: true,
+      toolUse: [
+        { toolId: 'tu_e', toolName: 'ws_edit_file', input: { path: '/repo/src/ActivityRow.tsx' }, status: 'complete', round: 0 },
+        { toolId: 'tu_c', toolName: 'ws_create_file', input: { path: '/repo/src/ActivityRow.test.ts' }, status: 'complete', round: 0 },
+        run('tu_t', 'npx tsc --noEmit', 0),
+        run('tu_v', 'npm test', 0),
+        run('tu_ruff', 'venv/bin/ruff check .', 1, true),
+        { ...read('/repo/src/types/chat.ts', 'tu_r1'), round: 2 },
+        { toolId: 'tu_r2', toolName: 'ws_read_file', input: { path: '/repo/src/deliveries.ts' }, status: 'stopped', result: '[Stopped by user]', round: 2 },
+      ],
+      activityLabels: { tu_e: 'Named each activity group; tests green', tu_ruff: 'Checked the new rows for lint' },
+    };
+    const { container } = render(<TurnBubble rows={[opening, stopped]} indices={[1, 2]} />);
+    const groups = [...container.querySelectorAll('.activity-row')];
+    const state = (g: Element) => /activity-(done|error|stopped|running|unchecked)\b/.exec(g.className)?.[1];
+    const text = (g: Element, part: string) => g.querySelector(`.activity-${part}`)?.textContent;
+    expect(groups.map(state)).toEqual(['done', 'error', 'stopped']);
+    expect(groups.map((g) => g.querySelectorAll('.activity-calls > li').length)).toEqual([0, 1, 0]);
+    // The edit round: its caption, the deterministic sentence as the tail.
+    expect(text(groups[0], 'label')).toBe('Named each activity group; tests green');
+    expect(text(groups[0], 'tail')).toBe('Edited ActivityRow.tsx, created ActivityRow.test.ts, ran 2 commands');
+    // The failed round keeps its failure as the label, in the error row, and
+    // its caption is the tail.
+    expect(text(groups[1], 'label')).toBe('ruff check failed');
+    expect(text(groups[1], 'tail')).toBe('Checked the new rows for lint');
+    // The stopped round has no caption.
+    expect(text(groups[2], 'label')).toBe('Read chat.ts, stopped');
+    expect(text(groups[2], 'tail')).toBe('Stopped by you');
+  });
+
   it('reads a group label and a Tasks checkpoint from the row that holds the call', () => {
     const tasks: SessionTask[] = [{ id: '1', subject: 'Write the fold', status: 'in_progress' }];
     const looked: ChatMessage = {

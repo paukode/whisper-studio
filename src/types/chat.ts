@@ -250,6 +250,12 @@ export interface ToolUseEvent {
   /** Set by the server's skill_result frame; absent on rows from older
    *  transcripts, slash commands and the voice path. */
   meta?: ToolMeta;
+  /** The model round that issued the call, from its skill frame, counted
+   *  across the legs of one turn: a leg that resumes the turn counts on from
+   *  the leg that paused (sseStream.nextRoundBase). Absent on older rows,
+   *  slash-command rows and the voice path. The activity groups split where
+   *  it changes (AgentCard.groupForActivity). */
+  round?: number;
 }
 
 export interface SkillTrace {
@@ -272,6 +278,8 @@ export interface SkillTrace {
   resolved?: boolean;
   /** See ToolUseEvent.previewImage. */
   previewImage?: { media_type: string; data: string };
+  /** See ToolUseEvent.round. */
+  round?: number;
 }
 
 /** One progress event emitted by an agent runtime turn. Shaped to mirror
@@ -463,6 +471,9 @@ export interface SSEEventData {
   /** On skill, skill_input and skill_result frames: the provider's tool_use
    *  id of the call, empty for a frame a provider could not tag. */
   tool_use_id?: string;
+  /** On skill frames: the model round that issued the call, counted from 0
+   *  in each request, a continuation's too (server/chat/engine/runner.py). */
+  round?: number;
   /** On skill_result frames: the server judged the output an error. */
   is_error?: boolean;
   /** On skill_result frames: the command's exit code, null for a tool that

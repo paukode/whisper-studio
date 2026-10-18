@@ -1,10 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
 import { groupAgentTools, groupForActivity, isActivityEntry } from './AgentCard';
 import { labelCommit } from '@/hooks/chatStream/activityLabels';
+import { readSSEStream } from '@/hooks/chatStream/sseStream';
+import { dropRuntime, getChatStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
 import { iconFor } from './activityIcons';
 import { describeGroup } from './activityLabel';
 import { groupChips } from './activityChips';
-import type { ToolMeta, ToolUseEvent } from '@/types/chat';
+import type { ToolMeta, ToolUseEvent, TurnModelSettings } from '@/types/chat';
 
 const tool = (name: string, opts: Partial<ToolUseEvent> = {}): ToolUseEvent => ({
   ...opts,
@@ -18,6 +20,10 @@ const tool = (name: string, opts: Partial<ToolUseEvent> = {}): ToolUseEvent => (
 const meta = (m: Partial<ToolMeta>): ToolMeta => ({
   durationMs: null, outputChars: null, truncated: null, lines: null, bytes: null, added: null, removed: null, ...m,
 });
+
+/** The toolIds of each activity group, as both views draw them. */
+const groupIds = (tools: ToolUseEvent[]) => groupForActivity(groupAgentTools(tools), { minRun: ACTIVITY_MIN_RUN })
+  .map((e) => (isActivityEntry(e) ? e.tools.map((t) => t.toolId) : []));
 
 describe('groupForActivity', () => {
   it('bundles 2+ consecutive individual tools into one activity entry', () => {
@@ -63,6 +69,39 @@ describe('groupForActivity', () => {
     expect(isActivityEntry(grouped[0])).toBe(true);
     expect(Array.isArray(grouped[1])).toBe(true);
     expect(isActivityEntry(grouped[2])).toBe(true);
+  });
+
+  it('splits the calls of two model rounds into two groups, and keeps a refusal card with the call it refused', () => {
+    // hook_blocked carries no round: it lands after the call it refused and
+    // stays in that call's group; the next round opens a group of its own.
+    const tools = [
+      tool('ws_read_file', { toolId: 'tu_a', round: 0 }),
+      tool('ws_run_command', { toolId: 'tu_rm', round: 0, status: 'error' }),
+      tool('hook_blocked', { toolId: 'hook_blocked', status: 'error' }),
+      tool('ws_grep', { toolId: 'tu_g', round: 1 }),
+      tool('ws_read_file', { toolId: 'tu_b', round: 1 }),
+    ];
+    expect(groupIds(tools)).toEqual([['tu_a', 'tu_rm', 'hook_blocked'], ['tu_g', 'tu_b']]);
+  });
+
+  it('keeps the rows of an older transcript, which carry no round, in one group', () => {
+    const tools = [tool('ws_edit_file', { toolId: 'e' }), tool('ws_run_command', { toolId: 'c' }), tool('ws_read_file', { toolId: 'r' })];
+    expect(groupIds(tools)).toEqual([['e', 'c', 'r']]);
+  });
+
+  it('a card at the head of a run keeps a group of its own, and the next round draws as its own group', () => {
+    // A stop_hook_block card committed after a prose row starts the run; the
+    // next round's calls, committed as a tool-only row, join that run. The
+    // round is not the card's, so its group does not take the card's error.
+    const tools = [
+      tool('stop_hook_block', { toolId: 'stop_hook_block', status: 'error', input: { reason: 'Run the tests' } }),
+      tool('ws_read_file', { toolId: 'tu_x', round: 5, input: { path: 'a.ts' } }),
+      tool('ws_read_file', { toolId: 'tu_y', round: 5, input: { path: 'b.ts' } }),
+    ];
+    expect(groupIds(tools)).toEqual([['stop_hook_block'], ['tu_x', 'tu_y']]);
+    const round = describeGroup(tools.slice(1), 'Read both halves of the fold');
+    expect(round.state).toBe('done');
+    expect(round.label).toBe('Read both halves of the fold');
   });
 
   it('keeps activity-exempt tools (workspace picker, ask-user) standalone', () => {
@@ -190,6 +229,44 @@ describe('streaming/committed grouping parity', () => {
     const committed = groupForActivity(groupAgentTools([tool('ws_read_file')]), { minRun: ACTIVITY_MIN_RUN });
     expect(isActivityEntry(live[0])).toBe(isActivityEntry(committed[0]));
     expect(isActivityEntry(live[0])).toBe(true);
+  });
+
+  // The same frames through the real parser: the live rows a stream leaves
+  // in the store, and the rows a card commits, group alike, one per round.
+  const SETTINGS: TurnModelSettings = { model: 'test-model', effort_level: 'normal', verbosity: 'medium', brief_mode: false };
+  const sseResponse = (frames: unknown[]) => {
+    const enc = new TextEncoder();
+    const body = [...frames.map((f) => `data: ${JSON.stringify(f)}\n\n`), 'data: [DONE]\n\n'].join('');
+    return new Response(new ReadableStream<Uint8Array>({
+      start(c) { c.enqueue(enc.encode(body)); c.close(); },
+    }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  const call = (id: string, name: string, round: number, isError = false) => [
+    { skill: name, tool_use_id: id, round },
+    { skill_input: name, input: { path: `${id}.ts`, command: id }, tool_use_id: id },
+    { skill_result: name, output: 'ok', tool_use_id: id, is_error: isError, exit_code: isError ? 1 : null },
+  ];
+
+  afterEach(() => {
+    for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
+  });
+
+  it('the live and the committed rows of the same rounds make the same groups', async () => {
+    const frames = [
+      ...call('tu_edit', 'ws_edit_file', 0),
+      ...call('tu_tsc', 'ws_run_command', 0),
+      ...call('tu_ruff', 'ws_run_command', 1, true),
+      ...call('tu_r1', 'ws_read_file', 2),
+      ...call('tu_r2', 'ws_read_file', 2),
+    ];
+    const signal = new AbortController().signal;
+    await readSSEStream(sseResponse(frames), 'sess-parity-live', signal, SETTINGS);
+    await readSSEStream(sseResponse([...frames, { workflow_started: { run_id: 'wf_1', name: 'nightly' } }]), 'sess-parity-commit', signal, SETTINGS);
+
+    const live = getChatStore('sess-parity-live').getState().currentStreamToolUse;
+    const committed = getChatStore('sess-parity-commit').getState().messages[0].toolUse ?? [];
+    expect(groupIds(live)).toEqual([['tu_edit', 'tu_tsc'], ['tu_ruff'], ['tu_r1', 'tu_r2']]);
+    expect(groupIds(committed)).toEqual(groupIds(live));
   });
 });
 
@@ -399,6 +476,29 @@ describe('group label', () => {
     expect(g.label).toBe('Named each activity group; tests green');
     expect(g.tail).toBe('Edited ActivityRow.tsx, ran npx tsc --noEmit');
     expect(g.title).toBe(g.tail);
+  });
+
+  it('a failed group keeps its failure as the label; a written label becomes the tail', () => {
+    const failed = [run('venv/bin/ruff check .', { status: 'error', exitCode: 1, result: 'E501\nFound 1 error.' })];
+    const g = describeGroup(failed, 'Checked the new rows for lint');
+    expect(g.state).toBe('error');
+    expect(g.label).toBe('ruff check failed');
+    expect(g.tail).toBe('Checked the new rows for lint');
+    // The title starts with the failure and keeps the command, which the
+    // collapsed row no longer shows.
+    expect(g.title).toBe('ruff check failed\nvenv/bin/ruff check .');
+    // Every other state: the written label takes the label, as before.
+    const others: ToolUseEvent[][] = [
+      [run('npm test', { status: 'running', exitCode: undefined })],
+      [read('a.ts'), tool('ws_read_file', { input: { path: 'b.ts' }, status: 'stopped', result: '[Stopped by user]' })],
+      [read('a.ts')],
+    ];
+    for (const tools of others) {
+      const other = describeGroup(tools, 'Checked the new rows for lint');
+      expect(other.state).not.toBe('error');
+      expect(other.label).toBe('Checked the new rows for lint');
+      expect(other.tail).toBe(other.sentence);
+    }
   });
 
   it('a streamed caption is the written label of the group that holds its calls, with the deterministic tail', () => {

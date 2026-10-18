@@ -15,12 +15,12 @@
  * is auto-created per session id by the runtime registry.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readSSEStream } from './sseStream';
+import { nextRoundBase, readSSEStream } from './sseStream';
 import { sendApprovalContinuation } from './approvalContinuation';
 import { useUIStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { PendingApproval } from '@/stores/chatStore';
-import type { TurnModelSettings } from '@/types/chat';
+import type { ChatMessage, TurnModelSettings } from '@/types/chat';
 import { dropRuntime, useRuntimeIndex, getChatStore } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import { ACTIVITY_MIN_RUN, groupAgentTools, groupForActivity, isActivityEntry } from '@/components/chat/AgentCard';
@@ -775,6 +775,51 @@ describe('readSSEStream tool frames', () => {
     expect(committed('sess-meta-commit')[0].toolUse?.[0].meta).toEqual(meta);
   });
 
+  it('the round a skill frame names rides on the live row and on the committed row', async () => {
+    const frames = [
+      { skill: 'ws_read_file', tool_use_id: 'tu_r0', round: 0 },
+      { skill_result: 'ws_read_file', output: 'A', tool_use_id: 'tu_r0', is_error: false, exit_code: null },
+      { skill: 'ws_grep', tool_use_id: 'tu_r1', round: 1 },
+      { skill_result: 'ws_grep', output: 'a.ts:1: x', tool_use_id: 'tu_r1', is_error: false, exit_code: null },
+      // An older server names no round: the row has none.
+      { skill: 'ws_read_file', tool_use_id: 'tu_old' },
+    ];
+    const result = await readSSEStream(sseResponse(frames), 'sess-round-live', signal(), SETTINGS);
+    expect(live('sess-round-live').map((t) => t.round)).toEqual([0, 1, undefined]);
+    expect(live('sess-round-live')[2]).not.toHaveProperty('round');
+    // What the approval continuation commits from.
+    expect(result.skillTraces.map((t) => t.round)).toEqual([0, 1, undefined]);
+
+    await readSSEStream(sseResponse([...frames, card]), 'sess-round-commit', signal(), SETTINGS);
+    const rows = committed('sess-round-commit')[0].toolUse ?? [];
+    expect(rows.map((t) => t.round)).toEqual([0, 1, undefined]);
+    expect(rows[2]).not.toHaveProperty('round');
+  });
+
+  it('a stream that resumes a turn counts its rounds on from the rows of that turn', async () => {
+    const sid = 'sess-round-base';
+    const at = (round?: number) => ({
+      toolId: `tu_${round ?? 'none'}`, toolName: 'ws_read_file', input: {}, status: 'complete' as const,
+      ...(round === undefined ? {} : { round }),
+    });
+    const earlier: ChatMessage = { role: 'assistant', content: 'done', timestamp: 't0', toolUse: [at(7)] };
+    const asked: ChatMessage = { role: 'user', content: 'go', timestamp: 't1' };
+    const paused: ChatMessage = { role: 'assistant', content: '', timestamp: 't2', toolUse: [at(0), at(2), at()] };
+    // Only the rows after the user's row are the turn on screen; the highest
+    // round there wins, and rows without rounds count for nothing.
+    expect(nextRoundBase([earlier, asked, paused])).toBe(3);
+    expect(nextRoundBase([earlier, asked])).toBe(0);
+    expect(nextRoundBase([asked, { ...paused, toolUse: [at()] }])).toBe(0);
+
+    getChatStore(sid).getState().setMessages([asked, paused]);
+    const result = await readSSEStream(sseResponse([
+      { skill: 'ws_grep', tool_use_id: 'tu_g', round: 0 },
+      { skill: 'ws_read_file', tool_use_id: 'tu_r', round: 1 },
+    ]), sid, signal(), SETTINGS);
+    expect(live(sid).map((t) => t.round)).toEqual([3, 4]);
+    expect(result.skillTraces.map((t) => t.round)).toEqual([3, 4]);
+  });
+
   it('a result without a meta (an older server) leaves the row without one', async () => {
     const sid = 'sess-meta-none';
     await readSSEStream(sseResponse([
@@ -883,8 +928,10 @@ describe('readSSEStream activity_label', () => {
   const committed = (sid: string) => getChatStore(sid).getState().messages;
   const card = { workflow_started: { run_id: 'wf_1', name: 'nightly' } };
   const hook = { hook_blocked: { tool_name: 'ws_run_command', reason: 'blocked' } };
-  const call = (id: string, name = 'ws_read_file') => [
-    { skill: name, tool_use_id: id },
+  /** One call's frames; `round` as the skill frame names it, none from an
+   *  older server. */
+  const call = (id: string, name = 'ws_read_file', round?: number) => [
+    { skill: name, tool_use_id: id, ...(round === undefined ? {} : { round }) },
     { skill_input: name, input: { path: `${id}.ts` }, tool_use_id: id },
     { skill_result: name, output: 'ok', tool_use_id: id, is_error: false, exit_code: null },
   ];
@@ -962,7 +1009,21 @@ describe('readSSEStream activity_label', () => {
     expect(saved[saved.length - 1]).toEqual({ tu_1: 'Read the failing test' });
   });
 
-  it('a group that spans rounds keeps the last caption, under its first call', async () => {
+  it('each round is a group of its own, and its caption lands on that group alone', async () => {
+    const sid = 'sess-label-per-round';
+    await readSSEStream(sseResponse([
+      ...call('tu_1', 'ws_read_file', 0),
+      label(['tu_1'], 'Read the plan'),
+      ...call('tu_2', 'ws_grep', 1),
+      label(['tu_2'], 'Found every caller of the plan'),
+      card,
+    ]), sid, signal(), SETTINGS);
+
+    expect(committed(sid)[0].activityLabels).toEqual({ tu_1: 'Read the plan', tu_2: 'Found every caller of the plan' });
+    expect(shownCaptions(sid)).toEqual(['Read the plan', 'Found every caller of the plan']);
+  });
+
+  it('a group that spans rounds (frames that name none) keeps the last caption, under its first call', async () => {
     const sid = 'sess-label-rounds';
     await readSSEStream(sseResponse([
       ...call('tu_1'),
