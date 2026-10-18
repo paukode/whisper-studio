@@ -189,6 +189,10 @@ export interface ChatMessage {
    *  for a visual and `shot-<tool index>` for a preview screenshot. A missing
    *  key is the natural size. UI-only: the prompt never reads it. */
   mediaSizes?: Record<string, MediaSize>;
+  /** Model-written captions for the activity groups of this message, keyed
+   *  by the first toolId of the group; the deterministic label is the
+   *  fallback and the tail. */
+  activityLabels?: Record<string, string>;
   /** Inline artifact from the create_artifact tool */
   programArtifact?: {
     title: string;
@@ -202,6 +206,19 @@ export interface ChatMessage {
     title: string;
     summary: string;
   };
+}
+
+/** What the server measured about one tool call's result. Every key may be
+ *  null: a tool that has no such number says so, and the row renders a
+ *  number-based chip only when the field is a number. */
+export interface ToolMeta {
+  durationMs: number | null;
+  outputChars: number | null;
+  truncated: boolean | null;
+  lines: number | null;
+  bytes: number | null;
+  added: number | null;
+  removed: number | null;
 }
 
 export interface ToolUseEvent {
@@ -230,6 +247,9 @@ export interface ToolUseEvent {
   /** The command's exit code (skill_result.exit_code); null for a tool that
    *  has none. Absent until the result lands. */
   exitCode?: number | null;
+  /** Set by the server's skill_result frame; absent on rows from older
+   *  transcripts, slash commands and the voice path. */
+  meta?: ToolMeta;
 }
 
 export interface SkillTrace {

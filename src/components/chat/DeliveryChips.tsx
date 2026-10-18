@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import type { Delivery } from '@/types/chat';
 import { toDelivery } from '@/hooks/chatStream/deliveries';
 import { attachWsFileHandlers, chatLinkHint, parseWsFileHref } from '@/utils/wsFileLinks';
-import { ICON } from '@/components/chat/ActivityRow';
+import { ICON } from '@/components/chat/activityIcons';
 
 /** The Activity row's stroke style, for the few kinds it has no glyph for. */
 const glyph = (children: React.ReactNode) => (

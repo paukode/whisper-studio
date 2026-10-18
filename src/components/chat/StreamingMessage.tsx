@@ -2,9 +2,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useActiveChatStore } from '@/stores/sessionRuntimes';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { StreamingMarkdown } from '@/components/markdown/StreamingMarkdown';
-import { AgentCard, groupAgentTools, groupForActivity, isActivityEntry, isTasksEntry, friendlyToolName, ACTIVITY_MIN_RUN } from '@/components/chat/AgentCard';
+import { AgentCard, groupAgentTools, groupForActivity, isActivityEntry, isTasksEntry, ACTIVITY_MIN_RUN } from '@/components/chat/AgentCard';
 import { TaskCard } from '@/components/chat/TaskCard';
 import { ActivityRow } from '@/components/chat/ActivityRow';
+import { ICON } from '@/components/chat/activityIcons';
 import { TeamAgentRows } from '@/components/chat/AgentRows';
 import { DeliveryChips } from '@/components/chat/DeliveryChips';
 import { findMatchingTeamReports } from '@/hooks/chatStream/teamProgress';
@@ -73,17 +74,8 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
         {/* Thinking block — shown immediately when streaming starts */}
         {((isStreaming && !content) || thinkingContent) && (
           <details className="thinking-block" open={!content}>
-            <summary style={{
-              cursor: 'pointer',
-              fontSize: '0.85em',
-              color: 'var(--text-muted)',
-              padding: '4px 0',
-              userSelect: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}>
-              <span>{(isLocalModel && !thinkingContent) ? '\u2728' : '\uD83D\uDCAD'}</span>
+            <summary className="thinking-summary">
+              <span className="activity-slot">{(isLocalModel && !thinkingContent) ? ICON.sparkle : ICON.thought}</span>
               {/* A status outranks the thinking label: thinking tokens clear
                *  it, so one that is set now came after them (the goal check
                *  after a thinking-only round) and names the current phase. */}
@@ -105,28 +97,10 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
                           : (isLocalModel ? 'Generating\u2026' : 'Thinking\u2026')}
               {!content && <span className="pulse-dot"></span>}
               {displayElapsed > 0 && (
-                <span style={{ marginLeft: 'auto', fontSize: '0.85em', opacity: 0.7 }}>
-                  {formatMs(displayElapsed)}
-                </span>
+                <span className="thinking-elapsed">{formatMs(displayElapsed)}</span>
               )}
             </summary>
-            {thinkingContent && (
-              <div style={{
-                fontSize: '0.85em',
-                color: 'var(--text-muted)',
-                padding: '8px 12px',
-                background: 'var(--bg-secondary)',
-                borderRadius: 6,
-                marginTop: 4,
-                marginBottom: 8,
-                maxHeight: 300,
-                overflow: 'auto',
-                whiteSpace: 'pre-wrap',
-                lineHeight: 1.5,
-              }}>
-                {thinkingContent}
-              </div>
-            )}
+            {thinkingContent && <div className="thinking-body">{thinkingContent}</div>}
           </details>
         )}
 
@@ -156,36 +130,8 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
               if (isActivityEntry(entry)) {
                 return <ActivityRow key={`activity-${idx}`} tools={entry.tools} />;
               }
-              const tool = entry;
-              const pathHint = (tool.input as Record<string, unknown>)?.path;
-              const label = friendlyToolName(tool.toolName);
-              const displayName = pathHint && typeof pathHint === 'string'
-                ? `${label}: ${pathHint.split('/').pop()}`
-                : label;
-              return (
-              <details key={`${tool.toolName}-${idx}`} className={`skill-trace ${tool.status === 'complete' ? 'done' : tool.status}`}>
-                <summary className="skill-trace-summary">
-                  <span className="skill-trace-icon">{'\uD83D\uDD27'}</span>
-                  <span className="skill-trace-name">{displayName}</span>
-                  <span className="skill-trace-status">
-                    {tool.status === 'complete' ? (
-                      <span className="trace-check">{'\u2713'}</span>
-                    ) : tool.status === 'error' ? (
-                      <span className="trace-check" style={{ color: 'var(--error, #f87171)' }}>{'\u2715'}</span>
-                    ) : tool.status === 'stopped' ? (
-                      <span className="trace-check trace-stopped" title="Stopped">{'\u23F9'}</span>
-                    ) : (
-                      <span className="trace-spinner">{'\u27F3'}</span>
-                    )}
-                  </span>
-                </summary>
-                {tool.result && (
-                  <div className="skill-trace-output">
-                    <pre>{tool.result.length > 2000 ? tool.result.slice(0, 2000) + '\u2026' : tool.result}</pre>
-                  </div>
-                )}
-              </details>
-              );
+              // An exempt tool (a screenshot, a picker) draws as a row of one.
+              return <ActivityRow key={`${entry.toolName}-${idx}`} tools={[entry]} />;
             })}
           </div>
         )}

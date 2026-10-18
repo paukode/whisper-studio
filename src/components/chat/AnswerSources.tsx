@@ -4,6 +4,7 @@ import { getAnswerSources, type AnswerSource } from '@/api/sessions';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useDockStore } from '@/stores/dockStore';
+import { ICON } from '@/components/chat/activityIcons';
 
 interface Props {
   grounding: { searched: number; passages: number; id?: string };
@@ -108,7 +109,7 @@ export const AnswerSources: React.FC<Props> = ({ grounding }) => {
   if (!groundingId) {
     return (
       <div className="grounding-chip">
-        <span aria-hidden="true">{'🔎'}</span>
+        <span className="grounding-glyph">{ICON.search}</span>
         {chipLabel(grounding)}
       </div>
     );
@@ -123,11 +124,9 @@ export const AnswerSources: React.FC<Props> = ({ grounding }) => {
         title={open ? 'Hide the passages behind this answer' : 'Show the passages behind this answer'}
         onClick={() => setOpen((v) => !v)}
       >
-        <span aria-hidden="true">{'🔎'}</span>
+        <span className="grounding-glyph">{ICON.search}</span>
         {chipLabel(grounding)}
-        <span aria-hidden="true" className="grounding-caret">
-          {open ? '▾' : '▸'}
-        </span>
+        <span className="grounding-caret">{open ? ICON.chevronDown : ICON.chevronRight}</span>
       </button>
       {open && (
         <div className="grounding-panel">

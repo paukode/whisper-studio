@@ -157,17 +157,17 @@ describe('VoiceLiveMessage', () => {
       useSessionStore.setState({ currentSessionId: 'sA' });
     });
     const { container, rerender } = render(<VoiceLiveMessage />);
-    // The activity row counts the steps it holds: one run each, never both.
+    // The activity row names the run it holds: one session's, never both.
     const shown = () => container.querySelector('[data-testid="voice-live-message"]')?.textContent ?? '';
-    expect(shown()).toContain('1 step');
-    expect(shown()).not.toContain('2 steps');
+    expect(shown()).toContain('Running 1 search');
+    expect(shown()).not.toContain('Running 2 calls');
     fireEvent.click(container.querySelector('.voice-draining-stop')!);
     expect(controller.cancelRuns).toHaveBeenLastCalledWith('sA');
 
     act(() => { useSessionStore.setState({ currentSessionId: 'sB' }); });
     rerender(<VoiceLiveMessage />);
-    expect(shown()).toContain('1 step');
-    expect(shown()).not.toContain('2 steps');
+    expect(shown()).toContain('Running 1 command');
+    expect(shown()).not.toContain('Running 2 calls');
     fireEvent.click(container.querySelector('.voice-draining-stop')!);
     expect(controller.cancelRuns).toHaveBeenLastCalledWith('sB');
     act(() => {

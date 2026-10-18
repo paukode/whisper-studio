@@ -1,10 +1,11 @@
 /**
- * AgentCard — inline grouping of consecutive agent-orchestration tool calls.
+ * AgentCard: inline grouping of consecutive agent-orchestration tool calls.
  *
- * Replaces a vertical stack of standalone `<details>` skill-trace chips
- * (spawn_agent, send_message×N, list_agents, team_results) with a single
- * collapsible card. Header shows "🤖 Agent · <task> — N/M steps · status".
- * Body, when expanded, lists every step with its own collapsible output.
+ * Replaces a vertical stack of standalone per-call rows (spawn_agent,
+ * send_message xN, list_agents, team_results) with a single collapsible
+ * card. The header shows the agents icon, "Agent · <task>", the step count
+ * and a status mark. Body, when expanded, lists every step with its own
+ * collapsible output.
  *
  * Industry pattern parity: Cursor / Aider / Continue / Claude Code all
  * group sub-agent activity into one card with a step count. The user
@@ -12,12 +13,13 @@
  * shouting for attention in the conversation flow.
  *
  * Pure-frontend grouping — no backend changes. We detect group boundaries
- * by `toolName ∈ AGENT_GROUP_TOOLS`. Non-agent tools fall through to the
- * existing skill-trace renderer, so a turn that mixes file edits with
- * agent calls still reads naturally.
+ * by `toolName` in AGENT_GROUP_TOOLS. Non-agent tools fall through to the
+ * activity row, so a turn that mixes file edits with agent calls still
+ * reads naturally.
  */
 
 import type { ToolUseEvent } from '@/types/chat';
+import { ICON, iconFor } from '@/components/chat/activityIcons';
 
 /**
  * Tool names whose consecutive runs collapse into one AgentCard. The full
@@ -66,16 +68,17 @@ export function groupAgentTools(tools: ToolUseEvent[]): GroupedTool[] {
 
 /** Tool names that should never collapse into an ActivityRow because
  *  they have their own dedicated chrome (workspace folder picker,
- *  ask_user_question, emitted program). The list is small on purpose —
+ *  ask_user_question, emitted program). The list is small on purpose:
  *  most tools are "internal" reads/writes/searches that benefit from
- *  collapsing into a single Activity strip. */
+ *  collapsing into a single activity row. */
 export const ACTIVITY_EXEMPT_TOOLS: ReadonlySet<string> = new Set([
   'ws_workspace_prompt',
   'ask_user_question',
   'create_artifact',
   'ws_open_folder',
-  // Renders an actual image (PreviewScreenshotCard) — collapsing it into the
-  // terse Activity strip would hide the one thing the tool exists to show.
+  // Renders an actual image (PreviewScreenshotCard): bundling it with other
+  // calls would hide the one thing the tool exists to show, so it draws as a
+  // row of its own that opens on the picture.
   'preview_screenshot',
   // Workflow runtime cards (WS-D) have their own interactive UI.
   'workflow_preview',
@@ -101,13 +104,9 @@ export function friendlyToolName(name: string): string {
  *
  * Special tools (workspace picker, ask-user, emitted program) pass through
  * untouched because they have their own interactive UI. ``minRun`` controls
- * how many consecutive calls are needed before the bundle kicks in:
- *   - Completed messages (ChatMessage): minRun = 2 — a single isolated call
- *     keeps its standalone <details> chip rather than paying the chrome
- *     cost of an "Activity · 1" wrapper.
- *   - Streaming messages (StreamingMessage): minRun = 1 — the collapsed row
- *     appears from tool #1 and counts up as more arrive, instead of a flash
- *     of individual cards that get bundled the moment the stream commits.
+ * how many consecutive calls make a bundle (2 when omitted). Both views pass
+ * ACTIVITY_MIN_RUN (1), so the row appears from tool #1 and grows as more
+ * arrive; a tool that passes through draws as an activity row of one.
  */
 export type ActivityEntry = { kind: 'activity'; tools: ToolUseEvent[] };
 
@@ -210,24 +209,14 @@ export function groupForActivity(
 
 // ── Render helpers ─────────────────────────────────────────────────────
 
-function stepIcon(name: string): string {
-  switch (name) {
-    case 'spawn_agent': return '\u{1F680}'; // 🚀
-    case 'send_message': return '✉️'; // ✉
-    case 'list_agents': return '\u{1F4CB}'; // 📋
-    case 'team_create': return '\u{1F465}'; // 👥
-    case 'team_delete': return '\u{1F5D1}️'; // 🗑
-    case 'team_results': return '\u{1F4E5}'; // 📥
-    default: return '\u{1F527}'; // 🔧
-  }
-}
-
+/** A step's or the card's status mark: the same stroke icons the activity
+ *  row uses, and the CSS ring while running. */
 function statusGlyph(status: ToolUseEvent['status']) {
-  if (status === 'complete') return <span className="trace-check">{'✓'}</span>;
-  if (status === 'error') return <span className="trace-check" style={{ color: 'var(--error, #f87171)' }}>{'✕'}</span>;
+  if (status === 'complete') return <span className="trace-check">{ICON.check}</span>;
+  if (status === 'error') return <span className="trace-check trace-error" title="Error">{ICON.alertCircle}</span>;
   // Cut short by the user: terminal, never a spinner.
-  if (status === 'stopped') return <span className="trace-check trace-stopped" title="Stopped">{'\u23F9'}</span>;
-  return <span className="trace-spinner">{'⟳'}</span>;
+  if (status === 'stopped') return <span className="trace-check trace-stopped" title="Stopped">{ICON.stop}</span>;
+  return <span className="trace-spinner" role="img" aria-label="Running" />;
 }
 
 /** Pull the human-readable subject from a group's most informative tool —
@@ -262,7 +251,7 @@ function summariseStepInput(tool: ToolUseEvent): string | null {
   if (tool.toolName === 'send_message') {
     const target = (input.to_agent_id as string | undefined) ?? (input.broadcast ? 'all agents' : '?');
     const content = ((input.content as string | undefined) ?? '').split('\n')[0];
-    return content ? `→ ${target}: ${content.slice(0, 80)}` : `→ ${target}`;
+    return content ? `to ${target}: ${content.slice(0, 80)}` : `to ${target}`;
   }
   if (tool.toolName === 'team_create') {
     const agents = (input.agents as Array<{ name?: string }> | undefined) ?? [];
@@ -286,7 +275,7 @@ function AgentStep({ tool }: AgentStepProps) {
     return (
       <div className="agent-step agent-step-result">
         <div className="agent-step-header">
-          <span className="agent-step-icon">{stepIcon(tool.toolName)}</span>
+          <span className="agent-step-icon">{iconFor(tool.toolName)}</span>
           <span className="agent-step-name">Result</span>
           {statusGlyph(tool.status)}
         </div>
@@ -299,7 +288,7 @@ function AgentStep({ tool }: AgentStepProps) {
   return (
     <details className={`agent-step ${tool.status === 'complete' ? 'done' : tool.status}`}>
       <summary className="agent-step-header">
-        <span className="agent-step-icon">{stepIcon(tool.toolName)}</span>
+        <span className="agent-step-icon">{iconFor(tool.toolName)}</span>
         <span className="agent-step-name">
           {tool.toolName}
           {subject && <span className="agent-step-subject"> · {subject}</span>}
@@ -369,19 +358,11 @@ export function AgentCard({ tools }: AgentCardProps) {
   return (
     <details className={`agent-card ${allDone ? (errored > 0 ? 'errored' : 'done') : 'running'}`} open={!allDone}>
       <summary className="agent-card-header">
-        <span className="agent-card-icon" aria-hidden="true">{'\u{1F916}'}</span>
+        <span className="agent-card-icon">{ICON.users}</span>
         <span className="agent-card-title">Agent · {title}</span>
         <span className="agent-card-status">
           {statusLabel}{' '}
-          {running > 0 ? (
-            <span className="trace-spinner">{'⟳'}</span>
-          ) : errored > 0 ? (
-            <span className="trace-check" style={{ color: 'var(--error, #f87171)' }}>{'✕'}</span>
-          ) : stopped > 0 ? (
-            <span className="trace-check trace-stopped" title="Stopped">{'\u23F9'}</span>
-          ) : (
-            <span className="trace-check">{'✓'}</span>
-          )}
+          {statusGlyph(running > 0 ? 'running' : errored > 0 ? 'error' : stopped > 0 ? 'stopped' : 'complete')}
         </span>
       </summary>
       <div className="agent-card-body">

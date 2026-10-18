@@ -1,564 +1,341 @@
-import React, { useMemo, useState } from 'react';
-import type { ToolUseEvent } from '@/types/chat';
+import React, { useEffect, useMemo, useState } from 'react';
+import type { MediaSize, ToolUseEvent } from '@/types/chat';
+import { ICON, iconFor } from '@/components/chat/activityIcons';
+import { basename, callVerb, describeCall, describeGroup, isRunning, type CallDesc, type GroupState } from '@/components/chat/activityLabel';
+import { callOutcome, formatCount, groupChips, type Chip } from '@/components/chat/activityChips';
+import { PreviewScreenshotCard } from '@/components/chat/PreviewScreenshotCard';
+import { useUIStore } from '@/stores/uiStore';
+import { useDockStore } from '@/stores/dockStore';
 
 /**
- * ActivityRow — collapsed strip of consecutive tool calls within an
- * assistant turn, rendered inline in the conversation pane.
+ * ActivityRow: a group of consecutive tool calls inside an assistant bubble,
+ * drawn as one line that reads as a sentence ("Read 3 files", "Edited
+ * ActivityRow.tsx, ran 2 commands") with the files or the command as a mono
+ * tail and the numbers as chips on the right. The same component draws a
+ * group of one call and a group of many.
  *
- * Replaces the old "one <details> per tool call" rendering which made a
- * turn that read 8 files + ran 3 commands look like 11 separate cards.
- * Now those 11 calls show up as:
- *
- *     ▸ ACTIVITY · 11 steps · ✓ 11
- *
- * Click the header to expand into one-line summaries per step (filename,
- * grep match count, command excerpt, …). Each step has its own ▾ toggle
- * that reveals that step's raw output in-place — everything stays inside
- * the chat column; there is no side pane.
+ * Clicking the line opens one detail line per call: verb, subject (a path
+ * links to the editor, a diff pill opens the diff), outcome, and a toggle
+ * for that call's raw output. Everything stays inside the chat column.
  *
  * UX rules:
- *   - Default collapsed.
- *   - If any step errored, the row opens by default so failures aren't
- *     silently hidden behind a chevron.
- *   - Per-tool one-liners are derived from input + result without
- *     re-running anything.
+ *   - Collapsed by default. A group with an error opens (never hide a
+ *     failure behind a chevron), and so does a goal the judge could not
+ *     check, so its reason is in view, and a preview screenshot.
+ *   - Every word comes from activityLabel.ts and every number from
+ *     activityChips.ts; nothing re-runs a tool or counts a cut preview.
  */
 
 export interface ActivityRowProps {
   tools: ToolUseEvent[];
+  /** The model-written caption for this group (ChatMessage.activityLabels,
+   *  keyed by the group's first toolId). Until it lands the deterministic
+   *  sentence is the label; after, the sentence is the tail. */
+  writtenLabel?: string;
+  /** A preview screenshot's saved size and setter, so a committed message
+   *  keeps the size the user dragged it to. Without it the shot shows at its
+   *  natural size with no grip. */
+  mediaFor?: (tool: ToolUseEvent) => { size?: MediaSize; onResize?: (size: MediaSize | null) => void };
 }
 
-/** Compact stroke icons (emoji read as chat content, not chrome — the
- *  premium pass replaces them with the same SVG language used everywhere
- *  else in the app). */
-const icon = (children: React.ReactNode) => (
-  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    {children}
-  </svg>
-);
-
-/** Exported for DeliveryChips, which draws each verified delivery with the
- *  glyph of the tool that makes it. */
-export const ICON = {
-  file: icon(<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></>),
-  pencil: icon(<path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />),
-  plus: icon(<><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></>),
-  x: icon(<><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>),
-  search: icon(<><circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.5" y2="16.5" /></>),
-  layers: icon(<><polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" /></>),
-  folder: icon(<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />),
-  terminal: icon(<><polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" /></>),
-  code: icon(<><polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" /></>),
-  checkSquare: icon(<><polyline points="9 11 12 14 22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></>),
-  refresh: icon(<><path d="M21 12a9 9 0 1 1-2.6-6.4" /><path d="M21 3v6h-6" /></>),
-  list: icon(<><line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" /></>),
-  globe: icon(<><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.6 3.9 5.7 3.9 9s-1.4 6.4-3.9 9c-2.5-2.6-3.9-5.7-3.9-9S9.5 5.6 12 3z" /></>),
-  clock: icon(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></>),
-  wrench: icon(<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />),
-  gitBranch: icon(<><line x1="6" y1="3" x2="6" y2="15" /><circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><path d="M18 9a9 9 0 0 1-9 9" /></>),
-  gitCommit: icon(<><circle cx="12" cy="12" r="4" /><line x1="2" y1="12" x2="8" y2="12" /><line x1="16" y1="12" x2="22" y2="12" /></>),
-  arrowUp: icon(<><line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" /></>),
-  arrowDown: icon(<><line x1="12" y1="5" x2="12" y2="19" /><polyline points="19 12 12 19 5 12" /></>),
-  diff: icon(<><path d="M12 3v14" /><path d="M5 10h14" /><path d="M5 21h14" /></>),
-  history: icon(<><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l3.5 2" /></>),
-  box: icon(<><rect x="3" y="4" width="18" height="5" rx="1" /><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9" /><line x1="10" y1="13" x2="14" y2="13" /></>),
-  database: icon(<><ellipse cx="12" cy="5" rx="8" ry="3" /><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" /><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" /></>),
-  monitor: icon(<><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></>),
-  camera: icon(<><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3l2-3h6l2 3h3a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></>),
-  pointer: icon(<path d="M4 3l7 18 2.4-7.6L21 11z" />),
-  pulse: icon(<polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />),
-  message: icon(<path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-4-.9L3 21l1.9-5a8.4 8.4 0 0 1-.9-3.8 8.4 8.4 0 0 1 8.4-8.4h.5a8.4 8.4 0 0 1 8.1 8.1z" />),
-  users: icon(<><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.9" /><path d="M16 3.1a4 4 0 0 1 0 7.8" /></>),
-  chart: icon(<><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></>),
-  fileText: icon(<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="8" y1="14" x2="15" y2="14" /><line x1="8" y1="18" x2="13" y2="18" /></>),
-  table: icon(<><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="9" x2="21" y2="9" /><line x1="3" y1="15" x2="21" y2="15" /><line x1="9" y1="3" x2="9" y2="21" /></>),
-  slides: icon(<><path d="M2 3h20" /><path d="M4 3v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3" /><path d="M12 15v6" /><path d="M9 21h6" /></>),
-  sparkle: icon(<><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /><path d="M19 15l.7 2L22 17.7l-2.3.8L19 21l-.7-2.5L16 17.7l2.3-.7z" /></>),
-  cloud: icon(<path d="M17.5 19a4.5 4.5 0 0 0 .5-9 6 6 0 0 0-11.6-1.6A4 4 0 0 0 6.5 19z" />),
-  sliders: icon(<><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></>),
-  play: icon(<polygon points="6 4 20 12 6 20 6 4" />),
-  book: icon(<><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></>),
-  shield: icon(<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><polyline points="9 12 11 14 15 10" /></>),
-  link: icon(<><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></>),
-  alert: icon(<><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></>),
-  info: icon(<><circle cx="12" cy="12" r="9" /><line x1="12" y1="11" x2="12" y2="16" /><line x1="12" y1="8" x2="12.01" y2="8" /></>),
-  moon: icon(<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />),
-  flag: icon(<><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></>),
-  mic: icon(<><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="22" /></>),
-  graph: icon(<><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.6" y1="10.7" x2="15.4" y2="6.3" /><line x1="8.6" y1="13.3" x2="15.4" y2="17.7" /></>),
-};
-
-/** Every tool this app can emit gets a glyph. A name that is missing here
- *  falls through to `iconFor`'s wrench, which reads as "some unlabelled
- *  step" — so the map tracks the real catalog
- *  (`server/chat/tool_pool.py::assemble_full_catalog`), not the tool-name
- *  vocabulary of any other product. CamelCase keys are kept alongside the
- *  app's own names because recorded transcripts from other vocabularies
- *  still render through this component. */
-const TOOL_ICON: Record<string, React.ReactNode> = {
-  // Workspace files
-  ws_read_file: ICON.file,
-  Read: ICON.file,
-  ws_write_file: ICON.pencil,
-  Write: ICON.pencil,
-  ws_edit_file: ICON.pencil,
-  Edit: ICON.pencil,
-  ws_create_file: ICON.plus,
-  ws_delete_file: ICON.x,
-  ws_open_folder: ICON.folder,
-  ws_list_directory: ICON.folder,
-  LS: ICON.folder,
-  save_file: ICON.fileText,
-  notebook_read: ICON.fileText,
-  notebook_edit: ICON.pencil,
-
-  // Search and code intelligence
-  ws_grep: ICON.search,
-  Grep: ICON.search,
-  ws_glob: ICON.layers,
-  Glob: ICON.layers,
-  workspace_semantic_search: ICON.search,
-  workspace_graph_query: ICON.graph,
-  tool_search: ICON.search,
-  lsp_diagnostics: ICON.alert,
-  lsp_hover: ICON.info,
-  lsp_references: ICON.link,
-
-  // Shell and code execution
-  ws_run_command: ICON.terminal,
-  Bash: ICON.terminal,
-  terminal_run: ICON.terminal,
-  terminal_send: ICON.terminal,
-  terminal_close: ICON.x,
-  run_python: ICON.code,
-  office_script: ICON.code,
-  run_tool_script: ICON.play,
-
-  // Tasks
-  task_create: ICON.checkSquare,
-  task_update: ICON.refresh,
-  task_list: ICON.list,
-  task_get: ICON.list,
-  task_status: ICON.pulse,
-  task_output: ICON.fileText,
-  task_stop: ICON.x,
-  task_cancel: ICON.x,
-  TodoWrite: ICON.pencil,
-
-  // Agents, teams, messaging
-  spawn_agent: ICON.users,
-  list_agents: ICON.users,
-  team_create: ICON.users,
-  team_delete: ICON.x,
-  promote_agent_type: ICON.users,
-  complete_coordination: ICON.checkSquare,
-  send_message: ICON.message,
-  send_session_message: ICON.message,
-  receive_messages: ICON.message,
-  notify_user: ICON.message,
-  ask_user_question: ICON.message,
-
-  // Git
-  git_status: ICON.list,
-  git_diff: ICON.diff,
-  git_show: ICON.diff,
-  git_blame: ICON.history,
-  git_log: ICON.history,
-  git_add_commit: ICON.gitCommit,
-  git_branch_list: ICON.gitBranch,
-  git_create_branch: ICON.gitBranch,
-  git_checkout: ICON.gitBranch,
-  git_merge: ICON.gitBranch,
-  git_delete_branch: ICON.x,
-  git_push: ICON.arrowUp,
-  git_push_pr: ICON.arrowUp,
-  git_pull: ICON.arrowDown,
-  git_fetch: ICON.arrowDown,
-  git_clone: ICON.arrowDown,
-  git_stash: ICON.box,
-  git_stash_list: ICON.box,
-  ws_create_worktree: ICON.gitBranch,
-  ws_merge_worktree: ICON.gitBranch,
-  ws_diff_worktree: ICON.diff,
-
-  // GitHub and CI
-  github: ICON.globe,
-  github_api: ICON.globe,
-  github_api_write: ICON.globe,
-  github_actions: ICON.pulse,
-  ci_status: ICON.pulse,
-  ci_watch: ICON.pulse,
-  ci_autofix: ICON.wrench,
-  verify_change: ICON.shield,
-
-  // Live preview
-  preview_start: ICON.monitor,
-  preview_stop: ICON.x,
-  preview_list: ICON.monitor,
-  preview_resize: ICON.monitor,
-  preview_snapshot: ICON.monitor,
-  preview_navigate: ICON.globe,
-  preview_click: ICON.pointer,
-  preview_fill: ICON.pointer,
-  preview_inspect: ICON.search,
-  preview_screenshot: ICON.camera,
-  preview_eval: ICON.code,
-  preview_logs: ICON.pulse,
-  preview_console_logs: ICON.pulse,
-  preview_network: ICON.pulse,
-
-  // Memory
-  memory_read: ICON.database,
-  memory_write: ICON.database,
-  memory_list: ICON.database,
-  memory_delete: ICON.x,
-
-  // Documents, artifacts, deliverables
-  create_docx: ICON.fileText,
-  create_pdf: ICON.fileText,
-  create_pptx: ICON.slides,
-  create_xlsx: ICON.table,
-  create_chart: ICON.chart,
-  create_visual: ICON.chart,
-  create_artifact: ICON.sparkle,
-  edit_artifact: ICON.sparkle,
-  read_artifact: ICON.sparkle,
-  create_program: ICON.sparkle,
-  create_plan: ICON.flag,
-  analyze_document: ICON.fileText,
-  inspect_document: ICON.search,
-  summarize_transcript: ICON.mic,
-
-  // Skills, workflows, schedules
-  skill_invoke: ICON.play,
-  skill_list: ICON.book,
-  skill_manage: ICON.book,
-  workflow_run: ICON.play,
-  workflow_list: ICON.list,
-  workflow_save: ICON.graph,
-  workflow_status: ICON.pulse,
-  workflow_delete: ICON.x,
-  cron_create: ICON.clock,
-  cron_update: ICON.clock,
-  cron_delete: ICON.clock,
-  cron_list: ICON.clock,
-  cron_run: ICON.play,
-
-  // Sessions, config, services
-  list_sessions: ICON.history,
-  session_search: ICON.history,
-  read_cached_result: ICON.box,
-  config_get: ICON.sliders,
-  config_set: ICON.sliders,
-  list_mcp_resources: ICON.link,
-  read_mcp_resource: ICON.link,
-  aws_boto3: ICON.cloud,
-  aws_cli: ICON.cloud,
-  sleep: ICON.moon,
-
-  // Web. Two vocabularies land here: this app's catalog emits web_fetch /
-  // web_search (server/executors/tools.py), while transcripts recorded
-  // under other tool-name schemes carry the CamelCase spellings.
-  web_fetch: ICON.globe,
-  WebFetch: ICON.globe,
-  web_search: ICON.search,
-  WebSearch: ICON.search,
-};
-
-export function iconFor(name: string): React.ReactNode {
-  return TOOL_ICON[name] ?? ICON.wrench;
+/** The path a detail line shows (workspace-relative when an absolute input
+ *  lies inside the workspace) and the absolute path the editor opens: an
+ *  absolute input as is, a relative one joined to the workspace, null when
+ *  there is no workspace to resolve it against. */
+export function resolvePath(path: string, wsPath: string): { shown: string; absolute: string | null } {
+  const root = wsPath.replace(/\/+$/, '');
+  if (path.startsWith('/')) {
+    const shown = root && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
+    return { shown, absolute: path };
+  }
+  const rel = path.replace(/^\.\//, '');
+  return { shown: rel, absolute: root && !rel.startsWith('~') ? `${root}/${rel}` : null };
 }
 
-/** Trim long inputs to a compact preview. */
-function preview(s: string, max = 60): string {
-  const collapsed = s.replace(/\s+/g, ' ').trim();
-  return collapsed.length > max ? collapsed.slice(0, max - 1) + '…' : collapsed;
-}
-
-/** Try to extract a match/line count from a tool's text output. Returns
- *  null when nothing's parseable so the caller falls back to a generic
- *  summary. */
-function countFromResult(toolName: string, result?: string): string | null {
-  if (!result) return null;
-  if (toolName === 'ws_grep' || toolName === 'Grep') {
-    const lines = result.split('\n').filter((l) => l.trim().length > 0);
-    if (lines.length > 0) return `${lines.length} match${lines.length === 1 ? '' : 'es'}`;
-  }
-  if (toolName === 'ws_glob' || toolName === 'Glob') {
-    const lines = result.split('\n').filter((l) => l.trim().length > 0);
-    if (lines.length > 0) return `${lines.length} file${lines.length === 1 ? '' : 's'}`;
-  }
-  if (toolName === 'ws_read_file' || toolName === 'Read') {
-    const lines = result.split('\n').length;
-    if (lines > 0) return `${lines} line${lines === 1 ? '' : 's'}`;
-  }
-  if (toolName === 'ws_list_directory' || toolName === 'LS') {
-    const lines = result.split('\n').filter((l) => l.trim().length > 0).length;
-    return `${lines} item${lines === 1 ? '' : 's'}`;
-  }
-  return null;
-}
-
-/** Friendly labels for the synthetic hook/security cards. */
-const DISPLAY_NAMES: Record<string, string> = {
-  security_blocked: 'Blocked (security)',
-  hook_blocked: 'Blocked by hook',
-  stop_hook_feedback: 'Continuing (Stop hook)',
-  stop_hook_block: 'Continuing (Stop hook)',
-  goal_eval: 'Goal check',
-  goal_cap_reached: 'Goal check paused (cap reached)',
-};
-
-function displayName(name: string): string {
-  return DISPLAY_NAMES[name] ?? name;
-}
-
-/** What a step is called in the list. A Stop-hook card the server raised
- *  because the reply claimed a delivery it could not verify says so; every
- *  other source keeps the generic hook label. */
-export function stepLabel(tool: ToolUseEvent): string {
-  if (tool.toolName === 'stop_hook_block' && (tool.input ?? {}).source === 'deliverable') {
-    return 'Checking a claimed delivery';
-  }
-  return displayName(tool.toolName);
-}
-
-/** How a goal_eval card names its verdict. */
-const VERDICT_LABELS: Record<string, string> = {
-  achieved: 'achieved',
-  not_achieved: 'not achieved',
-  blocked: 'blocked',
-  not_checked: 'not checked',
-};
-
-/** A goal check whose judge could not run or could not be understood: neither
- *  a pass nor a failure, so it renders neutral and opens to show the reason. */
-export function isUncheckedGoal(tool: ToolUseEvent): boolean {
-  return tool.toolName === 'goal_eval' && (tool.input ?? {}).verdict === 'not_checked';
-}
-
-/** Build a one-line description of what this tool call did. */
-/** "12 KB" style size for a tool call whose arguments are still arriving. */
-function formatKb(chars: number): string {
-  const kb = chars / 1024;
-  return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
-}
-
-export function summariseTool(tool: ToolUseEvent): string {
-  const input = (tool.input ?? {}) as Record<string, unknown>;
-  const name = tool.toolName;
-
-  if (name === 'hook_blocked' || name === 'stop_hook_feedback' || name === 'stop_hook_block' || name === 'security_blocked') {
-    const reason = (input.reason ?? '') as string;
-    const toolName = (input.tool_name ?? '') as string;
-    if (name === 'hook_blocked' && toolName) return `${toolName}: ${preview(reason, 80)}`;
-    return preview(reason, 90);
-  }
-  if (name === 'goal_eval') {
-    const verdict = (input.verdict ?? '') as string;
-    const feedback = (input.feedback ?? '') as string;
-    const attempt = input.attempt as number | undefined;
-    const cap = input.cap as number | undefined;
-    const n = attempt && cap ? ` (${attempt}/${cap})` : '';
-    const label = VERDICT_LABELS[verdict] ?? verdict;
-    return `${label}${n}${feedback ? `: ${preview(feedback, 70)}` : ''}`;
-  }
-  const path = (input.path ?? input.file_path ?? input.filepath) as string | undefined;
-  const pattern = (input.pattern ?? input.query) as string | undefined;
-
-  if (name === 'ws_run_command' || name === 'Bash' || name === 'terminal_run') {
-    const cmd = (input.command ?? input.cmd ?? '') as string;
-    return preview(cmd, 80);
-  }
-  if (name === 'terminal_send') {
-    // The persistent terminal takes its line under `input`, not `command`.
-    return preview((input.input ?? '') as string, 80);
-  }
-  if (name === 'run_python') {
-    const code = (input.code ?? '') as string;
-    return preview(code, 80);
-  }
-  if (name === 'ws_read_file' || name === 'Read' || name === 'ws_write_file' || name === 'Write' || name === 'ws_edit_file' || name === 'Edit' || name === 'ws_create_file' || name === 'ws_delete_file') {
-    return path ? path.split('/').slice(-2).join('/') : '(no path)';
-  }
-  if (name === 'ws_grep' || name === 'Grep') {
-    const inPath = path ? ` in ${path.split('/').pop()}` : '';
-    return pattern ? `"${preview(pattern, 40)}"${inPath}` : (path ?? '(no pattern)');
-  }
-  if (name === 'ws_glob' || name === 'Glob' || name === 'ws_list_directory' || name === 'LS') {
-    return preview((input.pattern ?? input.path ?? '') as string, 60);
-  }
-  if (name === 'task_create' || name === 'task_update' || name === 'TodoWrite') {
-    const subject = (input.subject ?? input.title ?? '') as string;
-    const status = (input.status ?? '') as string;
-    if (subject) return status ? `${subject} → ${status}` : subject;
-    return status || '(task)';
-  }
-  if (name === 'web_fetch' || name === 'WebFetch' || name === 'web_search' || name === 'WebSearch') {
-    return preview(((input.url ?? input.query ?? '') as string), 70);
-  }
-  if (name === 'cron_create') {
-    return preview(((input.name ?? '') as string), 50);
-  }
-  return '';
-}
-
-/** Aggregate status for the collapsed header. 'stopped' (the user cut the
- *  turn short) is terminal: it must never read as running. 'unchecked' (a
- *  goal the judge could not check) is neither a pass nor a failure. */
-function aggregateStatus(
-  tools: ToolUseEvent[],
-): 'running' | 'error' | 'stopped' | 'unchecked' | 'ok' {
-  if (tools.some((t) => t.status === 'error')) return 'error';
-  if (tools.some((t) => t.status === 'running' || t.status === 'pending')) return 'running';
-  if (tools.some((t) => t.status === 'stopped')) return 'stopped';
-  if (tools.some(isUncheckedGoal)) return 'unchecked';
-  return 'ok';
-}
-
-export const ActivityRow: React.FC<ActivityRowProps> = ({ tools }) => {
-  const agg = aggregateStatus(tools);
-  const hasError = agg === 'error';
-  // Open by default if anything errored (never hide failures behind a
-  // chevron), or a goal went unchecked, so its reason is in view. Otherwise
-  // the user explicitly clicks to expand.
-  const [open, setOpen] = useState<boolean>(hasError || agg === 'unchecked');
-  // Set of expanded step keys — each step toggles independently.
-  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
-
-  // Stable per-step keys. Index-prefixed on purpose: streamed tools are
-  // added with toolId = tool *name* (sseStream), so two ws_run_command
-  // calls share an id — keying on that alone made one click expand every
-  // matching step. The index guarantees uniqueness.
-  const stepKeys = useMemo(
-    () => tools.map((t, i) => `${i}-${t.toolId || t.toolName}`),
-    [tools],
+/** The diff stats of an edit or a group: +added -removed. A button that
+ *  opens the diff when it belongs to one call, a plain chip on a group. */
+export const DiffPill: React.FC<{ added: number; removed: number; onOpen?: () => void }> = ({ added, removed, onOpen }) => {
+  const body = (
+    <>
+      <span className="add">+{formatCount(added)}</span>
+      <span className="del">-{formatCount(removed)}</span>
+    </>
   );
-  // Steps that actually have output get an expand toggle.
-  const expandableKeys = useMemo(
-    () => stepKeys.filter((_, i) => Boolean(tools[i].result)),
-    [stepKeys, tools],
+  if (!onOpen) return <span className="activity-pill">{body}</span>;
+  return (
+    <button
+      type="button"
+      className="activity-pill"
+      title="Open the diff"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+    >
+      {body}
+    </button>
   );
-  const allExpanded =
-    expandableKeys.length > 0 && expandableKeys.every((k) => expandedKeys.has(k));
+};
 
-  const toggleStep = (key: string) => {
-    setExpandedKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-  const toggleAll = () => {
-    setExpandedKeys(allExpanded ? new Set() : new Set(expandableKeys));
-  };
+function ChipView({ chip }: { chip: Chip }) {
+  if (chip.kind === 'diff') return <DiffPill added={chip.added} removed={chip.removed} />;
+  return <span className={`activity-chip${chip.tone === 'neutral' ? '' : ` ${chip.tone}`}`}>{chip.text}</span>;
+}
 
-  const counts = useMemo(() => {
-    const total = tools.length;
-    const unchecked = tools.filter(isUncheckedGoal).length;
-    const done = tools.filter((t) => t.status === 'complete' && !isUncheckedGoal(t)).length;
-    const errored = tools.filter((t) => t.status === 'error').length;
-    const running = tools.filter((t) => t.status === 'running' || t.status === 'pending').length;
-    const stopped = tools.filter((t) => t.status === 'stopped').length;
-    return { total, done, errored, running, stopped, unchecked };
-  }, [tools]);
+const Spinner = () => <span className="activity-spinner" role="img" aria-label="Running" />;
+
+/** The group's icon slot: its kind's icon when done, a ring while running,
+ *  the alert on an error, the stop square when stopped. */
+function stateMark(state: GroupState, tools: ToolUseEvent[]): React.ReactNode {
+  if (state === 'running') return <Spinner />;
+  if (state === 'error') return ICON.alertCircle;
+  if (state === 'stopped') return ICON.stop;
+  return iconFor(tools[0]?.toolName ?? '');
+}
+
+/** Seconds since the group started running, counted on the client clock;
+ *  null once it is not running. The epoch is bumped each time the group
+ *  starts running again, so a later run counts from zero. */
+function useElapsedSeconds(running: boolean): number | null {
+  const [run, setRun] = useState({ running, epoch: 0 });
+  if (run.running !== running) setRun({ running, epoch: running ? run.epoch + 1 : run.epoch });
+  const [tick, setTick] = useState({ epoch: -1, seconds: 0 });
+  const { epoch } = run;
+  useEffect(() => {
+    if (!running) return;
+    const start = Date.now();
+    const id = setInterval(() => {
+      setTick({ epoch, seconds: Math.floor((Date.now() - start) / 1000) });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [running, epoch]);
+  if (!running) return null;
+  return tick.epoch === epoch ? tick.seconds : 0;
+}
+
+interface CallLineProps {
+  tool: ToolUseEvent;
+  expanded: boolean;
+  onToggle: () => void;
+  wsPath: string;
+  mediaFor?: ActivityRowProps['mediaFor'];
+}
+
+function CallSubject({ desc, wsPath }: { desc: CallDesc; wsPath: string }) {
+  if (desc.kind === 'card') {
+    return (
+      <span className="activity-call-subject prose wide" title={desc.line}>
+        <span className="activity-call-text">{desc.line}</span>
+      </span>
+    );
+  }
+  if (desc.path && (desc.kind === 'file' || desc.kind === 'list')) {
+    const { shown, absolute } = resolvePath(desc.path, wsPath);
+    const cut = shown.lastIndexOf('/', shown.length - 2);
+    const dir = cut >= 0 ? shown.slice(0, cut + 1) : '';
+    const base = cut >= 0 ? shown.slice(cut + 1) : shown;
+    const parts = (
+      <>
+        {dir && <span className="activity-call-dir">{dir}</span>}
+        <span className="activity-call-base">{base}</span>
+      </>
+    );
+    // A file that is gone, or a folder, has nothing for the editor to open.
+    const linked = absolute !== null && desc.kind === 'file' && desc.verb !== 'deleted';
+    if (!linked) return <span className="activity-call-subject" title={shown}>{parts}</span>;
+    return (
+      <button
+        type="button"
+        className="activity-call-subject activity-call-link"
+        title="Open in the editor"
+        onClick={(e) => {
+          e.stopPropagation();
+          useDockStore.getState().openFile({ path: absolute, title: basename(absolute) });
+        }}
+      >
+        {parts}
+      </button>
+    );
+  }
+  if (desc.kind === 'search') {
+    const scope = desc.scopePath ? resolvePath(desc.scopePath, wsPath).shown : null;
+    return (
+      <span className="activity-call-subject" title={[desc.subject, scope].filter(Boolean).join(' in ')}>
+        <span className="activity-call-text">{desc.subject ?? ''}</span>
+        {scope && <span className="activity-call-dim">{` in ${scope}`}</span>}
+      </span>
+    );
+  }
+  const line = desc.kind === 'command' ? desc.line : desc.line || desc.subject || '';
+  return (
+    <span className="activity-call-subject" title={line || undefined}>
+      <span className="activity-call-text">{line}</span>
+    </span>
+  );
+}
+
+function CallLine({ tool, expanded, onToggle, wsPath, mediaFor }: CallLineProps) {
+  const desc = describeCall(tool);
+  const outcome = callOutcome(tool, desc);
+  const verb = callVerb(tool, desc);
+  const running = isRunning(tool);
+  const result = tool.result ?? '';
+  const hasOutput = Boolean(result) || Boolean(tool.previewImage);
+  const status = running ? 'running' : tool.status;
+  const editPath = desc.path ? resolvePath(desc.path, wsPath).absolute ?? desc.path : null;
+
+  const outcomeCell = outcome === null
+    ? <span className="activity-call-out" />
+    : outcome.kind === 'diff'
+      ? (
+        <span className="activity-call-out">
+          <DiffPill
+            added={outcome.added}
+            removed={outcome.removed}
+            onOpen={editPath ? () => useUIStore.getState().openEditDiff({ toolUseId: tool.toolId, path: editPath }) : undefined}
+          />
+        </span>
+      )
+      : <span className={`activity-call-out${outcome.tone === 'neutral' ? '' : ` ${outcome.tone}`}`}>{outcome.text}</span>;
+
+  const outputChars = tool.meta?.outputChars;
+  const shot = tool.previewImage;
+  const media = shot ? mediaFor?.(tool) : undefined;
 
   return (
-    <div className={`activity-row activity-${agg}${open ? ' open' : ''}`}>
-      <div className="activity-header">
+    <li className={`activity-call status-${status}${tool.status === 'error' ? ' failed' : ''}`}>
+      <div className={`activity-call-line${hasOutput ? ' has-output' : ''}`} onClick={hasOutput ? onToggle : undefined}>
+        <span className="activity-slot">
+          {running ? <Spinner /> : tool.status === 'stopped' ? ICON.stop : iconFor(tool.toolName)}
+        </span>
+        {desc.kind !== 'card' && <span className="activity-call-verb">{verb}</span>}
+        <CallSubject desc={desc} wsPath={wsPath} />
+        {outcomeCell}
+        {hasOutput ? (
+          <button
+            type="button"
+            className="activity-call-toggle"
+            aria-expanded={expanded}
+            aria-label={expanded ? 'Hide output' : 'Show output'}
+            title={expanded ? 'Hide output' : 'Show output'}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle();
+            }}
+          >
+            {ICON.chevronDown}
+          </button>
+        ) : (
+          <span className="activity-slot" />
+        )}
+      </div>
+      {expanded && shot && (
+        <div className="activity-call-shot">
+          <PreviewScreenshotCard
+            mediaType={shot.media_type}
+            data={shot.data}
+            caption={result || undefined}
+            size={media?.size}
+            onResize={media?.onResize}
+          />
+        </div>
+      )}
+      {expanded && !shot && result && (
+        <>
+          <pre className="activity-call-raw">{result}</pre>
+          {tool.meta?.truncated === true && (
+            <div className="activity-call-note">
+              {typeof outputChars === 'number' && outputChars > result.length
+                ? `Showing the first ${formatCount(result.length)} of ${formatCount(outputChars)} characters.`
+                : 'Showing the first part of the output.'}
+            </div>
+          )}
+        </>
+      )}
+    </li>
+  );
+}
+
+export const ActivityRow: React.FC<ActivityRowProps> = ({ tools, writtenLabel, mediaFor }) => {
+  const wsPath = useUIStore((s) => s.wsPath);
+  const desc = useMemo(() => describeGroup(tools, writtenLabel), [tools, writtenLabel]);
+  const chips = useMemo(() => groupChips(tools), [tools]);
+  const { state } = desc;
+  const elapsed = useElapsedSeconds(state === 'running');
+
+  // An error or an unchecked goal opens the group, also when it lands while
+  // the row is already on screen; the user's own toggle wins after that. A
+  // screenshot opens too: the picture is the one thing its tool exists to show.
+  const defaultOpen = state === 'error' || state === 'unchecked' || tools.some((t) => Boolean(t.previewImage));
+  const [open, setOpen] = useState(defaultOpen);
+  const [wasDefaultOpen, setWasDefaultOpen] = useState(defaultOpen);
+  if (defaultOpen !== wasDefaultOpen) {
+    setWasDefaultOpen(defaultOpen);
+    if (defaultOpen) setOpen(true);
+  }
+
+  // Stable per-call keys. Index-prefixed on purpose: a row from an older
+  // transcript carries the tool name as its toolId, so two same-named calls
+  // would share a key and one click would toggle both.
+  const keys = useMemo(() => tools.map((t, i) => `${i}-${t.toolId || t.toolName}`), [tools]);
+  // A failed call and a screenshot show their output unless the user hid it.
+  const [overrides, setOverrides] = useState<Map<string, boolean>>(() => new Map());
+  const expandedByDefault = (t: ToolUseEvent) => Boolean(t.previewImage) || (t.status === 'error' && Boolean(t.result));
+  const isExpanded = (i: number) => overrides.get(keys[i]) ?? expandedByDefault(tools[i]);
+  const withOutput = tools.map((t, i) => (t.result || t.previewImage ? i : -1)).filter((i) => i >= 0);
+  const allExpanded = withOutput.length > 0 && withOutput.every(isExpanded);
+
+  const toggleCall = (i: number) => {
+    setOverrides((prev) => new Map(prev).set(keys[i], !(prev.get(keys[i]) ?? expandedByDefault(tools[i]))));
+  };
+  const toggleAll = () => {
+    setOverrides(new Map(withOutput.map((i) => [keys[i], !allExpanded])));
+  };
+
+  return (
+    <div className={`activity-row activity-${state}${open ? ' open' : ''}`}>
+      <div className="activity-head">
         <button
           type="button"
           className="activity-summary"
-          onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
+          title={desc.title}
+          onClick={() => setOpen((v) => !v)}
         >
-          <span className="activity-chevron" aria-hidden="true">{open ? '▾' : '▸'}</span>
-          <span className="activity-label">Activity</span>
-          <span className="activity-meta">
-            {counts.total} step{counts.total === 1 ? '' : 's'}
-          </span>
-          {counts.running > 0 && (
-            <span className="activity-badge running" title="Running">◐ {counts.running}</span>
-          )}
-          {counts.errored > 0 && (
-            <span className="activity-badge error" title="Errored">⚠ {counts.errored}</span>
-          )}
-          {counts.stopped > 0 && (
-            <span className="activity-badge stopped" title="Stopped">{'\u23F9'} {counts.stopped}</span>
-          )}
-          {counts.unchecked > 0 && (
-            <span className="activity-badge unchecked" title="The goal was not checked">not checked</span>
-          )}
-          {counts.errored === 0 && counts.running === 0 && counts.stopped === 0 && counts.done > 0 && (
-            <span className="activity-badge ok" title="All complete">✓ {counts.done}</span>
+          <span className="activity-slot">{stateMark(state, tools)}</span>
+          <span className="activity-chevron" aria-hidden="true">{ICON.chevronRight}</span>
+          <span className="activity-label">{desc.label}</span>
+          {desc.tail && <span className="activity-tail">{desc.tail}</span>}
+          {(chips.length > 0 || elapsed !== null) && (
+            <span className="activity-meta">
+              {chips.map((chip, i) => <ChipView key={i} chip={chip} />)}
+              {elapsed !== null && <span className="activity-chip live">{elapsed} s</span>}
+            </span>
           )}
         </button>
-        {open && expandableKeys.length > 0 && (
+        {open && withOutput.length > 0 && (
           <button
             type="button"
             className="activity-expand-all"
             onClick={toggleAll}
-            title={allExpanded ? 'Collapse all outputs' : 'Expand all outputs'}
+            title={allExpanded ? 'Hide every output' : 'Show every output'}
           >
             {allExpanded ? 'Collapse all' : 'Expand all'}
           </button>
         )}
       </div>
       {open && (
-        <ul className="activity-steps">
-          {tools.map((tool, idx) => {
-            const key = stepKeys[idx];
-            const summary = summariseTool(tool);
-            const count = countFromResult(tool.toolName, tool.result);
-            const detail = [summary, count].filter(Boolean).join(' · ');
-            const isError = tool.status === 'error';
-            const isRunning = tool.status === 'running' || tool.status === 'pending';
-            const unchecked = isUncheckedGoal(tool);
-            const result = tool.result ?? '';
-            const isExpanded = expandedKeys.has(key);
-            return (
-              <li
-                key={key}
-                className={`activity-step status-${unchecked ? 'unchecked' : tool.status}${isError ? ' errored' : ''}`}
-              >
-                <span className="activity-step-icon" aria-hidden="true">
-                  {iconFor(tool.toolName)}
-                </span>
-                <span className="activity-step-name">{stepLabel(tool)}</span>
-                {detail && <span className="activity-step-detail">{detail}</span>}
-                <span className="activity-step-spacer" />
-                <span className="activity-step-status">
-                  {isRunning && tool.progressChars ? (
-                    <span className="activity-step-detail" title="Tool arguments received so far">
-                      {formatKb(tool.progressChars)}
-                    </span>
-                  ) : null}
-                  {isRunning && <span className="activity-spinner" aria-label="running">◐</span>}
-                  {tool.status === 'complete' && !unchecked && <span className="activity-check">✓</span>}
-                  {unchecked && (
-                    <span className="activity-unchecked" aria-label="not checked" title="Not checked">○</span>
-                  )}
-                  {isError && <span className="activity-x">⚠</span>}
-                  {tool.status === 'stopped' && <span className="activity-stopped" aria-label="stopped">{'\u23F9'}</span>}
-                </span>
-                {result && (
-                  <button
-                    type="button"
-                    className="activity-expand-btn"
-                    onClick={(e) => { e.stopPropagation(); toggleStep(key); }}
-                    aria-expanded={isExpanded}
-                    title={isExpanded ? 'Hide output' : 'Show output'}
-                  >
-                    {isExpanded ? '▴' : '▾'}
-                  </button>
-                )}
-                {isExpanded && (
-                  <pre className="activity-step-output">{result}</pre>
-                )}
-              </li>
-            );
-          })}
+        <ul className="activity-calls">
+          {tools.map((tool, i) => (
+            <CallLine
+              key={keys[i]}
+              tool={tool}
+              expanded={isExpanded(i)}
+              onToggle={() => toggleCall(i)}
+              wsPath={wsPath}
+              mediaFor={mediaFor}
+            />
+          ))}
         </ul>
       )}
     </div>

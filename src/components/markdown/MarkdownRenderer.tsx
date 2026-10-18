@@ -3,7 +3,6 @@ import { marked } from 'marked';
 import { renderCodeBlock, attachCodeBlockHandlers, beginCodeBlockParse } from '@/utils/codeBlockEnhancer';
 import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
 import { attachWsFileHandlers } from '@/utils/wsFileLinks';
-import { toStepNarration } from '@/utils/stepNarration';
 import { useHtmlProp } from '@/hooks/useHtmlProp';
 
 // Configure marked with custom code block renderer
@@ -12,10 +11,6 @@ renderer.code = renderCodeBlock;
 
 export interface MarkdownRendererProps {
   content: string;
-  /** Reformat run-together step narration ("Let me…", "Now…") into an
-   *  activity log. Opt-in — set only on assistant/agent narration, never on
-   *  tool results or documents. No-op unless the text is multi-step prose. */
-  stepFormat?: boolean;
 }
 
 /**
@@ -30,7 +25,7 @@ export interface MarkdownRendererProps {
  * prompt-injected `<img onerror>` cannot fire inside the SPA's
  * same-origin context.
  */
-export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, stepFormat }) => {
+export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   // Unique per-instance prefix so code blocks in different message
   // bubbles never collide on the same ID inside the shared codeStore.
@@ -39,9 +34,8 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, ste
   const html = useMemo(() => {
     if (!content) return '';
     beginCodeBlockParse(instanceId);
-    const src = stepFormat ? toStepNarration(content) : content;
-    return renderMarkdownSafe(src, { markedOptions: { renderer } });
-  }, [content, instanceId, stepFormat]);
+    return renderMarkdownSafe(content, { markedOptions: { renderer } });
+  }, [content, instanceId]);
   const innerHtml = useHtmlProp(html);
 
   // Attach code block action handlers via event delegation
@@ -61,7 +55,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, ste
   return (
     <div
       ref={containerRef}
-      className={`markdown-content${stepFormat ? ' step-narration' : ''}`}
+      className="markdown-content"
       dangerouslySetInnerHTML={innerHtml}
     />
   );
