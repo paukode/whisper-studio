@@ -479,11 +479,17 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     elif isinstance(ev, ThinkingStop):
                         yield f"data: {ndjson_dumps({'thinking_stop': True})}\n\n"
                     elif isinstance(ev, ToolCallStart):
-                        yield f"data: {ndjson_dumps({'skill': ev.name, 'input': {}})}\n\n"
+                        # tool_use_id pairs the frame with its skill_result;
+                        # it is the provider's id, the same one the tool_result
+                        # block carries (server/chat/engine/events.py).
+                        _f = {"skill": ev.name, "input": {}, "tool_use_id": ev.id}
+                        yield f"data: {ndjson_dumps(_f)}\n\n"
                     elif isinstance(ev, ToolCallProgress):
-                        yield f"data: {ndjson_dumps({'skill_progress': {'name': ev.name, 'chars': ev.chars}})}\n\n"
+                        _p = {"name": ev.name, "chars": ev.chars, "tool_use_id": ev.id}
+                        yield f"data: {ndjson_dumps({'skill_progress': _p})}\n\n"
                     elif isinstance(ev, ToolCall):
-                        yield f"data: {ndjson_dumps({'skill_input': ev.name, 'input': ev.input})}\n\n"
+                        _f = {"skill_input": ev.name, "input": ev.input, "tool_use_id": ev.id}
+                        yield f"data: {ndjson_dumps(_f)}\n\n"
                     elif isinstance(ev, Heartbeat):
                         yield ": hb\n\n"
                     elif isinstance(ev, Frame):

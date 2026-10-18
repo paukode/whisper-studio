@@ -364,7 +364,7 @@ class LocalAdapter:
         # the call reaches an executor (and before it enters history).
         for c in calls:
             c["input"] = _coerce_call_args(c["name"], c.get("input") or {}, props_by_tool)
-            yield ToolCallStart(name=c["name"])
+            yield ToolCallStart(name=c["name"], id=c["id"])
             yield ToolCall(id=c["id"], name=c["name"], input=c["input"])
 
         if not calls and self._turn_out_chars == 0 and finish_reason != "length":

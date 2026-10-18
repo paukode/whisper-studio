@@ -7,7 +7,8 @@
   },
   {
     "skill": "ask_user_question",
-    "input": {}
+    "input": {},
+    "tool_use_id": "tu_q"
   },
   {
     "skill_input": "ask_user_question",
@@ -17,7 +18,8 @@
         "dev",
         "prod"
       ]
-    }
+    },
+    "tool_use_id": "tu_q"
   },
   {
     "usage": {
@@ -48,7 +50,10 @@
   },
   {
     "skill_result": "ask_user_question",
-    "output": "[PAUSE] Waiting for user to answer the question. The user's reply will arrive as their next message."
+    "output": "[PAUSE] Waiting for user to answer the question. The user's reply will arrive as their next message.",
+    "tool_use_id": "tu_q",
+    "is_error": false,
+    "exit_code": null
   },
   "[DONE]"
 ]

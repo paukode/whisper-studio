@@ -325,7 +325,7 @@ class AnthropicAdapter:
                     }
                     content_blocks.append(current_block)
                     if current_block["type"] == "tool_use":
-                        yield ToolCallStart(name=current_block["name"])
+                        yield ToolCallStart(name=current_block["name"], id=current_block["id"])
                     elif current_block["type"] == "thinking":
                         yield ThinkingStart()
 
@@ -370,7 +370,9 @@ class AnthropicAdapter:
                             current_block["next_progress"] = (
                                 _n // TOOL_ARGS_PROGRESS_STEP + 1
                             ) * TOOL_ARGS_PROGRESS_STEP
-                            yield ToolCallProgress(name=current_block["name"], chars=_n)
+                            yield ToolCallProgress(
+                                name=current_block["name"], chars=_n, id=current_block["id"]
+                            )
 
                 elif event_type == "content_block_stop":
                     if current_block and current_block["type"] == "thinking":

@@ -146,10 +146,20 @@ async def route_tool(
     # --- Sleep ---
     if tool_name == "sleep":
         secs = min(float(tool_input.get("seconds", 3)), 30)
-        side_effects.append({"skill": "sleep", "input": {"seconds": secs}})
+        side_effects.append(
+            {"skill": "sleep", "input": {"seconds": secs}, "tool_use_id": tool_use_id}
+        )
         await asyncio.sleep(secs)
         output = f"Slept for {secs} seconds."
-        side_effects.append({"skill_result": "sleep", "output": output})
+        side_effects.append(
+            {
+                "skill_result": "sleep",
+                "output": output,
+                "tool_use_id": tool_use_id,
+                "is_error": False,
+                "exit_code": None,
+            }
+        )
         return output, side_effects
 
     # --- Ask user question ---

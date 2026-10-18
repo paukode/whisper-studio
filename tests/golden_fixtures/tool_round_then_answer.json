@@ -7,14 +7,16 @@
   },
   {
     "skill": "analyze_document",
-    "input": {}
+    "input": {},
+    "tool_use_id": "tu_1"
   },
   {
     "skill_input": "analyze_document",
     "input": {
       "filename": "x.md",
       "question": "?"
-    }
+    },
+    "tool_use_id": "tu_1"
   },
   {
     "usage": {
@@ -35,7 +37,10 @@
   },
   {
     "skill_result": "analyze_document",
-    "output": "No documents attached."
+    "output": "No documents attached.",
+    "tool_use_id": "tu_1",
+    "is_error": false,
+    "exit_code": null
   },
   {
     "text": "Nothing attached."

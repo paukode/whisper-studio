@@ -17,9 +17,11 @@ import asyncio
 import copy
 import json
 import logging
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 from server.approval.spec import WORKSPACE_ROOT_KEY, turn_workspace_refusal
 from server.auto_mode import classify_tool_call
@@ -55,6 +57,73 @@ _PLAN_MODE_BLOCKED = {
 
 # Max denials before auto-blocking
 MAX_AUTO_DENIALS = 2
+
+# What a tool result opens with when the call did not do its job: the gate's
+# own markers (a tool exception, a denial, a sibling skipped after a failed
+# command, a tool outside an agent's scope, plan mode, a hook, the loop
+# guard) and an executor's own error line. One list for the loop guard's
+# repeated-failure count and the skill_result frame's is_error flag.
+_ERROR_PREFIXES = (
+    "[Tool Error]",
+    "Error:",
+    "Error ",
+    "error:",
+    "[Denied",
+    "[Skipped]",
+    "[Refused]",
+    "[Plan Mode]",
+    "[Hook denied]",
+    "[Loop guard]",
+)
+# A command tool's own exit status, appended to its result
+# (server/workspace/executors.py, server/executors/code.py).
+_EXIT_CODE_RE = re.compile(r"\(exit code (-?\d+)")
+# Tools whose result carries that suffix only on failure: a result without it
+# ran and exited 0.
+_EXIT_CODE_SILENT_ON_SUCCESS = frozenset({"ws_run_command"})
+
+
+class ToolOutcome(NamedTuple):
+    is_error: bool
+    exit_code: int | None
+
+
+def tool_outcome(tool_name: str, output) -> ToolOutcome:
+    """Whether a tool result reports a failure, and the exit code it carries.
+
+    Read on the FULL output, never a preview. ``is_error`` is true when the
+    output opens with one of the gate's error markers or reports a non-zero
+    exit code. ``exit_code`` is the last "(exit code N" in the output; 0 for
+    ws_run_command when the output has none and no error marker (its
+    executor only says so on failure); None for every other tool. The loop
+    guard and the skill_result frame share this one rule."""
+    text = output if isinstance(output, str) else str(output)
+    prefixed = text.startswith(_ERROR_PREFIXES)
+    codes = _EXIT_CODE_RE.findall(text)
+    exit_code: int | None
+    if codes:
+        exit_code = int(codes[-1])
+    elif tool_name in _EXIT_CODE_SILENT_ON_SUCCESS and not prefixed:
+        exit_code = 0
+    else:
+        exit_code = None
+    return ToolOutcome(prefixed or bool(exit_code), exit_code)
+
+
+def _result_frame(state: "ToolState", output: str, preview: str, **extra) -> str:
+    """The skill_result frame: the preview the UI shows, the id that pairs it
+    with its skill frame, and the outcome read from the FULL output."""
+    outcome = tool_outcome(state.tool_name, output)
+    return ndjson_dumps(
+        {
+            "skill_result": state.tool_name,
+            "output": preview,
+            "tool_use_id": state.tool_id,
+            "is_error": outcome.is_error,
+            "exit_code": outcome.exit_code,
+            **extra,
+        }
+    )
 
 
 def _append_hook_context(state: "ToolState", outcome) -> None:
@@ -370,11 +439,12 @@ async def execute_tool_batch(
             if guard_scope:
                 from server.chat import loop_guard
 
-                _is_err = isinstance(output, str) and output.startswith(
-                    ("[Tool Error]", "Error:", "[Denied", "[Skipped]")
-                )
                 _notice, _stub = loop_guard.after_call(
-                    guard_scope, tool_name, hook_input, state.output, is_error=_is_err
+                    guard_scope,
+                    tool_name,
+                    hook_input,
+                    state.output,
+                    is_error=tool_outcome(tool_name, state.output).is_error,
                 )
                 if _stub:
                     state.output = _stub
@@ -933,14 +1003,13 @@ async def _process_tool_results(
             media_type = img_parsed.get("media_type", "image/jpeg")
             data = img_parsed.get("data", "")
             sse_events.append(
-                ndjson_dumps(
-                    {
-                        "skill_result": state.tool_name,
-                        "output": caption,
-                        # Frontend-only field — PreviewScreenshotCard keys off this
-                        # to render the <img>; other skill_result consumers ignore it.
-                        "preview_image": {"media_type": media_type, "data": data},
-                    }
+                _result_frame(
+                    state,
+                    caption,
+                    caption,
+                    # Frontend-only field — PreviewScreenshotCard keys off this
+                    # to render the <img>; other skill_result consumers ignore it.
+                    preview_image={"media_type": media_type, "data": data},
                 )
             )
             tool_results.append(
@@ -965,17 +1034,19 @@ async def _process_tool_results(
         # the payload tail, so head-truncation would silently strip them and
         # leave the model unable to act on the remaining transcript. See
         # server.skills.produces_model_prompt and server.chat.budget.
+        full_output = tool_output if isinstance(tool_output, str) else str(tool_output)
         if isinstance(tool_output, str):
             from server.skills import produces_model_prompt
 
             if not produces_model_prompt(state.tool_name):
                 tool_output = budget_fn(state.tool_name, tool_output)
 
-        # Emit result preview as SSE
+        # Emit result preview as SSE; the outcome is read from the full
+        # output, before the budget cut it.
         if not isinstance(tool_output, str):
             tool_output = str(tool_output)
         preview = tool_output[:2000] + ("..." if len(tool_output) > 2000 else "")
-        sse_events.append(ndjson_dumps({"skill_result": state.tool_name, "output": preview}))
+        sse_events.append(_result_frame(state, full_output, preview))
 
         tool_results.append(
             {
@@ -1023,9 +1094,7 @@ async def _process_tool_results(
                 if not produces_model_prompt(state.tool_name):
                     content = budget_fn(state.tool_name, content)
                 preview = content[:2000] + ("..." if len(content) > 2000 else "")
-                sse_events.append(
-                    ndjson_dumps({"skill_result": state.tool_name, "output": preview})
-                )
+                sse_events.append(_result_frame(state, out, preview))
                 tool_results.append(
                     {
                         "type": "tool_result",

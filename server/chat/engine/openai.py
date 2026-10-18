@@ -399,13 +399,14 @@ class OpenAIResponsesAdapter:
                         msg_phase = getattr(item, "phase", None)
                     elif item_type == "function_call":
                         n_items += 1
-                        fcalls[getattr(item, "id", "") or ""] = {
+                        fc = {
                             "call_id": getattr(item, "call_id", "") or "",
                             "name": getattr(item, "name", "") or "",
                             "args": "",
                         }
+                        fcalls[getattr(item, "id", "") or ""] = fc
                         last_event = loop.time()
-                        yield ToolCallStart(name=getattr(item, "name", "") or "")
+                        yield ToolCallStart(name=fc["name"], id=fc["call_id"])
                 elif et == "response.function_call_arguments.delta":
                     fc = fcalls.get(getattr(ev, "item_id", "") or "")
                     if fc is not None:
@@ -419,7 +420,7 @@ class OpenAIResponsesAdapter:
                             fc["next_progress"] = (
                                 _n // TOOL_ARGS_PROGRESS_STEP + 1
                             ) * TOOL_ARGS_PROGRESS_STEP
-                            yield ToolCallProgress(name=fc["name"], chars=_n)
+                            yield ToolCallProgress(name=fc["name"], chars=_n, id=fc["call_id"])
                 elif et == "response.function_call_arguments.done":
                     fc = fcalls.get(getattr(ev, "item_id", "") or "")
                     if fc is not None:
