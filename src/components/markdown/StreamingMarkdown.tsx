@@ -7,7 +7,9 @@ import {
 } from '@/utils/codeBlockEnhancer';
 import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
 import { attachWsFileHandlers } from '@/utils/wsFileLinks';
+import { linkifyPaths } from '@/utils/pathLinks';
 import { useHtmlProp } from '@/hooks/useHtmlProp';
+import { useUIStore } from '@/stores/uiStore';
 
 // Local Marked instance with `breaks: true` so newlines become <br> during
 // streaming. Scoped here so it never mutates the global marked config shared
@@ -40,7 +42,7 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
   // Stable namespace for code block IDs in this component instance. The
   // counter inside codeBlockEnhancer resets to 1 every parse, so re-
   // parsing the same source on each streamed token produces the same
-  // `${instanceId}-1`, `${instanceId}-2`, ... — which is what makes
+  // `${instanceId}-1`, `${instanceId}-2`, ..., which is what makes
   // the per-block scroll memory below work across re-renders.
   const instanceId = useId();
   // Per-code-block scroll memory keyed by data-cb-id. Survives the
@@ -50,8 +52,11 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
   const codeBlockScrollRef = useRef<Map<string, { atBottom: boolean; scrollTop: number }>>(
     new Map(),
   );
+  // Plain path mentions link to the file against the connected workspace
+  // (utils/pathLinks.ts), in the streamed and the final render alike.
+  const wsPath = useUIStore((s) => s.wsPath);
 
-  // Parse markdown to HTML — memoized for the non-streaming (final) render.
+  // Parse markdown to HTML, memoized for the non-streaming (final) render.
   // renderMarkdownSafe = marked + DOMPurify. Same sanitization path used
   // by MarkdownRenderer; necessary because the streamed content can
   // include web_fetch results / MCP tool output that an attacker can
@@ -60,11 +65,11 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     if (isStreaming) return '';
     if (!content) return '';
     beginCodeBlockParse(instanceId);
-    return renderMarkdownSafe(content, {
+    return renderMarkdownSafe(linkifyPaths(content, wsPath), {
       parser: streamingParser,
       markedOptions: { renderer },
     });
-  }, [content, isStreaming, instanceId]);
+  }, [content, isStreaming, instanceId, wsPath]);
   const finalInnerHtml = useHtmlProp(finalHtml);
 
   // Capture per-block scroll state before innerHTML replaces the DOM.
@@ -100,10 +105,10 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
       const saved = codeBlockScrollRef.current.get(id);
       if (!saved || saved.atBottom) {
         // No prior entry (block is brand-new this tick) or user was
-        // at the bottom — follow the tail.
+        // at the bottom: follow the tail.
         pre.scrollTop = pre.scrollHeight;
       } else {
-        // User parked above the tail — preserve their position.
+        // User parked above the tail: preserve their position.
         pre.scrollTop = saved.scrollTop;
       }
     });
@@ -137,8 +142,9 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     // Snapshot scroll positions BEFORE the destroy-and-recreate.
     snapshotCodeBlockScroll(container);
 
-    // Close any unclosed fence for safe mid-stream parsing.
-    const safeContent = closeOpenFences(content);
+    // Close any unclosed fence for safe mid-stream parsing, then link the
+    // path mentions outside code.
+    const safeContent = linkifyPaths(closeOpenFences(content), wsPath);
     beginCodeBlockParse(instanceId);
     const html = safeContent
       ? renderMarkdownSafe(safeContent, { parser: streamingParser, markedOptions: { renderer } })
@@ -151,11 +157,11 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     markActiveStreamingBlock(container);
     cleanupRef.current?.();
     cleanupRef.current = attachCodeBlockHandlers(container);
-  }, [content, isStreaming, instanceId]);
+  }, [content, isStreaming, instanceId, wsPath]);
 
   // Track user scroll inside any <pre> via event delegation on the
   // container. capture:true is required because `scroll` events do not
-  // bubble — capture phase is the only way a parent listener sees them.
+  // bubble: capture phase is the only way a parent listener sees them.
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -197,8 +203,10 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     return attachCodeBlockHandlers(containerRef.current);
   }, [finalHtml, isStreaming]);
 
-  // Reveal-in-Finder for #wsfile= source links. Delegated on the container, so
-  // the single listener survives the streaming innerHTML swaps.
+  // Route #wsfile= links (search sources, write results, path mentions) to
+  // the side panel or the OS app, and the localhost ones to the Live pane.
+  // Delegated on the container, so the single listener survives the
+  // streaming innerHTML swaps.
   useEffect(() => {
     if (!containerRef.current) return;
     return attachWsFileHandlers(containerRef.current);
@@ -215,7 +223,7 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     return <div ref={containerRef} className={containerClassName} />;
   }
 
-  // finalHtml is sanitized via DOMPurify inside renderMarkdownSafe — safe.
+  // finalHtml is sanitized via DOMPurify inside renderMarkdownSafe: safe.
   return (
     <div
       ref={containerRef}

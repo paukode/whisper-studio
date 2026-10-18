@@ -366,8 +366,8 @@
         <a href="ref-security.html">security model</a>.</p></div>
     </div>
 
-    <h3 id="chat-links">Chat links: citations, created files, and localhost</h3>
-    <p>A rendered message can contain three kinds of link the app intercepts instead of letting the
+    <h3 id="chat-links">Chat links: citations, created files, path mentions, and localhost</h3>
+    <p>A rendered message can contain four kinds of link the app intercepts instead of letting the
       browser handle them, all wired through one delegated click handler,
       <code>attachWsFileHandlers</code> in <code class="path">src/utils/wsFileLinks.ts</code> (delegated
       so it survives the streaming <code>innerHTML</code> swaps that would otherwise detach a
@@ -385,6 +385,16 @@
         A plain click opens it with the OS default app - there is no in-app dock view to fall back to for
         a brand-new file - while a modifier-click still reveals it, for consistency with every other
         <code>#wsfile=</code> link.</li>
+      <li><b>Path mentions</b> are workspace paths that the assistant writes as plain text, for
+        example <code>server/goals/gate.py:40-44</code>. Before <code>marked</code> parses the text,
+        <code>linkifyPaths</code> in <code class="path">src/utils/pathLinks.ts</code> changes each
+        mention to a citation link with the same <code>#wsfile=</code> fragment. A <code>:line</code>
+        or <code>:start-end</code> suffix gives the <code>&amp;L=</code> range. The function does not
+        change code (fences, code spans, and the <code>pre</code>, <code>code</code>,
+        <code>kbd</code> and <code>samp</code> elements), links, or web addresses. When no workspace
+        is connected, the function does not change the text. The file preview and the notebook viewer
+        set <code>linkPaths={false}</code> on <code>MarkdownRenderer</code>, because a relative path
+        in a file can start at the folder of that file, not at the workspace root.</li>
       <li><b>Localhost links</b> (<code>http://localhost:*</code> / <code>127.0.0.1</code> /
         <code>[::1]</code>, any port) route into the <a href="arch-preview.html">Live preview</a> pane
         instead of opening a browser tab, since the assistant only ever names one when it started or is
