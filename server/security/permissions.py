@@ -81,6 +81,13 @@ MODE_DONT_ASK = "dontAsk"
 
 VALID_MODES = {MODE_DEFAULT, MODE_AUTO, MODE_PLAN, MODE_ACCEPT_EDITS, MODE_BYPASS, MODE_DONT_ASK}
 
+# Approval categories whose action lands outside the connected workspace: a
+# file saved to a path the user named (server/approval/bootstrap.py's
+# save_to_path) and reach into a folder they have not granted (folder_access).
+# bypassPermissions does not cover them (see resolve_static_decision); a write
+# under the app's own folder is exempt first (targets_app_storage).
+OUTSIDE_WORKSPACE_CATEGORIES = frozenset({"save", "folder-access"})
+
 DEFAULTS = {
     "mode": "default",
     "rules": [],
@@ -407,14 +414,17 @@ def resolve_static_decision(
     Returns "allow" | "ask" | "deny", or None when mode is "auto" and nothing
     else resolved it (the caller then falls back to the classifier).
 
-    Evaluation order: hard floors (github-destructive, rm-class command,
-    sandbox escalation, MCP server marked approve; see approval_floor) →
-    app storage (a write under ~/.whisper is allowed in every mode, a delete
-    there only in bypassPermissions; see targets_app_storage) →
-    category mode override → bypassPermissions (absolute) → trusted skill
-    script → session approvals ("yes/no for all this session") → explicit
-    custom rules → a preview_start naming an approved launch.json config
-    (allow) → dontAsk → acceptEdits (write category only) → auto (defer) → ask.
+    Evaluation order: hard floors (github-destructive, a delete outside the
+    workspace, sandbox escalation, MCP server marked approve; see
+    approval_floor) → app storage (a write under ~/.whisper is allowed in
+    every mode, a delete there only in bypassPermissions; see
+    targets_app_storage) → category mode override → bypassPermissions
+    (absolute inside the workspace; a save to a path outside it and reach into
+    a folder outside it keep asking, see OUTSIDE_WORKSPACE_CATEGORIES) →
+    trusted skill script → session approvals ("yes/no for all this session")
+    → explicit custom rules → a preview_start naming an approved launch.json
+    config (allow) → dontAsk → acceptEdits (write category only) → auto
+    (defer) → ask.
     """
     if approval_floor(tool_name, tool_input, category) is not None:
         return "ask"
@@ -437,7 +447,14 @@ def resolve_static_decision(
     if category_mode in VALID_MODES:
         mode = category_mode
 
-    if mode == MODE_BYPASS:
+    # Bypass is absolute inside the workspace. An action that lands outside it
+    # (a save to a path the user named, reach into a folder they have not
+    # granted) still asks, unless that category's own row says bypass: the
+    # user's rule is that nothing changes outside the workspace without an
+    # approval, and a remembered session answer or a rule of theirs is one.
+    if mode == MODE_BYPASS and (
+        category not in OUTSIDE_WORKSPACE_CATEGORIES or category_mode == MODE_BYPASS
+    ):
         return "allow"
     if auto_allow_trusted:
         return "allow"

@@ -10,6 +10,7 @@ the old tool-name lists.
 """
 
 import asyncio
+import os
 from unittest.mock import AsyncMock
 
 import pytest
@@ -622,3 +623,83 @@ def test_resume_auto_mode_is_a_noop_when_nothing_tripped():
     reset_auto_mode_breaker(session_id)
     assert resume_auto_mode(session_id) is False
     assert is_auto_mode_tripped(session_id) is False
+
+
+# ── bypassPermissions stops at the workspace boundary ───────────────────────
+# The user's rule: inside the connected workspace bypass does anything, but a
+# change outside it asks even in bypass. A save to a path the user named and
+# reach into a folder they have not granted are the two approval categories
+# whose action lands outside the workspace; the app's own folder is exempt.
+
+
+def test_bypass_still_asks_for_a_save_outside_the_workspace(monkeypatch, tmp_path):
+    _patch_rules(monkeypatch, [])
+    decision = resolve_static_decision(
+        "save_file",
+        {"action": "save_to_path", "path": str(tmp_path / "Documents" / "notes.txt")},
+        category="save",
+        session_approvals={},
+        mode=MODE_BYPASS,
+    )
+    assert decision == "ask"
+
+
+def test_bypass_still_asks_before_reaching_into_a_new_folder(monkeypatch, tmp_path):
+    _patch_rules(monkeypatch, [])
+    decision = resolve_static_decision(
+        "ws_open_folder",
+        {"action": "folder_access", "path": str(tmp_path / "project2")},
+        category="folder-access",
+        session_approvals={},
+        mode=MODE_BYPASS,
+    )
+    assert decision == "ask"
+
+
+def test_bypass_allows_a_save_under_the_apps_own_folder(monkeypatch):
+    from server.infrastructure import paths
+
+    _patch_rules(monkeypatch, [])
+    rule = os.path.join(paths.user_root(), "rules", "global", "rules.md")
+    decision = resolve_static_decision(
+        "save_file",
+        {"action": "save_to_path", "path": rule},
+        category="save",
+        session_approvals={},
+        mode=MODE_BYPASS,
+    )
+    assert decision == "allow"
+
+
+def test_a_session_yes_or_a_rule_of_the_users_covers_an_outside_save_in_bypass(
+    monkeypatch, tmp_path
+):
+    path = str(tmp_path / "Documents" / "notes.txt")
+    payload = {"action": "save_to_path", "path": path}
+    _patch_rules(monkeypatch, [])
+    assert (
+        resolve_static_decision("save_file", payload, "save", {"save": "allow"}, MODE_BYPASS)
+        == "allow"
+    )
+    _patch_rules(monkeypatch, [{"tool": "save_file", "pattern": "*", "action": "allow"}])
+    assert resolve_static_decision("save_file", payload, "save", {}, MODE_BYPASS) == "allow"
+
+
+def test_a_category_row_set_to_bypass_covers_an_outside_save(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "server.security.permissions.load_permissions",
+        lambda: {"mode": "default", "rules": [], "category_modes": {"save": MODE_BYPASS}},
+    )
+    payload = {"action": "save_to_path", "path": str(tmp_path / "notes.txt")}
+    assert resolve_static_decision("save_file", payload, "save", {}, MODE_DEFAULT) == "allow"
+
+
+def test_bypass_stays_absolute_inside_the_workspace(monkeypatch, tmp_path):
+    _patch_rules(monkeypatch, [])
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: str(tmp_path))
+    for tool, payload, category in (
+        ("ws_write_file", {"action": "write", "path": "src/app.py"}, "write"),
+        ("ws_delete_file", {"action": "delete", "path": "src/app.py"}, "delete"),
+        ("ws_run_command", {"action": "command", "command": "rm -rf dist"}, "cli"),
+    ):
+        assert resolve_static_decision(tool, payload, category, {}, MODE_BYPASS) == "allow"

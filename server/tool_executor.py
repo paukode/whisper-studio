@@ -755,13 +755,14 @@ async def _process_tool_results(
                     if command_runs_trusted_skill(ws_parsed.get("command", "")):
                         auto_allow_trusted = True
 
-                # Precedence: rm guardrail → github-destructive/MCP-approve →
-                # category mode override → bypassPermissions → trusted skill →
-                # session approvals → custom rules → approved launch.json
-                # preview (allow) → dontAsk → acceptEdits → auto (classifier) →
-                # ask. See server.security.permissions.resolve_static_decision
-                # (the rm guardrail lives there, alongside github-destructive,
-                # since both are "no bypass mode may cover this" absolutes).
+                # Precedence: the hard floors (github-destructive, a delete
+                # outside the workspace, sandbox escalation, MCP-approve) →
+                # app storage → category mode override → bypassPermissions
+                # (not for a save or folder reach outside the workspace) →
+                # trusted skill → session approvals → custom rules →
+                # approved launch.json preview (allow) → dontAsk →
+                # acceptEdits → auto (classifier) → ask. See
+                # server.security.permissions.resolve_static_decision.
                 decision = resolve_static_decision(
                     state.tool_name,
                     ws_parsed,
