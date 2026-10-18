@@ -24,6 +24,7 @@ SOURCE_LABELS: dict[str, str] = {
     "explainer": "Permission explainer",
     "evaluator": "Goal evaluator",
     "ci_diagnose": "CI diagnosis",
+    "activity_label": "Activity labels",
     "condensation": "Transcript condensation",
     "ocr": "OCR",
     "index": "Workspace index",

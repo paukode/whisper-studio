@@ -203,7 +203,7 @@
       <tbody>
         <tr><td><code>chat</code>, <code>agent</code>, <code>workflow</code>, <code>cron</code>, <code>voice</code>, <code>headless</code>, <code>wake</code></td><td>Turn-engine rounds, tagged by the caller through <code>TurnContext.cost_source</code>. A structured-output distillation call bills under its run's source. Under <code>voice</code>, Nova Sonic's own speech and text tokens are logged too (<code class="path">server/voice/cost_log.py</code>), from the running totals its <code>usageEvent</code> reports, once per stream at each completion end and when the stream closes.</td></tr>
         <tr><td><code>memory</code></td><td>Memory extraction and consolidation runs, the learning review fork, memory recall.</td></tr>
-        <tr><td><code>compaction</code>, <code>title</code>, <code>query_rewrite</code>, <code>btw</code>, <code>classifier</code>, <code>explainer</code>, <code>evaluator</code>, <code>ci_diagnose</code>, <code>condensation</code>, <code>ocr</code>, <code>index</code>, <code>buddy</code>, <code>doctor</code></td><td>Side tasks that call Bedrock directly, logged by <code class="path">calls.py</code> in the thread that made the call (so a call its caller timed out on is still logged). <code>index</code> includes the Cohere Embed v4 and Rerank 3.5 calls of the cloud index backends, counted from Bedrock's input token-count header or, without one, as characters / 4 of the body posted.</td></tr>
+        <tr><td><code>compaction</code>, <code>title</code>, <code>query_rewrite</code>, <code>btw</code>, <code>classifier</code>, <code>explainer</code>, <code>evaluator</code>, <code>ci_diagnose</code>, <code>activity_label</code>, <code>condensation</code>, <code>ocr</code>, <code>index</code>, <code>buddy</code>, <code>doctor</code></td><td>Side tasks that call Bedrock directly, logged by <code class="path">calls.py</code> in the thread that made the call (so a call its caller timed out on is still logged). <code>index</code> includes the Cohere Embed v4 and Rerank 3.5 calls of the cloud index backends, counted from Bedrock's input token-count header or, without one, as characters / 4 of the body posted.</td></tr>
         <tr><td><code>unattributed</code></td><td>Rows written before sources were recorded.</td></tr>
       </tbody>
     </table></div>
@@ -216,7 +216,7 @@
     <div class="table-wrap"><table>
       <thead><tr><th>Task key</th><th>Default when unset</th></tr></thead>
       <tbody>
-        <tr><td><code>memory_recall</code>, <code>goal_evaluator</code>, <code>title</code>, <code>auto_mode_classifier</code>, <code>permission_explainer</code>, <code>query_rewrite</code>, <code>ci_diagnose</code></td><td>Haiku</td></tr>
+        <tr><td><code>memory_recall</code>, <code>goal_evaluator</code>, <code>title</code>, <code>auto_mode_classifier</code>, <code>permission_explainer</code>, <code>query_rewrite</code>, <code>ci_diagnose</code>, <code>activity_label</code></td><td>Haiku</td></tr>
         <tr><td><code>compaction</code>, <code>learning_review</code></td><td>The session's own model</td></tr>
       </tbody>
     </table></div>

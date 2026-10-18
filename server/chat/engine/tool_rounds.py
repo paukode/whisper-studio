@@ -9,12 +9,15 @@ and sends the frames they produced; it stashes a turn that stopped for an
 approval or a question in the paused store; and on the way to the next round
 it appends the results to the message list, lets the claim guard settle the
 sentences it held back, and compacts the conversation once it has grown past
-the threshold. The loop keeps the exits: it ends the stream when the phase
-reports a pause or no result to send back.
+the threshold. Last, it starts the round's activity caption
+(activity_labels.py), which the runner sends when it lands. The loop keeps
+the exits: it ends the stream when the phase reports a pause or no result to
+send back.
 
 Every tool result flows through execute_tool_batch and process_tool_results
 (server/tool_executor.py): this module relays what they return and never
-reads tool output itself. The frames it yields belong to the SSE vocabulary
+reads tool output itself. The caption reads the head of the results the gate
+passed, after the gate. The frames it yields belong to the SSE vocabulary
 pinned by tests/golden_fixtures.
 
 runner.py imports this module; nothing here imports the runner.
@@ -47,6 +50,9 @@ class ToolRound:
     # An approval-gated tool or a question stopped the turn: its state is in
     # the paused store, and the loop ends the stream marked paused.
     paused: bool = False
+    # The round's activity caption on its way (activity_labels.py), or None:
+    # a paused round, a round with nothing to send back, or no caption here.
+    label: asyncio.Task | None = None
 
 
 def _route_event(ev: dict) -> dict | None:
@@ -217,6 +223,12 @@ async def run_tool_round(
             # session-wide access as the fallback).
             messages = ensure_attachments_present(messages, session_id)
         outcome.messages = messages
+
+        # Started last, so no await lies between the start and the runner
+        # taking the task: a Stop in between cannot leave it unowned.
+        from .activity_labels import start_label_task
+
+        outcome.label = start_label_task(ctx, states, tool_results)
     finally:
         # Torn down mid-phase (Stop / tab-close): cancel a tool batch still
         # running. A batch that finished is left alone.
