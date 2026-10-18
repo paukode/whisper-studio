@@ -18,7 +18,7 @@ from server.chat.engine.events import RoundResult, TextDelta, Usage
 from server.chat.engine.policy import TurnPolicy
 from server.chat.engine.runner import TurnContext, run_turn
 from server.goals import gate
-from server.goals.claims import asserted_paths, claims_an_artifact
+from server.goals.claims import FILE, REMOVED, asserted_paths, claims_an_artifact, read_claims
 from server.goals.deliverables import (
     CLAIM_MARKER,
     OUTSIDE_WRITERS,
@@ -260,6 +260,62 @@ def test_only_the_row_says_its_file_is_gone():
     assert asserted_paths(table) == ["~/Downloads/q3.docx"]
     changes = "| File | Change |\n|---|---|\n| ~/a.md | updated |\n| ~/b.md | removed |"
     assert asserted_paths(changes) == ["~/a.md"]
+
+
+@pytest.mark.parametrize(
+    ("change", "kind", "or_removed"),
+    [
+        # The verb takes an object of its own: the file lost a part or went,
+        # and the claim holds either way.
+        ("removed the legacy fallback", FILE, True),
+        ("deleted 3 dead helpers", FILE, True),
+        ("dropped the stepFormat pass and removed its test", FILE, True),
+        ("removed the dead module", FILE, True),
+        # It says what happened to the row's file.
+        ("removed", REMOVED, False),
+        ("Deleted.", REMOVED, False),
+        ("file removed", REMOVED, False),
+        ("removed it", REMOVED, False),
+        ("removed in favour of b.py", REMOVED, False),
+        ("removed (replaced by b.py)", REMOVED, False),
+        # A move or a rename claims nothing: the old and new names share the row.
+        ("moved to the archive", None, False),
+        ("renamed from old.py", None, False),
+        ("moved the helper into utils.ts", None, False),
+        ("renamed for clarity", None, False),
+        # A count of lines is no verb of the row's; the change column says
+        # the file was changed.
+        ("18 added, 6 removed", FILE, False),
+        ("+18 lines, 6 removed", FILE, False),
+        ("removed 6 lines", FILE, False),
+        ("120 insertions, 14 deletions", FILE, False),
+    ],
+)
+def test_a_rows_verb_of_removing_with_an_object_may_mean_either(change, kind, or_removed):
+    row = f"| File | Change |\n|---|---|\n| [a.py](#wsfile=/ws/a.py&open=os) | {change} |"
+    claims = read_claims(row)
+    assert [x.kind for x in claims] == ([kind] if kind else [])
+    assert all(x.made == (kind == FILE) and x.or_removed == or_removed for x in claims)
+
+
+@pytest.mark.parametrize(
+    ("head", "made"),
+    [
+        ("| File | What changed | Lines |", True),
+        ("| File | Change | Lines |", True),
+        ("| Files | Added | Removed |", True),
+        # No change column: the row only says where the file is.
+        ("| File | Location |", False),
+        ("| File | Lines |", False),
+    ],
+)
+def test_a_change_column_says_each_row_changed_its_file(head, made):
+    rule = "|---" * head.count("|", 1) + "|"
+    table = f"{head}\n{rule}\n| [a.md](#wsfile=/ws/a.md&open=os) | new section |"
+    (claim,) = read_claims(table)
+    assert claim.kind == FILE and claim.made is made
+    (unchanged,) = read_claims(table.replace("new section", "unchanged"))
+    assert unchanged.kind == FILE and not unchanged.made
 
 
 def test_a_row_of_a_file_table_names_the_missing_file(tmp_path):
