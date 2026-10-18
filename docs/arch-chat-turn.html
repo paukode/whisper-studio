@@ -113,8 +113,8 @@
         disrupts an in-flight session.</li>
       <li><b>Filter the history.</b> <code>visible_chat_history()</code>
         (<code class="path">server/infrastructure/sessions.py</code>) decides which stored rows reach
-        the model. <code>cron_event</code> and <code>task_event</code> rows are dropped: they persist
-        on disk and render in the chat, but never enter the model's context. Three roles are
+        the model. <code>cron_event</code> rows are dropped: they persist on disk and render in the
+        chat, but never enter the model's context. Three roles are
         translated instead of dropped - a <code>session_message</code> from another session and an
         <code>agent_report</code> both become user turns, and an <code>agent_answer</code> becomes
         the assistant's own previous message.</li>

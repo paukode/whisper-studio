@@ -66,7 +66,7 @@
       <div class="callout__body"><p><b>Detached (background) agents.</b> Both entry points above run inline
         and report within the same turn. The assistant can instead call <code>spawn_agent</code> with
         <code>detach: true</code>: it returns a task id right away, runs <b>read-only by default</b> (or
-        writes safely with <code>isolation: 'worktree'</code>), and shows up in the background-tasks panel
+        writes safely with <code>isolation: 'worktree'</code>), and shows up in the header's task list
         while it works. Its result is folded into a later turn, and you or the assistant can check on it
         with <code>task_status</code> / <code>task_output</code> or stop it with <code>task_cancel</code>.
         When a worktree-isolated agent finishes its work, its changes are automatically applied back to
@@ -197,21 +197,20 @@
       </li>
     </ol>
 
-    <h2 id="report-card">Reading the team report card</h2>
-    <p>The report card (rendered by <code class="path">src/components/chat/TeamReportCard.tsx</code>) is
-      the window into a run. It is one collapsible card per team, with a collapsible row per agent. A
-      plain single <code>spawn_agent</code> renders in the same card as a one-member team, Stop button
-      included, so one helper and a whole team read the same way.</p>
+    <h2 id="report-card">Reading the agent rows and the agent pane</h2>
+    <p>The chat shows delegated work as one line per agent (rendered by
+      <code class="path">src/components/chat/AgentRows.tsx</code>): the agent's name, its state, and
+      <b>Open</b>. A plain single <code>spawn_agent</code> is one row; a team is one row per member
+      under a line naming the team and how many are done. <b>Open</b> puts the agent in the dock's
+      agent pane (<code class="path">src/components/preview/AgentPanel.tsx</code>), the window into a
+      run: a status line (state, model, rounds against the cap, elapsed time, estimated cost, and
+      <b>Extend +20</b> while it runs), then everything the agent does in order, live: the task it
+      was given, each thing it wrote, every tool call with its result folded under it, and what it is
+      waiting on. The same pane opens from the header's tasks pill, where every running agent has a row.</p>
     <ul>
-      <li><b>Header</b> - team name, agent count, and a live status such as
-        <code>3/3 done</code> or <code>1/3 done · 2 running</code>, plus elapsed time. A green check
-        means all completed; a red mark means at least one failed.</li>
-      <li><b>Agent rows</b> - each shows the agent name, its role badge (team or orchestrator), its
-        <b>type</b> badge (<code>explore</code>, <code>verify</code>, and so on), the model it is running
-        on, a state pill, and a live status like <code>running · turn 3</code> or
-        <code>done · 5 turns · 2 tools</code>. A running or failed row opens automatically so you see it
-        without clicking. When a run ended at a limit the status says which:
-        <code>stopped at the turn limit · report written</code>,
+      <li><b>Rows</b> - the state reads <code>running</code>, <code>done · 5 rounds</code>,
+        <code>failed</code>, or which limit ended the run. When a run ended at a limit the status says which:
+        <code>stopped at the turn limit</code>,
         <code>stopped at the time limit · report written</code>,
         <code>stopped at the cost cap · report written</code>, or
         <code>cancelled · report salvaged</code>.</li>
@@ -275,11 +274,11 @@
       different: it resumes that agent (see <a href="#follow-ups">follow-ups</a> above).</p>
 
     <h2 id="stopping">Stopping a run</h2>
-    <p>While any agent is still working, a <b>Stop</b> button sits in the team card header. Click it to
-      cancel the whole team mid-flight: the server cancels the parallel run
-      (<code>POST /api/teams/{team_id}/stop</code>), each running agent flips to a stopped state through
-      the same event stream, and the card reflects it. Pressing <kbd>Esc</kbd> and using the main chat
-      Stop control also tears down in-flight agents along with the streaming turn. See
+    <p>While an agent is still working, <b>Stop</b> sits in its row of the header's tasks pill and in
+      the agent pane's header. It cancels the run (<code>POST /api/background-tasks/{id}/stop</code>,
+      which reaches a spawned agent through the team that owns it): the agent flips to a stopped state
+      through the same event stream, and its row and pane reflect it. Pressing <kbd>Esc</kbd> and using
+      the main chat Stop control also tears down in-flight agents along with the streaming turn. See
       <a href="tut-permissions.html">Permissions &amp; approvals</a> for the broader kill-switch
       behavior.</p>
     <p>Stopping does not throw the work away. Every agent's record is written to disk as it runs, so a

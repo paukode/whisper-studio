@@ -71,7 +71,8 @@
         migration 007, kinds <code>shell|agent|workflow|ci</code>) pointing at the journal's event log.
         That is what makes <code>task_output</code> work for <em>any</em> agent, not just a detached
         one, and what emits <code>task_event</code> lifecycle events through
-        <code class="path">server/tasks/events.py</code> into the global background-tasks panel.</p></li>
+        <code class="path">server/tasks/events.py</code> into the header's task list (live only; the
+        registry row is the record, the chat shows nothing for it).</p></li>
       <li><h4>Resolves the model</h4><p>Agents <b>inherit the session-selected model</b> through a
         <code>model_id_override</code> threaded from <code>/api/chat</code>. There is no hardcoded
         per-type model. A <code>spawn_agent</code> call can override it with a <code>chat_models</code>
@@ -426,8 +427,10 @@
       <code>task_event</code>, <code>cron_progress</code>, <code>ci_progress</code>,
       <code>ci_result</code>, <code>session_message</code>, and <code>workflow_event</code> are skipped,
       because a separate long-lived stream, <code>/api/sessions/{id}/events</code>, delivers those
-      (<code>task_event</code> is the unified background-task lifecycle role, and a workflow run also has
-      its own per-run stream). Skipping them prevents double-rendering: without the
+      (<code>task_event</code> is the unified background-task lifecycle frame, and a workflow run also has
+      its own per-run stream). The session stream also forwards agent runtime progress as
+      <code>agent_progress</code> for the dock's agent pane; the chat stream still folds the same events
+      into the turn's agent rows, and the client routes the two frames to those two consumers. Skipping them prevents double-rendering: without the
       <code>workflow_event</code> entry a detached workflow rendered mid-batch as if it were this turn's
       own subagent team. On the client, the SPA groups
       <code>team_progress</code> frames by <code>team_id</code> and <code>agent_id</code> into the live

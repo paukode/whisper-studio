@@ -4,7 +4,8 @@
 loop: the caller gets a task_id immediately, progress events stream to a
 private channel (mirrored into the owning session as ``team_progress`` and
 appended to the task's output file so ``task_output`` works uniformly across
-kinds), and completion lands in the session as a ``task_event`` card.
+kinds), and completion is announced as a ``task_event`` to the header's task
+list and delivered to the session as an agent report row.
 """
 
 import asyncio
