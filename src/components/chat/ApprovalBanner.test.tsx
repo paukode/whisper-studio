@@ -253,10 +253,10 @@ describe('ApprovalBanner diff preview', () => {
       writeApproval('tu_big', { path: 'big.txt', original: side('l'), content: side('r') }),
     );
 
-    const { container, getByText } = render(<ApprovalBanner />);
+    const { container } = render(<ApprovalBanner />);
 
     expect(container.querySelector('.git-diff-grid')).toBeNull();
     expect(container.querySelector('pre')?.textContent?.startsWith('r0\nr1\n')).toBe(true);
-    expect(getByText('✓ Yes')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeTruthy();
   });
 });
