@@ -5,6 +5,7 @@ import { LiveBrowserPanel } from './LiveBrowserPanel';
 import { PlanPanel } from './PlanPanel';
 import { FilePanel } from './FilePanel';
 import { DocsPanel } from './DocsPanel';
+import { AgentPanel, AgentStopButton } from './AgentPanel';
 import { TasksPanel } from '@/components/tasks/TasksPanel';
 
 const MIN_FRAC = 0.12;
@@ -15,6 +16,7 @@ const KIND_COLOR: Record<DockKind, string> = {
   tasks: 'var(--text-success, #2a9d5c)',
   file: 'var(--text-secondary, #888)',
   docs: 'var(--accent, #2563eb)',
+  agent: 'var(--accent-live, #34c77b)',
 };
 
 function CloseIcon() {
@@ -106,6 +108,7 @@ export const RightDock: React.FC = () => {
                 {p.title}
               </span>
               <span style={{ flex: 1 }} />
+              {p.kind === 'agent' && <AgentStopButton agentId={String(p.meta?.agentId ?? '')} />}
               <button
                 type="button"
                 onClick={() => (p.kind === 'live' ? closeLive() : closePanel(p.id))}
@@ -126,6 +129,7 @@ export const RightDock: React.FC = () => {
               />
             )}
             {p.kind === 'tasks' && <TasksPanel />}
+            {p.kind === 'agent' && <AgentPanel agentId={String(p.meta?.agentId ?? '')} />}
             {p.kind === 'plan' && <PlanPanel planId={String(p.meta?.planId ?? p.id)} />}
             {p.kind === 'docs' && (
               <DocsPanel

@@ -27,14 +27,16 @@ describe('foldTeamResultsInto', () => {
       team_id: 't1',
       team_name: 'Research Team',
       agents: [
-        { name: 'a1', task: 'investigate', result: 'done', status: 'completed' },
+        { name: 'a1', task: 'investigate', result: 'done', status: 'completed', turns_used: 3 },
       ],
     });
     expect(out.t1.team_name).toBe('Research Team');
     expect(out.t1.status).toBe('completed');
     expect(out.t1.agentOrder).toEqual(['a1']);
-    expect(out.t1.agents.a1.result).toBe('done');
     expect(out.t1.agents.a1.status).toBe('completed');
+    expect(out.t1.agents.a1.turns_used).toBe(3);
+    // The report text lives in the agent's record, not on the row.
+    expect(out.t1.agents.a1).not.toHaveProperty('result');
   });
 
   it('maps error/failed status onto the failed terminal state', () => {
@@ -72,15 +74,16 @@ describe('foldTeamResultsInto', () => {
     const first = foldTeamResultsInto(undefined, {
       team_id: 't3',
       team_name: 'T',
-      agents: [{ name: 'a1', result: 'r1', status: 'completed' }],
+      agents: [{ name: 'a1', result: 'r1', status: 'completed', stop_reason: 'completed' }],
     });
     const second = foldTeamResultsInto(first, {
       team_id: 't3',
-      agents: [{ name: 'a2', result: 'r2', status: 'completed' }],
+      agents: [{ name: 'a2', result: 'r2', status: 'failed', stop_reason: 'error' }],
     });
     expect(second.t3.agentOrder).toEqual(['a1', 'a2']);
-    expect(second.t3.agents.a1.result).toBe('r1');
-    expect(second.t3.agents.a2.result).toBe('r2');
+    expect(second.t3.agents.a1.stop_reason).toBe('completed');
+    expect(second.t3.agents.a2.status).toBe('failed');
+    expect(second.t3.agents.a2.stop_reason).toBe('error');
   });
 });
 
@@ -146,7 +149,7 @@ describe('foldTeamProgressIntoMap', () => {
     expect(map.t5.completed_at).toBeTypeOf('number');
   });
 
-  it('caps retained events per agent', () => {
+  it('keeps the row to its state: events are not retained (the agent pane holds the record)', () => {
     let map = foldTeamProgressIntoMap(undefined, {
       phase: 'started', team_id: 't6', agent_id: 'a1',
     } as TeamProgressEvent)!;
@@ -155,7 +158,13 @@ describe('foldTeamProgressIntoMap', () => {
         phase: 'turn_start', team_id: 't6', agent_id: 'a1', turn: i,
       } as TeamProgressEvent)!;
     }
-    expect(map.t6.agents.a1.events.length).toBeLessThanOrEqual(400);
+    map = foldTeamProgressIntoMap(map, {
+      phase: 'turn_limit', team_id: 't6', agent_id: 'a1', turns_used: 450, stop_reason: 'deadline',
+    } as TeamProgressEvent)!;
+    expect(map.t6.agents.a1).toEqual({
+      name: 'a1', task: '', agent_type: 'general', role: 'team',
+      agent_id: 'a1', status: 'turn_limit', turns_used: 450, stop_reason: 'deadline',
+    });
   });
 });
 
@@ -246,7 +255,6 @@ describe('applyTeamProgressToMessage', () => {
     const target = current().find((m) => m.timestamp === SUB_TS)!;
     expect(target.teamReports?.sub).toBeDefined();
     expect(target.teamReports!.sub.agents.Subagent.status).toBe('running');
-    expect(target.teamReports!.sub.agents.Subagent.events.length).toBe(1);
     // The other messages are untouched.
     expect(current().find((m) => m.timestamp === 'u2')!.teamReports).toBeUndefined();
   });

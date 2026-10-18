@@ -31,9 +31,9 @@ def start_watch(branch: str, cwd: str, session_id: str = "") -> str:
     )
     cancel = asyncio.Event()
     _cancels[task_id] = cancel
-    # Durable lifecycle (like every other task kind): a task_started row + the
-    # background-task pill count. The terminal task_completed/failed is emitted
-    # in _finish, so the outcome survives even when no SSE client is attached.
+    # Lifecycle like every other task kind: task_started puts the watch in the
+    # header's task list; the terminal task_completed/failed is emitted in
+    # _finish. The registry row is the durable record either way.
     row = registry.get_task(task_id)
     if row and session_id:
         _emit_task_event(session_id, "task_started", row)
@@ -93,9 +93,9 @@ def _finish(task_id: str, session_id: str, branch: str, outcome: dict) -> None:
             {**_result_payload(task_id, branch, outcome), "task_status": status}
         ),
     )
-    # Durable terminal record + pill decrement (mirrors shell/agent tasks). This
-    # persists a task_event chat row, so the outcome is NOT lost when no live SSE
-    # client is attached at emit time; the rich live card still flips via _emit_result.
+    # Terminal announcement to the header's task list (mirrors shell/agent
+    # tasks); the registry row above holds the outcome when no client is
+    # attached at emit time, and the rich live card still flips via _emit_result.
     if finished and session_id:
         event = {"completed": "task_completed", "failed": "task_failed", "stopped": "task_stopped"}[
             status

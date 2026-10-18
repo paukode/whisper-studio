@@ -172,7 +172,7 @@ export const NotificationsBell: React.FC = () => {
               >
                 Unread{unread > 0 ? ` ${unread}` : ''}
               </button>
-              <button className="bg-tasks-close" type="button" onClick={() => setOpen(false)} title="Close">
+              <button className="notif-close" type="button" onClick={() => setOpen(false)} title="Close">
                 ✕
               </button>
             </div>

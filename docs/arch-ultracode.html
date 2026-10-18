@@ -274,7 +274,7 @@ return { confirmed: results.flat().filter(f =&gt; f.verdict?.isReal) }</code></p
       duplicating them.</p>
     <div class="spec">
       <dt><a href="arch-agents.html">Provider-agnostic agents</a></dt><dd>Every <code>agent()</code> is a <code>run_agent</code> call, so workflows inherit Claude/GPT parity, usage accounting, effort, structured output, and worktree isolation.</dd>
-      <dt><a href="arch-agents.html">The task registry</a></dt><dd>A CI watch is a row in the unified background-task registry, so it appears in the tasks panel and the header running-count pill. A workflow run is mirrored into that same registry as a <code>workflow</code>-kind row, on top of its own <code>workflow_runs</code> row and <code>WorkflowRunCard</code>, so it shows up in the tasks panel too and posts a task card when it ends.</dd>
+      <dt><a href="arch-agents.html">The task registry</a></dt><dd>A CI watch is a row in the unified background-task registry, so it appears in the header's task list. A workflow run is mirrored into that same registry as a <code>workflow</code>-kind row, on top of its own <code>workflow_runs</code> row and <code>WorkflowRunCard</code>, so it shows up in the tasks panel too and posts a task card when it ends.</dd>
       <dt><a href="arch-tools.html">Tool disclosure and hooks</a></dt><dd>The workflow and CI tools surface only in the ultracode tier; workflow subagents still pass through the same Pre/PostToolUse hooks and tool executors.</dd>
       <dt>The built-in verify_change tool</dt><dd>Generated fix workflows end by running the repo's verification gate, which emits a deterministic <code>VERIFY PASS</code> / <code>VERIFY FAIL</code> line - the same tool the goal completion gate keys on.</dd>
     </div>

@@ -198,16 +198,15 @@
       shared <code>emit_session_event()</code> in <code class="path">server/tasks/events.py</code> - the
       unified session-event service that both appends a <code>cron_event</code> row to that session's
       history and publishes the same payload live to the <a href="arch-agents.html">event bus</a> as a
-      <code>{type:"cron_event"}</code> event so any open SSE stream renders it immediately. (The same
-      service backs the <code>task_event</code> role.) The row shows up as a compact
-      <code>cron_event</code> card in the conversation.</p>
+      <code>{type:"cron_event"}</code> event so any open SSE stream renders it immediately. The row
+      shows up as a compact <code>cron_event</code> card in the conversation.</p>
     <p>A running job is no longer opaque. Alongside the final card, <code class="path">server/cron_run.py</code>
       publishes live progress through <code>emit_progress()</code> in
       <code class="path">server/cron_events.py</code>: TeamProgressEvent-shaped frames (<code>started</code> /
       <code>turn_start</code> / <code>tool_call</code> / <code>tool_result</code> / <code>completed</code> /
       <code>failed</code> / <code>stopped</code>) go onto the event bus as <code>{type:"cron_progress"}</code>
       and are forwarded to the session SSE as <code>team_progress</code>, so the run renders as a live
-      per-tool log in the existing <a href="arch-agents.html">TeamReportCard/AgentCard</a> fold.</p>
+      agent row in the existing <a href="arch-agents.html">agent rows</a> fold.</p>
     <p>A cron run that calls <code>notify_user</code> also writes a durable <code>source='cron'</code> row to
       the <code>notifications</code> table (<a href="arch-persistence.html">migration 008</a>), so a report
       delivered while you were away waits behind the header bell, which reads the log over

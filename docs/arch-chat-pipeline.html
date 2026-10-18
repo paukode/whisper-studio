@@ -344,8 +344,8 @@
       UPSERTed into SQLite under a per-session lock, so background rows written by other subsystems
       are never clobbered. <code>visible_chat_history</code>
       (<code class="path">server/infrastructure/sessions.py</code>) decides what the <em>next</em>
-      prompt sees of those rows. A <code>cron_event</code> or <code>task_event</code> row renders in
-      the chat and is dropped before the prompt, so it never inflates the token bill. Three roles are
+      prompt sees of those rows. A <code>cron_event</code> row renders in the chat and is dropped
+      before the prompt, so it never inflates the token bill. Three roles are
       translated rather than dropped: a <code>session_message</code> from another session becomes a
       user turn; an <code>agent_report</code> becomes a user turn that names the team, the reason the
       reports arrived with no turn running, each agent's stop reason and rounds used, and the

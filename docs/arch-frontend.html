@@ -278,7 +278,8 @@
       response. Those frames arrive instead on the per-session <code>EventSource</code> opened in
       <code class="path">src/stores/sessionRuntimes.ts</code>
       (<code>/api/sessions/{id}/events</code>), so they reach a session you are not looking at:
-      <code>cron_event</code>, <code>task_event</code>, <code>memory_event</code>,
+      <code>cron_event</code>, <code>task_event</code> (the header's task list, global across
+      sessions), <code>agent_progress</code> (the dock's agent pane), <code>memory_event</code>,
       <code>session_message</code>, <code>team_progress</code>, <code>ci_progress</code>,
       <code>ci_result</code>, and the two agent-report frames below. A frame that does not parse as
       JSON is dropped, which is how the channel's own heartbeats are ignored.</p>
@@ -332,18 +333,20 @@
         accumulate, and runs of bare tool-only rows are re-folded into one entry at the display layer
         (<code class="path">src/components/chat/groupToolOnlyRuns.ts</code>) while keeping the real
         store indices, so edit, delete and regenerate still address the right message.</dd>
-      <dt>Agent work gets a card, not a transcript</dt><dd>Consecutive agent-orchestration calls
-        become an <code>AgentCard</code>, or a <code>TeamReportCard</code> when matching team results
-        arrived. Each agent row carries a state pill (<b>working</b>, <b>finishing up</b>,
-        <b>done</b>, <b>hit limit</b>, <b>salvaged</b>, <b>failed</b>) and budget bars for rounds,
-        time and estimated cost, with the last tenth of each bar hatched: that is the slice reserved
-        for the agent to write its report. While an agent is running, <b>Extend +20 rounds</b> grants
-        it more room (<code>POST /api/agents/{id}/extend</code>) without losing its loaded context.
-        See <a href="arch-agent-recorder.html">the agent flight recorder</a>.</dd>
+      <dt>Agent work gets a row, not a transcript</dt><dd>Consecutive agent-orchestration calls
+        become an <code>AgentCard</code>, or one agent row each (<code>AgentRows.tsx</code>) when
+        matching team results arrived: name, state, and <b>Open</b>. Open puts the agent in the dock's
+        agent pane (<code>AgentPanel.tsx</code>), which reads the run's record once
+        (<code>GET /api/agents/{id}/record</code>) and follows it live through
+        <code>agent_progress</code> frames merged by the journal's <code>seq</code>. The pane's status
+        line reads state, model, rounds against the cap, time and estimated cost, and while an agent is
+        running <b>Extend +20</b> grants it more rounds (<code>POST /api/agents/{id}/extend</code>)
+        without losing its loaded context. See <a href="arch-agent-recorder.html">the agent flight
+        recorder</a>.</dd>
     </div>
     <p>Beyond the two chat roles, <code class="path">src/components/chat/ChatMessage.tsx</code>
-      renders five card roles that short-circuit the normal bubble: <code>cron_event</code>,
-      <code>task_event</code>, <code>session_message</code>, <code>agent_report</code>, and
+      renders four card roles that short-circuit the normal bubble: <code>cron_event</code>,
+      <code>session_message</code>, <code>agent_report</code>, and
       <code>agent_answer</code> (an assistant bubble labelled "Answered from the agents' reports",
       with the team name appended when there is one).</p>
 
@@ -426,9 +429,11 @@
       <dt><code class="path">src/components/chat/WorkspacePromptCard.tsx</code></dt><dd>The workspace-connect-only prompt card and its answers-array resume.</dd>
       <dt><code class="path">src/components/chat/ChatMessage.tsx</code></dt><dd>The seven message roles and the two grouping passes that produce the readable transcript.</dd>
       <dt><code class="path">src/components/chat/ActivityRow.tsx</code></dt><dd>The collapsed activity row: step list, per-step output, and the streaming size readout.</dd>
-      <dt><code class="path">src/components/chat/TeamReportCard.tsx</code></dt><dd>Team and agent rows, the budget bars with their reserved reporting slice, and the Extend button.</dd>
+      <dt><code class="path">src/components/chat/AgentRows.tsx</code></dt><dd>One row per agent in the chat, with Open for the dock's agent pane.</dd>
+      <dt><code class="path">src/components/preview/AgentPanel.tsx</code></dt><dd>The agent pane: status line, Extend, Stop, and the live feed of everything the agent does.</dd>
+      <dt><code class="path">src/components/tasks/BackgroundTasksPanel.tsx</code></dt><dd>The list under the header's tasks pill: every task across sessions, unfolding details, Open, Stop, and the 30 second linger of a finished row.</dd>
       <dt><code class="path">src/components/chat/AgentReportCard.tsx</code></dt><dd>Reports that arrived with no live turn, with each agent's stop reason and a pointer to its full record.</dd>
-      <dt><code class="path">src/hooks/chatStream/agentBudget.ts</code></dt><dd>Rounds, time and cost read off the agent's own events, plus the state pill labels.</dd>
+      <dt><code class="path">src/stores/agentFeedStore.ts</code></dt><dd>The agent pane's records: the journal read once, the live tail merged by seq, and the status readout.</dd>
       <dt><code class="path">src/types/schemas/chat.schema.ts</code></dt><dd>The Zod schema every SSE payload is validated against; the client half of the frame contract.</dd>
     </div>
 

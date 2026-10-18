@@ -5,7 +5,8 @@
  *   - run-level summary events: {type:'phase'|'agent'|'workflow_event'|'snapshot'}
  *   - per-agent detail events: no `type`, carry {agent_id, phase, text/tool_*}
  * The detail events are folded into a per-agent map (TeamAgentReport shape) so
- * WorkflowRunCard can render the same expandable live log TeamReportCard uses.
+ * WorkflowRunCard renders the same agent rows the chat uses; the full feed of
+ * an agent is its record, opened in the dock's agent pane.
  *
  * Zustand v5 rule (see memory): selectors return PRIMITIVES or stable
  * references only — components subscribe to `useWorkflowStore(s => s.runs[id])`
@@ -13,10 +14,7 @@
  */
 import { create } from 'zustand';
 import type { WorkflowRun } from '@/api/workflows';
-import type { TeamAgentReport, TeamProgressEvent } from '@/types/chat';
-
-/** Upper bound on retained events per agent (mirrors teamProgress). */
-const MAX_EVENTS_PER_AGENT = 400;
+import type { TeamAgentReport } from '@/types/chat';
 
 export interface LiveActivity {
   phase: string;
@@ -103,11 +101,9 @@ function foldAgentEvent(
       agent_type: (ev.agent_type as string) ?? 'general',
       role: ev.agent_type === 'coordinator' ? 'orchestrator' : 'team',
       status: 'pending',
-      events: [],
       agent_id: ev.agent_id as string | undefined,
     } satisfies TeamAgentReport);
 
-  const events = [...base.events, ev as unknown as TeamProgressEvent].slice(-MAX_EVENTS_PER_AGENT);
   agentReports[key] = {
     ...base,
     agent_id: (ev.agent_id as string) ?? base.agent_id,
@@ -119,7 +115,7 @@ function foldAgentEvent(
     task: base.task || ((ev.task as string) ?? ''),
     status: phaseToStatus(ev.phase as string),
     turns_used: (ev.turns_used as number) ?? base.turns_used,
-    events,
+    stop_reason: (ev.stop_reason as string) ?? base.stop_reason,
   };
   return { agentReports, agentOrder };
 }

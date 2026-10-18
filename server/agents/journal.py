@@ -106,6 +106,49 @@ def find_dir(agent_id: str, session_id: str | None = None) -> str | None:
     return None
 
 
+def _line_count(path: str) -> int:
+    try:
+        with open(path, "rb") as f:
+            return sum(1 for _ in f)
+    except OSError:
+        return 0
+
+
+# Events the pane reads in one request; a chatty run keeps its newest ones.
+FEED_EVENTS_MAX = 2000
+
+
+def load_feed(agent_id: str, session_id: str | None = None) -> dict | None:
+    """What the agent pane shows: meta, the newest FEED_EVENTS_MAX progress
+    events (oldest first) and the report. The API message list is left on
+    disk; the pane never needs it."""
+    d = find_dir(agent_id, session_id)
+    if not d:
+        return None
+    out: dict = {"agent_id": agent_id, "meta": {}, "events": [], "report": ""}
+    try:
+        with open(os.path.join(d, "meta.json"), encoding="utf-8") as f:
+            out["meta"] = json.load(f)
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(os.path.join(d, "events.jsonl"), encoding="utf-8") as f:
+            lines = f.readlines()[-FEED_EVENTS_MAX:]
+    except OSError:
+        lines = []
+    for line in lines:
+        try:
+            out["events"].append(json.loads(line))
+        except ValueError:
+            continue
+    try:
+        with open(os.path.join(d, "report.md"), encoding="utf-8") as f:
+            out["report"] = f.read()
+    except OSError:
+        pass
+    return out
+
+
 def load(agent_id: str, session_id: str | None = None) -> dict | None:
     """The stored record: meta plus messages and report when present."""
     d = find_dir(agent_id, session_id)
@@ -185,6 +228,9 @@ class AgentJournal:
         self.meta_path = os.path.join(dir_path, "meta.json")
         self._meta: dict = {}
         self._closed = False
+        # Sequence number of the last event written: its line index in
+        # events.jsonl, which a reopened record continues from.
+        self._seq = 0
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
@@ -220,6 +266,7 @@ class AgentJournal:
                     prev = json.load(f)
             except (OSError, ValueError):
                 prev = {}
+            j._seq = _line_count(j.events_path)
         runs = int(prev.get("runs") or 0) + 1
         j._meta = {
             **prev,
@@ -245,8 +292,13 @@ class AgentJournal:
         }
         j._save_meta()
         j.event("started" if not resumed else "resumed", task=(task or "")[:2000], model=model)
+        # The registry row is what the header's task list shows; announcing it
+        # here, and its end in finish(), is what puts every agent there live,
+        # however it was started (a chat turn, /subagent, detached, resumed,
+        # a workflow).
         try:
             from server.tasks import registry
+            from server.tasks.events import emit_task_event
 
             registry.ensure_running_task(
                 agent_id,
@@ -262,17 +314,25 @@ class AgentJournal:
                     "parent_agent_id": parent_agent_id or "",
                 },
             )
+            row = registry.get_task(agent_id)
+            if row:
+                emit_task_event(session_id, "task_started", row)
         except Exception as e:  # noqa: BLE001 - the registry is a mirror, never the record
             log.debug("agent journal: registry row for %s not written: %s", agent_id, e)
         return j
 
-    def event(self, phase: str, **fields) -> None:
-        line = {"ts": _now(), "phase": phase, **fields}
+    def event(self, phase: str, **fields) -> int:
+        """Append one progress event and return its sequence number, the key
+        the live feed merges on (the agent pane reads the record once, then
+        appends only the events numbered past what it holds)."""
+        self._seq += 1
+        line = {"seq": self._seq, "ts": _now(), "phase": phase, **fields}
         try:
             with open(self.events_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(line, ensure_ascii=False, default=str) + "\n")
         except (OSError, TypeError, ValueError) as e:
             log.debug("agent journal: event not written for %s: %s", self.agent_id, e)
+        return self._seq
 
     def checkpoint(self, messages: list, round_num: int) -> None:
         """Snapshot the API message list so a killed run can be resumed from
@@ -323,13 +383,20 @@ class AgentJournal:
         self.event("finished", status=status, stop_reason=stop_reason, turns_used=turns_used)
         try:
             from server.tasks import registry
+            from server.tasks.events import emit_task_event
 
-            registry.finish_task(
+            row_status = {"completed": "completed", "stopped": "stopped"}.get(status, "failed")
+            finished = registry.finish_task(
                 self.agent_id,
-                status={"completed": "completed", "stopped": "stopped"}.get(status, "failed"),
+                status=row_status,
                 exit_code=None,
                 result_text=(report or "")[:REPORT_CHARS],
             )
+            if finished:
+                event = {"completed": "task_completed", "stopped": "task_stopped"}.get(
+                    row_status, "task_failed"
+                )
+                emit_task_event(str(self._meta.get("session_id") or ""), event, finished)
         except Exception as e:  # noqa: BLE001 - mirror only
             log.debug("agent journal: registry finish for %s failed: %s", self.agent_id, e)
 

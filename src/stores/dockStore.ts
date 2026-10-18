@@ -2,10 +2,11 @@ import { create } from 'zustand';
 
 /**
  * dockStore — the dynamic right-side dock: a stack of typed panels (live
- * preview, plan document, workspace file, tasks) opened from the conversation.
+ * preview, plan document, workspace file, tasks, docs, an agent's feed)
+ * opened from the conversation or the header's task list.
  *
  * Panels are deduped by `id` (singletons like live/tasks use their kind; files
- * use their path; plans use `plan:<id>`). `sizes` are parallel flex-grow
+ * use their path; plans use `plan:<id>`; agents `agent:<id>`). `sizes` are parallel flex-grow
  * fractions; RightDock renders each panel with `flex-grow: sizes[i]` and the
  * drag handles between panels reallocate space between neighbours.
  *
@@ -13,7 +14,7 @@ import { create } from 'zustand';
  * useDockLiveWatcher) and a persisted "dismissed" flag so closing the live
  * panel stays closed across a page reload (until a new session or a reopen).
  */
-export type DockKind = 'live' | 'plan' | 'file' | 'tasks' | 'docs';
+export type DockKind = 'live' | 'plan' | 'file' | 'tasks' | 'docs' | 'agent';
 
 export interface DockPanel {
   id: string;
@@ -54,6 +55,9 @@ interface DockState {
    *  page (and optional heading anchor) navigates there — set by the header's
    *  ? button and by #docspage= reference links in chat answers. */
   openDocs: (page?: string, anchor?: string) => void;
+  /** Open an agent's live feed (AgentPanel) by its id: Open on an agent row
+   *  in the chat or in the header's task list. Dedupes by agent. */
+  openAgent: (agentId: string, title: string) => void;
   closePanel: (id: string) => void;
   setSizes: (sizes: number[]) => void;
   setLiveSession: (s: LiveSession | null) => void;
@@ -136,6 +140,10 @@ export const useDockStore = create<DockState>((set, get) => ({
     }
     const next = [...panels, { id, kind: 'docs' as const, title: 'Documentation', meta }];
     set({ panels: next, sizes: equalize(next.length), open: true });
+  },
+
+  openAgent: (agentId, title) => {
+    get().openPanel({ id: `agent:${agentId}`, kind: 'agent', title, meta: { agentId } });
   },
 
   closePanel: (id) => {

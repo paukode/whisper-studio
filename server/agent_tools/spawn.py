@@ -416,11 +416,11 @@ async def execute_spawn_agent(
     if not _try_reserve_agent_slot(session_id):
         return json.dumps({"status": "failed", "output": _concurrency_limit_message()})
 
-    # Wrap the single agent in a one-member "team" so its live tool_call/
-    # tool_result/text events render in the rich TeamReportCard (the same view
-    # team_create gets) instead of the detail-less AgentCard summary. Without a
-    # team_id the frontend fold drops every per-agent event, so a bare
-    # spawn_agent was only ever clickable-when-done and showed no tool log.
+    # Wrap the single agent in a one-member "team" so its live events fold
+    # into an agent row (the same view team_create gets) instead of the
+    # detail-less AgentCard summary. Without a team_id the frontend fold drops
+    # every per-agent event, so a bare spawn_agent was only ever
+    # clickable-when-done and showed no state.
     # Registering in _teams (with the run wrapped in a named task) is what makes
     # the card's Stop button real: POST /api/teams/{team_id}/stop cancels the
     # task exactly like a team_create fan-out.

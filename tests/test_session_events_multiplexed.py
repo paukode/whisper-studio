@@ -76,7 +76,7 @@ def test_unsubscribe_all_stops_delivery():
     assert asyncio.run(main()) is True
 
 
-def test_frame_helper_maps_background_events_and_skips_agent_progress():
+def test_frame_helper_maps_background_events_and_agent_progress():
     """Both channels render the same envelopes, so they cannot drift."""
     assert _session_event_frame({"type": "cron_event", "cronEvent": {"a": 1}}) == {
         "cron_event": {"a": 1}
@@ -97,9 +97,14 @@ def test_frame_helper_maps_background_events_and_skips_agent_progress():
     assert _session_event_frame({"type": "session_message", "sessionMessage": {"a": 1}}) == {
         "session_message": {"a": 1}
     }
-    # Agent runtime progress rides the chat SSE while a turn is in flight and
-    # must stay skipped here so rows are not rendered twice.
-    assert _session_event_frame({"type": "agent_progress", "event": {}}) is None
+    # Agent runtime progress (untyped, server/agents/runtime.py _emit) feeds
+    # the agent pane from here, whichever channel the run publishes on. The
+    # chat stream folds the same events into the turn's agent rows; the two
+    # frames have two consumers, so nothing renders twice.
+    progress = {"agent_id": "a1", "phase": "tool_call", "seq": 4, "tool_name": "ws_grep"}
+    assert _session_event_frame(progress) == {"agent_progress": progress}
+    # Scaffold events carry no agent id and nothing here shows them.
+    assert _session_event_frame({"phase": "team_started", "team_id": "t1"}) is None
     assert _session_event_frame({"type": "workflow_event"}) is None
 
 

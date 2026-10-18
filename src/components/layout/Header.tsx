@@ -8,6 +8,7 @@ import { useBackgroundTaskStore } from '@/stores/backgroundTaskStore';
 import { recordingController } from '@/services/recordingController';
 import { CaptureSourceMenu } from '@/components/layout/CaptureSourceMenu';
 import { BackgroundTasksPanel } from '@/components/tasks/BackgroundTasksPanel';
+import { CheckIcon, ChevronIcon } from '@/components/common/icons';
 import { NotificationsBell } from '@/components/layout/NotificationsBell';
 import { useTheme } from '@/providers/ThemeProvider';
 import type { ThemeKey } from '@/types/theme';
@@ -55,8 +56,11 @@ export const Header: React.FC = () => {
   const wsConnected = useRecordingStore((s) => s.isConnected);
   const segments = useActiveTranscriptionStore((s) => s.segments);
   const runningTaskCount = useBackgroundTaskStore((s) => s.runningCount);
+  const backgroundTasks = useBackgroundTaskStore((s) => s.tasks);
   const taskPanelOpen = useBackgroundTaskStore((s) => s.panelOpen);
   const setTaskPanelOpen = useBackgroundTaskStore((s) => s.setPanelOpen);
+  // Rows the list holds: running tasks plus the finished ones still lingering.
+  const taskRowCount = Object.keys(backgroundTasks).length;
   const { themeKey, setTheme, themes } = useTheme();
   const voiceStatus = useVoiceStore((s) => s.status);
   const { elapsed: voiceElapsed } = useVoiceClock();
@@ -275,20 +279,24 @@ export const Header: React.FC = () => {
           <span id="statusText">{wsConnected ? 'Connected' : 'Ready'}</span>
         </span>
 
-        {/* Background-task pill: only rendered while something is actually
-          * running, so the header stays quiet in the common idle case. Click
-          * opens the cross-session what's-running panel. */}
-        {runningTaskCount > 0 && (
+        {/* Background-task pill: the one place running work shows. Rendered
+          * while the list has rows, so the header stays quiet when idle; it
+          * turns quiet itself ("n done") while only finished rows linger.
+          * Click opens the cross-session task list under it. */}
+        {taskRowCount > 0 && (
           <button
-            className="btn bg-tasks-pill"
+            className={`bg-tasks-pill${runningTaskCount === 0 ? ' bg-tasks-pill-done' : ''}`}
             id="bgTasksPill"
             type="button"
-            title="Background tasks running — click to view"
+            title={runningTaskCount > 0 ? 'Background tasks running' : 'Background tasks just finished'}
             onClick={() => setTaskPanelOpen(!taskPanelOpen)}
             aria-expanded={taskPanelOpen}
           >
-            <span className="pulse-dot"></span>
-            {runningTaskCount} task{runningTaskCount === 1 ? '' : 's'}
+            {runningTaskCount > 0 ? <span className="pulse-dot"></span> : <CheckIcon />}
+            {runningTaskCount > 0
+              ? `${runningTaskCount} task${runningTaskCount === 1 ? '' : 's'}`
+              : `${taskRowCount} done`}
+            {taskPanelOpen && <ChevronIcon direction="up" />}
           </button>
         )}
         <BackgroundTasksPanel />

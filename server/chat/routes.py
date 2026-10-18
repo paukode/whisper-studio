@@ -952,20 +952,12 @@ async def generate_title_endpoint(request: Request):
 
 @router.post("/api/teams/{team_id}/stop")
 async def stop_team_endpoint(team_id: str):
-    """Cancel a running team_create fan-out. The gather task cancellation
-    propagates into every member's run_agent, which publishes a per-agent
-    "stopped" event (flipping its card row) before re-raising; the tool then
-    returns an honest "stopped by user" summary to the model."""
-    from server.agent_tools import _teams
+    """Cancel a running team_create fan-out or spawn_agent run (ESC and the
+    session Stop reach here); see server.agent_tools.teams.stop_team."""
+    from server.agent_tools.teams import stop_team
 
-    team = _teams.get(team_id)
-    task = team.get("task") if team else None
-    if task is None or task.done():
+    if not stop_team(team_id):
         return {"stopped": False, "reason": "no running team with that id"}
-    # Flag first, then cancel: execute_team_create distinguishes a user stop
-    # from an outer-turn cancellation by this flag, not by future state.
-    team["stop_requested"] = True
-    task.cancel()
     return {"stopped": True, "team_id": team_id}
 
 
@@ -973,8 +965,9 @@ async def stop_team_endpoint(team_id: str):
 async def subagent_stream_endpoint(request: Request):
     """Run a `/subagent` task through the full agent runtime (tool loop + all
     enabled tools, including MCP browser tools) in the background, streaming
-    live progress as ``team_progress`` SSE frames that the frontend renders in
-    a TeamReportCard. Non-blocking: the composer stays open while it runs.
+    live progress as ``team_progress`` SSE frames that the frontend folds into
+    the agent row (its full feed opens in the dock's agent pane).
+    Non-blocking: the composer stays open while it runs.
 
     Progress is published on a PRIVATE event channel so a concurrent /api/chat
     turn (which drains the session channel) never absorbs these events.
@@ -1020,8 +1013,9 @@ async def subagent_stream_endpoint(request: Request):
     async def _stream():
         queue = _agent_event_bus.subscribe(event_channel)
         # Register in the unified task registry so UI-launched subagents show
-        # in the global background-tasks panel (no task_event emission — this
-        # stream already delivers its own completion frame).
+        # in the header's task list (no task_event emission: this stream
+        # already delivers its own completion frame). The run below takes this
+        # id as its agent id, so its journal and this row are one record.
         from server.tasks import registry as _task_registry
 
         registry_task_id = _task_registry.create_task(
@@ -1065,6 +1059,7 @@ async def subagent_stream_endpoint(request: Request):
                     # passing nothing, which on the Anthropic path means no
                     # thinking block.
                     effort_label=effort_for_model(model_key, body.get("effort_level")),
+                    agent_id=registry_task_id,
                 ),
             )
         )

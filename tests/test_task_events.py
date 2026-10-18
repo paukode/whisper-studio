@@ -1,4 +1,5 @@
-"""Session-event service: persist + publish, and task-event payload shape."""
+"""Session-event service: persist + publish for chat rows, publish only for
+task events, and the task-event payload shape."""
 
 import asyncio
 import json
@@ -63,7 +64,7 @@ def _task_row(sid: str, **over) -> dict:
     return row
 
 
-def test_emit_task_event_persists_row_and_publishes(temp_sessions_db, monkeypatch):
+def test_emit_task_event_publishes_live_and_writes_no_chat_row(temp_sessions_db, monkeypatch):
     sid = str(uuid.uuid4())
     _seed_session(sid)
 
@@ -71,7 +72,6 @@ def test_emit_task_event_persists_row_and_publishes(temp_sessions_db, monkeypatc
     from server.agents import event_bus as bus_mod
 
     monkeypatch.setattr(bus_mod.event_bus, "publish", lambda s, ev: published.append((s, ev)))
-    # emit_session_event imports the singleton by module path; patch there too.
     _run_with_thread_loop(
         monkeypatch,
         lambda: task_events.emit_task_event(sid, "task_completed", _task_row(sid)),
@@ -91,16 +91,22 @@ def test_emit_task_event_persists_row_and_publishes(temp_sessions_db, monkeypatc
     assert payload["duration_ms"] == 2000
     assert payload["result_tail"] == "all done"
 
-    # Persisted chat row matches the frontend ChatMessage shape.
+    # The registry row is the record; the chat carries nothing for it.
     with S._get_conn() as conn:
         row = conn.execute("SELECT chat_history FROM sessions WHERE id = ?", (sid,)).fetchone()
-    history = json.loads(row["chat_history"])
-    task_rows = [m for m in history if m.get("role") == "task_event"]
-    assert len(task_rows) == 1
-    persisted = task_rows[0]
-    assert persisted["content"] == ""
-    assert persisted["timestamp"] == persisted["taskEvent"]["timestamp"]
-    assert persisted["taskEvent"]["event_type"] == "task_completed"
+    assert json.loads(row["chat_history"]) == []
+
+
+def test_emit_task_event_without_a_session_reaches_the_app_channel(monkeypatch):
+    """A task no session owns still updates the header's list: it goes out on
+    the app-wide channel (empty session id), like mcp_changed."""
+    published: list = []
+    from server.agents import event_bus as bus_mod
+
+    monkeypatch.setattr(bus_mod.event_bus, "publish", lambda s, ev: published.append((s, ev)))
+    task_events.emit_task_event("", "task_started", _task_row("", status="running"))
+    assert published == [("", published[0][1])]
+    assert published[0][1]["taskEvent"]["event_type"] == "task_started"
 
 
 def test_emit_task_event_rejects_unknown_type():
@@ -118,30 +124,14 @@ def test_emit_session_event_skips_empty_session(monkeypatch):
     assert called == []
 
 
-def test_task_event_rows_are_ui_only():
-    """task_event must never leak into the model-facing history."""
-    history = [
-        {"role": "user", "content": "hi"},
-        {"role": "task_event", "content": "", "taskEvent": {"event_type": "task_completed"}},
-        {"role": "assistant", "content": "hello"},
-    ]
-    visible = S.visible_chat_history(history)
-    assert [m["role"] for m in visible] == ["user", "assistant"]
-
-
-def test_result_tail_truncated(temp_sessions_db, monkeypatch):
-    sid = str(uuid.uuid4())
-    _seed_session(sid)
+def test_result_tail_truncated(monkeypatch):
     published: list = []
     from server.agents import event_bus as bus_mod
 
     monkeypatch.setattr(bus_mod.event_bus, "publish", lambda s, ev: published.append(ev))
     big = "x" * (task_events.RESULT_TAIL_MAX * 3)
-    _run_with_thread_loop(
-        monkeypatch,
-        lambda: task_events.emit_task_event(
-            sid, "task_failed", _task_row(sid, status="failed", result_text=big, exit_code=1)
-        ),
+    task_events.emit_task_event(
+        "sid", "task_failed", _task_row("sid", status="failed", result_text=big, exit_code=1)
     )
     payload = published[0]["taskEvent"]
     assert len(payload["result_tail"]) == task_events.RESULT_TAIL_MAX

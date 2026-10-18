@@ -1,14 +1,14 @@
 /**
  * Inline card for a launched/completed workflow run (WS-D). Subscribes to the
- * run's SSE stream for live phase/agent/cost plus each sub-agent's live event
- * log (text / tool_call / tool_result), rendered as expandable per-agent rows
- * via the shared AgentRow. Offers Stop while running and Refresh when terminal.
+ * run's SSE stream for live phase/agent/cost plus each sub-agent's state,
+ * rendered as the shared agent rows (Open puts an agent's full feed in the
+ * dock). Offers Stop while running and Refresh when terminal.
  */
 import React, { useEffect } from 'react';
 import { getRun, stopRun, subscribeRun } from '@/api/workflows';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useWorkflowStore } from '@/stores/workflowStore';
-import { AgentRow } from '@/components/chat/TeamReportCard';
+import { AgentRow } from '@/components/chat/AgentRows';
 
 const STATUS_COLOR: Record<string, string> = {
   running: 'var(--accent-warn, #b8860b)',

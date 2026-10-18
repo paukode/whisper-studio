@@ -5,7 +5,7 @@ import { stepsToToolUse } from '@/services/voiceEvents';
 import { voiceController } from '@/services/voiceController';
 import { ActivityRow } from '@/components/chat/ActivityRow';
 import { ACTIVITY_MIN_RUN, AgentCard, groupAgentTools, groupForActivity, isActivityEntry, isTasksEntry } from '@/components/chat/AgentCard';
-import { TeamReportCard } from '@/components/chat/TeamReportCard';
+import { TeamAgentRows } from '@/components/chat/AgentRows';
 import { findMatchingTeamReports } from '@/hooks/chatStream/teamProgress';
 import { TaskCard } from '@/components/chat/TaskCard';
 
@@ -13,7 +13,7 @@ import { TaskCard } from '@/components/chat/TaskCard';
  * The assistant bubble for what is happening in voice mode right now: the
  * words Sonic is about to say (the preview, kept until its confirmed copy is
  * committed once the speech has ended), the delegated runs' tool activity and
- * agent cards, and a request card when a run needs the user.
+ * agent rows, and a request card when a run needs the user.
  *
  * Delegated runs outlive the conversation: after the user hangs up, their
  * steps and cards stay here until each run's written answer is committed.
@@ -96,8 +96,8 @@ export const VoiceLiveMessage: React.FC = () => {
 };
 
 /** The delegated runs' activity, rendered exactly like a streaming chat turn:
- *  agent groups become the rich per-agent cards when their reports are known,
- *  everything else collapses into the Activity row. */
+ *  agent groups become agent rows when their reports are known, everything
+ *  else collapses into the Activity row. */
 const VoiceRunActivity: React.FC<{
   tools: ReturnType<typeof stepsToToolUse>;
   teamReports: ReturnType<typeof useVoiceStore.getState>['teamReports'];
@@ -120,7 +120,7 @@ const VoiceRunActivity: React.FC<{
         if (Array.isArray(entry)) {
           const reports = findMatchingTeamReports(entry, teamReports);
           if (reports.length > 0) {
-            return reports.map((r) => <TeamReportCard key={`team-${r.team_id}-${idx}`} report={r} />);
+            return reports.map((r) => <TeamAgentRows key={`team-${r.team_id}-${idx}`} report={r} />);
           }
           return <AgentCard key={`agent-group-${idx}`} tools={entry} />;
         }
@@ -129,7 +129,7 @@ const VoiceRunActivity: React.FC<{
         return <ActivityRow key={`single-${idx}`} tools={[entry]} />;
       })}
       {orphanReports.map((r) => (
-        <TeamReportCard key={`live-team-${r.team_id}`} report={r} />
+        <TeamAgentRows key={`live-team-${r.team_id}`} report={r} />
       ))}
     </div>
   );

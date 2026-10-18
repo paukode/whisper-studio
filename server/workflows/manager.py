@@ -43,9 +43,9 @@ def _register_task(run_id: str, name: str, session_id: str, model_key: str) -> s
     The registry has allowed ``kind="workflow"`` since it was written and
     completion_inject already reports finished workflow tasks back to the model
     on the next turn — but nothing ever created such a row, so both were dead
-    code and a detached run notified nobody: no Background Tasks entry, no chat
-    card, no next-turn report. Best-effort by design; a registry hiccup must
-    never stop the run itself.
+    code and a detached run notified nobody: no row in the header's task list,
+    no next-turn report. Best-effort by design; a registry hiccup must never
+    stop the run itself.
     """
     try:
         from server.tasks import registry
@@ -87,7 +87,7 @@ def _finish_task(run_id: str, status: str, outcome: dict) -> None:
 
 
 def _task_result_text(status: str, outcome: dict) -> str:
-    """What the user's task card and the model's next-turn injection read.
+    """What the user's task list and the model's next-turn injection read.
     Leads with the headline numbers, then the script's own return value."""
     head = (
         f"Workflow {status}: {outcome.get('agents_spawned', 0)} agent(s), "

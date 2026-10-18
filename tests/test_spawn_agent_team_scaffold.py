@@ -147,8 +147,8 @@ def test_spawn_agent_preflight_failure_publishes_failed_row(monkeypatch):
 
 
 def test_spawn_agent_detach_does_not_scaffold(monkeypatch):
-    # Detached runs stream to their own private channel (task-events) and render
-    # as a background-task card, not a team report — no team scaffold here.
+    # Detached runs stream to their own private channel (task-events) and show
+    # in the header's task list, not as a team report — no team scaffold here.
     bus = _Bus()
     monkeypatch.setattr("server.agents.event_bus.event_bus", bus)
     monkeypatch.setattr("server.tasks.agents.start_detached_agent", lambda task, **k: "task-xyz")

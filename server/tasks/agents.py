@@ -4,7 +4,8 @@
 loop: the caller gets a task_id immediately, progress events stream to a
 private channel (mirrored into the owning session as ``team_progress`` and
 appended to the task's output file so ``task_output`` works uniformly across
-kinds), and completion lands in the session as a ``task_event`` card.
+kinds), and completion is announced as a ``task_event`` to the header's task
+list and delivered to the session as an agent report row.
 """
 
 import asyncio
@@ -81,9 +82,6 @@ def start_detached_agent(
     )
     _running[task_id] = aio_task
     aio_task.add_done_callback(lambda _t: _running.pop(task_id, None))
-    started = registry.get_task(task_id)
-    if started:
-        emit_task_event(session_id, "task_started", started)
     return task_id
 
 
@@ -164,10 +162,11 @@ async def _run_detached(
             pump.cancel()
         event_bus.unsubscribe(channel, queue)
         # The runtime's journal normally closes the registry row first (with
-        # the report); this call is then a no-op and the row is re-read.
+        # the report) and announces that; this closes and announces it only
+        # when the run never got a journal (a failure before it opened).
         finished = registry.finish_task(
             task_id, status=status, exit_code=None, result_text=result_text
-        ) or registry.get_task(task_id)
+        )
         if finished:
             event_name = {
                 "completed": "task_completed",
@@ -268,9 +267,6 @@ def resume_agent(agent_id: str, message: str, *, session_id: str = "") -> str:
     )
     _running[agent_id] = aio_task
     aio_task.add_done_callback(lambda _t: _running.pop(agent_id, None))
-    started = registry.get_task(agent_id)
-    if started:
-        emit_task_event(sid, "task_started", started)
     return agent_id
 
 
@@ -339,9 +335,17 @@ def _event_line(ev: dict) -> str:
 
 
 def cancel_task(task_id: str) -> bool:
-    """Cancel a running detached agent/workflow coroutine."""
+    """Stop a running agent: a detached, resumed or /subagent run through its
+    coroutine; an agent spawned inside a chat turn through the team that owns
+    it (server/agent_tools/teams.py), the same cancel the chat's Stop sends."""
     aio_task = _running.get(task_id)
-    if aio_task is None or aio_task.done():
+    if aio_task is not None and not aio_task.done():
+        aio_task.cancel()
+        return True
+    task = registry.get_task(task_id)
+    team_id = str(((task or {}).get("meta") or {}).get("team_id") or "")
+    if not team_id:
         return False
-    aio_task.cancel()
-    return True
+    from server.agent_tools.teams import stop_team
+
+    return stop_team(team_id)

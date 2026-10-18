@@ -81,9 +81,8 @@
         Python-callable only (no HTTP route) and adds <code>output_schema</code> and
         <code>ephemeral</code> options.</li>
       <li><b><code>visible_chat_history</code> filter.</b> Before building the Bedrock messages array,
-        non-prompt rows (<code>cron_event</code> and <code>task_event</code> lifecycle rows) are
-        stripped, so they persist on disk and render in the chat without inflating the prompt or the
-        token bill. Three roles are translated rather than dropped: <code>session_message</code> (a
+        non-prompt rows (<code>cron_event</code>) are stripped, so they persist on disk and render in
+        the chat without inflating the prompt or the token bill. Three roles are translated rather than dropped: <code>session_message</code> (a
         message pushed in from another session) and <code>agent_report</code> (agent work that
         finished with no live turn) both become user turns, and <code>agent_answer</code> becomes the
         assistant's own previous message. Each of those roles carries a per-session row cap.</li>
