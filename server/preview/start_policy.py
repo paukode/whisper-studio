@@ -21,8 +21,9 @@ here once:
 
   - ``server.security.permissions.approval_floor`` checks the hard floors
     against the command the config resolves to and the pinned one
-    (``floor_commands``), so a launch.json entry that runs an rm-class command,
-    also inside ``sh -c``, still asks.
+    (``floor_commands``), so a launch.json entry that deletes outside the
+    workspace, also inside ``sh -c``, still asks; one that deletes only inside
+    it (``rm -rf dist`` before a build) is an ordinary command.
   - ``server.security.permissions.resolve_static_decision`` lets a trusted
     named config stand in for the mode's own default (``starts_without_approval``),
     after the floors, bypass, session approvals and custom rules. The global

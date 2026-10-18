@@ -30,7 +30,17 @@ category_modes (optional, in permissions.json):
   to the global mode. Two exceptions always ask no matter what a category
   mode (or bypassPermissions, or a blanket session approval) says — see
   resolve_static_decision below: "github-destructive", and any command
-  input that is rm or a close cousin (is_rm_command).
+  input that deletes outside the connected workspace and the app's own
+  folders (server/security/delete_scope.py).
+
+The permission contract behind the order below: inside the connected
+workspace, bypassPermissions does anything with no card; reading never asks
+anywhere on the machine; a change outside the workspace asks even in bypass
+(a save to a path outside it, reach into a folder outside it, a command that
+deletes outside it, a command asking to write outside the sandbox); a
+destructive remote action always asks; the app's own folder (~/.whisper) is
+written without asking in every mode but plan, and a delete there follows the
+mode, silent in bypass only.
 
 A preview_start that names a .whisper/launch.json config whose command a person
 has approved once starts in every mode (server/preview/start_policy.py); a new
@@ -270,13 +280,18 @@ def approval_floor(tool_name: str, tool_input: dict, category: str) -> str | Non
     if category == "github-destructive":
         return "github-destructive"
 
-    # rm (and its close cousins — see is_rm_command): the same absolute floor
+    # rm (and its close cousins — see delete_sites) reaching outside the
+    # connected workspace and the app's own folders: the same absolute floor
     # as github-destructive, for the same reason — no bypass mode, category
     # override, trusted-skill flag, blanket "allow all commands" session
     # approval, custom rule, or dontAsk/acceptEdits default may let it run
-    # without a real human clicking Approve. Checked against whatever shell
-    # command the tool input actually carries, so it applies uniformly to
-    # ws_run_command, terminal_run, and any future command-shaped tool
+    # without a real human clicking Approve. A delete that stays inside the
+    # workspace is an ordinary command and follows the mode (the user's rule:
+    # inside the workspace, bypass means bypass); the roots and the working
+    # directory come from the call (_delete_roots), and an operand the
+    # command line cannot resolve counts as outside. Checked against whatever
+    # shell command the tool input actually carries, so it applies uniformly
+    # to ws_run_command, terminal_run, and any future command-shaped tool
     # without needing its own category or tool-name special case. A
     # preview_start that names a launch config carries no command of its own,
     # so the one .whisper/launch.json resolves it to, and the one pinned into
@@ -284,12 +299,17 @@ def approval_floor(tool_name: str, tool_input: dict, category: str) -> str | Non
     # may also carry).
     from server.preview.start_policy import floor_commands
 
-    for command in (tool_input.get("command"), *floor_commands(tool_name, tool_input)):
-        if isinstance(command, str) and command.strip():
-            from server.security.command_validator import is_rm_command
+    commands = [
+        c
+        for c in (tool_input.get("command"), *floor_commands(tool_name, tool_input))
+        if isinstance(c, str) and c.strip()
+    ]
+    if commands:
+        from server.security.delete_scope import deletes_beyond
 
-            if is_rm_command(command):
-                return "rm"
+        cwd, roots = _delete_roots(tool_input)
+        if any(deletes_beyond(command, cwd, roots) for command in commands):
+            return "rm"
 
     # Sandbox escalation (sandbox_permissions="danger-full-access"): the same
     # absolute floor as rm. The parameter's entire meaning is "run this ONE
@@ -318,6 +338,30 @@ def approval_floor(tool_name: str, tool_input: dict, category: str) -> str | Non
         if mcp_manager.get_tool_approval_tier_for_tool_name(tool_name) == "approve":
             return "mcp-approve"
     return None
+
+
+def _delete_roots(tool_input: dict) -> tuple[str | None, list[str]]:
+    """The working directory a command-shaped call deletes relative to, and
+    the roots a delete may stay inside without the rm floor: the workspace the
+    call is bound to (the root stamped on a workspace-bound card, else the
+    connected one) and the app's own folders (server.infrastructure.paths.
+    app_storage_roots). A ``cwd`` in the input is the command's working
+    directory, resolved against the workspace when relative; without one the
+    command runs in the workspace. No workspace means no working directory for
+    a relative operand, so such a delete counts as outside."""
+    from server.infrastructure.paths import app_storage_roots
+    from server.workspace.state import get_workspace_path
+
+    ws = tool_input.get("workspace_root") or get_workspace_path()
+    roots = ([ws] if ws else []) + list(app_storage_roots())
+    cwd = tool_input.get("cwd")
+    if isinstance(cwd, str) and cwd.strip():
+        cwd = os.path.expanduser(cwd.strip())
+        if not os.path.isabs(cwd):
+            cwd = os.path.join(ws, cwd) if ws else None
+    else:
+        cwd = ws
+    return cwd, roots
 
 
 def targets_app_storage(tool_input: dict) -> bool:

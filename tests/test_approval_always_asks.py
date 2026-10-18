@@ -2,7 +2,8 @@
 
 The card's "Yes, all <category>" and "Block <category>" remember a choice
 for the session, and the server applies that memory (session_approvals)
-only after its hard floors: a destructive GitHub call, an rm-class command,
+only after its hard floors: a destructive GitHub call, a command that deletes
+outside the workspace (here: with no workspace connected, every delete is),
 a sandbox escalation, an MCP server marked approve. For a floor request the
 two buttons would be silent no-ops, so the approval_request frame carries
 ``always_asks`` and the card drops them. The flag and the decision come
@@ -33,6 +34,8 @@ def _no_rules(monkeypatch):
         lambda: {"mode": "default", "rules": []},
     )
     monkeypatch.setattr("server.tool_executor.explain_permission", AsyncMock(return_value=None))
+    # No workspace: a relative delete has nowhere to be inside of.
+    monkeypatch.setattr("server.workspace.state.get_workspace_path", lambda: None)
 
 
 class _State:
