@@ -10,16 +10,17 @@ import { useCIStore } from '@/stores/ciStore';
 import { useSessionStore } from '@/stores/sessionStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { getChatStore } from '@/stores/sessionRuntimes';
+import { ICON } from '@/components/chat/activityIcons';
 
 const COLOR: Record<string, string> = {
-  success: 'var(--accent-ok, #2e7d32)',
-  completed: 'var(--accent-ok, #2e7d32)',
+  success: 'var(--success)',
+  completed: 'var(--success)',
   failure: 'var(--accent-record)',
   timed_out: 'var(--accent-record)',
   startup_failure: 'var(--accent-record)',
-  in_progress: 'var(--accent-warn, #b8860b)',
-  queued: 'var(--accent-warn, #b8860b)',
-  watching: 'var(--accent-warn, #b8860b)',
+  in_progress: 'var(--risk-warn)',
+  queued: 'var(--risk-warn)',
+  watching: 'var(--risk-warn)',
 };
 
 export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ taskId, branch }) => {
@@ -53,7 +54,7 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
         }
       })
       .catch(() => {
-        // No task row (server restart / pruned) — fall back to the branch's
+        // No task row (server restart / pruned): fall back to the branch's
         // latest-run snapshot, which is approximate but better than nothing.
         if (!fresh() || !branch) return;
         void ciStatus(branch)
@@ -139,7 +140,7 @@ export const CIStatusCard: React.FC<{ taskId: string; branch?: string }> = ({ ta
   return (
     <div className="workflow-card ci-card">
       <div className="workflow-card-head">
-        <span className="workflow-card-icon" aria-hidden="true">🧪</span>
+        <span className="workflow-card-icon" aria-hidden="true">{ICON.pulse}</span>
         <span className="workflow-card-title">CI · {w?.branch || branch || 'branch'}</span>
         <span className="workflow-card-badge" style={{ color: COLOR[label] ?? 'inherit' }}>{label}</span>
       </div>

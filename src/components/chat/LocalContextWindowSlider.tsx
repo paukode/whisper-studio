@@ -5,6 +5,7 @@ import { useDismiss } from '@/hooks/useDismiss';
 import { useTheme } from '@/providers/ThemeProvider';
 import { loadLocalModel } from '@/api/localModel';
 import { StardustSlider, parseColor, type RGB } from '@/components/chat/StardustSlider';
+import { ICON } from '@/components/chat/activityIcons';
 
 interface LocalContextWindowSliderProps {
   /** Called when the popover opens so the parent can close its other toolbar
@@ -52,7 +53,7 @@ const nearestMarkIndex = (value: number): number =>
 const recMem = (ctx: number): string =>
   RECOMMENDED_MEMORY[ctx] ?? RECOMMENDED_MEMORY[MARKS[nearestMarkIndex(ctx)]];
 
-/** Note shown under the slider. Above 16K it becomes a memory warning — the
+/** Note shown under the slider. Above 16K it becomes a memory warning: the
  *  user keeps control, but the recommended memory is spelled out (no
  *  machine-specific reference). */
 function memoryNote(ctx: number): { text: string; warn: boolean } {
@@ -64,7 +65,7 @@ function memoryNote(ctx: number): { text: string; warn: boolean } {
     };
   }
   return {
-    text: `⚠ Recommended memory: ${rec} total. If your machine has less, the model may fail to load or run slowly. Changing this reloads the model.`,
+    text: `Recommended memory: ${rec} total. If your machine has less, the model may fail to load or run slowly. Changing this reloads the model.`,
     warn: true,
   };
 }
@@ -172,7 +173,7 @@ export const LocalContextWindowSlider: React.FC<LocalContextWindowSliderProps> =
         type="button"
         className={`ctx-badge${note.warn ? ' ctx-badge-warn' : ''}`}
         id="ctxBadge"
-        title={`Context window: ${fmt(ctx)} tokens — click to change (reloads the model)`}
+        title={`Context window: ${fmt(ctx)} tokens. Click to change (reloads the model)`}
         onClick={() => {
           if (open) {
             void commit(); // closing via the badge commits too
@@ -215,7 +216,7 @@ export const LocalContextWindowSlider: React.FC<LocalContextWindowSliderProps> =
           ))}
         </div>
         <div className={`effort-pop-note${note.warn ? ' ctx-pop-warn' : ''}`}>
-          {busy ? 'Reloading the model at the new size…' : note.text}
+          {busy ? 'Reloading the model at the new size…' : <>{note.warn && <>{ICON.alert}{' '}</>}{note.text}</>}
         </div>
       </div>
     </div>

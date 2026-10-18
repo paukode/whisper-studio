@@ -24,10 +24,6 @@
     --accent-record: #e5453a;
     --accent-record-dim: rgba(229,69,58,0.12);
     --accent-live: #34c77b;
-    /* Status accents (goal verdicts, workflow run state). Base tokens — themes
-       inherit these unless they override; used in CSS and JSX inline styles. */
-    --accent-ok: #2e7d32;
-    --accent-warn: #b8860b;
     --accent-send: #e2a336;
     --accent-send-hover: #d4922a;
     --chat-user-bg: #2c2924;
@@ -428,18 +424,21 @@
     --z-toast: 2000;
     --z-ctx: 9999;
 
-    /* Semantic status colors — resolve through theme accents */
+    /* Semantic status colors, resolved through theme accents. Status marks
+       (goal verdicts, CI and workflow run state) use these: --success for
+       done, --risk-warn for still running, --danger for failed. */
     --success: var(--accent-live);
     --warning: var(--accent);
     --danger: var(--accent-record);
     --error: var(--accent-record);
     --info: #3b82f6;
 
-    /* Risk tints for permission modes. A true orange, deliberately NOT
-       --warning: that aliases to the gold brand accent and would not read
-       as caution next to it. Light themes override below (this default is
-       tuned for dark surfaces); danger reuses --danger/--accent-record-dim
-       so the daltonized red-to-blue remap carries through. */
+    /* Risk tints for permission modes and the caution of a status mark.
+       A true orange, deliberately NOT --warning: that aliases to the gold
+       brand accent and would not read as caution next to it. Light themes
+       override below (this default is tuned for dark surfaces); danger
+       reuses --danger/--accent-record-dim so the daltonized red-to-blue
+       remap carries through. */
     --risk-warn: #d97706;
     --risk-warn-dim: rgba(217, 119, 6, 0.12);
 

@@ -15,7 +15,7 @@ interface PreviewScreenshotCardProps {
 
 const noResize = () => {};
 
-/** Renders a preview_screenshot result as an actual image — the same
+/** Renders a preview_screenshot result as an actual image: the same
  *  screenshot the model received as an image content block, not a wall of
  *  base64 text in a <pre>. At its natural size a tall shot is capped at
  *  480px; once resized it shows whole at the width the user chose. */
@@ -39,7 +39,7 @@ export const PreviewScreenshotCard: React.FC<PreviewScreenshotCardProps> = ({
       style={{
         position: 'relative',
         border: '1px solid var(--border)',
-        borderRadius: '8px',
+        borderRadius: 'var(--radius-sm)',
         overflow: 'hidden',
         ...mediaWidthStyle(size),
       }}

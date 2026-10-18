@@ -1,5 +1,6 @@
 import React from 'react';
 import { useBackdropDismiss } from '@/hooks/useBackdropDismiss';
+import { ICON } from '@/components/chat/activityIcons';
 
 export interface BtwPopupProps {
   question: string;
@@ -58,13 +59,13 @@ export const BtwPopup: React.FC<BtwPopupProps> = ({ question, answer, onClose })
             border: 'none',
             color: 'var(--text-muted)',
             cursor: 'pointer',
-            fontSize: 18,
-            lineHeight: 1,
-            padding: '2px 6px',
+            display: 'inline-flex',
+            alignItems: 'center',
+            padding: '4px 6px',
             borderRadius: 4,
           }}
         >
-          ×
+          {ICON.x}
         </button>
         <div style={{ fontSize: '0.8em', color: 'var(--text-muted)', marginBottom: 8 }}>
           /btw {question}

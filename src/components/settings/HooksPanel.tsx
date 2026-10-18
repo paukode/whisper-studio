@@ -191,7 +191,7 @@ export const HooksPanel: React.FC = () => {
       </p>
 
       {data?.project?.status === 'pending_approval' && (
-        <div className="settings-editor" style={{ borderColor: 'var(--accent-warn, #b8860b)' }}>
+        <div className="settings-editor" style={{ borderColor: 'var(--risk-warn)' }}>
           <div className="settings-item-name">
             Project hooks need review ({projectPendingCount})
           </div>
@@ -361,7 +361,7 @@ export const HooksPanel: React.FC = () => {
               <div className="settings-item" style={{ marginTop: 8, flexDirection: 'column', alignItems: 'stretch' }}>
                 <div className="settings-item-name">
                   Test → exit {test.exit_code} ·{' '}
-                  <span style={{ color: test.decision === 'deny' ? 'var(--accent-record)' : test.decision === 'error' ? 'var(--accent-warn, #b8860b)' : 'var(--accent-ok, #2e7d32)' }}>
+                  <span style={{ color: test.decision === 'deny' ? 'var(--accent-record)' : test.decision === 'error' ? 'var(--risk-warn)' : 'var(--success)' }}>
                     {test.decision}
                   </span>
                   {test.reason ? ` — ${test.reason}` : ''}

@@ -9,7 +9,7 @@
 .viz-card {
     position: relative;
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: var(--radius-sm);
     background: var(--bg-surface);
     margin: 10px 0;
     overflow: hidden;
@@ -43,7 +43,7 @@
     text-overflow: ellipsis;
 }
 
-/* Actions stay quiet until the card is hovered — the picture is the point. */
+/* Actions stay quiet until the card is hovered: the picture is the point. */
 .viz-card-actions {
     display: flex;
     gap: 4px;

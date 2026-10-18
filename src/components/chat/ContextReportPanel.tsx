@@ -1,11 +1,12 @@
 /**
- * `/doctor context` — what the model is actually being sent, and what is
+ * `/doctor context`: what the model is actually being sent, and what is
  * wasteful about it.
  *
  * Backed by GET /api/doctor/context (server/context_report.py). Every row is a
  * cost paid on some cadence: a cached section is paid once per session, an
  * uncached one on every round of every turn, and a duplicated phrase twice over.
  */
+import { ICON } from './activityIcons';
 
 export interface ContextReport {
   workspace: string | null;
@@ -83,7 +84,7 @@ function Bar({ pct, cached }: { pct: number; cached: boolean }) {
           display: 'block',
           width: `${Math.max(2, Math.min(100, pct))}%`,
           height: '100%',
-          background: cached ? '#5dba6e' : '#ffa657',
+          background: cached ? 'var(--success)' : 'var(--risk-warn)',
         }}
       />
     </span>
@@ -99,7 +100,8 @@ export function ContextReportPanel({ report }: { report: ContextReport }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={CARD}>
         <div style={HEAD}>
-          <span>📏</span> System prompt: ~{totals.tokens_est} tokens, {totals.cached_pct}% cached
+          <span style={{ display: 'inline-flex', color: 'var(--text-muted)' }}>{ICON.ruler}</span>
+          System prompt: ~{totals.tokens_est} tokens, {totals.cached_pct}% cached
         </div>
         <div style={{ ...ROW, ...MUTED }}>
           <span>
@@ -122,8 +124,8 @@ export function ContextReportPanel({ report }: { report: ContextReport }) {
       {warnings.length > 0 && (
         <div style={CARD}>
           <div style={HEAD}>
-            <span style={{ color: '#ffa657' }}>⚠</span> {warnings.length} finding
-            {warnings.length === 1 ? '' : 's'}
+            <span style={{ display: 'inline-flex', color: 'var(--risk-warn)' }}>{ICON.alert}</span>
+            {warnings.length} finding{warnings.length === 1 ? '' : 's'}
           </div>
           {warnings.map((w, i) => (
             <div key={i} style={ROW}>
@@ -138,8 +140,10 @@ export function ContextReportPanel({ report }: { report: ContextReport }) {
           <div style={HEAD}>Duplicated between the prompt and a tool description</div>
           {duplication.map((d, i) => (
             <div key={i} style={{ ...ROW, flexDirection: 'column', gap: 3 }}>
-              <span style={{ fontWeight: 500 }}>
-                {d.section} ↔ {d.tool}{' '}
+              <span style={{ fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {d.section}
+                <span style={{ display: 'inline-flex', color: 'var(--text-muted)' }}>{ICON.arrowLeftRight}</span>
+                {d.tool}
                 <span style={MUTED}>({d.words} words)</span>
               </span>
               <span style={{ ...MUTED, fontFamily: 'var(--font-mono, monospace)' }}>{d.phrase}</span>
@@ -151,7 +155,8 @@ export function ContextReportPanel({ report }: { report: ContextReport }) {
       {missing.length > 0 && (
         <div style={CARD}>
           <div style={HEAD}>
-            <span style={{ color: '#e06060' }}>✗</span> Prompt names tools that do not exist
+            <span style={{ display: 'inline-flex', color: 'var(--danger)' }}>{ICON.x}</span>
+            Prompt names tools that do not exist
           </div>
           {missing.map((m, i) => (
             <div key={i} style={ROW}>
@@ -163,8 +168,9 @@ export function ContextReportPanel({ report }: { report: ContextReport }) {
       )}
 
       {warnings.length === 0 && duplication.length === 0 && missing.length === 0 && (
-        <div style={{ ...CARD, ...ROW, color: '#5dba6e' }}>
-          <span>✓ No duplication, no dead tool references, nothing stranded uncached.</span>
+        <div style={{ ...CARD, ...ROW, alignItems: 'center', color: 'var(--success)' }}>
+          <span style={{ display: 'inline-flex' }}>{ICON.check}</span>
+          <span>No duplication, no dead tool references, nothing stranded uncached.</span>
         </div>
       )}
     </div>
