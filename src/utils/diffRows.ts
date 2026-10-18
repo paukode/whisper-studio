@@ -46,8 +46,9 @@ export function toLines(text: string): string[] {
  * with the addition run that follows it so a replaced line sits opposite
  * its replacement.
  *
- * May throw DiffTooLargeError — the server only sends `full` within the
- * same bound, so that means the caller bypassed it.
+ * Throws DiffTooLargeError when the changed span is over MAX_DIFF_CELLS.
+ * The Git panel gets `full` only within that bound. A stored edit and the
+ * approval card can go over it, and their callers show a fallback.
  */
 export function rowsFromTexts(oldText: string, newText: string): DiffRow[] {
   const diff = computeLineDiffFromLines(toLines(oldText), toLines(newText));
@@ -155,7 +156,7 @@ function pairOps(ops: DiffHunkLine[]): DiffRow[] {
     }
 
     // git emits removals before additions, but the LCS backtrack can
-    // yield either order — collect whichever leads, then its counterpart,
+    // yield either order: collect whichever leads, then its counterpart,
     // so a replaced line still lands opposite its replacement.
     const dels: DiffHunkLine[] = [];
     const adds: DiffHunkLine[] = [];

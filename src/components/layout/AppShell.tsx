@@ -34,6 +34,7 @@ import { MemoryEditorModal } from '@/components/settings/MemoryEditorModal';
 import { MemoryViewerModal } from '@/components/settings/MemoryViewerModal';
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { BtwPopup } from '@/components/chat/BtwPopup';
+import { EditDiffViewer } from '@/components/chat/EditDiffViewer';
 import { DialogHost } from '@/components/common/Dialog';
 import { ModelModeNotice } from '@/components/common/ModelModeNotice';
 import { CommandPalette } from '@/components/common/CommandPalette';
@@ -434,6 +435,7 @@ const AppShell: React.FC = () => {
       <DialogHost />
       <ModelModeNotice />
       <CommandPalette />
+      <EditDiffViewer />
 
       {/* Reopen chip — a preview server is running but its live panel is closed. */}
       {liveSession && liveClosed && (

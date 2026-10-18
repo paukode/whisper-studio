@@ -18,6 +18,7 @@ import { dropRuntime, getChatStore, useRuntimeIndex } from '@/stores/sessionRunt
 import { useSessionStore } from '@/stores/sessionStore';
 import { killSessionStream } from '@/hooks/chatStream/streamControl';
 import { ApprovalBanner } from './ApprovalBanner';
+import { MAX_DIFF_CELLS } from '@/utils/computeLineDiff';
 
 const executeApproval = vi.fn();
 
@@ -180,5 +181,82 @@ describe('ApprovalBanner', () => {
     expect(getByText('✓ Yes, all cli')).toBeTruthy();
     expect(getByText('✕ Block cli')).toBeTruthy();
     expect(queryByText('This action always asks.')).toBeNull();
+  });
+});
+
+/** A write card: the diff preview draws the diff dialog's own grid. */
+function writeApproval(toolUseId: string, payload: Record<string, unknown>): PendingApproval {
+  return {
+    ...approval(toolUseId),
+    action: 'ws_write_file',
+    category: 'write',
+    preview: 'diff',
+    summary: `Write ${String(payload.path)}`,
+    payload,
+  };
+}
+
+const cells = (container: HTMLElement, kind: 'added' | 'removed') =>
+  Array.from(container.querySelectorAll(`.git-diff-code.${kind}`)).map((el) => el.textContent?.slice(1));
+
+describe('ApprovalBanner diff preview', () => {
+  beforeEach(() => {
+    for (const id of useRuntimeIndex.getState().liveIds) dropRuntime(id);
+    useSessionStore.setState({ currentSessionId: SID, liveSessions: {}, sessions: [] });
+  });
+
+  it('draws an edit in the shared unified grid under its path and counts', () => {
+    getChatStore(SID).getState().enqueueApproval(
+      writeApproval('tu_w', { path: 'a.txt', original: 'one\ntwo\nthree\n', content: 'one\nTWO\nthree\n' }),
+    );
+
+    const { container, getByText } = render(<ApprovalBanner />);
+
+    expect(container.querySelector('.git-diff-preview .git-diff-grid.unified')).toBeTruthy();
+    expect(cells(container, 'removed')).toEqual(['two']);
+    expect(cells(container, 'added')).toEqual(['TWO']);
+    expect(getByText('+1')).toBeTruthy();
+    expect(getByText('-1')).toBeTruthy();
+    // No dialog chrome inside the card.
+    expect(container.querySelector('.git-diff-header')).toBeNull();
+  });
+
+  it('draws a created file as all additions', () => {
+    getChatStore(SID).getState().enqueueApproval(
+      writeApproval('tu_new', { path: 'new.txt', content: 'a\nb\n' }),
+    );
+
+    const { container, getByText } = render(<ApprovalBanner />);
+
+    expect(cells(container, 'added')).toEqual(['a', 'b']);
+    expect(cells(container, 'removed')).toEqual([]);
+    expect(getByText('+2')).toBeTruthy();
+  });
+
+  it('says a write that changes nothing has no changes', () => {
+    const text = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join('\n');
+    getChatStore(SID).getState().enqueueApproval(
+      writeApproval('tu_same', { path: 'same.txt', original: text, content: text }),
+    );
+
+    const { container, getByText } = render(<ApprovalBanner />);
+
+    expect(getByText('No changes')).toBeTruthy();
+    expect(cells(container, 'added')).toEqual([]);
+    expect(cells(container, 'removed')).toEqual([]);
+  });
+
+  it('keeps the card answerable when the diff is too large: the new text shows instead', () => {
+    const n = Math.ceil(Math.sqrt(MAX_DIFF_CELLS)) + 10;
+    const side = (p: string) => Array.from({ length: n }, (_, i) => `${p}${i}`).join('\n');
+    getChatStore(SID).getState().enqueueApproval(
+      writeApproval('tu_big', { path: 'big.txt', original: side('l'), content: side('r') }),
+    );
+
+    const { container, getByText } = render(<ApprovalBanner />);
+
+    expect(container.querySelector('.git-diff-grid')).toBeNull();
+    expect(container.querySelector('pre')?.textContent?.startsWith('r0\nr1\n')).toBe(true);
+    expect(getByText('✓ Yes')).toBeTruthy();
   });
 });

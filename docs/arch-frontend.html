@@ -322,7 +322,11 @@
         line with a label that shows what the group did, for example <b>Read 3 files</b> or
         <b>ruff check failed</b>. A monospace tail shows the file names or the command, and chips
         show the diff, line, match, and exit counts. An expanded row shows one line for each call
-        with a file link, a diff pill, and an output toggle. <b>Expand all</b> shows each output, and
+        with a file link, a diff pill, and an output toggle. The diff pill opens the diff dialog of the
+        Git panel (<code class="path">src/components/git/DiffDialog.tsx</code>) through
+        <code class="path">src/components/chat/EditDiffViewer.tsx</code>. The dialog shows
+        the file before and after that call, from <code>GET /api/workspace/edits/{tool_use_id}</code>.
+        <b>Expand all</b> shows each output, and
         a row with an error is open at the start. Because the streaming view and the saved
         transcript use the same constant, <code>ACTIVITY_MIN_RUN</code>, the row does not move when
         the turn ends.</dd>

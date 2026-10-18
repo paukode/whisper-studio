@@ -54,6 +54,29 @@ export function sourceFileRawUrl(path: string): string {
   return `/api/workspace/source-file?path=${encodeURIComponent(path)}&raw=true`;
 }
 
+/** One edit the assistant made, kept under its tool call's id for the diff
+ *  dialog (server/workspace/edits.py). `original` and `modified` are the
+ *  file before and after the call; both are null and `stored` is false for
+ *  a text over the size cap or a dotenv or credential file. `added` and
+ *  `removed` are the counts the activity row shows (an estimate when
+ *  `approximate`); `at` is when the edit ran, in ISO 8601. */
+export interface EditRecord {
+  path: string;
+  original: string | null;
+  modified: string | null;
+  added: number | null;
+  removed: number | null;
+  approximate: boolean;
+  at: string;
+  stored: boolean;
+}
+
+/** The stored edit of one tool call. Rejects with the server's detail (an
+ *  ApiError with status 404) when nothing is kept for that id. */
+export function getEdit(toolUseId: string): Promise<EditRecord> {
+  return get<EditRecord>(`/api/workspace/edits/${encodeURIComponent(toolUseId)}`);
+}
+
 export function writeFile(path: string, content: string): Promise<void> {
   return post<void>('/api/workspace/write', { path, content });
 }

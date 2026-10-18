@@ -6,7 +6,7 @@ import {
   collapseUnchanged,
   type DiffRow,
 } from './diffRows';
-import { computeLineDiff, DiffTooLargeError, MAX_DIFF_CELLS } from './computeLineDiff';
+import { computeLineDiffFromLines, DiffTooLargeError, MAX_DIFF_CELLS } from './computeLineDiff';
 import type { DiffHunk } from '@/api/git';
 
 /** Compact row shape for readable assertions: kind + both line numbers. */
@@ -213,7 +213,7 @@ describe('collapseUnchanged', () => {
   });
 });
 
-describe('computeLineDiff guard', () => {
+describe('computeLineDiffFromLines guard', () => {
   it('throws rather than allocating an unbounded LCS table', () => {
     // Both sides must differ throughout: the guard measures the changed
     // span, and a shared head or tail is stripped before it is consulted.
@@ -221,7 +221,7 @@ describe('computeLineDiff guard', () => {
     const left = Array.from({ length: n }, (_, i) => `l${i}`).join('\n');
     const right = Array.from({ length: n }, (_, i) => `r${i}`).join('\n');
 
-    expect(() => computeLineDiff(left, right)).toThrow(DiffTooLargeError);
+    expect(() => computeLineDiffFromLines(left.split('\n'), right.split('\n'))).toThrow(DiffTooLargeError);
   });
 
   it('strips the common head and tail so a small edit stays cheap', () => {
@@ -234,7 +234,7 @@ describe('computeLineDiff guard', () => {
     const before = lines.join('\n');
     const after = edited.join('\n');
 
-    const diff = computeLineDiff(before, after);
+    const diff = computeLineDiffFromLines(before.split('\n'), after.split('\n'));
 
     expect(diff.filter((l) => l.type === 'removed')).toEqual([
       { type: 'removed', text: `line ${Math.floor(n / 2)}` },
@@ -246,7 +246,7 @@ describe('computeLineDiff guard', () => {
   });
 
   it('still diffs inputs inside the bound', () => {
-    expect(computeLineDiff('a', 'b')).toEqual([
+    expect(computeLineDiffFromLines(['a'], ['b'])).toEqual([
       { type: 'removed', text: 'a' },
       { type: 'added', text: 'b' },
     ]);

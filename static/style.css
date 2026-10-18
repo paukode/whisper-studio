@@ -4068,9 +4068,10 @@ button.ws-git-status-badge:hover {
 }
 
 /* ─── Diff viewer ──────────────────────────────────────────────────────
- * Read-only side-by-side (or unified) diff of one file against HEAD,
- * opened from a status letter in the Git Changes panel. Resizable and
- * movable via .ws-rz handles; click outside or press Esc to dismiss.
+ * Read-only side-by-side (or unified) diff of one file (DiffDialog.tsx):
+ * against HEAD from a status letter in the Git Changes panel, or one
+ * stored edit from an activity row's diff pill. Resizable and movable via
+ * .ws-rz handles; click outside or press Esc to dismiss.
  *
  * Both sides live in ONE grid, so a row's two cells share a row box and
  * the panes cannot drift apart however the content wraps. */
@@ -4112,6 +4113,7 @@ button.ws-git-status-badge:hover {
     font-size: var(--fs-small);
     font-weight: 600;
     color: var(--text-primary);
+    line-height: 1.5;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -4126,9 +4128,16 @@ button.ws-git-status-badge:hover {
     font-family: 'IBM Plex Mono', monospace;
     font-size: var(--fs-caption);
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 .git-diff-stats .added { color: var(--success, #4ade80); }
 .git-diff-stats .removed { color: var(--error, #f44); }
+/* The counts are an estimate (the server's exact diff ran over its bounds). */
+.git-diff-approx {
+    font-size: var(--fs-caption);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
 .git-diff-actions {
     display: flex;
     align-items: center;
@@ -4140,23 +4149,28 @@ button.ws-git-status-badge:hover {
     background: none;
     border: 1px solid var(--border);
     color: var(--text-muted);
+    font-family: inherit;
     font-size: var(--fs-caption);
+    line-height: 1.5;
     cursor: pointer;
     padding: 3px 8px;
     border-radius: 4px;
     white-space: nowrap;
 }
-.git-diff-toggle:hover {
+.git-diff-toggle:hover,
+.git-diff-toggle.active {
     background: var(--bg-hover);
     color: var(--text-primary);
 }
 .git-diff-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: none;
     border: none;
     color: var(--text-muted);
-    font-size: var(--fs-body);
     cursor: pointer;
-    padding: 2px 8px;
+    padding: 4px 8px;
     border-radius: 3px;
 }
 .git-diff-close:hover {
@@ -4168,6 +4182,7 @@ button.ws-git-status-badge:hover {
     border-bottom: 1px solid var(--border);
     font-family: 'IBM Plex Mono', monospace;
     font-size: var(--fs-caption);
+    line-height: 1.5;
     color: var(--text-muted);
     white-space: nowrap;
     overflow: hidden;
@@ -4216,6 +4231,7 @@ button.ws-git-status-badge:hover {
     font-size: var(--fs-small);
     line-height: 1.55;
     align-items: stretch;
+    font-variant-numeric: tabular-nums;
 }
 /* line no | old code | line no | new code */
 .git-diff-grid.split {
@@ -4233,6 +4249,7 @@ button.ws-git-status-badge:hover {
     user-select: none;
     background: var(--bg-inset);
     white-space: nowrap;
+    min-width: 4ch;
 }
 .git-diff-num.right {
     border-left: 1px solid var(--border);
@@ -4279,6 +4296,16 @@ button.ws-git-status-badge:hover {
 .git-diff-gap-btn:hover {
     background: var(--bg-hover);
     color: var(--text-primary);
+}
+/* The approval card's diff: the same grid, unified, in a short scroll box. */
+.git-diff-preview {
+    max-height: 240px;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+.git-diff-preview .git-diff-grid {
+    font-size: var(--fs-caption);
 }
 
 /* ─── Streaming "working" footer (motion during quiet streaming phases) ─── */
