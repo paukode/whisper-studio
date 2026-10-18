@@ -11,8 +11,9 @@ Modes:
   "default"          — read-only tools auto-allow; write tools ask
   "auto"             — read-only auto-allow; write tools go through Haiku classifier
   "plan"             — read-only auto-allow; ws_write_file/ws_create_file/ws_edit_file/
-                        ws_delete_file/ws_run_command/ws_merge_worktree are hard-blocked
-                        pre-dispatch (see _PLAN_MODE_BLOCKED in tool_executor.py); other
+                        ws_delete_file/ws_run_command/ws_merge_worktree and the writers of
+                        the app's own folder (memory_write, memory_delete, rules_write) are
+                        hard-blocked pre-dispatch (see _PLAN_MODE_BLOCKED in tool_executor.py); other
                         action tools (terminal_run, git_*, aws_cli, run_python, worktree
                         enter/exit) still go through the normal approval card
   "acceptEdits"      — ws_write_file/ws_create_file auto-allow; delete+commands ask

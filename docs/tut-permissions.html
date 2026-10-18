@@ -292,7 +292,9 @@
     <p>The app's own folder, <code class="path">~/.whisper</code>, is where its files belong: your
       rules and <code>WHISPER.md</code>, the scratch folder for throwaway probe scripts, memory, and
       the rest of <code class="path">data/</code>. Creating, writing or editing a file there raises no
-      card in any mode, and no per-category override changes that. Deleting a file there is silent in
+      card in any mode, and no per-category override changes that; the one exception is
+      <code>plan</code>, which writes nothing anywhere, so the memory and rules tools are blocked
+      there like every other write. Deleting a file there is silent in
       <code>bypassPermissions</code> only; every other mode applies its normal delete rule. Files in
       your workspace are untouched by this: they follow the mode and the rules above.</p>
 
