@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatMessage } from './ChatMessage';
 import { GoalBanner } from './GoalBanner';
 import { StreamingMessage } from './StreamingMessage';
-import { summariseTool } from './ActivityRow';
+import { summariseTool } from './activityLabel';
 import { useGoalStore } from '@/stores/goalStore';
 import { getChatStore } from '@/stores/sessionRuntimes';
 import type { ChatMessage as ChatMessageType, ToolUseEvent } from '@/types/chat';
@@ -40,21 +40,22 @@ describe('goal card', () => {
     const row = container.querySelector('.activity-row');
     expect(row?.classList.contains('activity-unchecked')).toBe(true);
     expect(row?.classList.contains('activity-error')).toBe(false);
-    expect(container.querySelector('.activity-badge.unchecked')?.textContent).toBe('not checked');
-    expect(container.querySelector('.activity-badge.ok')).toBeNull();
-    expect(container.querySelector('.activity-badge.error')).toBeNull();
-    expect(container.querySelector('.activity-check')).toBeNull();
-    expect(container.querySelector('.activity-x')).toBeNull();
-    // Open by default, with the reason in the step's summary.
-    const detail = container.querySelector('.activity-step-detail')?.textContent ?? '';
-    expect(detail.startsWith('not checked: Gemma 4 12B (Local) could not check the goal')).toBe(true);
-    expect(container.querySelector('.activity-expand-btn')).not.toBeNull();
+    expect(container.querySelector('.activity-label')?.textContent).toBe('Goal check: not checked');
+    expect(container.querySelector('.activity-chip.err')).toBeNull();
+    expect(container.querySelector('svg.activity-mark-error')).toBeNull();
+    expect(container.querySelector('svg.activity-mark-done')).toBeNull();
+    // Open by default, with the card's name and the reason on the call's line.
+    expect(row?.classList.contains('open')).toBe(true);
+    const detail = container.querySelector('.activity-call-subject')?.textContent ?? '';
+    expect(detail.startsWith('Goal check: not checked: Gemma 4 12B (Local) could not check the goal')).toBe(true);
+    expect(container.querySelector('.activity-call-toggle')).not.toBeNull();
   });
 
   it('blocked still reads as an error', () => {
     const { container } = render(<ChatMessage message={message(card('blocked', 'error'))} index={1} />);
     expect(container.querySelector('.activity-row.activity-error')).not.toBeNull();
-    expect(container.querySelector('.activity-badge.unchecked')).toBeNull();
+    expect(container.querySelector('.activity-row.activity-unchecked')).toBeNull();
+    expect(container.querySelector('.activity-label')?.textContent).toBe('Goal check: blocked');
   });
 
   it('names each verdict in words', () => {

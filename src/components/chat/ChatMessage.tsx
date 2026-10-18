@@ -1,14 +1,15 @@
 import React, { useState, useCallback, useRef, useLayoutEffect } from 'react';
-import type { ChatMessage as ChatMessageType } from '@/types/chat';
+import type { ChatMessage as ChatMessageType, ToolUseEvent } from '@/types/chat';
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer';
 import { ProgramArtifactCard } from '@/components/chat/ProgramArtifactCard';
 import { VizCard } from '@/components/chat/VizCard';
 import { WorkspacePromptCard } from '@/components/chat/WorkspacePromptCard';
-import { AgentCard, groupAgentTools, groupForActivity, isActivityEntry, isTasksEntry, friendlyToolName, ACTIVITY_MIN_RUN } from '@/components/chat/AgentCard';
+import { AgentCard, groupAgentTools, groupForActivity, isActivityEntry, isTasksEntry, ACTIVITY_MIN_RUN } from '@/components/chat/AgentCard';
 import { TaskCard } from '@/components/chat/TaskCard';
 import { PlanCard } from '@/components/chat/PlanCard';
 import type { SessionTask } from '@/stores/taskStore';
 import { ActivityRow } from '@/components/chat/ActivityRow';
+import { ICON } from '@/components/chat/activityIcons';
 import { TeamAgentRows } from '@/components/chat/AgentRows';
 import { AgentReportCard } from './AgentReportCard';
 import { CronEventCard } from '@/components/chat/CronEventCard';
@@ -17,7 +18,6 @@ import { WorkflowPreviewCard } from '@/components/chat/WorkflowPreviewCard';
 import { WorkflowRunCard } from '@/components/chat/WorkflowRunCard';
 import { CIStatusCard } from '@/components/chat/CIStatusCard';
 import { CIDiagnosisCard } from '@/components/chat/CIDiagnosisCard';
-import { PreviewScreenshotCard } from '@/components/chat/PreviewScreenshotCard';
 import { saveMediaSize } from '@/components/chat/MediaResize';
 import { findMatchingTeamReports } from '@/hooks/chatStream/teamProgress';
 import { getActiveChatStore } from '@/stores/sessionRuntimes';
@@ -202,45 +202,32 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
     return null;
   }
 
+  // A group's written caption is keyed by its first call's id.
+  const writtenLabelOf = (tools: ToolUseEvent[]) => message.activityLabels?.[tools[0]?.toolId ?? ''];
+  // A screenshot's dragged size is keyed by the call's place in toolUse,
+  // which never changes once the message is committed.
+  const mediaFor = (tool: ToolUseEvent) => {
+    const key = `shot-${message.toolUse?.indexOf(tool) ?? -1}`;
+    return {
+      size: message.mediaSizes?.[key],
+      onResize: (size: Parameters<typeof saveMediaSize>[2]) => saveMediaSize(message, key, size),
+    };
+  };
+
   return (
     <div className={`chat-msg-wrap ${isUser ? 'user-wrap' : 'assistant-wrap'}`}>
       <div className={`chat-msg ${message.role}${isEditing ? ' editing' : ''}${noEnter ? ' no-enter' : ''}`}>
         {/* Thinking block for completed messages */}
         {!isUser && message._thinkingText && (
           <details className="thinking-block">
-            <summary style={{
-              cursor: 'pointer',
-              fontSize: '0.85em',
-              color: 'var(--text-muted)',
-              padding: '4px 0',
-              userSelect: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-            }}>
-              <span>{'\uD83D\uDCAD'}</span>
+            <summary className="thinking-summary">
+              <span className="activity-slot">{ICON.thought}</span>
               Thought process
               {message._thinkingMs != null && message._thinkingMs > 0 && (
-                <span style={{ marginLeft: 'auto', fontSize: '0.85em', opacity: 0.7 }}>
-                  {(message._thinkingMs / 1000).toFixed(1)}s
-                </span>
+                <span className="thinking-elapsed">{(message._thinkingMs / 1000).toFixed(1)}s</span>
               )}
             </summary>
-            <div style={{
-              fontSize: '0.85em',
-              color: 'var(--text-muted)',
-              padding: '8px 12px',
-              background: 'var(--bg-secondary)',
-              borderRadius: 6,
-              marginTop: 4,
-              marginBottom: 8,
-              maxHeight: 300,
-              overflow: 'auto',
-              whiteSpace: 'pre-wrap',
-              lineHeight: 1.5,
-            }}>
-              {message._thinkingText}
-            </div>
+            <div className="thinking-body">{message._thinkingText}</div>
           </details>
         )}
 
@@ -259,19 +246,20 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
          *  1. ``groupAgentTools`` bundles consecutive agent-orchestration calls
          *     (spawn_agent / send_message / team_*) into a single AgentCard.
          *  2. ``groupForActivity`` then bundles consecutive *individual* tool
-         *     calls (read / grep / bash / edit / …) into a single <ActivityRow>
-         *     — "▸ Activity · 8 steps · ✓" — that expands inline on click.
-         *  Special tools (workspace picker, ask-user) pass through both passes
-         *  and keep their own chrome.
+         *     calls (read / grep / bash / edit) into a single <ActivityRow>,
+         *     one line that names what the group did ("Read 3 files") and
+         *     expands inline on click.
+         *  Special tools (workspace picker, ask-user) pass through both passes;
+         *  the ones with their own card keep it, the rest draw as a row of one.
          *
-         *  ACTIVITY_MIN_RUN — MUST match StreamingMessage (it does, by
+         *  ACTIVITY_MIN_RUN MUST match StreamingMessage (it does, by
          *  construction: both import the shared constant). Tool grouping is a
          *  pure transform of message.toolUse (which is persisted verbatim in
          *  the session's chat_history), so using the same threshold here means
          *  the Activity row that appeared while streaming stays put once the
          *  turn completes AND when an old session is restored. With the
          *  default (2), a 1-tool turn would collapse during streaming then pop
-         *  back to a bare chip on commit/reload — the disappearing-row bug. */}
+         *  back to a bare chip on commit/reload: the disappearing-row bug. */}
         {!isUser && message.toolUse && message.toolUse.length > 0 && (
           <div className="skill-traces">
             {groupForActivity(groupAgentTools(message.toolUse), { minRun: ACTIVITY_MIN_RUN }).map((entry, idx) => {
@@ -298,9 +286,16 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
                   ? <TaskCard key={`tasks-${idx}`} tasks={taskCheckpoint} historical={!taskCheckpointLive} />
                   : null;
               }
-              // Activity bundle — 2+ consecutive non-special tools.
+              // Activity bundle: a run of consecutive non-special tools.
               if (isActivityEntry(entry)) {
-                return <ActivityRow key={`activity-${idx}`} tools={entry.tools} />;
+                return (
+                  <ActivityRow
+                    key={`activity-${idx}`}
+                    tools={entry.tools}
+                    writtenLabel={writtenLabelOf(entry.tools)}
+                    mediaFor={mediaFor}
+                  />
+                );
               }
               const tool = entry;
               // Workflow runtime cards (WS-D)
@@ -338,48 +333,14 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
                 );
               }
 
-              // Default: collapsible tool trace
-              const pathHint = (tool.input as Record<string, unknown>)?.path;
-              const label = friendlyToolName(tool.toolName);
-              const displayName = pathHint && typeof pathHint === 'string'
-                ? `${label}: ${pathHint.split('/').pop()}`
-                : label;
-              // Keyed by the step's place in toolUse, which never changes once
-              // the message is committed, unlike the grouped index above.
-              const shotKey = `shot-${message.toolUse?.indexOf(tool) ?? idx}`;
+              // Default: the same row, for a group of one.
               return (
-                <details key={`${tool.toolName}-${idx}`} className={`skill-trace ${tool.status === 'complete' ? 'done' : tool.status}`}>
-                  <summary className="skill-trace-summary">
-                    <span className="skill-trace-icon">{'\uD83D\uDD27'}</span>
-                    <span className="skill-trace-name">{displayName}</span>
-                    <span className="skill-trace-status">
-                      {tool.status === 'complete' ? (
-                        <span className="trace-check">{'\u2713'}</span>
-                      ) : tool.status === 'error' ? (
-                        <span className="trace-check" style={{ color: 'var(--error, #f87171)' }}>{'\u2715'}</span>
-                      ) : tool.status === 'stopped' ? (
-                        <span className="trace-check trace-stopped" title="Stopped">{'\u23F9'}</span>
-                      ) : (
-                        <span className="trace-spinner">{'\u27F3'}</span>
-                      )}
-                    </span>
-                  </summary>
-                  {tool.previewImage ? (
-                    <div className="skill-trace-output">
-                      <PreviewScreenshotCard
-                        mediaType={tool.previewImage.media_type}
-                        data={tool.previewImage.data}
-                        caption={tool.result}
-                        size={message.mediaSizes?.[shotKey]}
-                        onResize={(size) => saveMediaSize(message, shotKey, size)}
-                      />
-                    </div>
-                  ) : tool.result && (
-                    <div className="skill-trace-output">
-                      <pre>{tool.result}</pre>
-                    </div>
-                  )}
-                </details>
+                <ActivityRow
+                  key={`${tool.toolName}-${idx}`}
+                  tools={[tool]}
+                  writtenLabel={writtenLabelOf([tool])}
+                  mediaFor={mediaFor}
+                />
               );
             })}
           </div>
@@ -411,12 +372,12 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
         {!isUser && message.userQuestions && message.userQuestions.length > 0 ? (
           <>
             {/* Prose the model streamed before asking renders above the card. */}
-            {message.content && <MarkdownRenderer content={message.content} stepFormat={!message.spoken} />}
+            {message.content && <MarkdownRenderer content={message.content} />}
             <UserQuestionGroupCard message={message} />
           </>
         ) : !isUser && message.userQuestion ? (
           <>
-            {message.content && <MarkdownRenderer content={message.content} stepFormat={!message.spoken} />}
+            {message.content && <MarkdownRenderer content={message.content} />}
             <UserQuestionCard
               question={message.userQuestion.question}
               options={message.userQuestion.options}
@@ -426,13 +387,13 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
           </>
         ) : !isUser && message.plan ? (
           <>
-            {message.content && <MarkdownRenderer content={message.content} stepFormat={!message.spoken} />}
+            {message.content && <MarkdownRenderer content={message.content} />}
             <PlanCard plan={message.plan} />
           </>
         ) : !isUser && message.visuals && message.visuals.length > 0 ? (
           <>
             {/* The sentence that introduces the picture renders above it. */}
-            {message.content && <MarkdownRenderer content={message.content} stepFormat={!message.spoken} />}
+            {message.content && <MarkdownRenderer content={message.content} />}
             {message.visuals.map((viz, i) => (
               <VizCard
                 key={`viz-${i}`}
@@ -506,7 +467,7 @@ const ChatMessageView: React.FC<ChatMessageProps> = ({ message, index, taskCheck
             </>
           )
         ) : message.content ? (
-          <MarkdownRenderer content={message.content} stepFormat={!message.spoken} />
+          <MarkdownRenderer content={message.content} />
         ) : null}
 
         {/* What the server verified this reply delivered, under the text that

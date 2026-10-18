@@ -1,0 +1,301 @@
+/* ─── Activity rows (src/components/chat/ActivityRow.tsx) ───
+   One line per group of tool calls inside an assistant bubble: icon slot,
+   chevron, label, mono tail, then right-aligned chips. A row sits in the
+   prose flow with no border; a surface panel appears only while the group
+   is open. Red only on marks: an error colours the icon, the label, the exit
+   chip and the detail list's left rule, never a border, never the output.
+   Tokens come from modules/themes.css and the type scale from style.css;
+   nothing is redefined here. The .chat-msg.assistant overrides beat the
+   bubble's own pre, ul and li rules (specificity 0,2,1) on purpose.
+   The thinking block shares this sheet: same slot, same type steps. */
+
+.activity-row {
+    margin: 0 -8px;
+    padding: 0 8px;
+    border-radius: 8px;
+    /* The .skill-traces column is flex; a row never gives up its height. */
+    flex-shrink: 0;
+    min-width: 0;
+}
+.activity-row.open { background: var(--bg-surface); padding-bottom: 8px; }
+
+.activity-head {
+    display: flex;
+    align-items: center;
+    margin: 0 -8px;
+}
+.activity-summary {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 30px;
+    padding: 3px 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--fs-body);
+    line-height: 1.5;
+    text-align: left;
+    cursor: pointer;
+    user-select: none;
+}
+.activity-summary:hover { background: var(--bg-hover); }
+.activity-expand-all {
+    flex: 0 0 auto;
+    margin: 0 4px 0 6px;
+    padding: 2px 6px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    font: inherit;
+    font-size: var(--fs-caption);
+    line-height: 1.5;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.activity-expand-all:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Icons: 12px strokes in a fixed 18px slot. */
+.activity-ic { width: 12px; height: 12px; flex: 0 0 12px; display: inline-block; vertical-align: -1px; }
+.activity-slot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    color: var(--text-muted);
+}
+.activity-spinner {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1.5px solid var(--accent-dim);
+    border-top-color: var(--accent);
+    animation: activity-spin 0.9s linear infinite;
+}
+@keyframes activity-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+    .activity-spinner { animation: none; }
+}
+.activity-chevron {
+    display: inline-flex;
+    flex: 0 0 12px;
+    color: var(--text-muted);
+    transition: transform 0.15s;
+}
+.activity-row.open > .activity-head .activity-chevron { transform: rotate(90deg); }
+
+.activity-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    margin-left: 2px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* The tail names the files or the command; it gives way before the label does. */
+.activity-tail {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 52ch;
+    margin-left: 2px;
+    font-family: var(--font-mono);
+    font-size: var(--fs-caption);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.activity-meta {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+.activity-row.activity-error > .activity-head .activity-slot,
+.activity-row.activity-error > .activity-head .activity-label { color: var(--accent-record); }
+.activity-row.activity-error .activity-calls { border-left-color: var(--accent-record); }
+.activity-row.activity-stopped > .activity-head .activity-label { color: var(--text-secondary); }
+
+/* Chips and the shared diff pill. */
+.activity-chip,
+.activity-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 9px;
+    border-radius: 10px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    font-size: var(--fs-caption);
+    line-height: 1.5;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.activity-chip.err { color: var(--accent-record); background: var(--accent-record-dim); border-color: transparent; }
+.activity-chip.live { color: var(--accent); background: var(--accent-dim); border-color: transparent; }
+.activity-chip.muted { color: var(--text-muted); }
+.activity-pill { font-family: var(--font-mono); }
+.activity-pill .add { color: var(--accent-live); }
+.activity-pill .del { color: var(--accent-record); }
+button.activity-pill { cursor: pointer; }
+button.activity-pill:hover { border-color: var(--accent); }
+
+/* Detail lines: one grid per call. */
+.chat-msg.assistant ul.activity-calls,
+.activity-calls {
+    list-style: none;
+    margin: 2px 0 0 29px;
+    padding: 0 0 0 11px;
+    border-left: 1px solid var(--border-strong);
+}
+.chat-msg.assistant .activity-calls li,
+.activity-call { margin: 0; padding: 0; }
+.activity-call-line {
+    display: grid;
+    grid-template-columns: 18px 62px minmax(0, 1fr) max-content 18px;
+    column-gap: 8px;
+    align-items: center;
+    min-height: 28px;
+    margin: 0 0 0 -6px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    line-height: 1.5;
+}
+.activity-call-line.has-output { cursor: pointer; }
+.activity-call-line:hover { background: var(--bg-hover); }
+.activity-call-verb {
+    font-size: var(--fs-small);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.activity-call-subject {
+    display: flex;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: var(--fs-small);
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+}
+/* A card's reason is prose, not a path, and takes the verb's column too. */
+.activity-call-subject.prose { font-family: inherit; color: var(--text-secondary); }
+.activity-call-subject.wide { grid-column: 2 / 4; }
+.activity-call-link {
+    padding: 0;
+    border: none;
+    background: transparent;
+    line-height: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.activity-call-link:hover { color: var(--link); }
+/* The directory part ellipsises, the file name never does. */
+.activity-call-dir { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.activity-call-base { flex: 0 0 auto; }
+.activity-call-text { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.activity-call-dim { flex: 0 0 auto; color: var(--text-secondary); white-space: pre; }
+.activity-call-out {
+    display: inline-flex;
+    justify-content: flex-end;
+    align-items: center;
+    font-size: var(--fs-caption);
+    color: var(--text-secondary);
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.activity-call-out.muted { color: var(--text-muted); }
+/* The detail line's exit code stays grey, as in the mockup: red only on the
+   marks (the icon, the label, the row chip and the detail rule). */
+.activity-call-out.err { color: var(--text-secondary); }
+.activity-call-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.activity-call-toggle:hover { background: var(--bg-hover); color: var(--text-primary); }
+.activity-call-toggle .activity-ic { transition: transform 0.15s; }
+.activity-call-toggle[aria-expanded="true"] .activity-ic { transform: rotate(180deg); }
+.activity-call.failed > .activity-call-line > .activity-slot:first-child { color: var(--accent-record); }
+
+/* Raw output under a call. */
+.chat-msg.assistant .activity-call-raw,
+.activity-call-raw {
+    margin: 2px 0 6px 26px;
+    padding: 8px 10px;
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    font-size: var(--fs-caption);
+    line-height: 1.5;
+    color: var(--text-secondary);
+    white-space: pre;
+    word-break: normal;
+    overflow: auto;
+    max-height: 280px;
+    overscroll-behavior: contain;
+}
+.activity-call-note {
+    margin: -2px 0 6px 26px;
+    font-size: var(--fs-caption);
+    line-height: 1.5;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+.activity-call-shot { margin: 2px 0 6px 26px; }
+
+/* ─── Thinking block (ChatMessage.tsx, StreamingMessage.tsx) ─── */
+.thinking-block { margin-bottom: 4px; }
+.thinking-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    list-style: none;
+    font-size: var(--fs-small);
+    line-height: 1.5;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+.thinking-summary::-webkit-details-marker { display: none; }
+.thinking-summary .activity-slot { width: 14px; flex-basis: 14px; }
+.thinking-elapsed {
+    margin-left: auto;
+    font-size: var(--fs-caption);
+    opacity: 0.7;
+    font-variant-numeric: tabular-nums;
+}
+.thinking-body {
+    margin: 4px 0 8px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    font-size: var(--fs-caption);
+    line-height: 1.5;
+    color: var(--text-muted);
+    max-height: 300px;
+    overflow: auto;
+    white-space: pre-wrap;
+}

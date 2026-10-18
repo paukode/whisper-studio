@@ -61,4 +61,14 @@ describe('groupToolOnlyRuns', () => {
     expect(out).toHaveLength(1);
     expect(out[0].indices).toEqual([0]);
   });
+
+  it('keeps the written group labels of every folded row', () => {
+    const out = groupToolOnlyRuns([
+      { ...toolOnly(['a']), activityLabels: { a: 'Read the plan' } },
+      toolOnly(['b']),
+      { ...toolOnly(['c']), activityLabels: { c: 'Ran the tests' } },
+    ]);
+    expect(out[0].message.activityLabels).toEqual({ a: 'Read the plan', c: 'Ran the tests' });
+    expect(groupToolOnlyRuns([toolOnly(['a']), toolOnly(['b'])])[0].message.activityLabels).toBeUndefined();
+  });
 });

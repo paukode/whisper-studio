@@ -316,16 +316,16 @@
     <p>A long agentic turn can produce dozens of tool calls. Rendered one bubble per step, the
       answer disappears into the machinery, so three rules shape what you actually see.</p>
     <div class="spec">
-      <dt>Tool steps collapse into one activity row</dt><dd>Consecutive tool calls are folded by
-        <code>groupForActivity</code> into a single <code>ActivityRow</code>
-        (<code class="path">src/components/chat/ActivityRow.tsx</code>): a collapsed header reading
-        <b>Activity</b>, the step count, and a badge summarising the run (a tick and a count when
-        everything succeeded, or a count of running, errored or stopped steps). Expanding it lists
-        each step with its tool name, a one-line detail, and a toggle for the full output;
-        <b>Expand all</b> opens every output at once. A row that contains an error opens by default.
-        The same grouping constant is shared by the live streaming view and the committed
-        transcript, so the row you watched does not jump or vanish when the turn ends or when you
-        reload the session.</dd>
+      <dt>Tool steps collapse into one activity row</dt><dd><code>groupForActivity</code> puts a
+        sequence of tool calls into one <code>ActivityRow</code>
+        (<code class="path">src/components/chat/ActivityRow.tsx</code>). The collapsed row is one
+        line with a label that shows what the group did, for example <b>Read 3 files</b> or
+        <b>ruff check failed</b>. A monospace tail shows the file names or the command, and chips
+        show the diff, line, match, and exit counts. An expanded row shows one line for each call
+        with a file link, a diff pill, and an output toggle. <b>Expand all</b> shows each output, and
+        a row with an error is open at the start. Because the streaming view and the saved
+        transcript use the same constant, <code>ACTIVITY_MIN_RUN</code>, the row does not move when
+        the turn ends.</dd>
       <dt>Prose before a tool call gets its own bubble</dt><dd>Text the model writes <em>before</em>
         it acts is a finished thought, so the stream commits it as a standalone message and starts a
         new one for whatever comes after the tool work. Concatenating both produced replies like
@@ -429,7 +429,7 @@
       <dt><code class="path">src/utils/wsFileLinks.ts</code></dt><dd>Delegated click handling for citation, created-file, and localhost links in rendered messages.</dd>
       <dt><code class="path">src/components/chat/WorkspacePromptCard.tsx</code></dt><dd>The workspace-connect-only prompt card and its answers-array resume.</dd>
       <dt><code class="path">src/components/chat/ChatMessage.tsx</code></dt><dd>The seven message roles and the two grouping passes that produce the readable transcript.</dd>
-      <dt><code class="path">src/components/chat/ActivityRow.tsx</code></dt><dd>The collapsed activity row: step list, per-step output, and the streaming size readout.</dd>
+      <dt><code class="path">src/components/chat/ActivityRow.tsx</code></dt><dd>The activity row: the group label, the chips, one line for each call, and the output of each call.</dd>
       <dt><code class="path">src/components/chat/AgentRows.tsx</code></dt><dd>One row per agent in the chat, with Open for the dock's agent pane.</dd>
       <dt><code class="path">src/components/preview/AgentPanel.tsx</code></dt><dd>The agent pane: status line, Extend, Stop, and the live feed of everything the agent does.</dd>
       <dt><code class="path">src/components/tasks/BackgroundTasksPanel.tsx</code></dt><dd>The list under the header's tasks pill: every task across sessions, unfolding details, Open, Stop, and the 30 second linger of a finished row.</dd>

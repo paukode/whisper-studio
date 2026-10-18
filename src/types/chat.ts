@@ -189,6 +189,10 @@ export interface ChatMessage {
    *  for a visual and `shot-<tool index>` for a preview screenshot. A missing
    *  key is the natural size. UI-only: the prompt never reads it. */
   mediaSizes?: Record<string, MediaSize>;
+  /** Model-written captions for the activity groups of this message, keyed
+   *  by the first toolId of the group; the deterministic label is the
+   *  fallback and the tail. */
+  activityLabels?: Record<string, string>;
   /** Inline artifact from the create_artifact tool */
   programArtifact?: {
     title: string;

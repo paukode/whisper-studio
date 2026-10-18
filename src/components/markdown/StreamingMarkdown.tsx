@@ -7,7 +7,6 @@ import {
 } from '@/utils/codeBlockEnhancer';
 import { renderMarkdownSafe } from '@/utils/sanitizeHtml';
 import { attachWsFileHandlers } from '@/utils/wsFileLinks';
-import { toStepNarration } from '@/utils/stepNarration';
 import { useHtmlProp } from '@/hooks/useHtmlProp';
 
 // Local Marked instance with `breaks: true` so newlines become <br> during
@@ -61,7 +60,7 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     if (isStreaming) return '';
     if (!content) return '';
     beginCodeBlockParse(instanceId);
-    return renderMarkdownSafe(toStepNarration(content), {
+    return renderMarkdownSafe(content, {
       parser: streamingParser,
       markedOptions: { renderer },
     });
@@ -138,10 +137,8 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     // Snapshot scroll positions BEFORE the destroy-and-recreate.
     snapshotCodeBlockScroll(container);
 
-    // Step-format first (a no-op while the text still has an open fence, which
-    // it bails on), then close any unclosed fence for safe mid-stream parsing.
-    const base = toStepNarration(content);
-    const safeContent = closeOpenFences(base);
+    // Close any unclosed fence for safe mid-stream parsing.
+    const safeContent = closeOpenFences(content);
     beginCodeBlockParse(instanceId);
     const html = safeContent
       ? renderMarkdownSafe(safeContent, { parser: streamingParser, markedOptions: { renderer } })
@@ -212,7 +209,7 @@ export const StreamingMarkdown: React.FC<StreamingMarkdownProps> = ({
     return () => { cleanupRef.current?.(); };
   }, []);
 
-  const containerClassName = 'markdown-content step-narration';
+  const containerClassName = 'markdown-content';
 
   if (isStreaming) {
     return <div ref={containerRef} className={containerClassName} />;

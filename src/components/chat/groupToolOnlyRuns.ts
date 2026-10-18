@@ -38,12 +38,19 @@ export function groupToolOnlyRuns(messages: ChatMessage[]): DisplayEntry[] {
     const m = messages[i];
     const prev = out[out.length - 1];
     if (isToolOnly(m) && prev && isToolOnly(prev.message)) {
+      // Written group labels are keyed by toolId, so every folded row's
+      // labels carry over. mediaSizes stays the first row's: its keys are
+      // places in one row's toolUse, which the merged list shifts.
       const merged: ChatMessage = {
         ...prev.message,
         toolUse: [...(prev.message.toolUse ?? []), ...(m.toolUse ?? [])],
         teamReports:
           prev.message.teamReports || m.teamReports
             ? { ...(prev.message.teamReports ?? {}), ...(m.teamReports ?? {}) }
+            : undefined,
+        activityLabels:
+          prev.message.activityLabels || m.activityLabels
+            ? { ...(prev.message.activityLabels ?? {}), ...(m.activityLabels ?? {}) }
             : undefined,
       };
       out[out.length - 1] = { message: merged, index: prev.index, indices: [...prev.indices, i] };
