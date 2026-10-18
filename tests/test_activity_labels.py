@@ -37,15 +37,20 @@ def call(tool_id: str, name: str, **tool_input) -> dict:
 class _Adapter:
     """Each positional list is one round of tool calls. The round after them
     answers in text deltas: "Done. " at once, then one more delta after each
-    of ``gaps`` seconds ("All good." last)."""
+    of ``gaps`` seconds ("All good." last). ``seen`` keeps the message list
+    each round was sent, and ``started`` the time.monotonic() it began."""
 
     provider = "test"
 
     def __init__(self, *tool_rounds: list[dict], gaps: tuple[float, ...] = (0.0,)):
         self.tool_rounds = tool_rounds
         self.gaps = gaps
+        self.seen: list[list[dict]] = []
+        self.started: list[float] = []
 
     async def stream_round(self, messages, tools, core_count, round_num, is_last_round):
+        self.seen.append(list(messages))
+        self.started.append(time.monotonic())
         if round_num < len(self.tool_rounds):
             content = list(self.tool_rounds[round_num])
             yield RoundResult(stop_reason="tool_use", content=content, usage=Usage())
@@ -347,6 +352,167 @@ def test_ready_holds_a_caption_behind_an_earlier_one_and_a_pause_drops_the_earli
     assert _labels(frames) == [_payload("tu_2")]
 
 
+async def _drained(
+    pending: AL.PendingLabels, timeout: float | None = None
+) -> list[tuple[str, float]]:
+    """Each frame drain() yields, with the seconds since the drain began."""
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    return [(frame, loop.time() - started) async for frame in pending.drain(timeout)]
+
+
+def test_the_end_of_turn_drain_yields_each_caption_as_it_lands():
+    async def go():
+        async def landed(tool_id: str, delay: float) -> dict:
+            await asyncio.sleep(delay)
+            return _payload(tool_id)
+
+        pending = AL.PendingLabels()
+        pending.add(asyncio.create_task(landed("tu_1", 0.05)))
+        pending.add(asyncio.create_task(landed("tu_2", 0.4)))
+        return await _drained(pending)
+
+    loop = asyncio.new_event_loop()
+    try:
+        (first, first_at), (second, second_at) = loop.run_until_complete(go())
+    finally:
+        loop.close()
+    assert _labels([first, second]) == [_payload("tu_1"), _payload("tu_2")]
+    # Round 1's caption left as it landed, not with round 2's.
+    assert first_at < 0.3 <= second_at
+
+
+def test_the_drain_gives_up_on_a_hung_caption_and_still_sends_the_ones_behind_it():
+    async def go():
+        async def landed(tool_id: str, delay: float) -> dict:
+            await asyncio.sleep(delay)
+            return _payload(tool_id)
+
+        pending = AL.PendingLabels()
+        hung = asyncio.create_task(landed("tu_1", 5))
+        pending.add(hung)
+        pending.add(asyncio.create_task(landed("tu_2", 0)))
+        frames = await _drained(pending, timeout=0.1)
+        await asyncio.sleep(0)
+        return frames, hung
+
+    loop = asyncio.new_event_loop()
+    try:
+        frames, hung = loop.run_until_complete(go())
+    finally:
+        loop.close()
+    assert _labels([frame for frame, _ in frames]) == [_payload("tu_2")]
+    assert hung.cancelled() and frames[0][1] >= 0.1
+
+
+def test_a_message_sent_during_the_end_of_turn_wait_is_answered_in_the_same_turn(monkeypatch):
+    """The round's caption takes 1 s, so the answer ends while it still runs.
+    A composer message sent 0.5 s in reaches the turn: the inbox stays open
+    through the captions' wait, and the last look after it gives the message
+    one more round, so it is neither refused nor left unanswered."""
+    from server.chat.engine import midturn_inbox
+
+    async def slow_caption(tool_id: str) -> dict:
+        await asyncio.sleep(1.0)
+        return _payload(tool_id)
+
+    monkeypatch.setattr(
+        AL,
+        "start_label_task",
+        lambda ctx, states, results: asyncio.create_task(slow_caption("tu_a")),
+    )
+    _tool_pipeline(monkeypatch)
+    adapter = _Adapter([read("tu_a", "a.py")])
+    ctx = _ctx(adapter)
+    ctx.midturn_inbox = True
+    midturn_inbox.clear(ctx.session_id)
+    accepted: list[bool] = []
+
+    async def send_during_the_wait():
+        await asyncio.sleep(0.5)
+        accepted.append(midturn_inbox.push(ctx.session_id, "also check b.py"))
+
+    async def go():
+        sender = asyncio.create_task(send_during_the_wait())
+        chunks = [c async for c in run_turn(ctx)]
+        await sender
+        return chunks
+
+    loop = asyncio.new_event_loop()
+    try:
+        chunks = loop.run_until_complete(go())
+        # The turn's inbox closed at its end: a later send starts a new turn.
+        assert midturn_inbox.push(ctx.session_id, "and this?") is False
+    finally:
+        midturn_inbox.clear(ctx.session_id)
+        loop.close()
+
+    assert accepted == [True]
+    # One more round of the same turn read the message and answered it.
+    assert len(adapter.seen) == 3
+    assert "also check b.py" in json.dumps(adapter.seen[2])
+    assert chunks.count(DONE) == 1 and chunks[-1] == DONE
+    assert midturn_inbox.UNANSWERED not in "".join(chunks)
+    # The caption went out in the wait, before the answer to the message.
+    texts = [i for i, c in enumerate(chunks) if c.startswith('data: {"text"')]
+    label_at = next(i for i, c in enumerate(chunks) if '"activity_label"' in c)
+    assert _labels(chunks) == [_payload("tu_a")]
+    assert texts[1] < label_at < texts[-1]
+
+
+def test_a_message_already_pending_at_the_answer_skips_the_caption_wait(monkeypatch):
+    """A composer message lands while the answer still streams, and the
+    round's caption takes 1.5 s. The message's round starts as soon as the
+    answer ends, not after the caption: the turn has a round left, so the
+    wait would only delay it. The caption still goes out once, in that
+    round or the wait after it."""
+    from server.chat.engine import midturn_inbox
+
+    async def slow_caption(tool_id: str) -> dict:
+        await asyncio.sleep(1.5)
+        return _payload(tool_id)
+
+    monkeypatch.setattr(
+        AL,
+        "start_label_task",
+        lambda ctx, states, results: asyncio.create_task(slow_caption("tu_a")),
+    )
+    _tool_pipeline(monkeypatch)
+    # The answer streams for 0.3 s; the message arrives 0.1 s in.
+    adapter = _Adapter([read("tu_a", "a.py")], gaps=(0.3,))
+    ctx = _ctx(adapter)
+    ctx.midturn_inbox = True
+    midturn_inbox.clear(ctx.session_id)
+    accepted: list[bool] = []
+
+    async def send_while_the_answer_streams():
+        await asyncio.sleep(0.1)
+        accepted.append(midturn_inbox.push(ctx.session_id, "also check b.py"))
+
+    async def go():
+        sender = asyncio.create_task(send_while_the_answer_streams())
+        chunks = [c async for c in run_turn(ctx)]
+        await sender
+        return chunks
+
+    loop = asyncio.new_event_loop()
+    try:
+        chunks = loop.run_until_complete(go())
+    finally:
+        midturn_inbox.clear(ctx.session_id)
+        loop.close()
+
+    assert accepted == [True]
+    assert len(adapter.seen) == 3
+    assert "also check b.py" in json.dumps(adapter.seen[2])
+    # The message's round began with the answer's end (0.3 s after the answer
+    # began), well before the caption landed (1.5 s).
+    assert adapter.started[2] - adapter.started[1] < 0.8
+    assert _labels(chunks) == [_payload("tu_a")]
+    assert chunks.count(DONE) == 1 and chunks[-1] == DONE
+    assert midturn_inbox.UNANSWERED not in "".join(chunks)
+
+
 def test_a_pause_does_not_wait_for_the_captions_still_running(monkeypatch):
     """Round 1's caption hangs; round 2 stops for an approval. The [DONE]
     comes at once (not after LABEL_TIMEOUT_S), so the card can be answered."""
@@ -457,17 +623,9 @@ def test_local_mode_starts_no_caption(monkeypatch, model, config):
     assert model.calls == [] and _labels(chunks) == [] and chunks[-1] == DONE
 
 
-@pytest.mark.parametrize(
-    ("mapped", "chat_model"),
-    [("local_gemma", "opus5.0"), ("main", "local_gemma")],
-    ids=["mapped-to-a-local-key", "main-with-an-on-device-chat-model"],
-)
-def test_an_on_device_caption_model_starts_no_caption(
-    monkeypatch, model, config, mapped, chat_model
-):
-    """A generation per round would compete with the turn's own on-device
-    stream, so a task that resolves to a local key never runs. The same
-    round with the task on a cloud key does get a caption."""
+def _start_one(monkeypatch, chat_model: str):
+    """start_label_task for one read on ``chat_model``, awaited; the keys
+    that start with "local_" are on-device."""
     from server.local import runtime as local_rt
     from server.tool_executor import ToolState
 
@@ -481,17 +639,33 @@ def test_an_on_device_caption_model_starts_no_caption(
             await task
         return task
 
-    def run_start():
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(start())
-        finally:
-            loop.close()
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(start())
+    finally:
+        loop.close()
 
-    config(auxiliary_models={"activity_label": mapped})
-    assert run_start() is None and model.calls == []
+
+def test_an_on_device_caption_model_starts_no_caption(monkeypatch, model, config):
+    """A generation per round would compete with the turn's own on-device
+    stream, so a task that resolves to a local key never runs. The same
+    round with the task on a cloud key does get a caption."""
+    config(auxiliary_models={"activity_label": "local_gemma"})
+    assert _start_one(monkeypatch, "opus5.0") is None and model.calls == []
     config(auxiliary_models={"activity_label": "haiku"})
-    assert run_start() is not None and len(model.calls) == 1
+    assert _start_one(monkeypatch, "opus5.0") is not None and len(model.calls) == 1
+
+
+@pytest.mark.parametrize("mapped", ["main", "haiku"])
+def test_a_chat_on_an_on_device_model_gets_no_cloud_caption(monkeypatch, model, config, mapped):
+    """Hybrid mode, a chat on an on-device model: the user chose it for this
+    chat, so the head of its tool output, its paths and its commands never go
+    to cloud Haiku for a caption, whatever the task is mapped to. The same
+    round of a chat on a cloud model does get one."""
+    config(model_mode="hybrid", auxiliary_models={"activity_label": mapped})
+    assert _start_one(monkeypatch, "local_gemma") is None and model.calls == []
+    config(model_mode="hybrid", auxiliary_models={"activity_label": "haiku"})
+    assert _start_one(monkeypatch, "opus5.0") is not None and len(model.calls) == 1
 
 
 def test_a_refused_task_starts_no_caption(monkeypatch, model):

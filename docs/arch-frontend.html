@@ -253,7 +253,7 @@
         <tr><td><code>error</code></td><td>Logs the backend's error text and appends it inline to the response instead of losing the partial answer.</td></tr>
         <tr><td><code>hook_blocked</code> / <code>stop_hook_block</code></td><td>Surfaces a <a href="arch-tools.html">blocking hook</a>'s veto and the completion gate's reason for continuing the turn.</td></tr>
         <tr><td><code>skill_progress</code></td><td>A tool call's arguments are still streaming; the running step shows how much has arrived (<code>7.3 KB</code>, then <code>143 KB</code>) next to its spinner.</td></tr>
-        <tr><td><code>activity_label</code></td><td>Puts the caption on the activity group that holds the calls of the round, under the first call of the group (<code class="path">src/hooks/chatStream/activityLabels.ts</code>). The caption replaces the label, and the deterministic sentence becomes the tail. A caption for a row that is in the transcript changes that row and saves the session. A caption shows on the row only after the stream commits the row. While the calls stream, the caption waits in the stream state.</td></tr>
+        <tr><td><code>activity_label</code></td><td>Puts the caption on the activity group that holds the calls of the round, under the first call of the group (<code class="path">src/hooks/chatStream/activityLabels.ts</code>). The caption replaces the label, and the deterministic sentence becomes the tail. A caption for a row that is in the transcript changes that row and saves the session. While the calls stream, the stream state keeps the caption, and the live row shows it immediately. When the stream commits the row, the committed row shows the same caption. This is also true when you stop the turn.</td></tr>
         <tr><td><code>budget_warning</code></td><td>The session or daily cost cap tripped. The first one announces the reserved final round; the second ends the turn.</td></tr>
         <tr><td><code>turn_downgrade</code></td><td>This turn is not running on what the composer shows, so the UI says so rather than letting the picker lie.</td></tr>
         <tr><td><code>viz_artifact</code></td><td>A rendered chart or diagram, attached to the settled message as its own card.</td></tr>
@@ -332,7 +332,8 @@
         transcript use the same constant, <code>ACTIVITY_MIN_RUN</code>, the row does not move when
         the turn ends. When the auxiliary model returns a caption for the group (the
         <code>activity_label</code> frame), the caption replaces the label and the sentence becomes
-        the tail. In Local mode, or when the call fails, the row keeps the sentence.</dd>
+        the tail. In Local mode, in a chat that uses an on-device model, or when the call fails,
+        the row keeps the sentence.</dd>
       <dt>One bubble for each assistant turn</dt><dd>Text that the model writes <em>before</em> a
         tool call is a complete thought, so the stream commits it as a row of its own. The store keeps
         these rows separate, because their indices control edit, delete, regenerate, the task

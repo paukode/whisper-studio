@@ -30,20 +30,31 @@ No caption is asked for:
   workflows, cron, voice, wake and headless runs never ask;
 - in Local mode: the ``activity_labels`` flag is off there, and aux_refusal
   names the cloud guard's reason;
-- when the task resolves to an on-device model (mapped to a local key, or to
-  "main" with an on-device chat model): a generation per round would compete
-  with the turn's own stream on the same machine;
+- for a chat on an on-device model (Hybrid mode): the user chose an
+  on-device model for this chat, so the head of its tool output, its paths
+  and its commands never go to a cloud model for a caption;
+- when the task resolves to an on-device model (mapped to a local key): a
+  generation per round would compete with the turn's own stream on the same
+  machine;
 - for a round that paused for an approval or a question: the tool phase
   returns before its caption starts, and the continuation does not caption
   the resumed calls, so their group keeps the deterministic label.
 
+So every caption comes from a cloud model.
+
 ``PendingLabels`` holds the turn's label tasks in round order. The runner
 sends the finished ones as the next round streams (one done() check for each
 provider event), always in round order, and at the end of the turn it waits
-for the rest, with the same cap, before [DONE]. A turn that paused does not
-wait: it sends what landed and drops the rest. A turn with no label task ends
-exactly as before. The frames carry no prose and the model never reads them,
-so the claim guard and the persisted reminders are not affected.
+for the rest, with the same cap, sending each one as it lands. That wait
+comes before the turn closes its mid-turn inbox, so a message sent during
+it still reaches the turn: after an answer before the round cap, the last
+look gives it one more round (runner.py); at the round cap it is handed on
+(a user message is announced as unanswered). A message already pending
+when an answer ends skips the wait: its round starts at once and sends the
+captions as they land. A turn that paused does not wait: it sends what
+landed and drops the rest. A turn with no label task ends exactly as
+before. The frames carry no prose and the model never reads them, so the
+claim guard and the persisted reminders are not affected.
 """
 
 import asyncio
@@ -52,6 +63,7 @@ import logging
 import re
 import threading
 import unicodedata
+from collections.abc import AsyncIterator
 
 from server.infrastructure.auxiliary import aux_one_shot, aux_refusal, resolve_task_key
 from server.infrastructure.feature_flags import is_enabled
@@ -245,9 +257,13 @@ def clean_label(reply) -> str | None:
 
 
 def _on_device(model_key: str) -> bool:
-    """Whether the task resolves to an on-device model for this session."""
+    """Whether the caption would stay on this Mac: the chat model is
+    on-device, so no cloud model may read its tool output, or the task
+    resolves to an on-device model, which would compete with the turn."""
     from server.local.runtime import is_local_model
 
+    if is_local_model(model_key):
+        return True
     return is_local_model(resolve_task_key(TASK, "haiku", model_key))
 
 
@@ -274,8 +290,9 @@ async def _caption(future: concurrent.futures.Future, ids: list[str]) -> dict | 
 def start_label_task(ctx: TurnContext, states: list, tool_results: list) -> asyncio.Task | None:
     """Start the caption of a round whose tool phase passed the gate, or
     return None when this round gets none: not the chat turn, no call a row
-    shows, the flag off, the task refused here (Local mode), the task on an
-    on-device model, or the session's earlier call still in its thread."""
+    shows, the flag off, an on-device chat model, the task refused here
+    (Local mode), the task on an on-device model, or the session's earlier
+    call still in its thread."""
     try:
         if ctx.cost_source != "chat":
             return None
@@ -358,23 +375,32 @@ class PendingLabels:
                 task.cancel()
         return _frames(tasks)
 
-    async def drain(self, timeout: float | None = None) -> list[str]:
-        """At the end of the turn: wait up to ``timeout`` (LABEL_TIMEOUT_S)
-        for the captions still running, return the frames of all that landed,
-        in round order, and cancel the rest. No task, no wait."""
+    async def drain(self, timeout: float | None = None) -> AsyncIterator[str]:
+        """At the end of the turn: yield the frames of the captions as they
+        land, in round order (as ready() does), for up to ``timeout``
+        (LABEL_TIMEOUT_S) in all, then the frames of the ones that landed
+        behind a caption the wait gave up on, and cancel the rest. No task,
+        no wait: the generator ends without an await."""
         if not self._tasks:
-            return []
-        running = [t for t in self._tasks if not t.done()]
+            return
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + (LABEL_TIMEOUT_S if timeout is None else timeout)
         try:
-            if running:
-                await asyncio.wait(running, timeout=LABEL_TIMEOUT_S if timeout is None else timeout)
+            while True:
+                for frame in self.ready():
+                    yield frame
+                remaining = deadline - loop.time()
+                if not self._tasks or remaining <= 0:
+                    break
+                await asyncio.wait([self._tasks[0]], timeout=remaining)
         finally:
             # Also on a Stop during the wait: no caption outlives the turn.
             tasks, self._tasks = self._tasks, []
             for task in tasks:
                 if not task.done():
                     task.cancel()
-        return _frames(tasks)
+        for frame in _frames(tasks):
+            yield frame
 
     def cancel(self) -> None:
         """Drop every caption still running (the turn was stopped or torn down)."""

@@ -31,10 +31,11 @@ Lifecycle, driven by the slot owner:
   between, so a push that comes after it is refused and the caller starts
   the next turn instead of queueing text that nobody will read. What was
   accepted but never read is handed on: agent reports get a wake turn, and a
-  user message is announced as unanswered. The [DONE] can follow the close
-  by up to the activity captions' wait (activity_labels.LABEL_TIMEOUT_S): a
-  push in that window is refused too, so the composer's mid-turn send gets
-  a 409 and an agent report gets a wake turn while the stream is still open;
+  user message is announced as unanswered. The activity captions' end-of-turn
+  wait (activity_labels.LABEL_TIMEOUT_S) comes before the close, while the
+  inbox is still open: after an answer before the round cap, a push in that
+  window gets one more round of the turn; at any other end, it is handed on
+  with the rest;
 - a turn that is stopped or disconnected clears it, as does /reset.
 
 A turn that ends before its round loop runs (a failed or cancelled local
@@ -134,8 +135,9 @@ def close_and_announce(session_id: str) -> list[str]:
     announced as unanswered, on the stream and in the notifications, instead
     of going quiet on the composer's promise. Returns the SSE frames to send
     before the turn's [DONE]. Synchronous on purpose: nothing may reach the
-    inbox between the close and the hand-on. A push after it is refused, also
-    while run_turn still waits for the activity captions before [DONE]."""
+    inbox between the close and the hand-on. A push after it is refused.
+    run_turn waits for the activity captions before this close, not after
+    it, so a push during that wait still reaches the turn."""
     import logging
 
     log = logging.getLogger("whisper-studio")

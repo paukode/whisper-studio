@@ -17,8 +17,9 @@ must behave identically across Claude/GPT/local and chat/subagents/cron:
   - completion gate (Stop hooks + goal evaluator), per-round cost accounting,
     and the post-turn memory hooks
   - the activity captions of the chat turn (activity_labels.py): sent in
-    round order as they land while the next round streams, the rest after
-    one bounded wait at the end of the turn (none at a pause)
+    round order as they land while the next round streams, the rest as they
+    land in one bounded wait at the end of the turn, before the mid-turn
+    inbox closes (none at a pause)
 
 The SSE frame vocabulary is pinned by tests/golden_fixtures — change frames
 only with an intentional GOLDEN_RECORD refresh.
@@ -29,6 +30,7 @@ import functools
 import itertools
 import logging
 import time
+from contextlib import aclosing
 from dataclasses import dataclass, field
 
 from server.utils import BoundedUUIDSet, ndjson_dumps
@@ -179,9 +181,9 @@ class _TurnEnd:
 
 
 def _turn_end_frames(ctx: TurnContext, end: _TurnEnd) -> list[str]:
-    """The frames to send before [DONE]: the claim guard's last text and
-    notes, then, unless the turn paused, the chat turn's last look at its
-    mid-turn inbox (midturn_inbox.close_and_announce)."""
+    """The frames to send before [DONE], after the captions' wait: the claim
+    guard's last text and notes, then, unless the turn paused, the close of
+    the chat turn's mid-turn inbox (midturn_inbox.close_and_announce)."""
     frames = ctx.claims.finish(paused=end.paused)
     if not ctx.midturn_inbox or end.paused:
         return frames
@@ -194,18 +196,22 @@ async def run_turn(ctx: TurnContext):
     """Yield SSE strings for one full agentic turn.
 
     Every exit that ends the turn with [DONE] (an answer, the round cap, a
-    failed round, the cost cap) takes the chat turn's last look at the
-    mid-turn inbox here, with no await since the round loop yielded its
-    [DONE], so nothing a turn accepted is left behind unread and unannounced.
-    A pause for approval does not: its continuation reads what was queued.
+    failed round, the cost cap) closes the chat turn's mid-turn inbox here
+    and hands on what it accepted but never read, so nothing a turn accepted
+    is left behind unread and unannounced. A pause for approval does not:
+    its continuation reads what was queued.
 
     The activity captions still running get one bounded wait (at most
-    activity_labels.LABEL_TIMEOUT_S) after that close and before [DONE]. In
-    that window the turn is still streaming but its inbox is closed: a
-    composer message sent mid-turn gets the route's 409 ("not delivered"),
-    and an agent report gets a wake turn. A turn with no caption running
-    does not wait, and a paused turn never waits: it sends the captions that
-    landed and drops the rest, so its card can be answered at once."""
+    activity_labels.LABEL_TIMEOUT_S), sent as they land, while the inbox is
+    still open. After an answer, the round loop waits right before its last
+    look: before the round cap, a composer message or an agent report that
+    arrives in the wait gets one more round of this turn, and one that is
+    already pending skips the wait and gets that round at once. Every other
+    exit waits here. Both waits come before the close, which hands on what
+    arrived and was not read. The claim guard's last frames come after the
+    wait. A turn with no caption running does not wait, and
+    a paused turn never waits: it sends the captions that landed and drops
+    the rest, so its card can be answered at once."""
     end = _TurnEnd()
     if ctx.claims is None:
         from server.chat.claim_guard import ClaimGuard
@@ -215,13 +221,18 @@ async def run_turn(ctx: TurnContext):
     try:
         async for chunk in rounds:
             if chunk == _DONE:
+                # The captions still running get one bounded wait before the
+                # inbox closes (see the docstring). After an answer the round
+                # loop already waited, so there is none left to wait for, and
+                # a pause never waits.
+                if end.paused:
+                    for frame in end.labels.flush():
+                        yield frame
+                else:
+                    async with aclosing(end.labels.drain()) as labels:
+                        async for frame in labels:
+                            yield frame
                 for frame in _turn_end_frames(ctx, end):
-                    yield frame
-                # The captions still running get one bounded wait, after the
-                # inbox closed above (see the docstring). With none pending
-                # there is no wait, and a pause never waits.
-                labels = end.labels.flush() if end.paused else await end.labels.drain()
-                for frame in labels:
                     yield frame
             yield chunk
     finally:
@@ -750,13 +761,13 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                 # What reaches the inbox after this round's drain (a message
                 # the user sent, agent reports) was accepted by the route and
                 # would never be read. The last look happens below, after the
-                # completion gate and its awaits, in the same synchronous step
-                # that ends the turn: close_if_empty closes the inbox only when
-                # nothing is pending, so a push that comes later is refused and
-                # starts the next turn instead of waiting for this one. Anything
-                # pending gets one more round (the drain at the top folds it
-                # in), bounded by the round cap; the drain empties the inbox, so
-                # this cannot spin.
+                # completion gate, the captions' wait and their awaits, in the
+                # same synchronous step that ends the turn: close_if_empty
+                # closes the inbox only when nothing is pending, so a push that
+                # comes later is refused and starts the next turn instead of
+                # waiting for this one. Anything pending gets one more round
+                # (the drain at the top folds it in), bounded by the round cap;
+                # the drain empties the inbox, so this cannot spin.
                 from server.chat.engine import midturn_inbox as _inbox
 
                 _mid_pending = ctx.midturn_inbox and _inbox.has_pending(session_id)
@@ -837,10 +848,21 @@ async def _run_rounds(ctx: TurnContext, end: _TurnEnd):
                     if _unchecked:
                         yield f"data: {ndjson_dumps(_unchecked)}\n\n"
 
+                # The captions still running get their one bounded wait here,
+                # sent as they land, before the last look: the inbox is still
+                # open, so a message sent during the wait is read below and
+                # answered in this turn (a round is left). A message already
+                # pending skips the wait: its round starts at once, and that
+                # round's ready() sends the captions as they land (each one
+                # keeps its own LABEL_TIMEOUT_S cap).
+                if not (ctx.midturn_inbox and not is_last_round and _inbox.has_pending(session_id)):
+                    async with aclosing(end.labels.drain()) as _labels:
+                        async for _label_frame in _labels:
+                            yield _label_frame
+
                 # The last look. No await from here to run_turn's close of
                 # the inbox, which hands on whatever is still queued when no
-                # round is left to spend on it. The wait for the activity
-                # captions comes after that close, before [DONE].
+                # round is left to spend on it.
                 if (
                     ctx.midturn_inbox
                     and not is_last_round
