@@ -149,7 +149,8 @@ export async function readSSEStream(
   // paused on them (see commitQuestions).
   const roundQuestions: Array<{ question: string; options: string[]; toolUseId: string }> = [];
   // Captions for calls still streaming: each rides on the message that
-  // commits its calls (labelCommit at every commit site).
+  // commits its calls (labelCommit at every commit site). The store's
+  // currentStreamLabels holds them too, for the live rows.
   const pendingLabels: WrittenLabel[] = [];
   // Not const: each flushed segment restarts the thinking clock, so a "Thinking
   // 42s" after a card measures the wait since that card rather than replaying
@@ -404,12 +405,14 @@ export async function readSSEStream(
           }
 
           // ── activity_label (a model-written caption for a group of calls) ──
-          // Calls still streaming keep it until their message commits; calls
-          // already committed get it on their row now, saved.
+          // Calls still streaming show it on their live row now and keep it
+          // for the message that commits them; calls already committed get
+          // it on their row now, saved.
           if (parsed.activity_label) {
             const written = writtenLabelFromFrame(parsed.activity_label);
             if (written && skillTraces.some((t) => t.id && written.ids.includes(t.id))) {
               pendingLabels.push(written);
+              store().addStreamLabel(written);
             } else if (written) {
               patchCommittedLabel(sessionId, written);
             }

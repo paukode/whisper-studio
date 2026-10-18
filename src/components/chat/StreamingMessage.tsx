@@ -10,6 +10,7 @@ import { TeamAgentRows } from '@/components/chat/AgentRows';
 import { DeliveryChips } from '@/components/chat/DeliveryChips';
 import { findMatchingTeamReports } from '@/hooks/chatStream/teamProgress';
 import { mergeDeliveries } from '@/hooks/chatStream/deliveries';
+import { liveCaption } from '@/hooks/chatStream/activityLabels';
 import type { Delivery } from '@/types/chat';
 
 export interface StreamingMessageProps {
@@ -40,6 +41,9 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
   const inputTokens = useActiveChatStore((s) => s.inputTokens);
   const outputTokens = useActiveChatStore((s) => s.outputTokens);
   const streamToolUse = useActiveChatStore((s) => s.currentStreamToolUse);
+  // Captions that landed for the live calls: a row shows its caption at
+  // once, not only after the commit.
+  const streamLabels = useActiveChatStore((s) => s.currentStreamLabels);
   // Turn-local team reports, folded live from team_progress SSE events.
   // Rendering them here is what makes agents visibly run in parallel DURING
   // the turn.
@@ -141,10 +145,22 @@ export const StreamingMessage: React.FC<StreamingMessageProps> = ({ content, isS
               return <TaskCard key={`tasks-${idx}`} tools={entry.tools} />;
             }
             if (isActivityEntry(entry)) {
-              return <ActivityRow key={`activity-${idx}`} tools={entry.tools} />;
+              return (
+                <ActivityRow
+                  key={`activity-${idx}`}
+                  tools={entry.tools}
+                  writtenLabel={liveCaption(streamLabels, entry.tools)}
+                />
+              );
             }
             // An exempt tool (a screenshot, a picker) draws as a row of one.
-            return <ActivityRow key={`${entry.toolName}-${idx}`} tools={[entry]} />;
+            return (
+              <ActivityRow
+                key={`${entry.toolName}-${idx}`}
+                tools={[entry]}
+                writtenLabel={liveCaption(streamLabels, [entry])}
+              />
+            );
           })}
         </div>
       )}

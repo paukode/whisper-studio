@@ -11,12 +11,13 @@
  * holds one of the round's calls. A group that gets captions from several
  * rounds keeps the last one.
  *
- * A caption for calls still streaming waits in the stream state and rides on
- * the message that commits them (labelCommit). A caption for calls already
- * committed patches their row in place and saves the session
+ * A caption for calls still streaming shows on their live row at once (the
+ * store's currentStreamLabels, read by StreamingMessage through liveCaption)
+ * and rides on the message that commits them (labelCommit). A caption for
+ * calls already committed patches their row in place and saves the session
  * (patchCommittedLabel). Until a caption lands, and when none comes (Local
- * mode, a refusal, an error, a timeout), the row keeps its deterministic
- * label.
+ * mode, a chat on an on-device model, a refusal, an error, a timeout), the
+ * row keeps its deterministic label.
  */
 import { ACTIVITY_MIN_RUN, groupAgentTools, groupForActivity, isActivityEntry } from '@/components/chat/AgentCard';
 import { traceRuns, turnEntries } from '@/components/chat/turnEntries';
@@ -41,6 +42,16 @@ export function writtenLabelFromFrame(frame: NonNullable<SSEEventData['activity_
 /** Whether `label` names one of the calls in `toolUse`. */
 export function namesCallIn(label: WrittenLabel, toolUse: readonly ToolUseEvent[] | undefined): boolean {
   return !!toolUse && toolUse.some((t) => label.ids.includes(t.toolId));
+}
+
+/** The caption a live activity group shows: the last of `labels` that names
+ *  one of its calls, as at commit, where a later caption for the same group
+ *  replaces an earlier one. */
+export function liveCaption(labels: readonly WrittenLabel[], tools: readonly ToolUseEvent[]): string | undefined {
+  for (let k = labels.length - 1; k >= 0; k -= 1) {
+    if (namesCallIn(labels[k], tools)) return labels[k].label;
+  }
+  return undefined;
 }
 
 /** The first toolId of the activity group, as the committed view groups

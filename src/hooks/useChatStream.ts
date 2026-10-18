@@ -586,9 +586,10 @@ export function useChatStream(): UseChatStreamReturn {
       // last look at the inbox before the request arrived, the backend
       // answers 409 instead of starting a fresh turn from an incomplete
       // body, and that outcome is reported as NOT delivered. That window
-      // opens at the last look and lasts until [DONE]: usually a moment, up
-      // to 3 s when the turn waits for its activity captions
-      // (server/chat/engine/activity_labels.py).
+      // opens at the last look and lasts until [DONE], a moment: the turn
+      // waits for its activity captions before the last look, not after it
+      // (server/chat/engine/runner.py), so a message sent in that wait is
+      // still delivered.
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

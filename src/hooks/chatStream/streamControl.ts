@@ -11,6 +11,7 @@ import { getChatStore, getRuntime } from '@/stores/sessionRuntimes';
 import { subagentsOf, useSubagentStore } from '@/stores/subagentStore';
 import type { ChatState } from '@/stores/chatStore';
 import type { ChatMessage, ToolUseEvent } from '@/types/chat';
+import { labelCommit } from './activityLabels';
 
 /** One in-flight controller per session, module-scoped so it survives
  *  component remounts and session switches. */
@@ -141,8 +142,10 @@ function closeLiveTeams(chat: ChatState): void {
  * accumulators of the given chat state: partial prose (with the "(Stopped)"
  * marker), the tool activity shown so far (running steps frozen as
  * 'stopped'), the live team reports (closed) and the thinking shown so far.
- * Returns undefined when the turn had produced none of that yet, so an abort
- * during the pure thinking phase appends nothing.
+ * The captions its live rows showed (currentStreamLabels) stay on the
+ * stopped rows, as at any other commit (labelCommit). Returns undefined when
+ * the turn had produced none of that yet, so an abort during the pure
+ * thinking phase appends nothing.
  *
  * Side effects on `chat`: closes live teams and takes (clears) the live team
  * reports. The caller commits the result with finishStream (fresh turn) or
@@ -155,7 +158,7 @@ export function buildStoppedMessage(chat: ChatState): ChatMessage | undefined {
   closeLiveTeams(chat);
   const teamReports = chat.takeTeamReports();
   if (!currentStreamContent && toolUse.length === 0 && !teamReports) return undefined;
-  return {
+  const message: ChatMessage = {
     role: 'assistant',
     content: currentStreamContent ? currentStreamContent + '\n\n*(Stopped)*' : '*(Stopped)*',
     timestamp: new Date().toISOString(),
@@ -165,6 +168,9 @@ export function buildStoppedMessage(chat: ChatState): ChatMessage | undefined {
     _thinkingMs: thinkingElapsedMs > 0 ? Math.round(thinkingElapsedMs) : undefined,
     _thinkingText: currentThinkingContent || undefined,
   };
+  // A copy: labelCommit takes what it uses out of the array it gets, and the
+  // store's live captions clear with the live rows when this message lands.
+  return labelCommit(message, chat.messages, [...chat.currentStreamLabels]);
 }
 
 /**

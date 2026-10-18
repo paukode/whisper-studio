@@ -2,6 +2,7 @@ import { createStore } from 'zustand/vanilla';
 import type { ChatMessage, ApprovalCategory, Delivery, ToolUseEvent, PreviewKind, RiskHint, TeamProgressEvent, TeamReportData, TurnModelSettings } from '@/types/chat';
 import { foldTeamProgressIntoMap, foldTeamResultsInto } from '@/hooks/chatStream/teamProgress';
 import { mergeDeliveries } from '@/hooks/chatStream/deliveries';
+import type { WrittenLabel } from '@/hooks/chatStream/activityLabels';
 
 /**
  * Generic pending approval. The shape is the same regardless of action —
@@ -53,6 +54,12 @@ export interface ChatState {
   currentThinkingContent: string;
   /** Tool traces shown in real-time during streaming */
   currentStreamToolUse: ToolUseEvent[];
+  /** Captions (activity_label frames) for calls in currentStreamToolUse, in
+   *  arrival order, so a live row shows its caption the moment it lands
+   *  (StreamingMessage). The commit takes its own copy (labelCommit in
+   *  sseStream); these clear with the live rows, so a committed caption is
+   *  never shown twice. */
+  currentStreamLabels: WrittenLabel[];
   /** Turn-local team reports, folded live from team_progress / team_results
    *  SSE events WHILE the assistant message does not exist yet. Rendered by
    *  StreamingMessage; taken (and cleared) at commit time so the report ends
@@ -120,6 +127,8 @@ export interface ChatState {
   appendStreamToken: (token: string) => void;
   appendThinkingToken: (token: string) => void;
   addStreamToolUse: (trace: ToolUseEvent) => void;
+  /** Show a caption on the live rows that hold one of its calls. */
+  addStreamLabel: (label: WrittenLabel) => void;
   /** Update the first still-running live row whose toolId equals `key`: the
    *  provider's tool_use id when the frame carried one, else the tool name. */
   updateStreamToolUse: (key: string, updates: Partial<ToolUseEvent>) => void;
@@ -243,6 +252,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   currentThinkingContent: '',
   streamStatus: null,
   currentStreamToolUse: [],
+  currentStreamLabels: [],
   liveTeamReports: {},
   liveDeliveries: [],
   approvalQueue: [],
@@ -292,6 +302,12 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
   addStreamToolUse: (trace: ToolUseEvent) => {
     set((state) => ({
       currentStreamToolUse: [...state.currentStreamToolUse, trace],
+    }));
+  },
+
+  addStreamLabel: (label: WrittenLabel) => {
+    set((state) => ({
+      currentStreamLabels: [...state.currentStreamLabels, label],
     }));
   },
 
@@ -364,6 +380,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         currentThinkingContent: '',
         streamStatus: null,
         currentStreamToolUse: [],
+        currentStreamLabels: [],
         // A fresh turn starts with a clean live report — a prior turn that
         // errored before its commit site could take them must not leak here.
         liveTeamReports: {},
@@ -387,6 +404,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         currentStreamContent: '',
         currentThinkingContent: '',
         currentStreamToolUse: [],
+        currentStreamLabels: [],
         thinkingStartTime: null,
       });
     }
@@ -401,6 +419,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
         currentStreamContent: '',
         currentThinkingContent: '',
         currentStreamToolUse: [],
+        currentStreamLabels: [],
         thinkingStartTime: null,
         liveDeliveries: [],
         messages: message
@@ -424,6 +443,7 @@ export const createChatStore = () => createStore<ChatState>()((set, get) => ({
       currentStreamContent: '',
       currentThinkingContent: '',
       currentStreamToolUse: [],
+      currentStreamLabels: [],
       thinkingStartTime: performance.now(),
       thinkingElapsedMs: 0,
     }));
