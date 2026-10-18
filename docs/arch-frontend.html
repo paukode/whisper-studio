@@ -422,7 +422,8 @@
       <dt><code class="path">src/components/layout/AppStatusBar.tsx</code></dt><dd>Persistent bottom status strip (WS-H): model, effort, permission mode, git, context meter, tokens/cost, background-task pill.</dd>
       <dt><code class="path">src/stores/sessionRuntimes.ts</code></dt><dd>The per-session runtime registry: stores, event streams, LRU eviction; also routes <code>task_event</code>/<code>ci_progress</code>/<code>ci_result</code>.</dd>
       <dt><code class="path">src/hooks/useChatStream.ts</code></dt><dd>The send path: bind the owning session, POST, commit atomically.</dd>
-      <dt><code class="path">src/hooks/chatStream/sseStream.ts</code></dt><dd>The SSE parser and the approval-continuation pump.</dd>
+      <dt><code class="path">src/hooks/chatStream/sseStream.ts</code></dt><dd>The SSE parser.</dd>
+      <dt><code class="path">src/hooks/chatStream/approvalContinuation.ts</code></dt><dd>The approval-continuation pump.</dd>
       <dt><code class="path">src/hooks/chatStream/sseEventCards.ts</code></dt><dd>Declarative one-card-per-frame SSE events split out of <code>sseStream.ts</code> (<code>plan_blocked</code>, <code>security_blocked</code>, <code>hook_blocked</code>, <code>goal_eval</code>, and more).</dd>
       <dt><code class="path">src/utils/sanitizeHtml.ts</code></dt><dd>Safe Markdown rendering (marked + DOMPurify).</dd>
       <dt><code class="path">src/utils/wsFileLinks.ts</code></dt><dd>Delegated click handling for citation, created-file, and localhost links in rendered messages.</dd>

@@ -1,6 +1,6 @@
 /**
  * The empty-answer fallback, shared by BOTH turn paths: the fresh turn
- * (useChatStream's send) and the approval resume (sseStream's
+ * (useChatStream's send) and the approval resume (approvalContinuation's
  * sendApprovalContinuation).
  *
  * A round can legitimately end with no assistant text — the model stops after

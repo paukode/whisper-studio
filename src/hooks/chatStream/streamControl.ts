@@ -3,7 +3,7 @@
  * instant kill switch.
  *
  * Lives in its own leaf module (not useChatStream) because BOTH
- * useChatStream's send() and sseStream's sendApprovalContinuation()
+ * useChatStream's send() and approvalContinuation's sendApprovalContinuation()
  * register controllers here, and useChatStream already imports
  * sseStream — a shared leaf keeps the import graph acyclic.
  */

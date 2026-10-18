@@ -9,7 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { useChatStream } from './useChatStream';
-import { sendApprovalContinuation } from './chatStream/sseStream';
+import { sendApprovalContinuation } from './chatStream/approvalContinuation';
 import { dropRuntime, getActiveChatStore, getChatStore, useRuntimeIndex } from '@/stores/sessionRuntimes';
 import { useSessionStore } from '@/stores/sessionStore';
 import type { PendingApproval } from '@/stores/chatStore';

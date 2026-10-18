@@ -7,10 +7,11 @@
  * in-flight stream per session (a re-send aborts only that session's
  * stream), up to MAX_ACTIVE_SESSIONS sessions active at once.
  *
- * The SSE parsing engine (readSSEStream) and the approval-continuation
- * pump (sendApprovalContinuation) live in ./chatStream/sseStream; the
- * team-report folding helpers live in ./chatStream/teamProgress. This file
- * keeps the React hook that wires them to component state.
+ * The SSE parsing engine (readSSEStream) lives in ./chatStream/sseStream,
+ * the approval-continuation pump (sendApprovalContinuation) in
+ * ./chatStream/approvalContinuation, and the team-report folding helpers in
+ * ./chatStream/teamProgress. This file keeps the React hook that wires them
+ * to component state.
  */
 import { useCallback, useEffect } from 'react';
 import {

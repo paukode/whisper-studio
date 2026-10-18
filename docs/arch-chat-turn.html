@@ -284,7 +284,8 @@
       <dt><code class="path">server/infrastructure/sessions.py</code></dt><dd><code>visible_chat_history()</code> and the session persistence UPSERT with its per-session lock.</dd>
       <dt><code class="path">server/approval/router.py</code></dt><dd><code>POST /api/approval/execute</code>, the single hub the SPA calls to run an approved action.</dd>
       <dt><code class="path">src/hooks/useChatStream.ts</code></dt><dd>The React hook: binds the owning session, POSTs the turn, commits the final message, PUTs the save.</dd>
-      <dt><code class="path">src/hooks/chatStream/sseStream.ts</code></dt><dd>The SSE parser and the approval continuation pump that re-enters the stream.</dd>
+      <dt><code class="path">src/hooks/chatStream/sseStream.ts</code></dt><dd>The SSE parser.</dd>
+      <dt><code class="path">src/hooks/chatStream/approvalContinuation.ts</code></dt><dd>The approval continuation pump that re-enters the stream.</dd>
     </div>
 
     <div class="callout callout--tip">

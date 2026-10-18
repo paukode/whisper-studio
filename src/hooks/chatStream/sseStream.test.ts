@@ -15,7 +15,8 @@
  * is auto-created per session id by the runtime registry.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readSSEStream, sendApprovalContinuation } from './sseStream';
+import { readSSEStream } from './sseStream';
+import { sendApprovalContinuation } from './approvalContinuation';
 import { useUIStore } from '@/stores/uiStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import type { PendingApproval } from '@/stores/chatStore';

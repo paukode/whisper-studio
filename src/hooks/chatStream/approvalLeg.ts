@@ -24,7 +24,7 @@ import { useSessionStore } from '@/stores/sessionStore';
 import type { ChatMessage } from '@/types/chat';
 import { useUIStore } from '@/stores/uiStore';
 import { toError } from '@/utils/toError';
-import { approvalTarget, sendApprovalContinuation } from './sseStream';
+import { approvalTarget, sendApprovalContinuation } from './approvalContinuation';
 import {
   hasLiveStream,
   registerStreamController,
