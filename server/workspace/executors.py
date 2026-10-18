@@ -36,6 +36,7 @@ from .filesystem import _ws_list_dir
 from .paths import (
     _WS_BINARY_EXTS,
     WORKSPACE_BACKUPS,
+    _is_system_path,
     _normalize_lf,
     _ws_path_allowed,
     scratch_root,
@@ -57,17 +58,53 @@ log = logging.getLogger("whisper-studio")
 
 
 def outside_roots_error(path: str, ws: str) -> str:
-    """The refusal for a ws_* file tool aimed outside both places it can reach.
+    """The refusal for a ws_* file tool aimed at changing a file outside both
+    places it may change.
 
     A plain tool result, never the folder picker: the workspace the user
     connected is not in question, only the path is, and the model can act on
-    this on its own (a path inside the workspace, the scratch folder, or
-    ws_run_command for anything else) without pausing the turn."""
+    this on its own (a path inside the workspace or the scratch folder, a
+    save the user approves, or terminal_run's escalation) without pausing the
+    turn. Reading is a different matter: ws_read_file and ws_list_directory
+    read anywhere (see resolve_read_path)."""
     return (
         f"Error: {path} is outside the connected workspace ({ws}) and outside the "
-        f"scratch folder ({scratch_root()}). The ws_* file tools reach only those two "
-        "places. Use a path inside one of them, or ws_run_command for other locations."
+        f"scratch folder ({scratch_root()}). The ws_* file tools change files only in "
+        "those two places (reading works anywhere). To write elsewhere, pass the "
+        "absolute path to ws_create_file or save_file, which asks the user to approve "
+        "the save, or use terminal_run with sandbox_permissions='danger-full-access'."
     )
+
+
+def resolve_read_path(path: str, ws: str | None) -> tuple[str | None, str | None]:
+    """Where a ws_* read tool reads from: ``(full path, refusal)``.
+
+    Reading never asks and is allowed anywhere on this machine (the user's
+    rule), so an absolute path may point outside the connected workspace and
+    the scratch folder, with or without a workspace connected; a relative
+    path needs the workspace to resolve against. The two exceptions are the
+    credential stores the OS sandbox denies to every command
+    (server/security/sensitive_paths.py) and the kernel pseudo-filesystems,
+    refused with a plain error."""
+    raw = os.path.expanduser((path or "").strip())
+    if os.path.isabs(raw):
+        full = raw
+    elif ws:
+        full = os.path.join(ws, raw) if raw and raw != "." else ws
+    else:
+        return None, "No workspace connected."
+    if ws and _ws_path_allowed(full, ws):
+        return full, None
+    if _is_system_path(full):
+        return None, f"Error: {path} is not a readable location."
+    from server.security.sensitive_paths import is_sensitive_path
+
+    if is_sensitive_path(full):
+        return None, (
+            f"Error: {path} is a protected location (credentials, keychains or browser "
+            "data) and is never read."
+        )
+    return full, None
 
 
 def open_folder_now(path: str) -> str:
@@ -220,13 +257,11 @@ def _flag(value) -> bool:
 @register_executor("ws_read_file", read_only=True, concurrent_safe=True)
 def _exec_ws_read_file(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
-    if not ws:
-        return "No workspace connected."
     session_id = tool_input.pop("__session_id__", "")
     path = tool_input.get("path", "")
-    full = os.path.join(ws, path)
-    if not _ws_path_allowed(full, ws):
-        return outside_roots_error(path, ws)
+    full, refusal = resolve_read_path(path, ws)
+    if refusal:
+        return refusal
     if not os.path.isfile(full):
         return f"File not found: {path}"
     ext = os.path.splitext(path)[1].lower()
@@ -295,12 +330,10 @@ def _exec_ws_read_file(tool_input, transcript, current_attachments):
 @register_executor("ws_list_directory", read_only=True, concurrent_safe=True)
 def _exec_ws_list_dir(tool_input, transcript, current_attachments):
     ws = get_workspace_path()
-    if not ws:
-        return "No workspace connected."
     path = tool_input.get("path", "").strip() or "."
-    full = os.path.join(ws, path) if path != "." else ws
-    if not _ws_path_allowed(full, ws):
-        return outside_roots_error(path, ws)
+    full, refusal = resolve_read_path(path, ws)
+    if refusal:
+        return refusal
     if not os.path.isdir(full):
         return f"Not a directory: {path}"
     entries = []

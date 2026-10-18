@@ -1,5 +1,7 @@
-"""The ws_* file tools reach two roots: the connected workspace and the
-per-session scratch folder the system prompt sends throwaway files to.
+"""The ws_* file tools change files in two roots: the connected workspace and
+the per-session scratch folder the system prompt sends throwaway files to.
+Reading is allowed anywhere on the machine (the user's rule), except the
+credential stores the sandbox denies.
 
 Regression: the prompt told the model to put probe scripts in the scratch
 folder, every ws_* tool rejected that absolute path as outside the workspace,
@@ -127,7 +129,6 @@ def test_modify_outside_both_roots_is_a_plain_refusal(roots, tmp_path):
     other = tmp_path / "other.txt"
     other.write_text("x")
     calls = (
-        (executors._exec_ws_read_file, {}),
         (executors._exec_ws_write_file, {"content": "y"}),
         (executors._exec_ws_edit_file, {"old_string": "x", "new_string": "y"}),
         (executors._exec_ws_delete_file, {}),
@@ -138,6 +139,44 @@ def test_modify_outside_both_roots_is_a_plain_refusal(roots, tmp_path):
         assert "[WS_WORKSPACE_PROMPT]" not in out
         assert ws in out and paths.scratch_root() in out
     assert other.read_text() == "x"
+
+
+def test_read_and_list_work_anywhere_outside_both_roots(roots, tmp_path):
+    """Reading never asks and is allowed anywhere on the machine."""
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    (other / "notes.txt").write_text("hello\n")
+    assert "hello" in executors._exec_ws_read_file({"path": str(other / "notes.txt")}, [], [])
+    assert "notes.txt" in executors._exec_ws_list_dir({"path": str(other)}, [], [])
+
+
+def test_read_by_absolute_path_needs_no_workspace(roots, tmp_path, monkeypatch):
+    for target in (state, executors):
+        monkeypatch.setattr(target, "get_workspace_path", lambda: None)
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    (other / "notes.txt").write_text("hello\n")
+    assert "hello" in executors._exec_ws_read_file({"path": str(other / "notes.txt")}, [], [])
+    assert "notes.txt" in executors._exec_ws_list_dir({"path": str(other)}, [], [])
+    assert executors._exec_ws_read_file({"path": "notes.txt"}, [], []) == "No workspace connected."
+
+
+def test_a_tilde_path_reads_the_home_folder(roots, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "home-note.txt").write_text("home\n")
+    assert "home" in executors._exec_ws_read_file({"path": "~/home-note.txt"}, [], [])
+
+
+def test_credential_stores_and_system_paths_are_never_read(roots, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    ssh = tmp_path / ".ssh"
+    ssh.mkdir()
+    (ssh / "id_rsa").write_text("secret")
+    out = executors._exec_ws_read_file({"path": str(ssh / "id_rsa")}, [], [])
+    assert out.startswith("Error:") and "secret" not in out
+    out = executors._exec_ws_list_dir({"path": str(ssh)}, [], [])
+    assert out.startswith("Error:") and "id_rsa" not in out
+    assert executors._exec_ws_read_file({"path": "/dev/null"}, [], []).startswith("Error:")
 
 
 def test_folder_picker_only_when_no_workspace_is_connected(roots, monkeypatch):
