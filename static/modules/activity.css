@@ -231,6 +231,8 @@ button.activity-pill:hover { border-color: var(--accent); }
     border-radius: 4px;
     background: transparent;
     color: var(--text-muted);
+    /* An icon-only button: without this it takes the browser's 13.33px. */
+    font-size: var(--fs-caption);
     cursor: pointer;
 }
 .activity-call-toggle:hover { background: var(--bg-hover); color: var(--text-primary); }
