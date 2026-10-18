@@ -222,7 +222,7 @@ const FeedRow: React.FC<{ item: FeedItem }> = ({ item }) => {
       <div className="agent-ev">
         <span className="agent-ev-label">model</span>
         <div className="agent-ev-body">
-          <MarkdownRenderer content={item.ev.text ?? ''} stepFormat />
+          <MarkdownRenderer content={item.ev.text ?? ''} />
         </div>
       </div>
     );

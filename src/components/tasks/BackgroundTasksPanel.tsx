@@ -158,7 +158,7 @@ const TaskDetail: React.FC<{ task: BackgroundTaskInfo }> = ({ task }) => {
           </>
         )}
         started {formatMessageTimestamp(task.created_at)}
-        {task.pid ? ` · pid ${task.pid}` : ''}
+        {task.kind === 'shell' && task.pid ? ` · pid ${task.pid}` : ''}
         {model ? ` · ${model}` : ''}
       </div>
       {task.kind !== 'shell' && <div className="bg-tasks-detail-task">{task.title}</div>}
